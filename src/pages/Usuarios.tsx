@@ -1,110 +1,130 @@
-import * as React from 'react'
-import { supabase } from '@/lib/supabase'
-import { useForm } from 'react-hook-form'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Input } from '@/components/ui/input'
-import { Select } from '@/components/ui/select'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { CepAutoFill } from '@/components/forms/CepAutoFill'
-import { maskCpf, onlyDigits } from '@/lib/masks'
+// src/pages/Usuarios.tsx
+import * as React from "react";
+import { useForm } from "react-hook-form";
 
-type Row = {
-  id:string; auth_user_id:string; nome:string; email:string; telefone?:string;
-  cep?:string; logradouro?:string; numero?:string; bairro?:string; cidade?:string; uf?:string;
-  login?:string; role:'admin'|'vendedor'|'viewer'; scopes:string[]; avatar_url?:string;
-  pix_kind?:'cpf'|'email'|'celular'|'aleatoria'; pix_key?:string; cpf?:string
-}
+type Form = {
+  nome: string;
+  email: string;
+  telefone?: string;
+  cpf?: string;
+  cep?: string;
+  logradouro?: string;
+  numero?: string;
+  bairro?: string;
+  cidade?: string;
+  uf?: string;
+  role: "admin" | "vendedor" | "viewer";
+  pixType: "cpf" | "email" | "celular" | "aleatoria";
+  pixKey?: string;
+};
 
-export default function Usuarios(){
-  const qc = useQueryClient()
-  const users = useQuery({
-    queryKey:['users'],
-    queryFn: async ()=>{
-      const { data, error } = await supabase.from('users_safe').select('*').order('created_at',{ascending:false})
-      if (error) throw error
-      return data as Row[]
+export default function Usuarios() {
+  const {
+    register,
+    handleSubmit,
+    watch,
+    setValue,
+    formState: { isSubmitting },
+  } = useForm<Form>({
+    defaultValues: { role: "viewer", pixType: "aleatoria" },
+  });
+
+  const w = watch();
+
+  // Auto-preenche PIX key quando possível
+  React.useEffect(() => {
+    if (!w) return;
+    if ((!w.pixKey || w.pixKey === "") && w.pixType === "cpf" && w.cpf) {
+      setValue("pixKey", String(w.cpf).replace(/\D/g, ""));
     }
-  })
+    if ((!w.pixKey || w.pixKey === "") && w.pixType === "email" && w.email) {
+      setValue("pixKey", w.email);
+    }
+    if ((!w.pixKey || w.pixKey === "") && w.pixType === "celular" && w.telefone) {
+      setValue("pixKey", String(w.telefone).replace(/\D/g, ""));
+    }
+  }, [w?.pixType, w?.cpf, w?.email, w?.telefone, w?.pixKey, setValue]);
 
-  const { register, handleSubmit, setValue, watch, reset } = useForm<Partial<Row>>({
-    defaultValues: { role:'viewer', scopes: [] }
-  })
-
-  async function onCreate(v:any){
-    const authId = prompt('Cole o auth_user_id (do convite Aceito em Auth > Users):')
-    if (!authId) { alert('auth_user_id é obrigatório.'); return }
-
-    if (v.pix_kind==='cpf') v.pix_key = maskCpf(onlyDigits(String(v.cpf||'')))
-    if (v.pix_kind==='email') v.pix_key = v.email
-    if (v.pix_kind==='celular') v.pix_key = v.telefone
-
-    const parts = String(v.nome||'').trim().toLowerCase().split(/\s+/)
-    const login = `${(parts[0]||'user')}.${(parts.slice(-1)[0]||'crm')}`
-
-    const { error } = await supabase.from('users').insert({
-      auth_user_id: authId, nome: v.nome, email: v.email, telefone: v.telefone,
-      cep:v.cep, logradouro:v.logradouro, numero:v.numero, bairro:v.bairro, cidade:v.cidade, uf:v.uf,
-      login, role: v.role, scopes: v.scopes||[], avatar_url: v.avatar_url, pix_kind: v.pix_kind, pix_key: v.pix_key
-    })
-    if (error){ alert(error.message); return }
-    reset(); qc.invalidateQueries({queryKey:['users']})
-    alert(`Usuário criado. Defina senha provisória pelo convite do Supabase Auth. No 1º login, ele será forçado a trocar.`)
-  }
+  const onSubmit = async (f: Form) => {
+    try {
+      const resp = await fetch("/api/users/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nome: f.nome,
+          email: f.email,
+          telefone: f.telefone ?? null,
+          cpf: f.cpf ?? null, // será criptografado na RPC
+          role: f.role,
+          endereco: {
+            cep: f.cep ?? null,
+            logradouro: f.logradouro ?? null,
+            numero: f.numero ?? null,
+            bairro: f.bairro ?? null,
+            cidade: f.cidade ?? null,
+            uf: f.uf ?? null,
+          },
+          pixType: f.pixType,
+          pixKey: f.pixKey ?? null, // se vazio, o back também tenta completar
+          scopes: ["leads", "oportunidades", "usuarios"],
+        }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.error || "Falha ao criar usuário");
+      alert(`Usuário criado!\nSenha provisória: ${json.tempPassword}`);
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
 
   return (
-    <div className="grid gap-4">
-      <Card>
-        <CardHeader><CardTitle>Novo Usuário (vincule a um Auth User convidado)</CardTitle></CardHeader>
-        <CardContent>
-          <form className="grid md:grid-cols-3 gap-3" onSubmit={handleSubmit(onCreate)}>
-            <Input placeholder="Nome" {...register('nome',{required:true})}/>
-            <Input placeholder="E-mail" {...register('email',{required:true})}/>
-            <Input placeholder="Telefone" {...register('telefone')}/>
-            <CepAutoFill value={watch('cep')||''} onValue={(s)=>setValue('cep',s)} onAddress={(a)=>{
-              setValue('logradouro',a.logradouro||''); setValue('bairro',a.bairro||''); setValue('cidade',a.cidade||''); setValue('uf',a.uf||'')
-            }}/>
-            <Input placeholder="Logradouro" {...register('logradouro')}/>
-            <Input placeholder="Número" {...register('numero')}/>
-            <Input placeholder="Bairro" {...register('bairro')}/>
-            <Input placeholder="Cidade" {...register('cidade')}/>
-            <Input placeholder="UF" {...register('uf')}/>
-            <Select value={watch('role')} onChange={e=>setValue('role', e.target.value as any)}>
-              <option value="viewer">Viewer</option>
-              <option value="vendedor">Vendedor</option>
-              <option value="admin">Admin</option>
-            </Select>
-            <Select value={watch('pix_kind')} onChange={e=>setValue('pix_kind', e.target.value as any)}>
-              <option value="">Chave PIX</option>
-              <option value="cpf">CPF</option>
-              <option value="email">E-mail</option>
-              <option value="celular">Celular</option>
-              <option value="aleatoria">Aleatória</option>
-            </Select>
-            <Input placeholder="Pix (se aleatória)" {...register('pix_key')}/>
-            <Button type="submit">Cadastrar</Button>
-          </form>
-        </CardContent>
-      </Card>
+    <div className="p-6 space-y-3">
+      <h1 className="text-xl font-extrabold">Novo Usuário</h1>
 
-      <Card>
-        <CardHeader><CardTitle>Usuários</CardTitle></CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="min-w-[900px] w-full">
-            <thead><tr className="text-left text-sm"><th className="p-2">Nome</th><th className="p-2">E-mail</th><th className="p-2">Role</th><th className="p-2">CPF</th></tr></thead>
-            <tbody>
-              {(users.data||[]).map(u=>(
-                <tr key={u.id} className="border-t">
-                  <td className="p-2">{u.nome}</td>
-                  <td className="p-2">{u.email}</td>
-                  <td className="p-2">{u.role}</td>
-                  <td className="p-2">{u.cpf||'—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
+      <form onSubmit={handleSubmit(onSubmit)} className="grid gap-3 md:grid-cols-3">
+        <input className="input" placeholder="Nome" {...register("nome", { required: true })} />
+        <input className="input" placeholder="E-mail" type="email" {...register("email", { required: true })} />
+        <input className="input" placeholder="Telefone" {...register("telefone")} />
+
+        {/* CPF novo */}
+        <input className="input" placeholder="CPF" {...register("cpf")} />
+
+        <input className="input" placeholder="CEP" {...register("cep")} />
+        <input className="input" placeholder="Logradouro" {...register("logradouro")} />
+        <input className="input" placeholder="Número" {...register("numero")} />
+        <input className="input" placeholder="Bairro" {...register("bairro")} />
+        <input className="input" placeholder="Cidade" {...register("cidade")} />
+        <input className="input" placeholder="UF" {...register("uf")} />
+
+        <select className="input" {...register("role", { required: true })}>
+          <option value="admin">Admin</option>
+          <option value="vendedor">Vendedor</option>
+          <option value="viewer">Viewer</option>
+        </select>
+
+        <select className="input" {...register("pixType", { required: true })}>
+          <option value="cpf">CPF</option>
+          <option value="email">E-mail</option>
+          <option value="celular">Celular</option>
+          <option value="aleatoria">Chave aleatória</option>
+        </select>
+
+        <input
+          className="input md:col-span-2"
+          placeholder="Pix (se aleatória, preencha aqui)"
+          {...register("pixKey")}
+        />
+
+        <button className="btn md:col-span-3" disabled={isSubmitting} type="submit">
+          {isSubmitting ? "Cadastrando…" : "Cadastrar"}
+        </button>
+      </form>
+
+      {/* estilos simples, caso não esteja usando seus componentes de UI aqui */}
+      <style>{`
+        .input{border:1px solid #e5e7eb;border-radius:12px;padding:10px}
+        .btn{background:#A11C27;color:white;border-radius:14px;padding:10px 14px;font-weight:700}
+      `}</style>
     </div>
-  )
+  );
 }

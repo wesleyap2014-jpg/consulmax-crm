@@ -1,191 +1,251 @@
-// src/pages/Usuarios.tsx
-import * as React from "react";
-import { useForm } from "react-hook-form";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabaseClient"; // ajuste o caminho se necessário
 
-type Role = "admin" | "vendedor" | "viewer";
-type PixType = "cpf" | "email" | "celular" | "aleatoria";
-
-type Form = {
-  nome: string;
-  email: string;
-  telefone?: string;
-  cpf?: string;
-
-  cep?: string;
-  logradouro?: string;
-  numero?: string;
-  bairro?: string;
-  cidade?: string;
-  uf?: string;
-
-  role: Role;
-  pixType: PixType;
-  pixKey?: string;
-};
+type PixKind = "cpf" | "email" | "telefone";
 
 export default function Usuarios() {
-  const {
-    register,
-    handleSubmit,
-    watch,
-    setValue,
-    formState: { isSubmitting },
-    reset,
-  } = useForm<Form>({
-    defaultValues: {
-      role: "viewer",
-      pixType: "aleatoria",
-    },
-  });
+  // -------- form state ----------
+  const [nome, setNome] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [cpf, setCpf] = useState("");
+  const [cep, setCep] = useState("");
+  const [logradouro, setLogradouro] = useState("");
+  const [bairro, setBairro] = useState("");
+  const [cidade, setCidade] = useState("");
+  const [uf, setUf] = useState("");
+  const [numero, setNumero] = useState("");
+  const [pixType, setPixType] = useState<PixKind>("email");
+  const [pixKey, setPixKey] = useState("");
+  const [role, setRole] = useState<"admin" | "vendedor" | "viewer">("admin");
 
-  const w = watch();
+  const [uploading, setUploading] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string>("");
 
-  // --------- Auto-preencher PIX key quando possível ----------
-  React.useEffect(() => {
-    if ((!w.pixKey || w.pixKey === "") && w.pixType === "cpf" && w.cpf) {
-      setValue("pixKey", String(w.cpf).replace(/\D/g, ""));
-    }
-    if ((!w.pixKey || w.pixKey === "") && w.pixType === "email" && w.email) {
-      setValue("pixKey", w.email);
-    }
-    if (
-      (!w.pixKey || w.pixKey === "") &&
-      w.pixType === "celular" &&
-      w.telefone
-    ) {
-      setValue("pixKey", String(w.telefone).replace(/\D/g, ""));
-    }
-    // 'aleatoria' => o usuário digita manualmente
-  }, [w.pixType, w.cpf, w.email, w.telefone, w.pixKey, setValue]);
+  // ------- helpers (máscaras) -------
+  const onlyDigits = (s: string) => s.replace(/\D/g, "");
 
-  // --------- Autopreencher endereço pelo CEP (ViaCEP) ----------
-  React.useEffect(() => {
-    const raw = (w?.cep || "").replace(/\D/g, "");
+  const maskPhone = (v: string) => {
+    const d = onlyDigits(v).slice(0, 11);
+    if (d.length <= 2) return `(${d}`;
+    if (d.length <= 6) return `(${d.slice(0,2)}) ${d.slice(2)}`;
+    if (d.length <= 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+    return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7,11)}`;
+  };
+
+  const maskCPF = (v: string) => {
+    const d = onlyDigits(v).slice(0, 11);
+    return d
+      .replace(/^(\d{3})(\d)/, "$1.$2")
+      .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+      .replace(/\.(\d{3})(\d)/, ".$1-$2");
+  };
+
+  const maskCEP = (v: string) => {
+    const d = onlyDigits(v).slice(0, 8);
+    return d.replace(/^(\d{5})(\d)/, "$1-$2");
+  };
+
+  // ------- CEP -> ViaCEP --------
+  useEffect(() => {
+    const raw = onlyDigits(cep);
     if (raw.length !== 8) return;
 
     let canceled = false;
     (async () => {
       try {
         const r = await fetch(`https://viacep.com.br/ws/${raw}/json/`);
-        const d = await r.json();
-        if (canceled || d?.erro) return;
+        const data = await r.json();
+        if (canceled || data?.erro) return;
 
-        setValue("logradouro", d.logradouro || "");
-        setValue("bairro", d.bairro || "");
-        setValue("cidade", d.localidade || "");
-        setValue("uf", d.uf || "");
-      } catch {
+        setLogradouro(data.logradouro || "");
+        setBairro(data.bairro || "");
+        setCidade(data.localidade || "");
+        setUf((data.uf || "").toUpperCase());
+        // número: usuário digita; aceita "S/N"
+      } catch (e) {
         // silencioso
       }
     })();
 
-    return () => {
-      canceled = true;
-    };
-  }, [w?.cep, setValue]);
+    return () => { canceled = true; };
+  }, [cep]);
 
-  // --------- Envio para a rota serverless /api/users/create ----------
-  const onSubmit = async (f: Form) => {
+  // ------- PIX auto-preenchimento -------
+  const cpfDigits = useMemo(() => onlyDigits(cpf), [cpf]);
+  const phoneDigits = useMemo(() => onlyDigits(phone), [phone]);
+
+  useEffect(() => {
+    if (pixType === "email") setPixKey(email || "");
+    if (pixType === "telefone") setPixKey(phoneDigits || "");
+    if (pixType === "cpf") setPixKey(cpfDigits || "");
+  }, [pixType, email, phoneDigits, cpfDigits]);
+
+  // ------- upload foto -------
+  async function uploadPhoto(authUserId: string) {
+    if (!photoFile) return "";
     try {
-      const resp = await fetch("/api/users/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nome: f.nome,
-          email: f.email,
-          telefone: f.telefone ?? null,
-          cpf: f.cpf ?? null, // será criptografado na RPC
-          role: f.role,
-          endereco: {
-            cep: f.cep ?? null,
-            logradouro: f.logradouro ?? null,
-            numero: f.numero ?? null,
-            bairro: f.bairro ?? null,
-            cidade: f.cidade ?? null,
-            uf: f.uf ?? null,
-          },
-          pixType: f.pixType,
-          pixKey: f.pixKey ?? null,
-          scopes: ["leads", "oportunidades", "usuarios"],
-        }),
+      setUploading(true);
+      const fileExt = photoFile.name.split(".").pop() || "jpg";
+      const path = `${authUserId}/${Date.now()}.${fileExt}`;
+      const { error } = await supabase.storage.from("avatars").upload(path, photoFile, {
+        upsert: true,
+        contentType: photoFile.type,
       });
+      if (error) throw error;
 
-      const text = await resp.text();
-      let json: any;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        json = null;
-      }
-
-      if (!resp.ok) {
-        throw new Error(json?.error || text || "Falha ao criar usuário");
-      }
-
-      alert(`Usuário criado!\nSenha provisória: ${json?.tempPassword}`);
-      reset({ role: "viewer", pixType: "aleatoria" } as any);
-    } catch (e: any) {
-      alert(e?.message || "Erro inesperado");
+      const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+      return data.publicUrl || "";
+    } finally {
+      setUploading(false);
     }
-  };
+  }
+
+  // ------- submit -------
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+
+    const auth_user_id = prompt("Cole o auth_user_id (do convite Aceito em Auth > Users):")?.trim();
+    if (!auth_user_id) return;
+
+    const publicPhotoUrl = await uploadPhoto(auth_user_id);
+    if (publicPhotoUrl) setPhotoUrl(publicPhotoUrl);
+
+    // INSERT no public.users
+    const payload = {
+      auth_user_id,
+      nome,
+      email,
+      phone,
+      cep: onlyDigits(cep),
+      logradouro,
+      bairro,
+      cidade,
+      uf: uf.toUpperCase(),
+      numero,                     // pode ser "S/N"
+      pix_type: pixType,
+      pix_key: pixKey,
+      role,                       // mantendo seu fluxo atual
+      photo_url: publicPhotoUrl || null,
+      // Se você guarda CPF criptografado no back, continue usando sua função RPC.
+      // Aqui, só guardamos a chave PIX (digits do CPF se pixType=cpf).
+    };
+
+    const { error } = await supabase.from("users").insert(payload);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    alert("Usuário cadastrado com sucesso!");
+    // Limpa o form
+    setNome(""); setEmail(""); setPhone("");
+    setCpf(""); setCep(""); setLogradouro(""); setBairro(""); setCidade(""); setUf("");
+    setNumero(""); setPixType("email"); setPixKey(""); setRole("admin"); setPhotoFile(null); setPhotoUrl("");
+  }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-4">
-      <h1 className="text-2xl font-extrabold">Novo Usuário</h1>
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
+      <h2>Novo Usuário (Vendedor)</h2>
+      <form onSubmit={onSubmit}>
+        <div className="grid" style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr 1fr" }}>
+          <input
+            placeholder="Nome completo"
+            value={nome}
+            onChange={(e) => setNome(e.target.value)}
+          />
+          <input
+            placeholder="E-mail"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <input
+            placeholder="Telefone (xx) 9xxxx-xxxx"
+            value={phone}
+            onChange={(e) => setPhone(maskPhone(e.target.value))}
+          />
 
-      <form onSubmit={handleSubmit(onSubmit)} className="grid gap-3 md:grid-cols-3">
-        {/* Dados principais */}
-        <input className="input" placeholder="Nome" {...register("nome", { required: true })} />
-        <input className="input" placeholder="E-mail" type="email" {...register("email", { required: true })} />
-        <input className="input" placeholder="Telefone" {...register("telefone")} />
-        <input className="input" placeholder="CPF" {...register("cpf")} />
+          <input
+            placeholder="CPF (xxx.xxx.xxx-xx)"
+            value={cpf}
+            onChange={(e) => setCpf(maskCPF(e.target.value))}
+          />
+          <input
+            placeholder="CEP (xxxxx-xxx)"
+            value={cep}
+            onChange={(e) => setCep(maskCEP(e.target.value))}
+          />
+          <input
+            placeholder="Logradouro"
+            value={logradouro}
+            onChange={(e) => setLogradouro(e.target.value)}
+          />
 
-        {/* Endereço */}
-        <input className="input" placeholder="CEP" {...register("cep")} />
-        <input className="input" placeholder="Logradouro" {...register("logradouro")} />
-        <input className="input" placeholder="Número" {...register("numero")} />
-        <input className="input" placeholder="Bairro" {...register("bairro")} />
-        <input className="input" placeholder="Cidade" {...register("cidade")} />
-        <input className="input" placeholder="UF" {...register("uf")} />
+          <input
+            placeholder="Bairro"
+            value={bairro}
+            onChange={(e) => setBairro(e.target.value)}
+          />
+          <input
+            placeholder="Cidade"
+            value={cidade}
+            onChange={(e) => setCidade(e.target.value)}
+          />
+          <input
+            placeholder="UF"
+            value={uf}
+            onChange={(e) => setUf(e.target.value.toUpperCase().slice(0,2))}
+          />
 
-        {/* Perfil e PIX */}
-        <select className="input" {...register("role", { required: true })}>
-          <option value="admin">Admin</option>
-          <option value="vendedor">Vendedor</option>
-          <option value="viewer">Viewer</option>
-        </select>
+          <input
+            placeholder="Número (aceita S/N)"
+            value={numero}
+            onChange={(e) => setNumero(e.target.value)}
+          />
 
-        <select className="input" {...register("pixType", { required: true })}>
-          <option value="cpf">PIX por CPF</option>
-          <option value="email">PIX por E-mail</option>
-          <option value="celular">PIX por Celular</option>
-          <option value="aleatoria">Chave aleatória</option>
-        </select>
+          <select value={role} onChange={(e) => setRole(e.target.value as any)}>
+            <option value="admin">Admin</option>
+            <option value="vendedor">Vendedor</option>
+            <option value="viewer">Viewer</option>
+          </select>
 
-        <input
-          className="input md:col-span-1"
-          placeholder="Pix (se aleatória, preencha aqui)"
-          {...register("pixKey")}
-        />
+          <div style={{ display: "flex", gap: 8 }}>
+            <select
+              value={pixType}
+              onChange={(e) => setPixType(e.target.value as PixKind)}
+            >
+              <option value="email">PIX por E-mail</option>
+              <option value="telefone">PIX por Telefone</option>
+              <option value="cpf">PIX por CPF</option>
+            </select>
+            <input
+              placeholder="Chave PIX (preenchida automaticamente)"
+              value={pixKey}
+              onChange={(e) => setPixKey(e.target.value)}
+            />
+          </div>
 
-        <button className="btn md:col-span-3" disabled={isSubmitting} type="submit">
-          {isSubmitting ? "Cadastrando…" : "Cadastrar"}
-        </button>
+          <div style={{ gridColumn: "span 3" }}>
+            <label>Foto do usuário (jpg, png, webp)</label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setPhotoFile(e.target.files?.[0] || null)}
+            />
+            {uploading && <small>Enviando foto…</small>}
+            {photoUrl && (
+              <div style={{ marginTop: 8 }}>
+                <img src={photoUrl} alt="foto" style={{ height: 80, borderRadius: 8 }} />
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <button type="submit">Cadastrar</button>
+        </div>
       </form>
-
-      {/* estilos simples para garantir visual mínimo mesmo sem Tailwind */}
-      <style>{`
-        .input{
-          border:1px solid #e5e7eb; border-radius:12px; padding:10px;
-          outline:none; background:#fff; width:100%;
-        }
-        .input:focus{ border-color:#A11C27; box-shadow:0 0 0 2px rgba(161,28,39,0.15); }
-        .btn{
-          background:#A11C27; color:white; border-radius:14px;
-          padding:12px 16px; font-weight:700; width:100%;
-        }
-        .btn:disabled{ opacity:.6; cursor:not-allowed; }
-      `}</style>
     </div>
   );
 }

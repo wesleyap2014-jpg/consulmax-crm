@@ -20,8 +20,33 @@ type Body = {
   scopes?: string[];
 };
 
-// OBS: não importamos tipos do '@vercel/node' para evitar problemas de build.
-// A Vercel compila TS automaticamente e injeta req/res.
+async function findUserIdByEmail(
+  supabaseUrl: string,
+  serviceKey: string,
+  email: string
+): Promise<string | null> {
+  try {
+    const url = `${supabaseUrl.replace(/\/$/, '')}/auth/v1/admin/users?email=${encodeURIComponent(
+      email
+    )}`;
+    const resp = await fetch(url, {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    // API pode retornar { users: [...] } ou um array simples dependendo da versão
+    const users =
+      Array.isArray(json) ? json : Array.isArray(json?.users) ? json.users : [];
+    const u = users[0];
+    return u?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export default async function handler(req: any, res: any) {
   try {
@@ -29,63 +54,82 @@ export default async function handler(req: any, res: any) {
       return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    // 1) Ler envs de forma tolerante (alguns projetos usam NEXT_PUBLIC_ ou SUPABASE_URL)
     const SUPABASE_URL =
       process.env.VITE_SUPABASE_URL ||
       process.env.NEXT_PUBLIC_SUPABASE_URL ||
       process.env.SUPABASE_URL ||
       '';
-
     const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
     const ENCRYPT_KEY = process.env.SUPABASE_PG_ENCRYPTION_KEY || '';
 
     if (!SUPABASE_URL || !SERVICE_KEY) {
-      return res.status(500).json({
-        error:
-          'Missing Supabase envs. Set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel.',
-      });
+      return res
+        .status(500)
+        .json({ error: 'Missing Supabase envs (URL/Service Role).' });
     }
     if (!ENCRYPT_KEY) {
-      return res.status(500).json({
-        error: 'Missing SUPABASE_PG_ENCRYPTION_KEY in Vercel.',
-      });
+      return res
+        .status(500)
+        .json({ error: 'Missing SUPABASE_PG_ENCRYPTION_KEY.' });
     }
 
-    // 2) Parse seguro do body (às vezes req.body chega como string)
     let body: Body;
     try {
       body =
         typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-    } catch (e: any) {
+    } catch {
       return res.status(400).json({ error: 'Invalid JSON body' });
     }
 
-    const { nome, email, telefone, cpf, role, endereco, pixType, pixKey, scopes } = body;
+    const { nome, email, telefone, cpf, role, endereco, pixType, pixKey, scopes } =
+      body;
 
     if (!nome || !email || !role) {
-      return res.status(400).json({ error: 'Campos obrigatórios: nome, email, role' });
+      return res
+        .status(400)
+        .json({ error: 'Campos obrigatórios: nome, email, role' });
     }
 
-    // 3) Criar cliente admin só depois de validar envs
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { persistSession: false },
     });
 
-    // senha provisória
+    // senha provisória só quando criar de fato
     const tempPassword = Math.random().toString(36).slice(-10) + 'Aa1!';
 
-    // 4) Criar usuário no Auth
+    let userId: string | null = null;
+    let reusedExisting = false;
+
+    // tenta criar o usuário no Auth
     const { data: created, error: authErr } = await admin.auth.admin.createUser({
       email,
       password: tempPassword,
       email_confirm: true,
     });
-    if (authErr) return res.status(400).json({ error: authErr.message });
 
-    const userId = created?.user?.id;
-    if (!userId) return res.status(500).json({ error: 'Falha ao obter id do usuário' });
+    if (authErr) {
+      // se já existe, tenta localizar o id por e-mail e reaproveitar
+      if (/already been registered/i.test(authErr.message)) {
+        const existingId = await findUserIdByEmail(SUPABASE_URL, SERVICE_KEY, email);
+        if (!existingId) {
+          return res.status(400).json({
+            error:
+              'E-mail já existe no Auth e não foi possível localizar o ID. Remova em Auth > Users ou use outro e-mail.',
+          });
+        }
+        userId = existingId;
+        reusedExisting = true;
+      } else {
+        return res.status(400).json({ error: authErr.message });
+      }
+    } else {
+      userId = created?.user?.id ?? null;
+    }
 
-    // 5) Chamar RPC para gravar perfil (com CPF criptografado)
+    if (!userId) {
+      return res.status(500).json({ error: 'Falha ao obter id do usuário' });
+    }
+
     const login = (email.split('@')[0] || '').replace(/\W/g, '');
 
     const { error: rpcErr } = await admin.rpc('create_user_profile', {
@@ -110,9 +154,12 @@ export default async function handler(req: any, res: any) {
 
     if (rpcErr) return res.status(400).json({ error: rpcErr.message });
 
-    return res.status(200).json({ ok: true, tempPassword });
+    return res.status(200).json({
+      ok: true,
+      tempPassword: reusedExisting ? null : tempPassword,
+      reusedExisting,
+    });
   } catch (e: any) {
-    // Isso vai aparecer nos logs da Vercel (Functions)
     console.error('create user error:', e);
     return res.status(500).json({ error: e?.message || 'Server error' });
   }

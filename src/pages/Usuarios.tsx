@@ -1,5 +1,5 @@
 // ... imports
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '@/lib/supabaseClient';
 
 // dentro do submit/handler do cadastro:
 const email = form.email.trim();

@@ -11,10 +11,7 @@ export default function Usuarios() {
   });
   const [loading, setLoading] = useState(false);
 
-  /**
-   * Chama a API /api/users/create passando { nome, email, role } e
-   * mostra a senha provisória retornada (temp_password) quando existir.
-   */
+  // PASSO 2 — chama /api/users/create e exibe a senha provisória (password) quando houver
   async function cadastrarUsuarioViaAPI(f: { nome: string; email: string; role: Role }) {
     const payload = {
       nome: (f?.nome || "").trim(),
@@ -40,42 +37,41 @@ export default function Usuarios() {
         body: JSON.stringify(payload),
       });
 
-      // Lê como TEXTO para evitar o problema do “Unexpected token ... is not valid JSON”
+      // lê como TEXTO primeiro (evita erro de “Unexpected token … is not valid JSON”)
       const raw = await res.text();
 
-      // Tenta converter para JSON (se não for, seguimos com 'raw')
+      // tenta converter pra JSON; se não for JSON, seguimos com o texto cru
       let data: any = null;
       try {
         data = JSON.parse(raw);
       } catch {
-        /* não é JSON -> mantemos 'raw' para a mensagem de erro/sucesso */
+        /* mantém raw */
       }
 
       if (!res.ok) {
         const mensagem =
           (data && (data.error || data.message)) ||
-          raw || // mensagem crua do servidor
+          raw ||
           `HTTP ${res.status}`;
         alert(`Erro ao criar usuário: ${mensagem}`);
         return;
       }
 
-      // Procura a senha provisória retornada pela API
-      const tempPassword =
-        (data && (data.temp_password || data.password || data.tempPass || data.temp)) ||
+      // senha que a API devolve (conforme implementado em /api/users/create)
+      const senha =
+        (data && (data.password || data.temp_password || data.tempPass || data.temp)) ||
         null;
 
-      if (tempPassword) {
+      if (senha) {
         alert(
           `Usuário criado com sucesso!\n\n` +
-          `Senha provisória: ${tempPassword}\n\n` +
-          `> Peça para o usuário alterar no primeiro acesso.`
+          `Senha provisória: ${senha}\n\n` +
+          `Peça para o usuário acessar e alterar a senha no primeiro login.`
         );
       } else {
         alert("Usuário criado com sucesso!");
       }
 
-      // Limpa o formulário
       setForm({ nome: "", email: "", role: "viewer" });
     } catch (e: any) {
       alert(`Falha de rede: ${e?.message || e}`);
@@ -126,7 +122,6 @@ export default function Usuarios() {
           <option value="admin">Admin</option>
         </select>
 
-        {/* PASSO 2 — botão chamando a função NOVA com o objeto 'form' */}
         <button
           onClick={() => cadastrarUsuarioViaAPI(form)}
           disabled={loading}
@@ -146,8 +141,8 @@ export default function Usuarios() {
       </div>
 
       <p style={{ color: "#64748b", fontSize: 14 }}>
-        Este formulário envia <b>nome</b>, <b>email</b> e <b>role</b> para <code>/api/users/create</code>. 
-        Quando a API retornar <code>temp_password</code>, a senha provisória aparecerá no alerta.
+        Este formulário envia <b>nome</b>, <b>email</b> e <b>role</b> para <code>/api/users/create</code>.
+        Quando a API retornar <code>password</code>, a senha provisória aparecerá no alerta.
       </p>
     </div>
   );

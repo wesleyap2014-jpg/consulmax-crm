@@ -1,27 +1,18 @@
-// /api/users/create.ts
+// api/users/create.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-// Variáveis (tanto faz se SUPABASE_URL ou VITE_SUPABASE_URL — usamos a que existir)
 const SUPABASE_URL =
-  process.env.SUPABASE_URL ||
-  process.env.VITE_SUPABASE_URL ||
-  process.env.NEXT_PUBLIC_SUPABASE_URL;
+  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-  throw new Error('Supabase env vars ausentes. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.');
-}
-
-const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
+const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
+  auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
 });
 
-// Gera senha provisória
-const alphabet =
-  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$';
 function tempPassword(len = 12) {
+  const alphabet =
+    'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
   return Array.from({ length: len })
     .map(() => alphabet[Math.floor(Math.random() * alphabet.length)])
     .join('');
@@ -29,44 +20,47 @@ function tempPassword(len = 12) {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'method_not_allowed' });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const { nome, email, role } = (req.body ?? {}) as {
-      nome?: string;
-      email?: string;
-      role?: 'admin' | 'vendedor' | 'viewer';
-    };
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const nome = (body?.nome || '').trim();
+    const email = (body?.email || '').trim().toLowerCase();
+    const role = (body?.role || 'viewer').trim();
 
-    if (!nome || !email || !role) {
-      return res.status(400).json({ error: 'missing_fields' });
+    if (!nome || !email) {
+      return res.status(400).json({ error: 'nome e email são obrigatórios' });
     }
 
-    const password = tempPassword(12);
+    const password = tempPassword();
 
-    // Cria o usuário no Auth (com e-mail já confirmado)
+    // cria usuário no Auth
     const { data, error } = await admin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true,
+      email_confirm: false,
       user_metadata: { nome, role },
+      app_metadata: { role },
     });
 
     if (error) {
       return res.status(400).json({ error: error.message });
     }
 
-    // Se você tiver uma função RPC/insert do perfil, chame aqui.
-    // Exemplo (opcional):
-    // await admin.rpc('create_user_profile', { auth_user_id: data.user!.id, nome, email, role });
-
-    return res.status(200).json({
-      ok: true,
-      userId: data.user?.id,
-      tempPassword: password, // <— devolvemos a senha provisória aqui
+    // (opcional) upsert no seu perfil público
+    await admin.from('users').upsert({
+      auth_user_id: data.user?.id,
+      nome,
+      email,
+      role,
     });
-  } catch (e: any) {
-    return res.status(500).json({ error: e?.message || 'server_error' });
+
+    // devolve a senha para o frontend exibir
+    return res.status(200).json({ ok: true, password });
+  } catch (err: any) {
+    return res
+      .status(500)
+      .json({ error: err?.message || String(err) || 'Server error' });
   }
 }

@@ -2,22 +2,17 @@
 import React from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
-// Componente default que o router espera
-export default function Usuarios() {
-  // submit do formulário
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = new FormData(e.currentTarget);
-    const get = (k: string) => (form.get(k)?.toString() ?? '').trim();
-
-    // 1) validar e-mail
-    const email = get('email');
+// --- FUNÇÃO ÚNICA PARA CRIAR USUÁRIO (cole esse bloco após os imports) ---
+export async function cadastrarUsuario(form: any) {
+  try {
+    // 1) Validar / normalizar campos do formulário
+    const email = (form?.email ?? '').toString().trim();
     if (!email) {
       alert('Preencha o e-mail do vendedor.');
       return;
     }
 
-    // 2) buscar o auth_user_id pelo e-mail (RPC existente no banco)
+    // 2) Buscar o auth_user_id pelo e-mail (RPC existente no banco)
     const { data: uid, error: uidErr } = await supabase
       .rpc('get_auth_user_id_by_email', { p_email: email });
 
@@ -30,28 +25,55 @@ export default function Usuarios() {
       return;
     }
 
-    // 3) criar o perfil do usuário com o uid retornado (RPC existente)
+    // 3) Normalização de PIX (tipo e chave)
+    const rawPixType = (form?.pix_type ?? '')
+      .toString()
+      .trim()
+      .toLowerCase();
+
+    let pix_type: 'cpf' | 'email' | 'telefone' | null = null;
+    if (['cpf', 'email', 'telefone'].includes(rawPixType)) {
+      pix_type = rawPixType as any;
+    } else if (rawPixType.includes('cpf')) {
+      pix_type = 'cpf';
+    } else if (rawPixType.includes('mail') || rawPixType.includes('e-mail')) {
+      pix_type = 'email';
+    } else if (
+      rawPixType.includes('tel') ||
+      rawPixType.includes('phone') ||
+      rawPixType.includes('cel')
+    ) {
+      pix_type = 'telefone';
+    }
+
+    // Normaliza documentos / números
+    const cpfNum  = (form?.cpf ?? '').toString().replace(/\D/g, '');
+    const foneNum = (form?.telefone ?? '').toString().replace(/\D/g, '');
+    const cepNum  = (form?.cep ?? '').toString().replace(/\D/g, '');
+
+    // Se a chave não for informada, preenche automaticamente conforme o tipo
+    let pix_key = (form?.pix_key ?? '').toString().trim();
+    if (!pix_key) {
+      if (pix_type === 'email')     pix_key = email;
+      if (pix_type === 'cpf')       pix_key = cpfNum;
+      if (pix_type === 'telefone')  pix_key = foneNum;
+    }
+
+    // 4) Chama a RPC para criar o perfil
     const { error: createErr } = await supabase.rpc('create_user_profile', {
       auth_user_id: uid,
-      // Dados pessoais
-      nome: get('nome'),
+      nome:        (form?.nome ?? '').toString().trim(),
       email,
-      phone: get('telefone'),
-
-      // Endereço
-      cep: get('cep'),
-      logradouro: get('logradouro'),
-      numero: get('numero'),
-      bairro: get('bairro'),
-      cidade: get('cidade'),
-      uf: get('uf'),
-
-      // PIX
-      pix_type: get('pix_type'), // 'cpf' | 'email' | 'telefone'
-      pix_key: get('pix_key'),
-
-      // Papel (ajuste conforme seu ENUM no banco)
-      role: get('role') || 'viewer',
+      phone:       foneNum,
+      cep:         cepNum,
+      logradouro:  (form?.logradouro ?? '').toString().trim(),
+      numero:      (form?.numero ?? '').toString().trim(),
+      bairro:      (form?.bairro ?? '').toString().trim(),
+      cidade:      (form?.cidade ?? '').toString().trim(),
+      uf:          (form?.uf ?? '').toString().trim().slice(0, 2).toUpperCase(),
+      pix_type,          // => 'cpf' | 'email' | 'telefone'
+      pix_key,           // => chave coerente com o tipo
+      role: (form?.role ?? 'viewer').toString().trim().toLowerCase() // 'admin' | 'vendedor' | 'viewer'
     });
 
     if (createErr) {
@@ -60,38 +82,8 @@ export default function Usuarios() {
     }
 
     alert('Usuário criado com sucesso!');
-    e.currentTarget.reset();
+  } catch (e) {
+    console.error(e);
+    alert('Falha inesperada ao criar usuário.');
   }
-
-  // Form simples só para funcionar (sem libs adicionais)
-  return (
-    <form onSubmit={onSubmit} style={{ display: 'grid', gap: 8, maxWidth: 640 }}>
-      <input name="nome" placeholder="Nome completo" />
-      <input name="email" type="email" placeholder="E-mail" />
-      <input name="telefone" placeholder="Telefone (xx) 9xxxx-xxxx" />
-
-      <input name="cep" placeholder="CEP xxxxx-xxx" />
-      <input name="logradouro" placeholder="Logradouro" />
-      <input name="numero" placeholder="Número (aceita S/N)" />
-      <input name="bairro" placeholder="Bairro" />
-      <input name="cidade" placeholder="Cidade" />
-      <input name="uf" placeholder="UF" />
-
-      <select name="pix_type" defaultValue="">
-        <option value="">Tipo de chave PIX</option>
-        <option value="cpf">CPF</option>
-        <option value="email">E-mail</option>
-        <option value="telefone">Telefone</option>
-      </select>
-      <input name="pix_key" placeholder="Chave PIX" />
-
-      <select name="role" defaultValue="viewer">
-        <option value="viewer">Viewer</option>
-        <option value="vendedor">Vendedor</option>
-        <option value="admin">Admin</option>
-      </select>
-
-      <button type="submit">Cadastrar</button>
-    </form>
-  );
 }

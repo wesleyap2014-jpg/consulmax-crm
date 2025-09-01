@@ -1,184 +1,135 @@
+// src/pages/Usuarios.tsx
 import React, { useState } from "react";
 
-/**
- * Tela simples de cadastro de usuário chamando a API admin-only:
- *   POST /api/users/create
- * A API cria o usuário no Auth com senha provisória e grava o perfil em public.users.
- */
-
 type Role = "admin" | "vendedor" | "viewer";
-type PixType = "cpf" | "email" | "telefone" | ""; // "" = nenhum
-
-type FormState = {
-  nome: string;
-  email: string;
-
-  telefone?: string;
-  cep?: string;
-  logradouro?: string;
-  numero?: string;
-  bairro?: string;
-  cidade?: string;
-  uf?: string;
-
-  pix_type: PixType;
-  pix_key?: string;
-
-  role: Role;
-};
-
-const defaultForm: FormState = {
-  nome: "",
-  email: "",
-  telefone: "",
-  cep: "",
-  logradouro: "",
-  numero: "",
-  bairro: "",
-  cidade: "",
-  uf: "",
-  pix_type: "",     // nenhum
-  pix_key: "",
-  role: "viewer",
-};
 
 export default function Usuarios() {
-  const [form, setForm] = useState<FormState>({ ...defaultForm });
+  const [form, setForm] = useState<{ nome: string; email: string; role: Role }>({
+    nome: "",
+    email: "",
+    role: "viewer",
+  });
   const [loading, setLoading] = useState(false);
 
-  function set<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((s) => ({ ...s, [key]: value as any }));
-  }
+  async function cadastrarUsuarioViaAPI() {
+    const payload = {
+      nome: (form?.nome || "").trim(),
+      email: (form?.email || "").trim(),
+      role: form?.role || "viewer",
+    };
 
-  async function cadastrarUsuarioViaAPI(payload: FormState) {
-    setLoading(true);
+    if (!payload.nome) {
+      alert("Informe o nome.");
+      return;
+    }
+    if (!payload.email) {
+      alert("Informe o e-mail.");
+      return;
+    }
+
     try {
-      // Normalizações leves
-      const pix_type = (payload.pix_type || "").toString().trim().toLowerCase() as PixType;
-      const body = {
-        ...payload,
-        pix_type,                    // "" | cpf | email | telefone
-        pix_key: (payload.pix_key || "").trim() || null,
-        telefone: (payload.telefone || "").trim() || null,
-        cep: (payload.cep || "").trim() || null,
-        logradouro: (payload.logradouro || "").trim() || null,
-        numero: (payload.numero || "").trim() || null,
-        bairro: (payload.bairro || "").trim() || null,
-        cidade: (payload.cidade || "").trim() || null,
-        uf: (payload.uf || "").trim().toUpperCase() || null,
-      };
+      setLoading(true);
 
       const res = await fetch("/api/users/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       });
 
-      const out = await res.json();
-      if (!res.ok) {
-        throw new Error(out?.error || "Falha ao criar usuário.");
+      // Lê como TEXTO para evitar "Unexpected token ... is not valid JSON"
+      const raw = await res.text();
+
+      // Tenta converter para JSON apenas se for JSON de verdade
+      let data: any = null;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        /* ignora — não é JSON, manteremos o texto cru */
       }
 
-      alert("Usuário criado com sucesso! O acesso foi enviado por e-mail com senha provisória.");
-      setForm({ ...defaultForm });
-    } catch (err: any) {
-      alert(err?.message || "Erro ao criar usuário.");
+      if (!res.ok) {
+        const mensagem =
+          (data && (data.error || data.message)) ||
+          raw || // mensagem crua vinda do servidor (HTML/stacktrace, etc.)
+          `HTTP ${res.status}`;
+        alert(`Erro ao criar usuário: ${mensagem}`);
+        return;
+      }
+
+      alert("Usuário criado com sucesso!");
+      setForm({ nome: "", email: "", role: "viewer" });
+    } catch (e: any) {
+      alert(`Falha de rede: ${e?.message || e}`);
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div style={{ maxWidth: 980, margin: "24px auto", padding: 16 }}>
-      <h2 style={{ marginBottom: 16 }}>Novo Usuário (Admin)</h2>
+    <div style={{ maxWidth: 720, margin: "40px auto", fontFamily: "Inter, system-ui, Arial" }}>
+      <h1 style={{ marginBottom: 16 }}>Usuários</h1>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "1fr 1fr 200px",
+          alignItems: "center",
+          background: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          marginBottom: 16,
+        }}
+      >
         <input
-          placeholder="Nome completo"
+          placeholder="Nome"
           value={form.nome}
-          onChange={(e) => set("nome", e.target.value)}
+          onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
+          style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
         />
         <input
           placeholder="E-mail"
+          type="email"
           value={form.email}
-          onChange={(e) => set("email", e.target.value)}
+          onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+          style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
         />
-        <input
-          placeholder="Telefone (xx) 9xxxx-xxxx"
-          value={form.telefone}
-          onChange={(e) => set("telefone", e.target.value)}
-        />
-
-        <input
-          placeholder="CEP (xxxxx-xxx)"
-          value={form.cep}
-          onChange={(e) => set("cep", e.target.value)}
-        />
-        <input
-          placeholder="Logradouro"
-          value={form.logradouro}
-          onChange={(e) => set("logradouro", e.target.value)}
-        />
-        <input
-          placeholder="Número"
-          value={form.numero}
-          onChange={(e) => set("numero", e.target.value)}
-        />
-
-        <input
-          placeholder="Bairro"
-          value={form.bairro}
-          onChange={(e) => set("bairro", e.target.value)}
-        />
-        <input
-          placeholder="Cidade"
-          value={form.cidade}
-          onChange={(e) => set("cidade", e.target.value)}
-        />
-        <input
-          placeholder="UF"
-          value={form.uf}
-          onChange={(e) => set("uf", e.target.value)}
-          maxLength={2}
-        />
-
         <select
-          value={form.pix_type}
-          onChange={(e) => {
-            const val = e.target.value as PixType; // "" | cpf | email | telefone
-            set("pix_type", val);
-            // se não for nenhum, limpamos/ajustamos a chave depois
-            if (val === "") set("pix_key", "");
-          }}
+          value={form.role}
+          onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as Role }))}
+          style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
         >
-          <option value="">PIX: nenhum</option>
-          <option value="cpf">PIX por CPF</option>
-          <option value="email">PIX por E-mail</option>
-          <option value="telefone">PIX por Telefone</option>
-        </select>
-        <input
-          placeholder="Chave PIX (preenchida conforme o tipo)"
-          value={form.pix_key || ""}
-          onChange={(e) => set("pix_key", e.target.value)}
-          disabled={form.pix_type === ""}
-        />
-
-        <select value={form.role} onChange={(e) => set("role", e.target.value as Role)}>
           <option value="viewer">Viewer</option>
           <option value="vendedor">Vendedor</option>
           <option value="admin">Admin</option>
         </select>
-      </div>
 
-      <div style={{ marginTop: 16 }}>
         <button
-          onClick={() => cadastrarUsuarioViaAPI(form)}
+          onClick={cadastrarUsuarioViaAPI}
           disabled={loading}
-          style={{ padding: "10px 16px", fontWeight: 700 }}
+          style={{
+            gridColumn: "1 / span 3",
+            padding: "12px 16px",
+            borderRadius: 12,
+            background: "#A11C27",
+            color: "#fff",
+            border: 0,
+            cursor: loading ? "not-allowed" : "pointer",
+            fontWeight: 700,
+          }}
         >
           {loading ? "Cadastrando..." : "Cadastrar"}
         </button>
       </div>
+
+      <p style={{ color: "#64748b", fontSize: 14 }}>
+        Dica: se aparecer erro, a mensagem agora virá “limpa” do servidor (JSON ou texto), sem o problema de
+        “Unexpected token … is not valid JSON”.
+      </p>
+      <p style={{ color: "#64748b", fontSize: 14 }}>
+        Este formulário envia apenas <b>nome</b>, <b>email</b> e <b>role</b> para <code>/api/users/create</code>.
+      </p>
     </div>
   );
 }

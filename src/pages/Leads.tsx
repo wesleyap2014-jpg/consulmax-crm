@@ -1,91 +1,296 @@
-import * as React from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useForm } from 'react-hook-form'
+// src/pages/Leads.tsx
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
-type Lead = { id:string; nome:string; telefone?:string; email?:string; origem?:string; descricao?:string; created_at:string }
+type Lead = {
+  id: string;
+  nome: string;
+  telefone?: string;
+  email?: string;
+  origem?: string;
+  descricao?: string;
+  owner_id?: string;
+  created_at: string;
+};
 
-export default function Leads(){
-  const qc = useQueryClient()
-  const [q,setQ] = React.useState('')
-  const [page,setPage] = React.useState(0)
+type UserProfile = {
+  auth_user_id: string;
+  nome: string;
+  role: "admin" | "vendedor" | "viewer" | "operacoes";
+};
 
-  const leads = useQuery({
-    queryKey: ['leads', q, page],
-    queryFn: async ()=>{
-      let query = supabase.from('leads').select('*').order('created_at',{ascending:false}).range(page*10, page*10+9)
-      if (q) query = query.ilike('nome', `%${q}%`)
-      const { data, error } = await query
-      if (error) throw error
-      return data as Lead[]
+export default function LeadsPage() {
+  const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>([]); // para admin reatribuir
+  const [form, setForm] = useState<Partial<Lead>>({ origem: "Site" });
+
+  const isAdmin = me?.role === "admin";
+
+  // 1) pega usuário logado + role do JWT (app_metadata.role)
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      const user = data?.user;
+      const role = (user?.app_metadata as any)?.role || "viewer";
+      if (user) setMe({ id: user.id, role });
+    })();
+  }, []);
+
+  // 2) carrega leads (RLS faz o filtro automaticamente)
+  async function loadLeads() {
+    const { data, error } = await supabase
+      .from("leads")
+      .select("id,nome,telefone,email,origem,descricao,owner_id,created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      alert("Erro ao carregar leads: " + error.message);
+      return;
     }
-  })
-
-  const { register, handleSubmit, reset } = useForm<Pick<Lead,'nome'|'telefone'|'email'|'origem'|'descricao'>>()
-
-  async function createLead(values: any){
-    const me = (await supabase.auth.getUser()).data.user
-    const ins = await supabase.from('leads').insert({ ...values, owner_id: me!.id })
-    if (ins.error) { alert(ins.error.message); return }
-    reset(); qc.invalidateQueries({queryKey:['leads']})
+    setLeads(data || []);
   }
 
-  async function remove(id:string){
-    if (!confirm('Excluir lead?')) return
-    const { error } = await supabase.from('leads').delete().eq('id',id)
-    if (error) { alert(error.message); return }
-    qc.invalidateQueries({queryKey:['leads']})
+  // 3) admins: carrega lista de usuários para reatribuição
+  async function loadUsers() {
+    const { data, error } = await supabase
+      .from("users")
+      .select("auth_user_id,nome,role")
+      .order("nome", { ascending: true });
+    if (!error && data) setUsers(data as any);
   }
 
+  useEffect(() => {
+    loadLeads();
+  }, []);
+
+  useEffect(() => {
+    if (isAdmin) loadUsers();
+  }, [isAdmin]);
+
+  // criar lead (owner_id vem do trigger se omitir)
+  async function createLead() {
+    const payload = {
+      nome: (form.nome || "").trim(),
+      telefone: (form.telefone || "").trim() || null,
+      email: (form.email || "").trim() || null,
+      origem: form.origem || null,
+      descricao: (form.descricao || "").trim() || null,
+      // owner_id omitido => trigger setará auth.uid()
+    };
+
+    if (!payload.nome) {
+      alert("Informe o nome do lead.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const { error } = await supabase.from("leads").insert([payload]);
+      if (error) {
+        alert("Erro ao criar lead: " + error.message);
+        return;
+      }
+      setForm({ origem: "Site" });
+      await loadLeads();
+      alert("Lead criado com sucesso!");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // admin: reatribui owner_id de um lead
+  async function reatribuir(leadId: string, newOwnerId: string) {
+    if (!newOwnerId) {
+      alert("Selecione o novo responsável.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.rpc("reassign_lead", {
+        p_lead_id: leadId,
+        p_new_owner: newOwnerId,
+      });
+      if (error) {
+        alert("Erro ao reatribuir: " + error.message);
+        return;
+      }
+      await loadLeads();
+      alert("Lead reatribuído!");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // UI simples (sem Tailwind)
   return (
-    <div className="grid gap-4">
-      <Card><CardContent className="grid md:grid-cols-5 gap-2">
-        <Input placeholder="Buscar por nome..." value={q} onChange={e=>setQ(e.target.value)}/>
-        <div className="md:col-span-4 text-sm text-consulmax-secondary/70 self-center">Resultados: {leads.data?.length ?? 0}</div>
-      </CardContent></Card>
+    <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+      <h1 style={{ margin: "16px 0" }}>Leads</h1>
 
-      <Card>
-        <CardHeader><CardTitle>Novo Lead</CardTitle></CardHeader>
-        <CardContent>
-          <form className="grid md:grid-cols-3 gap-3" onSubmit={handleSubmit(createLead)}>
-            <Input placeholder="Nome" {...register('nome',{required:true})}/>
-            <Input placeholder="Telefone (cel.)" {...register('telefone')}/>
-            <Input placeholder="E-mail" type="email" {...register('email')}/>
-            <Input placeholder="Origem (Site, Redes Sociais, Indicação...)" {...register('origem')}/>
-            <Input className="md:col-span-2" placeholder="Descrição" {...register('descricao')}/>
-            <Button type="submit">Criar</Button>
-          </form>
-        </CardContent>
-      </Card>
+      {/* Formulário de novo lead */}
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          padding: 16,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          marginBottom: 16,
+        }}
+      >
+        <h3 style={{ margin: "0 0 12px 0" }}>Novo Lead</h3>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+          }}
+        >
+          <input
+            placeholder="Nome"
+            value={form.nome || ""}
+            onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
+            style={input}
+          />
 
-      <Card>
-        <CardHeader><CardTitle>Leads</CardTitle></CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="min-w-[800px] w-full">
-            <thead><tr className="text-left text-sm">
-              <th className="p-2">Nome</th><th className="p-2">Telefone</th><th className="p-2">E-mail</th><th className="p-2">Origem</th><th className="p-2">Ações</th>
-            </tr></thead>
+          <input
+            placeholder="Telefone"
+            value={form.telefone || ""}
+            onChange={(e) => setForm((s) => ({ ...s, telefone: e.target.value }))}
+            style={input}
+          />
+
+          <input
+            placeholder="E-mail"
+            value={form.email || ""}
+            onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+            style={input}
+          />
+
+          <select
+            value={form.origem || "Site"}
+            onChange={(e) => setForm((s) => ({ ...s, origem: e.target.value }))}
+            style={input}
+          >
+            <option value="Site">Site</option>
+            <option value="Redes Sociais">Redes Sociais</option>
+            <option value="Indicação">Indicação</option>
+          </select>
+
+          <input
+            placeholder="Descrição"
+            value={form.descricao || ""}
+            onChange={(e) => setForm((s) => ({ ...s, descricao: e.target.value }))}
+            style={{ ...input, gridColumn: "span 2" }}
+          />
+
+          <button onClick={createLead} disabled={loading} style={btn}>
+            {loading ? "Salvando..." : "Criar Lead"}
+          </button>
+        </div>
+      </div>
+
+      {/* Lista de leads */}
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          padding: 16,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+        }}
+      >
+        <h3 style={{ margin: "0 0 12px 0" }}>
+          {isAdmin ? "Todos os Leads" : "Meus Leads"}
+        </h3>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+            <thead>
+              <tr>
+                <th style={th}>Nome</th>
+                <th style={th}>Telefone</th>
+                <th style={th}>E-mail</th>
+                <th style={th}>Origem</th>
+                {isAdmin && <th style={th}>Responsável</th>}
+                {isAdmin && <th style={th}>Reatribuir</th>}
+              </tr>
+            </thead>
             <tbody>
-              {(leads.data||[]).map(l=>(
-                <tr key={l.id} className="border-t">
-                  <td className="p-2">{l.nome}</td>
-                  <td className="p-2">{l.telefone}</td>
-                  <td className="p-2">{l.email}</td>
-                  <td className="p-2">{l.origem}</td>
-                  <td className="p-2"><Button className="mr-2" onClick={()=>remove(l.id)}>Excluir</Button></td>
+              {leads.map((l) => (
+                <tr key={l.id}>
+                  <td style={td}>{l.nome}</td>
+                  <td style={td}>{l.telefone || "-"}</td>
+                  <td style={td}>{l.email || "-"}</td>
+                  <td style={td}>{l.origem || "-"}</td>
+
+                  {isAdmin && (
+                    <>
+                      <td style={td}>
+                        {users.find((u) => u.auth_user_id === l.owner_id)?.nome || "—"}
+                      </td>
+                      <td style={td}>
+                        <select
+                          defaultValue=""
+                          style={input}
+                          onChange={(e) => {
+                            const newOwner = e.target.value;
+                            if (newOwner) reatribuir(l.id, newOwner);
+                          }}
+                        >
+                          <option value="">Selecionar usuário…</option>
+                          {users.map((u) => (
+                            <option key={u.auth_user_id} value={u.auth_user_id}>
+                              {u.nome} ({u.role})
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
+              {leads.length === 0 && (
+                <tr>
+                  <td style={td} colSpan={isAdmin ? 6 : 4}>
+                    Nenhum lead encontrado.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
-          <div className="flex gap-2 mt-3">
-            <Button disabled={page===0} onClick={()=>setPage(p=>Math.max(0,p-1))}>Anterior</Button>
-            <Button onClick={()=>setPage(p=>p+1)}>Próxima</Button>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
-  )
+  );
 }
+
+// estilos simples
+const input: React.CSSProperties = {
+  padding: 10,
+  borderRadius: 10,
+  border: "1px solid #e5e7eb",
+  outline: "none",
+};
+
+const btn: React.CSSProperties = {
+  padding: "10px 16px",
+  borderRadius: 12,
+  background: "#A11C27",
+  color: "#fff",
+  border: 0,
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const th: React.CSSProperties = {
+  textAlign: "left",
+  fontSize: 12,
+  color: "#475569",
+  padding: "8px 8px",
+};
+
+const td: React.CSSProperties = {
+  padding: "8px 8px",
+  borderTop: "1px solid #eee",
+};

@@ -64,3 +64,4 @@ export async function cadastrarUsuario(form: any) {
 <Button onClick={handleSubmit(cadastrarUsuario)}>
   Cadastrar
 </Button>
+export default Usuarios;

@@ -1,48 +1,56 @@
 // src/components/auth/RequireAuth.tsx
-import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "@/lib/supabase"; // troque se seu compat for "@/lib/supabaseClient"
+import { useEffect, useState } from "react";
+import { Outlet, Navigate, useLocation } from "react-router-dom";
+import { supabase } from "@/lib/supabaseClient";
 
-type Props = { children: React.ReactNode };
-
-export default function RequireAuth({ children }: Props) {
-  const navigate = useNavigate();
+export default function RequireAuth() {
   const [ready, setReady] = useState(false);
+  const [session, setSession] = useState<Awaited<
+    ReturnType<typeof supabase.auth.getSession>
+  >["data"]["session"] | null>(null);
+
+  const location = useLocation();
 
   useEffect(() => {
-    // Checagem inicial
+    let unsub: (() => void) | undefined;
+
+    // 1) pega sessão atual
     supabase.auth.getSession().then(({ data }) => {
-      const user = data.session?.user;
-      if (!user) {
-        navigate("/login", { replace: true });
-        return;
-      }
-      const must = user.user_metadata?.must_change_password === true;
-      if (must && location.pathname !== "/alterar-senha") {
-        navigate("/alterar-senha", { replace: true });
-        return;
-      }
+      setSession(data.session ?? null);
       setReady(true);
     });
 
-    // Ouve mudanças de auth
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      const user = session?.user;
-      if (!user) {
-        navigate("/login", { replace: true });
-        return;
-      }
-      const must = user.user_metadata?.must_change_password === true;
-      if (must && location.pathname !== "/alterar-senha") {
-        navigate("/alterar-senha", { replace: true });
-        return;
-      }
+    // 2) reage a mudanças de auth (login/logout)
+    const { data } = supabase.auth.onAuthStateChange((_evt, s) => {
+      setSession(s ?? null);
       setReady(true);
     });
 
-    return () => sub.subscription.unsubscribe();
-  }, [navigate]);
+    unsub = () => data.subscription.unsubscribe();
+    return () => unsub?.();
+  }, []);
 
-  if (!ready) return null; // ou um skeleton/spinner
-  return <>{children}</>;
+  // Enquanto verifica => evita tela branca
+  if (!ready) {
+    return (
+      <div style={{ padding: 24, fontFamily: "Inter, system-ui, Arial" }}>
+        Carregando…
+      </div>
+    );
+  }
+
+  // Não logado => volta pro login
+  if (!session) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  // Logado, mas precisa trocar a senha => manda pra /alterar-senha
+  const needsPwd =
+    session.user?.user_metadata?.must_change_password === true;
+  if (needsPwd && location.pathname !== "/alterar-senha") {
+    return <Navigate to="/alterar-senha" replace />;
+  }
+
+  // Autorizado => renderiza as rotas filhas
+  return <Outlet />;
 }

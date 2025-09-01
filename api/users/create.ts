@@ -1,18 +1,17 @@
-// api/users/create.ts
+// /api/users/create.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL =
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
-  auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
-});
+// cliente admin (service role) – só na API
+const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
+// gera senha provisória forte
 function tempPassword(len = 12) {
   const alphabet =
-    'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+    'ABCDEFGHJKLMMNPRQSTUVWXYZabcdefghiijkmnopqrrstuvwxyz23456789!@#$%';
   return Array.from({ length: len })
     .map(() => alphabet[Math.floor(Math.random() * alphabet.length)])
     .join('');
@@ -24,43 +23,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    const nome = (body?.nome || '').trim();
-    const email = (body?.email || '').trim().toLowerCase();
-    const role = (body?.role || 'viewer').trim();
+    const { nome, email, role } = (req.body ?? {}) as {
+      nome?: string;
+      email?: string;
+      role?: 'admin' | 'vendedor' | 'viewer';
+    };
 
     if (!nome || !email) {
       return res.status(400).json({ error: 'nome e email são obrigatórios' });
     }
 
-    const password = tempPassword();
+    const tempPass = tempPassword();
 
-    // cria usuário no Auth
+    // cria usuário e já marca e-mail como confirmado
     const { data, error } = await admin.auth.admin.createUser({
       email,
-      password,
-      email_confirm: false,
-      user_metadata: { nome, role },
-      app_metadata: { role },
+      password: tempPass,
+      email_confirm: true, // <- evita "Email not confirmed"
+      user_metadata: {
+        nome,
+        role: role ?? 'viewer',
+        require_password_change: true, // força tela de troca de senha
+      },
+      app_metadata: {
+        role: role ?? 'viewer',
+      },
     });
 
     if (error) {
-      return res.status(400).json({ error: error.message });
+      return res
+        .status(400)
+        .json({ error: error.message || 'Falha ao criar usuário' });
     }
 
-    // (opcional) upsert no seu perfil público
-    await admin.from('users').upsert({
-      auth_user_id: data.user?.id,
-      nome,
+    return res.status(200).json({
+      ok: true,
+      user_id: data.user?.id,
       email,
-      role,
+      role: role ?? 'viewer',
+      temp_password: tempPass, // o front exibe isso
     });
-
-    // devolve a senha para o frontend exibir
-    return res.status(200).json({ ok: true, password });
-  } catch (err: any) {
+  } catch (e: any) {
     return res
       .status(500)
-      .json({ error: err?.message || String(err) || 'Server error' });
+      .json({ error: e?.message || 'Erro interno ao criar usuário' });
   }
 }

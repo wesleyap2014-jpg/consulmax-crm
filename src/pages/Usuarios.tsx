@@ -65,3 +65,7 @@ export async function cadastrarUsuario(form: any) {
   Cadastrar
 </Button>
 export default Usuarios;
+// Export default exigido pelo router
+export default function Usuarios() {
+  return <></>;
+}

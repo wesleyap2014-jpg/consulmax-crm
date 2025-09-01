@@ -11,11 +11,15 @@ export default function Usuarios() {
   });
   const [loading, setLoading] = useState(false);
 
-  async function cadastrarUsuarioViaAPI() {
+  /**
+   * Chama a API /api/users/create passando { nome, email, role } e
+   * mostra a senha provisória retornada (temp_password) quando existir.
+   */
+  async function cadastrarUsuarioViaAPI(f: { nome: string; email: string; role: Role }) {
     const payload = {
-      nome: (form?.nome || "").trim(),
-      email: (form?.email || "").trim(),
-      role: form?.role || "viewer",
+      nome: (f?.nome || "").trim(),
+      email: (f?.email || "").trim(),
+      role: f?.role || "viewer",
     };
 
     if (!payload.nome) {
@@ -36,27 +40,42 @@ export default function Usuarios() {
         body: JSON.stringify(payload),
       });
 
-      // Lê como TEXTO para evitar "Unexpected token ... is not valid JSON"
+      // Lê como TEXTO para evitar o problema do “Unexpected token ... is not valid JSON”
       const raw = await res.text();
 
-      // Tenta converter para JSON apenas se for JSON de verdade
+      // Tenta converter para JSON (se não for, seguimos com 'raw')
       let data: any = null;
       try {
         data = JSON.parse(raw);
       } catch {
-        /* ignora — não é JSON, manteremos o texto cru */
+        /* não é JSON -> mantemos 'raw' para a mensagem de erro/sucesso */
       }
 
       if (!res.ok) {
         const mensagem =
           (data && (data.error || data.message)) ||
-          raw || // mensagem crua vinda do servidor (HTML/stacktrace, etc.)
+          raw || // mensagem crua do servidor
           `HTTP ${res.status}`;
         alert(`Erro ao criar usuário: ${mensagem}`);
         return;
       }
 
-      alert("Usuário criado com sucesso!");
+      // Procura a senha provisória retornada pela API
+      const tempPassword =
+        (data && (data.temp_password || data.password || data.tempPass || data.temp)) ||
+        null;
+
+      if (tempPassword) {
+        alert(
+          `Usuário criado com sucesso!\n\n` +
+          `Senha provisória: ${tempPassword}\n\n` +
+          `> Peça para o usuário alterar no primeiro acesso.`
+        );
+      } else {
+        alert("Usuário criado com sucesso!");
+      }
+
+      // Limpa o formulário
       setForm({ nome: "", email: "", role: "viewer" });
     } catch (e: any) {
       alert(`Falha de rede: ${e?.message || e}`);
@@ -88,6 +107,7 @@ export default function Usuarios() {
           onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
           style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
         />
+
         <input
           placeholder="E-mail"
           type="email"
@@ -95,6 +115,7 @@ export default function Usuarios() {
           onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
           style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
         />
+
         <select
           value={form.role}
           onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as Role }))}
@@ -105,8 +126,9 @@ export default function Usuarios() {
           <option value="admin">Admin</option>
         </select>
 
+        {/* PASSO 2 — botão chamando a função NOVA com o objeto 'form' */}
         <button
-          onClick={cadastrarUsuarioViaAPI}
+          onClick={() => cadastrarUsuarioViaAPI(form)}
           disabled={loading}
           style={{
             gridColumn: "1 / span 3",
@@ -124,11 +146,8 @@ export default function Usuarios() {
       </div>
 
       <p style={{ color: "#64748b", fontSize: 14 }}>
-        Dica: se aparecer erro, a mensagem agora virá “limpa” do servidor (JSON ou texto), sem o problema de
-        “Unexpected token … is not valid JSON”.
-      </p>
-      <p style={{ color: "#64748b", fontSize: 14 }}>
-        Este formulário envia apenas <b>nome</b>, <b>email</b> e <b>role</b> para <code>/api/users/create</code>.
+        Este formulário envia <b>nome</b>, <b>email</b> e <b>role</b> para <code>/api/users/create</code>. 
+        Quando a API retornar <code>temp_password</code>, a senha provisória aparecerá no alerta.
       </p>
     </div>
   );

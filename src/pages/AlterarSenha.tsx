@@ -1,9 +1,8 @@
 // src/pages/AlterarSenha.tsx
 import React, { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase"; // se precisar, troque para "@/lib/supabaseClient"
+import { supabase } from "@/lib/supabaseClient"; // mantenha seu caminho de client
 
-// Caminho para onde enviar após trocar a senha
-const LOGIN_PATH = "/login"; // ajuste se seu login for outra rota
+const LOGIN_PATH = "/login";
 
 export default function AlterarSenha() {
   const [email, setEmail] = useState<string>("");
@@ -11,19 +10,15 @@ export default function AlterarSenha() {
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Busca o usuário logado para exibir o e-mail
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
-      const userEmail = data.user?.email || "";
-      setEmail(userEmail);
+      setEmail(data.user?.email || "");
     })();
   }, []);
 
   function validatePassword(pwd: string): string | null {
-    if (!pwd || pwd.length < 8) {
-      return "A senha deve ter pelo menos 8 caracteres.";
-    }
+    if (!pwd || pwd.length < 8) return "A senha deve ter pelo menos 8 caracteres.";
     if (!/[A-Za-z]/.test(pwd) || !/[0-9]/.test(pwd)) {
       return "A senha deve conter letras e números.";
     }
@@ -34,38 +29,43 @@ export default function AlterarSenha() {
     e.preventDefault();
 
     const problem = validatePassword(newPassword);
-    if (problem) {
-      alert(problem);
-      return;
-    }
-    if (newPassword !== confirm) {
-      alert("A confirmação não confere.");
-      return;
-    }
+    if (problem) return alert(problem);
+    if (newPassword !== confirm) return alert("A confirmação não confere.");
 
     try {
       setLoading(true);
 
-      // Atualiza a senha do usuário autenticado
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) {
-        alert(`Falha ao alterar a senha: ${error.message}`);
+      // 1) Atualiza a senha
+      const { error: pwdErr } = await supabase.auth.updateUser({ password: newPassword });
+      if (pwdErr) {
+        alert(`Falha ao alterar a senha: ${pwdErr.message}`);
         return;
       }
 
-      alert("Senha alterada com sucesso! Você precisará entrar novamente.");
+      // 2) LIMPA as flags que forçam troca de senha
+      const { error: metaErr } = await supabase.auth.updateUser({
+        data: {
+          must_change_password: false,
+          require_password_change: false,
+        },
+      });
+      if (metaErr) {
+        alert(`Senha trocada, mas houve falha ao atualizar os metadados: ${metaErr.message}`);
+        // ainda assim seguimos com logout para evitar loop
+      }
 
-      // Termina a sessão atual e leva ao login
+      alert("Senha alterada com sucesso! Faça login novamente.");
       await supabase.auth.signOut();
+
+      // 3) Redireciona para o login
       window.location.href = LOGIN_PATH;
     } catch (err: any) {
-      alert(`Erro inesperado: ${err?.message || err}`);
+      alert(`Erro inesperado: ${err?.message || String(err)}`);
     } finally {
       setLoading(false);
     }
   }
 
-  // Se não houver usuário, orienta a logar
   const noUser = !email;
 
   return (
@@ -74,9 +74,7 @@ export default function AlterarSenha() {
         <h1 style={styles.title}>Alterar senha</h1>
 
         {noUser ? (
-          <p style={styles.muted}>
-            Você não está autenticado. Faça login para alterar a senha.
-          </p>
+          <p style={styles.muted}>Você não está autenticado. Faça login para alterar a senha.</p>
         ) : (
           <>
             <p style={styles.muted}>
@@ -100,7 +98,6 @@ export default function AlterarSenha() {
                 style={styles.input}
                 autoComplete="new-password"
               />
-
               <button type="submit" disabled={loading} style={styles.button}>
                 {loading ? "Salvando..." : "Salvar nova senha"}
               </button>
@@ -118,7 +115,6 @@ export default function AlterarSenha() {
   );
 }
 
-// --- estilos simples inline ---
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",

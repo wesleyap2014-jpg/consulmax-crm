@@ -1,7 +1,7 @@
 // src/pages/Oportunidades.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import DashboardKpis from "../components/DashboardKpis"; // <-- use o path relativo correto
+import DashboardKpis from "../components/DashboardKpis";
 
 type Lead = {
   id: string;
@@ -23,7 +23,7 @@ type Oportunidade = {
   segmento: string;
   valor_credito: number;
   observacao: string | null;
-  score: number; // 1..5 (no seu banco permitimos 0..100; 1..5 é um subconjunto)
+  score: number; // 1..5
   estagio: Estagio;
   expected_close_at: string | null; // yyyy-mm-dd
   created_at: string;
@@ -33,7 +33,7 @@ const segmentos = ["Automóvel", "Imóvel", "Motocicleta", "Serviços", "Pesados
 
 // aceita "12.345,67" ou "12345.67" e retorna Number
 function moedaParaNumeroBR(valor: string) {
-  const limpo = valor.replace(/[^\d,,-.]/g, "").replace(/\./g, "").replace(",", ".");
+  const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
   return Number(limpo || 0);
 }
 
@@ -116,6 +116,7 @@ export default function Oportunidades() {
         {
           lead_id: leadId,
           vendedor_id: vendId,
+          owner_id: vendId, // <<< importante para passar nas policies/RLS
           segmento,
           valor_credito: valorNum,
           observacao: obs || null,

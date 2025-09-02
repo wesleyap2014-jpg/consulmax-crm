@@ -58,7 +58,7 @@ const currency = (n: number) =>
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
 /** ----------------------------------------------------------------
- *  Componentes de Linha (evita hooks dentro de .map())
+ *  Linhas (componentes separados) — evita hooks dentro de .map()
  * ----------------------------------------------------------------*/
 type LinhaEncarteirarProps = {
   venda: Venda;
@@ -165,6 +165,65 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave }) => {
         )}
       </td>
     </tr>
+  );
+};
+
+/** ----------------------------------------------------------------
+ *  Bloco de Cliente (controla o "open")
+ * ----------------------------------------------------------------*/
+type ClienteGroup = {
+  cliente: Lead;
+  itens: Venda[];
+  totalAtivas: number;
+  qtdAtivas: number;
+  segmentos: Set<string>;
+};
+type ClienteBlocoProps = {
+  group: ClienteGroup;
+  onSaveVenda: (v: Venda, patch: Partial<Venda>) => Promise<void>;
+};
+const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda }) => {
+  const [open, setOpen] = useState(false);
+  const segs = Array.from(group.segmentos).join("; ");
+
+  return (
+    <div className="border rounded-2xl p-4">
+      <button className="w-full text-left" onClick={() => setOpen((o) => !o)}>
+        <div className="flex items-center justify-between">
+          <div className="font-medium">
+            {group.cliente.nome}
+            <span className="text-xs text-gray-500 ml-2">{group.cliente.telefone ?? ""}</span>
+          </div>
+          <div className="text-sm text-gray-600">
+            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
+          </div>
+        </div>
+      </button>
+
+      {open && (
+        <div className="mt-3 overflow-auto">
+          <table className="min-w-[720px] w-full border border-gray-200 rounded-xl">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2">Status</th>
+                <th className="text-left p-2">Adm</th>
+                <th className="text-left p-2">Proposta</th>
+                <th className="text-left p-2">Grupo</th>
+                <th className="text-left p-2">Cota</th>
+                <th className="text-left p-2">Código</th>
+                <th className="text-left p-2">Valor</th>
+                <th className="text-left p-2">Editar</th>
+              </tr>
+            </thead>
+            <tbody>
+              {group.itens.map((v) => (
+                <LinhaCota key={v.id} venda={v} onSave={(patch) => onSaveVenda(v, patch)} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -299,7 +358,7 @@ const Carteira: React.FC = () => {
     [encarteiradas]
   );
 
-  const porCliente = useMemo(() => {
+  const porCliente: ClienteGroup[] = useMemo(() => {
     const map: Record<
       string,
       { cliente: Lead; itens: Venda[]; totalAtivas: number; qtdAtivas: number; segmentos: Set<string> }
@@ -550,54 +609,9 @@ const Carteira: React.FC = () => {
       {/* Carteira (lista por cliente) */}
       <section id="relatorio-carteira" className="space-y-3">
         {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
-
-        {porCliente.map(({ cliente, itens, totalAtivas, qtdAtivas, segmentos }) => {
-          const [open, setOpen] = useState(false);
-          const segs = Array.from(segmentos).join("; ");
-          return (
-            <div key={cliente.id} className="border rounded-2xl p-4">
-              <button className="w-full text-left" onClick={() => setOpen((o) => !o)}>
-                <div className="flex items-center justify-between">
-                  <div className="font-medium">
-                    {cliente.nome}
-                    <span className="text-xs text-gray-500 ml-2">{cliente.telefone ?? ""}</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Total Ativas: <strong>{currency(totalAtivas)}</strong> • Qtd: <strong>{qtdAtivas}</strong> • Segmentos: {segs}
-                  </div>
-                </div>
-              </button>
-
-              {open && (
-                <div className="mt-3 overflow-auto">
-                  <table className="min-w-[720px] w-full border border-gray-200 rounded-xl">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="text-left p-2">Status</th>
-                        <th className="text-left p-2">Adm</th>
-                        <th className="text-left p-2">Proposta</th>
-                        <th className="text-left p-2">Grupo</th>
-                        <th className="text-left p-2">Cota</th>
-                        <th className="text-left p-2">Código</th>
-                        <th className="text-left p-2">Valor</th>
-                        <th className="text-left p-2">Editar</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {itens.map((v) => (
-                        <LinhaCota
-                          key={v.id}
-                          venda={v}
-                          onSave={(patch) => salvarEdicao(v, patch)}
-                        />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {porCliente.map((group) => (
+          <ClienteBloco key={group.cliente.id} group={group} onSaveVenda={salvarEdicao} />
+        ))}
       </section>
 
       {/* Oferta de Lance */}
@@ -613,7 +627,7 @@ const Carteira: React.FC = () => {
             onChange={(e) => setAssembleia(e.target.value)}
             className="border rounded-xl px-3 py-2"
           />
-          <button onClick={listarOferta} className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90">Listar</button>
+        <button onClick={listarOferta} className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90">Listar</button>
         </div>
 
         <div className="overflow-auto">

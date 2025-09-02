@@ -9,7 +9,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { supabase } from "@/lib/supabaseClient";
 
-type Stage =
+export type DbStage =
   | "novo"
   | "qualificando"
   | "proposta"
@@ -17,32 +17,36 @@ type Stage =
   | "fechado_ganho"
   | "fechado_perdido";
 
-type Item = {
+export type KanbanItem = {
   id: string;
-  stage?: Stage | null; // alguns registros antigos podem estar nulos
-  estagio?: string | null; // legado
-  lead_id?: string;
-  vendedor_id?: string;
-  valor_credito?: number;
-  segmento?: string;
+  // coluna nova (enum no banco)
+  stage?: DbStage | null;
+  // coluna legada (texto) — pode existir em registros antigos
+  estagio?: string | null;
+
+  // alguns campos úteis para exibir no card
+  lead_id?: string | null;
+  vendedor_id?: string | null;
+  valor_credito?: number | null;
+  segmento?: string | null;
 };
 
 type Props = {
-  items: Item[];
-  onChanged?: (items: Item[]) => void;
+  items: KanbanItem[];
+  onChanged?: (items: KanbanItem[]) => void;
 };
 
-const COLUMNS: { id: Stage; title: string }[] = [
-  { id: "novo", title: "Novo" },
-  { id: "qualificando", title: "Qualificando" },
-  { id: "proposta", title: "Proposta" },
-  { id: "negociacao", title: "Negociação" },
-  { id: "fechado_ganho", title: "Fechado (Ganho)" },
-  { id: "fechado_perdido", title: "Fechado (Perdido)" },
+const COLUMNS: { id: DbStage; title: string }[] = [
+  { id: "novo",             title: "Novo" },
+  { id: "qualificando",     title: "Qualificando" },
+  { id: "proposta",         title: "Proposta" },
+  { id: "negociacao",       title: "Negociação" },
+  { id: "fechado_ganho",    title: "Fechado (Ganho)" },
+  { id: "fechado_perdido",  title: "Fechado (Perdido)" },
 ];
 
-function normalizeStage(item: Item): Stage {
-  // Se o enum 'stage' existir, use-o; caso contrário, mapeie 'estagio' legado
+/** Converte o legado `estagio` textual em um valor do enum `stage` */
+function normalizeStage(item: KanbanItem): DbStage {
   if (item.stage) return item.stage;
   const e = (item.estagio || "").toLowerCase();
   switch (e) {
@@ -73,7 +77,7 @@ function Column({
   title,
   children,
 }: {
-  id: Stage;
+  id: DbStage;
   title: string;
   children: React.ReactNode;
 }) {
@@ -91,15 +95,13 @@ function Column({
       }}
       data-column-id={id}
     >
-      <div style={{ fontWeight: 700, color: "#334155", marginBottom: 6 }}>
-        {title}
-      </div>
+      <div style={{ fontWeight: 700, color: "#334155", marginBottom: 6 }}>{title}</div>
       {children}
     </div>
   );
 }
 
-function Card({ item }: { item: Item }) {
+function Card({ item }: { item: KanbanItem }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: item.id,
   });
@@ -116,12 +118,15 @@ function Card({ item }: { item: Item }) {
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <div style={{ fontWeight: 600, color: "#0f172a" }}>{item.segmento || "Oportunidade"}</div>
+      <div style={{ fontWeight: 600, color: "#0f172a" }}>
+        {item.segmento || "Oportunidade"}
+      </div>
       <div style={{ fontSize: 12, color: "#475569" }}>
         {item.valor_credito
-          ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
-              item.valor_credito
-            )
+          ? new Intl.NumberFormat("pt-BR", {
+              style: "currency",
+              currency: "BRL",
+            }).format(item.valor_credito)
           : "—"}
       </div>
     </div>
@@ -129,14 +134,14 @@ function Card({ item }: { item: Item }) {
 }
 
 export default function KanbanBoard({ items, onChanged }: Props) {
-  // estado local para trabalhar no board
-  const [data, setData] = useState<Item[]>(
+  // estado local para trabalhar visualmente
+  const [data, setData] = useState<KanbanItem[]>(
     (items || []).map((it) => ({ ...it, stage: normalizeStage(it) }))
   );
 
-  // agrupar por coluna
+  // agrupa por coluna
   const byColumn = useMemo(() => {
-    const map: Record<Stage, Item[]> = {
+    const map: Record<DbStage, KanbanItem[]> = {
       novo: [],
       qualificando: [],
       proposta: [],
@@ -144,32 +149,27 @@ export default function KanbanBoard({ items, onChanged }: Props) {
       fechado_ganho: [],
       fechado_perdido: [],
     };
-    for (const it of data) {
-      map[normalizeStage(it)].push(it);
-    }
+    for (const it of data) map[normalizeStage(it)].push(it);
     return map;
   }, [data]);
 
-  async function persistStage(opportunityId: string, newStage: Stage) {
-    // Chama a RPC criada no Supabase (com nomes dos parâmetros)
+  async function persistStage(opportunityId: string, newStage: DbStage) {
+    // RPC no Supabase (ajuste nomes dos parâmetros se o seu SQL diferir)
     const { error } = await supabase.rpc("update_opportunity_stage", {
       p_id: opportunityId,
       p_new_stage: newStage,
       p_reason: null,
     });
-    if (error) {
-      console.error(error);
-      throw new Error(error.message);
-    }
+    if (error) throw error;
   }
 
   async function onDragEnd(evt: DragEndEvent) {
     const activeId = String(evt.active.id);
-    const overContainer = (evt.over?.data?.current as any)?.containerId as Stage | undefined;
-    // Se não vier do container (por ser card -> coluna), tentamos pegar do DOM data-attr
+
+    // destino (coluna) — detecta tanto por container quanto por data-attr
+    const overContainer = (evt.over?.data?.current as any)?.containerId as DbStage | undefined;
     const overFromAttr =
-      (evt.over?.rect ? (evt.over?.node?.getAttribute("data-column-id") as Stage | null) : null) ||
-      null;
+      (evt.over?.node?.getAttribute("data-column-id") as DbStage | null) || null;
     const destination = overContainer || overFromAttr || undefined;
     if (!destination) return;
 
@@ -179,7 +179,7 @@ export default function KanbanBoard({ items, onChanged }: Props) {
     const currentStage = normalizeStage(data[idx]);
     if (currentStage === destination) return;
 
-    // otimismo: move local primeiro
+    // otimismo: move local
     const next = [...data];
     next[idx] = { ...next[idx], stage: destination };
     setData(next);
@@ -187,12 +187,11 @@ export default function KanbanBoard({ items, onChanged }: Props) {
 
     try {
       await persistStage(activeId, destination);
-    } catch (e) {
-      alert("Falha ao atualizar estágio: " + (e as Error).message);
-      // rollback em caso de erro
-      const rollback = [...data];
-      setData(rollback);
-      onChanged?.(rollback);
+    } catch (e: any) {
+      alert("Falha ao atualizar estágio: " + e.message);
+      // rollback se deu erro
+      setData(data);
+      onChanged?.(data);
     }
   }
 
@@ -205,12 +204,22 @@ export default function KanbanBoard({ items, onChanged }: Props) {
               items={byColumn[col.id].map((i) => i.id)}
               strategy={verticalListSortingStrategy}
             >
-              <div data-column-id={col.id} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div
+                data-column-id={col.id}
+                style={{ display: "flex", flexDirection: "column", gap: 8 }}
+              >
                 {byColumn[col.id].map((it) => (
                   <Card key={it.id} item={it} />
                 ))}
                 {!byColumn[col.id].length && (
-                  <div style={{ color: "#94a3b8", fontSize: 12, textAlign: "center", padding: 6 }}>
+                  <div
+                    style={{
+                      color: "#94a3b8",
+                      fontSize: 12,
+                      textAlign: "center",
+                      padding: 6,
+                    }}
+                  >
                     (vazio)
                   </div>
                 )}

@@ -322,3 +322,15 @@ export default function Oportunidades() {
 // estilos da tabela
 const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
 const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
+import DashboardKpis from "./components/DashboardKpis";
+
+function App() {
+  return (
+    <div>
+      <h1>CRM Consulmax</h1>
+      <DashboardKpis />
+    </div>
+  );
+}
+
+export default App;

@@ -6,7 +6,6 @@ import { supabase } from "@/lib/supabaseClient";
 type Lead = { id: string; nome: string; owner_id: string };
 type Vendedor = { auth_user_id: string; nome: string };
 
-// estágio "de tela" (minúsculo, simples de trabalhar no UI)
 type StageUI =
   | "novo"
   | "qualificando"
@@ -15,7 +14,6 @@ type StageUI =
   | "fechado_ganho"
   | "fechado_perdido";
 
-// texto que o banco aceita no campo legado `estagio` (check constraint)
 type EstagioDB =
   | "Novo"
   | "Qualificação"
@@ -32,9 +30,9 @@ type Oportunidade = {
   segmento: string;
   valor_credito: number;
   observacao: string | null;
-  score: number; // 1..5
-  estagio: EstagioDB; // <- importante para o constraint
-  expected_close_at: string | null; // yyyy-mm-dd
+  score: number;
+  estagio: EstagioDB | string; // <- pode vir “diferente”, por isso deixei string também
+  expected_close_at: string | null;
   created_at: string;
 };
 
@@ -57,21 +55,21 @@ const uiToDB: Record<StageUI, EstagioDB> = {
   fechado_perdido: "Fechado (Perdido)",
 };
 
-const dbToUI: Record<EstagioDB, StageUI> = {
+const dbToUI: Partial<Record<string, StageUI>> = {
   "Novo": "novo",
   "Qualificação": "qualificando",
+  "Qualificacao": "qualificando",
   "Proposta": "proposta",
   "Negociação": "negociacao",
+  "Negociacao": "negociacao",
   "Fechado (Ganho)": "fechado_ganho",
   "Fechado (Perdido)": "fechado_perdido",
 };
 
 function moedaParaNumeroBR(valor: string) {
-  // aceita "12.345,67" ou "12345.67" e retorna Number
   const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
   return Number(limpo || 0);
 }
-
 function fmtBRL(n: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
     n || 0
@@ -93,7 +91,7 @@ export default function Oportunidades() {
   const [obs, setObs] = useState("");
   const [score, setScore] = useState(1);
   const [stageUI, setStageUI] = useState<StageUI>("novo");
-  const [expectedDate, setExpectedDate] = useState<string>(""); // dd/mm/aaaa no input
+  const [expectedDate, setExpectedDate] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   // modal "Tratar Lead"
@@ -132,7 +130,7 @@ export default function Oportunidades() {
     [lista, filtroVendedor]
   );
 
-  /** KPI por estágio (usando lista inteira — sem filtro, como no seu mock) */
+  /** KPI por estágio — com fallback seguro */
   const kpi = useMemo(() => {
     const base: Record<StageUI, { qtd: number; total: number }> = {
       novo: { qtd: 0, total: 0 },
@@ -142,10 +140,10 @@ export default function Oportunidades() {
       fechado_ganho: { qtd: 0, total: 0 },
       fechado_perdido: { qtd: 0, total: 0 },
     };
-    for (const o of lista) {
-      const k = dbToUI[o.estagio];
+    for (const o of lista || []) {
+      const k = dbToUI[o.estagio as string] ?? "novo"; // <- Fallback p/ qualquer valor inesperado
       base[k].qtd += 1;
-      base[k].total += o.valor_credito || 0;
+      base[k].total += Number(o.valor_credito || 0);
     }
     return base;
   }, [lista]);
@@ -157,7 +155,7 @@ export default function Oportunidades() {
     const valorNum = moedaParaNumeroBR(valor);
     if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
 
-    // converter data dd/mm/aaaa -> yyyy-mm-dd
+    // dd/mm/aaaa -> yyyy-mm-dd
     let isoDate: string | null = null;
     if (expectedDate) {
       const [d, m, y] = expectedDate.split("/");
@@ -168,13 +166,12 @@ export default function Oportunidades() {
     const payload = {
       lead_id: leadId,
       vendedor_id: vendId,
-      owner_id: vendId, // RLS
+      owner_id: vendId,
       segmento,
       valor_credito: valorNum,
       observacao: obs ? `[${new Date().toLocaleString("pt-BR")}]\n${obs}` : null,
       score,
-      // ⚠️ campo legado do banco com check constraint — NÃO pode ser nulo
-      estagio: uiToDB[stageUI] as EstagioDB,
+      estagio: uiToDB[stageUI] as EstagioDB, // <- atende ao check constraint
       expected_close_at: isoDate,
     };
 
@@ -194,7 +191,6 @@ export default function Oportunidades() {
 
     setLista((s) => [data as Oportunidade, ...s]);
 
-    // limpar form
     setLeadId("");
     setVendId("");
     setSegmento("Automóvel");
@@ -217,18 +213,16 @@ export default function Oportunidades() {
   }
   async function saveEdit() {
     if (!editing) return;
-    // concatenar histórico de observações
     const historico =
       (editing.observacao ? editing.observacao + "\n\n" : "") +
       (newNote ? `[${new Date().toLocaleString("pt-BR")}]\n${newNote}` : "");
 
-    // UI da modal usa campos já no formato correto (mantemos o valor em editing)
     const payload = {
       segmento: editing.segmento,
       valor_credito: editing.valor_credito,
       score: editing.score,
-      estagio: editing.estagio, // já está no texto aceito pelo banco
-      expected_close_at: editing.expected_close_at, // yyyy-mm-dd
+      estagio: (editing.estagio as EstagioDB) ?? "Novo",
+      expected_close_at: editing.expected_close_at,
       observacao: historico || editing.observacao || null,
     };
 
@@ -244,14 +238,13 @@ export default function Oportunidades() {
       return;
     }
 
-    // refletir na lista
     setLista((s) => s.map((x) => (x.id === editing.id ? (data as Oportunidade) : x)));
     closeEdit();
   }
 
   /** ------------- UI ------------- */
 
-  // Cards KPI (só contagem e valor)
+  // Cards KPI (com fallback se, por algum motivo, a chave não existir)
   const CardsKPI = () => {
     const ORDER: { id: StageUI; label: string }[] = [
       { id: "novo", label: "Novo" },
@@ -263,29 +256,32 @@ export default function Oportunidades() {
     ];
     return (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 16 }}>
-        {ORDER.map(({ id, label }) => (
-          <div
-            key={id}
-            style={{
-              background: "#fff",
-              borderRadius: 14,
-              boxShadow: "0 2px 10px rgba(0,0,0,.06)",
-              padding: 14,
-            }}
-          >
-            <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{label}</div>
-            <div style={{ color: "#1f2937" }}>Qtd: {kpi[id].qtd}</div>
-            <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(kpi[id].total)}</div>
-          </div>
-        ))}
+        {ORDER.map(({ id, label }) => {
+          const safe = kpi[id] ?? { qtd: 0, total: 0 };
+          return (
+            <div
+              key={id}
+              style={{
+                background: "#fff",
+                borderRadius: 14,
+                boxShadow: "0 2px 10px rgba(0,0,0,.06)",
+                padding: 14,
+              }}
+            >
+              <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{label}</div>
+              <div style={{ color: "#1f2937" }}>Qtd: {safe.qtd}</div>
+              <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(safe.total)}</div>
+            </div>
+          );
+        })}
       </div>
     );
   };
 
-  // Tabela simples com botão "Tratar Lead"
   const ListaOportunidades = () => {
     const linhas = visiveis.filter(
-      (o) => dbToUI[o.estagio] !== "fechado_ganho" && dbToUI[o.estagio] !== "fechado_perdido"
+      (o) => dbToUI[o.estagio as string] !== "fechado_ganho" &&
+             dbToUI[o.estagio as string] !== "fechado_perdido"
     );
     return (
       <div style={card}>
@@ -314,7 +310,7 @@ export default function Oportunidades() {
                   <td style={td}>{o.segmento}</td>
                   <td style={td}>{fmtBRL(o.valor_credito)}</td>
                   <td style={td}>{"★".repeat(Math.max(1, Math.min(5, o.score)))}</td>
-                  <td style={td}>{o.estagio}</td>
+                  <td style={td}>{String(o.estagio)}</td>
                   <td style={td}>
                     {o.expected_close_at
                       ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
@@ -341,10 +337,9 @@ export default function Oportunidades() {
     );
   };
 
-  // Fechadas (ganho/perdido)
   const CardsFechadas = () => {
-    const ganhos = visiveis.filter((o) => dbToUI[o.estagio] === "fechado_ganho");
-    const perdidos = visiveis.filter((o) => dbToUI[o.estagio] === "fechado_perdido");
+    const ganhos = visiveis.filter((o) => dbToUI[o.estagio as string] === "fechado_ganho");
+    const perdidos = visiveis.filter((o) => dbToUI[o.estagio as string] === "fechado_perdido");
     return (
       <div style={card}>
         <h3 style={{ marginTop: 0 }}>Oportunidades Fechadas</h3>
@@ -352,7 +347,7 @@ export default function Oportunidades() {
           <div style={subCard}>
             <div style={{ fontWeight: 700, marginBottom: 8 }}>Ganhos</div>
             <div style={{ color: "#475569", marginBottom: 8 }}>
-              Qtd: {ganhos.length} — Valor: {fmtBRL(ganhos.reduce((s, x) => s + x.valor_credito, 0))}
+              Qtd: {ganhos.length} — Valor: {fmtBRL(ganhos.reduce((s, x) => s + (x.valor_credito || 0), 0))}
             </div>
             {ganhos.map((g) => (
               <div key={g.id} style={pill}>
@@ -364,8 +359,7 @@ export default function Oportunidades() {
           <div style={subCard}>
             <div style={{ fontWeight: 700, marginBottom: 8 }}>Perdidos</div>
             <div style={{ color: "#475569", marginBottom: 8 }}>
-              Qtd: {perdidos.length} — Valor:{" "}
-              {fmtBRL(perdidos.reduce((s, x) => s + x.valor_credito, 0))}
+              Qtd: {perdidos.length} — Valor: {fmtBRL(perdidos.reduce((s, x) => s + (x.valor_credito || 0), 0))}
             </div>
             {perdidos.map((g) => (
               <div key={g.id} style={pill}>
@@ -381,10 +375,8 @@ export default function Oportunidades() {
 
   return (
     <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
-      {/* KPI no topo */}
       <CardsKPI />
 
-      {/* Filtro por vendedor */}
       <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", margin: "16px 0" }}>
         <label style={label}>Filtrar por vendedor</label>
         <select
@@ -401,11 +393,9 @@ export default function Oportunidades() {
         </select>
       </div>
 
-      {/* Lista + ações */}
       <ListaOportunidades />
       <CardsFechadas />
 
-      {/* Form Nova oportunidade */}
       <div style={card}>
         <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
         <div style={grid2}>
@@ -509,7 +499,6 @@ export default function Oportunidades() {
         </button>
       </div>
 
-      {/* Modal Tratar Lead */}
       {editing && (
         <div style={modalBackdrop}>
           <div style={modalCard}>
@@ -556,8 +545,8 @@ export default function Oportunidades() {
               <div>
                 <label style={label}>Estágio</label>
                 <select
-                  value={editing.estagio}
-                  onChange={(e) => setEditing({ ...editing, estagio: e.target.value as EstagioDB })}
+                  value={String(editing.estagio)}
+                  onChange={(e) => setEditing({ ...editing, estagio: e.target.value })}
                   style={input}
                 >
                   <option value="Novo">Novo</option>
@@ -619,7 +608,7 @@ export default function Oportunidades() {
   );
 }
 
-/** ------------- estilos inline simples ------------- */
+/** ------------- estilos ------------- */
 const card: React.CSSProperties = {
   background: "#fff",
   borderRadius: 16,
@@ -627,14 +616,12 @@ const card: React.CSSProperties = {
   padding: 16,
   marginBottom: 16,
 };
-
 const subCard: React.CSSProperties = {
   background: "#fff",
   border: "1px solid #e5e7eb",
   borderRadius: 12,
   padding: 12,
 };
-
 const pill: React.CSSProperties = {
   padding: "8px 10px",
   borderRadius: 10,
@@ -642,13 +629,11 @@ const pill: React.CSSProperties = {
   background: "#f8fafc",
   marginBottom: 8,
 };
-
 const grid2: React.CSSProperties = {
   display: "grid",
   gap: 12,
   gridTemplateColumns: "1fr 1fr",
 };
-
 const input: React.CSSProperties = {
   width: "100%",
   padding: 10,
@@ -656,7 +641,6 @@ const input: React.CSSProperties = {
   border: "1px solid #e5e7eb",
   outline: "none",
 };
-
 const label: React.CSSProperties = {
   display: "block",
   fontSize: 12,
@@ -664,10 +648,8 @@ const label: React.CSSProperties = {
   color: "#475569",
   marginBottom: 6,
 };
-
 const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
 const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
-
 const btnPrimary: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
@@ -677,7 +659,6 @@ const btnPrimary: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 700,
 };
-
 const btnGhost: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
@@ -687,7 +668,6 @@ const btnGhost: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 700,
 };
-
 const modalBackdrop: React.CSSProperties = {
   position: "fixed",
   inset: 0,
@@ -696,7 +676,6 @@ const modalBackdrop: React.CSSProperties = {
   placeItems: "center",
   zIndex: 50,
 };
-
 const modalCard: React.CSSProperties = {
   width: "min(980px, 94vw)",
   background: "#fff",

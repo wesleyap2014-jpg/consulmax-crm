@@ -2,19 +2,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-type Role = "admin" | "vendedor" | "operacoes" | "viewer";
-
 type Lead = {
   id: string;
   nome: string;
-  origem?: string | null;
-  owner_id?: string | null;
+  owner_id: string;
 };
 
 type Vendedor = {
-  auth_user_id: string; // id do auth.users
+  auth_user_id: string;
   nome: string;
-  role: Role;
 };
 
 type Estagio = "Novo" | "Qualificação" | "Proposta" | "Negociação" | "Convertido" | "Perdido";
@@ -25,243 +21,153 @@ type Oportunidade = {
   vendedor_id: string;
   segmento: string;
   valor_credito: number;
-  observacao?: string | null;
-  score: number;
+  observacao: string | null;
+  score: number;              // 1..5
   estagio: Estagio;
+  expected_close_at: string | null; // yyyy-mm-dd
   created_at: string;
 };
 
-const SEGMENTOS = [
-  "Automóvel",
-  "Imóvel",
-  "Motocicleta",
-  "Serviços",
-  "Pesados",
-  "Imóvel Estendido",
-] as const;
+const segmentos = ["Automóvel", "Imóvel", "Motocicleta", "Serviços", "Pesados", "Imóvel Estendido"] as const;
 
-const ESTAGIOS: Estagio[] = ["Novo", "Qualificação", "Proposta", "Negociação", "Convertido", "Perdido"];
-
-const BRL = (n: number) =>
-  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
+function moedaParaNumeroBR(valor: string) {
+  // aceita "12.345,67" ou "12345.67" e retorna Number
+  const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+  return Number(limpo || 0);
+}
 
 export default function Oportunidades() {
-  const [me, setMe] = useState<{ uid: string; role: Role }>({ uid: "", role: "viewer" });
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
-  const [list, setList] = useState<Oportunidade[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [lista, setLista] = useState<Oportunidade[]>([]);
+  const [filtroVendedor, setFiltroVendedor] = useState<string>("all");
 
-  // filtros (admin)
-  const [filtroVendedor, setFiltroVendedor] = useState<string>("");
-
-  // form
+  // formulário
   const [leadId, setLeadId] = useState("");
   const [vendId, setVendId] = useState("");
-  const [segmento, setSegmento] = useState<(typeof SEGMENTOS)[number]>("Automóvel");
-  const [valor, setValor] = useState<string>("");
+  const [segmento, setSegmento] = useState<string>("Automóvel");
+  const [valor, setValor] = useState("");
   const [obs, setObs] = useState("");
-  const [score, setScore] = useState<number>(3);
+  const [score, setScore] = useState(3);
   const [estagio, setEstagio] = useState<Estagio>("Novo");
+  const [expectedDate, setExpectedDate] = useState<string>(""); // yyyy-mm-dd
 
-  // carregar quem sou eu + role (do token)
+  const [loading, setLoading] = useState(false);
+
+  // Carrega listas
   useEffect(() => {
     (async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id || "";
-      const roleFromToken =
-        ((auth.user?.app_metadata as any)?.role ||
-          (auth.user?.user_metadata as any)?.role ||
-          "viewer") as Role;
+      // Leads (mostre só do usuário se precisar; aqui estou trazendo todos que ele pode ver)
+      const { data: l, error: lErr } = await supabase
+        .from("leads")
+        .select("id, nome, owner_id")
+        .order("created_at", { ascending: false });
+      if (lErr) {
+        alert("Erro ao carregar leads: " + lErr.message);
+      } else {
+        setLeads(l || []);
+      }
 
-      setMe({ uid, role: roleFromToken });
+      // Vendedores via RPC (corrige o seu erro)
+      const { data: v, error: vErr } = await supabase.rpc("listar_vendedores");
+      if (vErr) {
+        alert("Erro ao carregar vendedores: " + vErr.message);
+      } else {
+        setVendedores(v || []);
+      }
+
+      // Oportunidades (aplique RLS para admin ver tudo e vendedor ver só suas)
+      const { data: o, error: oErr } = await supabase
+        .from("opportunities")
+        .select(
+          "id, lead_id, vendedor_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
+        )
+        .order("created_at", { ascending: false });
+      if (oErr) {
+        alert("Erro ao carregar oportunidades: " + oErr.message);
+      } else {
+        setLista(o || []);
+      }
     })();
   }, []);
 
-  // carregar leads acessíveis (RLS já filtra)
-  async function loadLeads() {
-    const { data, error } = await supabase
-      .from("leads")
-      .select("id, nome, origem, owner_id")
-      .order("created_at", { ascending: false });
-    if (error) {
-      console.error(error);
-      alert("Erro ao carregar leads");
-      return;
-    }
-    setLeads(data || []);
-  }
+  const ativos = useMemo(
+    () =>
+      lista.filter((o) => o.estagio !== "Convertido" && o.estagio !== "Perdido")
+           .filter((o) => (filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor)),
+    [lista, filtroVendedor]
+  );
 
-  // vendedores: buscamos na tabela de perfis (users) e usamos o auth_user_id
-  async function loadVendedores() {
-    const { data, error } = await supabase
-      .from("users")
-      .select("auth_user_id, nome, role")
-      .in("role", ["admin", "vendedor", "operacoes"]);
-    if (error) {
-      console.error(error);
-      alert("Erro ao carregar vendedores");
-      return;
-    }
-    setVendedores((data || []) as any);
-  }
+  async function criarOportunidade() {
+    if (!leadId) return alert("Selecione um Lead.");
+    if (!vendId) return alert("Selecione um Vendedor.");
+    const valorNum = moedaParaNumeroBR(valor);
+    if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
 
-  async function loadOpps() {
+    setLoading(true);
     const { data, error } = await supabase
       .from("opportunities")
-      .select("*")
-      .order("created_at", { ascending: false });
+      .insert([
+        {
+          lead_id: leadId,
+          vendedor_id: vendId,
+          segmento,
+          valor_credito: valorNum,
+          observacao: obs || null,
+          score,
+          estagio,
+          expected_close_at: expectedDate || null,
+        },
+      ])
+      .select()
+      .single();
+
+    setLoading(false);
+
     if (error) {
-      console.error(error);
-      alert("Erro ao carregar oportunidades");
-      return;
-    }
-    setList((data || []) as any);
-  }
-
-  useEffect(() => {
-    if (!me.uid) return;
-    loadLeads();
-    loadVendedores();
-    loadOpps();
-  }, [me.uid]);
-
-  const listFiltrada = useMemo(() => {
-    if (me.role !== "admin" || !filtroVendedor) return list;
-    return list.filter((o) => o.vendedor_id === filtroVendedor);
-  }, [list, filtroVendedor, me.role]);
-
-  async function criar() {
-    const v = Number(String(valor).replace(/[^\d]/g, "")) / 100;
-
-    if (!leadId) {
-      alert("Selecione um lead.");
-      return;
-    }
-    if (!vendId) {
-      alert("Selecione um vendedor.");
-      return;
-    }
-    if (!v || v <= 0) {
-      alert("Informe o valor do crédito.");
+      alert("Erro ao criar oportunidade: " + error.message);
       return;
     }
 
-    try {
-      setLoading(true);
-      const { error } = await supabase.from("opportunities").insert({
-        lead_id: leadId,
-        vendedor_id: vendId,
-        segmento,
-        valor_credito: v,
-        observacao: obs || null,
-        score,
-        estagio,
-      } as any);
-      if (error) throw error;
+    setLista((s) => [data as Oportunidade, ...s]);
 
-      alert("Oportunidade criada!");
-      // limpa form
-      setLeadId("");
-      setVendId("");
-      setSegmento("Automóvel");
-      setValor("");
-      setObs("");
-      setScore(3);
-      setEstagio("Novo");
-      // recarrega
-      loadOpps();
-    } catch (e: any) {
-      alert(`Erro ao criar: ${e?.message || e}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function atualizarEstagio(id: string, novo: Estagio) {
-    try {
-      const { error } = await supabase
-        .from("opportunities")
-        .update({ estagio: novo })
-        .eq("id", id);
-      if (error) throw error;
-      loadOpps();
-    } catch (e: any) {
-      alert(`Erro ao atualizar estágio: ${e?.message || e}`);
-    }
-  }
-
-  async function reatribuir(id: string, novoVend: string) {
-    try {
-      // RLS permite troca de vendedor_id apenas para admin (política já criada)
-      const { error } = await supabase
-        .from("opportunities")
-        .update({ vendedor_id: novoVend })
-        .eq("id", id);
-      if (error) throw error;
-      loadOpps();
-    } catch (e: any) {
-      alert(`Erro ao reatribuir: ${e?.message || e}`);
-    }
-  }
-
-  function nomeLead(lead_id: string) {
-    return leads.find((l) => l.id === lead_id)?.nome || "—";
-  }
-  function nomeVend(uid: string) {
-    return vendedores.find((v) => v.auth_user_id === uid)?.nome || "—";
+    // limpa form
+    setLeadId("");
+    setVendId("");
+    setSegmento("Automóvel");
+    setValor("");
+    setObs("");
+    setScore(3);
+    setEstagio("Novo");
+    setExpectedDate("");
+    alert("Oportunidade criada!");
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      <h1 style={{ marginBottom: 16 }}>Oportunidades</h1>
+    <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
+      <h2 style={{ marginBottom: 12 }}>Oportunidades</h2>
 
-      {/* Filtro (apenas admin) */}
-      {me.role === "admin" && (
-        <div
-          style={{
-            background: "#fff",
-            border: "1px solid #eee",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 12,
-            display: "flex",
-            gap: 8,
-          }}
+      {/* Filtro por vendedor */}
+      <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+        <select
+          value={filtroVendedor}
+          onChange={(e) => setFiltroVendedor(e.target.value)}
+          style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
         >
-          <select
-            value={filtroVendedor}
-            onChange={(e) => setFiltroVendedor(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-          >
-            <option value="">Todos os vendedores</option>
-            {vendedores.map((v) => (
-              <option key={v.auth_user_id} value={v.auth_user_id}>
-                {v.nome} ({v.role})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+          <option value="all">Todos os vendedores</option>
+          {vendedores.map((v) => (
+            <option key={v.auth_user_id} value={v.auth_user_id}>
+              {v.nome}
+            </option>
+          ))}
+        </select>
+      </div>
 
-      {/* Form */}
-      <div
-        style={{
-          background: "#fff",
-          border: "1px solid #eee",
-          borderRadius: 12,
-          padding: 12,
-          marginBottom: 16,
-        }}
-      >
-        <h3 style={{ margin: "0 0 12px 0" }}>Nova oportunidade</h3>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: 10,
-          }}
-        >
+      {/* Formulário */}
+      <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+        <h3 style={{ margin: 0, marginBottom: 12 }}>Nova oportunidade</h3>
+
+        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(3, 1fr)" }}>
           <select
             value={leadId}
             onChange={(e) => setLeadId(e.target.value)}
@@ -281,21 +187,19 @@ export default function Oportunidades() {
             style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
           >
             <option value="">Selecione um Vendedor</option>
-            {vendedores
-              .filter((v) => v.role === "vendedor" || v.role === "admin" || v.role === "operacoes")
-              .map((v) => (
-                <option key={v.auth_user_id} value={v.auth_user_id}>
-                  {v.nome} ({v.role})
-                </option>
-              ))}
+            {vendedores.map((v) => (
+              <option key={v.auth_user_id} value={v.auth_user_id}>
+                {v.nome}
+              </option>
+            ))}
           </select>
 
           <select
             value={segmento}
-            onChange={(e) => setSegmento(e.target.value as any)}
+            onChange={(e) => setSegmento(e.target.value)}
             style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
           >
-            {SEGMENTOS.map((s) => (
+            {segmentos.map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
@@ -305,16 +209,7 @@ export default function Oportunidades() {
           <input
             placeholder="Valor do crédito (R$)"
             value={valor}
-            onChange={(e) => {
-              // máscara simples de moeda
-              const only = e.target.value.replace(/[^\d]/g, "");
-              const n = (Number(only || "0") / 100).toFixed(2);
-              setValor(
-                new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
-                  Number(n)
-                )
-              );
-            }}
+            onChange={(e) => setValor(e.target.value)}
             style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
           />
 
@@ -342,15 +237,24 @@ export default function Oportunidades() {
             onChange={(e) => setEstagio(e.target.value as Estagio)}
             style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
           >
-            {ESTAGIOS.map((s) => (
+            {["Novo", "Qualificação", "Proposta", "Negociação", "Convertido", "Perdido"].map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
             ))}
           </select>
 
+          {/* NOVO: Data prevista para fechamento */}
+          <input
+            type="date"
+            value={expectedDate}
+            onChange={(e) => setExpectedDate(e.target.value)}
+            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
+            placeholder="Data prevista para fechamento"
+          />
+
           <button
-            onClick={criar}
+            onClick={criarOportunidade}
             disabled={loading}
             style={{
               gridColumn: "1 / span 3",
@@ -363,15 +267,14 @@ export default function Oportunidades() {
               fontWeight: 700,
             }}
           >
-            {loading ? "Salvando..." : "Criar oportunidade"}
+            {loading ? "Criando..." : "Criar oportunidade"}
           </button>
         </div>
       </div>
 
       {/* Lista */}
-      <div style={{ background: "#fff", border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-        <h3 style={{ margin: "0 0 12px 0" }}>Oportunidades</h3>
-
+      <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+        <h3 style={{ margin: 0, marginBottom: 12 }}>Oportunidades</h3>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
             <thead>
@@ -382,53 +285,30 @@ export default function Oportunidades() {
                 <th style={th}>Valor</th>
                 <th style={th}>Score</th>
                 <th style={th}>Estágio</th>
-                {me.role === "admin" && <th style={th}>Reatribuir</th>}
+                <th style={th}>Previsão</th> {/* novo */}
               </tr>
             </thead>
             <tbody>
-              {listFiltrada.map((o) => (
+              {ativos.map((o) => (
                 <tr key={o.id}>
-                  <td style={td}>{nomeLead(o.lead_id)}</td>
-                  <td style={td}>{nomeVend(o.vendedor_id)}</td>
+                  <td style={td}>{leads.find((l) => l.id === o.lead_id)?.nome || "-"}</td>
+                  <td style={td}>{vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}</td>
                   <td style={td}>{o.segmento}</td>
-                  <td style={td}>{BRL(o.valor_credito)}</td>
-                  <td style={td}>{"★".repeat(o.score)}</td>
                   <td style={td}>
-                    <select
-                      value={o.estagio}
-                      onChange={(e) => atualizarEstagio(o.id, e.target.value as Estagio)}
-                      style={{ padding: 8, borderRadius: 8, border: "1px solid #e5e7eb" }}
-                    >
-                      {ESTAGIOS.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
+                    {new Intl.DateTimeFormat("pt-BR", { style: "currency", currency: "BRL" } as any).format(o.valor_credito)}
                   </td>
-
-                  {me.role === "admin" && (
-                    <td style={td}>
-                      <select
-                        value={o.vendedor_id}
-                        onChange={(e) => reatribuir(o.id, e.target.value)}
-                        style={{ padding: 8, borderRadius: 8, border: "1px solid #e5e7eb" }}
-                      >
-                        {vendedores.map((v) => (
-                          <option key={v.auth_user_id} value={v.auth_user_id}>
-                            {v.nome} ({v.role})
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  )}
+                  <td style={td}>{"★".repeat(o.score)}</td>
+                  <td style={td}>{o.estagio}</td>
+                  <td style={td}>
+                    {o.expected_close_at
+                      ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
+                      : "-"}
+                  </td>
                 </tr>
               ))}
-              {!listFiltrada.length && (
+              {!ativos.length && (
                 <tr>
-                  <td style={{ ...td, color: "#64748b" }} colSpan={me.role === "admin" ? 7 : 6}>
-                    Nenhuma oportunidade encontrada.
-                  </td>
+                  <td style={td} colSpan={7}>Nenhuma oportunidade encontrada.</td>
                 </tr>
               )}
             </tbody>
@@ -439,5 +319,6 @@ export default function Oportunidades() {
   );
 }
 
+// estilos da tabela
 const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
 const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };

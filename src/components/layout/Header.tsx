@@ -1,136 +1,127 @@
 // src/components/layout/Header.tsx
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabaseClient"; // mantenha seu caminho
+import { useNavigate } from "react-router-dom";
+// use o alias que você já usa no projeto
+import { supabase } from "@/lib/supabaseClient";
 
-type ProfileRow = {
-  nome?: string | null;
-  photo_url?: string | null;   // ajuste o nome da coluna se for diferente
+type Profile = {
+  name: string;
+  email: string;
+  avatarUrl?: string | null;
 };
 
-function initialsFrom(name?: string | null) {
-  if (!name) return "U";
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase())
-    .join("");
+function getInitials(name?: string, email?: string) {
+  const base = (name || email || "").trim();
+  if (!base) return "U";
+  const parts = base.split(" ").filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 export default function Header() {
-  const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState<string | null>(null);
-  const [displayName, setDisplayName] = useState<string | null>(null);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const [profile, setProfile] = useState<Profile>({
+    name: "",
+    email: "",
+    avatarUrl: null,
+  });
 
   useEffect(() => {
-    let mounted = true;
+    let active = true;
 
     async function load() {
-      setLoading(true);
+      // 1) usuário do Auth
+      const { data: userResp } = await supabase.auth.getUser();
+      const user = userResp?.user;
+      if (!user) return;
 
-      const { data: u } = await supabase.auth.getUser();
-      const user = u?.user || null;
+      let name =
+        (user.user_metadata as any)?.nome ||
+        (user.user_metadata as any)?.full_name ||
+        user.email ||
+        "";
+      let email = user.email || "";
 
-      if (!mounted) return;
-      setEmail(user?.email ?? null);
+      // 2) perfil na tabela public.users (nome/arquivo do avatar)
+      const { data: row } = await supabase
+        .from("users")
+        .select("nome, avatar_url")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
 
-      // nome/avatar via user_metadata (fallback)
-      const metaName =
-        (user?.user_metadata as any)?.name ||
-        (user?.user_metadata as any)?.full_name ||
-        (user?.user_metadata as any)?.user_name ||
-        null;
-      const metaAvatar =
-        (user?.user_metadata as any)?.avatar_url ||
-        (user?.user_metadata as any)?.picture ||
-        null;
+      let avatarUrl: string | null | undefined =
+        (user.user_metadata as any)?.avatar_url || row?.avatar_url || null;
+      name = row?.nome || name;
 
-      let nameToUse: string | null = metaName;
-      let avatarToUse: string | null = metaAvatar;
-
-      // tenta tabela "users" para um perfil mais completo
-      if (user?.id) {
-        const { data: row, error } = await supabase
-          .from("users")
-          .select("nome, photo_url")
-          .eq("auth_user_id", user.id)
-          .maybeSingle<ProfileRow>();
-
-        if (!error && row) {
-          if (row.nome) nameToUse = row.nome;
-
-          // se photo_url for apenas um path do bucket, gera URL pública
-          if (row.photo_url) {
-            if (/^https?:\/\//i.test(row.photo_url)) {
-              avatarToUse = row.photo_url;
-            } else {
-              // ajuste o nome do bucket se for diferente de "avatars"
-              const { data: pub } = supabase.storage
-                .from("avatars")
-                .getPublicUrl(row.photo_url);
-              avatarToUse = pub?.publicUrl || row.photo_url;
-            }
-          }
-        }
+      // 3) se vier caminho de Storage, transformar em URL pública
+      if (avatarUrl && !/^https?:\/\//i.test(avatarUrl)) {
+        // troque "avatars" se seu bucket tiver outro nome
+        const pub = supabase.storage.from("avatars").getPublicUrl(avatarUrl);
+        avatarUrl = pub.data.publicUrl;
       }
 
-      if (mounted) {
-        setDisplayName(nameToUse || user?.email || "Usuário");
-        setAvatarUrl(avatarToUse || null);
-        setLoading(false);
-      }
+      if (active) setProfile({ name, email, avatarUrl });
     }
 
     load();
-
-    // atualiza quando logar/deslogar
-    const { data: sub } = supabase.auth.onAuthStateChange(() => load());
-
     return () => {
-      mounted = false;
-      sub.subscription?.unsubscribe();
+      active = false;
     };
   }, []);
 
-  const initials = useMemo(() => initialsFrom(displayName), [displayName]);
+  const initials = useMemo(
+    () => getInitials(profile.name, profile.email),
+    [profile.name, profile.email]
+  );
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    navigate("/login", { replace: true });
+  }
 
   return (
-    <header className="sticky top-0 z-50 h-14 bg-white shadow-sm">
+    <header className="sticky top-0 z-50 h-14 border-b bg-white">
       <div className="mx-auto flex h-full max-w-screen-2xl items-center justify-between px-4">
-        {/* Marca/Logo */}
+        {/* Marca */}
         <div className="flex items-center gap-3 font-extrabold text-slate-900">
-          <span className="inline-block h-8 w-8 rounded-full bg-[#A11C27]" />
-          <span>
+          <div className="h-8 w-8 rounded-full bg-[#A11C27]" />
+          <div>
             Consulmax •{" "}
             <span className="text-[#A11C27]">Maximize as suas conquistas</span>
-          </span>
+          </div>
         </div>
 
-        {/* Badge do usuário logado */}
+        {/* Usuário + Sair */}
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 overflow-hidden rounded-full ring-1 ring-slate-200">
-            {avatarUrl ? (
-              <img
-                src={avatarUrl}
-                alt="avatar"
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-slate-200 text-sm font-semibold text-slate-700">
-                {loading ? "…" : initials}
-              </div>
-            )}
+          {profile.avatarUrl ? (
+            <img
+              src={profile.avatarUrl}
+              alt={profile.name || "avatar"}
+              className="h-9 w-9 rounded-full object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : (
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 font-bold text-slate-700">
+              {initials}
+            </div>
+          )}
+
+          <div className="hidden sm:flex flex-col leading-tight">
+            <span className="text-sm font-semibold text-slate-900">
+              {profile.name || "Usuário"}
+            </span>
+            <span className="text-xs text-slate-500">{profile.email}</span>
           </div>
 
-          <div className="leading-tight">
-            <div className="text-sm font-semibold text-slate-900">
-              {loading ? "Carregando…" : displayName}
-            </div>
-            <div className="text-xs text-slate-500">
-              {loading ? null : email}
-            </div>
-          </div>
+          <button
+            onClick={handleSignOut}
+            className="ml-2 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+            title="Sair"
+          >
+            Sair
+          </button>
         </div>
       </div>
     </header>

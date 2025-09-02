@@ -1,90 +1,142 @@
+// src/components/KanbanBoard.tsx
 import React, { useMemo, useState } from "react";
+import { DndContext, DragEndEvent, closestCorners } from "@dnd-kit/core";
 import {
-  DndContext,
-  DragEndEvent,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import { useDroppable } from "@dnd-kit/core";
-import { useDraggable } from "@dnd-kit/core";
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Stage, stages, stageLabels, updateOpportunityStage } from "@/services/opportunities";
+import { supabase } from "@/lib/supabaseClient";
 
-type Oportunidade = {
+type Stage =
+  | "novo"
+  | "qualificando"
+  | "proposta"
+  | "negociacao"
+  | "fechado_ganho"
+  | "fechado_perdido";
+
+type Item = {
   id: string;
-  lead_id: string;
-  vendedor_id: string;
-  segmento: string;
-  valor_credito: number;
-  observacao: string | null;
-  score: number;
-  estagio: string;           // legado com acento
-  stage?: Stage;             // enum novo (alguns registros podem não ter; trate como "novo")
-  expected_close_at: string | null;
-  created_at: string;
+  stage?: Stage | null; // alguns registros antigos podem estar nulos
+  estagio?: string | null; // legado
+  lead_id?: string;
+  vendedor_id?: string;
+  valor_credito?: number;
+  segmento?: string;
 };
 
 type Props = {
-  items: Oportunidade[];
-  onChanged?: (updated: Oportunidade[]) => void; // para refletir no pai
+  items: Item[];
+  onChanged?: (items: Item[]) => void;
 };
 
-const columnStyle: React.CSSProperties = {
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
-  borderRadius: 14,
-  padding: 12,
-  minWidth: 260,
-  width: 260,
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-};
+const COLUMNS: { id: Stage; title: string }[] = [
+  { id: "novo", title: "Novo" },
+  { id: "qualificando", title: "Qualificando" },
+  { id: "proposta", title: "Proposta" },
+  { id: "negociacao", title: "Negociação" },
+  { id: "fechado_ganho", title: "Fechado (Ganho)" },
+  { id: "fechado_perdido", title: "Fechado (Perdido)" },
+];
 
-const cardStyle: React.CSSProperties = {
-  background: "#fff",
-  border: "1px solid #e5e7eb",
-  borderRadius: 12,
-  padding: 10,
-  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-  cursor: "grab",
-};
-
-function Column(props: React.PropsWithChildren<{ id: Stage; title: string; count: number }>) {
-  const { setNodeRef, isOver } = useDroppable({ id: props.id });
-  return (
-    <div ref={setNodeRef} style={{ ...columnStyle, outline: isOver ? "2px solid #A11C27" : "none" }}>
-      <div style={{ fontWeight: 700, marginBottom: 4 }}>
-        {props.title} <span style={{ color: "#64748b" }}>({props.count})</span>
-      </div>
-      {props.children}
-    </div>
-  );
+function normalizeStage(item: Item): Stage {
+  // Se o enum 'stage' existir, use-o; caso contrário, mapeie 'estagio' legado
+  if (item.stage) return item.stage;
+  const e = (item.estagio || "").toLowerCase();
+  switch (e) {
+    case "novo":
+      return "novo";
+    case "qualificação":
+    case "qualificacao":
+    case "qualificando":
+      return "qualificando";
+    case "proposta":
+      return "proposta";
+    case "negociação":
+    case "negociacao":
+      return "negociacao";
+    case "convertido":
+    case "fechado (ganho)":
+      return "fechado_ganho";
+    case "perdido":
+    case "fechado (perdido)":
+      return "fechado_perdido";
+    default:
+      return "novo";
+  }
 }
 
-function Card({ id, children }: { id: string; children: React.ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
-  const style: React.CSSProperties = {
-    ...cardStyle,
-    transform: CSS.Translate.toString(transform),
-    opacity: isDragging ? 0.6 : 1,
-  };
+function Column({
+  id,
+  title,
+  children,
+}: {
+  id: Stage;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
+    <div
+      style={{
+        width: 300,
+        background: "#fff",
+        borderRadius: 12,
+        boxShadow: "0 2px 12px rgba(0,0,0,.06)",
+        padding: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+      data-column-id={id}
+    >
+      <div style={{ fontWeight: 700, color: "#334155", marginBottom: 6 }}>
+        {title}
+      </div>
       {children}
     </div>
   );
 }
 
+function Card({ item }: { item: Item }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id: item.id,
+  });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: 10,
+    padding: 10,
+    cursor: "grab",
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <div style={{ fontWeight: 600, color: "#0f172a" }}>{item.segmento || "Oportunidade"}</div>
+      <div style={{ fontSize: 12, color: "#475569" }}>
+        {item.valor_credito
+          ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
+              item.valor_credito
+            )
+          : "—"}
+      </div>
+    </div>
+  );
+}
+
 export default function KanbanBoard({ items, onChanged }: Props) {
-  // Normaliza stage faltando -> "novo"
-  const [data, setData] = useState<Oportunidade[]>(
-    items.map((o) => ({ ...o, stage: (o.stage as Stage) ?? "novo" }))
+  // estado local para trabalhar no board
+  const [data, setData] = useState<Item[]>(
+    (items || []).map((it) => ({ ...it, stage: normalizeStage(it) }))
   );
 
-  const grouped = useMemo(() => {
-    const g: Record<Stage, Oportunidade[]> = {
+  // agrupar por coluna
+  const byColumn = useMemo(() => {
+    const map: Record<Stage, Item[]> = {
       novo: [],
       qualificando: [],
       proposta: [],
@@ -92,66 +144,81 @@ export default function KanbanBoard({ items, onChanged }: Props) {
       fechado_ganho: [],
       fechado_perdido: [],
     };
-    for (const o of data) {
-      const s = (o.stage as Stage) ?? "novo";
-      g[s].push(o);
+    for (const it of data) {
+      map[normalizeStage(it)].push(it);
     }
-    return g;
+    return map;
   }, [data]);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
-  );
+  async function persistStage(opportunityId: string, newStage: Stage) {
+    // Chama a RPC criada no Supabase (com nomes dos parâmetros)
+    const { error } = await supabase.rpc("update_opportunity_stage", {
+      p_id: opportunityId,
+      p_new_stage: newStage,
+      p_reason: null,
+    });
+    if (error) {
+      console.error(error);
+      throw new Error(error.message);
+    }
+  }
 
   async function onDragEnd(evt: DragEndEvent) {
-    const cardId = evt.active?.id as string | undefined;
-    const overCol = evt.over?.id as Stage | undefined;
-    if (!cardId || !overCol) return;
+    const activeId = String(evt.active.id);
+    const overContainer = (evt.over?.data?.current as any)?.containerId as Stage | undefined;
+    // Se não vier do container (por ser card -> coluna), tentamos pegar do DOM data-attr
+    const overFromAttr =
+      (evt.over?.rect ? (evt.over?.node?.getAttribute("data-column-id") as Stage | null) : null) ||
+      null;
+    const destination = overContainer || overFromAttr || undefined;
+    if (!destination) return;
 
-    const current = data.find((d) => d.id === cardId);
-    if (!current || current.stage === overCol) return;
+    const idx = data.findIndex((i) => i.id === activeId);
+    if (idx < 0) return;
 
-    // Otimismo: atualiza UI antes de salvar
-    const previous = current.stage as Stage;
-    setData((prev) =>
-      prev.map((p) => (p.id === cardId ? { ...p, stage: overCol } : p))
-    );
+    const currentStage = normalizeStage(data[idx]);
+    if (currentStage === destination) return;
+
+    // otimismo: move local primeiro
+    const next = [...data];
+    next[idx] = { ...next[idx], stage: destination };
+    setData(next);
+    onChanged?.(next);
 
     try {
-      await updateOpportunityStage(cardId, overCol);
-      const updated = data.map((p) => (p.id === cardId ? { ...p, stage: overCol } : p));
-      onChanged?.(updated);
-    } catch (err: any) {
-      // Reverte em caso de erro
-      console.error(err);
-      setData((prev) =>
-        prev.map((p) => (p.id === cardId ? { ...p, stage: previous } : p))
-      );
-      alert("Não foi possível mover a oportunidade: " + err.message);
+      await persistStage(activeId, destination);
+    } catch (e) {
+      alert("Falha ao atualizar estágio: " + (e as Error).message);
+      // rollback em caso de erro
+      const rollback = [...data];
+      setData(rollback);
+      onChanged?.(rollback);
     }
   }
 
   return (
-    <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 12 }}>
-      <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-        {stages.map((s) => (
-          <Column key={s} id={s} title={stageLabels[s]} count={grouped[s].length}>
-            {grouped[s].map((o) => (
-              <Card key={o.id} id={o.id}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{o.segmento}</div>
-                <div style={{ fontSize: 12, color: "#64748b" }}>
-                  Valor:{" "}
-                  {new Intl.NumberFormat("pt-BR", {
-                    style: "currency",
-                    currency: "BRL",
-                  }).format(o.valor_credito)}
-                  {" · "}Score: {"★".repeat(o.score)}
-                </div>
-              </Card>
-            ))}
+    <DndContext collisionDetection={closestCorners} onDragEnd={onDragEnd}>
+      <div style={{ display: "flex", gap: 12, overflowX: "auto" }}>
+        {COLUMNS.map((col) => (
+          <Column key={col.id} id={col.id} title={col.title}>
+            <SortableContext
+              items={byColumn[col.id].map((i) => i.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div data-column-id={col.id} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {byColumn[col.id].map((it) => (
+                  <Card key={it.id} item={it} />
+                ))}
+                {!byColumn[col.id].length && (
+                  <div style={{ color: "#94a3b8", fontSize: 12, textAlign: "center", padding: 6 }}>
+                    (vazio)
+                  </div>
+                )}
+              </div>
+            </SortableContext>
           </Column>
         ))}
-      </DndContext>
-    </div>
+      </div>
+    </DndContext>
   );
 }

@@ -352,3 +352,13 @@ export default function Oportunidades() {
 // estilos da tabela
 const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
 const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
+// no topo
+import KanbanBoard from "@/components/KanbanBoard";
+
+// ...dentro do componente Oportunidades(), logo abaixo do DashboardKpis:
+<div style={{ marginBottom: 16 }}>
+  <KanbanBoard
+    items={lista as any}
+    onChanged={(updated) => setLista(updated as any)}
+  />
+</div>

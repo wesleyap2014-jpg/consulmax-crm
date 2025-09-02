@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import DashboardKpis from "../components/DashboardKpis";
+import KanbanBoard from "@/components/KanbanBoard"; // <-- IMPORTE AQUI, NO TOPO
 
 type Lead = {
   id: string;
@@ -16,15 +17,26 @@ type Vendedor = {
 
 type Estagio = "Novo" | "Qualificação" | "Proposta" | "Negociação" | "Convertido" | "Perdido";
 
+// Enum novo do banco (kanban)
+type Stage =
+  | "novo"
+  | "qualificando"
+  | "proposta"
+  | "negociacao"
+  | "fechado_ganho"
+  | "fechado_perdido";
+
 type Oportunidade = {
   id: string;
   lead_id: string;
   vendedor_id: string;
+  owner_id?: string;
   segmento: string;
   valor_credito: number;
   observacao: string | null;
-  score: number; // 1..5
-  estagio: Estagio;
+  score: number;               // 1..5
+  estagio: Estagio;            // legado (texto com acento)
+  stage?: Stage;               // enum novo (pode estar nulo em registros antigos)
   expected_close_at: string | null; // yyyy-mm-dd
   created_at: string;
 };
@@ -79,11 +91,11 @@ export default function Oportunidades() {
         setVendedores((v || []) as Vendedor[]);
       }
 
-      // Oportunidades
+      // Oportunidades (inclua 'stage' para o Kanban)
       const { data: o, error: oErr } = await supabase
         .from("opportunities")
         .select(
-          "id, lead_id, vendedor_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
+          "id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, estagio, stage, expected_close_at, created_at"
         )
         .order("created_at", { ascending: false });
       if (oErr) {
@@ -116,12 +128,14 @@ export default function Oportunidades() {
         {
           lead_id: leadId,
           vendedor_id: vendId,
-          owner_id: vendId, // <<< importante para passar nas policies/RLS
+          owner_id: vendId, // <<< importante para RLS
           segmento,
           valor_credito: valorNum,
           observacao: obs || null,
           score,
-          estagio, // precisa obedecer ao CHECK de texto: "Novo", "Qualificação", ...
+          estagio, // "Novo", "Qualificação", ...
+          // opcional: se quiser já colocar o enum:
+          // stage: "novo" as Stage,
           expected_close_at: expectedDate || null,
         },
       ])
@@ -154,9 +168,17 @@ export default function Oportunidades() {
     <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
       <h2 style={{ marginBottom: 12 }}>Oportunidades</h2>
 
-      {/* KPIs (usa views criadas) */}
+      {/* KPIs */}
       <div style={{ marginBottom: 16 }}>
         <DashboardKpis />
+      </div>
+
+      {/* KANBAN */}
+      <div style={{ marginBottom: 16 }}>
+        <KanbanBoard
+          items={lista as any}
+          onChanged={(updated) => setLista(updated as any)}
+        />
       </div>
 
       {/* Filtro por vendedor */}
@@ -300,7 +322,7 @@ export default function Oportunidades() {
         </div>
       </div>
 
-      {/* Lista */}
+      {/* Lista (continua como estava) */}
       <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
         <h3 style={{ margin: 0, marginBottom: 12 }}>Oportunidades</h3>
         <div style={{ overflowX: "auto" }}>
@@ -352,13 +374,3 @@ export default function Oportunidades() {
 // estilos da tabela
 const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
 const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
-// no topo
-import KanbanBoard from "@/components/KanbanBoard";
-
-// ...dentro do componente Oportunidades(), logo abaixo do DashboardKpis:
-<div style={{ marginBottom: 16 }}>
-  <KanbanBoard
-    items={lista as any}
-    onChanged={(updated) => setLista(updated as any)}
-  />
-</div>

@@ -9,6 +9,7 @@ import Usuarios from './pages/Usuarios';
 import TermsLGPD from './pages/TermsLGPD';
 import RequireAuth from './components/auth/RequireAuth';
 import AlterarSenha from './pages/AlterarSenha';
+import Carteira from './pages/Carteira'; // 🚀 nova guia
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
           { path: 'leads', element: <Leads /> },
           { path: 'oportunidades', element: <Oportunidades /> },
           { path: 'usuarios', element: <Usuarios /> },
+          { path: 'carteira', element: <Carteira /> },   // ✅ adicionada aqui
           { path: 'lgpd', element: <TermsLGPD /> },
           { path: '*', element: <Navigate to="/leads" replace /> },
         ],

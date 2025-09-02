@@ -16,7 +16,7 @@ type StageUI =
 
 type EstagioDB =
   | "Novo"
-  | "Qualificação"
+  | "Qualificando"
   | "Proposta"
   | "Negociação"
   | "Fechado (Ganho)"
@@ -31,7 +31,7 @@ type Oportunidade = {
   valor_credito: number;
   observacao: string | null;
   score: number;
-  estagio: EstagioDB | string; // <- pode vir “diferente”, por isso deixei string também
+  estagio: EstagioDB | string; // pode vir “diferente” (dados legados)
   expected_close_at: string | null;
   created_at: string;
 };
@@ -46,9 +46,10 @@ const segmentos = [
   "Imóvel Estendido",
 ] as const;
 
+/** Mapas UI ↔ DB (alinhados com o ENUM/CHECK do banco) */
 const uiToDB: Record<StageUI, EstagioDB> = {
   novo: "Novo",
-  qualificando: "Qualificação",
+  qualificando: "Qualificando",
   proposta: "Proposta",
   negociacao: "Negociação",
   fechado_ganho: "Fechado (Ganho)",
@@ -57,8 +58,9 @@ const uiToDB: Record<StageUI, EstagioDB> = {
 
 const dbToUI: Partial<Record<string, StageUI>> = {
   Novo: "novo",
-  Qualificação: "qualificando",
-  Qualificacao: "qualificando",
+  Qualificando: "qualificando",    // padrão atual
+  Qualificação: "qualificando",    // legado
+  Qualificacao: "qualificando",    // legado
   Proposta: "proposta",
   Negociação: "negociacao",
   Negociacao: "negociacao",
@@ -71,25 +73,22 @@ function moedaParaNumeroBR(valor: string) {
   return Number(limpo || 0);
 }
 function fmtBRL(n: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
-    n || 0
-  );
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
 }
 
-/** Converte rótulos/valores variados para o que o CHECK da tabela aceita */
+/** Converte rótulos variados para um dos 6 canônicos aceitos pelo banco */
 function normalizeEstagioDB(label: string): EstagioDB {
   const v = (label || "").toLowerCase();
 
   if (v.includes("fechado") && v.includes("ganho")) return "Fechado (Ganho)";
   if (v.includes("fechado") && v.includes("perdido")) return "Fechado (Perdido)";
 
-  if (v.startsWith("qualifica")) return "Qualificação";
+  if (v.startsWith("qualifica")) return "Qualificando";
   if (v.startsWith("proposta")) return "Proposta";
   if (v.startsWith("negocia")) return "Negociação";
   if (v.startsWith("novo")) return "Novo";
 
-  // fallback seguro
-  // (se vier um texto inesperado, prefira "Novo" para não violar o CHECK)
+  // fallback seguro para não violar o CHECK
   return "Novo";
 }
 
@@ -140,10 +139,7 @@ export default function Oportunidades() {
 
   /** Filtro por vendedor (aplicado nas seções abaixo do filtro) */
   const visiveis = useMemo(
-    () =>
-      lista.filter((o) =>
-        filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor
-      ),
+    () => lista.filter((o) => (filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor)),
     [lista, filtroVendedor]
   );
 
@@ -188,7 +184,7 @@ export default function Oportunidades() {
       valor_credito: valorNum,
       observacao: obs ? `[${new Date().toLocaleString("pt-BR")}]\n${obs}` : null,
       score,
-      estagio: uiToDB[stageUI] as EstagioDB, // compatível com o CHECK
+      estagio: uiToDB[stageUI] as EstagioDB, // compatível com o CHECK/ENUM
       expected_close_at: isoDate,
     };
 
@@ -230,17 +226,18 @@ export default function Oportunidades() {
   }
   async function saveEdit() {
     if (!editing) return;
+
     const historico =
       (editing.observacao ? editing.observacao + "\n\n" : "") +
       (newNote ? `[${new Date().toLocaleString("pt-BR")}]\n${newNote}` : "");
 
+    // normaliza estágio e garante data nula quando em branco
     const payload = {
       segmento: editing.segmento,
       valor_credito: editing.valor_credito,
       score: editing.score,
-      // -> aqui está o pulo do gato: normaliza para o que o CHECK aceita
       estagio: normalizeEstagioDB(String(editing.estagio)),
-      expected_close_at: editing.expected_close_at,
+      expected_close_at: editing.expected_close_at?.trim() ? editing.expected_close_at : null,
       observacao: historico || editing.observacao || null,
     };
 
@@ -492,7 +489,11 @@ export default function Oportunidades() {
 
           <div>
             <label style={label}>Probabilidade de fechamento</label>
-            <select value={String(score)} onChange={(e) => setScore(Number(e.target.value))} style={input}>
+            <select
+              value={String(score)}
+              onChange={(e) => setScore(Number(e.target.value))}
+              style={input}
+            >
               {[1, 2, 3, 4, 5].map((n) => (
                 <option key={n} value={n}>
                   {"★".repeat(n)}
@@ -503,7 +504,11 @@ export default function Oportunidades() {
 
           <div>
             <label style={label}>Estágio</label>
-            <select value={stageUI} onChange={(e) => setStageUI(e.target.value as StageUI)} style={input}>
+            <select
+              value={stageUI}
+              onChange={(e) => setStageUI(e.target.value as StageUI)}
+              style={input}
+            >
               <option value="novo">Novo</option>
               <option value="qualificando">Qualificando</option>
               <option value="proposta">Proposta</option>
@@ -596,7 +601,7 @@ export default function Oportunidades() {
                   style={input}
                 >
                   <option value="Novo">Novo</option>
-                  <option value="Qualificação">Qualificação</option>
+                  <option value="Qualificando">Qualificando</option>
                   <option value="Proposta">Proposta</option>
                   <option value="Negociação">Negociação</option>
                   <option value="Fechado (Ganho)">Fechado (Ganho)</option>
@@ -607,7 +612,12 @@ export default function Oportunidades() {
                 <label style={label}>Previsão (aaaa-mm-dd)</label>
                 <input
                   value={editing.expected_close_at || ""}
-                  onChange={(e) => setEditing({ ...editing, expected_close_at: e.target.value })}
+                  onChange={(e) =>
+                    setEditing({
+                      ...editing,
+                      expected_close_at: e.target.value,
+                    })
+                  }
                   style={input}
                   placeholder="2025-09-20"
                 />
@@ -695,7 +705,7 @@ const label: React.CSSProperties = {
   marginBottom: 6,
 };
 const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
-const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
+const td: React.CSSProperties = { padding: 8, borderTop: "1px solid "#eee" };
 const btnPrimary: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,

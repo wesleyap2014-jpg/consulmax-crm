@@ -1,20 +1,13 @@
 // src/pages/Oportunidades.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import KanbanBoard from "@/components/KanbanBoard";
 
-type Lead = {
-  id: string;
-  nome: string;
-  owner_id: string;
-};
+/** ------------- Tipos ------------- */
+type Lead = { id: string; nome: string; owner_id: string };
+type Vendedor = { auth_user_id: string; nome: string };
 
-type Vendedor = {
-  auth_user_id: string;
-  nome: string;
-};
-
-type EstagioUi =
+// estágio "de tela" (minúsculo, simples de trabalhar no UI)
+type StageUI =
   | "novo"
   | "qualificando"
   | "proposta"
@@ -22,20 +15,30 @@ type EstagioUi =
   | "fechado_ganho"
   | "fechado_perdido";
 
+// texto que o banco aceita no campo legado `estagio` (check constraint)
+type EstagioDB =
+  | "Novo"
+  | "Qualificação"
+  | "Proposta"
+  | "Negociação"
+  | "Fechado (Ganho)"
+  | "Fechado (Perdido)";
+
 type Oportunidade = {
   id: string;
   lead_id: string;
   vendedor_id: string;
+  owner_id?: string | null;
   segmento: string;
   valor_credito: number;
   observacao: string | null;
-  score: number;
-  estagio: string | null; // legado texto (pode existir)
-  stage?: EstagioUi | null; // enum novo (se já existir no banco)
-  expected_close_at: string | null;
+  score: number; // 1..5
+  estagio: EstagioDB; // <- importante para o constraint
+  expected_close_at: string | null; // yyyy-mm-dd
   created_at: string;
 };
 
+/** ------------- Helpers ------------- */
 const segmentos = [
   "Automóvel",
   "Imóvel",
@@ -45,44 +48,59 @@ const segmentos = [
   "Imóvel Estendido",
 ] as const;
 
-// helpers
+const uiToDB: Record<StageUI, EstagioDB> = {
+  novo: "Novo",
+  qualificando: "Qualificação",
+  proposta: "Proposta",
+  negociacao: "Negociação",
+  fechado_ganho: "Fechado (Ganho)",
+  fechado_perdido: "Fechado (Perdido)",
+};
+
+const dbToUI: Record<EstagioDB, StageUI> = {
+  "Novo": "novo",
+  "Qualificação": "qualificando",
+  "Proposta": "proposta",
+  "Negociação": "negociacao",
+  "Fechado (Ganho)": "fechado_ganho",
+  "Fechado (Perdido)": "fechado_perdido",
+};
+
 function moedaParaNumeroBR(valor: string) {
+  // aceita "12.345,67" ou "12345.67" e retorna Number
   const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
   return Number(limpo || 0);
 }
-function formatBRL(n: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
-}
-function normalizeStage(o: Oportunidade): EstagioUi {
-  if (o.stage) return o.stage;
-  const e = (o.estagio || "").toLowerCase();
-  if (e.includes("novo")) return "novo";
-  if (e.includes("qual")) return "qualificando";
-  if (e.includes("proposta")) return "proposta";
-  if (e.includes("negoc")) return "negociacao";
-  if (e.includes("ganho") || e.includes("convertido")) return "fechado_ganho";
-  if (e.includes("perdido")) return "fechado_perdido";
-  return "novo";
+
+function fmtBRL(n: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
+    n || 0
+  );
 }
 
+/** ------------- Página ------------- */
 export default function Oportunidades() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [lista, setLista] = useState<Oportunidade[]>([]);
   const [filtroVendedor, setFiltroVendedor] = useState<string>("all");
 
-  // formulário
+  // formulário - Nova oportunidade
   const [leadId, setLeadId] = useState("");
   const [vendId, setVendId] = useState("");
   const [segmento, setSegmento] = useState<string>("Automóvel");
   const [valor, setValor] = useState("");
   const [obs, setObs] = useState("");
-  const [score, setScore] = useState(3);
-  const [estagio, setEstagio] = useState<EstagioUi>("novo");
-  const [expectedDate, setExpectedDate] = useState<string>("");
-
+  const [score, setScore] = useState(1);
+  const [stageUI, setStageUI] = useState<StageUI>("novo");
+  const [expectedDate, setExpectedDate] = useState<string>(""); // dd/mm/aaaa no input
   const [loading, setLoading] = useState(false);
 
+  // modal "Tratar Lead"
+  const [editing, setEditing] = useState<Oportunidade | null>(null);
+  const [newNote, setNewNote] = useState("");
+
+  /** Carregar listas iniciais */
   useEffect(() => {
     (async () => {
       const { data: l } = await supabase
@@ -97,66 +115,72 @@ export default function Oportunidades() {
       const { data: o } = await supabase
         .from("opportunities")
         .select(
-          "id, lead_id, vendedor_id, segmento, valor_credito, observacao, score, estagio, stage, expected_close_at, created_at"
+          "id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
         )
         .order("created_at", { ascending: false });
+
       setLista((o || []) as Oportunidade[]);
     })();
   }, []);
 
-  // dados do Kanban (somente abertas)
-  const abertas = useMemo(
+  /** Filtro por vendedor (aplicado nas seções abaixo do filtro) */
+  const visiveis = useMemo(
     () =>
-      lista
-        .filter((o) => {
-          const s = normalizeStage(o);
-          return s !== "fechado_ganho" && s !== "fechado_perdido";
-        })
-        .filter((o) => (filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor)),
+      lista.filter((o) =>
+        filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor
+      ),
     [lista, filtroVendedor]
   );
 
-  // KPIs para os 6 cards
-  const kpis = useMemo(() => {
-    const base = {
+  /** KPI por estágio (usando lista inteira — sem filtro, como no seu mock) */
+  const kpi = useMemo(() => {
+    const base: Record<StageUI, { qtd: number; total: number }> = {
       novo: { qtd: 0, total: 0 },
       qualificando: { qtd: 0, total: 0 },
       proposta: { qtd: 0, total: 0 },
       negociacao: { qtd: 0, total: 0 },
       fechado_ganho: { qtd: 0, total: 0 },
       fechado_perdido: { qtd: 0, total: 0 },
-    } as Record<EstagioUi, { qtd: number; total: number }>;
-
+    };
     for (const o of lista) {
-      const s = normalizeStage(o);
-      base[s].qtd += 1;
-      base[s].total += o.valor_credito || 0;
+      const k = dbToUI[o.estagio];
+      base[k].qtd += 1;
+      base[k].total += o.valor_credito || 0;
     }
     return base;
   }, [lista]);
 
+  /** Criar oportunidade */
   async function criarOportunidade() {
     if (!leadId) return alert("Selecione um Lead.");
     if (!vendId) return alert("Selecione um Vendedor.");
     const valorNum = moedaParaNumeroBR(valor);
     if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
 
+    // converter data dd/mm/aaaa -> yyyy-mm-dd
+    let isoDate: string | null = null;
+    if (expectedDate) {
+      const [d, m, y] = expectedDate.split("/");
+      if (d && m && y) isoDate = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    }
+
     setLoading(true);
+    const payload = {
+      lead_id: leadId,
+      vendedor_id: vendId,
+      owner_id: vendId, // RLS
+      segmento,
+      valor_credito: valorNum,
+      observacao: obs ? `[${new Date().toLocaleString("pt-BR")}]\n${obs}` : null,
+      score,
+      // ⚠️ campo legado do banco com check constraint — NÃO pode ser nulo
+      estagio: uiToDB[stageUI] as EstagioDB,
+      expected_close_at: isoDate,
+    };
+
     const { data, error } = await supabase
       .from("opportunities")
-      .insert([
-        {
-          lead_id: leadId,
-          vendedor_id: vendId,
-          owner_id: vendId, // compatível com RLS
-          segmento,
-          valor_credito: valorNum,
-          observacao: obs || null,
-          score,
-          stage: estagio, // grave o enum moderno
-          expected_close_at: expectedDate || null,
-        },
-      ])
+      .insert([payload])
       .select()
       .single();
 
@@ -170,85 +194,203 @@ export default function Oportunidades() {
 
     setLista((s) => [data as Oportunidade, ...s]);
 
-    // limpa form
+    // limpar form
     setLeadId("");
     setVendId("");
     setSegmento("Automóvel");
     setValor("");
     setObs("");
-    setScore(3);
-    setEstagio("novo");
+    setScore(1);
+    setStageUI("novo");
     setExpectedDate("");
     alert("Oportunidade criada!");
   }
 
-  return (
-    <div
-      style={{
-        maxWidth: 1200,
-        margin: "24px auto",
-        padding: "0 16px",
-        fontFamily: "Inter, system-ui, Arial",
-      }}
-    >
-      {/* CARDS DE KPI (6 colunas, como no seu modelo) */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(6, minmax(0,1fr))",
-          gap: 12,
-          marginBottom: 16,
-        }}
-      >
-        {(
-          [
-            ["novo", "Novo"],
-            ["qualificando", "Qualificando"],
-            ["proposta", "Proposta"],
-            ["negociacao", "Negociação"],
-            ["fechado_ganho", "Fechado (Ganho)"],
-            ["fechado_perdido", "Fechado (Perdido)"],
-          ] as const
-        ).map(([key, label]) => (
+  /** Abrir/Salvar modal Tratar Lead */
+  function openEdit(o: Oportunidade) {
+    setEditing(o);
+    setNewNote("");
+  }
+  function closeEdit() {
+    setEditing(null);
+    setNewNote("");
+  }
+  async function saveEdit() {
+    if (!editing) return;
+    // concatenar histórico de observações
+    const historico =
+      (editing.observacao ? editing.observacao + "\n\n" : "") +
+      (newNote ? `[${new Date().toLocaleString("pt-BR")}]\n${newNote}` : "");
+
+    // UI da modal usa campos já no formato correto (mantemos o valor em editing)
+    const payload = {
+      segmento: editing.segmento,
+      valor_credito: editing.valor_credito,
+      score: editing.score,
+      estagio: editing.estagio, // já está no texto aceito pelo banco
+      expected_close_at: editing.expected_close_at, // yyyy-mm-dd
+      observacao: historico || editing.observacao || null,
+    };
+
+    const { error, data } = await supabase
+      .from("opportunities")
+      .update(payload)
+      .eq("id", editing.id)
+      .select()
+      .single();
+
+    if (error) {
+      alert("Falha ao salvar: " + error.message);
+      return;
+    }
+
+    // refletir na lista
+    setLista((s) => s.map((x) => (x.id === editing.id ? (data as Oportunidade) : x)));
+    closeEdit();
+  }
+
+  /** ------------- UI ------------- */
+
+  // Cards KPI (só contagem e valor)
+  const CardsKPI = () => {
+    const ORDER: { id: StageUI; label: string }[] = [
+      { id: "novo", label: "Novo" },
+      { id: "qualificando", label: "Qualificando" },
+      { id: "proposta", label: "Proposta" },
+      { id: "negociacao", label: "Negociação" },
+      { id: "fechado_ganho", label: "Fechado (Ganho)" },
+      { id: "fechado_perdido", label: "Fechado (Perdido)" },
+    ];
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 16 }}>
+        {ORDER.map(({ id, label }) => (
           <div
-            key={key}
+            key={id}
             style={{
               background: "#fff",
-              borderRadius: 12,
+              borderRadius: 14,
+              boxShadow: "0 2px 10px rgba(0,0,0,.06)",
               padding: 14,
-              boxShadow: "0 2px 12px rgba(0,0,0,.06)",
             }}
           >
-            <div style={{ fontWeight: 800, color: "#1f2937", marginBottom: 6 }}>{label}</div>
-            <div style={{ fontSize: 13, color: "#111827" }}>
-              <div>Qtd: {kpis[key as EstagioUi].qtd}</div>
-              <div>Valor: {formatBRL(kpis[key as EstagioUi].total)}</div>
-            </div>
+            <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{label}</div>
+            <div style={{ color: "#1f2937" }}>Qtd: {kpi[id].qtd}</div>
+            <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(kpi[id].total)}</div>
           </div>
         ))}
       </div>
+    );
+  };
 
-      {/* FILTRO POR VENDEDOR (com rótulo, igual ao mock) */}
-      <div
-        style={{
-          background: "#fff",
-          padding: 16,
-          borderRadius: 12,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-          marginBottom: 16,
-        }}
-      >
-        <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>Filtrar por vendedor</div>
+  // Tabela simples com botão "Tratar Lead"
+  const ListaOportunidades = () => {
+    const linhas = visiveis.filter(
+      (o) => dbToUI[o.estagio] !== "fechado_ganho" && dbToUI[o.estagio] !== "fechado_perdido"
+    );
+    return (
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>Oportunidades</h3>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+            <thead>
+              <tr>
+                <th style={th}>Lead</th>
+                <th style={th}>Vendedor</th>
+                <th style={th}>Segmento</th>
+                <th style={th}>Valor</th>
+                <th style={th}>Prob.</th>
+                <th style={th}>Estágio</th>
+                <th style={th}>Previsão</th>
+                <th style={th}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.map((o) => (
+                <tr key={o.id}>
+                  <td style={td}>{leads.find((l) => l.id === o.lead_id)?.nome || "-"}</td>
+                  <td style={td}>
+                    {vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}
+                  </td>
+                  <td style={td}>{o.segmento}</td>
+                  <td style={td}>{fmtBRL(o.valor_credito)}</td>
+                  <td style={td}>{"★".repeat(Math.max(1, Math.min(5, o.score)))}</td>
+                  <td style={td}>{o.estagio}</td>
+                  <td style={td}>
+                    {o.expected_close_at
+                      ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
+                      : "-"}
+                  </td>
+                  <td style={td}>
+                    <button onClick={() => openEdit(o)} style={btnPrimary}>
+                      Tratar Lead
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!linhas.length && (
+                <tr>
+                  <td style={td} colSpan={8}>
+                    Nenhuma oportunidade encontrada.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  // Fechadas (ganho/perdido)
+  const CardsFechadas = () => {
+    const ganhos = visiveis.filter((o) => dbToUI[o.estagio] === "fechado_ganho");
+    const perdidos = visiveis.filter((o) => dbToUI[o.estagio] === "fechado_perdido");
+    return (
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>Oportunidades Fechadas</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div style={subCard}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Ganhos</div>
+            <div style={{ color: "#475569", marginBottom: 8 }}>
+              Qtd: {ganhos.length} — Valor: {fmtBRL(ganhos.reduce((s, x) => s + x.valor_credito, 0))}
+            </div>
+            {ganhos.map((g) => (
+              <div key={g.id} style={pill}>
+                {g.segmento} — {fmtBRL(g.valor_credito)}
+              </div>
+            ))}
+            {!ganhos.length && <div style={{ color: "#94a3b8" }}>(vazio)</div>}
+          </div>
+          <div style={subCard}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Perdidos</div>
+            <div style={{ color: "#475569", marginBottom: 8 }}>
+              Qtd: {perdidos.length} — Valor:{" "}
+              {fmtBRL(perdidos.reduce((s, x) => s + x.valor_credito, 0))}
+            </div>
+            {perdidos.map((g) => (
+              <div key={g.id} style={pill}>
+                {g.segmento} — {fmtBRL(g.valor_credito)}
+              </div>
+            ))}
+            {!perdidos.length && <div style={{ color: "#94a3b8" }}>(vazio)</div>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
+      {/* KPI no topo */}
+      <CardsKPI />
+
+      {/* Filtro por vendedor */}
+      <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", margin: "16px 0" }}>
+        <label style={label}>Filtrar por vendedor</label>
         <select
           value={filtroVendedor}
           onChange={(e) => setFiltroVendedor(e.target.value)}
-          style={{
-            width: "100%",
-            padding: 12,
-            borderRadius: 12,
-            border: "1px solid #e5e7eb",
-            outline: "none",
-          }}
+          style={input}
         >
           <option value="all">Todos os vendedores</option>
           {vendedores.map((v) => (
@@ -259,140 +401,306 @@ export default function Oportunidades() {
         </select>
       </div>
 
-      {/* KANBAN (o mesmo de antes) */}
-      <div style={{ marginBottom: 16 }}>
-        <KanbanBoard items={abertas as any} onChanged={(updated) => setLista(updated as any)} />
-      </div>
+      {/* Lista + ações */}
+      <ListaOportunidades />
+      <CardsFechadas />
 
-      {/* FORMULÁRIO DE NOVA OPORTUNIDADE */}
-      <div
-        style={{
-          background: "#fff",
-          padding: 16,
-          borderRadius: 12,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-          marginBottom: 24,
-        }}
-      >
-        <h3 style={{ margin: 0, marginBottom: 12 }}>Nova oportunidade</h3>
+      {/* Form Nova oportunidade */}
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
+        <div style={grid2}>
+          <div>
+            <label style={label}>Selecionar um Lead</label>
+            <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={input}>
+              <option value="">Selecione um Lead</option>
+              {leads.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.nome}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div
+          <div>
+            <label style={label}>Selecione um Vendedor</label>
+            <select value={vendId} onChange={(e) => setVendId(e.target.value)} style={input}>
+              <option value="">Selecione um Vendedor</option>
+              {vendedores.map((v) => (
+                <option key={v.auth_user_id} value={v.auth_user_id}>
+                  {v.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={label}>Selecione um Segmento</label>
+            <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={input}>
+              {segmentos.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={label}>Valor do crédito (R$)</label>
+            <input value={valor} onChange={(e) => setValor(e.target.value)} style={input} placeholder="Ex.: 80.000,00" />
+          </div>
+
+          <div>
+            <label style={label}>Observações</label>
+            <input value={obs} onChange={(e) => setObs(e.target.value)} style={input} placeholder="Observação inicial (opcional)" />
+          </div>
+
+          <div>
+            <label style={label}>Probabilidade de fechamento</label>
+            <select value={String(score)} onChange={(e) => setScore(Number(e.target.value))} style={input}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {"★".repeat(n)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={label}>Estágio</label>
+            <select value={stageUI} onChange={(e) => setStageUI(e.target.value as StageUI)} style={input}>
+              <option value="novo">Novo</option>
+              <option value="qualificando">Qualificando</option>
+              <option value="proposta">Proposta</option>
+              <option value="negociacao">Negociação</option>
+              <option value="fechado_ganho">Fechado (Ganho)</option>
+              <option value="fechado_perdido">Fechado (Perdido)</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={label}>Data prevista para fechamento</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="dd/mm/aaaa"
+              value={expectedDate}
+              onChange={(e) => setExpectedDate(e.target.value)}
+              style={input}
+            />
+          </div>
+        </div>
+
+        <button
+          onClick={criarOportunidade}
+          disabled={loading}
           style={{
-            display: "grid",
-            gap: 12,
-            gridTemplateColumns: "repeat(3, 1fr)",
+            marginTop: 12,
+            width: "100%",
+            padding: "12px 16px",
+            borderRadius: 12,
+            background: "#A11C27",
+            color: "#fff",
+            border: 0,
+            cursor: loading ? "not-allowed" : "pointer",
+            fontWeight: 800,
           }}
         >
-          <select
-            value={leadId}
-            onChange={(e) => setLeadId(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-            title="Selecionar um Lead"
-          >
-            <option value="">Selecione um Lead</option>
-            {leads.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.nome}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={vendId}
-            onChange={(e) => setVendId(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-            title="Selecione um Vendedor"
-          >
-            <option value="">Selecione um Vendedor</option>
-            {vendedores.map((v) => (
-              <option key={v.auth_user_id} value={v.auth_user_id}>
-                {v.nome}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={segmento}
-            onChange={(e) => setSegmento(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-            title="Selecione um Segmento"
-          >
-            {segmentos.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-
-          <input
-            placeholder="Valor do crédito (R$)"
-            value={valor}
-            onChange={(e) => setValor(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-            title="Valor do crédito"
-          />
-
-          <input
-            placeholder="Observações"
-            value={obs}
-            onChange={(e) => setObs(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-            title="Observações"
-          />
-
-          <select
-            value={String(score)}
-            onChange={(e) => setScore(Number(e.target.value))}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-            title="Probabilidade de fechamento"
-          >
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>
-                {"★".repeat(n)}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={estagio}
-            onChange={(e) => setEstagio(e.target.value as EstagioUi)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-            title="Estágio"
-          >
-            <option value="novo">Novo</option>
-            <option value="qualificando">Qualificando</option>
-            <option value="proposta">Proposta</option>
-            <option value="negociacao">Negociação</option>
-            <option value="fechado_ganho">Fechado (Ganho)</option>
-            <option value="fechado_perdido">Fechado (Perdido)</option>
-          </select>
-
-          <input
-            type="date"
-            value={expectedDate}
-            onChange={(e) => setExpectedDate(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
-            title="Data prevista para fechamento"
-          />
-
-          <button
-            onClick={criarOportunidade}
-            disabled={loading}
-            style={{
-              gridColumn: "1 / span 3",
-              padding: "12px 16px",
-              borderRadius: 12,
-              background: "#A11C27",
-              color: "#fff",
-              border: 0,
-              cursor: loading ? "not-allowed" : "pointer",
-              fontWeight: 700,
-            }}
-          >
-            {loading ? "Criando..." : "Criar oportunidade"}
-          </button>
-        </div>
+          {loading ? "Criando..." : "Criar oportunidade"}
+        </button>
       </div>
+
+      {/* Modal Tratar Lead */}
+      {editing && (
+        <div style={modalBackdrop}>
+          <div style={modalCard}>
+            <h3 style={{ marginTop: 0 }}>Tratar Lead</h3>
+            <div style={grid2}>
+              <div>
+                <label style={label}>Segmento</label>
+                <select
+                  value={editing.segmento}
+                  onChange={(e) => setEditing({ ...editing, segmento: e.target.value })}
+                  style={input}
+                >
+                  {segmentos.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={label}>Valor do crédito (R$)</label>
+                <input
+                  value={String(editing.valor_credito)}
+                  onChange={(e) =>
+                    setEditing({ ...editing, valor_credito: moedaParaNumeroBR(e.target.value) })
+                  }
+                  style={input}
+                />
+              </div>
+              <div>
+                <label style={label}>Probabilidade</label>
+                <select
+                  value={String(editing.score)}
+                  onChange={(e) => setEditing({ ...editing, score: Number(e.target.value) })}
+                  style={input}
+                >
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {"★".repeat(n)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={label}>Estágio</label>
+                <select
+                  value={editing.estagio}
+                  onChange={(e) => setEditing({ ...editing, estagio: e.target.value as EstagioDB })}
+                  style={input}
+                >
+                  <option value="Novo">Novo</option>
+                  <option value="Qualificação">Qualificação</option>
+                  <option value="Proposta">Proposta</option>
+                  <option value="Negociação">Negociação</option>
+                  <option value="Fechado (Ganho)">Fechado (Ganho)</option>
+                  <option value="Fechado (Perdido)">Fechado (Perdido)</option>
+                </select>
+              </div>
+              <div>
+                <label style={label}>Previsão (aaaa-mm-dd)</label>
+                <input
+                  value={editing.expected_close_at || ""}
+                  onChange={(e) => setEditing({ ...editing, expected_close_at: e.target.value })}
+                  style={input}
+                  placeholder="2025-09-20"
+                />
+              </div>
+              <div style={{ gridColumn: "1 / span 2" }}>
+                <label style={label}>Adicionar observação</label>
+                <textarea
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  style={{ ...input, minHeight: 90 }}
+                  placeholder="Escreva uma nova observação. O histórico anterior será mantido."
+                />
+                <div style={{ marginTop: 8, color: "#64748b", fontSize: 12 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Histórico</div>
+                  <pre
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      background: "#f8fafc",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 8,
+                      padding: 8,
+                      maxHeight: 180,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {editing.observacao || "(sem anotações)"}
+                  </pre>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={saveEdit} style={btnPrimary}>
+                Salvar alterações
+              </button>
+              <button onClick={closeEdit} style={btnGhost}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+/** ------------- estilos inline simples ------------- */
+const card: React.CSSProperties = {
+  background: "#fff",
+  borderRadius: 16,
+  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+  padding: 16,
+  marginBottom: 16,
+};
+
+const subCard: React.CSSProperties = {
+  background: "#fff",
+  border: "1px solid #e5e7eb",
+  borderRadius: 12,
+  padding: 12,
+};
+
+const pill: React.CSSProperties = {
+  padding: "8px 10px",
+  borderRadius: 10,
+  border: "1px solid #e5e7eb",
+  background: "#f8fafc",
+  marginBottom: 8,
+};
+
+const grid2: React.CSSProperties = {
+  display: "grid",
+  gap: 12,
+  gridTemplateColumns: "1fr 1fr",
+};
+
+const input: React.CSSProperties = {
+  width: "100%",
+  padding: 10,
+  borderRadius: 12,
+  border: "1px solid #e5e7eb",
+  outline: "none",
+};
+
+const label: React.CSSProperties = {
+  display: "block",
+  fontSize: 12,
+  fontWeight: 700,
+  color: "#475569",
+  marginBottom: 6,
+};
+
+const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
+const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
+
+const btnPrimary: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 12,
+  background: "#A11C27",
+  color: "#fff",
+  border: 0,
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const btnGhost: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 12,
+  background: "#fff",
+  color: "#1E293F",
+  border: "1px solid #e5e7eb",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const modalBackdrop: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,.3)",
+  display: "grid",
+  placeItems: "center",
+  zIndex: 50,
+};
+
+const modalCard: React.CSSProperties = {
+  width: "min(980px, 94vw)",
+  background: "#fff",
+  padding: 16,
+  borderRadius: 16,
+  boxShadow: "0 20px 60px rgba(0,0,0,.3)",
+};

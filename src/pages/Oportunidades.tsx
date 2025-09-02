@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabaseClient";
 import DashboardKpis from "../components/DashboardKpis";
 import KanbanBoard from "@/components/KanbanBoard";
 
+// ---------------- Tipos ----------------
 type Lead = {
   id: string;
   nome: string;
@@ -15,13 +16,18 @@ type Vendedor = {
   nome: string;
 };
 
-type Estagio =
+// valores que aparecem no SELECT do formulário (minúsculos)
+type EstagioUi =
   | "novo"
   | "qualificando"
   | "proposta"
   | "negociacao"
   | "fechado_ganho"
   | "fechado_perdido";
+
+// OBS: no banco, a coluna `estagio` aceita APENAS o texto abaixo (maiúscula e com acento):
+// 'Novo' | 'Qualificação' | 'Proposta' | 'Negociação' | 'Convertido' | 'Perdido'
+// e a coluna `stage` é o enum minúsculo (novo|qualificando|...).
 
 type Oportunidade = {
   id: string;
@@ -31,7 +37,8 @@ type Oportunidade = {
   valor_credito: number;
   observacao: string | null;
   score: number;
-  estagio: Estagio;
+  estagio: string | null;           // pode vir "Novo", "Qualificação", etc. (texto do legado)
+  stage?: EstagioUi | null;         // pode vir o enum novo
   expected_close_at: string | null;
   created_at: string;
 };
@@ -45,15 +52,39 @@ const segmentos = [
   "Imóvel Estendido",
 ] as const;
 
+// ---------------- Helpers ----------------
+
 // aceita "12.345,67" ou "12345.67" e retorna Number
 function moedaParaNumeroBR(valor: string) {
-  const limpo = valor
-    .replace(/[^\d,.-]/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
+  const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
   return Number(limpo || 0);
 }
 
+/**
+ * Converte o valor do SELECT (minúsculo) em:
+ * - estagioText: string exatamente como o CHECK do Postgres exige (maiúscula e acento)
+ * - stageEnum:   enum em minúsculo para a coluna `stage`
+ */
+function mapUiEstagioToDb(estagioUi: EstagioUi) {
+  switch (estagioUi) {
+    case "novo":
+      return { estagioText: "Novo", stageEnum: "novo" as const };
+    case "qualificando":
+      return { estagioText: "Qualificação", stageEnum: "qualificando" as const };
+    case "proposta":
+      return { estagioText: "Proposta", stageEnum: "proposta" as const };
+    case "negociacao":
+      return { estagioText: "Negociação", stageEnum: "negociacao" as const };
+    case "fechado_ganho":
+      return { estagioText: "Convertido", stageEnum: "fechado_ganho" as const };
+    case "fechado_perdido":
+      return { estagioText: "Perdido", stageEnum: "fechado_perdido" as const };
+    default:
+      return { estagioText: "Novo", stageEnum: "novo" as const };
+  }
+}
+
+// ---------------- Página ----------------
 export default function Oportunidades() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
@@ -67,7 +98,7 @@ export default function Oportunidades() {
   const [valor, setValor] = useState("");
   const [obs, setObs] = useState("");
   const [score, setScore] = useState(3);
-  const [estagio, setEstagio] = useState<Estagio>("novo");
+  const [estagio, setEstagio] = useState<EstagioUi>("novo");
   const [expectedDate, setExpectedDate] = useState<string>("");
 
   const [loading, setLoading] = useState(false);
@@ -87,7 +118,8 @@ export default function Oportunidades() {
       const { data: o } = await supabase
         .from("opportunities")
         .select(
-          "id, lead_id, vendedor_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
+          // inclui `stage` também; o Kanban usa stage ou estagio
+          "id, lead_id, vendedor_id, segmento, valor_credito, observacao, score, estagio, stage, expected_close_at, created_at"
         )
         .order("created_at", { ascending: false });
       setLista((o || []) as Oportunidade[]);
@@ -106,8 +138,10 @@ export default function Oportunidades() {
     if (!leadId) return alert("Selecione um Lead.");
     if (!vendId) return alert("Selecione um Vendedor.");
     const valorNum = moedaParaNumeroBR(valor);
-    if (!valorNum || valorNum <= 0)
-      return alert("Informe o valor do crédito.");
+    if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
+
+    // converte do select (minúsculo) para os valores que o banco aceita
+    const { estagioText, stageEnum } = mapUiEstagioToDb(estagio);
 
     setLoading(true);
     const { data, error } = await supabase
@@ -116,12 +150,13 @@ export default function Oportunidades() {
         {
           lead_id: leadId,
           vendedor_id: vendId,
-          owner_id: vendId,
+          owner_id: vendId,               // mantém o dono para RLS
           segmento,
           valor_credito: valorNum,
           observacao: obs || null,
           score,
-          estagio,
+          estagio: estagioText,           // TEXTO exatamente como o CHECK exige
+          stage: stageEnum,               // ENUM minúsculo para o Kanban
           expected_close_at: expectedDate || null,
         },
       ])
@@ -138,6 +173,7 @@ export default function Oportunidades() {
 
     setLista((s) => [data as Oportunidade, ...s]);
 
+    // limpa form
     setLeadId("");
     setVendId("");
     setSegmento("Automóvel");
@@ -160,6 +196,7 @@ export default function Oportunidades() {
     >
       <h2 style={{ marginBottom: 12 }}>Oportunidades</h2>
 
+      {/* KPIs */}
       <div style={{ marginBottom: 16 }}>
         <DashboardKpis />
       </div>
@@ -276,9 +313,10 @@ export default function Oportunidades() {
             ))}
           </select>
 
+          {/* O SELECT continua usando minúsculo (EstagioUi). O helper converte no insert */}
           <select
             value={estagio}
-            onChange={(e) => setEstagio(e.target.value as Estagio)}
+            onChange={(e) => setEstagio(e.target.value as EstagioUi)}
             style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
           >
             <option value="novo">Novo</option>
@@ -318,4 +356,3 @@ export default function Oportunidades() {
     </div>
   );
 }
-

@@ -4,11 +4,24 @@ import { supabase } from "@/lib/supabaseClient";
 
 /** ---------------- Tipos ---------------- */
 type Lead = { id: string; nome: string; telefone?: string | null };
+
+type Produto =
+  | "Automóvel"
+  | "Imóvel"
+  | "Serviço"
+  | "Motocicleta"
+  | "Pesados"
+  | "Imóvel Estendido"
+  | "Consórcio Ouro";
+
+type Administradora = "Embracon" | "Banco do Brasil" | "HS Consórcios" | "Âncora" | "Maggi";
+type FormaVenda = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
+
 type Venda = {
   id: string;
   lead_id: string;
   cpf: string;
-  data_venda: string; // ISO
+  data_venda: string; // ISO (yyyy-mm-dd)
   vendedor_id: string;
   produto: Produto;
   administradora: Administradora;
@@ -25,18 +38,6 @@ type Venda = {
   created_at: string;
 };
 
-type Produto =
-  | "Automóvel"
-  | "Imóvel"
-  | "Serviço"
-  | "Motocicleta"
-  | "Pesados"
-  | "Imóvel Estendido"
-  | "Consórcio Ouro";
-
-type Administradora = "Embracon" | "Banco do Brasil" | "HS Consórcios" | "Âncora" | "Maggi";
-type FormaVenda = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
-
 /** --------------- Constantes --------------- */
 const PRODUTOS: Produto[] = [
   "Automóvel",
@@ -49,7 +50,6 @@ const PRODUTOS: Produto[] = [
 ];
 
 const ADMINISTRADORAS: Administradora[] = ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
-
 const FORMAS: FormaVenda[] = ["Parcela Cheia", "Reduzida 25%", "Reduzida 50%"];
 
 const currency = (n: number) =>
@@ -57,7 +57,118 @@ const currency = (n: number) =>
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
-/** --------------- Componente --------------- */
+/** ----------------------------------------------------------------
+ *  Componentes de Linha (evita hooks dentro de .map())
+ * ----------------------------------------------------------------*/
+type LinhaEncarteirarProps = {
+  venda: Venda;
+  lead?: Lead;
+  onSubmit: (vendaId: string, grupo: string, cota: string, codigo: string) => Promise<void>;
+};
+const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({ venda, lead, onSubmit }) => {
+  const [grupo, setGrupo] = useState("");
+  const [cota, setCota] = useState("");
+  const [codigo, setCodigo] = useState("");
+  return (
+    <tr className="border-t">
+      <td className="p-2">
+        <div className="font-medium">{lead?.nome ?? "—"}</div>
+        <div className="text-xs text-gray-500">{lead?.telefone ?? "—"}</div>
+      </td>
+      <td className="p-2">{venda.administradora}</td>
+      <td className="p-2">{venda.numero_proposta}</td>
+      <td className="p-2">
+        <input value={grupo} onChange={(e) => setGrupo(e.target.value)} className="border rounded px-2 py-1 w-28" />
+      </td>
+      <td className="p-2">
+        <input value={cota} onChange={(e) => setCota(e.target.value)} className="border rounded px-2 py-1 w-20" />
+      </td>
+      <td className="p-2">
+        <input value={codigo} onChange={(e) => setCodigo(e.target.value)} className="border rounded px-2 py-1 w-20" />
+      </td>
+      <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
+      <td className="p-2">
+        <button
+          className="px-3 py-1 rounded bg-[#A11C27] text-white hover:opacity-90"
+          onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
+        >
+          ENCARTEIRAR
+        </button>
+      </td>
+    </tr>
+  );
+};
+
+type LinhaCotaProps = {
+  venda: Venda;
+  onSave: (patch: Partial<Venda>) => Promise<void>;
+};
+const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave }) => {
+  const ativa = isAtiva(venda.codigo);
+  const [edit, setEdit] = useState(false);
+  const [grupo, setGrupo] = useState(venda.grupo ?? "");
+  const [cota, setCota] = useState(venda.cota ?? "");
+  const [codigo, setCodigo] = useState(venda.codigo ?? "");
+  const [valor, setValor] = useState<number>(venda.valor_venda);
+
+  return (
+    <tr className="border-t">
+      <td className="p-2">
+        <span className={`px-2 py-1 rounded-full text-xs ${ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+          {ativa ? "Ativa" : "Cancelada"}
+        </span>
+      </td>
+      <td className="p-2">{venda.administradora}</td>
+      <td className="p-2">{venda.numero_proposta}</td>
+      <td className="p-2">
+        {edit ? <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} /> : venda.grupo ?? "—"}
+      </td>
+      <td className="p-2">
+        {edit ? <input className="border rounded px-2 py-1 w-20" value={cota} onChange={(e) => setCota(e.target.value)} /> : venda.cota ?? "—"}
+      </td>
+      <td className="p-2">
+        {edit ? <input className="border rounded px-2 py-1 w-20" value={codigo} onChange={(e) => setCodigo(e.target.value)} /> : venda.codigo ?? "—"}
+      </td>
+      <td className="p-2">
+        {edit ? (
+          <input
+            className="border rounded px-2 py-1 w-28"
+            value={valor}
+            onChange={(e) => setValor(Number(e.target.value))}
+            type="number"
+            step="0.01"
+          />
+        ) : (
+          currency(venda.valor_venda ?? 0)
+        )}
+      </td>
+      <td className="p-2">
+        {edit ? (
+          <div className="flex gap-2">
+            <button
+              className="px-3 py-1 rounded bg-[#1E293F] text-white hover:opacity-90"
+              onClick={() => {
+                setEdit(false);
+                onSave({ grupo, cota, codigo, valor_venda: valor });
+              }}
+            >
+              Salvar
+            </button>
+            <button className="px-3 py-1 rounded border" onClick={() => setEdit(false)}>
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <button className="px-3 py-1 rounded border" onClick={() => setEdit(true)}>
+            ✏️ Editar
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+};
+
+/** --------------- Página --------------- */
 const Carteira: React.FC = () => {
   /** Sessão / Dados base */
   const [userId, setUserId] = useState<string>("");
@@ -95,54 +206,81 @@ const Carteira: React.FC = () => {
 
   /** ----------------- Effects ----------------- */
   useEffect(() => {
+    let alive = true;
+
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const fetchWithRetry = async <T,>(fn: () => Promise<T>, label: string, tries = 3): Promise<T> => {
+      let lastErr: any;
+      for (let i = 1; i <= tries; i++) {
+        try {
+          return await fn();
+        } catch (e: any) {
+          lastErr = e;
+          console.warn(`[Carteira] Falhou ${label} (tentativa ${i}/${tries})`, e);
+          await sleep(300 * i);
+        }
+      }
+      throw new Error(`${label}: ${lastErr?.message ?? "Falha de rede"}`);
+    };
+
     (async () => {
       try {
         setLoading(true);
-        const { data: session } = await supabase.auth.getUser();
-        const uid = session.user?.id ?? "";
-        setUserId(uid);
-        // Se você salva o nome no perfil/metadata:
-        setUserName(session.user?.user_metadata?.nome ?? session.user?.email ?? "Vendedor");
+        setErr("");
 
-        // Leads
-        const { data: leadsData, error: leadsErr } = await supabase
-          .from("leads")
-          .select("id,nome,telefone")
-          .order("nome", { ascending: true });
+        // 1) Sessão / usuário
+        const session = await fetchWithRetry(async () => (await supabase.auth.getUser()).data, "auth.getUser");
+        const uid = session?.user?.id ?? "";
+        if (alive) {
+          setUserId(uid);
+          setUserName(session?.user?.user_metadata?.nome ?? session?.user?.email ?? "Vendedor");
+        }
 
-        if (leadsErr) throw leadsErr;
-        setLeads(leadsData ?? []);
-        setLeadMap(Object.fromEntries((leadsData ?? []).map((l) => [l.id, l])));
+        // 2) Leads
+        const leadsData = await fetchWithRetry(async () => {
+          const { data, error } = await supabase.from("leads").select("id,nome,telefone").order("nome", { ascending: true });
+          if (error) throw error;
+          return data ?? [];
+        }, "select leads");
+        if (alive) {
+          setLeads(leadsData);
+          setLeadMap(Object.fromEntries(leadsData.map((l: any) => [l.id, l])));
+        }
 
-        // Vendas pendentes
-        const { data: pend, error: pendErr } = await supabase
-          .from("vendas")
-          .select("*")
-          .eq("status", "nova")
-          .order("created_at", { ascending: false });
-        if (pendErr) throw pendErr;
-        setPendentes(pend ?? []);
+        // 3) Vendas pendentes
+        const pend = await fetchWithRetry(async () => {
+          const { data, error } = await supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+          if (error) throw error;
+          return data ?? [];
+        }, "select vendas (pendentes)");
 
-        // Vendas encarteiradas
-        const { data: enc, error: encErr } = await supabase
-          .from("vendas")
-          .select("*")
-          .eq("status", "encarteirada")
-          .order("created_at", { ascending: false });
-        if (encErr) throw encErr;
-        setEncarteiradas(enc ?? []);
+        // 4) Vendas encarteiradas
+        const enc = await fetchWithRetry(async () => {
+          const { data, error } = await supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+          if (error) throw error;
+          return data ?? [];
+        }, "select vendas (encarteiradas)");
+
+        if (alive) {
+          setPendentes(pend);
+          setEncarteiradas(enc);
+        }
       } catch (e: any) {
         console.error(e);
-        setErr(e.message ?? "Erro ao carregar dados.");
+        setErr(e.message || "Falha ao carregar dados da Carteira.");
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   /** ----------------- Helpers ----------------- */
   const pendentesComNome = useMemo(
-    () => pendentes.map((v) => ({ ...v, lead: leadMap[v.lead_id] })),
+    () => pendentes.map((v) => ({ venda: v, lead: leadMap[v.lead_id] })),
     [pendentes, leadMap]
   );
 
@@ -164,22 +302,13 @@ const Carteira: React.FC = () => {
   const porCliente = useMemo(() => {
     const map: Record<
       string,
-      {
-        cliente: Lead;
-        itens: Venda[];
-        totalAtivas: number;
-        qtdAtivas: number;
-        segmentos: Set<string>;
-      }
+      { cliente: Lead; itens: Venda[]; totalAtivas: number; qtdAtivas: number; segmentos: Set<string> }
     > = {};
-
     for (const v of encarteiradasFiltradas) {
       const lead = leadMap[v.lead_id];
       if (!lead) continue;
       const key = lead.id;
-      if (!map[key]) {
-        map[key] = { cliente: lead, itens: [], totalAtivas: 0, qtdAtivas: 0, segmentos: new Set() };
-      }
+      if (!map[key]) map[key] = { cliente: lead, itens: [], totalAtivas: 0, qtdAtivas: 0, segmentos: new Set() };
       map[key].itens.push(v);
       if (isAtiva(v.codigo)) {
         map[key].totalAtivas += v.valor_venda || 0;
@@ -193,7 +322,6 @@ const Carteira: React.FC = () => {
   /** ----------------- Actions ----------------- */
   const openModal = () => setShowModal(true);
   const closeModal = () => setShowModal(false);
-
   const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
 
   const registrarVenda = async () => {
@@ -201,9 +329,7 @@ const Carteira: React.FC = () => {
       if (!form.lead_id) throw new Error("Selecione o Lead.");
       if (!form.cpf?.trim()) throw new Error("CPF é obrigatório.");
       if (!form.numero_proposta?.trim()) throw new Error("Número da proposta é obrigatório.");
-      const valor = Number(
-        (form.valor_venda as any)?.toString().replace(/\./g, "").replace(",", ".")
-      );
+      const valor = Number((form.valor_venda as any)?.toString().replace(/\./g, "").replace(",", "."));
       if (Number.isNaN(valor)) throw new Error("Valor da venda inválido.");
 
       const payload = {
@@ -224,7 +350,6 @@ const Carteira: React.FC = () => {
       const { error } = await supabase.from("vendas").insert(payload as any);
       if (error) throw error;
 
-      // Refresh listas
       const { data: pend } = await supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
       setPendentes(pend ?? []);
 
@@ -276,7 +401,6 @@ const Carteira: React.FC = () => {
 
   const listarOferta = async () => {
     try {
-      // Pega todas as encarteiradas e cruza com gestão de grupos da data
       const { data: grupos, error } = await supabase
         .from("gestao_grupos")
         .select("administradora,grupo,referencia,participantes,maior_perc_ll,contemplados,data_assembleia")
@@ -304,15 +428,11 @@ const Carteira: React.FC = () => {
       }
       setOferta(linhas);
     } catch (e: any) {
-      alert(
-        (e.message ?? "Erro ao listar.") +
-          "\nSe a tabela 'gestao_grupos' ainda não existe, pode ignorar por enquanto."
-      );
+      alert((e.message ?? "Erro ao listar.") + "\nSe a tabela 'gestao_grupos' ainda não existe, pode ignorar por enquanto.");
     }
   };
 
   const exportarPDF = () => {
-    // Abre uma janela de impressão com a área do relatório
     const el = document.getElementById("relatorio-carteira");
     if (!el) return;
     const win = window.open("", "_blank", "width=1024,height=768");
@@ -325,11 +445,7 @@ const Carteira: React.FC = () => {
         .muted { color:#6b7280; font-size:12px }
         .grid { width:100%; border-collapse: collapse; margin-top: 12px; }
         .grid th, .grid td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; }
-        .tag { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px }
-        .green { background:#DCFCE7; color:#166534 }
-        .red { background:#FEE2E2; color:#991B1B }
         .totais { display:flex; gap:16px; margin:8px 0 16px 0; }
-        .card { border:1px solid #e5e7eb; border-radius:12px; padding:12px; margin-bottom:12px; }
         .logo { height: 40px; margin-bottom: 12px; }
       </style>
     `;
@@ -354,12 +470,8 @@ const Carteira: React.FC = () => {
   };
 
   /** ----------------- UI ----------------- */
-  if (loading) {
-    return <div className="p-6 text-sm text-gray-600">Carregando carteira…</div>;
-  }
-  if (err) {
-    return <div className="p-6 text-red-600">Erro: {err}</div>;
-  }
+  if (loading) return <div className="p-6 text-sm text-gray-600">Carregando carteira…</div>;
+  if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
 
   return (
     <div className="p-6 space-y-6">
@@ -409,47 +521,17 @@ const Carteira: React.FC = () => {
             <tbody>
               {pendentesComNome.length === 0 && (
                 <tr>
-                  <td className="p-3 text-gray-500" colSpan={8}>
-                    Sem novas vendas para encarteirar.
-                  </td>
+                  <td className="p-3 text-gray-500" colSpan={8}>Sem novas vendas para encarteirar.</td>
                 </tr>
               )}
-              {pendentesComNome.map((v) => {
-                const [grupo, setGrupo] = useState("");
-                const [cota, setCota] = useState("");
-                const [codigo, setCodigo] = useState("");
-
-                // ⚠️ Truque simples: componente inline para inputs por linha
-                const Linha: React.FC = () => (
-                  <tr key={v.id} className="border-t">
-                    <td className="p-2">
-                      <div className="font-medium">{v.lead?.nome ?? "—"}</div>
-                      <div className="text-xs text-gray-500">{leadMap[v.lead_id]?.telefone ?? "—"}</div>
-                    </td>
-                    <td className="p-2">{v.administradora}</td>
-                    <td className="p-2">{v.numero_proposta}</td>
-                    <td className="p-2">
-                      <input value={grupo} onChange={(e) => setGrupo(e.target.value)} className="border rounded px-2 py-1 w-28" />
-                    </td>
-                    <td className="p-2">
-                      <input value={cota} onChange={(e) => setCota(e.target.value)} className="border rounded px-2 py-1 w-20" />
-                    </td>
-                    <td className="p-2">
-                      <input value={codigo} onChange={(e) => setCodigo(e.target.value)} className="border rounded px-2 py-1 w-20" />
-                    </td>
-                    <td className="p-2">{currency(v.valor_venda ?? 0)}</td>
-                    <td className="p-2">
-                      <button
-                        className="px-3 py-1 rounded bg-[#A11C27] text-white hover:opacity-90"
-                        onClick={() => encarteirar(v.id, grupo, cota, codigo)}
-                      >
-                        ENCARTEIRAR
-                      </button>
-                    </td>
-                  </tr>
-                );
-                return <Linha key={v.id} />;
-              })}
+              {pendentesComNome.map(({ venda, lead }) => (
+                <LinhaEncarteirar
+                  key={venda.id}
+                  venda={venda}
+                  lead={lead}
+                  onSubmit={encarteirar}
+                />
+              ))}
             </tbody>
           </table>
         </div>
@@ -467,16 +549,13 @@ const Carteira: React.FC = () => {
 
       {/* Carteira (lista por cliente) */}
       <section id="relatorio-carteira" className="space-y-3">
-        {porCliente.length === 0 && (
-          <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>
-        )}
+        {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
 
         {porCliente.map(({ cliente, itens, totalAtivas, qtdAtivas, segmentos }) => {
           const [open, setOpen] = useState(false);
           const segs = Array.from(segmentos).join("; ");
-
-          const Bloco: React.FC = () => (
-            <div className="border rounded-2xl p-4">
+          return (
+            <div key={cliente.id} className="border rounded-2xl p-4">
               <button className="w-full text-left" onClick={() => setOpen((o) => !o)}>
                 <div className="flex items-center justify-between">
                   <div className="font-medium">
@@ -505,78 +584,19 @@ const Carteira: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {itens.map((v) => {
-                        const ativa = isAtiva(v.codigo);
-                        const [edit, setEdit] = useState(false);
-                        const [grupo, setGrupo] = useState(v.grupo ?? "");
-                        const [cota, setCota] = useState(v.cota ?? "");
-                        const [codigo, setCodigo] = useState(v.codigo ?? "");
-                        const [valor, setValor] = useState(v.valor_venda);
-
-                        const Linha: React.FC = () => (
-                          <tr key={v.id} className="border-t">
-                            <td className="p-2">
-                              <span className={`px-2 py-1 rounded-full text-xs ${ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                                {ativa ? "Ativa" : "Cancelada"}
-                              </span>
-                            </td>
-                            <td className="p-2">{v.administradora}</td>
-                            <td className="p-2">{v.numero_proposta}</td>
-                            <td className="p-2">
-                              {edit ? <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} /> : v.grupo ?? "—"}
-                            </td>
-                            <td className="p-2">
-                              {edit ? <input className="border rounded px-2 py-1 w-20" value={cota} onChange={(e) => setCota(e.target.value)} /> : v.cota ?? "—"}
-                            </td>
-                            <td className="p-2">
-                              {edit ? <input className="border rounded px-2 py-1 w-20" value={codigo} onChange={(e) => setCodigo(e.target.value)} /> : v.codigo ?? "—"}
-                            </td>
-                            <td className="p-2">
-                              {edit ? (
-                                <input
-                                  className="border rounded px-2 py-1 w-28"
-                                  value={valor}
-                                  onChange={(e) => setValor(Number(e.target.value))}
-                                  type="number"
-                                  step="0.01"
-                                />
-                              ) : (
-                                currency(v.valor_venda ?? 0)
-                              )}
-                            </td>
-                            <td className="p-2">
-                              {edit ? (
-                                <div className="flex gap-2">
-                                  <button
-                                    className="px-3 py-1 rounded bg-[#1E293F] text-white hover:opacity-90"
-                                    onClick={() => {
-                                      setEdit(false);
-                                      salvarEdicao(v, { grupo, cota, codigo, valor_venda: valor });
-                                    }}
-                                  >
-                                    Salvar
-                                  </button>
-                                  <button className="px-3 py-1 rounded border" onClick={() => setEdit(false)}>
-                                    Cancelar
-                                  </button>
-                                </div>
-                              ) : (
-                                <button className="px-3 py-1 rounded border" onClick={() => setEdit(true)}>
-                                  ✏️ Editar
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                        return <Linha key={v.id} />;
-                      })}
+                      {itens.map((v) => (
+                        <LinhaCota
+                          key={v.id}
+                          venda={v}
+                          onSave={(patch) => salvarEdicao(v, patch)}
+                        />
+                      ))}
                     </tbody>
                   </table>
                 </div>
               )}
             </div>
           );
-          return <Bloco key={cliente.id} />;
         })}
       </section>
 

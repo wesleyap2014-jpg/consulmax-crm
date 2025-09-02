@@ -1,6 +1,7 @@
 // src/pages/Oportunidades.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import DashboardKpis from "../components/DashboardKpis"; // <-- use o path relativo correto
 
 type Lead = {
   id: string;
@@ -22,7 +23,7 @@ type Oportunidade = {
   segmento: string;
   valor_credito: number;
   observacao: string | null;
-  score: number;              // 1..5
+  score: number; // 1..5 (no seu banco permitimos 0..100; 1..5 é um subconjunto)
   estagio: Estagio;
   expected_close_at: string | null; // yyyy-mm-dd
   created_at: string;
@@ -30,9 +31,9 @@ type Oportunidade = {
 
 const segmentos = ["Automóvel", "Imóvel", "Motocicleta", "Serviços", "Pesados", "Imóvel Estendido"] as const;
 
+// aceita "12.345,67" ou "12345.67" e retorna Number
 function moedaParaNumeroBR(valor: string) {
-  // aceita "12.345,67" ou "12345.67" e retorna Number
-  const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+  const limpo = valor.replace(/[^\d,,-.]/g, "").replace(/\./g, "").replace(",", ".");
   return Number(limpo || 0);
 }
 
@@ -57,26 +58,28 @@ export default function Oportunidades() {
   // Carrega listas
   useEffect(() => {
     (async () => {
-      // Leads (mostre só do usuário se precisar; aqui estou trazendo todos que ele pode ver)
+      // Leads
       const { data: l, error: lErr } = await supabase
         .from("leads")
         .select("id, nome, owner_id")
         .order("created_at", { ascending: false });
       if (lErr) {
+        console.error(lErr);
         alert("Erro ao carregar leads: " + lErr.message);
       } else {
         setLeads(l || []);
       }
 
-      // Vendedores via RPC (corrige o seu erro)
+      // Vendedores via RPC segura
       const { data: v, error: vErr } = await supabase.rpc("listar_vendedores");
       if (vErr) {
+        console.error(vErr);
         alert("Erro ao carregar vendedores: " + vErr.message);
       } else {
-        setVendedores(v || []);
+        setVendedores((v || []) as Vendedor[]);
       }
 
-      // Oportunidades (aplique RLS para admin ver tudo e vendedor ver só suas)
+      // Oportunidades
       const { data: o, error: oErr } = await supabase
         .from("opportunities")
         .select(
@@ -84,17 +87,19 @@ export default function Oportunidades() {
         )
         .order("created_at", { ascending: false });
       if (oErr) {
+        console.error(oErr);
         alert("Erro ao carregar oportunidades: " + oErr.message);
       } else {
-        setLista(o || []);
+        setLista((o || []) as Oportunidade[]);
       }
     })();
   }, []);
 
   const ativos = useMemo(
     () =>
-      lista.filter((o) => o.estagio !== "Convertido" && o.estagio !== "Perdido")
-           .filter((o) => (filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor)),
+      lista
+        .filter((o) => o.estagio !== "Convertido" && o.estagio !== "Perdido")
+        .filter((o) => (filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor)),
     [lista, filtroVendedor]
   );
 
@@ -115,7 +120,7 @@ export default function Oportunidades() {
           valor_credito: valorNum,
           observacao: obs || null,
           score,
-          estagio,
+          estagio, // precisa obedecer ao CHECK de texto: "Novo", "Qualificação", ...
           expected_close_at: expectedDate || null,
         },
       ])
@@ -125,6 +130,7 @@ export default function Oportunidades() {
     setLoading(false);
 
     if (error) {
+      console.error(error);
       alert("Erro ao criar oportunidade: " + error.message);
       return;
     }
@@ -147,8 +153,21 @@ export default function Oportunidades() {
     <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
       <h2 style={{ marginBottom: 12 }}>Oportunidades</h2>
 
+      {/* KPIs (usa views criadas) */}
+      <div style={{ marginBottom: 16 }}>
+        <DashboardKpis />
+      </div>
+
       {/* Filtro por vendedor */}
-      <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+      <div
+        style={{
+          background: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          marginBottom: 16,
+        }}
+      >
         <select
           value={filtroVendedor}
           onChange={(e) => setFiltroVendedor(e.target.value)}
@@ -164,7 +183,15 @@ export default function Oportunidades() {
       </div>
 
       {/* Formulário */}
-      <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", marginBottom: 16 }}>
+      <div
+        style={{
+          background: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          marginBottom: 16,
+        }}
+      >
         <h3 style={{ margin: 0, marginBottom: 12 }}>Nova oportunidade</h3>
 
         <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(3, 1fr)" }}>
@@ -244,7 +271,7 @@ export default function Oportunidades() {
             ))}
           </select>
 
-          {/* NOVO: Data prevista para fechamento */}
+          {/* Data prevista para fechamento */}
           <input
             type="date"
             value={expectedDate}
@@ -285,7 +312,7 @@ export default function Oportunidades() {
                 <th style={th}>Valor</th>
                 <th style={th}>Score</th>
                 <th style={th}>Estágio</th>
-                <th style={th}>Previsão</th> {/* novo */}
+                <th style={th}>Previsão</th>
               </tr>
             </thead>
             <tbody>
@@ -295,7 +322,7 @@ export default function Oportunidades() {
                   <td style={td}>{vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}</td>
                   <td style={td}>{o.segmento}</td>
                   <td style={td}>
-                    {new Intl.DateTimeFormat("pt-BR", { style: "currency", currency: "BRL" } as any).format(o.valor_credito)}
+                    {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(o.valor_credito)}
                   </td>
                   <td style={td}>{"★".repeat(o.score)}</td>
                   <td style={td}>{o.estagio}</td>
@@ -308,7 +335,9 @@ export default function Oportunidades() {
               ))}
               {!ativos.length && (
                 <tr>
-                  <td style={td} colSpan={7}>Nenhuma oportunidade encontrada.</td>
+                  <td style={td} colSpan={7}>
+                    Nenhuma oportunidade encontrada.
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -322,15 +351,3 @@ export default function Oportunidades() {
 // estilos da tabela
 const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
 const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
-import DashboardKpis from "./components/DashboardKpis";
-
-function App() {
-  return (
-    <div>
-      <h1>CRM Consulmax</h1>
-      <DashboardKpis />
-    </div>
-  );
-}
-
-export default App;

@@ -19,12 +19,8 @@ export type DbStage =
 
 export type KanbanItem = {
   id: string;
-  // coluna nova (enum no banco)
   stage?: DbStage | null;
-  // coluna legada (texto) — pode existir em registros antigos
   estagio?: string | null;
-
-  // alguns campos úteis para exibir no card
   lead_id?: string | null;
   vendedor_id?: string | null;
   valor_credito?: number | null;
@@ -45,7 +41,6 @@ const COLUMNS: { id: DbStage; title: string }[] = [
   { id: "fechado_perdido",  title: "Fechado (Perdido)" },
 ];
 
-/** Converte o legado `estagio` textual em um valor do enum `stage` */
 function normalizeStage(item: KanbanItem): DbStage {
   if (item.stage) return item.stage;
   const e = (item.estagio || "").toLowerCase();
@@ -134,12 +129,10 @@ function Card({ item }: { item: KanbanItem }) {
 }
 
 export default function KanbanBoard({ items, onChanged }: Props) {
-  // estado local para trabalhar visualmente
   const [data, setData] = useState<KanbanItem[]>(
     (items || []).map((it) => ({ ...it, stage: normalizeStage(it) }))
   );
 
-  // agrupa por coluna
   const byColumn = useMemo(() => {
     const map: Record<DbStage, KanbanItem[]> = {
       novo: [],
@@ -154,7 +147,6 @@ export default function KanbanBoard({ items, onChanged }: Props) {
   }, [data]);
 
   async function persistStage(opportunityId: string, newStage: DbStage) {
-    // RPC no Supabase (ajuste nomes dos parâmetros se o seu SQL diferir)
     const { error } = await supabase.rpc("update_opportunity_stage", {
       p_id: opportunityId,
       p_new_stage: newStage,
@@ -166,7 +158,6 @@ export default function KanbanBoard({ items, onChanged }: Props) {
   async function onDragEnd(evt: DragEndEvent) {
     const activeId = String(evt.active.id);
 
-    // destino (coluna) — detecta tanto por container quanto por data-attr
     const overContainer = (evt.over?.data?.current as any)?.containerId as DbStage | undefined;
     const overFromAttr =
       (evt.over?.node?.getAttribute("data-column-id") as DbStage | null) || null;
@@ -179,7 +170,6 @@ export default function KanbanBoard({ items, onChanged }: Props) {
     const currentStage = normalizeStage(data[idx]);
     if (currentStage === destination) return;
 
-    // otimismo: move local
     const next = [...data];
     next[idx] = { ...next[idx], stage: destination };
     setData(next);
@@ -189,8 +179,7 @@ export default function KanbanBoard({ items, onChanged }: Props) {
       await persistStage(activeId, destination);
     } catch (e: any) {
       alert("Falha ao atualizar estágio: " + e.message);
-      // rollback se deu erro
-      setData(data);
+      setData(data);         // rollback
       onChanged?.(data);
     }
   }

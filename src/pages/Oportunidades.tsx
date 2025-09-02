@@ -56,12 +56,12 @@ const uiToDB: Record<StageUI, EstagioDB> = {
 };
 
 const dbToUI: Partial<Record<string, StageUI>> = {
-  "Novo": "novo",
-  "Qualificação": "qualificando",
-  "Qualificacao": "qualificando",
-  "Proposta": "proposta",
-  "Negociação": "negociacao",
-  "Negociacao": "negociacao",
+  Novo: "novo",
+  Qualificação: "qualificando",
+  Qualificacao: "qualificando",
+  Proposta: "proposta",
+  Negociação: "negociacao",
+  Negociacao: "negociacao",
   "Fechado (Ganho)": "fechado_ganho",
   "Fechado (Perdido)": "fechado_perdido",
 };
@@ -74,6 +74,23 @@ function fmtBRL(n: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
     n || 0
   );
+}
+
+/** Converte rótulos/valores variados para o que o CHECK da tabela aceita */
+function normalizeEstagioDB(label: string): EstagioDB {
+  const v = (label || "").toLowerCase();
+
+  if (v.includes("fechado") && v.includes("ganho")) return "Fechado (Ganho)";
+  if (v.includes("fechado") && v.includes("perdido")) return "Fechado (Perdido)";
+
+  if (v.startsWith("qualifica")) return "Qualificação";
+  if (v.startsWith("proposta")) return "Proposta";
+  if (v.startsWith("negocia")) return "Negociação";
+  if (v.startsWith("novo")) return "Novo";
+
+  // fallback seguro
+  // (se vier um texto inesperado, prefira "Novo" para não violar o CHECK)
+  return "Novo";
 }
 
 /** ------------- Página ------------- */
@@ -141,7 +158,7 @@ export default function Oportunidades() {
       fechado_perdido: { qtd: 0, total: 0 },
     };
     for (const o of lista || []) {
-      const k = dbToUI[o.estagio as string] ?? "novo"; // <- Fallback p/ qualquer valor inesperado
+      const k = dbToUI[o.estagio as string] ?? "novo"; // fallback p/ valores inesperados
       base[k].qtd += 1;
       base[k].total += Number(o.valor_credito || 0);
     }
@@ -171,7 +188,7 @@ export default function Oportunidades() {
       valor_credito: valorNum,
       observacao: obs ? `[${new Date().toLocaleString("pt-BR")}]\n${obs}` : null,
       score,
-      estagio: uiToDB[stageUI] as EstagioDB, // <- atende ao check constraint
+      estagio: uiToDB[stageUI] as EstagioDB, // compatível com o CHECK
       expected_close_at: isoDate,
     };
 
@@ -221,7 +238,8 @@ export default function Oportunidades() {
       segmento: editing.segmento,
       valor_credito: editing.valor_credito,
       score: editing.score,
-      estagio: (editing.estagio as EstagioDB) ?? "Novo",
+      // -> aqui está o pulo do gato: normaliza para o que o CHECK aceita
+      estagio: normalizeEstagioDB(String(editing.estagio)),
       expected_close_at: editing.expected_close_at,
       observacao: historico || editing.observacao || null,
     };
@@ -244,7 +262,7 @@ export default function Oportunidades() {
 
   /** ------------- UI ------------- */
 
-  // Cards KPI (com fallback se, por algum motivo, a chave não existir)
+  // Cards KPI
   const CardsKPI = () => {
     const ORDER: { id: StageUI; label: string }[] = [
       { id: "novo", label: "Novo" },
@@ -280,8 +298,9 @@ export default function Oportunidades() {
 
   const ListaOportunidades = () => {
     const linhas = visiveis.filter(
-      (o) => dbToUI[o.estagio as string] !== "fechado_ganho" &&
-             dbToUI[o.estagio as string] !== "fechado_perdido"
+      (o) =>
+        dbToUI[o.estagio as string] !== "fechado_ganho" &&
+        dbToUI[o.estagio as string] !== "fechado_perdido"
     );
     return (
       <div style={card}>
@@ -347,7 +366,8 @@ export default function Oportunidades() {
           <div style={subCard}>
             <div style={{ fontWeight: 700, marginBottom: 8 }}>Ganhos</div>
             <div style={{ color: "#475569", marginBottom: 8 }}>
-              Qtd: {ganhos.length} — Valor: {fmtBRL(ganhos.reduce((s, x) => s + (x.valor_credito || 0), 0))}
+              Qtd: {ganhos.length} — Valor:{" "}
+              {fmtBRL(ganhos.reduce((s, x) => s + (x.valor_credito || 0), 0))}
             </div>
             {ganhos.map((g) => (
               <div key={g.id} style={pill}>
@@ -359,7 +379,8 @@ export default function Oportunidades() {
           <div style={subCard}>
             <div style={{ fontWeight: 700, marginBottom: 8 }}>Perdidos</div>
             <div style={{ color: "#475569", marginBottom: 8 }}>
-              Qtd: {perdidos.length} — Valor: {fmtBRL(perdidos.reduce((s, x) => s + (x.valor_credito || 0), 0))}
+              Qtd: {perdidos.length} — Valor:{" "}
+              {fmtBRL(perdidos.reduce((s, x) => s + (x.valor_credito || 0), 0))}
             </div>
             {perdidos.map((g) => (
               <div key={g.id} style={pill}>
@@ -374,10 +395,25 @@ export default function Oportunidades() {
   };
 
   return (
-    <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
+    <div
+      style={{
+        maxWidth: 1200,
+        margin: "24px auto",
+        padding: "0 16px",
+        fontFamily: "Inter, system-ui, Arial",
+      }}
+    >
       <CardsKPI />
 
-      <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", margin: "16px 0" }}>
+      <div
+        style={{
+          background: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          margin: "16px 0",
+        }}
+      >
         <label style={label}>Filtrar por vendedor</label>
         <select
           value={filtroVendedor}
@@ -436,12 +472,22 @@ export default function Oportunidades() {
 
           <div>
             <label style={label}>Valor do crédito (R$)</label>
-            <input value={valor} onChange={(e) => setValor(e.target.value)} style={input} placeholder="Ex.: 80.000,00" />
+            <input
+              value={valor}
+              onChange={(e) => setValor(e.target.value)}
+              style={input}
+              placeholder="Ex.: 80.000,00"
+            />
           </div>
 
           <div>
             <label style={label}>Observações</label>
-            <input value={obs} onChange={(e) => setObs(e.target.value)} style={input} placeholder="Observação inicial (opcional)" />
+            <input
+              value={obs}
+              onChange={(e) => setObs(e.target.value)}
+              style={input}
+              placeholder="Observação inicial (opcional)"
+            />
           </div>
 
           <div>

@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom'
 const items = [
   { to: '/leads', label: 'Leads' },
   { to: '/oportunidades', label: 'Oportunidades' },
+  { to: '/carteira', label: 'Carteira' },   // ✅ nova guia
   { to: '/usuarios', label: 'Usuários' }
 ]
 

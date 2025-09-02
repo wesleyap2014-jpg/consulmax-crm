@@ -15,7 +15,13 @@ type Vendedor = {
   nome: string;
 };
 
-type Estagio = "Novo" | "Qualificação" | "Proposta" | "Negociação" | "Convertido" | "Perdido";
+type Estagio =
+  | "novo"
+  | "qualificando"
+  | "proposta"
+  | "negociacao"
+  | "fechado_ganho"
+  | "fechado_perdido";
 
 type Oportunidade = {
   id: string;
@@ -24,17 +30,27 @@ type Oportunidade = {
   segmento: string;
   valor_credito: number;
   observacao: string | null;
-  score: number; // 1..5
+  score: number;
   estagio: Estagio;
-  expected_close_at: string | null; // yyyy-mm-dd
+  expected_close_at: string | null;
   created_at: string;
 };
 
-const segmentos = ["Automóvel", "Imóvel", "Motocicleta", "Serviços", "Pesados", "Imóvel Estendido"] as const;
+const segmentos = [
+  "Automóvel",
+  "Imóvel",
+  "Motocicleta",
+  "Serviços",
+  "Pesados",
+  "Imóvel Estendido",
+] as const;
 
 // aceita "12.345,67" ou "12345.67" e retorna Number
 function moedaParaNumeroBR(valor: string) {
-  const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+  const limpo = valor
+    .replace(/[^\d,.-]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
   return Number(limpo || 0);
 }
 
@@ -51,56 +67,38 @@ export default function Oportunidades() {
   const [valor, setValor] = useState("");
   const [obs, setObs] = useState("");
   const [score, setScore] = useState(3);
-  const [estagio, setEstagio] = useState<Estagio>("Novo");
-  const [expectedDate, setExpectedDate] = useState<string>(""); // yyyy-mm-dd
+  const [estagio, setEstagio] = useState<Estagio>("novo");
+  const [expectedDate, setExpectedDate] = useState<string>("");
 
   const [loading, setLoading] = useState(false);
 
   // Carrega listas
   useEffect(() => {
     (async () => {
-      // Leads
-      const { data: l, error: lErr } = await supabase
+      const { data: l } = await supabase
         .from("leads")
         .select("id, nome, owner_id")
         .order("created_at", { ascending: false });
-      if (lErr) {
-        console.error(lErr);
-        alert("Erro ao carregar leads: " + lErr.message);
-      } else {
-        setLeads(l || []);
-      }
+      setLeads(l || []);
 
-      // Vendedores via RPC segura
-      const { data: v, error: vErr } = await supabase.rpc("listar_vendedores");
-      if (vErr) {
-        console.error(vErr);
-        alert("Erro ao carregar vendedores: " + vErr.message);
-      } else {
-        setVendedores((v || []) as Vendedor[]);
-      }
+      const { data: v } = await supabase.rpc("listar_vendedores");
+      setVendedores((v || []) as Vendedor[]);
 
-      // Oportunidades
-      const { data: o, error: oErr } = await supabase
+      const { data: o } = await supabase
         .from("opportunities")
         .select(
           "id, lead_id, vendedor_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
         )
         .order("created_at", { ascending: false });
-      if (oErr) {
-        console.error(oErr);
-        alert("Erro ao carregar oportunidades: " + oErr.message);
-      } else {
-        setLista((o || []) as Oportunidade[]);
-      }
+      setLista((o || []) as Oportunidade[]);
     })();
   }, []);
 
   const ativos = useMemo(
     () =>
-      lista
-        .filter((o) => o.estagio !== "Convertido" && o.estagio !== "Perdido")
-        .filter((o) => (filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor)),
+      lista.filter((o) =>
+        filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor
+      ),
     [lista, filtroVendedor]
   );
 
@@ -108,7 +106,8 @@ export default function Oportunidades() {
     if (!leadId) return alert("Selecione um Lead.");
     if (!vendId) return alert("Selecione um Vendedor.");
     const valorNum = moedaParaNumeroBR(valor);
-    if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
+    if (!valorNum || valorNum <= 0)
+      return alert("Informe o valor do crédito.");
 
     setLoading(true);
     const { data, error } = await supabase
@@ -117,12 +116,12 @@ export default function Oportunidades() {
         {
           lead_id: leadId,
           vendedor_id: vendId,
-          owner_id: vendId, // <<< importante para passar nas policies/RLS
+          owner_id: vendId,
           segmento,
           valor_credito: valorNum,
           observacao: obs || null,
           score,
-          estagio, // precisa obedecer ao CHECK de texto: "Novo", "Qualificação", ...
+          estagio,
           expected_close_at: expectedDate || null,
         },
       ])
@@ -139,33 +138,35 @@ export default function Oportunidades() {
 
     setLista((s) => [data as Oportunidade, ...s]);
 
-    // limpa form
     setLeadId("");
     setVendId("");
     setSegmento("Automóvel");
     setValor("");
     setObs("");
     setScore(3);
-    setEstagio("Novo");
+    setEstagio("novo");
     setExpectedDate("");
     alert("Oportunidade criada!");
   }
 
   return (
-    <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
+    <div
+      style={{
+        maxWidth: 1200,
+        margin: "24px auto",
+        padding: "0 16px",
+        fontFamily: "Inter, system-ui, Arial",
+      }}
+    >
       <h2 style={{ marginBottom: 12 }}>Oportunidades</h2>
 
-      {/* KPIs (usa views criadas) */}
       <div style={{ marginBottom: 16 }}>
         <DashboardKpis />
       </div>
 
-      {/* Kanban Board */}
+      {/* Kanban */}
       <div style={{ marginBottom: 16 }}>
-        <KanbanBoard
-          items={lista as any}
-          onChanged={(updated) => setLista(updated as any)}
-        />
+        <KanbanBoard items={lista as any} onChanged={(updated) => setLista(updated as any)} />
       </div>
 
       {/* Filtro por vendedor */}
@@ -204,7 +205,13 @@ export default function Oportunidades() {
       >
         <h3 style={{ margin: 0, marginBottom: 12 }}>Nova oportunidade</h3>
 
-        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(3, 1fr)",
+          }}
+        >
           <select
             value={leadId}
             onChange={(e) => setLeadId(e.target.value)}
@@ -274,14 +281,14 @@ export default function Oportunidades() {
             onChange={(e) => setEstagio(e.target.value as Estagio)}
             style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
           >
-            {["Novo", "Qualificação", "Proposta", "Negociação", "Convertido", "Perdido"].map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
+            <option value="novo">Novo</option>
+            <option value="qualificando">Qualificando</option>
+            <option value="proposta">Proposta</option>
+            <option value="negociacao">Negociação</option>
+            <option value="fechado_ganho">Fechado (Ganho)</option>
+            <option value="fechado_perdido">Fechado (Perdido)</option>
           </select>
 
-          {/* Data prevista para fechamento */}
           <input
             type="date"
             value={expectedDate}
@@ -308,56 +315,7 @@ export default function Oportunidades() {
           </button>
         </div>
       </div>
-
-      {/* Lista */}
-      <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
-        <h3 style={{ margin: 0, marginBottom: 12 }}>Oportunidades</h3>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-            <thead>
-              <tr>
-                <th style={th}>Lead</th>
-                <th style={th}>Vendedor</th>
-                <th style={th}>Segmento</th>
-                <th style={th}>Valor</th>
-                <th style={th}>Score</th>
-                <th style={th}>Estágio</th>
-                <th style={th}>Previsão</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ativos.map((o) => (
-                <tr key={o.id}>
-                  <td style={td}>{leads.find((l) => l.id === o.lead_id)?.nome || "-"}</td>
-                  <td style={td}>{vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}</td>
-                  <td style={td}>{o.segmento}</td>
-                  <td style={td}>
-                    {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(o.valor_credito)}
-                  </td>
-                  <td style={td}>{"★".repeat(o.score)}</td>
-                  <td style={td}>{o.estagio}</td>
-                  <td style={td}>
-                    {o.expected_close_at
-                      ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
-                      : "-"}
-                  </td>
-                </tr>
-              ))}
-              {!ativos.length && (
-                <tr>
-                  <td style={td} colSpan={7}>
-                    Nenhuma oportunidade encontrada.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 }
 
-// estilos da tabela
-const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
-const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };

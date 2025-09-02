@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import DashboardKpis from "../components/DashboardKpis";
-import KanbanBoard, { DbStage, KanbanItem } from "../components/KanbanBoard";
+import KanbanBoard from "@/components/KanbanBoard";
 
 type Lead = {
   id: string;
@@ -15,68 +15,27 @@ type Vendedor = {
   nome: string;
 };
 
-type EstagioTxt =
-  | "Novo"
-  | "Qualificação"
-  | "Proposta"
-  | "Negociação"
-  | "Convertido"
-  | "Perdido";
+type Estagio = "Novo" | "Qualificação" | "Proposta" | "Negociação" | "Convertido" | "Perdido";
 
 type Oportunidade = {
   id: string;
   lead_id: string;
   vendedor_id: string;
-  owner_id?: string | null;
-  segmento: string | null;
-  valor_credito: number | null;
+  segmento: string;
+  valor_credito: number;
   observacao: string | null;
   score: number; // 1..5
-  // colunas
-  stage?: DbStage | null;   // enum novo
-  estagio?: EstagioTxt | null; // legado em texto
+  estagio: Estagio;
   expected_close_at: string | null; // yyyy-mm-dd
   created_at: string;
 };
 
-const segmentos = [
-  "Automóvel",
-  "Imóvel",
-  "Motocicleta",
-  "Serviços",
-  "Pesados",
-  "Imóvel Estendido",
-] as const;
+const segmentos = ["Automóvel", "Imóvel", "Motocicleta", "Serviços", "Pesados", "Imóvel Estendido"] as const;
 
 // aceita "12.345,67" ou "12345.67" e retorna Number
 function moedaParaNumeroBR(valor: string) {
   const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
   return Number(limpo || 0);
-}
-
-function toLegacyText(stage: EstagioTxt | DbStage): EstagioTxt {
-  const s = String(stage).toLowerCase();
-  switch (s) {
-    case "novo":
-      return "Novo";
-    case "qualificação":
-    case "qualificacao":
-    case "qualificando":
-      return "Qualificação";
-    case "proposta":
-      return "Proposta";
-    case "negociação":
-    case "negociacao":
-      return "Negociação";
-    case "convertido":
-    case "fechado_ganho":
-      return "Convertido";
-    case "perdido":
-    case "fechado_perdido":
-      return "Perdido";
-    default:
-      return "Novo";
-  }
 }
 
 export default function Oportunidades() {
@@ -92,58 +51,55 @@ export default function Oportunidades() {
   const [valor, setValor] = useState("");
   const [obs, setObs] = useState("");
   const [score, setScore] = useState(3);
-  const [estagio, setEstagio] = useState<EstagioTxt>("Novo");
+  const [estagio, setEstagio] = useState<Estagio>("Novo");
   const [expectedDate, setExpectedDate] = useState<string>(""); // yyyy-mm-dd
+
   const [loading, setLoading] = useState(false);
 
-  async function carregarTudo() {
-    // Leads
-    const { data: l, error: lErr } = await supabase
-      .from("leads")
-      .select("id, nome, owner_id")
-      .order("created_at", { ascending: false });
-    if (lErr) {
-      console.error(lErr);
-      alert("Erro ao carregar leads: " + lErr.message);
-    } else {
-      setLeads(l || []);
-    }
-
-    // Vendedores via RPC segura
-    const { data: v, error: vErr } = await supabase.rpc("listar_vendedores");
-    if (vErr) {
-      console.error(vErr);
-      alert("Erro ao carregar vendedores: " + vErr.message);
-    } else {
-      setVendedores((v || []) as Vendedor[]);
-    }
-
-    // Oportunidades — traga as duas colunas (stage e estagio) para compat.
-    const { data: o, error: oErr } = await supabase
-      .from("opportunities")
-      .select(
-        "id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, stage, estagio, expected_close_at, created_at"
-      )
-      .order("created_at", { ascending: false });
-    if (oErr) {
-      console.error(oErr);
-      alert("Erro ao carregar oportunidades: " + oErr.message);
-    } else {
-      setLista((o || []) as Oportunidade[]);
-    }
-  }
-
+  // Carrega listas
   useEffect(() => {
-    carregarTudo();
+    (async () => {
+      // Leads
+      const { data: l, error: lErr } = await supabase
+        .from("leads")
+        .select("id, nome, owner_id")
+        .order("created_at", { ascending: false });
+      if (lErr) {
+        console.error(lErr);
+        alert("Erro ao carregar leads: " + lErr.message);
+      } else {
+        setLeads(l || []);
+      }
+
+      // Vendedores via RPC segura
+      const { data: v, error: vErr } = await supabase.rpc("listar_vendedores");
+      if (vErr) {
+        console.error(vErr);
+        alert("Erro ao carregar vendedores: " + vErr.message);
+      } else {
+        setVendedores((v || []) as Vendedor[]);
+      }
+
+      // Oportunidades
+      const { data: o, error: oErr } = await supabase
+        .from("opportunities")
+        .select(
+          "id, lead_id, vendedor_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
+        )
+        .order("created_at", { ascending: false });
+      if (oErr) {
+        console.error(oErr);
+        alert("Erro ao carregar oportunidades: " + oErr.message);
+      } else {
+        setLista((o || []) as Oportunidade[]);
+      }
+    })();
   }, []);
 
   const ativos = useMemo(
     () =>
       lista
-        .filter(
-          (o) => toLegacyText(o.stage || (o.estagio as any) || "Novo") !== "Convertido" &&
-                 toLegacyText(o.stage || (o.estagio as any) || "Novo") !== "Perdido"
-        )
+        .filter((o) => o.estagio !== "Convertido" && o.estagio !== "Perdido")
         .filter((o) => (filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor)),
     [lista, filtroVendedor]
   );
@@ -154,20 +110,6 @@ export default function Oportunidades() {
     const valorNum = moedaParaNumeroBR(valor);
     if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
 
-    // guarda em enum (stage) e também no texto legado (estagio)
-    const newStage: DbStage =
-      estagio === "Novo"
-        ? "novo"
-        : estagio === "Qualificação"
-        ? "qualificando"
-        : estagio === "Proposta"
-        ? "proposta"
-        : estagio === "Negociação"
-        ? "negociacao"
-        : estagio === "Convertido"
-        ? "fechado_ganho"
-        : "fechado_perdido";
-
     setLoading(true);
     const { data, error } = await supabase
       .from("opportunities")
@@ -175,13 +117,12 @@ export default function Oportunidades() {
         {
           lead_id: leadId,
           vendedor_id: vendId,
-          owner_id: vendId, // importante para passar nas RLS/policies
+          owner_id: vendId, // <<< importante para passar nas policies/RLS
           segmento,
           valor_credito: valorNum,
           observacao: obs || null,
           score,
-          stage: newStage,
-          estagio, // mantém legado
+          estagio, // precisa obedecer ao CHECK de texto: "Novo", "Qualificação", ...
           expected_close_at: expectedDate || null,
         },
       ])
@@ -210,48 +151,48 @@ export default function Oportunidades() {
     alert("Oportunidade criada!");
   }
 
-  // itens para o kanban
-  const kanbanItems: KanbanItem[] = useMemo(
-    () =>
-      lista.map((o) => ({
-        id: o.id,
-        stage: o.stage || null,
-        estagio: (o.estagio as any) || null,
-        lead_id: o.lead_id,
-        vendedor_id: o.vendedor_id,
-        valor_credito: o.valor_credito,
-        segmento: o.segmento || undefined,
-      })),
-    [lista]
-  );
-
   return (
     <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
       <h2 style={{ marginBottom: 12 }}>Oportunidades</h2>
 
-      {/* KPIs */}
+      {/* KPIs (usa views criadas) */}
       <div style={{ marginBottom: 16 }}>
         <DashboardKpis />
       </div>
 
-      {/* KANBAN */}
+      {/* Kanban Board */}
       <div style={{ marginBottom: 16 }}>
         <KanbanBoard
-          items={kanbanItems}
-          onChanged={(updated) => {
-            // atualiza só visualmente; se você quiser refetch, chame carregarTudo()
-            const map = new Map(updated.map((u) => [u.id, u]));
-            setLista((prev) =>
-              prev.map((p) => {
-                const u = map.get(p.id);
-                return u ? { ...p, stage: u.stage ?? p.stage } : p;
-              })
-            );
-          }}
+          items={lista as any}
+          onChanged={(updated) => setLista(updated as any)}
         />
       </div>
 
-      {/* Formulário de criação */}
+      {/* Filtro por vendedor */}
+      <div
+        style={{
+          background: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          marginBottom: 16,
+        }}
+      >
+        <select
+          value={filtroVendedor}
+          onChange={(e) => setFiltroVendedor(e.target.value)}
+          style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
+        >
+          <option value="all">Todos os vendedores</option>
+          {vendedores.map((v) => (
+            <option key={v.auth_user_id} value={v.auth_user_id}>
+              {v.nome}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Formulário */}
       <div
         style={{
           background: "#fff",
@@ -330,7 +271,7 @@ export default function Oportunidades() {
 
           <select
             value={estagio}
-            onChange={(e) => setEstagio(e.target.value as EstagioTxt)}
+            onChange={(e) => setEstagio(e.target.value as Estagio)}
             style={{ padding: 10, borderRadius: 10, border: "1px solid #e5e7eb" }}
           >
             {["Novo", "Qualificação", "Proposta", "Negociação", "Convertido", "Perdido"].map((s) => (
@@ -340,6 +281,7 @@ export default function Oportunidades() {
             ))}
           </select>
 
+          {/* Data prevista para fechamento */}
           <input
             type="date"
             value={expectedDate}
@@ -367,7 +309,7 @@ export default function Oportunidades() {
         </div>
       </div>
 
-      {/* Lista simples (opcional) */}
+      {/* Lista */}
       <div style={{ background: "#fff", padding: 16, borderRadius: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
         <h3 style={{ margin: 0, marginBottom: 12 }}>Oportunidades</h3>
         <div style={{ overflowX: "auto" }}>
@@ -388,17 +330,12 @@ export default function Oportunidades() {
                 <tr key={o.id}>
                   <td style={td}>{leads.find((l) => l.id === o.lead_id)?.nome || "-"}</td>
                   <td style={td}>{vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}</td>
-                  <td style={td}>{o.segmento || "-"}</td>
+                  <td style={td}>{o.segmento}</td>
                   <td style={td}>
-                    {o.valor_credito
-                      ? new Intl.NumberFormat("pt-BR", {
-                          style: "currency",
-                          currency: "BRL",
-                        }).format(o.valor_credito)
-                      : "-"}
+                    {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(o.valor_credito)}
                   </td>
-                  <td style={td}>{"★".repeat(o.score || 0)}</td>
-                  <td style={td}>{toLegacyText(o.stage || (o.estagio as any) || "Novo")}</td>
+                  <td style={td}>{"★".repeat(o.score)}</td>
+                  <td style={td}>{o.estagio}</td>
                   <td style={td}>
                     {o.expected_close_at
                       ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
@@ -421,5 +358,6 @@ export default function Oportunidades() {
   );
 }
 
+// estilos da tabela
 const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
 const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };

@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Filter as FilterIcon, Percent, Settings } from "lucide-react";
 
@@ -56,11 +55,11 @@ function sanitizeBilhete5(value: string): string {
 }
 
 /** ------------------------------------------------------
- *  MODAL: LOTERIA FEDERAL
+ *  PAINEL EXPANSÍVEL: LOTERIA FEDERAL (sem dialog)
  *  ------------------------------------------------------ */
 
-function ModalLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
-  const [open, setOpen] = useState(false);
+function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
+  const [aberto, setAberto] = useState(false);
   const [data, setData] = useState<string>("");
   const [form, setForm] = useState<LoteriaFederal>({
     data_sorteio: "",
@@ -71,7 +70,13 @@ function ModalLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
     quinto: "",
   });
 
-  const canSave = data && form.primeiro && form.segundo && form.terceiro && form.quarto && form.quinto;
+  const canSave =
+    Boolean(data) &&
+    Boolean(form.primeiro) &&
+    Boolean(form.segundo) &&
+    Boolean(form.terceiro) &&
+    Boolean(form.quarto) &&
+    Boolean(form.quinto);
 
   const handleSave = async () => {
     const payload: LoteriaFederal = { ...form, data_sorteio: data };
@@ -88,56 +93,69 @@ function ModalLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
       console.error(e);
     }
     onSaved(payload);
-    setOpen(false);
+    setAberto(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="secondary" className="gap-2">
-          <Percent className="h-4 w-4" /> Informar resultados
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <CardTitle className="text-lg">LOTERIA FEDERAL</CardTitle>
+        <Button variant="secondary" className="gap-2" onClick={() => setAberto((s) => !s)}>
+          <Percent className="h-4 w-4" />
+          {aberto ? "Fechar formulário" : "Informar resultados"}
         </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle>Loteria Federal — Informar Resultados</DialogTitle>
-        </DialogHeader>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="col-span-2">
+      </div>
+
+      {aberto && (
+        <div className="rounded-xl border p-4 space-y-4">
+          <div>
             <Label>Data do sorteio</Label>
             <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
           </div>
-          {["Primeiro", "Segundo", "Terceiro", "Quarto", "Quinto"].map((label, idx) => (
-            <div key={idx} className="flex flex-col gap-1">
-              <Label>{label} Prêmio</Label>
-              <Input
-                maxLength={6}
-                inputMode="numeric"
-                pattern="\d*"
-                placeholder="00000"
-                value={(form as any)[label.toLowerCase()]}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    [label.toLowerCase()]: sanitizeBilhete5(e.target.value),
-                  }))
-                }
-              />
-            </div>
-          ))}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[
+              ["primeiro", "Primeiro Prêmio"],
+              ["segundo", "Segundo Prêmio"],
+              ["terceiro", "Terceiro Prêmio"],
+              ["quarto", "Quarto Prêmio"],
+              ["quinto", "Quinto Prêmio"],
+            ].map(([key, label]) => (
+              <div key={key} className="flex flex-col gap-1">
+                <Label>{label}</Label>
+                <Input
+                  maxLength={6}
+                  inputMode="numeric"
+                  pattern="\d*"
+                  placeholder="00000"
+                  value={(form as any)[key]}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      [key]: sanitizeBilhete5(e.target.value),
+                    }))
+                  }
+                />
+                <span className="text-xs text-muted-foreground">
+                  Sempre 5 dígitos (mantém zeros à esquerda; se digitar 6, guarda os últimos 5).
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end">
+            <Button disabled={!canSave} onClick={handleSave}>
+              Salvar
+            </Button>
+          </div>
         </div>
-        <DialogFooter>
-          <Button disabled={!canSave} onClick={handleSave}>
-            Salvar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      )}
+    </div>
   );
 }
 
 /** ------------------------------------------------------
- *  COMPONENTE PRINCIPAL
+ *  PÁGINA PRINCIPAL
  *  ------------------------------------------------------ */
 
 export default function GestaoDeGrupos() {
@@ -148,7 +166,8 @@ export default function GestaoDeGrupos() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const { data: g } = await supabase.from("groups").select("*");
+      const { data: g, error } = await supabase.from("groups").select("*");
+      if (error) console.error(error);
       setGrupos(
         (g || []).map((r: any) => ({
           id: r.id,
@@ -182,15 +201,21 @@ export default function GestaoDeGrupos() {
         </Card>
 
         <Card className="lg:col-span-4">
-          <CardHeader className="pb-2 flex-row items-center justify-between">
-            <CardTitle className="text-lg">LOTERIA FEDERAL</CardTitle>
-            <ModalLoteria onSaved={(lf) => setLoteria(lf)} />
+          <CardHeader className="pb-2">
+            {/* Painel expansível substitui o dialog */}
+            <PainelLoteria onSaved={(lf) => setLoteria(lf)} />
           </CardHeader>
           <CardContent className="text-sm grid grid-cols-5 gap-2">
             <div className="col-span-5 text-xs text-muted-foreground">
-              {loteria?.data_sorteio ? `Sorteio: ${new Date(loteria.data_sorteio).toLocaleDateString()}` : "Sem resultado selecionado"}
+              {loteria?.data_sorteio
+                ? `Sorteio: ${new Date(loteria.data_sorteio).toLocaleDateString()}`
+                : "Sem resultado selecionado"}
             </div>
-            {([loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[]).map((v, i) => (
+            {(
+              [loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(
+                Boolean
+              ) as string[]
+            ).map((v, i) => (
               <div key={i} className="px-2 py-1 rounded bg-muted text-center font-mono">
                 {v}
               </div>
@@ -201,12 +226,12 @@ export default function GestaoDeGrupos() {
         <Card className="lg:col-span-4">
           <CardHeader className="pb-2 flex-row items-center justify-between">
             <CardTitle className="text-lg">ASSEMBLEIAS</CardTitle>
-            <Button variant="secondary" className="gap-2">
+            <Button variant="secondary" className="gap-2" /* TODO: ligar formulário de assembleias */>
               <Settings className="h-4 w-4" /> Informar resultados
             </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Informe resultados por data e atualize os prazos do grupo.
+            Informe resultados por data e atualize os prazos do grupo. (Formulário será ativado no próximo passo)
           </CardContent>
         </Card>
       </div>

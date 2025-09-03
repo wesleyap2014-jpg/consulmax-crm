@@ -825,6 +825,19 @@ export default function GestaoDeGrupos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loteria]);
 
+  // 🚀 Função utilitária para sincronizar grupos a partir da Carteira (RPC)
+  const syncFromCarteira = async () => {
+    const { data, error } = await supabase.rpc<number>("sync_groups_from_carteira");
+    if (error) {
+      console.error(error);
+      alert("Erro ao sincronizar grupos a partir da Carteira: " + (error.message || ""));
+      return;
+    }
+    await carregar();
+    const qtd = typeof data === "number" ? data : 0;
+    alert(`${qtd} grupo(s) inserido(s)/atualizado(s) a partir da Carteira.`);
+  };
+
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
@@ -849,20 +862,7 @@ export default function GestaoDeGrupos() {
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
             <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  // ⚙️ Sincroniza Carteira -> Groups (função SQL)
-                  const { error } = await supabase.rpc("sync_groups_from_carteira");
-                  if (error) {
-                    console.error(error);
-                    alert("Erro ao sincronizar grupos a partir da Carteira.");
-                    return;
-                  }
-                  // Recarrega a tabela após sincronizar
-                  await carregar();
-                }}
-              >
+              <Button variant="secondary" onClick={syncFromCarteira}>
                 <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
               </Button>
               <Button onClick={() => { setCriando(true); setEditando(null); }}>

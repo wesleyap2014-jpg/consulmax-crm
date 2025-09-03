@@ -54,6 +54,11 @@ function sanitizeBilhete5(value: string): string {
   return onlyDigits.slice(-5);
 }
 
+function calcMediana(maior?: number | null, menor?: number | null) {
+  if (maior == null || menor == null) return null;
+  return (maior + menor) / 2;
+}
+
 /** ------------------------------------------------------
  *  PAINEL EXPANSÍVEL: LOTERIA FEDERAL (sem dialog)
  *  ------------------------------------------------------ */
@@ -155,6 +160,253 @@ function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
 }
 
 /** ------------------------------------------------------
+ *  PAINEL EXPANSÍVEL: ASSEMBLEIAS (salva no Supabase)
+ *  ------------------------------------------------------ */
+
+type ResultadoLinha = {
+  group_id: string;
+  codigo: string;
+  fix25_entregas: number;
+  fix25_ofertas: number;
+  fix50_entregas: number;
+  fix50_ofertas: number;
+  ll_entregas: number;
+  ll_ofertas: number;
+  ll_maior: number | null;
+  ll_menor: number | null;
+  mediana: number | null;
+};
+
+function AssembleiasPanel({
+  grupos,
+  onSaved,
+}: {
+  grupos: { id: string; codigo: string }[];
+  onSaved: (params: {
+    date: string;
+    next_due_date: string | null;
+    next_draw_date: string | null;
+    next_assembly_date: string | null;
+    remaining_meetings: number | null;
+  }) => Promise<void> | void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [date, setDate] = useState<string>("");
+  const [nextDue, setNextDue] = useState<string>("");
+  const [nextDraw, setNextDraw] = useState<string>("");
+  const [nextAsm, setNextAsm] = useState<string>("");
+  const [prazoEnc, setPrazoEnc] = useState<string>("");
+
+  const [linhas, setLinhas] = useState<ResultadoLinha[]>([]);
+
+  // inicializa linhas quando abrir
+  useEffect(() => {
+    if (!aberto) return;
+    const base: ResultadoLinha[] = grupos.map((g) => ({
+      group_id: g.id,
+      codigo: g.codigo,
+      fix25_entregas: 0,
+      fix25_ofertas: 0,
+      fix50_entregas: 0,
+      fix50_ofertas: 0,
+      ll_entregas: 0,
+      ll_ofertas: 0,
+      ll_maior: null,
+      ll_menor: null,
+      mediana: null,
+    }));
+    setLinhas(base);
+  }, [aberto, grupos]);
+
+  const upd = (id: string, campo: keyof ResultadoLinha, valor: number | null) => {
+    setLinhas((prev) =>
+      prev.map((r) => {
+        if (r.group_id !== id) return r;
+        const next = { ...r, [campo]: valor ?? 0 } as ResultadoLinha;
+        if (campo === "ll_maior" || campo === "ll_menor") {
+          next.mediana = calcMediana(next.ll_maior, next.ll_menor);
+        }
+        return next;
+      })
+    );
+  };
+
+  const podeSalvar = Boolean(date) && linhas.length > 0;
+
+  const handleSave = async () => {
+    // 1) upsert em assemblies (uma por data)
+    const { data: assem, error: errAsm } = await supabase
+      .from("assemblies")
+      .upsert(
+        {
+          date,
+          next_due_date: nextDue || null,
+          next_draw_date: nextDraw || null,
+          next_assembly_date: nextAsm || null,
+          remaining_meetings: prazoEnc ? Number(prazoEnc) : null,
+        },
+        { onConflict: "date" }
+      )
+      .select()
+      .single();
+
+    if (errAsm) {
+      console.error(errAsm);
+      alert("Erro ao salvar a assembleia.");
+      return;
+    }
+
+    // 2) upsert dos resultados por grupo
+    const payload = linhas.map((r) => ({
+      assembly_id: assem.id,
+      group_id: r.group_id,
+      date,
+      fixed25_offers: r.fix25_ofertas,
+      fixed25_deliveries: r.fix25_entregas,
+      fixed50_offers: r.fix50_ofertas,
+      fixed50_deliveries: r.fix50_entregas,
+      ll_offers: r.ll_ofertas,
+      ll_deliveries: r.ll_entregas,
+      ll_high: r.ll_maior,
+      ll_low: r.ll_menor,
+      median: r.mediana,
+    }));
+
+    const { error: errRes } = await supabase.from("assembly_results").upsert(payload, {
+      onConflict: "assembly_id,group_id",
+    });
+    if (errRes) {
+      console.error(errRes);
+      alert("Erro ao salvar os resultados da assembleia.");
+      return;
+    }
+
+    // 3) atualizar datas futuras e prazo nos grupos editados
+    const ids = linhas.map((l) => l.group_id);
+    const { error: errGrp } = await supabase
+      .from("groups")
+      .update({
+        prox_vencimento: nextDue || null,
+        prox_sorteio: nextDraw || null,
+        prox_assembleia: nextAsm || null,
+        prazo_encerramento_meses: prazoEnc ? Number(prazoEnc) : null,
+      })
+      .in("id", ids);
+
+    if (errGrp) console.error(errGrp);
+
+    await onSaved({
+      date,
+      next_due_date: nextDue || null,
+      next_draw_date: nextDraw || null,
+      next_assembly_date: nextAsm || null,
+      remaining_meetings: prazoEnc ? Number(prazoEnc) : null,
+    });
+
+    setAberto(false);
+    alert("Resultados salvos com sucesso!");
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <CardTitle className="text-lg">ASSEMBLEIAS</CardTitle>
+        <Button variant="secondary" className="gap-2" onClick={() => setAberto((s) => !s)}>
+          <Settings className="h-4 w-4" />
+          {aberto ? "Fechar formulário" : "Informar resultados"}
+        </Button>
+      </div>
+
+      {aberto && (
+        <div className="rounded-xl border p-4 space-y-4">
+          {/* Datas gerais */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <Label>Data da assembleia</Label>
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div>
+              <Label>Vencimento (próximo)</Label>
+              <Input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
+            </div>
+            <div>
+              <Label>Sorteio (próximo)</Label>
+              <Input type="date" value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} />
+            </div>
+            <div>
+              <Label>Próxima assembleia</Label>
+              <Input type="date" value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} />
+            </div>
+            <div>
+              <Label>Prazo de encerramento (meses)</Label>
+              <Input type="number" min={0} value={prazoEnc} onChange={(e) => setPrazoEnc(e.target.value)} />
+            </div>
+          </div>
+
+          {/* Tabela por grupo */}
+          <div className="max-h-[55vh] overflow-auto rounded-xl border">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                <tr>
+                  <th className="p-2 text-left">Grupo</th>
+                  <th className="p-2 text-center">25% Entregas</th>
+                  <th className="p-2 text-center">25% Ofertas</th>
+                  <th className="p-2 text-center">50% Entregas</th>
+                  <th className="p-2 text-center">50% Ofertas</th>
+                  <th className="p-2 text-center">LL Entregas</th>
+                  <th className="p-2 text-center">LL Ofertas</th>
+                  <th className="p-2 text-center">LL Maior %</th>
+                  <th className="p-2 text-center">LL Menor %</th>
+                  <th className="p-2 text-center">Mediana</th>
+                </tr>
+              </thead>
+              <tbody>
+                {linhas.map((l) => (
+                  <tr key={l.group_id} className="odd:bg-muted/30">
+                    <td className="p-2 font-medium">{l.codigo}</td>
+                    <td className="p-1 text-center">
+                      <Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} />
+                    </td>
+                    <td className="p-1 text-center">
+                      <Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} />
+                    </td>
+                    <td className="p-1 text-center">
+                      <Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} />
+                    </td>
+                    <td className="p-1 text-center">
+                      <Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} />
+                    </td>
+                    <td className="p-1 text-center">
+                      <Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} />
+                    </td>
+                    <td className="p-1 text-center">
+                      <Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} />
+                    </td>
+                    <td className="p-1 text-center">
+                      <Input type="number" min={0} step="0.01" value={l.ll_maior ?? ""} onChange={(e) => upd(l.group_id, "ll_maior", Number(e.target.value))} />
+                    </td>
+                    <td className="p-1 text-center">
+                      <Input type="number" min={0} step="0.01" value={l.ll_menor ?? ""} onChange={(e) => upd(l.group_id, "ll_menor", Number(e.target.value))} />
+                    </td>
+                    <td className="p-1 text-center">{l.mediana != null ? `${l.mediana.toFixed(2)}%` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-end">
+            <Button disabled={!podeSalvar} onClick={handleSave}>
+              Salvar resultados
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** ------------------------------------------------------
  *  PÁGINA PRINCIPAL
  *  ------------------------------------------------------ */
 
@@ -202,7 +454,6 @@ export default function GestaoDeGrupos() {
 
         <Card className="lg:col-span-4">
           <CardHeader className="pb-2">
-            {/* Painel expansível substitui o dialog */}
             <PainelLoteria onSaved={(lf) => setLoteria(lf)} />
           </CardHeader>
           <CardContent className="text-sm grid grid-cols-5 gap-2">
@@ -224,14 +475,16 @@ export default function GestaoDeGrupos() {
         </Card>
 
         <Card className="lg:col-span-4">
-          <CardHeader className="pb-2 flex-row items-center justify-between">
-            <CardTitle className="text-lg">ASSEMBLEIAS</CardTitle>
-            <Button variant="secondary" className="gap-2" /* TODO: ligar formulário de assembleias */>
-              <Settings className="h-4 w-4" /> Informar resultados
-            </Button>
+          <CardHeader className="pb-2">
+            <AssembleiasPanel
+              grupos={grupos.map((g) => ({ id: g.id, codigo: g.codigo }))}
+              onSaved={async () => {
+                // (opcional) recarregar dados após salvar
+              }}
+            />
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Informe resultados por data e atualize os prazos do grupo. (Formulário será ativado no próximo passo)
+            Informe resultados por data e atualize os prazos do grupo.
           </CardContent>
         </Card>
       </div>

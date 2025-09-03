@@ -4,11 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Filter as FilterIcon, Percent, Settings } from "lucide-react";
+import {
+  Loader2,
+  Filter as FilterIcon,
+  Percent,
+  Settings,
+  Plus,
+  Pencil,
+  RefreshCw,
+  Save,
+} from "lucide-react";
 
-/** ------------------------------------------------------
- *  TIPOS DE DADOS
- *  ------------------------------------------------------ */
+/* =========================================================
+   TIPOS
+   ========================================================= */
 
 type Administradora = "Embracon" | "HS" | string;
 
@@ -58,9 +67,9 @@ type UltimoResultado = {
   median: number | null;
 };
 
-/** ------------------------------------------------------
- *  HELPERS
- *  ------------------------------------------------------ */
+/* =========================================================
+   HELPERS
+   ========================================================= */
 
 function sanitizeBilhete5(value: string): string {
   const onlyDigits = (value || "").replace(/\D/g, "");
@@ -76,8 +85,7 @@ function calcMediana(maior?: number | null, menor?: number | null) {
 function withinLLMedianFilter(mediana: number | null | undefined, alvo: number | null): boolean {
   if (alvo == null) return true;
   if (mediana == null) return false;
-  // alvo ±15% (ex.: alvo 45 → faixa 30..60)
-  const min = Math.max(0, alvo * 0.70);
+  const min = Math.max(0, alvo * 0.70); // ±15% em torno do alvo => 70% a 130% do valor
   const max = alvo * 1.30;
   return mediana >= min && mediana <= max;
 }
@@ -142,9 +150,9 @@ function referenciaPorAdministradora(params: {
   return null;
 }
 
-/** ------------------------------------------------------
- *  PAINEL EXPANSÍVEL: LOTERIA FEDERAL (sem dialog)
- *  ------------------------------------------------------ */
+/* =========================================================
+   PAINEL: LOTERIA FEDERAL (sem dialog)
+   ========================================================= */
 
 function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
   const [aberto, setAberto] = useState(false);
@@ -157,6 +165,26 @@ function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
     quarto: "",
     quinto: "",
   });
+
+  // ao escolher uma data, tenta buscar no banco para preencher automaticamente
+  useEffect(() => {
+    (async () => {
+      if (!data) return;
+      const { data: d } = await supabase.from("lottery_draws").select("*").eq("draw_date", data).single();
+      if (d) {
+        setForm({
+          data_sorteio: data,
+          primeiro: d.first,
+          segundo: d.second,
+          terceiro: d.third,
+          quarto: d.fourth,
+          quinto: d.fifth,
+        });
+      } else {
+        setForm((f) => ({ ...f, data_sorteio: data, primeiro: "", segundo: "", terceiro: "", quarto: "", quinto: "" }));
+      }
+    })();
+  }, [data]);
 
   const canSave =
     Boolean(data) &&
@@ -179,6 +207,8 @@ function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
       });
     } catch (e) {
       console.error(e);
+      alert("Erro ao salvar o resultado da Loteria.");
+      return;
     }
     onSaved(payload);
     setAberto(false);
@@ -242,9 +272,9 @@ function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
   );
 }
 
-/** ------------------------------------------------------
- *  PAINEL EXPANSÍVEL: ASSEMBLEIAS (salva no Supabase)
- *  ------------------------------------------------------ */
+/* =========================================================
+   PAINEL: ASSEMBLEIAS (grava em 3 tabelas + atualiza groups)
+   ========================================================= */
 
 type ResultadoLinha = {
   group_id: string;
@@ -480,7 +510,7 @@ function AssembleiasPanel({
 
           <div className="flex justify-end">
             <Button disabled={!podeSalvar} onClick={handleSave}>
-              Salvar resultados
+              <Save className="h-4 w-4 mr-2" /> Salvar resultados
             </Button>
           </div>
         </div>
@@ -489,9 +519,187 @@ function AssembleiasPanel({
   );
 }
 
-/** ------------------------------------------------------
- *  PÁGINA PRINCIPAL
- *  ------------------------------------------------------ */
+/* =========================================================
+   EDITAR / ADICIONAR GRUPO (inline)
+   ========================================================= */
+
+function EditorGrupo({
+  group,
+  onClose,
+  onSaved,
+}: {
+  group?: Grupo | null;
+  onClose: () => void;
+  onSaved: () => Promise<void> | void;
+}) {
+  const [form, setForm] = useState<Partial<Grupo>>(
+    group || {
+      administradora: "" as Administradora,
+      segmento: "" as SegmentoUI,
+      codigo: "",
+      participantes: null,
+      faixa_min: null,
+      faixa_max: null,
+      prox_vencimento: null,
+      prox_sorteio: null,
+      prox_assembleia: null,
+      prazo_encerramento_meses: null,
+    }
+  );
+
+  const isNew = !group?.id;
+
+  const handleSave = async () => {
+    if (!form.codigo || !form.administradora || !form.segmento) {
+      alert("Preencha Administradora, Segmento e Código do Grupo.");
+      return;
+    }
+    if (isNew) {
+      const { error } = await supabase.from("groups").insert({
+        administradora: form.administradora,
+        segmento: form.segmento,
+        codigo: form.codigo,
+        participantes: form.participantes,
+        faixa_min: form.faixa_min,
+        faixa_max: form.faixa_max,
+        prox_vencimento: form.prox_vencimento,
+        prox_sorteio: form.prox_sorteio,
+        prox_assembleia: form.prox_assembleia,
+        prazo_encerramento_meses: form.prazo_encerramento_meses,
+      });
+      if (error) {
+        console.error(error);
+        alert("Erro ao inserir grupo.");
+        return;
+      }
+    } else {
+      const { error } = await supabase
+        .from("groups")
+        .update({
+          administradora: form.administradora,
+          segmento: form.segmento,
+          codigo: form.codigo,
+          participantes: form.participantes,
+          faixa_min: form.faixa_min,
+          faixa_max: form.faixa_max,
+          prox_vencimento: form.prox_vencimento,
+          prox_sorteio: form.prox_sorteio,
+          prox_assembleia: form.prox_assembleia,
+          prazo_encerramento_meses: form.prazo_encerramento_meses,
+        })
+        .eq("id", group!.id);
+      if (error) {
+        console.error(error);
+        alert("Erro ao atualizar grupo.");
+        return;
+      }
+    }
+    await onSaved();
+    onClose();
+  };
+
+  return (
+    <div className="rounded-xl border p-4 space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div>
+          <Label>Administradora</Label>
+          <Input
+            value={form.administradora ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))}
+            placeholder="Ex.: Embracon"
+          />
+        </div>
+        <div>
+          <Label>Segmento</Label>
+          <Input
+            value={form.segmento ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))}
+            placeholder="Ex.: Imóvel"
+          />
+        </div>
+        <div>
+          <Label>Código do Grupo</Label>
+          <Input
+            value={form.codigo ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))}
+            placeholder="Ex.: 1234/5"
+          />
+        </div>
+
+        <div>
+          <Label>Participantes</Label>
+          <Input
+            type="number"
+            min={1}
+            value={form.participantes ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))}
+          />
+        </div>
+        <div>
+          <Label>Faixa Mínima</Label>
+          <Input
+            type="number"
+            step="0.01"
+            value={form.faixa_min ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))}
+          />
+        </div>
+        <div>
+          <Label>Faixa Máxima</Label>
+          <Input
+            type="number"
+            step="0.01"
+            value={form.faixa_max ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))}
+          />
+        </div>
+
+        <div>
+          <Label>Próx. Vencimento</Label>
+          <Input
+            type="date"
+            value={form.prox_vencimento ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))}
+          />
+        </div>
+        <div>
+          <Label>Próx. Sorteio</Label>
+          <Input
+            type="date"
+            value={form.prox_sorteio ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))}
+          />
+        </div>
+        <div>
+          <Label>Próx. Assembleia</Label>
+          <Input
+            type="date"
+            value={form.prox_assembleia ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))}
+          />
+        </div>
+        <div>
+          <Label>Prazo Enc. (meses)</Label>
+          <Input
+            type="number"
+            min={0}
+            value={form.prazo_encerramento_meses ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))}
+          />
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+        <Button onClick={handleSave}><Save className="h-4 w-4 mr-2" /> Salvar Grupo</Button>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   PÁGINA PRINCIPAL
+   ========================================================= */
 
 type LinhaUI = {
   id: string;
@@ -536,88 +744,98 @@ export default function GestaoDeGrupos() {
   const [fFaixa, setFFaixa] = useState("");
   const [fMedianaAlvo, setFMedianaAlvo] = useState("");
 
-  // carrega grupos e últimos resultados
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
+  // edição/novo grupo
+  const [editando, setEditando] = useState<Grupo | null>(null);
+  const [criando, setCriando] = useState<boolean>(false);
 
-      const { data: g, error: gErr } = await supabase
-        .from("groups")
-        .select("id, administradora, segmento, codigo, participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia, prazo_encerramento_meses");
-      if (gErr) console.error(gErr);
+  const carregar = async () => {
+    setLoading(true);
 
-      const gruposFetched: Grupo[] =
-        (g || []).map((r: any) => ({
-          id: r.id,
-          administradora: r.administradora,
-          segmento: r.segmento === "Imóvel Estendido" ? "Imóvel" : r.segmento,
-          codigo: r.codigo,
-          participantes: r.participantes,
-          faixa_min: r.faixa_min,
-          faixa_max: r.faixa_max,
-          prox_vencimento: r.prox_vencimento,
-          prox_sorteio: r.prox_sorteio,
-          prox_assembleia: r.prox_assembleia,
-          prazo_encerramento_meses: r.prazo_encerramento_meses,
-        })) || [];
+    const { data: g, error: gErr } = await supabase
+      .from("groups")
+      .select(
+        "id, administradora, segmento, codigo, participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia, prazo_encerramento_meses"
+      );
+    if (gErr) console.error(gErr);
 
-      setGrupos(gruposFetched);
+    const gruposFetched: Grupo[] =
+      (g || []).map((r: any) => ({
+        id: r.id,
+        administradora: r.administradora,
+        segmento: r.segmento === "Imóvel Estendido" ? "Imóvel" : r.segmento,
+        codigo: r.codigo,
+        participantes: r.participantes,
+        faixa_min: r.faixa_min,
+        faixa_max: r.faixa_max,
+        prox_vencimento: r.prox_vencimento,
+        prox_sorteio: r.prox_sorteio,
+        prox_assembleia: r.prox_assembleia,
+        prazo_encerramento_meses: r.prazo_encerramento_meses,
+      })) || [];
 
-      // últimos resultados por grupo (view)
-      const { data: ar, error: arErr } = await supabase
-        .from("v_group_last_assembly")
-        .select("group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median");
+    setGrupos(gruposFetched);
 
-      if (arErr) console.error(arErr);
+    // últimos resultados por grupo (view)
+    const { data: ar, error: arErr } = await supabase
+      .from("v_group_last_assembly")
+      .select(
+        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
+      );
 
-      const byGroup = new Map<string, UltimoResultado>();
-      (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
+    if (arErr) console.error(arErr);
 
-      const linhas: LinhaUI[] = gruposFetched.map((g) => {
-        const r = byGroup.get(g.id);
-        const t25 = r?.fixed25_deliveries || 0;
-        const t50 = r?.fixed50_deliveries || 0;
-        const tLL = r?.ll_deliveries || 0;
-        const total = t25 + t50 + tLL;
-        const med = r?.median ?? calcMediana(r?.ll_high ?? null, r?.ll_low ?? null);
+    const byGroup = new Map<string, UltimoResultado>();
+    (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
 
-        return {
-          id: g.id,
+    const linhas: LinhaUI[] = gruposFetched.map((g) => {
+      const r = byGroup.get(g.id);
+      const t25 = r?.fixed25_deliveries || 0;
+      const t50 = r?.fixed50_deliveries || 0;
+      const tLL = r?.ll_deliveries || 0;
+      const total = t25 + t50 + tLL;
+      const med = r?.median ?? calcMediana(r?.ll_high ?? null, r?.ll_low ?? null);
+
+      return {
+        id: g.id,
+        administradora: g.administradora,
+        segmento: g.segmento,
+        codigo: g.codigo,
+        participantes: g.participantes,
+        faixa_min: g.faixa_min,
+        faixa_max: g.faixa_max,
+
+        total_entregas: total,
+        fix25_entregas: t25,
+        fix25_ofertas: r?.fixed25_offers || 0,
+        fix50_entregas: t50,
+        fix50_ofertas: r?.fixed50_offers || 0,
+        ll_entregas: tLL,
+        ll_ofertas: r?.ll_offers || 0,
+        ll_maior: r?.ll_high ?? null,
+        ll_menor: r?.ll_low ?? null,
+        mediana: med,
+
+        apuracao_dia: r?.date ?? null,
+        prazo_encerramento_meses: g.prazo_encerramento_meses,
+        prox_vencimento: g.prox_vencimento,
+        prox_sorteio: g.prox_sorteio,
+        prox_assembleia: g.prox_assembleia,
+
+        referencia: referenciaPorAdministradora({
           administradora: g.administradora,
-          segmento: g.segmento,
-          codigo: g.codigo,
           participantes: g.participantes,
-          faixa_min: g.faixa_min,
-          faixa_max: g.faixa_max,
+          bilhetes: loteria,
+        }),
+      };
+    });
 
-          total_entregas: total,
-          fix25_entregas: t25,
-          fix25_ofertas: r?.fixed25_offers || 0,
-          fix50_entregas: t50,
-          fix50_ofertas: r?.fixed50_offers || 0,
-          ll_entregas: tLL,
-          ll_ofertas: r?.ll_offers || 0,
-          ll_maior: r?.ll_high ?? null,
-          ll_menor: r?.ll_low ?? null,
-          mediana: med,
+    setRows(linhas);
+    setLoading(false);
+  };
 
-          apuracao_dia: r?.date ?? null,
-          prazo_encerramento_meses: g.prazo_encerramento_meses,
-          prox_vencimento: g.prox_vencimento,
-          prox_sorteio: g.prox_sorteio,
-          prox_assembleia: g.prox_assembleia,
-
-          referencia: referenciaPorAdministradora({
-            administradora: g.administradora,
-            participantes: g.participantes,
-            bilhetes: loteria,
-          }),
-        };
-      });
-
-      setRows(linhas);
-      setLoading(false);
-    })();
+  useEffect(() => {
+    carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loteria]); // recalcula referência quando informar novo sorteio
 
   // aplica filtros
@@ -639,11 +857,19 @@ export default function GestaoDeGrupos() {
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Cabeçalho */}
+      {/* Cabeçalho / Ações */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
         <Card className="lg:col-span-4">
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={carregar}>
+                <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
+              </Button>
+              <Button onClick={() => { setCriando(true); setEditando(null); }}>
+                <Plus className="h-4 w-4 mr-2" /> Adicionar Grupo
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Visão consolidada por grupo: resultados de assembleias, filtros e referência do sorteio.
@@ -677,7 +903,7 @@ export default function GestaoDeGrupos() {
             <AssembleiasPanel
               grupos={grupos.map((g) => ({ id: g.id, codigo: g.codigo }))}
               onSaved={async () => {
-                // (opcional) recarregar depois de salvar
+                await carregar();
               }}
             />
           </CardHeader>
@@ -694,7 +920,7 @@ export default function GestaoDeGrupos() {
             <FilterIcon className="h-4 w-4" /> Filtros
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <div>
             <Label>Administradora</Label>
             <Input value={fAdmin} onChange={(e) => setFAdmin(e.target.value)} placeholder="Filtrar Administradora" />
@@ -720,10 +946,28 @@ export default function GestaoDeGrupos() {
               onChange={(e) => setFMedianaAlvo(e.target.value)}
               placeholder="ex.: 45"
             />
-            <p className="text-xs text-muted-foreground mt-1">Ex.: 45 → mostra grupos com mediana entre 30% e 60%.</p>
+          </div>
+          <div className="self-end text-xs text-muted-foreground">
+            Ex.: 45 → mostra grupos com mediana entre 30% e 60%.
           </div>
         </CardContent>
       </Card>
+
+      {/* Editor / Criador de Grupo */}
+      {(criando || editando) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{criando ? "Adicionar Grupo" : `Editar Grupo (${editando?.codigo})`}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <EditorGrupo
+              group={editando}
+              onClose={() => { setCriando(false); setEditando(null); }}
+              onSaved={async () => await carregar()}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tabela de grupos */}
       <div className="rounded-2xl border overflow-auto">
@@ -751,18 +995,19 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-center">Sorteio</th>
               <th className="p-2 text-center">Assembleia</th>
               <th className="p-2 text-right">Referência</th>
+              <th className="p-2 text-center">Ações</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={21} className="p-6 text-center text-muted-foreground">
+                <td colSpan={22} className="p-6 text-center text-muted-foreground">
                   <Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={21} className="p-6 text-center text-muted-foreground">
+                <td colSpan={22} className="p-6 text-center text-muted-foreground">
                   Sem registros para os filtros aplicados.
                 </td>
               </tr>
@@ -790,12 +1035,34 @@ export default function GestaoDeGrupos() {
                   <td className="p-2 text-right">{r.ll_maior != null ? `${r.ll_maior.toFixed(2)}%` : "—"}</td>
                   <td className="p-2 text-right">{r.ll_menor != null ? `${r.ll_menor.toFixed(2)}%` : "—"}</td>
                   <td className="p-2 text-right">{r.mediana != null ? `${r.mediana.toFixed(2)}%` : "—"}</td>
-                  <td className="p-2 text-center">{r.apuracao_dia ? new Date(r.apuracao_dia).toLocaleDateString() : "—"}</td>
+                  <td className="p-2 text-center">
+                    {r.apuracao_dia ? new Date(r.apuracao_dia).toLocaleDateString() : "—"}
+                  </td>
                   <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
-                  <td className="p-2 text-center">{r.prox_vencimento ? new Date(r.prox_vencimento).toLocaleDateString() : "—"}</td>
-                  <td className="p-2 text-center">{r.prox_sorteio ? new Date(r.prox_sorteio).toLocaleDateString() : "—"}</td>
-                  <td className="p-2 text-center">{r.prox_assembleia ? new Date(r.prox_assembleia).toLocaleDateString() : "—"}</td>
+                  <td className="p-2 text-center">
+                    {r.prox_vencimento ? new Date(r.prox_vencimento).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="p-2 text-center">
+                    {r.prox_sorteio ? new Date(r.prox_sorteio).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="p-2 text-center">
+                    {r.prox_assembleia ? new Date(r.prox_assembleia).toLocaleDateString() : "—"}
+                  </td>
                   <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
+                  <td className="p-2 text-center">
+                    <Button
+                      variant="secondary"
+                      className="gap-1"
+                      onClick={() => {
+                        const g = grupos.find((x) => x.id === r.id) || null;
+                        setEditando(g);
+                        setCriando(false);
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                    >
+                      <Pencil className="h-4 w-4" /> Editar
+                    </Button>
+                  </td>
                 </tr>
               ))
             )}
@@ -805,7 +1072,8 @@ export default function GestaoDeGrupos() {
 
       {/* Rodapé simples */}
       <div className="text-sm text-muted-foreground">
-        Total de entregas (linhas filtradas): <span className="font-semibold text-foreground">{totalEntregas}</span>
+        Total de entregas (linhas filtradas):{" "}
+        <span className="font-semibold text-foreground">{totalEntregas}</span>
       </div>
     </div>
   );

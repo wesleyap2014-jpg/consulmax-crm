@@ -28,13 +28,15 @@ type Venda = {
   forma_venda: FormaVenda;
   numero_proposta: string;
   valor_venda: number;
-  tipo_venda: "Normal" | "Contemplada";
+  tipo_venda: "Normal" | "Contemplada" | "Bolsão";
   descricao: string | null;
   status: "nova" | "encarteirada";
   grupo: string | null;
   cota: string | null;
   codigo: string | null; // '00' ativa; outro -> cancelada
   encarteirada_em: string | null;
+  contemplada?: boolean | null;
+  data_contemplacao?: string | null; // ISO date
   created_at: string;
 };
 
@@ -57,43 +59,90 @@ const currency = (n: number) =>
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
+/** ---------------- CPF ---------------- */
+const onlyDigits = (s: string) => (s || "").replace(/\D/g, "");
+const formatCPF = (s: string) => {
+  const d = onlyDigits(s).slice(0, 11);
+  const parts = [d.slice(0, 3), d.slice(3, 6), d.slice(6, 9), d.slice(9, 11)].filter(Boolean);
+  return parts.length <= 3 ? parts.join(".") : `${parts[0]}.${parts[1]}.${parts[2]}-${parts[3]}`;
+};
+// Validação CPF (algoritmo oficial)
+const validateCPF = (cpf: string) => {
+  const d = onlyDigits(cpf);
+  if (d.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(d)) return false; // repetidos
+  const calc = (base: string, factor: number) => {
+    let sum = 0;
+    for (let i = 0; i < base.length; i++) sum += parseInt(base[i], 10) * (factor - i);
+    const rest = (sum * 10) % 11;
+    return rest === 10 ? 0 : rest;
+  };
+  const d1 = calc(d.slice(0, 9), 10);
+  const d2 = calc(d.slice(0, 10), 11);
+  return d1 === parseInt(d[9]) && d2 === parseInt(d[10]);
+};
+
 /** ----------------------------------------------------------------
  *  Linhas (componentes separados) — evita hooks dentro de .map()
  * ----------------------------------------------------------------*/
 type LinhaEncarteirarProps = {
   venda: Venda;
   lead?: Lead;
+  isAdmin: boolean;
   onSubmit: (vendaId: string, grupo: string, cota: string, codigo: string) => Promise<void>;
+  onDelete: (vendaId: string) => Promise<void>;
+  onViewDescricao: (title: string, text: string | null) => void;
 };
-const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({ venda, lead, onSubmit }) => {
+const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({ venda, lead, isAdmin, onSubmit, onDelete, onViewDescricao }) => {
   const [grupo, setGrupo] = useState("");
   const [cota, setCota] = useState("");
   const [codigo, setCodigo] = useState("");
+
   return (
     <tr className="border-t">
       <td className="p-2">
-        <div className="font-medium">{lead?.nome ?? "—"}</div>
+        <div className="flex items-center gap-2">
+          <div className="font-medium">{lead?.nome ?? "—"}</div>
+          <button
+            title="Ver descrição"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onViewDescricao(`Descrição - ${lead?.nome ?? "Venda"}`, venda.descricao)}
+          >
+            👁️
+          </button>
+        </div>
         <div className="text-xs text-gray-500">{lead?.telefone ?? "—"}</div>
       </td>
       <td className="p-2">{venda.administradora}</td>
       <td className="p-2">{venda.numero_proposta}</td>
       <td className="p-2">
-        <input value={grupo} onChange={(e) => setGrupo(e.target.value)} className="border rounded px-2 py-1 w-28" />
+        <input value={grupo} onChange={(e) => setGrupo(e.target.value)} className="border rounded px-2 py-1 w-28" disabled={!isAdmin} />
       </td>
       <td className="p-2">
-        <input value={cota} onChange={(e) => setCota(e.target.value)} className="border rounded px-2 py-1 w-20" />
+        <input value={cota} onChange={(e) => setCota(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!isAdmin} />
       </td>
       <td className="p-2">
-        <input value={codigo} onChange={(e) => setCodigo(e.target.value)} className="border rounded px-2 py-1 w-20" />
+        <input value={codigo} onChange={(e) => setCodigo(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!isAdmin} />
       </td>
       <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
       <td className="p-2">
-        <button
-          className="px-3 py-1 rounded bg-[#A11C27] text-white hover:opacity-90"
-          onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
-        >
-          ENCARTEIRAR
-        </button>
+        <div className="flex gap-2">
+          <button
+            className={`px-3 py-1 rounded ${isAdmin ? "bg-[#A11C27] text-white hover:opacity-90" : "bg-gray-200 text-gray-500 cursor-not-allowed"}`}
+            disabled={!isAdmin}
+            onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
+          >
+            ENCARTEIRAR
+          </button>
+          <button
+            className="px-3 py-1 rounded border hover:bg-gray-50"
+            onClick={() => {
+              if (confirm("Excluir este lançamento? Essa ação não pode ser desfeita.")) onDelete(venda.id);
+            }}
+          >
+            Excluir
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -102,14 +151,32 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({ venda, lead, onSubm
 type LinhaCotaProps = {
   venda: Venda;
   onSave: (patch: Partial<Venda>) => Promise<void>;
+  onViewDescricao: (title: string, text: string | null) => void;
+  isAdmin: boolean;
 };
-const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave }) => {
+const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewDescricao, isAdmin }) => {
   const ativa = isAtiva(venda.codigo);
   const [edit, setEdit] = useState(false);
   const [grupo, setGrupo] = useState(venda.grupo ?? "");
   const [cota, setCota] = useState(venda.cota ?? "");
   const [codigo, setCodigo] = useState(venda.codigo ?? "");
   const [valor, setValor] = useState<number>(venda.valor_venda);
+  const [adm, setAdm] = useState<Administradora>(venda.administradora);
+  const [flagCont, setFlagCont] = useState<boolean>(!!venda.contemplada);
+  const [dataCont, setDataCont] = useState<string>(venda.data_contemplacao ?? "");
+
+  const saveEdit = async () => {
+    setEdit(false);
+    await onSave({ grupo, cota, codigo, valor_venda: valor, administradora: adm });
+  };
+
+  const saveContemplacao = async () => {
+    if (flagCont && !dataCont) {
+      alert("Informe a data da contemplação.");
+      return;
+    }
+    await onSave({ contemplada: flagCont, data_contemplacao: flagCont ? dataCont : null });
+  };
 
   return (
     <tr className="border-t">
@@ -118,8 +185,31 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave }) => {
           {ativa ? "Ativa" : "Cancelada"}
         </span>
       </td>
-      <td className="p-2">{venda.administradora}</td>
-      <td className="p-2">{venda.numero_proposta}</td>
+      <td className="p-2">
+        {edit ? (
+          <select className="border rounded px-2 py-1" value={adm} onChange={(e) => setAdm(e.target.value as Administradora)}>
+            {ADMINISTRADORAS.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        ) : (
+          venda.administradora
+        )}
+      </td>
+      <td className="p-2">
+        <div className="flex items-center gap-2">
+          <span>{venda.numero_proposta}</span>
+          <button
+            title="Ver descrição"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onViewDescricao(`Descrição - Proposta ${venda.numero_proposta}`, venda.descricao)}
+          >
+            👁️
+          </button>
+        </div>
+      </td>
       <td className="p-2">
         {edit ? <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} /> : venda.grupo ?? "—"}
       </td>
@@ -143,26 +233,52 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave }) => {
         )}
       </td>
       <td className="p-2">
-        {edit ? (
-          <div className="flex gap-2">
-            <button
-              className="px-3 py-1 rounded bg-[#1E293F] text-white hover:opacity-90"
-              onClick={() => {
-                setEdit(false);
-                onSave({ grupo, cota, codigo, valor_venda: valor });
-              }}
-            >
-              Salvar
+        {isAdmin ? (
+          edit ? (
+            <div className="flex gap-2">
+              <button className="px-3 py-1 rounded bg-[#1E293F] text-white hover:opacity-90" onClick={saveEdit}>
+                Salvar
+              </button>
+              <button className="px-3 py-1 rounded border" onClick={() => setEdit(false)}>
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button className="px-3 py-1 rounded border" onClick={() => setEdit(true)}>
+              ✏️ Editar
             </button>
-            <button className="px-3 py-1 rounded border" onClick={() => setEdit(false)}>
-              Cancelar
-            </button>
-          </div>
+          )
         ) : (
-          <button className="px-3 py-1 rounded border" onClick={() => setEdit(true)}>
-            ✏️ Editar
-          </button>
+          <span className="text-xs text-gray-400">Somente admin edita</span>
         )}
+      </td>
+
+      {/* Contemplação (sempre visível) */}
+      <td className="p-2">
+        <div className="flex items-center gap-2">
+          <label className="text-sm">
+            <input
+              type="checkbox"
+              className="mr-1"
+              checked={flagCont}
+              onChange={(e) => setFlagCont(e.target.checked)}
+            />
+            Contemplada
+          </label>
+          {flagCont && (
+            <>
+              <input
+                type="date"
+                className="border rounded px-2 py-1"
+                value={dataCont}
+                onChange={(e) => setDataCont(e.target.value)}
+              />
+              <button className="px-2 py-1 rounded border hover:bg-gray-50" onClick={saveContemplacao}>
+                Salvar
+              </button>
+            </>
+          )}
+        </div>
       </td>
     </tr>
   );
@@ -181,15 +297,17 @@ type ClienteGroup = {
 type ClienteBlocoProps = {
   group: ClienteGroup;
   onSaveVenda: (v: Venda, patch: Partial<Venda>) => Promise<void>;
+  onViewAllDescricoes: (title: string, textos: Array<{ proposta: string; descricao: string | null }>) => void;
+  isAdmin: boolean;
 };
-const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda }) => {
+const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewAllDescricoes, isAdmin }) => {
   const [open, setOpen] = useState(false);
   const segs = Array.from(group.segmentos).join("; ");
 
   return (
     <div className="border rounded-2xl p-4">
-      <button className="w-full text-left" onClick={() => setOpen((o) => !o)}>
-        <div className="flex items-center justify-between">
+      <div className="w-full flex items-center justify-between">
+        <button className="text-left" onClick={() => setOpen((o) => !o)}>
           <div className="font-medium">
             {group.cliente.nome}
             <span className="text-xs text-gray-500 ml-2">{group.cliente.telefone ?? ""}</span>
@@ -197,12 +315,24 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda }) => {
           <div className="text-sm text-gray-600">
             Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
           </div>
-        </div>
-      </button>
+        </button>
+        <button
+          title="Ver descrições do cliente"
+          className="text-gray-500 hover:text-gray-800"
+          onClick={() =>
+            onViewAllDescricoes(
+              `Descrições - ${group.cliente.nome}`,
+              group.itens.map((v) => ({ proposta: v.numero_proposta, descricao: v.descricao }))
+            )
+          }
+        >
+          👁️
+        </button>
+      </div>
 
       {open && (
         <div className="mt-3 overflow-auto">
-          <table className="min-w-[720px] w-full border border-gray-200 rounded-xl">
+          <table className="min-w-[960px] w-full border border-gray-200 rounded-xl">
             <thead className="bg-gray-50">
               <tr>
                 <th className="text-left p-2">Status</th>
@@ -213,11 +343,18 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda }) => {
                 <th className="text-left p-2">Código</th>
                 <th className="text-left p-2">Valor</th>
                 <th className="text-left p-2">Editar</th>
+                <th className="text-left p-2">Contemplação</th>
               </tr>
             </thead>
             <tbody>
               {group.itens.map((v) => (
-                <LinhaCota key={v.id} venda={v} onSave={(patch) => onSaveVenda(v, patch)} />
+                <LinhaCota
+                  key={v.id}
+                  venda={v}
+                  onSave={(patch) => onSaveVenda(v, patch)}
+                  onViewDescricao={(t, d) => onViewAllDescricoes(t, [{ proposta: v.numero_proposta, descricao: d }])}
+                  isAdmin={isAdmin}
+                />
               ))}
             </tbody>
           </table>
@@ -231,7 +368,9 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda }) => {
 const Carteira: React.FC = () => {
   /** Sessão / Dados base */
   const [userId, setUserId] = useState<string>("");
+  const [userEmail, setUserEmail] = useState<string>("");
   const [userName, setUserName] = useState<string>("");
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadMap, setLeadMap] = useState<Record<string, Lead>>({});
@@ -245,7 +384,10 @@ const Carteira: React.FC = () => {
   /** Pesquisa */
   const [q, setQ] = useState<string>("");
 
-  /** Nova Venda (modal) */
+  /** Mostrar/ocultar carteira */
+  const [showCarteira, setShowCarteira] = useState<boolean>(true);
+
+  /** Modal Nova Venda */
   const [showModal, setShowModal] = useState<boolean>(false);
   const [form, setForm] = useState<Partial<Venda>>({
     cpf: "",
@@ -255,7 +397,13 @@ const Carteira: React.FC = () => {
     forma_venda: "Parcela Cheia",
     tipo_venda: "Normal",
     descricao: "",
+    grupo: "", // usado quando tipo_venda = 'Bolsão'
   });
+
+  /** Modal Descrição */
+  const [descModal, setDescModal] = useState<{ open: boolean; title: string; text: string }>(
+    { open: false, title: "", text: "" }
+  );
 
   /** Oferta de Lance */
   const [assembleia, setAssembleia] = useState<string>(new Date().toISOString().slice(0, 10));
@@ -290,10 +438,21 @@ const Carteira: React.FC = () => {
         // 1) Sessão / usuário
         const session = await fetchWithRetry(async () => (await supabase.auth.getUser()).data, "auth.getUser");
         const uid = session?.user?.id ?? "";
+        const uemail = session?.user?.email ?? "";
         if (alive) {
           setUserId(uid);
-          setUserName(session?.user?.user_metadata?.nome ?? session?.user?.email ?? "Vendedor");
+          setUserEmail(uemail);
+          setUserName(session?.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
         }
+
+        // 1.1) É admin?
+        const isAdm = await fetchWithRetry(async () => {
+          if (!uemail) return false;
+          const { data, error } = await supabase.from("admins").select("email").eq("email", uemail).maybeSingle();
+          if (error) throw error;
+          return !!data;
+        }, "select admins");
+        if (alive) setIsAdmin(isAdm);
 
         // 2) Leads
         const leadsData = await fetchWithRetry(async () => {
@@ -357,6 +516,10 @@ const Carteira: React.FC = () => {
     () => encarteiradas.reduce((acc, v) => (!isAtiva(v.codigo) ? acc + (v.valor_venda || 0) : acc), 0),
     [encarteiradas]
   );
+  const totalContempladas = useMemo(
+    () => encarteiradas.reduce((acc, v) => (v.contemplada ? acc + (v.valor_venda || 0) : acc), 0),
+    [encarteiradas]
+  );
 
   const porCliente: ClienteGroup[] = useMemo(() => {
     const map: Record<
@@ -375,7 +538,9 @@ const Carteira: React.FC = () => {
       }
       map[key].segmentos.add(v.produto);
     }
-    return Object.values(map);
+    return Object.values(map).sort((a, b) =>
+      a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" })
+    );
   }, [encarteiradasFiltradas, leadMap]);
 
   /** ----------------- Actions ----------------- */
@@ -387,24 +552,31 @@ const Carteira: React.FC = () => {
     try {
       if (!form.lead_id) throw new Error("Selecione o Lead.");
       if (!form.cpf?.trim()) throw new Error("CPF é obrigatório.");
+      if (!validateCPF(form.cpf)) throw new Error("CPF inválido.");
       if (!form.numero_proposta?.trim()) throw new Error("Número da proposta é obrigatório.");
       const valor = Number((form.valor_venda as any)?.toString().replace(/\./g, "").replace(",", "."));
       if (Number.isNaN(valor)) throw new Error("Valor da venda inválido.");
 
-      const payload = {
+      const payload: Partial<Venda> = {
         lead_id: form.lead_id,
-        cpf: (form.cpf ?? "").trim(),
-        data_venda: form.data_venda,
+        cpf: onlyDigits(form.cpf!),
+        data_venda: form.data_venda!,
         vendedor_id: userId,
-        produto: form.produto,
-        administradora: form.administradora,
-        forma_venda: form.forma_venda,
-        numero_proposta: form.numero_proposta,
+        produto: form.produto!,
+        administradora: form.administradora!,
+        forma_venda: form.forma_venda!,
+        numero_proposta: form.numero_proposta!,
         valor_venda: valor,
-        tipo_venda: form.tipo_venda ?? "Normal",
+        tipo_venda: (form.tipo_venda as any) ?? "Normal",
         descricao: form.descricao ?? "",
         status: "nova",
       };
+
+      // Se for Bolsão, já pedir Grupo
+      if (form.tipo_venda === "Bolsão") {
+        if (!form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão).");
+        payload.grupo = form.grupo!;
+      }
 
       const { error } = await supabase.from("vendas").insert(payload as any);
       if (error) throw error;
@@ -420,6 +592,7 @@ const Carteira: React.FC = () => {
         forma_venda: "Parcela Cheia",
         tipo_venda: "Normal",
         descricao: "",
+        grupo: "",
       });
       closeModal();
     } catch (e: any) {
@@ -443,7 +616,18 @@ const Carteira: React.FC = () => {
       setPendentes(pend ?? []);
       setEncarteiradas(enc ?? []);
     } catch (e: any) {
-      alert(e.message ?? "Erro ao encarteirar.");
+      alert(e.message ?? "Erro ao encarteirar. (Somente admin pode encarteirar)");
+    }
+  };
+
+  const excluirVenda = async (vendaId: string) => {
+    try {
+      const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
+      if (error) throw error;
+      const { data: pend } = await supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      setPendentes(pend ?? []);
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao excluir.");
     }
   };
 
@@ -470,7 +654,8 @@ const Carteira: React.FC = () => {
       for (const g of grupos ?? []) mapGroup.set(`${g.administradora}::${g.grupo}`, g);
 
       const linhas: any[] = [];
-      for (const v of encarteiradas) {
+      // ⚠️ não listar contempladas
+      for (const v of encarteiradas.filter((x) => !x.contemplada)) {
         if (v.grupo && v.cota) {
           const key = `${v.administradora}::${v.grupo}`;
           const info = mapGroup.get(key);
@@ -491,8 +676,8 @@ const Carteira: React.FC = () => {
     }
   };
 
-  const exportarPDF = () => {
-    const el = document.getElementById("relatorio-carteira");
+  const exportarOfertaPDF = () => {
+    const el = document.getElementById("relatorio-oferta");
     if (!el) return;
     const win = window.open("", "_blank", "width=1024,height=768");
     if (!win) return;
@@ -504,22 +689,17 @@ const Carteira: React.FC = () => {
         .muted { color:#6b7280; font-size:12px }
         .grid { width:100%; border-collapse: collapse; margin-top: 12px; }
         .grid th, .grid td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; }
-        .totais { display:flex; gap:16px; margin:8px 0 16px 0; }
         .logo { height: 40px; margin-bottom: 12px; }
       </style>
     `;
 
     win.document.write(`
       <html>
-        <head><title>Relatório - Carteira Consulmax</title>${style}</head>
+        <head><title>Oferta de Lance - Consulmax</title>${style}</head>
         <body>
           <img src="/consulmax-logo.png" class="logo" onerror="this.style.display='none'"/>
-          <h1>Carteira - Consulmax</h1>
+          <h1>Oferta de Lance</h1>
           <div class="muted">Gerado em ${new Date().toLocaleString("pt-BR")}</div>
-          <div class="totais">
-            <strong>Total Ativas: ${currency(totalAtivas)}</strong>
-            <strong>Total Canceladas: ${currency(totalCanceladas)}</strong>
-          </div>
           ${el.innerHTML}
           <script>window.print(); setTimeout(()=>window.close(), 300);</script>
         </body>
@@ -540,7 +720,7 @@ const Carteira: React.FC = () => {
           <h1 className="text-2xl font-semibold">Carteira</h1>
           <p className="text-gray-500 text-sm">Gerencie vendas, encarteiramento e oferta de lance.</p>
         </div>
-        <button onClick={openModal} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">
+        <button onClick={() => setShowModal(true)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">
           + Nova Venda
         </button>
       </div>
@@ -553,7 +733,6 @@ const Carteira: React.FC = () => {
           placeholder="Pesquisar cliente pelo nome…"
           className="w-full border rounded-xl px-3 py-2 outline-none focus:ring"
         />
-        <button onClick={exportarPDF} className="px-4 py-2 rounded-xl border hover:bg-gray-50">Exportar PDF</button>
       </div>
 
       {/* Encarteirar */}
@@ -564,7 +743,7 @@ const Carteira: React.FC = () => {
         </div>
 
         <div className="overflow-auto">
-          <table className="min-w-[720px] w-full border border-gray-200 rounded-xl">
+          <table className="min-w-[840px] w-full border border-gray-200 rounded-xl">
             <thead className="bg-gray-50">
               <tr>
                 <th className="text-left p-2">Cliente</th>
@@ -574,7 +753,7 @@ const Carteira: React.FC = () => {
                 <th className="text-left p-2">Cota</th>
                 <th className="text-left p-2">Código</th>
                 <th className="text-left p-2">Valor</th>
-                <th className="text-left p-2 w-40">Ação</th>
+                <th className="text-left p-2 w-56">Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -588,7 +767,10 @@ const Carteira: React.FC = () => {
                   key={venda.id}
                   venda={venda}
                   lead={lead}
+                  isAdmin={isAdmin}
                   onSubmit={encarteirar}
+                  onDelete={excluirVenda}
+                  onViewDescricao={(title, text) => setDescModal({ open: true, title, text: text ?? "" })}
                 />
               ))}
             </tbody>
@@ -596,7 +778,7 @@ const Carteira: React.FC = () => {
         </div>
       </section>
 
-      {/* Totais */}
+      {/* Totais + toggle carteira */}
       <div className="flex items-center gap-4">
         <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">
           Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong>
@@ -604,15 +786,41 @@ const Carteira: React.FC = () => {
         <div className="px-4 py-3 rounded-2xl bg-gray-100">
           Canceladas: <strong className="ml-1">{currency(totalCanceladas)}</strong>
         </div>
+        <div className="px-4 py-3 rounded-2xl bg-amber-100 text-amber-900">
+          Contempladas: <strong className="ml-1">{currency(totalContempladas)}</strong>
+        </div>
+        <button
+          className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
+          onClick={() => setShowCarteira((s) => !s)}
+        >
+          {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
+        </button>
       </div>
 
       {/* Carteira (lista por cliente) */}
-      <section id="relatorio-carteira" className="space-y-3">
-        {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
-        {porCliente.map((group) => (
-          <ClienteBloco key={group.cliente.id} group={group} onSaveVenda={salvarEdicao} />
-        ))}
-      </section>
+      {showCarteira && (
+        <section className="space-y-3">
+          {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
+          {porCliente.map((group) => (
+            <ClienteBloco
+              key={group.cliente.id}
+              group={group}
+              onSaveVenda={salvarEdicao}
+              isAdmin={isAdmin}
+              onViewAllDescricoes={(title, itens) =>
+                setDescModal({
+                  open: true,
+                  title,
+                  text:
+                    itens
+                      .map((x) => `Proposta ${x.proposta}: ${x.descricao || "—"}`)
+                      .join("\n") || "Sem descrições",
+                })
+              }
+            />
+          ))}
+        </section>
+      )}
 
       {/* Oferta de Lance */}
       <section className="space-y-2">
@@ -627,10 +835,11 @@ const Carteira: React.FC = () => {
             onChange={(e) => setAssembleia(e.target.value)}
             className="border rounded-xl px-3 py-2"
           />
-        <button onClick={listarOferta} className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90">Listar</button>
+          <button onClick={listarOferta} className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90">Listar</button>
+          <button onClick={exportarOfertaPDF} className="px-4 py-2 rounded-xl border hover:bg-gray-50">Exportar PDF</button>
         </div>
 
-        <div className="overflow-auto">
+        <div id="relatorio-oferta" className="overflow-auto">
           <table className="min-w-[720px] w-full border border-gray-200 rounded-xl">
             <thead className="bg-gray-50">
               <tr>
@@ -669,7 +878,7 @@ const Carteira: React.FC = () => {
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Nova Venda</h3>
-              <button onClick={closeModal} className="text-gray-500 hover:text-gray-800">✕</button>
+              <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-gray-800">✕</button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -703,7 +912,7 @@ const Carteira: React.FC = () => {
                 <label className="text-sm text-gray-600">CPF *</label>
                 <input
                   className="w-full border rounded-xl px-3 py-2"
-                  value={form.cpf ?? ""}
+                  value={formatCPF(form.cpf ?? "")}
                   onChange={(e) => onFormChange("cpf", e.target.value)}
                   placeholder="000.000.000-00"
                 />
@@ -763,11 +972,29 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Tipo da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.tipo_venda ?? "Normal"} onChange={(e) => onFormChange("tipo_venda", e.target.value)}>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.tipo_venda ?? "Normal"}
+                  onChange={(e) => onFormChange("tipo_venda", e.target.value)}
+                >
                   <option>Normal</option>
                   <option>Contemplada</option>
+                  <option>Bolsão</option>
                 </select>
               </div>
+
+              {/* Campo de Grupo quando Bolsão */}
+              {form.tipo_venda === "Bolsão" && (
+                <div>
+                  <label className="text-sm text-gray-600">Grupo (Bolsão)</label>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={form.grupo ?? ""}
+                    onChange={(e) => onFormChange("grupo", e.target.value)}
+                    placeholder="Informe o número do grupo"
+                  />
+                </div>
+              )}
 
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Descrição da Venda</label>
@@ -782,8 +1009,28 @@ const Carteira: React.FC = () => {
             </div>
 
             <div className="flex items-center justify-end gap-3">
-              <button onClick={closeModal} className="px-4 py-2 rounded-xl border">Cancelar</button>
+              <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded-xl border">Cancelar</button>
               <button onClick={registrarVenda} className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90">Registrar Venda</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Descrição */}
+      {descModal.open && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-xl p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">{descModal.title}</h3>
+              <button className="text-gray-500 hover:text-gray-800" onClick={() => setDescModal({ open: false, title: "", text: "" })}>
+                ✕
+              </button>
+            </div>
+            <pre className="whitespace-pre-wrap text-sm text-gray-800 max-h-[60vh] overflow-auto">{descModal.text || "—"}</pre>
+            <div className="text-right">
+              <button className="px-4 py-2 rounded-xl border" onClick={() => setDescModal({ open: false, title: "", text: "" })}>
+                Fechar
+              </button>
             </div>
           </div>
         </div>

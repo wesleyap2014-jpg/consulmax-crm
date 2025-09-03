@@ -39,6 +39,8 @@ type Venda = {
   data_contemplacao?: string | null;
   tabela?: string | null;
   created_at: string;
+  // pode existir em banco mesmo não estando no tipo original; usamos no patch:
+  segmento?: string | null;
 };
 
 /** Constantes */
@@ -115,6 +117,15 @@ const validateCPF = (cpf: string) => {
   return d1 === parseInt(d[9]) && d2 === parseInt(d[10]);
 };
 
+/** 🔧 Normalização de Produto -> Segmento (o que vai para a coluna `segmento` em vendas) */
+function normalizeProdutoToSegmento(produto: Produto | string | null | undefined): string | null {
+  const p = (produto || "").toString().trim();
+  if (!p) return null;
+  if (p === "Imóvel Estendido") return "Imóvel";
+  if (p === "Serviço") return "Serviços";
+  return p; // Automóvel, Imóvel, Motocicleta, Pesados, Consórcio Ouro…
+}
+
 /** Linhas (componentes filhos) */
 type LinhaEncarteirarProps = {
   venda: Venda;
@@ -171,8 +182,16 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewDescricao, i
   const [flagCont, setFlagCont] = useState<boolean>(!!venda.contemplada);
   const [dataCont, setDataCont] = useState<string>(venda.data_contemplacao ?? "");
 
-  const saveEdit = async () => { setEdit(false); await onSave({ grupo, cota, codigo, valor_venda: valor, administradora: adm }); };
-  const saveContemplacao = async () => { if (flagCont && !dataCont) { alert("Informe a data da contemplação."); return; } await onSave({ contemplada: flagCont, data_contemplacao: flagCont ? dataCont : null }); };
+  const saveEdit = async () => {
+    setEdit(false);
+    // 🔐 Sempre salvar também o segmento (normalizado) baseado no produto da venda
+    const segmento = normalizeProdutoToSegmento(venda.produto);
+    await onSave({ grupo, cota, codigo, valor_venda: valor, administradora: adm, segmento: segmento ?? undefined });
+  };
+  const saveContemplacao = async () => {
+    if (flagCont && !dataCont) { alert("Informe a data da contemplação."); return; }
+    await onSave({ contemplada: flagCont, data_contemplacao: flagCont ? dataCont : null });
+  };
 
   return (
     <tr className="border-t">
@@ -347,11 +366,15 @@ const Carteira: React.FC = () => {
       const valor = Number((form.valor_venda as any)?.toString().replace(/\./g,"").replace(",","."));
       if(Number.isNaN(valor)) throw new Error("Valor inválido.");
 
+      // 🔐 segmento normalizado baseado no produto escolhido
+      const segmento = normalizeProdutoToSegmento(form.produto as Produto);
+
       const payload: Partial<Venda> = {
         lead_id: form.lead_id, cpf: onlyDigits(form.cpf!), data_venda: form.data_venda!, vendedor_id: userId,
-        produto: form.produto!, administradora: form.administradora!, forma_venda: form.forma_venda!,
+        produto: form.produto as Produto, administradora: form.administradora as Administradora, forma_venda: form.forma_venda as FormaVenda,
         numero_proposta: form.numero_proposta!, valor_venda: valor, tipo_venda: (form.tipo_venda as any) ?? "Normal",
-        descricao: form.descricao ?? "", status: "nova", tabela: form.tabela || null
+        descricao: form.descricao ?? "", status: "nova", tabela: form.tabela || null,
+        segmento: segmento ?? undefined, // 👈 grava em vendas
       };
       if(form.tipo_venda==="Bolsão"){ if(!form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão)."); payload.grupo = form.grupo!; }
 
@@ -366,8 +389,18 @@ const Carteira: React.FC = () => {
   const encarteirar = async (vendaId:string, grupo:string, cota:string, codigo:string)=>{
     try{
       if(!grupo?.trim()||!cota?.trim()||!codigo?.trim()) throw new Error("Preencha Grupo, Cota e Código.");
-      const { error } = await supabase.from("vendas").update({ grupo, cota, codigo, status:"encarteirada", encarteirada_em: new Date().toISOString() }).eq("id", vendaId);
+
+      // 🔎 garantir segmento no update (busca o produto desta venda)
+      const { data: vOne, error: selErr } = await supabase.from("vendas").select("produto").eq("id", vendaId).maybeSingle();
+      if (selErr) throw selErr;
+      const segmento = normalizeProdutoToSegmento(vOne?.produto as Produto);
+
+      const { error } = await supabase
+        .from("vendas")
+        .update({ grupo, cota, codigo, status:"encarteirada", encarteirada_em: new Date().toISOString(), segmento: segmento ?? undefined })
+        .eq("id", vendaId);
       if(error) throw error;
+
       const [{data:pend},{data:enc}] = await Promise.all([
         supabase.from("vendas").select("*").eq("status","nova").order("created_at",{ascending:false}),
         supabase.from("vendas").select("*").eq("status","encarteirada").order("created_at",{ascending:false}),
@@ -386,7 +419,10 @@ const Carteira: React.FC = () => {
 
   const salvarEdicao = async (v: Venda, patch: Partial<Venda>)=>{
     try{
-      const { error } = await supabase.from("vendas").update(patch).eq("id", v.id); if(error) throw error;
+      // 🔐 sempre manda segmento normalizado do produto atual da venda
+      const seg = normalizeProdutoToSegmento(v.produto);
+      const { error } = await supabase.from("vendas").update({ ...patch, segmento: seg ?? undefined }).eq("id", v.id);
+      if(error) throw error;
       const { data: enc } = await supabase.from("vendas").select("*").eq("status","encarteirada").order("created_at",{ascending:false});
       setEncarteiradas(enc ?? []);
     }catch(e:any){ alert(e.message ?? "Erro ao salvar edição."); }
@@ -498,7 +534,7 @@ const Carteira: React.FC = () => {
               <div><label className="text-sm text-gray-600">CPF *</label><input className="w-full border rounded-xl px-3 py-2" value={formatCPF(form.cpf ?? "")} onChange={(e)=>onFormChange("cpf", e.target.value)} placeholder="000.000.000-00"/></div>
 
               <div><label className="text-sm text-gray-600">Data da Venda</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_venda ?? ""} onChange={(e)=>onFormChange("data_venda", e.target.value)}/></div>
-              <div><label className="text-sm text-gray-600">Vendedor</label><input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly/></div>
+              <div><label className="text-sm text_gray-600">Vendedor</label><input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly/></div>
 
               <div><label className="text-sm text-gray-600">Produto (Segmento)</label>
                 <select className="w-full border rounded-xl px-3 py-2" value={form.produto as Produto} onChange={(e)=>onFormChange("produto", e.target.value as Produto)}>{PRODUTOS.map(p=><option key={p} value={p}>{p}</option>)}</select></div>

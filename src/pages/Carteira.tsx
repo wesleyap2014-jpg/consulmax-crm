@@ -190,6 +190,8 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewDescricao, i
           <button title="Ver descrição" className="text-gray-500 hover:text-gray-800" onClick={() => onViewDescricao(`Descrição - Proposta ${venda.numero_proposta}`, venda.descricao)}>👁️</button>
         </div>
       </td>
+      {/* NOVA COLUNA: Segmento (produto) */}
+      <td className="p-2">{venda.produto}</td>
       <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} /> : venda.grupo ?? "—"}</td>
       <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-20" value={cota} onChange={(e) => setCota(e.target.value)} /> : venda.cota ?? "—"}</td>
       <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-20" value={codigo} onChange={(e) => setCodigo(e.target.value)} /> : venda.codigo ?? "—"}</td>
@@ -236,9 +238,33 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewA
       </div>
       {open && (
         <div className="mt-3 overflow-auto">
-          <table className="min-w-[960px] w-full border border-gray-200 rounded-xl">
-            <thead className="bg-gray-50"><tr><th className="text-left p-2">Status</th><th className="text-left p-2">Adm</th><th className="text-left p-2">Proposta</th><th className="text-left p-2">Grupo</th><th className="text-left p-2">Cota</th><th className="text-left p-2">Código</th><th className="text-left p-2">Valor</th><th className="text-left p-2">Editar</th><th className="text-left p-2">Contemplação</th></tr></thead>
-            <tbody>{group.itens.map((v) => (<LinhaCota key={v.id} venda={v} onSave={(patch) => onSaveVenda(v, patch)} onViewDescricao={(t, d) => onViewAllDescricoes(t, [{ proposta: v.numero_proposta, descricao: d }])} isAdmin={isAdmin} />))}</tbody>
+          {/* Largura maior para caber a nova coluna Segmento */}
+          <table className="min-w-[1100px] w-full border border-gray-200 rounded-xl">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2">Status</th>
+                <th className="text-left p-2">Adm</th>
+                <th className="text-left p-2">Proposta</th>
+                <th className="text-left p-2">Segmento</th>
+                <th className="text-left p-2">Grupo</th>
+                <th className="text-left p-2">Cota</th>
+                <th className="text-left p-2">Código</th>
+                <th className="text-left p-2">Valor</th>
+                <th className="text-left p-2">Editar</th>
+                <th className="text-left p-2">Contemplação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {group.itens.map((v) => (
+                <LinhaCota
+                  key={v.id}
+                  venda={v}
+                  onSave={(patch) => onSaveVenda(v, patch)}
+                  onViewDescricao={(t, d) => onViewAllDescricoes(t, [{ proposta: v.numero_proposta, descricao: d }])}
+                  isAdmin={isAdmin}
+                />
+              ))}
+            </tbody>
           </table>
         </div>
       )}
@@ -318,7 +344,8 @@ const Carteira: React.FC = () => {
       if(!form.cpf?.trim()) throw new Error("CPF é obrigatório.");
       if(!validateCPF(form.cpf)) throw new Error("CPF inválido.");
       if(!form.numero_proposta?.trim()) throw new Error("Número da proposta é obrigatório.");
-      const valor = Number((form.valor_venda as any)?.toString().replace(/\./g,"").replace(",",".")); if(Number.isNaN(valor)) throw new Error("Valor inválido.");
+      const valor = Number((form.valor_venda as any)?.toString().replace(/\./g,"").replace(",","."));
+      if(Number.isNaN(valor)) throw new Error("Valor inválido.");
 
       const payload: Partial<Venda> = {
         lead_id: form.lead_id, cpf: onlyDigits(form.cpf!), data_venda: form.data_venda!, vendedor_id: userId,
@@ -412,7 +439,7 @@ const Carteira: React.FC = () => {
             <tbody>
               {pendentesComNome.length===0 && (<tr><td className="p-3 text-gray-500" colSpan={8}>Sem novas vendas para encarteirar.</td></tr>)}
               {pendentesComNome.map(({venda,lead})=>(
-                <LinhaEncarteirar key={venda.id} venda={venda} lead={lead} isAdmin={true /* UI não bloqueia; RLS garante no banco */} onSubmit={encarteirar} onDelete={excluirVenda} onViewDescricao={(title,text)=>setDescModal({open:true,title,text:text??""})}/>
+                <LinhaEncarteirar key={venda.id} venda={venda} lead={lead} isAdmin={true} onSubmit={encarteirar} onDelete={excluirVenda} onViewDescricao={(title,text)=>setDescModal({open:true,title,text:text??""})}/>
               ))}
             </tbody>
           </table>

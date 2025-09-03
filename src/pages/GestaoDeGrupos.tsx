@@ -85,7 +85,7 @@ function calcMediana(maior?: number | null, menor?: number | null) {
 function withinLLMedianFilter(mediana: number | null | undefined, alvo: number | null): boolean {
   if (alvo == null) return true;
   if (mediana == null) return false;
-  const min = Math.max(0, alvo * 0.70); // ±15% em torno do alvo => 70% a 130% do valor
+  const min = Math.max(0, alvo * 0.70); // ±15%
   const max = alvo * 1.30;
   return mediana >= min && mediana <= max;
 }
@@ -94,7 +94,7 @@ function withinLLMedianFilter(mediana: number | null | undefined, alvo: number |
 function referenciaPorAdministradora(params: {
   administradora: Administradora;
   participantes: number | null | undefined;
-  bilhetes: LoteriaFederal | null; // usa a data selecionada ativa
+  bilhetes: LoteriaFederal | null;
 }): number | null {
   const { administradora, participantes, bilhetes } = params;
   if (!participantes || participantes <= 0 || !bilhetes) return null;
@@ -124,14 +124,13 @@ function referenciaPorAdministradora(params: {
       if (participantes <= 1000) {
         const tentativa = tryTresUltimosOuInicio(p5, participantes);
         if (tentativa != null) return tentativa;
-        continue; // tenta próximo prêmio
+        continue;
       } else if (participantes >= 5000) {
         const quatro = parseInt(p5.slice(-4));
         const ajustado = reduceByCap(quatro, 5000);
         if (ajustado >= 1 && ajustado <= 5000) return ajustado;
         continue;
       } else {
-        // 1001..4999 → estratégia conservadora: 4 últimos reduzindo pelo cap real
         const quatro = parseInt(p5.slice(-4));
         return reduceByCap(quatro, participantes);
       }
@@ -142,7 +141,6 @@ function referenciaPorAdministradora(params: {
       return reduceByCap(quatro, participantes);
     }
 
-    // padrão: 3 últimos reduzindo por cap
     const tres = parseInt(p5.slice(-3));
     return reduceByCap(tres, participantes);
   }
@@ -151,7 +149,7 @@ function referenciaPorAdministradora(params: {
 }
 
 /* =========================================================
-   PAINEL: LOTERIA FEDERAL (sem dialog)
+   PAINEL: LOTERIA FEDERAL
    ========================================================= */
 
 function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
@@ -166,7 +164,6 @@ function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
     quinto: "",
   });
 
-  // ao escolher uma data, tenta buscar no banco para preencher automaticamente
   useEffect(() => {
     (async () => {
       if (!data) return;
@@ -273,7 +270,7 @@ function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
 }
 
 /* =========================================================
-   PAINEL: ASSEMBLEIAS (grava em 3 tabelas + atualiza groups)
+   PAINEL: ASSEMBLEIAS
    ========================================================= */
 
 type ResultadoLinha = {
@@ -312,7 +309,6 @@ function AssembleiasPanel({
 
   const [linhas, setLinhas] = useState<ResultadoLinha[]>([]);
 
-  // inicializa linhas quando abrir
   useEffect(() => {
     if (!aberto) return;
     const base: ResultadoLinha[] = grupos.map((g) => ({
@@ -347,7 +343,6 @@ function AssembleiasPanel({
   const podeSalvar = Boolean(date) && linhas.length > 0;
 
   const handleSave = async () => {
-    // 1) upsert em assemblies (uma por data)
     const { data: assem, error: errAsm } = await supabase
       .from("assemblies")
       .upsert(
@@ -369,7 +364,6 @@ function AssembleiasPanel({
       return;
     }
 
-    // 2) upsert dos resultados por grupo
     const payload = linhas.map((r) => ({
       assembly_id: assem.id,
       group_id: r.group_id,
@@ -394,7 +388,6 @@ function AssembleiasPanel({
       return;
     }
 
-    // 3) atualizar datas futuras e prazo nos grupos editados
     const ids = linhas.map((l) => l.group_id);
     const { error: errGrp } = await supabase
       .from("groups")
@@ -432,7 +425,6 @@ function AssembleiasPanel({
 
       {aberto && (
         <div className="rounded-xl border p-4 space-y-4">
-          {/* Datas gerais */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <Label>Data da assembleia</Label>
@@ -456,7 +448,6 @@ function AssembleiasPanel({
             </div>
           </div>
 
-          {/* Tabela por grupo */}
           <div className="max-h-[55vh] overflow-auto rounded-xl border">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-muted/70 backdrop-blur">
@@ -520,7 +511,7 @@ function AssembleiasPanel({
 }
 
 /* =========================================================
-   EDITAR / ADICIONAR GRUPO (inline)
+   EDITAR / ADICIONAR GRUPO
    ========================================================= */
 
 function EditorGrupo({
@@ -710,7 +701,6 @@ type LinhaUI = {
   faixa_min: number | null;
   faixa_max: number | null;
 
-  // resultados
   total_entregas: number;
   fix25_entregas: number;
   fix25_ofertas: number;
@@ -737,14 +727,12 @@ export default function GestaoDeGrupos() {
   const [rows, setRows] = useState<LinhaUI[]>([]);
   const [loteria, setLoteria] = useState<LoteriaFederal | null>(null);
 
-  // filtros
   const [fAdmin, setFAdmin] = useState("");
   const [fSeg, setFSeg] = useState("");
   const [fGrupo, setFGrupo] = useState("");
   const [fFaixa, setFFaixa] = useState("");
   const [fMedianaAlvo, setFMedianaAlvo] = useState("");
 
-  // edição/novo grupo
   const [editando, setEditando] = useState<Grupo | null>(null);
   const [criando, setCriando] = useState<boolean>(false);
 
@@ -775,7 +763,6 @@ export default function GestaoDeGrupos() {
 
     setGrupos(gruposFetched);
 
-    // últimos resultados por grupo (view)
     const { data: ar, error: arErr } = await supabase
       .from("v_group_last_assembly")
       .select(
@@ -836,9 +823,8 @@ export default function GestaoDeGrupos() {
   useEffect(() => {
     carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loteria]); // recalcula referência quando informar novo sorteio
+  }, [loteria]);
 
-  // aplica filtros
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
@@ -863,7 +849,20 @@ export default function GestaoDeGrupos() {
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={carregar}>
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  // ⚙️ Sincroniza Carteira -> Groups (função SQL)
+                  const { error } = await supabase.rpc("sync_groups_from_carteira");
+                  if (error) {
+                    console.error(error);
+                    alert("Erro ao sincronizar grupos a partir da Carteira.");
+                    return;
+                  }
+                  // Recarrega a tabela após sincronizar
+                  await carregar();
+                }}
+              >
                 <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
               </Button>
               <Button onClick={() => { setCriando(true); setEditando(null); }}>

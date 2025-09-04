@@ -8,11 +8,12 @@ import {
   Loader2,
   Filter as FilterIcon,
   Percent,
-  Settings,
   Plus,
   Pencil,
   RefreshCw,
   Save,
+  Settings,
+  X,
 } from "lucide-react";
 
 /* =========================================================
@@ -270,10 +271,10 @@ function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
 }
 
 /* =========================================================
-   PAINEL: ASSEMBLEIAS
+   TELA CHEIA: INFORMAR RESULTADOS DE ASSEMBLEIAS
    ========================================================= */
 
-type ResultadoLinha = {
+type LinhaAsm = {
   group_id: string;
   codigo: string;
   fix25_entregas: number;
@@ -284,234 +285,302 @@ type ResultadoLinha = {
   ll_ofertas: number;
   ll_maior: number | null;
   ll_menor: number | null;
-  mediana: number | null;
+  prazo_enc_meses: number | null; // por linha
 };
 
-function AssembleiasPanel({
-  grupos,
+function OverlayAssembleias({
+  gruposBase,
+  onClose,
   onSaved,
 }: {
-  grupos: { id: string; codigo: string }[];
-  onSaved: (params: {
-    date: string;
-    next_due_date: string | null;
-    next_draw_date: string | null;
-    next_assembly_date: string | null;
-    remaining_meetings: number | null;
-  }) => Promise<void> | void;
+  gruposBase: Grupo[]; // lista completa para filtrar quais estavam agendados nessa data
+  onClose: () => void;
+  onSaved: () => Promise<void> | void;
 }) {
-  const [aberto, setAberto] = useState(false);
-  const [date, setDate] = useState<string>("");
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [date, setDate] = useState<string>(""); // Data da assembleia (passada)
   const [nextDue, setNextDue] = useState<string>("");
   const [nextDraw, setNextDraw] = useState<string>("");
   const [nextAsm, setNextAsm] = useState<string>("");
-  const [prazoEnc, setPrazoEnc] = useState<string>("");
 
-  const [linhas, setLinhas] = useState<ResultadoLinha[]>([]);
+  const [linhas, setLinhas] = useState<LinhaAsm[]>([]);
+  const [loading, setLoading] = useState(false);
 
+  // filtra grupos cuja prox_assembleia coincida com a data escolhida
   useEffect(() => {
-    if (!aberto) return;
-    const base: ResultadoLinha[] = grupos.map((g) => ({
-      group_id: g.id,
-      codigo: g.codigo,
-      fix25_entregas: 0,
-      fix25_ofertas: 0,
-      fix50_entregas: 0,
-      fix50_ofertas: 0,
-      ll_entregas: 0,
-      ll_ofertas: 0,
-      ll_maior: null,
-      ll_menor: null,
-      mediana: null,
-    }));
-    setLinhas(base);
-  }, [aberto, grupos]);
+    if (!date) {
+      setLinhas([]);
+      return;
+    }
+    const subset = gruposBase
+      .filter((g) => (g.prox_assembleia || "").slice(0, 10) === date)
+      .map<LinhaAsm>((g) => ({
+        group_id: g.id,
+        codigo: g.codigo,
+        fix25_entregas: 0,
+        fix25_ofertas: 0,
+        fix50_entregas: 0,
+        fix50_ofertas: 0,
+        ll_entregas: 0,
+        ll_ofertas: 0,
+        ll_maior: null,
+        ll_menor: null,
+        prazo_enc_meses: g.prazo_encerramento_meses ?? null,
+      }));
+    setLinhas(subset);
+  }, [date, gruposBase]);
 
-  const upd = (id: string, campo: keyof ResultadoLinha, valor: number | null) => {
+  const upd = (id: string, campo: keyof LinhaAsm, val: number | null) => {
     setLinhas((prev) =>
-      prev.map((r) => {
-        if (r.group_id !== id) return r;
-        const next = { ...r, [campo]: valor ?? 0 } as ResultadoLinha;
-        if (campo === "ll_maior" || campo === "ll_menor") {
-          next.mediana = calcMediana(next.ll_maior, next.ll_menor);
-        }
-        return next;
-      })
+      prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r))
     );
   };
 
-  const podeSalvar = Boolean(date) && linhas.length > 0;
+  const dataPassadaOk = date && date <= today; // somente passado
+  const datasFuturasOk =
+    (!nextDue || nextDue > today) &&
+    (!nextDraw || nextDraw > today) &&
+    (!nextAsm || nextAsm > today); // se preenchidas, devem ser futuras
+
+  const podeSalvar = dataPassadaOk && datasFuturasOk && linhas.length > 0;
 
   const handleSave = async () => {
-    const { data: assem, error: errAsm } = await supabase
-      .from("assemblies")
-      .upsert(
-        {
-          date,
-          next_due_date: nextDue || null,
-          next_draw_date: nextDraw || null,
-          next_assembly_date: nextAsm || null,
-          remaining_meetings: prazoEnc ? Number(prazoEnc) : null,
-        },
-        { onConflict: "date" }
-      )
-      .select()
-      .single();
-
-    if (errAsm) {
-      console.error(errAsm);
-      alert("Erro ao salvar a assembleia.");
+    if (!podeSalvar) {
+      alert("Verifique as datas e os grupos selecionados.");
       return;
     }
+    try {
+      setLoading(true);
 
-    const payload = linhas.map((r) => ({
-      assembly_id: assem.id,
-      group_id: r.group_id,
-      date,
-      fixed25_offers: r.fix25_ofertas,
-      fixed25_deliveries: r.fix25_entregas,
-      fixed50_offers: r.fix50_ofertas,
-      fixed50_deliveries: r.fix50_entregas,
-      ll_offers: r.ll_ofertas,
-      ll_deliveries: r.ll_entregas,
-      ll_high: r.ll_maior,
-      ll_low: r.ll_menor,
-      median: r.mediana,
-    }));
+      // 1) upsert da assembleia (por data)
+      const { data: assem, error: errAsm } = await supabase
+        .from("assemblies")
+        .upsert(
+          {
+            date,
+            next_due_date: nextDue || null,
+            next_draw_date: nextDraw || null,
+            next_assembly_date: nextAsm || null,
+            remaining_meetings: null, // agora por linha (prazo_enc_meses)
+          },
+          { onConflict: "date" }
+        )
+        .select()
+        .single();
 
-    const { error: errRes } = await supabase.from("assembly_results").upsert(payload, {
-      onConflict: "assembly_id,group_id",
-    });
-    if (errRes) {
-      console.error(errRes);
-      alert("Erro ao salvar os resultados da assembleia.");
-      return;
+      if (errAsm) throw errAsm;
+
+      // 2) resultados por grupo
+      const payload = linhas.map((r) => ({
+        assembly_id: assem!.id,
+        group_id: r.group_id,
+        date,
+        fixed25_offers: r.fix25_ofertas ?? 0,
+        fixed25_deliveries: r.fix25_entregas ?? 0,
+        fixed50_offers: r.fix50_ofertas ?? 0,
+        fixed50_deliveries: r.fix50_entregas ?? 0,
+        ll_offers: r.ll_ofertas ?? 0,
+        ll_deliveries: r.ll_entregas ?? 0,
+        ll_high: r.ll_maior,
+        ll_low: r.ll_menor,
+        median: calcMediana(r.ll_maior, r.ll_menor), // calculamos aqui, mas não exibimos no formulário
+      }));
+
+      const { error: errRes } = await supabase
+        .from("assembly_results")
+        .upsert(payload, { onConflict: "assembly_id,group_id" });
+      if (errRes) throw errRes;
+
+      // 3) atualizar grupos individualmente (datas próximas iguais para todos + prazo_enc por linha)
+      await Promise.all(
+        linhas.map((l) =>
+          supabase
+            .from("groups")
+            .update({
+              prox_vencimento: nextDue || null,
+              prox_sorteio: nextDraw || null,
+              prox_assembleia: nextAsm || null,
+              prazo_encerramento_meses: l.prazo_enc_meses ?? null,
+            })
+            .eq("id", l.group_id)
+        )
+      );
+
+      await onSaved();
+      alert("Resultados salvos com sucesso!");
+      onClose();
+    } catch (e: any) {
+      console.error(e);
+      alert(e.message ?? "Erro ao salvar os resultados.");
+    } finally {
+      setLoading(false);
     }
-
-    const ids = linhas.map((l) => l.group_id);
-    const { error: errGrp } = await supabase
-      .from("groups")
-      .update({
-        prox_vencimento: nextDue || null,
-        prox_sorteio: nextDraw || null,
-        prox_assembleia: nextAsm || null,
-        prazo_encerramento_meses: prazoEnc ? Number(prazoEnc) : null,
-      })
-      .in("id", ids);
-
-    if (errGrp) console.error(errGrp);
-
-    await onSaved({
-      date,
-      next_due_date: nextDue || null,
-      next_draw_date: nextDraw || null,
-      next_assembly_date: nextAsm || null,
-      remaining_meetings: prazoEnc ? Number(prazoEnc) : null,
-    });
-
-    setAberto(false);
-    alert("Resultados salvos com sucesso!");
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <CardTitle className="text-lg">ASSEMBLEIAS</CardTitle>
-        <Button variant="secondary" className="gap-2" onClick={() => setAberto((s) => !s)}>
-          <Settings className="h-4 w-4" />
-          {aberto ? "Fechar formulário" : "Informar resultados"}
+    <div className="fixed inset-0 z-50 bg-white">
+      <div className="flex items-center justify-between px-5 py-3 border-b">
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          <Settings className="h-5 w-5" /> Informar resultados da Assembleia
+        </h2>
+        <Button variant="secondary" onClick={onClose} className="gap-2">
+          <X className="h-4 w-4" /> Fechar
         </Button>
       </div>
 
-      {aberto && (
-        <div className="rounded-xl border p-4 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="p-5 space-y-5">
+        {/* Bloco 1: Data da assembleia (passado) */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Data da Assembleia</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
-              <Label>Data da assembleia</Label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <Label>Ocorrida em</Label>
+              <Input
+                type="date"
+                max={today}
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+              {!dataPassadaOk && date && (
+                <p className="text-xs text-red-600 mt-1">
+                  Use uma data passada.
+                </p>
+              )}
             </div>
-            <div>
-              <Label>Vencimento (próximo)</Label>
-              <Input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
-            </div>
-            <div>
-              <Label>Sorteio (próximo)</Label>
-              <Input type="date" value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} />
-            </div>
-            <div>
-              <Label>Próxima assembleia</Label>
-              <Input type="date" value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} />
-            </div>
-            <div>
-              <Label>Prazo de encerramento (meses)</Label>
-              <Input type="number" min={0} value={prazoEnc} onChange={(e) => setPrazoEnc(e.target.value)} />
-            </div>
-          </div>
 
-          <div className="max-h-[55vh] overflow-auto rounded-xl border">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-muted/70 backdrop-blur">
-                <tr>
-                  <th className="p-2 text-left">Grupo</th>
-                  <th className="p-2 text-center">25% Entregas</th>
-                  <th className="p-2 text-center">25% Ofertas</th>
-                  <th className="p-2 text-center">50% Entregas</th>
-                  <th className="p-2 text-center">50% Ofertas</th>
-                  <th className="p-2 text-center">LL Entregas</th>
-                  <th className="p-2 text-center">LL Ofertas</th>
-                  <th className="p-2 text-center">LL Maior %</th>
-                  <th className="p-2 text-center">LL Menor %</th>
-                  <th className="p-2 text-center">Mediana</th>
-                </tr>
-              </thead>
-              <tbody>
-                {linhas.map((l) => (
-                  <tr key={l.group_id} className="odd:bg-muted/30">
-                    <td className="p-2 font-medium">{l.codigo}</td>
-                    <td className="p-1 text-center">
-                      <Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} />
-                    </td>
-                    <td className="p-1 text-center">
-                      <Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} />
-                    </td>
-                    <td className="p-1 text-center">
-                      <Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} />
-                    </td>
-                    <td className="p-1 text-center">
-                      <Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} />
-                    </td>
-                    <td className="p-1 text-center">
-                      <Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} />
-                    </td>
-                    <td className="p-1 text-center">
-                      <Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} />
-                    </td>
-                    <td className="p-1 text-center">
-                      <Input type="number" min={0} step="0.01" value={l.ll_maior ?? ""} onChange={(e) => upd(l.group_id, "ll_maior", Number(e.target.value))} />
-                    </td>
-                    <td className="p-1 text-center">
-                      <Input type="number" min={0} step="0.01" value={l.ll_menor ?? ""} onChange={(e) => upd(l.group_id, "ll_menor", Number(e.target.value))} />
-                    </td>
-                    <td className="p-1 text-center">{l.mediana != null ? `${l.mediana.toFixed(2)}%` : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+            <div className="md:col-span-3 text-sm text-muted-foreground flex items-end">
+              Escolha a data da assembleia realizada. Listaremos abaixo apenas os
+              grupos que tinham <strong>prox_assembleia</strong> nessa data.
+            </div>
+          </CardContent>
+        </Card>
 
-          <div className="flex justify-end">
-            <Button disabled={!podeSalvar} onClick={handleSave}>
-              <Save className="h-4 w-4 mr-2" /> Salvar resultados
-            </Button>
-          </div>
-        </div>
-      )}
+        {/* Bloco 2: Próximas datas (futuras) */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Informe os dados da próxima assembleia</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label>Próximo Vencimento</Label>
+              <Input type="date" min={today} value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
+            </div>
+            <div>
+              <Label>Próximo Sorteio</Label>
+              <Input type="date" min={today} value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} />
+            </div>
+            <div>
+              <Label>Próxima Assembleia</Label>
+              <Input type="date" min={today} value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} />
+            </div>
+
+            {!datasFuturasOk && (
+              <div className="md:col-span-3 text-xs text-red-600">
+                As datas informadas aqui devem ser futuras.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Bloco 3: Linhas por grupo (somente os da data selecionada) */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Grupos dessa assembleia</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {(!date || linhas.length === 0) ? (
+              <div className="text-sm text-muted-foreground">
+                {date
+                  ? "Nenhum grupo estava com 'Próx. Assembleia' nessa data."
+                  : "Informe a data da assembleia para listar os grupos."}
+              </div>
+            ) : (
+              <div className="max-h-[58vh] overflow-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                    <tr>
+                      <th className="p-2 text-left">Grupo</th>
+                      <th className="p-2 text-center">25% Entregas</th>
+                      <th className="p-2 text-center">25% Ofertas</th>
+                      <th className="p-2 text-center">50% Entregas</th>
+                      <th className="p-2 text-center">50% Ofertas</th>
+                      <th className="p-2 text-center">LL Entregas</th>
+                      <th className="p-2 text-center">LL Ofertas</th>
+                      <th className="p-2 text-center">LL Maior %</th>
+                      <th className="p-2 text-center">LL Menor %</th>
+                      <th className="p-2 text-center">Pz Enc (meses)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {linhas.map((l) => (
+                      <tr key={l.group_id} className="odd:bg-muted/30">
+                        <td className="p-2 font-medium">{l.codigo}</td>
+
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} value={l.fix25_entregas}
+                                 onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))}/>
+                        </td>
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} value={l.fix25_ofertas}
+                                 onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))}/>
+                        </td>
+
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} value={l.fix50_entregas}
+                                 onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))}/>
+                        </td>
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} value={l.fix50_ofertas}
+                                 onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))}/>
+                        </td>
+
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} value={l.ll_entregas}
+                                 onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))}/>
+                        </td>
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} value={l.ll_ofertas}
+                                 onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))}/>
+                        </td>
+
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} step="0.01" value={l.ll_maior ?? ""}
+                                 onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))}/>
+                        </td>
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} step="0.01" value={l.ll_menor ?? ""}
+                                 onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))}/>
+                        </td>
+
+                        <td className="p-1 text-center">
+                          <Input type="number" min={0} value={l.prazo_enc_meses ?? ""}
+                                 onChange={(e) => upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))}/>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-3">
+              <Button disabled={!podeSalvar || loading} onClick={handleSave}>
+                {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Save className="h-4 w-4 mr-2" /> Salvar Resultados
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
 
 /* =========================================================
-   EDITAR / ADICIONAR GRUPO
+   EDITAR / ADICIONAR GRUPO (inline)
    ========================================================= */
 
 function EditorGrupo({
@@ -675,14 +744,20 @@ function EditorGrupo({
             type="number"
             min={0}
             value={form.prazo_encerramento_meses ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))
+            }
           />
         </div>
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-        <Button onClick={handleSave}><Save className="h-4 w-4 mr-2" /> Salvar Grupo</Button>
+        <Button variant="secondary" onClick={onClose}>
+          Cancelar
+        </Button>
+        <Button onClick={handleSave}>
+          <Save className="h-4 w-4 mr-2" /> Salvar Grupo
+        </Button>
       </div>
     </div>
   );
@@ -735,6 +810,8 @@ export default function GestaoDeGrupos() {
 
   const [editando, setEditando] = useState<Grupo | null>(null);
   const [criando, setCriando] = useState<boolean>(false);
+
+  const [asmOpen, setAsmOpen] = useState<boolean>(false);
 
   const carregar = async () => {
     setLoading(true);
@@ -825,19 +902,6 @@ export default function GestaoDeGrupos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loteria]);
 
-  // 🚀 Função utilitária para sincronizar grupos a partir da Carteira (RPC)
-  const syncFromCarteira = async () => {
-    const { data, error } = await supabase.rpc<number>("sync_groups_from_carteira");
-    if (error) {
-      console.error(error);
-      alert("Erro ao sincronizar grupos a partir da Carteira: " + (error.message || ""));
-      return;
-    }
-    await carregar();
-    const qtd = typeof data === "number" ? data : 0;
-    alert(`${qtd} grupo(s) inserido(s)/atualizado(s) a partir da Carteira.`);
-  };
-
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
@@ -862,7 +926,18 @@ export default function GestaoDeGrupos() {
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={syncFromCarteira}>
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  const { error } = await supabase.rpc("sync_groups_from_carteira_safe");
+                  if (error) {
+                    console.error(error);
+                    alert("Erro ao sincronizar grupos a partir da Carteira.");
+                    return;
+                  }
+                  await carregar();
+                }}
+              >
                 <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
               </Button>
               <Button onClick={() => { setCriando(true); setEditando(null); }}>
@@ -898,16 +973,14 @@ export default function GestaoDeGrupos() {
         </Card>
 
         <Card className="lg:col-span-4">
-          <CardHeader className="pb-2">
-            <AssembleiasPanel
-              grupos={grupos.map((g) => ({ id: g.id, codigo: g.codigo }))}
-              onSaved={async () => {
-                await carregar();
-              }}
-            />
+          <CardHeader className="pb-2 flex items-center justify-between">
+            <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
+            <Button variant="secondary" className="gap-2" onClick={() => setAsmOpen(true)}>
+              <Settings className="h-4 w-4" /> Informar resultados
+            </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Informe resultados por data e atualize os prazos do grupo.
+            Informe resultados por data (passada). Atualizaremos os prazos do(s) grupo(s) com as próximas datas.
           </CardContent>
         </Card>
       </div>
@@ -1074,6 +1147,14 @@ export default function GestaoDeGrupos() {
         Total de entregas (linhas filtradas):{" "}
         <span className="font-semibold text-foreground">{totalEntregas}</span>
       </div>
+
+      {asmOpen && (
+        <OverlayAssembleias
+          gruposBase={grupos}
+          onClose={() => setAsmOpen(false)}
+          onSaved={async () => await carregar()}
+        />
+      )}
     </div>
   );
 }

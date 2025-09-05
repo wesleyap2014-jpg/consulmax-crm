@@ -905,20 +905,21 @@ const Carteira: React.FC = () => {
 
   /**
    * ✅ Oferta de Lance
-   * Regras pedidas:
-   *  - Ao escolher a data: listar **apenas** grupos que têm **cotas encarteiradas** (visíveis ao perfil) *na Gestão de Grupos* nessa data.
-   *  - **Uma linha por cota**.
+   * Agora busca tudo no servidor para a data selecionada:
+   *  - Traz os grupos da data em gestao_grupos_norm
+   *  - Busca as encarteiradas visíveis (admin vê todas; vendedor vê as dele)
+   *  - Gera 1 linha por cota encarteirada cujo grupo está naquela assembleia
    */
   const listarOferta = async () => {
     try {
-      // 1) Trazer os grupos da data na view normalizada (somente campos necessários)
-      const { data: gruposNorm, error } = await supabase
+      // 1) Grupos da data (view normalizada)
+      const { data: gruposNorm, error: gErr } = await supabase
         .from("gestao_grupos_norm")
         .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
         .eq("assembleia_date", assembleia);
-      if (error) throw error;
+      if (gErr) throw gErr;
 
-      // 2) Mapa (adm_norm::grupo_norm) -> dados de gestão
+      // Mapa adm::grupo normalizado
       const gmap = new Map<
         string,
         { referencia?: string | null; participantes?: number | null; mediana?: number | null; contemplados?: number | null }
@@ -932,21 +933,34 @@ const Carteira: React.FC = () => {
           contemplados: g.contemplados ?? null,
         });
       }
+      if (gmap.size === 0) {
+        setOferta([]);
+        return;
+      }
 
-      // 3) Partir das encarteiradas visíveis (não contempladas), com grupo/cota preenchidos
-      const visiveis = encarteiradas
-        .filter((x) => !x.contemplada && x.grupo && x.cota);
+      // 2) Buscar encarteiradas atuais, visíveis ao perfil
+      const encQuery = supabase
+        .from("vendas")
+        .select("administradora,grupo,cota,contemplada,vendedor_id,status")
+        .eq("status", "encarteirada")
+        .not("grupo", "is", null)
+        .not("cota", "is", null);
+      if (!isAdmin) encQuery.eq("vendedor_id", userId);
 
+      const { data: encNow, error: eErr } = await encQuery;
+      if (eErr) throw eErr;
+
+      // 3) Cruzamento por chave normalizada; 1 linha por cota não contemplada
       const linhas: any[] = [];
-      for (const v of visiveis) {
+      for (const v of encNow ?? []) {
+        if (v.contemplada === true) continue;
         const key = `${String(v.administradora || "").toLowerCase().trim()}::${String(v.grupo || "").trim()}`;
         const ginfo = gmap.get(key);
-        if (!ginfo) continue; // só entra se o grupo está na assembleia da data
-
+        if (!ginfo) continue; // grupo não está na assembleia da data
         linhas.push({
           administradora: v.administradora,
           grupo: String(v.grupo),
-          cota: v.cota!,
+          cota: v.cota,
           referencia: (ginfo.referencia && String(ginfo.referencia).trim() !== "") ? ginfo.referencia : null,
           participantes: ginfo.participantes ?? null,
           mediana: ginfo.mediana ?? null,

@@ -46,7 +46,7 @@ type Venda = {
   tabela?: string | null;
   created_at: string;
   segmento?: string | null;
-  data_nascimento?: string | null; // novo
+  data_nascimento?: string | null; // NOVO
 };
 
 /** Constantes */
@@ -472,7 +472,7 @@ const Carteira: React.FC = () => {
         setUserEmail(uemail);
         setUserName(meta?.nome ?? uemail ?? "Vendedor");
 
-        // Admin robusto (com override temporário p/ seu e-mail)
+        // Sinalizador de admin robusto + override do seu e-mail
         let adminFlag = false;
         try {
           const { data, error } = await supabase.rpc("is_admin_email", { e: uemail });
@@ -540,12 +540,12 @@ const Carteira: React.FC = () => {
     return encarteiradasVisiveis.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
   }, [q, encarteiradasVisiveis, leadMap]);
 
-  /** Totais respeitando permissão */
+  /** Totais por permissão */
   const totalAtivas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
   const totalCanceladas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
   const totalContempladas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
 
-  /** Agrupado por cliente */
+  /** Agrupar por cliente */
   const porCliente: any[] = useMemo(() => {
     const map: Record<string, ClienteGroup> = {};
     for (const v of encarteiradasFiltradas) {
@@ -683,38 +683,44 @@ const Carteira: React.FC = () => {
   };
 
   /** ====== Oferta de Lance ====== */
-  // detecção da coluna de data de assembleia
-  const pickDateField = (row: any): string | null => {
-    if (!row || typeof row !== "object") return null;
-    const keys = Object.keys(row);
-    const lower = keys.map((k) => k.toLowerCase());
-    const preferred = ["data_assembleia", "assembleia", "dt_assembleia", "data_assem", "data", "data_ref"];
-    for (const p of preferred) {
-      const idx = lower.indexOf(p);
-      if (idx >= 0) return keys[idx];
-    }
-    const fuzzyIdx = lower.findIndex((k) => k.includes("assem"));
-    return fuzzyIdx >= 0 ? keys[fuzzyIdx] : null;
-  };
+  // helpers tolerantes a variações de nomes/formatos
   const normalizeISO = (d: any): string | null => {
-    if (!d) return null;
+    if (d == null) return null;
     try {
       if (typeof d === "string") {
-        if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
-        if (/^\d{2}\/\d{2}\/\d{4}$/.test(d)) {
-          const [dd, mm, yy] = d.split("/");
+        const s = d.trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+          const [dd, mm, yy] = s.split("/");
           return `${yy}-${mm}-${dd}`;
         }
+        // tenta parse geral
+        const dt = new Date(s);
+        if (!isNaN(+dt)) return dt.toISOString().slice(0, 10);
+      } else {
+        const dt = new Date(d);
+        if (!isNaN(+dt)) return dt.toISOString().slice(0, 10);
       }
-      const dt = new Date(d);
-      if (!isNaN(+dt)) return dt.toISOString().slice(0, 10);
     } catch {}
     return null;
+  };
+  const getField = (row: any, candidates: string[]) => {
+    if (!row) return undefined;
+    const keys = Object.keys(row);
+    for (const cand of candidates) {
+      const hit = keys.find((k) => k.toLowerCase() === cand.toLowerCase());
+      if (hit) return row[hit];
+    }
+    // fuzzy: inclui parte do nome
+    for (const k of keys) {
+      const lk = k.toLowerCase();
+      if (candidates.some((c) => lk.includes(c.toLowerCase()))) return row[k];
+    }
+    return undefined;
   };
 
   const listarOferta = async () => {
     try {
-      // 1) pega tudo e filtra no front para evitar erros de coluna inexistente
       const { data: grupos, error } = await supabase.from("gestao_grupos").select("*");
       if (error) throw error;
 
@@ -724,50 +730,59 @@ const Carteira: React.FC = () => {
         return;
       }
 
-      // 2) identifica qual coluna é a data da assembleia
-      const dateKey = pickDateField(rows[0]);
-      const alvoISO = normalizeISO(assembleia);
+      const alvoISO = normalizeISO(assembleia); // "YYYY-MM-DD"
 
-      // 3) mantém apenas linhas com assembleia exatamente na data selecionada
+      // filtra pela data da assembleia (coluna pode ter nomes diferentes)
       const rowsNaData = rows.filter((g) => {
-        if (!dateKey) return false; // se não temos coluna de data, não listamos nada para evitar resultado errado
-        return normalizeISO((g as any)[dateKey]) === alvoISO;
+        const d =
+          getField(g, ["data_assembleia", "assembleia", "dt_assembleia", "dataAssembleia", "data", "data_ref", "data_assem"]) ??
+          null;
+        return normalizeISO(d) === alvoISO;
       });
 
-      // 4) cria set de grupos válidos (somente os com assembleia nessa data)
-      const allowedSet = new Map<string, any>();
+      // set de grupos válidos nesta data
+      const allowed = new Map<string, any>();
       for (const g of rowsNaData) {
-        allowedSet.set(`${g.administradora}::${g.grupo}`, g);
+        const adm = (getField(g, ["administradora", "adm", "admin", "administrador"]) ?? "").toString().trim();
+        const grupo = (getField(g, ["grupo", "nr_grupo", "num_grupo"]) ?? "").toString().trim();
+        if (!adm || !grupo) continue;
+        allowed.set(`${adm}::${grupo}`, g);
       }
 
-      // 5) monta as linhas APENAS das suas cotas encarteiradas cujo grupo esteja no allowedSet
       const linhas: any[] = [];
       for (const v of encarteiradasVisiveis.filter((x) => !x.contemplada)) {
         if (!v.grupo || !v.cota) continue;
         const key = `${v.administradora}::${v.grupo}`;
-        const info = allowedSet.get(key);
-        if (!info) continue; // << só inclui se o grupo realmente tem assembleia nessa data
+        const info = allowed.get(key);
+        if (!info) continue; // só lista se o grupo tem assembleia exatamente na data
 
+        const referencia = getField(info, ["referencia", "ref", "refer\u00EAncia"]);
+        const participantes = getField(info, ["participantes", "qtd_participantes", "particip"]);
+        const medianaRaw =
+          getField(info, ["mediana", "mediana_ll", "mediana_perc_ll", "maior_perc_ll", "mediana_%", "medianaPercentual"]) ?? null;
         const mediana =
-          info.mediana ??
-          info.mediana_ll ??
-          info.mediana_perc_ll ??
-          info.maior_perc_ll ??
-          null;
+          medianaRaw == null
+            ? null
+            : typeof medianaRaw === "number"
+            ? medianaRaw
+            : Number(String(medianaRaw).replace(",", "."));
+        const contemplados = getField(info, ["contemplados", "qt_contemplados", "entregas_ll", "entregas"]);
 
         linhas.push({
           administradora: v.administradora,
           grupo: v.grupo,
           cota: v.cota,
-          referencia: info?.referencia ?? null,
-          participantes: info?.participantes ?? null,
-          mediana,
-          contemplados: info?.contemplados ?? null,
+          referencia: referencia ?? null,
+          participantes: participantes ?? null,
+          mediana: Number.isFinite(mediana) ? mediana : null,
+          contemplados: contemplados ?? null,
         });
       }
 
-      // ordena por administradora/grupo/cota pra ficar estável
-      linhas.sort((a, b) => (a.administradora + a.grupo + a.cota).localeCompare(b.administradora + b.grupo + b.cota, "pt-BR", { numeric: true }));
+      // ordenação estável
+      linhas.sort((a, b) =>
+        (a.administradora + a.grupo + a.cota).localeCompare(b.administradora + b.grupo + b.cota, "pt-BR", { numeric: true })
+      );
 
       setOferta(linhas);
     } catch (e: any) {

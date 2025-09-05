@@ -132,6 +132,44 @@ function sameDay(a: string | Date | null | undefined, b: string | Date | null | 
   return A != null && B != null && A === B;
 }
 
+/** Formata Y-M-D para BR. */
+function formatBR(ymd: string | null): string {
+  if (!ymd) return "";
+  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return ymd;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+/** Casamento ainda mais tolerante:
+ * - sameDay (UTC)
+ * - YMD puro iguais
+ * - diferença < 24h quando convertido para Date (caso venha string com hora)
+ * - compara representações BR x YMD
+ */
+function matchesAssemblyDate(gDate: string | null, selectedDate: string | null): boolean {
+  if (!gDate || !selectedDate) return false;
+
+  // 1) igualdade por "dia" (UTC)
+  if (sameDay(gDate, selectedDate)) return true;
+
+  // 2) igualdade por YMD puro
+  const gY = toYMD(gDate);
+  const sY = toYMD(selectedDate);
+  if (gY && sY && gY === sY) return true;
+
+  // 3) diferença absoluta < 24h (caso haja horário colado)
+  const gT = new Date(gDate).getTime();
+  const sT = new Date(selectedDate).getTime();
+  if (!isNaN(gT) && !isNaN(sT) && Math.abs(gT - sT) <= 24 * 60 * 60 * 1000) return true;
+
+  // 4) BR vs YMD
+  const gBR = formatBR(gY);
+  const sBR = formatBR(sY);
+  if (gBR && sBR && gBR === sBR) return true;
+
+  return false;
+}
+
 /** Regras de Referência (Embracon/HS) */
 function referenciaPorAdministradora(params: {
   administradora: Administradora;
@@ -338,6 +376,7 @@ function OverlayAssembleias({
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
+  const DEBUG_CODE = "772"; // <<<<<<<<<<<<<<<<<<<<<<<<<<<<< DEBUG: código alvo
   const today = new Date().toISOString().slice(0, 10);
 
   const [date, setDate] = useState<string>(""); // Data da assembleia (passada)
@@ -348,14 +387,32 @@ function OverlayAssembleias({
   const [linhas, setLinhas] = useState<LinhaAsm[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // filtra grupos cuja prox_assembleia coincida com a data escolhida (comparação por dia, tolerante a fuso)
+  // filtra grupos cuja prox_assembleia coincida com a data escolhida (tolerante a fuso/formatos)
   useEffect(() => {
     if (!date) {
       setLinhas([]);
       return;
     }
+
+    // DEBUG: mostra como as datas chegam para o grupo 772
+    const g772 = gruposBase.find((g) => (g.codigo || "").trim() === DEBUG_CODE);
+    if (g772) {
+      console.log("[DEBUG 772] valor bruto prox_assembleia:", g772.prox_assembleia);
+      console.log("[DEBUG 772] toYMD(prox_assembleia):", toYMD(g772.prox_assembleia));
+      console.log("[DEBUG 772] date selecionada (raw):", date);
+      console.log("[DEBUG 772] toYMD(date):", toYMD(date));
+      console.log(
+        "[DEBUG 772] sameDay?:",
+        sameDay(g772.prox_assembleia, date),
+        "matchesAssemblyDate?:",
+        matchesAssemblyDate(g772.prox_assembleia, date)
+      );
+    } else {
+      console.log("[DEBUG 772] Grupo 772 não está na lista base recebida pelo overlay.");
+    }
+
     const subset = gruposBase
-      .filter((g) => sameDay(g.prox_assembleia, date))
+      .filter((g) => matchesAssemblyDate(g.prox_assembleia, date))
       .map<LinhaAsm>((g) => ({
         group_id: g.id,
         codigo: g.codigo,
@@ -369,6 +426,16 @@ function OverlayAssembleias({
         ll_menor: null,
         prazo_enc_meses: g.prazo_encerramento_meses ?? null,
       }));
+
+    console.log(
+      "[DEBUG overlay] alvo YMD:",
+      toYMD(date),
+      "qtd grupos encontrados:",
+      subset.length,
+      "exemplos:",
+      subset.slice(0, 5).map((s) => s.codigo)
+    ); // DEBUG
+
     setLinhas(subset);
   }, [date, gruposBase]);
 
@@ -522,7 +589,18 @@ function OverlayAssembleias({
           <CardContent>
             {!date || linhas.length === 0 ? (
               <div className="text-sm text-muted-foreground">
-                {date ? "Nenhum grupo estava com 'Próx. Assembleia' nessa data." : "Informe a data da assembleia para listar os grupos."}
+                {date ? (
+                  <>
+                    Nenhum grupo estava com 'Próx. Assembleia' nessa data.
+                    {/* DEBUG: Ajuda visual rápida */}
+                    <div className="mt-2 text-xs">
+                      <strong>DEBUG:</strong> Data alvo {formatBR(toYMD(date))}. Tente conferir o console do navegador
+                      (grupo 772 logado).
+                    </div>
+                  </>
+                ) : (
+                  "Informe a data da assembleia para listar os grupos."
+                )}
               </div>
             ) : (
               <div className="max-h-[58vh] overflow-auto rounded-xl border">
@@ -1202,9 +1280,9 @@ export default function GestaoDeGrupos() {
                       className="gap-1"
                       onClick={() => {
                         const g = grupos.find((x) => x.id === r.id) || null;
-                        setEditando(g);
-                        setCriando(false);
                         window.scrollTo({ top: 0, behavior: "smooth" });
+                        setCriando(false);
+                        setEditando(g);
                       }}
                     >
                       <Pencil className="h-4 w-4" /> Editar

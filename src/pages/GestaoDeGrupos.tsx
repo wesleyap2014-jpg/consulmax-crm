@@ -92,7 +92,7 @@ function withinLLMedianFilter(mediana: number | null | undefined, alvo: number |
   return mediana >= min && mediana <= max;
 }
 
-/** Converte qualquer coisa (string Date, ISO, 'DD/MM/AAAA', timestamp) em 'YYYY-MM-DD' com base em UTC. */
+/** Converte qualquer coisa (string Date, ISO, 'DD/MM/AAAA', timestamp) em 'YYYY-MM-DD' com base em UTC (sem mudar o dia). */
 function toYMD(d: string | Date | null | undefined): string | null {
   if (!d) return null;
   const s = typeof d === "string" ? d.trim() : (d as Date).toISOString();
@@ -105,7 +105,7 @@ function toYMD(d: string | Date | null | undefined): string | null {
   const isoHead = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoHead) return `${isoHead[1]}-${isoHead[2]}-${isoHead[3]}`;
 
-  // fallback: Date parse + extrair Y-M-D em UTC (sem sofrer com timezone)
+  // fallback: Date parse + extrair Y-M-D em UTC (evita fuso)
   const dt = new Date(s);
   if (isNaN(dt.getTime())) return null;
   const y = dt.getUTCFullYear();
@@ -114,60 +114,25 @@ function toYMD(d: string | Date | null | undefined): string | null {
   return `${y}-${m}-${day}`;
 }
 
-/** Transforma 'YYYY-MM-DD' em timestamp UTC do meio-dia (evita bordas de fuso/DST). */
-function ymdToMiddayUTC(ymd: string | null): number | null {
-  if (!ymd) return null;
-  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-  const y = Number(m[1]);
-  const mo = Number(m[2]) - 1;
-  const d = Number(m[3]);
-  return Date.UTC(y, mo, d, 12, 0, 0); // 12:00 UTC
-}
-
 /** Compara dois valores de data “no dia”, tolerante a fuso. */
 function sameDay(a: string | Date | null | undefined, b: string | Date | null | undefined): boolean {
-  const A = ymdToMiddayUTC(toYMD(a));
-  const B = ymdToMiddayUTC(toYMD(b));
-  return A != null && B != null && A === B;
+  const A = toYMD(a);
+  const B = toYMD(b);
+  return !!A && !!B && A === B;
 }
 
-/** Formata Y-M-D para BR. */
-function formatBR(ymd: string | null): string {
-  if (!ymd) return "";
+/** Formata Y-M-D como BR. */
+function formatBR(ymd: string | null | undefined): string {
+  if (!ymd) return "—";
   const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return ymd;
+  if (!m) return "—";
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
-/** Casamento ainda mais tolerante:
- * - sameDay (UTC)
- * - YMD puro iguais
- * - diferença < 24h quando convertido para Date (caso venha string com hora)
- * - compara representações BR x YMD
- */
+/** Casamento tolerante para prox_assembleia: aceita mesmo dia em diferentes formatos. */
 function matchesAssemblyDate(gDate: string | null, selectedDate: string | null): boolean {
   if (!gDate || !selectedDate) return false;
-
-  // 1) igualdade por "dia" (UTC)
-  if (sameDay(gDate, selectedDate)) return true;
-
-  // 2) igualdade por YMD puro
-  const gY = toYMD(gDate);
-  const sY = toYMD(selectedDate);
-  if (gY && sY && gY === sY) return true;
-
-  // 3) diferença absoluta < 24h (caso haja horário colado)
-  const gT = new Date(gDate).getTime();
-  const sT = new Date(selectedDate).getTime();
-  if (!isNaN(gT) && !isNaN(sT) && Math.abs(gT - sT) <= 24 * 60 * 60 * 1000) return true;
-
-  // 4) BR vs YMD
-  const gBR = formatBR(gY);
-  const sBR = formatBR(sY);
-  if (gBR && sBR && gBR === sBR) return true;
-
-  return false;
+  return sameDay(gDate, selectedDate);
 }
 
 /** Regras de Referência (Embracon/HS) */
@@ -345,6 +310,9 @@ function PainelLoteria({ onSaved }: { onSaved: (lf: LoteriaFederal) => void }) {
           </div>
         </div>
       )}
+      <div className="text-xs text-muted-foreground">
+        {data ? `Sorteio: ${formatBR(toYMD(data))}` : "Sem resultado selecionado"}
+      </div>
     </div>
   );
 }
@@ -376,8 +344,7 @@ function OverlayAssembleias({
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
-  const DEBUG_CODE = "772"; // <<<<<<<<<<<<<<<<<<<<<<<<<<<<< DEBUG: código alvo
-  const today = new Date().toISOString().slice(0, 10);
+  const todayYMD = toYMD(new Date())!;
 
   const [date, setDate] = useState<string>(""); // Data da assembleia (passada)
   const [nextDue, setNextDue] = useState<string>("");
@@ -387,30 +354,12 @@ function OverlayAssembleias({
   const [linhas, setLinhas] = useState<LinhaAsm[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // filtra grupos cuja prox_assembleia coincida com a data escolhida (tolerante a fuso/formatos)
+  // filtra grupos cuja prox_assembleia coincida com a data escolhida
   useEffect(() => {
     if (!date) {
       setLinhas([]);
       return;
     }
-
-    // DEBUG: mostra como as datas chegam para o grupo 772
-    const g772 = gruposBase.find((g) => (g.codigo || "").trim() === DEBUG_CODE);
-    if (g772) {
-      console.log("[DEBUG 772] valor bruto prox_assembleia:", g772.prox_assembleia);
-      console.log("[DEBUG 772] toYMD(prox_assembleia):", toYMD(g772.prox_assembleia));
-      console.log("[DEBUG 772] date selecionada (raw):", date);
-      console.log("[DEBUG 772] toYMD(date):", toYMD(date));
-      console.log(
-        "[DEBUG 772] sameDay?:",
-        sameDay(g772.prox_assembleia, date),
-        "matchesAssemblyDate?:",
-        matchesAssemblyDate(g772.prox_assembleia, date)
-      );
-    } else {
-      console.log("[DEBUG 772] Grupo 772 não está na lista base recebida pelo overlay.");
-    }
-
     const subset = gruposBase
       .filter((g) => matchesAssemblyDate(g.prox_assembleia, date))
       .map<LinhaAsm>((g) => ({
@@ -426,16 +375,6 @@ function OverlayAssembleias({
         ll_menor: null,
         prazo_enc_meses: g.prazo_encerramento_meses ?? null,
       }));
-
-    console.log(
-      "[DEBUG overlay] alvo YMD:",
-      toYMD(date),
-      "qtd grupos encontrados:",
-      subset.length,
-      "exemplos:",
-      subset.slice(0, 5).map((s) => s.codigo)
-    ); // DEBUG
-
     setLinhas(subset);
   }, [date, gruposBase]);
 
@@ -443,12 +382,11 @@ function OverlayAssembleias({
     setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
   };
 
-  const todayYMD = toYMD(new Date());
-  const dataPassadaOk = Boolean(date) && toYMD(date)! <= todayYMD!;
+  const dataPassadaOk = Boolean(date) && toYMD(date)! <= todayYMD;
   const datasFuturasOk =
-    (!nextDue || toYMD(nextDue)! > todayYMD!) &&
-    (!nextDraw || toYMD(nextDraw)! > todayYMD!) &&
-    (!nextAsm || toYMD(nextAsm)! > todayYMD!);
+    (!nextDue || toYMD(nextDue)! > todayYMD) &&
+    (!nextDraw || toYMD(nextDraw)! > todayYMD) &&
+    (!nextAsm || toYMD(nextAsm)! > todayYMD);
 
   const podeSalvar = dataPassadaOk && datasFuturasOk && linhas.length > 0;
 
@@ -545,7 +483,7 @@ function OverlayAssembleias({
           <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <Label>Ocorrida em</Label>
-              <Input type="date" max={today} value={date} onChange={(e) => setDate(e.target.value)} />
+              <Input type="date" max={todayYMD} value={date} onChange={(e) => setDate(e.target.value)} />
               {!dataPassadaOk && date && <p className="text-xs text-red-600 mt-1">Use uma data passada.</p>}
             </div>
 
@@ -564,15 +502,15 @@ function OverlayAssembleias({
           <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <Label>Próximo Vencimento</Label>
-              <Input type="date" min={today} value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
+              <Input type="date" min={todayYMD} value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
             </div>
             <div>
               <Label>Próximo Sorteio</Label>
-              <Input type="date" min={today} value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} />
+              <Input type="date" min={todayYMD} value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} />
             </div>
             <div>
               <Label>Próxima Assembleia</Label>
-              <Input type="date" min={today} value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} />
+              <Input type="date" min={todayYMD} value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} />
             </div>
 
             {!datasFuturasOk && (
@@ -589,18 +527,7 @@ function OverlayAssembleias({
           <CardContent>
             {!date || linhas.length === 0 ? (
               <div className="text-sm text-muted-foreground">
-                {date ? (
-                  <>
-                    Nenhum grupo estava com 'Próx. Assembleia' nessa data.
-                    {/* DEBUG: Ajuda visual rápida */}
-                    <div className="mt-2 text-xs">
-                      <strong>DEBUG:</strong> Data alvo {formatBR(toYMD(date))}. Tente conferir o console do navegador
-                      (grupo 772 logado).
-                    </div>
-                  </>
-                ) : (
-                  "Informe a data da assembleia para listar os grupos."
-                )}
+                {date ? "Nenhum grupo estava com 'Próx. Assembleia' nessa data." : "Informe a data da assembleia para listar os grupos."}
               </div>
             ) : (
               <div className="max-h-[58vh] overflow-auto rounded-xl border">
@@ -1106,9 +1033,7 @@ export default function GestaoDeGrupos() {
           </CardHeader>
           <CardContent className="text-sm grid grid-cols-5 gap-2">
             <div className="col-span-5 text-xs text-muted-foreground">
-              {loteria?.data_sorteio
-                ? `Sorteio: ${new Date(loteria.data_sorteio).toLocaleDateString()}`
-                : "Sem resultado selecionado"}
+              {loteria?.data_sorteio ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}` : "Sem resultado selecionado"}
             </div>
             {(
               [loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(
@@ -1260,19 +1185,11 @@ export default function GestaoDeGrupos() {
                   <td className="p-2 text-right">{r.ll_maior != null ? `${r.ll_maior.toFixed(2)}%` : "—"}</td>
                   <td className="p-2 text-right">{r.ll_menor != null ? `${r.ll_menor.toFixed(2)}%` : "—"}</td>
                   <td className="p-2 text-right">{r.mediana != null ? `${r.mediana.toFixed(2)}%` : "—"}</td>
-                  <td className="p-2 text-center">
-                    {r.apuracao_dia ? new Date(r.apuracao_dia).toLocaleDateString() : "—"}
-                  </td>
+                  <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                   <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
-                  <td className="p-2 text-center">
-                    {r.prox_vencimento ? new Date(r.prox_vencimento).toLocaleDateString() : "—"}
-                  </td>
-                  <td className="p-2 text-center">
-                    {r.prox_sorteio ? new Date(r.prox_sorteio).toLocaleDateString() : "—"}
-                  </td>
-                  <td className="p-2 text-center">
-                    {r.prox_assembleia ? new Date(r.prox_assembleia).toLocaleDateString() : "—"}
-                  </td>
+                  <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
+                  <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
+                  <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
                   <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
                   <td className="p-2 text-center">
                     <Button
@@ -1280,9 +1197,9 @@ export default function GestaoDeGrupos() {
                       className="gap-1"
                       onClick={() => {
                         const g = grupos.find((x) => x.id === r.id) || null;
-                        window.scrollTo({ top: 0, behavior: "smooth" });
                         setCriando(false);
                         setEditando(g);
+                        window.scrollTo({ top: 0, behavior: "smooth" });
                       }}
                     >
                       <Pencil className="h-4 w-4" /> Editar

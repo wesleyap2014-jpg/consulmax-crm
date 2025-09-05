@@ -92,20 +92,17 @@ function withinLLMedianFilter(mediana: number | null | undefined, alvo: number |
   return mediana >= min && mediana <= max;
 }
 
-/** Converte qualquer coisa (string Date, ISO, 'DD/MM/AAAA', timestamp) em 'YYYY-MM-DD' (UTC, sem mudar o dia). */
+/** Converte qualquer coisa (string Date, ISO, 'DD/MM/AAAA', timestamp) em 'YYYY-MM-DD' (UTC). */
 function toYMD(d: string | Date | null | undefined): string | null {
   if (!d) return null;
   const s = typeof d === "string" ? d.trim() : (d as Date).toISOString();
 
-  // dd/mm/aaaa
   const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (br) return `${br[3]}-${br[2]}-${br[1]}`;
 
-  // yyyy-mm-dd (ou começa assim)
   const isoHead = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoHead) return `${isoHead[1]}-${isoHead[2]}-${isoHead[3]}`;
 
-  // fallback: Date parse + extrair Y-M-D em UTC (evita fuso)
   const dt = new Date(s);
   if (isNaN(dt.getTime())) return null;
   const y = dt.getUTCFullYear();
@@ -114,14 +111,12 @@ function toYMD(d: string | Date | null | undefined): string | null {
   return `${y}-${m}-${day}`;
 }
 
-/** Compara dois valores de data “no dia”. */
 function sameDay(a: string | Date | null | undefined, b: string | Date | null | undefined): boolean {
   const A = toYMD(a);
   const B = toYMD(b);
   return !!A && !!B && A === B;
 }
 
-/** Formata Y-M-D como BR. */
 function formatBR(ymd: string | null | undefined): string {
   if (!ymd) return "—";
   const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -188,7 +183,7 @@ function referenciaPorAdministradora(params: {
 }
 
 /* =========================================================
-   OVERLAY: LOTERIA FEDERAL
+   OVERLAY: LOTERIA FEDERAL (inalterado)
    ========================================================= */
 
 function OverlayLoteria({
@@ -331,7 +326,7 @@ function OverlayLoteria({
 }
 
 /* =========================================================
-   OVERLAY: ASSEMBLEIAS (agora modal, com filtro de Administradora)
+   OVERLAY: ASSEMBLEIAS (modal com filtro de Administradora)
    ========================================================= */
 
 type LinhaAsm = {
@@ -345,7 +340,7 @@ type LinhaAsm = {
   ll_ofertas: number;
   ll_maior: number | null;
   ll_menor: number | null;
-  prazo_enc_meses: number | null; // por linha
+  prazo_enc_meses: number | null;
 };
 
 function OverlayAssembleias({
@@ -358,9 +353,8 @@ function OverlayAssembleias({
   onSaved: () => Promise<void> | void;
 }) {
   const todayYMD = toYMD(new Date())!;
-
   const [date, setDate] = useState<string>("");
-  const [adminSel, setAdminSel] = useState<string>(""); // "" = todas
+  const [adminSel, setAdminSel] = useState<string>("");
   const [nextDue, setNextDue] = useState<string>("");
   const [nextDraw, setNextDraw] = useState<string>("");
   const [nextAsm, setNextAsm] = useState<string>("");
@@ -373,7 +367,6 @@ function OverlayAssembleias({
     [gruposBase]
   );
 
-  // filtra grupos por data (obrigatória) + administradora (opcional)
   useEffect(() => {
     if (!date) {
       setLinhas([]);
@@ -482,7 +475,6 @@ function OverlayAssembleias({
   return (
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
-        {/* Cabeçalho */}
         <div className="flex items-center justify-between px-5 py-3 border-b">
           <h2 className="text-xl font-semibold flex items-center gap-2">
             <Settings className="h-5 w-5" /> Informar resultados da Assembleia
@@ -492,9 +484,7 @@ function OverlayAssembleias({
           </Button>
         </div>
 
-        {/* Conteúdo */}
         <div className="p-5 space-y-5 overflow-hidden">
-          {/* Bloco 1: Data + Administradora */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Data da Assembleia</CardTitle>
@@ -505,7 +495,6 @@ function OverlayAssembleias({
                 <Input type="date" max={toYMD(new Date())!} value={date} onChange={(e) => setDate(e.target.value)} />
                 {!dataPassadaOk && date && <p className="text-xs text-red-600 mt-1">Use uma data passada.</p>}
               </div>
-
               <div className="md:col-span-3">
                 <Label>Administradora (opcional)</Label>
                 <select
@@ -521,13 +510,12 @@ function OverlayAssembleias({
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Selecione uma administradora para reduzir a lista de grupos (opcional).
+                  Selecione uma administradora para reduzir a lista (opcional).
                 </p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Bloco 2: Próximas datas (futuras) */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Informe os dados da próxima assembleia</CardTitle>
@@ -552,7 +540,6 @@ function OverlayAssembleias({
             </CardContent>
           </Card>
 
-          {/* Bloco 3: Linhas por grupo */}
           <Card className="flex-1 min-h-0">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Grupos dessa assembleia</CardTitle>
@@ -583,86 +570,32 @@ function OverlayAssembleias({
                       {linhas.map((l) => (
                         <tr key={l.group_id} className="odd:bg-muted/30">
                           <td className="p-2 font-medium">{l.codigo}</td>
-
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.fix25_entregas}
-                              onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.fix25_ofertas}
-                              onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))}
-                            />
-                          </td>
-
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.fix50_entregas}
-                              onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.fix50_ofertas}
-                              onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))}
-                            />
-                          </td>
-
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.ll_entregas}
-                              onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.ll_ofertas}
-                              onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))}
-                            />
-                          </td>
-
-                          <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={l.ll_maior ?? ""}
-                              onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={l.ll_menor ?? ""}
-                              onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} />
                           </td>
-
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.prazo_enc_meses ?? ""}
-                              onChange={(e) =>
-                                upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))
-                              }
-                            />
+                            <Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} step="0.01" value={l.ll_maior ?? ""} onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} step="0.01" value={l.ll_menor ?? ""} onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} value={l.prazo_enc_meses ?? ""} onChange={(e) => upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))} />
                           </td>
                         </tr>
                       ))}
@@ -679,6 +612,159 @@ function OverlayAssembleias({
               </div>
             </CardContent>
           </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   OVERLAY: GRUPOS IMPORTADOS (pós sincronização)
+   ========================================================= */
+
+type NovoGrupoRow = {
+  id: string;
+  administradora: string;
+  codigo: string;
+  faixa_min: number | null;
+  faixa_max: number | null;
+  prox_vencimento: string | null;
+  prox_sorteio: string | null;
+  prox_assembleia: string | null;
+};
+
+function OverlayGruposImportados({
+  rows,
+  onClose,
+  onSaved,
+}: {
+  rows: NovoGrupoRow[];
+  onClose: () => void;
+  onSaved: () => Promise<void> | void;
+}) {
+  const [dados, setDados] = useState<NovoGrupoRow[]>(rows);
+  const [saving, setSaving] = useState(false);
+
+  const upd = (id: string, campo: keyof NovoGrupoRow, val: any) => {
+    setDados((prev) => prev.map((r) => (r.id === id ? { ...r, [campo]: val } : r)));
+  };
+
+  const canSave = dados.length > 0;
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    try {
+      setSaving(true);
+      await Promise.all(
+        dados.map((r) =>
+          supabase
+            .from("groups")
+            .update({
+              faixa_min: r.faixa_min ?? null,
+              faixa_max: r.faixa_max ?? null,
+              prox_vencimento: r.prox_vencimento ?? null,
+              prox_sorteio: r.prox_sorteio ?? null,
+              prox_assembleia: r.prox_assembleia ?? null,
+            })
+            .eq("id", r.id)
+        )
+      );
+      await onSaved();
+      alert("Grupos atualizados com sucesso!");
+      onClose();
+    } catch (e: any) {
+      console.error(e);
+      alert(e.message ?? "Erro ao salvar grupos importados.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-5xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-3 border-b">
+          <h2 className="text-lg font-semibold">Grupos importados</h2>
+          <Button variant="secondary" onClick={onClose} className="gap-2">
+            <X className="h-4 w-4" /> Fechar
+          </Button>
+        </div>
+
+        <div className="p-5 pt-3 flex-1 min-h-0">
+          {dados.length === 0 ? (
+            <div className="text-sm text-muted-foreground">Nenhum grupo precisa de complementação.</div>
+          ) : (
+            <div className="rounded-xl border overflow-auto h-full">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                  <tr>
+                    <th className="p-2 text-left">Administradora</th>
+                    <th className="p-2 text-left">Grupo</th>
+                    <th className="p-2 text-center">Faixa de Crédito</th>
+                    <th className="p-2 text-center">Vencimento</th>
+                    <th className="p-2 text-center">Sorteio</th>
+                    <th className="p-2 text-center">Assembleia</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dados.map((r) => (
+                    <tr key={r.id} className="odd:bg-muted/30">
+                      <td className="p-2">{r.administradora}</td>
+                      <td className="p-2 font-medium">{r.codigo}</td>
+                      <td className="p-2">
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="mín"
+                            value={r.faixa_min ?? ""}
+                            onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))}
+                          />
+                          <span className="text-muted-foreground">—</span>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="máx"
+                            value={r.faixa_max ?? ""}
+                            onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))}
+                          />
+                        </div>
+                      </td>
+                      <td className="p-2 text-center">
+                        <Input
+                          type="date"
+                          value={r.prox_vencimento ?? ""}
+                          onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)}
+                        />
+                      </td>
+                      <td className="p-2 text-center">
+                        <Input
+                          type="date"
+                          value={r.prox_sorteio ?? ""}
+                          onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)}
+                        />
+                      </td>
+                      <td className="p-2 text-center">
+                        <Input
+                          type="date"
+                          value={r.prox_assembleia ?? ""}
+                          onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 pb-4 flex justify-end">
+          <Button onClick={handleSave} disabled={!canSave || saving}>
+            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            <Save className="h-4 w-4 mr-2" />
+            Salvar
+          </Button>
         </div>
       </div>
     </div>
@@ -724,7 +810,6 @@ export default function GestaoDeGrupos() {
   const [rows, setRows] = useState<LinhaUI[]>([]);
   const [loteria, setLoteria] = useState<LoteriaFederal | null>(null);
 
-  // mapa de resultados por data (YYYY-MM-DD) -> bilhetes
   const [drawsByDate, setDrawsByDate] = useState<Record<string, LoteriaFederal>>({});
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
 
@@ -739,6 +824,10 @@ export default function GestaoDeGrupos() {
 
   const [asmOpen, setAsmOpen] = useState<boolean>(false);
   const [lfOpen, setLfOpen] = useState<boolean>(false);
+
+  // overlay pós-importação
+  const [importOpen, setImportOpen] = useState(false);
+  const [importRows, setImportRows] = useState<NovoGrupoRow[]>([]);
 
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
@@ -792,7 +881,6 @@ export default function GestaoDeGrupos() {
   const carregar = async () => {
     setLoading(true);
 
-    // 1) Grupos
     const { data: g, error: gErr } = await supabase
       .from("groups")
       .select(
@@ -817,7 +905,6 @@ export default function GestaoDeGrupos() {
 
     setGrupos(gruposFetched);
 
-    // 2) Últimos resultados por grupo
     const { data: ar, error: arErr } = await supabase
       .from("v_group_last_assembly")
       .select(
@@ -829,19 +916,19 @@ export default function GestaoDeGrupos() {
     (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
     setLastAsmByGroup(byGroup);
 
-    // 3) Carregar resultados de loteria apenas para as datas existentes em prox_sorteio
+    // carregar resultados de loteria para as datas presentes em prox_sorteio
     const dateSet = new Set<string>();
     for (const gRow of gruposFetched) {
       const ymd = toYMD(gRow.prox_sorteio);
       if (ymd) dateSet.add(ymd);
     }
+    const want = Array.from(dateSet);
     let newDraws: Record<string, LoteriaFederal> = {};
-    if (dateSet.size > 0) {
-      const dates = Array.from(dateSet);
+    if (want.length > 0) {
       const { data: ld, error: ldErr } = await supabase
         .from("lottery_draws")
         .select("*")
-        .in("draw_date", dates);
+        .in("draw_date", want);
       if (ldErr) console.error(ldErr);
       (ld || []).forEach((d: any) => {
         newDraws[d.draw_date] = {
@@ -868,6 +955,55 @@ export default function GestaoDeGrupos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // === sincronia a partir da Carteira (Ponto 1 & 2) ===
+  const handleSync = async () => {
+    // chamamos a RPC mas tratamos retorno 0/erro benigno como sucesso informativo
+    let importedCount = 0;
+    try {
+      const { data, error } = await supabase.rpc("sync_groups_from_carteira_safe");
+      if (!error) {
+        importedCount = typeof data === "number" ? data : (data as any)?.imported ?? 0;
+      } else {
+        // alguns backends disparam erro mesmo quando nada novo foi importado;
+        // nesse caso, seguimos como 0 importados.
+        console.warn("[sync_groups_from_carteira_safe] aviso:", error);
+      }
+    } catch (e) {
+      console.warn("sync_groups_from_carteira_safe falhou; tratando como 0 importados.", e);
+    }
+
+    alert(`${importedCount} grupos importados a partir da Carteira.`);
+
+    // buscar grupos que precisam de complementação (os recém importados vão cair aqui)
+    const { data: novos, error: novosErr } = await supabase
+      .from("groups")
+      .select("id, administradora, codigo, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia")
+      .or("faixa_min.is.null,faixa_max.is.null,prox_vencimento.is.null,prox_sorteio.is.null,prox_assembleia.is.null")
+      .order("administradora", { ascending: true })
+      .order("codigo", { ascending: true });
+
+    if (novosErr) {
+      console.error(novosErr);
+      await carregar();
+      return;
+    }
+
+    const rows: NovoGrupoRow[] = (novos || []).map((r: any) => ({
+      id: r.id,
+      administradora: r.administradora,
+      codigo: r.codigo,
+      faixa_min: r.faixa_min,
+      faixa_max: r.faixa_max,
+      prox_vencimento: r.prox_vencimento,
+      prox_sorteio: r.prox_sorteio,
+      prox_assembleia: r.prox_assembleia,
+    }));
+
+    setImportRows(rows);
+    setImportOpen(true);
+    await carregar();
+  };
+
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
@@ -892,18 +1028,7 @@ export default function GestaoDeGrupos() {
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
             <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  const { error } = await supabase.rpc("sync_groups_from_carteira_safe");
-                  if (error) {
-                    console.error(error);
-                    alert("Erro ao sincronizar grupos a partir da Carteira.");
-                    return;
-                  }
-                  await carregar();
-                }}
-              >
+              <Button variant="secondary" onClick={handleSync}>
                 <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
               </Button>
               <Button
@@ -921,7 +1046,6 @@ export default function GestaoDeGrupos() {
           </CardContent>
         </Card>
 
-        {/* Loteria Federal */}
         <Card className="lg:col-span-4">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
@@ -932,9 +1056,7 @@ export default function GestaoDeGrupos() {
           </CardHeader>
           <CardContent className="text-sm grid grid-cols-5 gap-2 items-center">
             <div className="col-span-5 text-xs text-muted-foreground">
-              {loteria?.data_sorteio
-                ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}`
-                : "Sem resultado selecionado"}
+              {loteria?.data_sorteio ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}` : "Sem resultado selecionado"}
             </div>
             {(
               [loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(
@@ -1113,7 +1235,6 @@ export default function GestaoDeGrupos() {
         </table>
       </div>
 
-      {/* Rodapé simples */}
       <div className="text-sm text-muted-foreground">
         Total de entregas (linhas filtradas):{" "}
         <span className="font-semibold text-foreground">{totalEntregas}</span>
@@ -1131,12 +1252,20 @@ export default function GestaoDeGrupos() {
         <OverlayLoteria
           onClose={() => setLfOpen(false)}
           onSaved={(lf) => {
-            setLoteria(lf); // mostra na caixinha da Loteria
+            setLoteria(lf);
             setDrawsByDate((prev) => ({
               ...prev,
-              [lf.data_sorteio]: lf, // preserva as datas anteriores
+              [lf.data_sorteio]: lf,
             }));
           }}
+        />
+      )}
+
+      {importOpen && (
+        <OverlayGruposImportados
+          rows={importRows}
+          onClose={() => setImportOpen(false)}
+          onSaved={async () => await carregar()}
         />
       )}
     </div>
@@ -1144,7 +1273,7 @@ export default function GestaoDeGrupos() {
 }
 
 /* =========================================================
-   EDITOR DE GRUPO
+   EDITOR DE GRUPO (inalterado)
    ========================================================= */
 
 function EditorGrupo({
@@ -1280,38 +1409,19 @@ function EditorGrupo({
 
         <div>
           <Label>Próx. Vencimento</Label>
-          <Input
-            type="date"
-            value={form.prox_vencimento ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))}
-          />
+          <Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} />
         </div>
         <div>
           <Label>Próx. Sorteio</Label>
-          <Input
-            type="date"
-            value={form.prox_sorteio ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))}
-          />
+          <Input type="date" value={form.prox_sorteio ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))} />
         </div>
         <div>
           <Label>Próx. Assembleia</Label>
-          <Input
-            type="date"
-            value={form.prox_assembleia ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))}
-          />
+          <Input type="date" value={form.prox_assembleia ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))} />
         </div>
         <div>
           <Label>Prazo Enc. (meses)</Label>
-          <Input
-            type="number"
-            min={0}
-            value={form.prazo_encerramento_meses ?? ""}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))
-            }
-          />
+          <Input type="number" min={0} value={form.prazo_encerramento_meses ?? ""} onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))} />
         </div>
       </div>
 

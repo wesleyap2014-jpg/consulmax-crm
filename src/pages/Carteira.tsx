@@ -904,67 +904,71 @@ const Carteira: React.FC = () => {
   };
 
   /**
-   * ✅ Oferta de Lance
-   * Agora busca tudo no servidor para a data selecionada:
-   *  - Traz os grupos da data em gestao_grupos_norm
-   *  - Busca as encarteiradas visíveis (admin vê todas; vendedor vê as dele)
-   *  - Gera 1 linha por cota encarteirada cujo grupo está naquela assembleia
+   * ✅ Oferta de Lance (versão que cruza direto no banco + join no front)
+   * Regras:
+   *  - Só grupos que têm assembleia NA DATA na view gestao_grupos_norm
+   *  - Uma linha por cota encarteirada ATIVA (codigo='00') e não contemplada
+   *  - Se não for admin, só cotas do vendedor
    */
   const listarOferta = async () => {
     try {
-      // 1) Grupos da data (view normalizada)
+      setOferta([]); // limpa visualmente ao trocar de data
+
+      // 1) Pega os grupos que têm assembleia na data
       const { data: gruposNorm, error: gErr } = await supabase
         .from("gestao_grupos_norm")
         .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
         .eq("assembleia_date", assembleia);
       if (gErr) throw gErr;
 
-      // Mapa adm::grupo normalizado
-      const gmap = new Map<
-        string,
-        { referencia?: string | null; participantes?: number | null; mediana?: number | null; contemplados?: number | null }
-      >();
-      for (const g of gruposNorm ?? []) {
-        const key = `${String(g.adm_norm || "").trim()}::${String(g.grupo_norm || "").trim()}`;
-        gmap.set(key, {
-          referencia: g.referencia ?? null,
-          participantes: g.participantes ?? null,
-          mediana: g.mediana ?? null,
-          contemplados: g.contemplados ?? null,
-        });
-      }
-      if (gmap.size === 0) {
+      if (!gruposNorm || gruposNorm.length === 0) {
         setOferta([]);
         return;
       }
 
-      // 2) Buscar encarteiradas atuais, visíveis ao perfil
-      const encQuery = supabase
+      // Mapa rapido para cruzar por (adm, grupo)
+      const gruposSet = new Set(
+        gruposNorm.map((g: any) => `${String(g.adm_norm).trim()}::${String(g.grupo_norm).trim()}`)
+      );
+      const ginfoMap = new Map<string, { referencia?: string|null; participantes?: number|null; mediana?: number|null; contemplados?: number|null }>();
+      for (const g of gruposNorm) {
+        const key = `${String(g.adm_norm).trim()}::${String(g.grupo_norm).trim()}`;
+        ginfoMap.set(key, {
+          referencia: (g.referencia && String(g.referencia).trim() !== "" && String(g.referencia).trim() !== "—") ? g.referencia : null,
+          participantes: g.participantes ?? null,
+          mediana: g.mediana ?? null,
+          contemplados: g.contemplados ?? null
+        });
+      }
+
+      // 2) Busca as vendas encarteiradas (ativas, não contempladas, com grupo/cota)
+      const vq = supabase
         .from("vendas")
-        .select("administradora,grupo,cota,contemplada,vendedor_id,status")
+        .select("administradora,grupo,cota,contemplada,codigo,vendedor_id")
         .eq("status", "encarteirada")
         .not("grupo", "is", null)
-        .not("cota", "is", null);
-      if (!isAdmin) encQuery.eq("vendedor_id", userId);
+        .not("cota", "is", null)
+        .eq("codigo", "00") // somente cotas ativas
+        .or("contemplada.is.null,contemplada.eq.false"); // não contempladas
+      if (!isAdmin) vq.eq("vendedor_id", userId);
 
-      const { data: encNow, error: eErr } = await encQuery;
-      if (eErr) throw eErr;
+      const { data: vs, error: vErr } = await vq;
+      if (vErr) throw vErr;
 
-      // 3) Cruzamento por chave normalizada; 1 linha por cota não contemplada
       const linhas: any[] = [];
-      for (const v of encNow ?? []) {
-        if (v.contemplada === true) continue;
+      for (const v of vs ?? []) {
         const key = `${String(v.administradora || "").toLowerCase().trim()}::${String(v.grupo || "").trim()}`;
-        const ginfo = gmap.get(key);
-        if (!ginfo) continue; // grupo não está na assembleia da data
+        if (!gruposSet.has(key)) continue; // só os grupos da data escolhida
+
+        const gi = ginfoMap.get(key) || {};
         linhas.push({
           administradora: v.administradora,
           grupo: String(v.grupo),
-          cota: v.cota,
-          referencia: (ginfo.referencia && String(ginfo.referencia).trim() !== "") ? ginfo.referencia : null,
-          participantes: ginfo.participantes ?? null,
-          mediana: ginfo.mediana ?? null,
-          contemplados: ginfo.contemplados ?? null,
+          cota: String(v.cota),
+          referencia: (gi.referencia && String(gi.referencia).trim() !== "" && String(gi.referencia).trim() !== "—") ? gi.referencia : null,
+          participantes: gi.participantes ?? null,
+          mediana: gi.mediana ?? null,
+          contemplados: gi.contemplados ?? null
         });
       }
 
@@ -1111,7 +1115,7 @@ const Carteira: React.FC = () => {
           <input
             type="date"
             value={assembleia}
-            onChange={(e) => setAssembleia(e.target.value)}
+            onChange={(e) => { setAssembleia(e.target.value); setOferta([]); }}
             className="border rounded-xl px-3 py-2"
           />
           <button
@@ -1230,7 +1234,7 @@ const Carteira: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="text_sm text_gray-600">Vendedor</label>
+                <label className="text-sm text-gray-600">Vendedor</label>
                 <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly />
               </div>
 

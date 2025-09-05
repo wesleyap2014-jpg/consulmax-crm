@@ -39,8 +39,9 @@ type Venda = {
   data_contemplacao?: string | null;
   tabela?: string | null;
   created_at: string;
+  // campos opcionais/novos
   segmento?: string | null;
-  data_nascimento?: string | null; // NOVO
+  data_nascimento?: string | null; // ✅ novo campo solicitado
 };
 
 /** Constantes */
@@ -91,7 +92,7 @@ const TABELAS: Record<Produto, string[]> = {
 };
 
 const currency = (n: number) =>
-  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 }).format(n || 0);
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 }).format(n);
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
@@ -117,32 +118,25 @@ const validateCPF = (cpf: string) => {
   return d1 === parseInt(d[9]) && d2 === parseInt(d[10]);
 };
 
-/** Normalização de Produto -> Segmento */
+/** 🔧 Normalização de Produto -> Segmento (o que vai para a coluna `segmento` em vendas) */
 function normalizeProdutoToSegmento(produto: Produto | string | null | undefined): string | null {
   const p = (produto || "").toString().trim();
   if (!p) return null;
   if (p === "Imóvel Estendido") return "Imóvel";
   if (p === "Serviço") return "Serviços";
-  return p;
+  return p; // Automóvel, Imóvel, Motocicleta, Pesados, Consórcio Ouro…
 }
 
-/** Linha Encarteirar */
+/** Linhas (componentes filhos) */
 type LinhaEncarteirarProps = {
   venda: Venda;
   lead?: Lead;
-  canEncarteirar: boolean;
+  canEncarteirar: boolean; // ✅ controle por perfil
   onSubmit: (vendaId: string, grupo: string, cota: string, codigo: string) => Promise<void>;
   onDelete: (vendaId: string) => Promise<void>;
-  onViewEditarVenda: (venda: Venda) => void;
+  onOpenEditarVenda: (v: Venda) => void; // ✅ ver/editar todos os dados
 };
-const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
-  venda,
-  lead,
-  canEncarteirar,
-  onSubmit,
-  onDelete,
-  onViewEditarVenda,
-}) => {
+const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({ venda, lead, canEncarteirar, onSubmit, onDelete, onOpenEditarVenda }) => {
   const [grupo, setGrupo] = useState("");
   const [cota, setCota] = useState("");
   const [codigo, setCodigo] = useState("");
@@ -151,8 +145,13 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
     <tr className="border-t">
       <td className="p-2">
         <div className="flex items-center gap-2">
-          <button title="Ver/Editar venda" className="text-gray-700 hover:underline" onClick={() => onViewEditarVenda(venda)}>
-            👁️ {lead?.nome ?? "—"}
+          <div className="font-medium">{lead?.nome ?? "—"}</div>
+          <button
+            title="Ver/Editar venda"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onOpenEditarVenda(venda)}
+          >
+            👁️
           </button>
         </div>
         <div className="text-xs text-gray-500">{lead?.telefone ?? "—"}</div>
@@ -160,19 +159,36 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
       <td className="p-2">{venda.administradora}</td>
       <td className="p-2">{venda.numero_proposta}</td>
       <td className="p-2">
-        <input value={grupo} onChange={(e) => setGrupo(e.target.value)} className="border rounded px-2 py-1 w-28" disabled={!canEncarteirar} />
+        <input
+          value={grupo}
+          onChange={(e) => setGrupo(e.target.value)}
+          className="border rounded px-2 py-1 w-28"
+          disabled={!canEncarteirar}
+        />
       </td>
       <td className="p-2">
-        <input value={cota} onChange={(e) => setCota(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!canEncarteirar} />
+        <input
+          value={cota}
+          onChange={(e) => setCota(e.target.value)}
+          className="border rounded px-2 py-1 w-20"
+          disabled={!canEncarteirar}
+        />
       </td>
       <td className="p-2">
-        <input value={codigo} onChange={(e) => setCodigo(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!canEncarteirar} />
+        <input
+          value={codigo}
+          onChange={(e) => setCodigo(e.target.value)}
+          className="border rounded px-2 py-1 w-20"
+          disabled={!canEncarteirar}
+        />
       </td>
       <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
       <td className="p-2">
         <div className="flex gap-2">
           <button
-            className={`px-3 py-1 rounded ${canEncarteirar ? "bg-[#A11C27] text-white hover:opacity-90" : "bg-gray-200 text-gray-500 cursor-not-allowed"}`}
+            className={`px-3 py-1 rounded ${
+              canEncarteirar ? "bg-[#A11C27] text-white hover:opacity-90" : "bg-gray-200 text-gray-500 cursor-not-allowed"
+            }`}
             disabled={!canEncarteirar}
             onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
           >
@@ -192,7 +208,6 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
   );
 };
 
-/** Linha da carteira (encarteiradas) */
 type LinhaCotaProps = {
   venda: Venda;
   onSave: (patch: Partial<Venda>) => Promise<void>;
@@ -215,7 +230,6 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewDescricao, i
     const segmento = normalizeProdutoToSegmento(venda.produto);
     await onSave({ grupo, cota, codigo, valor_venda: valor, administradora: adm, segmento: segmento ?? undefined });
   };
-
   const saveContemplacao = async () => {
     if (flagCont && !dataCont) {
       alert("Informe a data da contemplação.");
@@ -227,11 +241,19 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewDescricao, i
   return (
     <tr className="border-t">
       <td className="p-2">
-        <span className={`px-2 py-1 rounded-full text-xs ${ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{ativa ? "Ativa" : "Cancelada"}</span>
+        <span
+          className={`px-2 py-1 rounded-full text-xs ${ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
+        >
+          {ativa ? "Ativa" : "Cancelada"}
+        </span>
       </td>
       <td className="p-2">
         {edit ? (
-          <select className="border rounded px-2 py-1" value={adm} onChange={(e) => setAdm(e.target.value as Administradora)}>
+          <select
+            className="border rounded px-2 py-1"
+            value={adm}
+            onChange={(e) => setAdm(e.target.value as Administradora)}
+          >
             {ADMINISTRADORAS.map((a) => (
               <option key={a} value={a}>
                 {a}
@@ -245,17 +267,49 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewDescricao, i
       <td className="p-2">
         <div className="flex items-center gap-2">
           <span>{venda.numero_proposta}</span>
-          <button title="Ver descrição" className="text-gray-500 hover:text-gray-800" onClick={() => onViewDescricao(`Descrição - Proposta ${venda.numero_proposta}`, venda.descricao)}>
+          <button
+            title="Ver descrição"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onViewDescricao(`Descrição - Proposta ${venda.numero_proposta}`, venda.descricao)}
+          >
             👁️
           </button>
         </div>
       </td>
       <td className="p-2">{venda.produto}</td>
-      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} /> : venda.grupo ?? "—"}</td>
-      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-20" value={cota} onChange={(e) => setCota(e.target.value)} /> : venda.cota ?? "—"}</td>
-      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-20" value={codigo} onChange={(e) => setCodigo(e.target.value)} /> : venda.codigo ?? "—"}</td>
       <td className="p-2">
-        {edit ? <input className="border rounded px-2 py-1 w-28" value={valor} onChange={(e) => setValor(Number(e.target.value))} type="number" step="0.01" /> : currency(venda.valor_venda ?? 0)}
+        {edit ? (
+          <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} />
+        ) : (
+          venda.grupo ?? "—"
+        )}
+      </td>
+      <td className="p-2">
+        {edit ? (
+          <input className="border rounded px-2 py-1 w-20" value={cota} onChange={(e) => setCota(e.target.value)} />
+        ) : (
+          venda.cota ?? "—"
+        )}
+      </td>
+      <td className="p-2">
+        {edit ? (
+          <input className="border rounded px-2 py-1 w-20" value={codigo} onChange={(e) => setCodigo(e.target.value)} />
+        ) : (
+          venda.codigo ?? "—"
+        )}
+      </td>
+      <td className="p-2">
+        {edit ? (
+          <input
+            className="border rounded px-2 py-1 w-28"
+            value={valor}
+            onChange={(e) => setValor(Number(e.target.value))}
+            type="number"
+            step="0.01"
+          />
+        ) : (
+          currency(venda.valor_venda ?? 0)
+        )}
       </td>
       <td className="p-2">
         {isAdmin ? (
@@ -280,12 +334,22 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewDescricao, i
       <td className="p-2">
         <div className="flex items-center gap-2">
           <label className="text-sm">
-            <input type="checkbox" className="mr-1" checked={flagCont} onChange={(e) => setFlagCont(e.target.checked)} />
+            <input
+              type="checkbox"
+              className="mr-1"
+              checked={flagCont}
+              onChange={(e) => setFlagCont(e.target.checked)}
+            />
             Contemplada
           </label>
           {flagCont && (
             <>
-              <input type="date" className="border rounded px-2 py-1" value={dataCont} onChange={(e) => setDataCont(e.target.value)} />
+              <input
+                type="date"
+                className="border rounded px-2 py-1"
+                value={dataCont}
+                onChange={(e) => setDataCont(e.target.value)}
+              />
               <button className="px-2 py-1 rounded border hover:bg-gray-50" onClick={saveContemplacao}>
                 Salvar
               </button>
@@ -317,7 +381,8 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewA
             <span className="text-xs text-gray-500 ml-2">{group.cliente.telefone ?? ""}</span>
           </div>
           <div className="text-sm text-gray-600">
-            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
+            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> •
+            Segmentos: {segs}
           </div>
         </button>
         <button
@@ -352,7 +417,13 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewA
             </thead>
             <tbody>
               {group.itens.map((v) => (
-                <LinhaCota key={v.id} venda={v} onSave={(patch) => onSaveVenda(v, patch)} onViewDescricao={() => {}} isAdmin={isAdmin} />
+                <LinhaCota
+                  key={v.id}
+                  venda={v}
+                  onSave={(patch) => onSaveVenda(v, patch)}
+                  onViewDescricao={(t, d) => onViewAllDescricoes(t, [{ proposta: v.numero_proposta, descricao: d }])}
+                  isAdmin={isAdmin}
+                />
               ))}
             </tbody>
           </table>
@@ -385,7 +456,6 @@ const Carteira: React.FC = () => {
   const [form, setForm] = useState<Partial<Venda>>({
     cpf: "",
     data_venda: new Date().toISOString().slice(0, 10),
-    data_nascimento: "",
     produto: "Automóvel",
     administradora: "Embracon",
     forma_venda: "Parcela Cheia",
@@ -393,13 +463,28 @@ const Carteira: React.FC = () => {
     descricao: "",
     grupo: "",
     tabela: "",
+    data_nascimento: "", // ✅ novo
   });
-  const [descModal, setDescModal] = useState<{ open: boolean; title: string; text: string }>({ open: false, title: "", text: "" });
-  const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
+
+  const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({ open: false }); // ✅ ver/editar pendente
+
+  const [descModal, setDescModal] = useState<{ open: boolean; title: string; text: string }>({
+    open: false,
+    title: "",
+    text: "",
+  });
 
   const [assembleia, setAssembleia] = useState<string>(new Date().toISOString().slice(0, 10));
   const [oferta, setOferta] = useState<
-    Array<{ administradora: string; grupo: string; cota: string; referencia?: string | null; participantes?: number | null; mediana?: number | null; contemplados?: number | null }>
+    Array<{
+      administradora: string;
+      grupo: string;
+      cota: string;
+      referencia?: string | null;
+      participantes?: number | null;
+      mediana?: number | null;
+      contemplados?: number | null;
+    }>
   >([]);
 
   useEffect(() => {
@@ -414,12 +499,11 @@ const Carteira: React.FC = () => {
         const { data: authData } = await supabase.auth.getUser();
         const uid = authData.user?.id ?? "";
         const uemail = authData.user?.email ?? "";
-        const meta = authData.user?.user_metadata || {};
         setUserId(uid);
         setUserEmail(uemail);
-        setUserName(meta?.nome ?? uemail ?? "Vendedor");
+        setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
 
-        // Admin robusto + override
+        // Admin (RPC se existir, senão fallbacks)
         let adminFlag = false;
         try {
           const { data, error } = await supabase.rpc("is_admin_email", { e: uemail });
@@ -434,37 +518,39 @@ const Carteira: React.FC = () => {
         }
         if (!adminFlag) {
           try {
-            const { data } = await supabase.from("usuarios").select("email, perfil, role").eq("email", uemail).maybeSingle();
+            const { data } = await supabase
+              .from("usuarios")
+              .select("email, perfil, role")
+              .eq("email", uemail)
+              .maybeSingle();
             if (data) {
               const p = (data.perfil || data.role || "").toString().toLowerCase();
-              adminFlag = ["admin", "administrador", "adm", "gestor", "gerente"].includes(p);
+              adminFlag = ["admin", "administrador", "adm"].includes(p);
             }
           } catch {}
         }
-        if (!adminFlag) {
-          try {
-            const { data } = await supabase.from("profiles").select("role,perfil").eq("id", uid).maybeSingle();
-            if (data) {
-              const p = (data.perfil || data.role || "").toString().toLowerCase();
-              adminFlag = ["admin", "administrador", "adm", "gestor", "gerente"].includes(p);
-            }
-          } catch {}
-        }
-        if (!adminFlag) {
-          const metaRole = (meta?.perfil || meta?.role || meta?.papel || "").toString().toLowerCase();
-          if (["admin", "administrador", "adm", "gestor", "gerente"].includes(metaRole)) adminFlag = true;
-          if (meta?.is_admin === true) adminFlag = true;
-        }
-        if (uemail === "wesley.planejadorfinanceiro@outlook.com.br") adminFlag = true; // override
         setIsAdmin(adminFlag);
 
-        const { data: lds } = await supabase.from("leads").select("id,nome,telefone").order("nome", { ascending: true });
+        const { data: lds } = await supabase
+          .from("leads")
+          .select("id,nome,telefone")
+          .order("nome", { ascending: true });
         const leadsArr = lds ?? [];
         setLeads(leadsArr);
         setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
 
-        const { data: pend } = await supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-        const { data: enc } = await supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+        // 🔒 Filtragem por perfil:
+        const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", {
+          ascending: false,
+        });
+        const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", {
+          ascending: false,
+        });
+        if (!adminFlag) {
+          pendQuery.eq("vendedor_id", uid);
+          encQuery.eq("vendedor_id", uid);
+        }
+        const [{ data: pend }, { data: enc }] = await Promise.all([pendQuery, encQuery]);
         setPendentes(pend ?? []);
         setEncarteiradas(enc ?? []);
       } catch (e: any) {
@@ -475,30 +561,37 @@ const Carteira: React.FC = () => {
     })();
   }, []);
 
-  /** Permissões de visualização */
-  const pendentesVisiveis = useMemo(() => (isAdmin ? pendentes : pendentes.filter((v) => v.vendedor_id === userId)), [isAdmin, pendentes, userId]);
-  const encarteiradasVisiveis = useMemo(() => (isAdmin ? encarteiradas : encarteiradas.filter((v) => v.vendedor_id === userId)), [isAdmin, encarteiradas, userId]);
-
-  const pendentesComNome = useMemo(() => pendentesVisiveis.map((v) => ({ venda: v, lead: leadMap[v.lead_id] })), [pendentesVisiveis, leadMap]);
+  const pendentesComNome = useMemo(
+    () => pendentes.map((v) => ({ venda: v, lead: leadMap[v.lead_id] })),
+    [pendentes, leadMap]
+  );
 
   const encarteiradasFiltradas = useMemo(() => {
-    if (!q.trim()) return encarteiradasVisiveis;
+    if (!q.trim()) return encarteiradas;
     const s = q.toLowerCase();
-    return encarteiradasVisiveis.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
-  }, [q, encarteiradasVisiveis, leadMap]);
+    return encarteiradas.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
+  }, [q, encarteiradas, leadMap]);
 
-  /** Totais (respeitam permissão) */
-  const totalAtivas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
-  const totalCanceladas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
-  const totalContempladas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
+  const totalAtivas = useMemo(
+    () => encarteiradas.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradas]
+  );
+  const totalCanceladas = useMemo(
+    () => encarteiradas.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradas]
+  );
+  const totalContempladas = useMemo(
+    () => encarteiradas.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradas]
+  );
 
-  /** Agrupar carteira por cliente */
   const porCliente: ClienteGroup[] = useMemo(() => {
     const map: Record<string, ClienteGroup> = {};
     for (const v of encarteiradasFiltradas) {
       const lead = leadMap[v.lead_id];
       if (!lead) continue;
-      if (!map[lead.id]) map[lead.id] = { cliente: lead, itens: [], totalAtivas: 0, qtdAtivas: 0, segmentos: new Set() };
+      if (!map[lead.id])
+        map[lead.id] = { cliente: lead, itens: [], totalAtivas: 0, qtdAtivas: 0, segmentos: new Set() };
       map[lead.id].itens.push(v);
       if (isAtiva(v.codigo)) {
         map[lead.id].totalAtivas += v.valor_venda || 0;
@@ -506,13 +599,34 @@ const Carteira: React.FC = () => {
       }
       map[lead.id].segmentos.add(v.produto);
     }
-    return Object.values(map).sort((a, b) => a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" }));
+    return Object.values(map).sort((a, b) =>
+      a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" })
+    );
   }, [encarteiradasFiltradas, leadMap]);
 
-  /** Form helpers */
   const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
 
-  /** Registrar venda */
+  // ✅ helper: tenta inserir com data_nascimento; se a coluna não existir, reenvia sem ela.
+  async function insertVenda(payload: any) {
+    let { error } = await supabase.from("vendas").insert(payload as any);
+    if (error && /data_nascimento/.test(error.message || "")) {
+      const { data: _d, error: e2 } = await supabase
+        .from("vendas")
+        .insert({ ...payload, data_nascimento: undefined } as any);
+      if (e2) throw e2;
+    } else if (error) throw error;
+  }
+  async function updateVenda(id: string, patch: any) {
+    let { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
+    if (error && /data_nascimento/.test(error.message || "")) {
+      const { data: _d, error: e2 } = await supabase
+        .from("vendas")
+        .update({ ...patch, data_nascimento: undefined } as any)
+        .eq("id", id);
+      if (e2) throw e2;
+    } else if (error) throw error;
+  }
+
   const registrarVenda = async () => {
     try {
       if (!form.lead_id) throw new Error("Selecione o Lead.");
@@ -528,7 +642,6 @@ const Carteira: React.FC = () => {
         lead_id: form.lead_id,
         cpf: onlyDigits(form.cpf!),
         data_venda: form.data_venda!,
-        data_nascimento: form.data_nascimento || null,
         vendedor_id: userId,
         produto: form.produto as Produto,
         administradora: form.administradora as Administradora,
@@ -540,21 +653,25 @@ const Carteira: React.FC = () => {
         status: "nova",
         tabela: form.tabela || null,
         segmento: segmento ?? undefined,
+        data_nascimento: form.data_nascimento || null, // ✅
+        grupo: form.tipo_venda === "Bolsão" ? (form.grupo || "") : null,
       };
-      if (form.tipo_venda === "Bolsão") {
-        if (!form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão).");
-        payload.grupo = form.grupo!;
-      }
 
-      const { error } = await supabase.from("vendas").insert(payload as any);
-      if (error) throw error;
+      if (form.tipo_venda === "Bolsão" && !form.grupo?.trim())
+        throw new Error("Informe o número do Grupo (Bolsão).");
 
-      const { data: pend } = await supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      await insertVenda(payload);
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", {
+        ascending: false,
+      });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
       setPendentes(pend ?? []);
+
       setForm({
         cpf: "",
         data_venda: new Date().toISOString().slice(0, 10),
-        data_nascimento: "",
         produto: "Automóvel",
         administradora: "Embracon",
         forma_venda: "Parcela Cheia",
@@ -562,6 +679,7 @@ const Carteira: React.FC = () => {
         descricao: "",
         grupo: "",
         tabela: "",
+        data_nascimento: "",
       });
       setShowModal(false);
     } catch (e: any) {
@@ -569,24 +687,47 @@ const Carteira: React.FC = () => {
     }
   };
 
-  /** Encarteirar */
   const encarteirar = async (vendaId: string, grupo: string, cota: string, codigo: string) => {
     try {
+      if (!isAdmin) throw new Error("Somente administradores podem encarteirar.");
       if (!grupo?.trim() || !cota?.trim() || !codigo?.trim()) throw new Error("Preencha Grupo, Cota e Código.");
 
-      const { data: vOne, error: selErr } = await supabase.from("vendas").select("produto").eq("id", vendaId).maybeSingle();
+      const { data: vOne, error: selErr } = await supabase
+        .from("vendas")
+        .select("produto")
+        .eq("id", vendaId)
+        .maybeSingle();
       if (selErr) throw selErr;
       const segmento = normalizeProdutoToSegmento(vOne?.produto as Produto);
 
       const { error } = await supabase
         .from("vendas")
-        .update({ grupo, cota, codigo, status: "encarteirada", encarteirada_em: new Date().toISOString(), segmento: segmento ?? undefined })
+        .update({
+          grupo,
+          cota,
+          codigo,
+          status: "encarteirada",
+          encarteirada_em: new Date().toISOString(),
+          segmento: segmento ?? undefined,
+        })
         .eq("id", vendaId);
       if (error) throw error;
 
       const [{ data: pend }, { data: enc }] = await Promise.all([
-        supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false }),
-        supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false }),
+        (async () => {
+          const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+          if (!isAdmin) q.eq("vendedor_id", userId);
+          return await q;
+        })(),
+        (async () => {
+          const q = supabase
+            .from("vendas")
+            .select("*")
+            .eq("status", "encarteirada")
+            .order("created_at", { ascending: false });
+          if (!isAdmin) q.eq("vendedor_id", userId);
+          return await q;
+        })(),
       ]);
       setPendentes(pend ?? []);
       setEncarteiradas(enc ?? []);
@@ -595,137 +736,106 @@ const Carteira: React.FC = () => {
     }
   };
 
-  /** Excluir */
   const excluirVenda = async (vendaId: string) => {
     try {
       const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
       if (error) throw error;
-      const { data: pend } = await supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", {
+        ascending: false,
+      });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
       setPendentes(pend ?? []);
     } catch (e: any) {
       alert(e.message ?? "Erro ao excluir.");
     }
   };
 
-  /** Salvar edição encarteirada */
   const salvarEdicao = async (v: Venda, patch: Partial<Venda>) => {
     try {
       const seg = normalizeProdutoToSegmento(v.produto);
-      const { error } = await supabase.from("vendas").update({ ...patch, segmento: seg ?? undefined }).eq("id", v.id);
-      if (error) throw error;
-      const { data: enc } = await supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+      await updateVenda(v.id, { ...patch, segmento: seg ?? undefined });
+      const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", {
+        ascending: false,
+      });
+      if (!isAdmin) encQuery.eq("vendedor_id", userId);
+      const { data: enc } = await encQuery;
       setEncarteiradas(enc ?? []);
     } catch (e: any) {
       alert(e.message ?? "Erro ao salvar edição.");
     }
   };
 
-  /** Salvar edição de venda pendente (modal) */
-  const salvarEdicaoPendente = async (venda: Venda, patch: Partial<Venda>) => {
+  // ✅ Editar/visualizar venda PENDENTE (olhinho)
+  const salvarEdicaoPendente = async (venda: Venda, novo: Partial<Venda>) => {
     try {
-      if (!isAdmin && venda.vendedor_id !== userId) throw new Error("Sem permissão para editar esta venda.");
-      const seg = normalizeProdutoToSegmento((patch.produto as Produto) ?? venda.produto);
-      const { error } = await supabase.from("vendas").update({ ...patch, segmento: seg ?? undefined }).eq("id", venda.id);
-      if (error) throw error;
-      const { data: pend } = await supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      // validações principais
+      if (novo.cpf && !validateCPF(novo.cpf)) throw new Error("CPF inválido.");
+      if (novo.numero_proposta && !novo.numero_proposta.trim()) throw new Error("Informe o número da proposta.");
+      let patch: any = { ...novo };
+      if (patch.cpf) patch.cpf = onlyDigits(patch.cpf);
+      if (patch.valor_venda != null) {
+        const valor = Number(patch.valor_venda);
+        if (Number.isNaN(valor)) throw new Error("Valor inválido.");
+        patch.valor_venda = valor;
+      }
+      // normaliza segmento
+      if (patch.produto) patch.segmento = normalizeProdutoToSegmento(patch.produto as Produto);
+
+      await updateVenda(venda.id, patch);
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", {
+        ascending: false,
+      });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
       setPendentes(pend ?? []);
-      setEditVendaModal({ open: false });
+      setEditVendaModal({ open: false, venda: undefined });
     } catch (e: any) {
       alert(e.message ?? "Erro ao salvar.");
     }
   };
 
-  /** ===== Oferta de Lance ===== */
-  const normalizeISO = (d: any): string | null => {
-    if (d == null) return null;
-    try {
-      if (typeof d === "string") {
-        const s = d.trim();
-        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-        if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
-          const [dd, mm, yy] = s.split("/");
-          return `${yy}-${mm}-${dd}`;
-        }
-        const dt = new Date(s);
-        if (!isNaN(+dt)) return dt.toISOString().slice(0, 10);
-      } else {
-        const dt = new Date(d);
-        if (!isNaN(+dt)) return dt.toISOString().slice(0, 10);
-      }
-    } catch {}
-    return null;
-  };
-
-  const getField = (row: any, candidates: string[]) => {
-    if (!row) return undefined;
-    const keys = Object.keys(row);
-    for (const cand of candidates) {
-      const hit = keys.find((k) => k.toLowerCase() === cand.toLowerCase());
-      if (hit) return row[hit];
-    }
-    for (const k of keys) {
-      const lk = k.toLowerCase();
-      if (candidates.some((c) => lk.includes(c.toLowerCase()))) return row[k];
-    }
-    return undefined;
-  };
-
+  // ✅ Oferta de Lance (agora cruzando com view normalizada por data)
   const listarOferta = async () => {
     try {
-      const { data: grupos, error } = await supabase.from("gestao_grupos").select("*");
+      // 1) pega grupos da data na view normalizada
+      const { data: gruposNorm, error } = await supabase
+        .from("gestao_grupos_norm")
+        .select("adm_norm,grupo_norm,assembleia_date,referencia,participantes,mediana,contemplados")
+        .eq("assembleia_date", assembleia);
       if (error) throw error;
 
-      const rows: any[] = grupos ?? [];
-      const alvoISO = normalizeISO(assembleia);
-
-      // Filtra linhas de gestão de grupos exatamente na data informada
-      const rowsNaData = rows.filter((g) => {
-        const d = getField(g, ["Assembleia", "assembleia", "data_assembleia", "dt_assembleia", "dataAssembleia", "data"]);
-        return normalizeISO(d) === alvoISO;
-      });
-
-      // Indexa por Adm::Grupo
-      const allowed = new Map<string, any>();
-      for (const g of rowsNaData) {
-        const adm = (getField(g, ["ADMINISTRADORA", "administradora", "adm"]) ?? "").toString().trim();
-        const grupo = (getField(g, ["GRUPO", "grupo", "nr_grupo", "num_grupo"]) ?? "").toString().trim();
-        if (!adm || !grupo) continue;
-        allowed.set(`${adm}::${grupo}`, g);
+      // 2) mapa por administradora+grupo
+      const map = new Map<string, any>();
+      for (const g of gruposNorm ?? []) {
+        const key = `${(g.adm_norm || "").toString().trim()}::${(g.grupo_norm || "").toString().trim()}`;
+        map.set(key, g);
       }
 
-      // IMPORTANTEEEE: cruzar com **todas** as encarteiradas visíveis (sem excluir contempladas)
+      // 3) linhas apenas das encarteiradas visíveis (por perfil), não contempladas, que existam na data
+      const encFonte = encarteiradas.filter((x) => !x.contemplada);
       const linhas: any[] = [];
-      for (const v of encarteiradasVisiveis) {
-        if (!v.grupo || !v.cota) continue;
-        const key = `${v.administradora}::${v.grupo}`;
-        const info = allowed.get(key);
-        if (!info) continue; // só grupos com assembleia na data
-
-        const referencia = getField(info, ["Referência", "referência", "referencia", "ref"]);
-        const participantes = getField(info, ["PARTICIPANTES", "participantes"]);
-        const medianaRaw = getField(info, ["Mediana", "mediana"]);
-        const mediana =
-          medianaRaw == null ? null : typeof medianaRaw === "number" ? medianaRaw : Number(String(medianaRaw).replace(",", "."));
-        const contemplados = getField(info, ["Total Entregas", "total_entregas", "entregas_ll", "entregas"]);
-
-        linhas.push({
-          administradora: v.administradora,
-          grupo: v.grupo,
-          cota: v.cota,
-          referencia: referencia ?? null,
-          participantes: participantes ?? null,
-          mediana: Number.isFinite(mediana as number) ? (mediana as number) : null,
-          contemplados: contemplados ?? null,
-        });
+      for (const v of encFonte) {
+        if (v.grupo && v.cota) {
+          const key = `${(v.administradora || "").toLowerCase().trim()}::${(v.grupo || "").toString().trim()}`;
+          const info = map.get(key);
+          if (info) {
+            linhas.push({
+              administradora: v.administradora,
+              grupo: v.grupo,
+              cota: v.cota,
+              referencia: info?.referencia ?? null,
+              participantes: info?.participantes ?? null,
+              mediana: info?.mediana ?? null,
+              contemplados: info?.contemplados ?? null,
+            });
+          }
+        }
       }
-
-      linhas.sort((a, b) =>
-        (a.administradora + a.grupo + a.cota).localeCompare(b.administradora + b.grupo + b.cota, "pt-BR", { numeric: true })
-      );
-
       setOferta(linhas);
     } catch (e: any) {
-      alert((e.message ?? "Erro ao listar.") + "\nSe a tabela 'gestao_grupos' ainda não existe, pode ignorar por enquanto.");
+      alert(e.message ?? "Erro ao listar.");
     }
   };
 
@@ -734,7 +844,7 @@ const Carteira: React.FC = () => {
     if (!el) return;
     const win = window.open("", "_blank", "width=1024,height=768");
     if (!win) return;
-    const style = `<style>body{font-family:Arial,sans-serif;padding:24px}h1{margin:0 0 12px 0}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e5e7eb;padding:10px 12px;font-size:12px;text-align:left}.logo{height:40px;margin-bottom:12px}</style>`;
+    const style = `<style>body{font-family:Arial,sans-serif;padding:24px}h1{margin:0 0 12px 0}.grid{width:100%;border-collapse:collapse;margin-top:12px}.grid th,.grid td{border:1px solid #e5e7eb;padding:8px;font-size:12px}.logo{height:40px;margin-bottom:12px}</style>`;
     win.document.write(
       `<html><head><title>Oferta de Lance - Consulmax</title>${style}</head><body><img src="/consulmax-logo.png" class="logo" onerror="this.style.display='none'"/><h1>Oferta de Lance</h1>${el.innerHTML}<script>window.print();setTimeout(()=>window.close(),300);</script></body></html>`
     );
@@ -759,17 +869,21 @@ const Carteira: React.FC = () => {
       </div>
 
       <div className="flex items-center gap-3">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pesquisar cliente pelo nome…" className="w-full border rounded-xl px-3 py-2 outline-none focus:ring" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Pesquisar cliente pelo nome…"
+          className="w-full border rounded-xl px-3 py-2 outline-none focus:ring"
+        />
       </div>
 
-      {/* Encarteirar */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Encarteirar</h2>
-          <span className="text-sm text-gray-500">{pendentesVisiveis.length} nova(s) venda(s)</span>
+          <span className="text-sm text-gray-500">{pendentes.length} nova(s) venda(s)</span>
         </div>
         <div className="overflow-auto">
-          <table className="min-w-[840px] w-full border border-gray-200 rounded-xl">
+          <table className="min-w-[860px] w-full border border-gray-200 rounded-xl">
             <thead className="bg-gray-50">
               <tr>
                 <th className="text-left p-2">Cliente</th>
@@ -795,10 +909,10 @@ const Carteira: React.FC = () => {
                   key={venda.id}
                   venda={venda}
                   lead={lead}
-                  canEncarteirar={isAdmin} // vendedor não encarteira (pode excluir), admin encarteira
+                  canEncarteirar={isAdmin /* ✅ apenas admin */}
                   onSubmit={encarteirar}
                   onDelete={excluirVenda}
-                  onViewEditarVenda={(v) => setEditVendaModal({ open: true, venda: v })}
+                  onOpenEditarVenda={(v) => setEditVendaModal({ open: true, venda: v })}
                 />
               ))}
             </tbody>
@@ -806,15 +920,24 @@ const Carteira: React.FC = () => {
         </div>
       </section>
 
-      {/* Totais */}
       <div className="flex items-center gap-4">
-        <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong></div>
-        <div className="px-4 py-3 rounded-2xl bg-gray-100">Canceladas: <strong className="ml-1">{currency(totalCanceladas)}</strong></div>
-        <div className="px-4 py-3 rounded-2xl bg-amber-100 text-amber-900">Contempladas: <strong className="ml-1">{currency(totalContempladas)}</strong></div>
-        <button className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50" onClick={() => setShowCarteira((s) => !s)}>{showCarteira ? "Ocultar carteira" : "Mostrar carteira"}</button>
+        <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">
+          Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong>
+        </div>
+        <div className="px-4 py-3 rounded-2xl bg-gray-100">
+          Canceladas: <strong className="ml-1">{currency(totalCanceladas)}</strong>
+        </div>
+        <div className="px-4 py-3 rounded-2xl bg-amber-100 text-amber-900">
+          Contempladas: <strong className="ml-1">{currency(totalContempladas)}</strong>
+        </div>
+        <button
+          className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
+          onClick={() => setShowCarteira((s) => !s)}
+        >
+          {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
+        </button>
       </div>
 
-      {/* Carteira encarteirada */}
       {showCarteira && (
         <section className="space-y-3">
           {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
@@ -836,7 +959,6 @@ const Carteira: React.FC = () => {
         </section>
       )}
 
-      {/* Oferta de Lance */}
       <section className="space-y-2">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-medium">Oferta de Lance</h2>
@@ -844,11 +966,15 @@ const Carteira: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           <input type="date" value={assembleia} onChange={(e) => setAssembleia(e.target.value)} className="border rounded-xl px-3 py-2" />
-          <button onClick={listarOferta} className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90">Listar</button>
-          <button onClick={exportarOfertaPDF} className="px-4 py-2 rounded-xl border hover:bg-gray-50">Exportar PDF</button>
+          <button onClick={listarOferta} className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90">
+            Listar
+          </button>
+          <button onClick={exportarOfertaPDF} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
+            Exportar PDF
+          </button>
         </div>
         <div id="relatorio-oferta" className="overflow-auto">
-          <table className="min-w-[900px] w-full border border-gray-200 rounded-xl">
+          <table className="min-w-[880px] w-full border border-gray-200 rounded-xl">
             <thead className="bg-gray-50">
               <tr>
                 <th className="text-left p-2">Adm</th>
@@ -856,14 +982,16 @@ const Carteira: React.FC = () => {
                 <th className="text-left p-2">Cota</th>
                 <th className="text-left p-2">Referência</th>
                 <th className="text-left p-2">Participantes</th>
-                <th className="text-left p-2">Mediana</th>
+                <th className="text-left p-2">Mediana</th> {/* ✅ renomeado */}
                 <th className="text-left p-2">Contemplados</th>
               </tr>
             </thead>
             <tbody>
               {oferta.length === 0 && (
                 <tr>
-                  <td className="p-3 text-gray-500" colSpan={7}>Nenhuma cota encontrada para a data.</td>
+                  <td className="p-3 text-gray-500" colSpan={7}>
+                    Nenhuma cota encontrada para a data.
+                  </td>
                 </tr>
               )}
               {oferta.map((o, idx) => (
@@ -882,18 +1010,24 @@ const Carteira: React.FC = () => {
         </div>
       </section>
 
-      {/* Modal: Nova Venda */}
+      {/* Modal Nova Venda */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Nova Venda</h3>
-              <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-gray-800">✕</button>
+              <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-gray-800">
+                ✕
+              </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Pessoa (Lead)</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.lead_id ?? ""} onChange={(e) => onFormChange("lead_id", e.target.value)}>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.lead_id ?? ""}
+                  onChange={(e) => onFormChange("lead_id", e.target.value)}
+                >
                   <option value="">Selecione um lead…</option>
                   {leads.map((l) => (
                     <option key={l.id} value={l.id}>
@@ -902,194 +1036,412 @@ const Carteira: React.FC = () => {
                   ))}
                 </select>
               </div>
-              <div><label className="text-sm text-gray-600">Telefone</label><input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[form.lead_id as string]?.telefone ?? ""} readOnly/></div>
-              <div><label className="text-sm text-gray-600">CPF *</label><input className="w-full border rounded-xl px-3 py-2" value={formatCPF(form.cpf ?? "")} onChange={(e)=>onFormChange("cpf", e.target.value)} placeholder="000.000.000-00"/></div>
+              <div>
+                <label className="text-sm text-gray-600">Telefone</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={leadMap[form.lead_id as string]?.telefone ?? ""}
+                  readOnly
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">CPF *</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={formatCPF(form.cpf ?? "")}
+                  onChange={(e) => onFormChange("cpf", e.target.value)}
+                  placeholder="000.000.000-00"
+                />
+              </div>
 
-              <div><label className="text-sm text-gray-600">Data da Venda</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_venda ?? ""} onChange={(e)=>onFormChange("data_venda", e.target.value)}/></div>
-              <div><label className="text-sm text-gray-600">Data de Nascimento</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_nascimento ?? ""} onChange={(e)=>onFormChange("data_nascimento", e.target.value)}/></div>
-              <div><label className="text-sm text_gray-600">Vendedor</label><input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly/></div>
+              <div>
+                <label className="text-sm text-gray-600">Data da Venda</label>
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.data_venda ?? ""}
+                  onChange={(e) => onFormChange("data_venda", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Data de Nascimento</label>
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.data_nascimento ?? ""}
+                  onChange={(e) => onFormChange("data_nascimento", e.target.value)}
+                />
+              </div>
 
-              <div><label className="text-sm text-gray-600">Produto (Segmento)</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.produto as Produto} onChange={(e)=>onFormChange("produto", e.target.value as Produto)}>{PRODUTOS.map(p=><option key={p} value={p}>{p}</option>)}</select></div>
+              <div>
+                <label className="text-sm text_gray-600">Vendedor</label>
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly />
+              </div>
 
-              <div><label className="text-sm text-gray-600">Tabela</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.tabela ?? ""} onChange={(e)=>onFormChange("tabela", e.target.value)} disabled={(TABELAS[(form.produto as Produto)||"Automóvel"]||[]).length===0}>
-                  <option value="">{(TABELAS[(form.produto as Produto)||"Automóvel"]||[]).length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
-                  {(TABELAS[(form.produto as Produto)||"Automóvel"]||[]).map(t=><option key={t} value={t}>{t}</option>)}
-                </select></div>
+              <div>
+                <label className="text-sm text-gray-600">Produto (Segmento)</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.produto as Produto}
+                  onChange={(e) => onFormChange("produto", e.target.value as Produto)}
+                >
+                  {PRODUTOS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              <div><label className="text-sm text-gray-600">Administradora</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.administradora as Administradora} onChange={(e)=>onFormChange("administradora", e.target.value as Administradora)}>{ADMINISTRADORAS.map(a=><option key={a} value={a}>{a}</option>)}</select></div>
+              <div>
+                <label className="text-sm text-gray-600">Tabela</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.tabela ?? ""}
+                  onChange={(e) => onFormChange("tabela", e.target.value)}
+                  disabled={(TABELAS[(form.produto as Produto) || "Automóvel"] || []).length === 0}
+                >
+                  <option value="">
+                    {(TABELAS[(form.produto as Produto) || "Automóvel"] || []).length
+                      ? "Selecione a tabela…"
+                      : "Sem tabelas para este segmento"}
+                  </option>
+                  {(TABELAS[(form.produto as Produto) || "Automóvel"] || []).map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              <div><label className="text-sm text-gray-600">Forma da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.forma_venda as FormaVenda} onChange={(e)=>onFormChange("forma_venda", e.target.value as FormaVenda)}>{FORMAS.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
+              <div>
+                <label className="text-sm text-gray-600">Administradora</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.administradora as Administradora}
+                  onChange={(e) => onFormChange("administradora", e.target.value as Administradora)}
+                >
+                  {ADMINISTRADORAS.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              <div><label className="text-sm text-gray-600">Número da Proposta *</label><input className="w-full border rounded-xl px-3 py-2" value={form.numero_proposta ?? ""} onChange={(e)=>onFormChange("numero_proposta", e.target.value)}/></div>
-              <div><label className="text-sm text-gray-600">Valor da Venda</label><input className="w-full border rounded-xl px-3 py-2" value={(form.valor_venda as any) ?? ""} onChange={(e)=>onFormChange("valor_venda", e.target.value)} placeholder="R$ 0,00"/></div>
+              <div>
+                <label className="text-sm text-gray-600">Forma da Venda</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.forma_venda as FormaVenda}
+                  onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}
+                >
+                  {FORMAS.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              <div><label className="text-sm text-gray-600">Tipo da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.tipo_venda ?? "Normal"} onChange={(e)=>onFormChange("tipo_venda", e.target.value)}>
-                  <option>Normal</option><option>Contemplada</option><option>Bolsão</option>
-                </select></div>
+              <div>
+                <label className="text-sm text-gray-600">Número da Proposta *</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.numero_proposta ?? ""}
+                  onChange={(e) => onFormChange("numero_proposta", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Valor da Venda</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={(form.valor_venda as any) ?? ""}
+                  onChange={(e) => onFormChange("valor_venda", e.target.value)}
+                  placeholder="R$ 0,00"
+                />
+              </div>
 
-              {form.tipo_venda==="Bolsão" && (<div><label className="text-sm text-gray-600">Grupo (Bolsão)</label><input className="w-full border rounded-xl px-3 py-2" value={form.grupo ?? ""} onChange={(e)=>onFormChange("grupo", e.target.value)} placeholder="Informe o número do grupo"/></div>)}
+              <div>
+                <label className="text-sm text-gray-600">Tipo da Venda</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.tipo_venda ?? "Normal"}
+                  onChange={(e) => onFormChange("tipo_venda", e.target.value)}
+                >
+                  <option>Normal</option>
+                  <option>Contemplada</option>
+                  <option>Bolsão</option>
+                </select>
+              </div>
 
-              <div className="md:col-span-2"><label className="text-sm text-gray-600">Descrição da Venda</label>
-                <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={form.descricao ?? ""} onChange={(e)=>onFormChange("descricao", e.target.value)} placeholder="Estratégias de contemplação, observações…"/></div>
+              {form.tipo_venda === "Bolsão" && (
+                <div>
+                  <label className="text-sm text-gray-600">Grupo (Bolsão)</label>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={form.grupo ?? ""}
+                    onChange={(e) => onFormChange("grupo", e.target.value)}
+                    placeholder="Informe o número do grupo"
+                  />
+                </div>
+              )}
+
+              <div className="md:col-span-2">
+                <label className="text-sm text-gray-600">Descrição da Venda</label>
+                <textarea
+                  className="w-full border rounded-xl px-3 py-2"
+                  rows={3}
+                  value={form.descricao ?? ""}
+                  onChange={(e) => onFormChange("descricao", e.target.value)}
+                  placeholder="Estratégias de contemplação, observações…"
+                />
+              </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3"><button onClick={()=>setShowModal(false)} className="px-4 py-2 rounded-xl border">Cancelar</button><button onClick={registrarVenda} className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90">Registrar Venda</button></div>
+            <div className="flex items-center justify-end gap-3">
+              <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded-xl border">
+                Cancelar
+              </button>
+              <button onClick={registrarVenda} className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90">
+                Registrar Venda
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Editar venda pendente */}
+      {/* Modal Ver/Editar venda pendente */}
       {editVendaModal.open && editVendaModal.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-xl font-semibold">Editar Venda (Proposta {editVendaModal.venda.numero_proposta})</h3>
-              <button onClick={() => setEditVendaModal({ open: false })} className="text-gray-500 hover:text-gray-800">✕</button>
+              <h3 className="text-xl font-semibold">Venda • {editVendaModal.venda.numero_proposta}</h3>
+              <button onClick={() => setEditVendaModal({ open: false })} className="text-gray-500 hover:text-gray-800">
+                ✕
+              </button>
             </div>
-            <EditarVendaPendenteForm venda={editVendaModal.venda} leads={leads} leadMap={leadMap} onSalvar={(patch) => salvarEdicaoPendente(editVendaModal.venda!, patch)} />
+
+            {(() => {
+              const v = editVendaModal.venda!;
+              const [tmp, setTmp] = useState<Partial<Venda>>({
+                lead_id: v.lead_id,
+                cpf: v.cpf,
+                data_venda: v.data_venda,
+                produto: v.produto,
+                administradora: v.administradora,
+                forma_venda: v.forma_venda,
+                numero_proposta: v.numero_proposta,
+                valor_venda: v.valor_venda,
+                tipo_venda: v.tipo_venda,
+                descricao: v.descricao,
+                tabela: v.tabela,
+                grupo: v.grupo || "",
+                data_nascimento: v.data_nascimento || "",
+              });
+
+              // re-render section component
+              const Comp = () => (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="md:col-span-2">
+                      <label className="text-sm text-gray-600">Pessoa (Lead)</label>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.lead_id ?? ""}
+                        onChange={(e) => setTmp((p) => ({ ...p, lead_id: e.target.value }))}
+                      >
+                        <option value="">Selecione um lead…</option>
+                        {leads.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.nome} {l.telefone ? `• ${l.telefone}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">CPF</label>
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={formatCPF(tmp.cpf ?? "")}
+                        onChange={(e) => setTmp((p) => ({ ...p, cpf: e.target.value }))}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Data da Venda</label>
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.data_venda ?? ""}
+                        onChange={(e) => setTmp((p) => ({ ...p, data_venda: e.target.value }))}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Data de Nascimento</label>
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.data_nascimento ?? ""}
+                        onChange={(e) => setTmp((p) => ({ ...p, data_nascimento: e.target.value }))}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Produto</label>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.produto as Produto}
+                        onChange={(e) => setTmp((p) => ({ ...p, produto: e.target.value as Produto }))}
+                      >
+                        {PRODUTOS.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Tabela</label>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.tabela ?? ""}
+                        onChange={(e) => setTmp((p) => ({ ...p, tabela: e.target.value }))}
+                        disabled={(TABELAS[(tmp.produto as Produto) || "Automóvel"] || []).length === 0}
+                      >
+                        <option value="">
+                          {(TABELAS[(tmp.produto as Produto) || "Automóvel"] || []).length
+                            ? "Selecione a tabela…"
+                            : "Sem tabelas para este segmento"}
+                        </option>
+                        {(TABELAS[(tmp.produto as Produto) || "Automóvel"] || []).map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Administradora</label>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.administradora as Administradora}
+                        onChange={(e) => setTmp((p) => ({ ...p, administradora: e.target.value as Administradora }))}
+                      >
+                        {ADMINISTRADORAS.map((a) => (
+                          <option key={a} value={a}>
+                            {a}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Forma da Venda</label>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.forma_venda as FormaVenda}
+                        onChange={(e) => setTmp((p) => ({ ...p, forma_venda: e.target.value as FormaVenda }))}
+                      >
+                        {FORMAS.map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Número da Proposta</label>
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.numero_proposta ?? ""}
+                        onChange={(e) => setTmp((p) => ({ ...p, numero_proposta: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">Valor da Venda</label>
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={(tmp.valor_venda as any) ?? ""}
+                        onChange={(e) => setTmp((p) => ({ ...p, valor_venda: Number(e.target.value) }))}
+                        type="number"
+                        step="0.01"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Tipo da Venda</label>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.tipo_venda ?? "Normal"}
+                        onChange={(e) => setTmp((p) => ({ ...p, tipo_venda: e.target.value as any }))}
+                      >
+                        <option>Normal</option>
+                        <option>Contemplada</option>
+                        <option>Bolsão</option>
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="text-sm text-gray-600">Descrição</label>
+                      <textarea
+                        className="w-full border rounded-xl px-3 py-2"
+                        rows={3}
+                        value={tmp.descricao ?? ""}
+                        onChange={(e) => setTmp((p) => ({ ...p, descricao: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="text-right mt-3">
+                    <button className="px-4 py-2 rounded-xl border mr-2" onClick={() => setEditVendaModal({ open: false })}>
+                      Cancelar
+                    </button>
+                    <button
+                      className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+                      onClick={() => salvarEdicaoPendente(v, tmp)}
+                    >
+                      Salvar
+                    </button>
+                  </div>
+                </>
+              );
+              return <Comp />;
+            })()}
           </div>
         </div>
       )}
 
-      {/* Modal: Descrições */}
+      {/* Modal de texto simples */}
       {descModal.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-xl p-5 space-y-3">
-            <div className="flex items-center justify-between"><h3 className="text-lg font-semibold">{descModal.title}</h3><button className="text-gray-500 hover:text-gray-800" onClick={()=>setDescModal({open:false,title:"",text:""})}>✕</button></div>
-            <pre className="whitespace-pre-wrap text-sm text-gray-800 max-h-[60vh] overflow-auto">{descModal.text || "—"}</pre>
-            <div className="text-right"><button className="px-4 py-2 rounded-xl border" onClick={()=>setDescModal({open:false,title:"",text:""})}>Fechar</button></div>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">{descModal.title}</h3>
+              <button
+                className="text-gray-500 hover:text-gray-800"
+                onClick={() => setDescModal({ open: false, title: "", text: "" })}
+              >
+                ✕
+              </button>
+            </div>
+            <pre className="whitespace-pre-wrap text-sm text-gray-800 max-h-[60vh] overflow-auto">
+              {descModal.text || "—"}
+            </pre>
+            <div className="text-right">
+              <button className="px-4 py-2 rounded-xl border" onClick={() => setDescModal({ open: false, title: "", text: "" })}>
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}
     </div>
-  );
-};
-
-/** Sub-form de edição de venda pendente */
-const EditarVendaPendenteForm: React.FC<{
-  venda: Venda;
-  leads: Lead[];
-  leadMap: Record<string, Lead>;
-  onSalvar: (patch: Partial<Venda>) => Promise<void>;
-}> = ({ venda, leads, leadMap, onSalvar }) => {
-  const [local, setLocal] = useState<Partial<Venda>>({
-    lead_id: venda.lead_id,
-    cpf: venda.cpf,
-    data_venda: venda.data_venda,
-    data_nascimento: venda.data_nascimento ?? "",
-    produto: venda.produto,
-    tabela: venda.tabela ?? "",
-    administradora: venda.administradora,
-    forma_venda: venda.forma_venda,
-    numero_proposta: venda.numero_proposta,
-    valor_venda: venda.valor_venda,
-    tipo_venda: venda.tipo_venda,
-    grupo: venda.grupo ?? "",
-    descricao: venda.descricao ?? "",
-  });
-
-  const onChange = (k: keyof Venda, val: any) => setLocal((f) => ({ ...f, [k]: val }));
-  const tabelaOptions = TABELAS[(local.produto as Produto) || (venda.produto as Produto)] || [];
-
-  return (
-    <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="md:col-span-2">
-          <label className="text-sm text-gray-600">Pessoa (Lead)</label>
-          <select className="w-full border rounded-xl px-3 py-2" value={local.lead_id ?? ""} onChange={(e) => onChange("lead_id", e.target.value)}>
-            <option value="">Selecione um lead…</option>
-            {leads.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.nome} {l.telefone ? `• ${l.telefone}` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div><label className="text-sm text-gray-600">Telefone</label><input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[local.lead_id as string]?.telefone ?? ""} readOnly/></div>
-        <div><label className="text-sm text-gray-600">CPF</label><input className="w-full border rounded-xl px-3 py-2" value={formatCPF(local.cpf ?? "")} onChange={(e)=>onChange("cpf", e.target.value)}/></div>
-        <div><label className="text-sm text-gray-600">Data da Venda</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={local.data_venda ?? ""} onChange={(e)=>onChange("data_venda", e.target.value)}/></div>
-        <div><label className="text-sm text-gray-600">Data de Nascimento</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={local.data_nascimento ?? ""} onChange={(e)=>onChange("data_nascimento", e.target.value)}/></div>
-
-        <div>
-          <label className="text-sm text-gray-600">Produto (Segmento)</label>
-          <select className="w-full border rounded-xl px-3 py-2" value={local.produto as Produto} onChange={(e) => onChange("produto", e.target.value as Produto)}>
-            {PRODUTOS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-600">Tabela</label>
-          <select className="w-full border rounded-xl px-3 py-2" value={local.tabela ?? ""} onChange={(e) => onChange("tabela", e.target.value)} disabled={(tabelaOptions || []).length === 0}>
-            <option value="">{(tabelaOptions || []).length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
-            {(tabelaOptions || []).map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-600">Administradora</label>
-          <select className="w-full border rounded-xl px-3 py-2" value={local.administradora as Administradora} onChange={(e) => onChange("administradora", e.target.value as Administradora)}>
-            {ADMINISTRADORAS.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-600">Forma da Venda</label>
-          <select className="w-full border rounded-xl px-3 py-2" value={local.forma_venda as FormaVenda} onChange={(e) => onChange("forma_venda", e.target.value as FormaVenda)}>
-            {FORMAS.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div><label className="text-sm text-gray-600">Número da Proposta</label><input className="w-full border rounded-xl px-3 py-2" value={local.numero_proposta ?? ""} onChange={(e)=>onChange("numero_proposta", e.target.value)}/></div>
-        <div><label className="text-sm text-gray-600">Valor da Venda</label><input className="w-full border rounded-xl px-3 py-2" value={(local.valor_venda as any) ?? ""} onChange={(e)=>onChange("valor_venda", Number(e.target.value))} placeholder="R$ 0,00"/></div>
-
-        <div>
-          <label className="text-sm text-gray-600">Tipo da Venda</label>
-          <select className="w-full border rounded-xl px-3 py-2" value={local.tipo_venda ?? "Normal"} onChange={(e) => onChange("tipo_venda", e.target.value)}>
-            <option>Normal</option>
-            <option>Contemplada</option>
-            <option>Bolsão</option>
-          </select>
-        </div>
-
-        {local.tipo_venda === "Bolsão" && (
-          <div>
-            <label className="text-sm text-gray-600">Grupo (Bolsão)</label>
-            <input className="w-full border rounded-xl px-3 py-2" value={local.grupo ?? ""} onChange={(e) => onChange("grupo", e.target.value)} placeholder="Informe o número do grupo" />
-          </div>
-        )}
-
-        <div className="md:col-span-2">
-          <label className="text-sm text-gray-600">Descrição da Venda</label>
-          <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={local.descricao ?? ""} onChange={(e) => onChange("descricao", e.target.value)} placeholder="Estratégias de contemplação, observações…" />
-        </div>
-      </div>
-
-      <div className="flex items-center justify-end gap-3">
-        <button onClick={() => onSalvar(local)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">Salvar alterações</button>
-      </div>
-    </>
   );
 };
 

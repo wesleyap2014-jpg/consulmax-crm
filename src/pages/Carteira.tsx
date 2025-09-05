@@ -46,7 +46,7 @@ type Venda = {
   tabela?: string | null;
   created_at: string;
   segmento?: string | null;
-  data_nascimento?: string | null; // novo campo (opcional)
+  data_nascimento?: string | null; // novo
 };
 
 /** Constantes */
@@ -69,6 +69,7 @@ const ADMINISTRADORAS: Administradora[] = [
 ];
 const FORMAS: FormaVenda[] = ["Parcela Cheia", "Reduzida 25%", "Reduzida 50%"];
 
+// Segmento -> Tabelas
 const TABELAS: Record<Produto, string[]> = {
   Motocicleta: ["Moto"],
   Serviço: ["Serviço"],
@@ -102,13 +103,11 @@ const TABELAS: Record<Produto, string[]> = {
 };
 
 const currency = (n: number) =>
-  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
-    n || 0
-  );
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
-/** Utils CPF */
+/** CPF utils */
 const onlyDigits = (s: string) => (s || "").replace(/\D/g, "");
 const formatCPF = (s: string) => {
   const d = onlyDigits(s).slice(0, 11);
@@ -130,7 +129,7 @@ const validateCPF = (cpf: string) => {
   return d1 === parseInt(d[9]) && d2 === parseInt(d[10]);
 };
 
-/** Normalização Produto -> Segmento */
+/** Normalização produto -> segmento */
 function normalizeProdutoToSegmento(produto: Produto | string | null | undefined): string | null {
   const p = (produto || "").toString().trim();
   if (!p) return null;
@@ -139,7 +138,7 @@ function normalizeProdutoToSegmento(produto: Produto | string | null | undefined
   return p;
 }
 
-/** ====== Linha ENCARTEIRAR ====== */
+/** Linha Encarteirar */
 type LinhaEncarteirarProps = {
   venda: Venda;
   lead?: Lead;
@@ -228,7 +227,7 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
   );
 };
 
-/** ====== Linha COTA (carteira) ====== */
+/** Linha Carteira */
 type LinhaCotaProps = {
   venda: Venda;
   onSave: (patch: Partial<Venda>) => Promise<void>;
@@ -348,7 +347,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, isAdmin, onViewDes
   );
 };
 
-/** ====== Bloco por Cliente ====== */
+/** Bloco por cliente */
 type ClienteGroup = { cliente: Lead; itens: Venda[]; totalAtivas: number; qtdAtivas: number; segmentos: Set<string> };
 type ClienteBlocoProps = {
   group: ClienteGroup;
@@ -414,7 +413,7 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewA
   );
 };
 
-/** ====== Página Carteira ====== */
+/** Página Carteira */
 const Carteira: React.FC = () => {
   const [userId, setUserId] = useState<string>("");
   const [userEmail, setUserEmail] = useState<string>("");
@@ -448,7 +447,6 @@ const Carteira: React.FC = () => {
   });
 
   const [descModal, setDescModal] = useState<{ open: boolean; title: string; text: string }>({ open: false, title: "", text: "" });
-
   const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
 
   const [assembleia, setAssembleia] = useState<string>(new Date().toISOString().slice(0, 10));
@@ -474,25 +472,19 @@ const Carteira: React.FC = () => {
         setUserEmail(uemail);
         setUserName(meta?.nome ?? uemail ?? "Vendedor");
 
-        // ====== Detecção de Admin mais robusta ======
+        // Admin robusto (com override temporário p/ seu e-mail)
         let adminFlag = false;
-
-        // 1) RPC (se existir)
         try {
           const { data, error } = await supabase.rpc("is_admin_email", { e: uemail });
           if (error) throw error;
           adminFlag = !!data;
         } catch {}
-
-        // 2) Tabela admins
         if (!adminFlag) {
           try {
             const { data } = await supabase.from("admins").select("email").eq("email", uemail).maybeSingle();
             adminFlag = !!data;
           } catch {}
         }
-
-        // 3) Tabela usuarios (perfil/role)
         if (!adminFlag) {
           try {
             const { data } = await supabase.from("usuarios").select("email, perfil, role").eq("email", uemail).maybeSingle();
@@ -502,8 +494,6 @@ const Carteira: React.FC = () => {
             }
           } catch {}
         }
-
-        // 4) Profiles (se existir)
         if (!adminFlag) {
           try {
             const { data } = await supabase.from("profiles").select("role,perfil").eq("id", uid).maybeSingle();
@@ -513,29 +503,21 @@ const Carteira: React.FC = () => {
             }
           } catch {}
         }
-
-        // 5) Metadados do usuário
         if (!adminFlag) {
           const metaRole = (meta?.perfil || meta?.role || meta?.papel || "").toString().toLowerCase();
           if (["admin", "administrador", "adm", "gestor", "gerente"].includes(metaRole)) adminFlag = true;
           if (meta?.is_admin === true) adminFlag = true;
         }
-
-        // 6) Override provisório p/ você (remover depois, se quiser)
-        if (uemail === "wesley.planejadorfinanceiro@outlook.com.br") adminFlag = true;
-
+        if (uemail === "wesley.planejadorfinanceiro@outlook.com.br") adminFlag = true; // override
         setIsAdmin(adminFlag);
 
-        // Leads
         const { data: lds } = await supabase.from("leads").select("id,nome,telefone").order("nome", { ascending: true });
         const leadsArr = lds ?? [];
         setLeads(leadsArr);
         setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
 
-        // Vendas
         const { data: pend } = await supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
         const { data: enc } = await supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
-
         setPendentes(pend ?? []);
         setEncarteiradas(enc ?? []);
       } catch (e: any) {
@@ -546,7 +528,7 @@ const Carteira: React.FC = () => {
     })();
   }, []);
 
-  /** Permissões visibilidade */
+  /** Permissões */
   const pendentesVisiveis = useMemo(() => (isAdmin ? pendentes : pendentes.filter((v) => v.vendedor_id === userId)), [isAdmin, pendentes, userId]);
   const encarteiradasVisiveis = useMemo(() => (isAdmin ? encarteiradas : encarteiradas.filter((v) => v.vendedor_id === userId)), [isAdmin, encarteiradas, userId]);
 
@@ -558,12 +540,13 @@ const Carteira: React.FC = () => {
     return encarteiradasVisiveis.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
   }, [q, encarteiradasVisiveis, leadMap]);
 
-  // Totais respeitam a permissão
+  /** Totais respeitando permissão */
   const totalAtivas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
   const totalCanceladas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
   const totalContempladas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
 
-  const porCliente: ClienteGroup[] = useMemo(() => {
+  /** Agrupado por cliente */
+  const porCliente: any[] = useMemo(() => {
     const map: Record<string, ClienteGroup> = {};
     for (const v of encarteiradasFiltradas) {
       const lead = leadMap[v.lead_id];
@@ -699,25 +682,22 @@ const Carteira: React.FC = () => {
     }
   };
 
-  /** ====== Oferta de Lance ======
-   * Evita erro de coluna inexistente (seleciona tudo e filtra por qualquer campo que pareça “assembleia”)
-   */
+  /** ====== Oferta de Lance ====== */
+  // detecção da coluna de data de assembleia
   const pickDateField = (row: any): string | null => {
     if (!row || typeof row !== "object") return null;
-    const keys = Object.keys(row).map((k) => k.toLowerCase());
-    const preferred = ["data_assembleia", "assembleia", "dt_assembleia", "data_assem", "data", "data_ref", "ref_data"];
-    for (const name of preferred) {
-      const idx = keys.indexOf(name);
-      if (idx >= 0) return Object.keys(row)[idx];
+    const keys = Object.keys(row);
+    const lower = keys.map((k) => k.toLowerCase());
+    const preferred = ["data_assembleia", "assembleia", "dt_assembleia", "data_assem", "data", "data_ref"];
+    for (const p of preferred) {
+      const idx = lower.indexOf(p);
+      if (idx >= 0) return keys[idx];
     }
-    // tenta qualquer chave que contenha 'assem'
-    const fuzzy = keys.find((k) => k.includes("assem"));
-    return fuzzy ? Object.keys(row)[keys.indexOf(fuzzy)] : null;
+    const fuzzyIdx = lower.findIndex((k) => k.includes("assem"));
+    return fuzzyIdx >= 0 ? keys[fuzzyIdx] : null;
   };
-
   const normalizeISO = (d: any): string | null => {
     if (!d) return null;
-    // aceita 'YYYY-MM-DD', Date, 'DD/MM/YYYY', 'YYYY-MM-DDTHH:mm:ss'
     try {
       if (typeof d === "string") {
         if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
@@ -734,48 +714,61 @@ const Carteira: React.FC = () => {
 
   const listarOferta = async () => {
     try {
+      // 1) pega tudo e filtra no front para evitar erros de coluna inexistente
       const { data: grupos, error } = await supabase.from("gestao_grupos").select("*");
       if (error) throw error;
 
-      const linhas: any[] = [];
       const rows: any[] = grupos ?? [];
-      const dateKey = rows.length ? pickDateField(rows[0]) : null;
-      const alvo = normalizeISO(assembleia);
-
-      // Mapa auxiliar por administradora::grupo
-      const map = new Map<string, any>();
-      for (const g of rows) {
-        // filtra pela data se houver chave de data
-        const ok =
-          !dateKey ||
-          !alvo ||
-          normalizeISO((g as any)[dateKey]) === alvo;
-        if (!ok) continue;
-        map.set(`${g.administradora}::${g.grupo}`, g);
+      if (!rows.length) {
+        setOferta([]);
+        return;
       }
 
+      // 2) identifica qual coluna é a data da assembleia
+      const dateKey = pickDateField(rows[0]);
+      const alvoISO = normalizeISO(assembleia);
+
+      // 3) mantém apenas linhas com assembleia exatamente na data selecionada
+      const rowsNaData = rows.filter((g) => {
+        if (!dateKey) return false; // se não temos coluna de data, não listamos nada para evitar resultado errado
+        return normalizeISO((g as any)[dateKey]) === alvoISO;
+      });
+
+      // 4) cria set de grupos válidos (somente os com assembleia nessa data)
+      const allowedSet = new Map<string, any>();
+      for (const g of rowsNaData) {
+        allowedSet.set(`${g.administradora}::${g.grupo}`, g);
+      }
+
+      // 5) monta as linhas APENAS das suas cotas encarteiradas cujo grupo esteja no allowedSet
+      const linhas: any[] = [];
       for (const v of encarteiradasVisiveis.filter((x) => !x.contemplada)) {
-        if (v.grupo && v.cota) {
-          const key = `${v.administradora}::${v.grupo}`;
-          const info: any = map.get(key) || {};
-          const mediana =
-            info.mediana ??
-            info.mediana_ll ??
-            info.mediana_perc_ll ??
-            info.maior_perc_ll ??
-            null;
+        if (!v.grupo || !v.cota) continue;
+        const key = `${v.administradora}::${v.grupo}`;
+        const info = allowedSet.get(key);
+        if (!info) continue; // << só inclui se o grupo realmente tem assembleia nessa data
 
-          linhas.push({
-            administradora: v.administradora,
-            grupo: v.grupo,
-            cota: v.cota,
-            referencia: info?.referencia ?? null,
-            participantes: info?.participantes ?? null,
-            mediana,
-            contemplados: info?.contemplados ?? null,
-          });
-        }
+        const mediana =
+          info.mediana ??
+          info.mediana_ll ??
+          info.mediana_perc_ll ??
+          info.maior_perc_ll ??
+          null;
+
+        linhas.push({
+          administradora: v.administradora,
+          grupo: v.grupo,
+          cota: v.cota,
+          referencia: info?.referencia ?? null,
+          participantes: info?.participantes ?? null,
+          mediana,
+          contemplados: info?.contemplados ?? null,
+        });
       }
+
+      // ordena por administradora/grupo/cota pra ficar estável
+      linhas.sort((a, b) => (a.administradora + a.grupo + a.cota).localeCompare(b.administradora + b.grupo + b.cota, "pt-BR", { numeric: true }));
+
       setOferta(linhas);
     } catch (e: any) {
       alert((e.message ?? "Erro ao listar.") + "\nSe a tabela 'gestao_grupos' ainda não existe, pode ignorar por enquanto.");
@@ -815,7 +808,7 @@ const Carteira: React.FC = () => {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pesquisar cliente pelo nome…" className="w-full border rounded-xl px-3 py-2 outline-none focus:ring" />
       </div>
 
-      {/* ENCARTEIRAR */}
+      {/* Encarteirar */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Encarteirar</h2>
@@ -848,7 +841,7 @@ const Carteira: React.FC = () => {
                   key={venda.id}
                   venda={venda}
                   lead={lead}
-                  canEncarteirar={isAdmin} // admin pode encarteirar
+                  canEncarteirar={isAdmin} // somente admin encarteira
                   onSubmit={encarteirar}
                   onDelete={excluirVenda} // vendedor pode excluir
                   onViewEditarVenda={(v) => setEditVendaModal({ open: true, venda: v })}
@@ -859,7 +852,7 @@ const Carteira: React.FC = () => {
         </div>
       </section>
 
-      {/* TOTAIS (respeitam permissão) */}
+      {/* Totais */}
       <div className="flex items-center gap-4">
         <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">
           Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong>
@@ -875,7 +868,7 @@ const Carteira: React.FC = () => {
         </button>
       </div>
 
-      {/* CARTEIRA */}
+      {/* Carteira */}
       {showCarteira && (
         <section className="space-y-3">
           {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
@@ -897,7 +890,7 @@ const Carteira: React.FC = () => {
         </section>
       )}
 
-      {/* OFERTA DE LANCE (layout antigo com espaçamento) */}
+      {/* Oferta de Lance */}
       <section className="space-y-2">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-medium">Oferta de Lance</h2>
@@ -1095,7 +1088,7 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* Modal: Ver/Editar Vendas Pendentes */}
+      {/* Modal: Ver/Editar venda pendente */}
       {editVendaModal.open && editVendaModal.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -1134,7 +1127,7 @@ const Carteira: React.FC = () => {
   );
 };
 
-/** Subcomponente: formulário de edição da venda pendente */
+/** Sub-formulário edição de venda pendente */
 const EditarVendaPendenteForm: React.FC<{
   venda: Venda;
   leads: Lead[];
@@ -1158,7 +1151,6 @@ const EditarVendaPendenteForm: React.FC<{
   });
 
   const onChange = (k: keyof Venda, val: any) => setLocal((f) => ({ ...f, [k]: val }));
-
   const tabelaOptions = TABELAS[(local.produto as Produto) || (venda.produto as Produto)] || [];
 
   return (

@@ -87,40 +87,49 @@ function calcMediana(maior?: number | null, menor?: number | null) {
 function withinLLMedianFilter(mediana: number | null | undefined, alvo: number | null): boolean {
   if (alvo == null) return true;
   if (mediana == null) return false;
-  const min = Math.max(0, alvo * 0.70); // ±15%
-  const max = alvo * 1.30;
+  const min = Math.max(0, alvo * 0.7); // ±15%
+  const max = alvo * 1.3;
   return mediana >= min && mediana <= max;
 }
 
-/** 🔧 NOVO: Normaliza qualquer string de data (ou timestamp) para 'YYYY-MM-DD'
- *  Aceita: 'DD/MM/AAAA', 'YYYY-MM-DD' (ou com hora/fuso), timestamps parseáveis pelo Date.
- */
-function normalizeDateStr(d: string | null | undefined): string | null {
+/** Converte qualquer coisa (string Date, ISO, 'DD/MM/AAAA', timestamp) em 'YYYY-MM-DD' com base em UTC. */
+function toYMD(d: string | Date | null | undefined): string | null {
   if (!d) return null;
-  const s = String(d).trim();
+  const s = typeof d === "string" ? d.trim() : (d as Date).toISOString();
 
-  // Caso 1: dd/mm/aaaa
-  const m1 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m1) {
-    const [, dd, mm, yyyy] = m1;
-    return `${yyyy}-${mm}-${dd}`;
-  }
+  // dd/mm/aaaa
+  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
 
-  // Caso 2: já no padrão yyyy-mm-dd (ou começa assim)
-  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+  // yyyy-mm-dd (ou começa assim)
+  const isoHead = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoHead) return `${isoHead[1]}-${isoHead[2]}-${isoHead[3]}`;
 
-  // Caso 3: qualquer outra coisa que o Date entenda (inclui timestamps com fuso)
+  // fallback: Date parse + extrair Y-M-D em UTC (sem sofrer com timezone)
   const dt = new Date(s);
-  if (!isNaN(dt.getTime())) {
-    const y = dt.getFullYear();
-    const m = String(dt.getMonth() + 1).padStart(2, "0");
-    const day = String(dt.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  }
+  if (isNaN(dt.getTime())) return null;
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(dt.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
-  // Fallback defensivo (mantém primeiros 10 chars, ex.: 'YYYY-MM-DD')
-  return s.slice(0, 10);
+/** Transforma 'YYYY-MM-DD' em timestamp UTC do meio-dia (evita bordas de fuso/DST). */
+function ymdToMiddayUTC(ymd: string | null): number | null {
+  if (!ymd) return null;
+  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  return Date.UTC(y, mo, d, 12, 0, 0); // 12:00 UTC
+}
+
+/** Compara dois valores de data “no dia”, tolerante a fuso. */
+function sameDay(a: string | Date | null | undefined, b: string | Date | null | undefined): boolean {
+  const A = ymdToMiddayUTC(toYMD(a));
+  const B = ymdToMiddayUTC(toYMD(b));
+  return A != null && B != null && A === B;
 }
 
 /** Regras de Referência (Embracon/HS) */
@@ -339,15 +348,14 @@ function OverlayAssembleias({
   const [linhas, setLinhas] = useState<LinhaAsm[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // filtra grupos cuja prox_assembleia coincida com a data escolhida (comparação por data normalizada)
+  // filtra grupos cuja prox_assembleia coincida com a data escolhida (comparação por dia, tolerante a fuso)
   useEffect(() => {
     if (!date) {
       setLinhas([]);
       return;
     }
-    const alvo = normalizeDateStr(date);
     const subset = gruposBase
-      .filter((g) => normalizeDateStr(g.prox_assembleia) === alvo)
+      .filter((g) => sameDay(g.prox_assembleia, date))
       .map<LinhaAsm>((g) => ({
         group_id: g.id,
         codigo: g.codigo,
@@ -368,11 +376,12 @@ function OverlayAssembleias({
     setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
   };
 
-  const dataPassadaOk = date && normalizeDateStr(date)! <= new Date().toISOString().slice(0, 10); // somente passado
+  const todayYMD = toYMD(new Date());
+  const dataPassadaOk = Boolean(date) && toYMD(date)! <= todayYMD!;
   const datasFuturasOk =
-    (!nextDue || normalizeDateStr(nextDue)! > new Date().toISOString().slice(0, 10)) &&
-    (!nextDraw || normalizeDateStr(nextDraw)! > new Date().toISOString().slice(0, 10)) &&
-    (!nextAsm || normalizeDateStr(nextAsm)! > new Date().toISOString().slice(0, 10)); // se preenchidas, devem ser futuras
+    (!nextDue || toYMD(nextDue)! > todayYMD!) &&
+    (!nextDraw || toYMD(nextDraw)! > todayYMD!) &&
+    (!nextAsm || toYMD(nextAsm)! > todayYMD!);
 
   const podeSalvar = dataPassadaOk && datasFuturasOk && linhas.length > 0;
 

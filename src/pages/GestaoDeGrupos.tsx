@@ -1,5 +1,5 @@
 // src/pages/GestaoDeGrupos.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -129,11 +129,6 @@ function formatBR(ymd: string | null | undefined): string {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
-/** Casamento tolerante (usa sameDay). */
-function matchesDate(a: string | null | undefined, b: string | null | undefined) {
-  return a && b ? sameDay(a, b) : false;
-}
-
 /** Regras de Referência (Embracon/HS) */
 function referenciaPorAdministradora(params: {
   administradora: Administradora;
@@ -193,7 +188,7 @@ function referenciaPorAdministradora(params: {
 }
 
 /* =========================================================
-   OVERLAY: LOTERIA FEDERAL (novo)
+   OVERLAY: LOTERIA FEDERAL
    ========================================================= */
 
 function OverlayLoteria({
@@ -336,7 +331,7 @@ function OverlayLoteria({
 }
 
 /* =========================================================
-   OVERLAY: ASSEMBLEIAS (inalterado, com fix de datas)
+   OVERLAY: ASSEMBLEIAS (com fix de datas)
    ========================================================= */
 
 type LinhaAsm = {
@@ -378,7 +373,7 @@ function OverlayAssembleias({
       return;
     }
     const subset = gruposBase
-      .filter((g) => matchesDate(g.prox_assembleia, date))
+      .filter((g) => sameDay(g.prox_assembleia, date))
       .map<LinhaAsm>((g) => ({
         group_id: g.id,
         codigo: g.codigo,
@@ -493,7 +488,7 @@ function OverlayAssembleias({
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Data da Assembleia</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <Label>Ocorrida em</Label>
               <Input type="date" max={toYMD(new Date())!} value={date} onChange={(e) => setDate(e.target.value)} />
@@ -701,6 +696,11 @@ export default function GestaoDeGrupos() {
   const [rows, setRows] = useState<LinhaUI[]>([]);
   const [loteria, setLoteria] = useState<LoteriaFederal | null>(null);
 
+  // Novo: mapa de resultados por data (YYYY-MM-DD) -> bilhetes
+  const [drawsByDate, setDrawsByDate] = useState<Record<string, LoteriaFederal>>({});
+  // Novo: cache do último resultado por grupo
+  const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
+
   const [fAdmin, setFAdmin] = useState("");
   const [fSeg, setFSeg] = useState("");
   const [fGrupo, setFGrupo] = useState("");
@@ -713,55 +713,18 @@ export default function GestaoDeGrupos() {
   const [asmOpen, setAsmOpen] = useState<boolean>(false);
   const [lfOpen, setLfOpen] = useState<boolean>(false);
 
-  const carregar = async () => {
-    setLoading(true);
-
-    const { data: g, error: gErr } = await supabase
-      .from("groups")
-      .select(
-        "id, administradora, segmento, codigo, participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia, prazo_encerramento_meses"
-      );
-    if (gErr) console.error(gErr);
-
-    const gruposFetched: Grupo[] =
-      (g || []).map((r: any) => ({
-        id: r.id,
-        administradora: r.administradora,
-        segmento: r.segmento === "Imóvel Estendido" ? "Imóvel" : r.segmento,
-        codigo: r.codigo,
-        participantes: r.participantes,
-        faixa_min: r.faixa_min,
-        faixa_max: r.faixa_max,
-        prox_vencimento: r.prox_vencimento,
-        prox_sorteio: r.prox_sorteio,
-        prox_assembleia: r.prox_assembleia,
-        prazo_encerramento_meses: r.prazo_encerramento_meses,
-      })) || [];
-
-    setGrupos(gruposFetched);
-
-    const { data: ar, error: arErr } = await supabase
-      .from("v_group_last_assembly")
-      .select(
-        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
-      );
-
-    if (arErr) console.error(arErr);
-
-    const byGroup = new Map<string, UltimoResultado>();
-    (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
-
-    const linhas: LinhaUI[] = gruposFetched.map((g) => {
-      const r = byGroup.get(g.id);
+  // Recalcula linhas usando estados atuais (grupos, últimos resultados e mapa de sorteios)
+  const rebuildRows = useCallback(() => {
+    const linhas: LinhaUI[] = grupos.map((g) => {
+      const r = lastAsmByGroup.get(g.id);
       const t25 = r?.fixed25_deliveries || 0;
       const t50 = r?.fixed50_deliveries || 0;
       const tLL = r?.ll_deliveries || 0;
       const total = t25 + t50 + tLL;
       const med = r?.median ?? calcMediana(r?.ll_high ?? null, r?.ll_low ?? null);
 
-      // >>> Referência agora só aparece para os grupos cujo prox_sorteio == data da loteria selecionada
-      const podeCalcularRef =
-        !!loteria && matchesDate(g.prox_sorteio, loteria.data_sorteio);
+      const key = toYMD(g.prox_sorteio) as string | null;
+      const bilhetes = key ? drawsByDate[key] ?? null : null;
 
       return {
         id: g.id,
@@ -789,24 +752,98 @@ export default function GestaoDeGrupos() {
         prox_sorteio: g.prox_sorteio,
         prox_assembleia: g.prox_assembleia,
 
-        referencia: podeCalcularRef
-          ? referenciaPorAdministradora({
-              administradora: g.administradora,
-              participantes: g.participantes,
-              bilhetes: loteria,
-            })
-          : null,
+        // Referência é calculada com o bilhete da data DO PRÓX. SORTEIO DO GRUPO
+        referencia: referenciaPorAdministradora({
+          administradora: g.administradora,
+          participantes: g.participantes,
+          bilhetes,
+        }),
       };
     });
 
     setRows(linhas);
+  }, [grupos, lastAsmByGroup, drawsByDate]);
+
+  const carregar = async () => {
+    setLoading(true);
+
+    // 1) Grupos
+    const { data: g, error: gErr } = await supabase
+      .from("groups")
+      .select(
+        "id, administradora, segmento, codigo, participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia, prazo_encerramento_meses"
+      );
+    if (gErr) console.error(gErr);
+
+    const gruposFetched: Grupo[] =
+      (g || []).map((r: any) => ({
+        id: r.id,
+        administradora: r.administradora,
+        segmento: r.segmento === "Imóvel Estendido" ? "Imóvel" : r.segmento,
+        codigo: r.codigo,
+        participantes: r.participantes,
+        faixa_min: r.faixa_min,
+        faixa_max: r.faixa_max,
+        prox_vencimento: r.prox_vencimento,
+        prox_sorteio: r.prox_sorteio,
+        prox_assembleia: r.prox_assembleia,
+        prazo_encerramento_meses: r.prazo_encerramento_meses,
+      })) || [];
+
+    setGrupos(gruposFetched);
+
+    // 2) Últimos resultados por grupo
+    const { data: ar, error: arErr } = await supabase
+      .from("v_group_last_assembly")
+      .select(
+        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
+      );
+    if (arErr) console.error(arErr);
+
+    const byGroup = new Map<string, UltimoResultado>();
+    (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
+    setLastAsmByGroup(byGroup);
+
+    // 3) Carregar resultados de loteria SOMENTE para as datas que existem em prox_sorteio
+    const dateSet = new Set<string>();
+    for (const g of gruposFetched) {
+      const ymd = toYMD(g.prox_sorteio);
+      if (ymd) dateSet.add(ymd);
+    }
+    let newDraws: Record<string, LoteriaFederal> = {};
+    if (dateSet.size > 0) {
+      const dates = Array.from(dateSet);
+      const { data: ld, error: ldErr } = await supabase
+        .from("lottery_draws")
+        .select("*")
+        .in("draw_date", dates);
+      if (ldErr) console.error(ldErr);
+      (ld || []).forEach((d: any) => {
+        newDraws[d.draw_date] = {
+          data_sorteio: d.draw_date,
+          primeiro: d.first,
+          segundo: d.second,
+          terceiro: d.third,
+          quarto: d.fourth,
+          quinto: d.fifth,
+        };
+      });
+    }
+    setDrawsByDate(newDraws);
+
     setLoading(false);
   };
 
+  // Sempre que grupos, últimos resultados ou sorteios mudarem, recalcula as linhas
+  useEffect(() => {
+    rebuildRows();
+  }, [rebuildRows]);
+
+  // Carrega tudo inicialmente
   useEffect(() => {
     carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loteria]);
+  }, []);
 
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
@@ -861,7 +898,7 @@ export default function GestaoDeGrupos() {
           </CardContent>
         </Card>
 
-        {/* Loteria Federal — agora com OVERLAY */}
+        {/* Loteria Federal — overlay + “memória” */}
         <Card className="lg:col-span-4">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
@@ -1070,7 +1107,14 @@ export default function GestaoDeGrupos() {
       {lfOpen && (
         <OverlayLoteria
           onClose={() => setLfOpen(false)}
-          onSaved={(lf) => setLoteria(lf)}
+          onSaved={(lf) => {
+            setLoteria(lf); // mostra na caixinha da Loteria
+            // atualiza cache local de sorteios (preserva os anteriores!)
+            setDrawsByDate((prev) => ({
+              ...prev,
+              [lf.data_sorteio]: lf,
+            }));
+          }}
         />
       )}
     </div>

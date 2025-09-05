@@ -92,12 +92,35 @@ function withinLLMedianFilter(mediana: number | null | undefined, alvo: number |
   return mediana >= min && mediana <= max;
 }
 
-/** Normaliza qualquer string de data (ou timestamp) para 'YYYY-MM-DD' */
+/** 🔧 NOVO: Normaliza qualquer string de data (ou timestamp) para 'YYYY-MM-DD'
+ *  Aceita: 'DD/MM/AAAA', 'YYYY-MM-DD' (ou com hora/fuso), timestamps parseáveis pelo Date.
+ */
 function normalizeDateStr(d: string | null | undefined): string | null {
   if (!d) return null;
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return null;
-  return dt.toISOString().slice(0, 10);
+  const s = String(d).trim();
+
+  // Caso 1: dd/mm/aaaa
+  const m1 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m1) {
+    const [, dd, mm, yyyy] = m1;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // Caso 2: já no padrão yyyy-mm-dd (ou começa assim)
+  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+
+  // Caso 3: qualquer outra coisa que o Date entenda (inclui timestamps com fuso)
+  const dt = new Date(s);
+  if (!isNaN(dt.getTime())) {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, "0");
+    const day = String(dt.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  // Fallback defensivo (mantém primeiros 10 chars, ex.: 'YYYY-MM-DD')
+  return s.slice(0, 10);
 }
 
 /** Regras de Referência (Embracon/HS) */
@@ -345,9 +368,11 @@ function OverlayAssembleias({
     setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
   };
 
-  const dataPassadaOk = date && date <= today; // somente passado
+  const dataPassadaOk = date && normalizeDateStr(date)! <= new Date().toISOString().slice(0, 10); // somente passado
   const datasFuturasOk =
-    (!nextDue || nextDue > today) && (!nextDraw || nextDraw > today) && (!nextAsm || nextAsm > today); // se preenchidas, devem ser futuras
+    (!nextDue || normalizeDateStr(nextDue)! > new Date().toISOString().slice(0, 10)) &&
+    (!nextDraw || normalizeDateStr(nextDraw)! > new Date().toISOString().slice(0, 10)) &&
+    (!nextAsm || normalizeDateStr(nextAsm)! > new Date().toISOString().slice(0, 10)); // se preenchidas, devem ser futuras
 
   const podeSalvar = dataPassadaOk && datasFuturasOk && linhas.length > 0;
 
@@ -390,7 +415,7 @@ function OverlayAssembleias({
         ll_deliveries: r.ll_entregas ?? 0,
         ll_high: r.ll_maior,
         ll_low: r.ll_menor,
-        median: calcMediana(r.ll_maior, r.ll_menor), // calculamos aqui, mas não exibimos no formulário
+        median: calcMediana(r.ll_maior, r.ll_menor),
       }));
 
       const { error: errRes } = await supabase

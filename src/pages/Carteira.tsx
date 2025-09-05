@@ -14,13 +14,7 @@ type Produto =
   | "Imóvel Estendido"
   | "Consórcio Ouro";
 
-type Administradora =
-  | "Embracon"
-  | "Banco do Brasil"
-  | "HS Consórcios"
-  | "Âncora"
-  | "Maggi";
-
+type Administradora = "Embracon" | "Banco do Brasil" | "HS Consórcios" | "Âncora" | "Maggi";
 type FormaVenda = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
 type Venda = {
@@ -60,13 +54,7 @@ const PRODUTOS: Produto[] = [
   "Consórcio Ouro",
 ];
 
-const ADMINISTRADORAS: Administradora[] = [
-  "Embracon",
-  "Banco do Brasil",
-  "HS Consórcios",
-  "Âncora",
-  "Maggi",
-];
+const ADMINISTRADORAS: Administradora[] = ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
 const FORMAS: FormaVenda[] = ["Parcela Cheia", "Reduzida 25%", "Reduzida 50%"];
 
 // Segmento -> Tabelas
@@ -103,7 +91,7 @@ const TABELAS: Record<Produto, string[]> = {
 };
 
 const currency = (n: number) =>
-  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 }).format(n || 0);
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
@@ -129,7 +117,7 @@ const validateCPF = (cpf: string) => {
   return d1 === parseInt(d[9]) && d2 === parseInt(d[10]);
 };
 
-/** Normalização produto -> segmento */
+/** Normalização de Produto -> Segmento */
 function normalizeProdutoToSegmento(produto: Produto | string | null | undefined): string | null {
   const p = (produto || "").toString().trim();
   if (!p) return null;
@@ -163,11 +151,7 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
     <tr className="border-t">
       <td className="p-2">
         <div className="flex items-center gap-2">
-          <button
-            title="Ver/Editar venda"
-            className="text-gray-700 hover:underline"
-            onClick={() => onViewEditarVenda(venda)}
-          >
+          <button title="Ver/Editar venda" className="text-gray-700 hover:underline" onClick={() => onViewEditarVenda(venda)}>
             👁️ {lead?.nome ?? "—"}
           </button>
         </div>
@@ -176,38 +160,19 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
       <td className="p-2">{venda.administradora}</td>
       <td className="p-2">{venda.numero_proposta}</td>
       <td className="p-2">
-        <input
-          value={grupo}
-          onChange={(e) => setGrupo(e.target.value)}
-          className="border rounded px-2 py-1 w-28"
-          disabled={!canEncarteirar}
-        />
+        <input value={grupo} onChange={(e) => setGrupo(e.target.value)} className="border rounded px-2 py-1 w-28" disabled={!canEncarteirar} />
       </td>
       <td className="p-2">
-        <input
-          value={cota}
-          onChange={(e) => setCota(e.target.value)}
-          className="border rounded px-2 py-1 w-20"
-          disabled={!canEncarteirar}
-        />
+        <input value={cota} onChange={(e) => setCota(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!canEncarteirar} />
       </td>
       <td className="p-2">
-        <input
-          value={codigo}
-          onChange={(e) => setCodigo(e.target.value)}
-          className="border rounded px-2 py-1 w-20"
-          disabled={!canEncarteirar}
-        />
+        <input value={codigo} onChange={(e) => setCodigo(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!canEncarteirar} />
       </td>
       <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
       <td className="p-2">
         <div className="flex gap-2">
           <button
-            className={`px-3 py-1 rounded ${
-              canEncarteirar
-                ? "bg-[#A11C27] text-white hover:opacity-90"
-                : "bg-gray-200 text-gray-500 cursor-not-allowed"
-            }`}
+            className={`px-3 py-1 rounded ${canEncarteirar ? "bg-[#A11C27] text-white hover:opacity-90" : "bg-gray-200 text-gray-500 cursor-not-allowed"}`}
             disabled={!canEncarteirar}
             onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
           >
@@ -227,14 +192,14 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
   );
 };
 
-/** Linha Carteira */
+/** Linha da carteira (encarteiradas) */
 type LinhaCotaProps = {
   venda: Venda;
   onSave: (patch: Partial<Venda>) => Promise<void>;
-  isAdmin: boolean;
   onViewDescricao: (title: string, text: string | null) => void;
+  isAdmin: boolean;
 };
-const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, isAdmin, onViewDescricao }) => {
+const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewDescricao, isAdmin }) => {
   const ativa = isAtiva(venda.codigo);
   const [edit, setEdit] = useState(false);
   const [grupo, setGrupo] = useState(venda.grupo ?? "");
@@ -250,6 +215,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, isAdmin, onViewDes
     const segmento = normalizeProdutoToSegmento(venda.produto);
     await onSave({ grupo, cota, codigo, valor_venda: valor, administradora: adm, segmento: segmento ?? undefined });
   };
+
   const saveContemplacao = async () => {
     if (flagCont && !dataCont) {
       alert("Informe a data da contemplação.");
@@ -261,9 +227,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, isAdmin, onViewDes
   return (
     <tr className="border-t">
       <td className="p-2">
-        <span className={`px-2 py-1 rounded-full text-xs ${ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-          {ativa ? "Ativa" : "Cancelada"}
-        </span>
+        <span className={`px-2 py-1 rounded-full text-xs ${ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{ativa ? "Ativa" : "Cancelada"}</span>
       </td>
       <td className="p-2">
         {edit ? (
@@ -281,31 +245,17 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, isAdmin, onViewDes
       <td className="p-2">
         <div className="flex items-center gap-2">
           <span>{venda.numero_proposta}</span>
-          <button
-            title="Ver descrição"
-            className="text-gray-500 hover:text-gray-800"
-            onClick={() => onViewDescricao(`Descrição - Proposta ${venda.numero_proposta}`, venda.descricao)}
-          >
+          <button title="Ver descrição" className="text-gray-500 hover:text-gray-800" onClick={() => onViewDescricao(`Descrição - Proposta ${venda.numero_proposta}`, venda.descricao)}>
             👁️
           </button>
         </div>
       </td>
       <td className="p-2">{venda.produto}</td>
+      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} /> : venda.grupo ?? "—"}</td>
+      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-20" value={cota} onChange={(e) => setCota(e.target.value)} /> : venda.cota ?? "—"}</td>
+      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-20" value={codigo} onChange={(e) => setCodigo(e.target.value)} /> : venda.codigo ?? "—"}</td>
       <td className="p-2">
-        {edit ? <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} /> : venda.grupo ?? "—"}
-      </td>
-      <td className="p-2">
-        {edit ? <input className="border rounded px-2 py-1 w-20" value={cota} onChange={(e) => setCota(e.target.value)} /> : venda.cota ?? "—"}
-      </td>
-      <td className="p-2">
-        {edit ? <input className="border rounded px-2 py-1 w-20" value={codigo} onChange={(e) => setCodigo(e.target.value)} /> : venda.codigo ?? "—"}
-      </td>
-      <td className="p-2">
-        {edit ? (
-          <input className="border rounded px-2 py-1 w-28" value={valor} onChange={(e) => setValor(Number(e.target.value))} type="number" step="0.01" />
-        ) : (
-          currency(venda.valor_venda ?? 0)
-        )}
+        {edit ? <input className="border rounded px-2 py-1 w-28" value={valor} onChange={(e) => setValor(Number(e.target.value))} type="number" step="0.01" /> : currency(venda.valor_venda ?? 0)}
       </td>
       <td className="p-2">
         {isAdmin ? (
@@ -373,7 +323,12 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewA
         <button
           title="Ver descrições do cliente"
           className="text-gray-500 hover:text-gray-800"
-          onClick={() => onViewAllDescricoes(`Descrições - ${group.cliente.nome}`, group.itens.map((v) => ({ proposta: v.numero_proposta, descricao: v.descricao })))}
+          onClick={() =>
+            onViewAllDescricoes(
+              `Descrições - ${group.cliente.nome}`,
+              group.itens.map((v) => ({ proposta: v.numero_proposta, descricao: v.descricao }))
+            )
+          }
         >
           👁️
         </button>
@@ -397,13 +352,7 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewA
             </thead>
             <tbody>
               {group.itens.map((v) => (
-                <LinhaCota
-                  key={v.id}
-                  venda={v}
-                  onSave={(patch) => onSaveVenda(v, patch)}
-                  onViewDescricao={(t, d) => onViewAllDescricoes(t, [{ proposta: v.numero_proposta, descricao: d }])}
-                  isAdmin={isAdmin}
-                />
+                <LinhaCota key={v.id} venda={v} onSave={(patch) => onSaveVenda(v, patch)} onViewDescricao={() => {}} isAdmin={isAdmin} />
               ))}
             </tbody>
           </table>
@@ -445,7 +394,6 @@ const Carteira: React.FC = () => {
     grupo: "",
     tabela: "",
   });
-
   const [descModal, setDescModal] = useState<{ open: boolean; title: string; text: string }>({ open: false, title: "", text: "" });
   const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
 
@@ -463,7 +411,6 @@ const Carteira: React.FC = () => {
       try {
         setLoading(true);
         setErr("");
-
         const { data: authData } = await supabase.auth.getUser();
         const uid = authData.user?.id ?? "";
         const uemail = authData.user?.email ?? "";
@@ -472,7 +419,7 @@ const Carteira: React.FC = () => {
         setUserEmail(uemail);
         setUserName(meta?.nome ?? uemail ?? "Vendedor");
 
-        // Admin (robusto + override)
+        // Admin robusto + override
         let adminFlag = false;
         try {
           const { data, error } = await supabase.rpc("is_admin_email", { e: uemail });
@@ -528,7 +475,7 @@ const Carteira: React.FC = () => {
     })();
   }, []);
 
-  /** Permissões */
+  /** Permissões de visualização */
   const pendentesVisiveis = useMemo(() => (isAdmin ? pendentes : pendentes.filter((v) => v.vendedor_id === userId)), [isAdmin, pendentes, userId]);
   const encarteiradasVisiveis = useMemo(() => (isAdmin ? encarteiradas : encarteiradas.filter((v) => v.vendedor_id === userId)), [isAdmin, encarteiradas, userId]);
 
@@ -540,13 +487,13 @@ const Carteira: React.FC = () => {
     return encarteiradasVisiveis.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
   }, [q, encarteiradasVisiveis, leadMap]);
 
-  /** Totais por permissão */
+  /** Totais (respeitam permissão) */
   const totalAtivas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
   const totalCanceladas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
   const totalContempladas = useMemo(() => encarteiradasVisiveis.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0), [encarteiradasVisiveis]);
 
-  /** Agrupar por cliente */
-  const porCliente: any[] = useMemo(() => {
+  /** Agrupar carteira por cliente */
+  const porCliente: ClienteGroup[] = useMemo(() => {
     const map: Record<string, ClienteGroup> = {};
     for (const v of encarteiradasFiltradas) {
       const lead = leadMap[v.lead_id];
@@ -562,8 +509,10 @@ const Carteira: React.FC = () => {
     return Object.values(map).sort((a, b) => a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" }));
   }, [encarteiradasFiltradas, leadMap]);
 
+  /** Form helpers */
   const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
 
+  /** Registrar venda */
   const registrarVenda = async () => {
     try {
       if (!form.lead_id) throw new Error("Selecione o Lead.");
@@ -620,6 +569,7 @@ const Carteira: React.FC = () => {
     }
   };
 
+  /** Encarteirar */
   const encarteirar = async (vendaId: string, grupo: string, cota: string, codigo: string) => {
     try {
       if (!grupo?.trim() || !cota?.trim() || !codigo?.trim()) throw new Error("Preencha Grupo, Cota e Código.");
@@ -645,6 +595,7 @@ const Carteira: React.FC = () => {
     }
   };
 
+  /** Excluir */
   const excluirVenda = async (vendaId: string) => {
     try {
       const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
@@ -656,6 +607,7 @@ const Carteira: React.FC = () => {
     }
   };
 
+  /** Salvar edição encarteirada */
   const salvarEdicao = async (v: Venda, patch: Partial<Venda>) => {
     try {
       const seg = normalizeProdutoToSegmento(v.produto);
@@ -668,6 +620,7 @@ const Carteira: React.FC = () => {
     }
   };
 
+  /** Salvar edição de venda pendente (modal) */
   const salvarEdicaoPendente = async (venda: Venda, patch: Partial<Venda>) => {
     try {
       if (!isAdmin && venda.vendedor_id !== userId) throw new Error("Sem permissão para editar esta venda.");
@@ -682,7 +635,7 @@ const Carteira: React.FC = () => {
     }
   };
 
-  /** ====== Oferta de Lance ====== */
+  /** ===== Oferta de Lance ===== */
   const normalizeISO = (d: any): string | null => {
     if (d == null) return null;
     try {
@@ -702,6 +655,7 @@ const Carteira: React.FC = () => {
     } catch {}
     return null;
   };
+
   const getField = (row: any, candidates: string[]) => {
     if (!row) return undefined;
     const keys = Object.keys(row);
@@ -722,21 +676,15 @@ const Carteira: React.FC = () => {
       if (error) throw error;
 
       const rows: any[] = grupos ?? [];
-      if (!rows.length) {
-        setOferta([]);
-        return;
-      }
+      const alvoISO = normalizeISO(assembleia);
 
-      const alvoISO = normalizeISO(assembleia); // "YYYY-MM-DD"
-
-      // nomes EXATOS conforme você enviou + tolerância
+      // Filtra linhas de gestão de grupos exatamente na data informada
       const rowsNaData = rows.filter((g) => {
-        const d =
-          getField(g, ["Assembleia", "assembleia", "data_assembleia", "dt_assembleia", "dataAssembleia", "data"]) ??
-          null;
+        const d = getField(g, ["Assembleia", "assembleia", "data_assembleia", "dt_assembleia", "dataAssembleia", "data"]);
         return normalizeISO(d) === alvoISO;
       });
 
+      // Indexa por Adm::Grupo
       const allowed = new Map<string, any>();
       for (const g of rowsNaData) {
         const adm = (getField(g, ["ADMINISTRADORA", "administradora", "adm"]) ?? "").toString().trim();
@@ -745,22 +693,19 @@ const Carteira: React.FC = () => {
         allowed.set(`${adm}::${grupo}`, g);
       }
 
+      // IMPORTANTEEEE: cruzar com **todas** as encarteiradas visíveis (sem excluir contempladas)
       const linhas: any[] = [];
-      for (const v of encarteiradasVisiveis.filter((x) => !x.contemplada)) {
+      for (const v of encarteiradasVisiveis) {
         if (!v.grupo || !v.cota) continue;
         const key = `${v.administradora}::${v.grupo}`;
         const info = allowed.get(key);
-        if (!info) continue;
+        if (!info) continue; // só grupos com assembleia na data
 
         const referencia = getField(info, ["Referência", "referência", "referencia", "ref"]);
         const participantes = getField(info, ["PARTICIPANTES", "participantes"]);
         const medianaRaw = getField(info, ["Mediana", "mediana"]);
         const mediana =
-          medianaRaw == null
-            ? null
-            : typeof medianaRaw === "number"
-            ? medianaRaw
-            : Number(String(medianaRaw).replace(",", "."));
+          medianaRaw == null ? null : typeof medianaRaw === "number" ? medianaRaw : Number(String(medianaRaw).replace(",", "."));
         const contemplados = getField(info, ["Total Entregas", "total_entregas", "entregas_ll", "entregas"]);
 
         linhas.push({
@@ -769,7 +714,7 @@ const Carteira: React.FC = () => {
           cota: v.cota,
           referencia: referencia ?? null,
           participantes: participantes ?? null,
-          mediana: Number.isFinite(mediana) ? mediana : null,
+          mediana: Number.isFinite(mediana as number) ? (mediana as number) : null,
           contemplados: contemplados ?? null,
         });
       }
@@ -850,9 +795,9 @@ const Carteira: React.FC = () => {
                   key={venda.id}
                   venda={venda}
                   lead={lead}
-                  canEncarteirar={isAdmin} // somente admin encarteira
+                  canEncarteirar={isAdmin} // vendedor não encarteira (pode excluir), admin encarteira
                   onSubmit={encarteirar}
-                  onDelete={excluirVenda} // vendedor pode excluir
+                  onDelete={excluirVenda}
                   onViewEditarVenda={(v) => setEditVendaModal({ open: true, venda: v })}
                 />
               ))}
@@ -863,21 +808,13 @@ const Carteira: React.FC = () => {
 
       {/* Totais */}
       <div className="flex items-center gap-4">
-        <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">
-          Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong>
-        </div>
-        <div className="px-4 py-3 rounded-2xl bg-gray-100">
-          Canceladas: <strong className="ml-1">{currency(totalCanceladas)}</strong>
-        </div>
-        <div className="px-4 py-3 rounded-2xl bg-amber-100 text-amber-900">
-          Contempladas: <strong className="ml-1">{currency(totalContempladas)}</strong>
-        </div>
-        <button className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50" onClick={() => setShowCarteira((s) => !s)}>
-          {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
-        </button>
+        <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong></div>
+        <div className="px-4 py-3 rounded-2xl bg-gray-100">Canceladas: <strong className="ml-1">{currency(totalCanceladas)}</strong></div>
+        <div className="px-4 py-3 rounded-2xl bg-amber-100 text-amber-900">Contempladas: <strong className="ml-1">{currency(totalContempladas)}</strong></div>
+        <button className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50" onClick={() => setShowCarteira((s) => !s)}>{showCarteira ? "Ocultar carteira" : "Mostrar carteira"}</button>
       </div>
 
-      {/* Carteira */}
+      {/* Carteira encarteirada */}
       {showCarteira && (
         <section className="space-y-3">
           {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
@@ -907,12 +844,8 @@ const Carteira: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           <input type="date" value={assembleia} onChange={(e) => setAssembleia(e.target.value)} className="border rounded-xl px-3 py-2" />
-          <button onClick={listarOferta} className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90">
-            Listar
-          </button>
-          <button onClick={exportarOfertaPDF} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
-            Exportar PDF
-          </button>
+          <button onClick={listarOferta} className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90">Listar</button>
+          <button onClick={exportarOfertaPDF} className="px-4 py-2 rounded-xl border hover:bg-gray-50">Exportar PDF</button>
         </div>
         <div id="relatorio-oferta" className="overflow-auto">
           <table className="min-w-[900px] w-full border border-gray-200 rounded-xl">
@@ -930,9 +863,7 @@ const Carteira: React.FC = () => {
             <tbody>
               {oferta.length === 0 && (
                 <tr>
-                  <td className="p-3 text-gray-500" colSpan={7}>
-                    Nenhuma cota encontrada para a data.
-                  </td>
+                  <td className="p-3 text-gray-500" colSpan={7}>Nenhuma cota encontrada para a data.</td>
                 </tr>
               )}
               {oferta.map((o, idx) => (
@@ -957,9 +888,7 @@ const Carteira: React.FC = () => {
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Nova Venda</h3>
-              <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-gray-800">
-                ✕
-              </button>
+              <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-gray-800">✕</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
@@ -973,141 +902,55 @@ const Carteira: React.FC = () => {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="text-sm text-gray-600">Telefone</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[form.lead_id as string]?.telefone ?? ""} readOnly />
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">CPF *</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(form.cpf ?? "")} onChange={(e) => onFormChange("cpf", e.target.value)} placeholder="000.000.000-00" />
-              </div>
+              <div><label className="text-sm text-gray-600">Telefone</label><input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[form.lead_id as string]?.telefone ?? ""} readOnly/></div>
+              <div><label className="text-sm text-gray-600">CPF *</label><input className="w-full border rounded-xl px-3 py-2" value={formatCPF(form.cpf ?? "")} onChange={(e)=>onFormChange("cpf", e.target.value)} placeholder="000.000.000-00"/></div>
 
-              <div>
-                <label className="text-sm text-gray-600">Data da Venda</label>
-                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_venda ?? ""} onChange={(e) => onFormChange("data_venda", e.target.value)} />
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">Data de Nascimento</label>
-                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_nascimento ?? ""} onChange={(e) => onFormChange("data_nascimento", e.target.value)} />
-              </div>
+              <div><label className="text-sm text-gray-600">Data da Venda</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_venda ?? ""} onChange={(e)=>onFormChange("data_venda", e.target.value)}/></div>
+              <div><label className="text-sm text-gray-600">Data de Nascimento</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_nascimento ?? ""} onChange={(e)=>onFormChange("data_nascimento", e.target.value)}/></div>
+              <div><label className="text-sm text_gray-600">Vendedor</label><input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly/></div>
 
-              <div>
-                <label className="text-sm text-gray-600">Vendedor</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly />
-              </div>
+              <div><label className="text-sm text-gray-600">Produto (Segmento)</label>
+                <select className="w-full border rounded-xl px-3 py-2" value={form.produto as Produto} onChange={(e)=>onFormChange("produto", e.target.value as Produto)}>{PRODUTOS.map(p=><option key={p} value={p}>{p}</option>)}</select></div>
 
-              <div>
-                <label className="text-sm text-gray-600">Produto (Segmento)</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.produto as Produto} onChange={(e) => onFormChange("produto", e.target.value as Produto)}>
-                  {PRODUTOS.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div><label className="text-sm text-gray-600">Tabela</label>
+                <select className="w-full border rounded-xl px-3 py-2" value={form.tabela ?? ""} onChange={(e)=>onFormChange("tabela", e.target.value)} disabled={(TABELAS[(form.produto as Produto)||"Automóvel"]||[]).length===0}>
+                  <option value="">{(TABELAS[(form.produto as Produto)||"Automóvel"]||[]).length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
+                  {(TABELAS[(form.produto as Produto)||"Automóvel"]||[]).map(t=><option key={t} value={t}>{t}</option>)}
+                </select></div>
 
-              <div>
-                <label className="text-sm text-gray-600">Tabela</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.tabela ?? ""}
-                  onChange={(e) => onFormChange("tabela", e.target.value)}
-                  disabled={(TABELAS[(form.produto as Produto) || "Automóvel"] || []).length === 0}
-                >
-                  <option value="">
-                    {(TABELAS[(form.produto as Produto) || "Automóvel"] || []).length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}
-                  </option>
-                  {(TABELAS[(form.produto as Produto) || "Automóvel"] || []).map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div><label className="text-sm text-gray-600">Administradora</label>
+                <select className="w-full border rounded-xl px-3 py-2" value={form.administradora as Administradora} onChange={(e)=>onFormChange("administradora", e.target.value as Administradora)}>{ADMINISTRADORAS.map(a=><option key={a} value={a}>{a}</option>)}</select></div>
 
-              <div>
-                <label className="text-sm text-gray-600">Administradora</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.administradora as Administradora} onChange={(e) => onFormChange("administradora", e.target.value as Administradora)}>
-                  {ADMINISTRADORAS.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div><label className="text-sm text-gray-600">Forma da Venda</label>
+                <select className="w-full border rounded-xl px-3 py-2" value={form.forma_venda as FormaVenda} onChange={(e)=>onFormChange("forma_venda", e.target.value as FormaVenda)}>{FORMAS.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
 
-              <div>
-                <label className="text-sm text-gray-600">Forma da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.forma_venda as FormaVenda} onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}>
-                  {FORMAS.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div><label className="text-sm text-gray-600">Número da Proposta *</label><input className="w-full border rounded-xl px-3 py-2" value={form.numero_proposta ?? ""} onChange={(e)=>onFormChange("numero_proposta", e.target.value)}/></div>
+              <div><label className="text-sm text-gray-600">Valor da Venda</label><input className="w-full border rounded-xl px-3 py-2" value={(form.valor_venda as any) ?? ""} onChange={(e)=>onFormChange("valor_venda", e.target.value)} placeholder="R$ 0,00"/></div>
 
-              <div>
-                <label className="text-sm text-gray-600">Número da Proposta *</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={form.numero_proposta ?? ""} onChange={(e) => onFormChange("numero_proposta", e.target.value)} />
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">Valor da Venda</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={(form.valor_venda as any) ?? ""} onChange={(e) => onFormChange("valor_venda", e.target.value)} placeholder="R$ 0,00" />
-              </div>
+              <div><label className="text-sm text-gray-600">Tipo da Venda</label>
+                <select className="w-full border rounded-xl px-3 py-2" value={form.tipo_venda ?? "Normal"} onChange={(e)=>onFormChange("tipo_venda", e.target.value)}>
+                  <option>Normal</option><option>Contemplada</option><option>Bolsão</option>
+                </select></div>
 
-              <div>
-                <label className="text-sm text-gray-600">Tipo da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.tipo_venda ?? "Normal"} onChange={(e) => onFormChange("tipo_venda", e.target.value)}>
-                  <option>Normal</option>
-                  <option>Contemplada</option>
-                  <option>Bolsão</option>
-                </select>
-              </div>
+              {form.tipo_venda==="Bolsão" && (<div><label className="text-sm text-gray-600">Grupo (Bolsão)</label><input className="w-full border rounded-xl px-3 py-2" value={form.grupo ?? ""} onChange={(e)=>onFormChange("grupo", e.target.value)} placeholder="Informe o número do grupo"/></div>)}
 
-              {form.tipo_venda === "Bolsão" && (
-                <div>
-                  <label className="text-sm text-gray-600">Grupo (Bolsão)</label>
-                  <input className="w-full border rounded-xl px-3 py-2" value={form.grupo ?? ""} onChange={(e) => onFormChange("grupo", e.target.value)} placeholder="Informe o número do grupo" />
-                </div>
-              )}
-
-              <div className="md:col-span-2">
-                <label className="text-sm text-gray-600">Descrição da Venda</label>
-                <textarea
-                  className="w-full border rounded-xl px-3 py-2"
-                  rows={3}
-                  value={form.descricao ?? ""}
-                  onChange={(e) => onFormChange("descricao", e.target.value)}
-                  placeholder="Estratégias de contemplação, observações…"
-                />
-              </div>
+              <div className="md:col-span-2"><label className="text-sm text-gray-600">Descrição da Venda</label>
+                <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={form.descricao ?? ""} onChange={(e)=>onFormChange("descricao", e.target.value)} placeholder="Estratégias de contemplação, observações…"/></div>
             </div>
 
-            <div className="flex items-center justify-end gap-3">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded-xl border">
-                Cancelar
-              </button>
-              <button onClick={registrarVenda} className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90">
-                Registrar Venda
-              </button>
-            </div>
+            <div className="flex items-center justify-end gap-3"><button onClick={()=>setShowModal(false)} className="px-4 py-2 rounded-xl border">Cancelar</button><button onClick={registrarVenda} className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90">Registrar Venda</button></div>
           </div>
         </div>
       )}
 
-      {/* Modal: Ver/Editar venda pendente */}
+      {/* Modal: Editar venda pendente */}
       {editVendaModal.open && editVendaModal.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Editar Venda (Proposta {editVendaModal.venda.numero_proposta})</h3>
-              <button onClick={() => setEditVendaModal({ open: false })} className="text-gray-500 hover:text-gray-800">
-                ✕
-              </button>
+              <button onClick={() => setEditVendaModal({ open: false })} className="text-gray-500 hover:text-gray-800">✕</button>
             </div>
-
             <EditarVendaPendenteForm venda={editVendaModal.venda} leads={leads} leadMap={leadMap} onSalvar={(patch) => salvarEdicaoPendente(editVendaModal.venda!, patch)} />
           </div>
         </div>
@@ -1117,18 +960,9 @@ const Carteira: React.FC = () => {
       {descModal.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-xl p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold">{descModal.title}</h3>
-              <button className="text-gray-500 hover:text-gray-800" onClick={() => setDescModal({ open: false, title: "", text: "" })}>
-                ✕
-              </button>
-            </div>
+            <div className="flex items-center justify-between"><h3 className="text-lg font-semibold">{descModal.title}</h3><button className="text-gray-500 hover:text-gray-800" onClick={()=>setDescModal({open:false,title:"",text:""})}>✕</button></div>
             <pre className="whitespace-pre-wrap text-sm text-gray-800 max-h-[60vh] overflow-auto">{descModal.text || "—"}</pre>
-            <div className="text-right">
-              <button className="px-4 py-2 rounded-xl border" onClick={() => setDescModal({ open: false, title: "", text: "" })}>
-                Fechar
-              </button>
-            </div>
+            <div className="text-right"><button className="px-4 py-2 rounded-xl border" onClick={()=>setDescModal({open:false,title:"",text:""})}>Fechar</button></div>
           </div>
         </div>
       )}
@@ -1136,7 +970,7 @@ const Carteira: React.FC = () => {
   );
 };
 
-/** Sub-formulário edição de venda pendente */
+/** Sub-form de edição de venda pendente */
 const EditarVendaPendenteForm: React.FC<{
   venda: Venda;
   leads: Lead[];
@@ -1177,25 +1011,10 @@ const EditarVendaPendenteForm: React.FC<{
           </select>
         </div>
 
-        <div>
-          <label className="text-sm text-gray-600">Telefone</label>
-          <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[local.lead_id as string]?.telefone ?? ""} readOnly />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-600">CPF</label>
-          <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(local.cpf ?? "")} onChange={(e) => onChange("cpf", e.target.value)} />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-600">Data da Venda</label>
-          <input type="date" className="w-full border rounded-xl px-3 py-2" value={local.data_venda ?? ""} onChange={(e) => onChange("data_venda", e.target.value)} />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-600">Data de Nascimento</label>
-          <input type="date" className="w-full border rounded-xl px-3 py-2" value={local.data_nascimento ?? ""} onChange={(e) => onChange("data_nascimento", e.target.value)} />
-        </div>
+        <div><label className="text-sm text-gray-600">Telefone</label><input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[local.lead_id as string]?.telefone ?? ""} readOnly/></div>
+        <div><label className="text-sm text-gray-600">CPF</label><input className="w-full border rounded-xl px-3 py-2" value={formatCPF(local.cpf ?? "")} onChange={(e)=>onChange("cpf", e.target.value)}/></div>
+        <div><label className="text-sm text-gray-600">Data da Venda</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={local.data_venda ?? ""} onChange={(e)=>onChange("data_venda", e.target.value)}/></div>
+        <div><label className="text-sm text-gray-600">Data de Nascimento</label><input type="date" className="w-full border rounded-xl px-3 py-2" value={local.data_nascimento ?? ""} onChange={(e)=>onChange("data_nascimento", e.target.value)}/></div>
 
         <div>
           <label className="text-sm text-gray-600">Produto (Segmento)</label>
@@ -1210,12 +1029,7 @@ const EditarVendaPendenteForm: React.FC<{
 
         <div>
           <label className="text-sm text-gray-600">Tabela</label>
-          <select
-            className="w-full border rounded-xl px-3 py-2"
-            value={local.tabela ?? ""}
-            onChange={(e) => onChange("tabela", e.target.value)}
-            disabled={(tabelaOptions || []).length === 0}
-          >
+          <select className="w-full border rounded-xl px-3 py-2" value={local.tabela ?? ""} onChange={(e) => onChange("tabela", e.target.value)} disabled={(tabelaOptions || []).length === 0}>
             <option value="">{(tabelaOptions || []).length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
             {(tabelaOptions || []).map((t) => (
               <option key={t} value={t}>
@@ -1247,15 +1061,8 @@ const EditarVendaPendenteForm: React.FC<{
           </select>
         </div>
 
-        <div>
-          <label className="text-sm text-gray-600">Número da Proposta</label>
-          <input className="w-full border rounded-xl px-3 py-2" value={local.numero_proposta ?? ""} onChange={(e) => onChange("numero_proposta", e.target.value)} />
-        </div>
-
-        <div>
-          <label className="text-sm text-gray-600">Valor da Venda</label>
-          <input className="w-full border rounded-xl px-3 py-2" value={(local.valor_venda as any) ?? ""} onChange={(e) => onChange("valor_venda", Number(e.target.value))} placeholder="R$ 0,00" />
-        </div>
+        <div><label className="text-sm text-gray-600">Número da Proposta</label><input className="w-full border rounded-xl px-3 py-2" value={local.numero_proposta ?? ""} onChange={(e)=>onChange("numero_proposta", e.target.value)}/></div>
+        <div><label className="text-sm text-gray-600">Valor da Venda</label><input className="w-full border rounded-xl px-3 py-2" value={(local.valor_venda as any) ?? ""} onChange={(e)=>onChange("valor_venda", Number(e.target.value))} placeholder="R$ 0,00"/></div>
 
         <div>
           <label className="text-sm text-gray-600">Tipo da Venda</label>
@@ -1280,9 +1087,7 @@ const EditarVendaPendenteForm: React.FC<{
       </div>
 
       <div className="flex items-center justify-end gap-3">
-        <button onClick={() => onSalvar(local)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">
-          Salvar alterações
-        </button>
+        <button onClick={() => onSalvar(local)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">Salvar alterações</button>
       </div>
     </>
   );

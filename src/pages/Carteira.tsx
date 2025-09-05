@@ -472,7 +472,7 @@ const Carteira: React.FC = () => {
         setUserEmail(uemail);
         setUserName(meta?.nome ?? uemail ?? "Vendedor");
 
-        // Sinalizador de admin robusto + override do seu e-mail
+        // Admin (robusto + override)
         let adminFlag = false;
         try {
           const { data, error } = await supabase.rpc("is_admin_email", { e: uemail });
@@ -683,7 +683,6 @@ const Carteira: React.FC = () => {
   };
 
   /** ====== Oferta de Lance ====== */
-  // helpers tolerantes a variações de nomes/formatos
   const normalizeISO = (d: any): string | null => {
     if (d == null) return null;
     try {
@@ -694,7 +693,6 @@ const Carteira: React.FC = () => {
           const [dd, mm, yy] = s.split("/");
           return `${yy}-${mm}-${dd}`;
         }
-        // tenta parse geral
         const dt = new Date(s);
         if (!isNaN(+dt)) return dt.toISOString().slice(0, 10);
       } else {
@@ -711,7 +709,6 @@ const Carteira: React.FC = () => {
       const hit = keys.find((k) => k.toLowerCase() === cand.toLowerCase());
       if (hit) return row[hit];
     }
-    // fuzzy: inclui parte do nome
     for (const k of keys) {
       const lk = k.toLowerCase();
       if (candidates.some((c) => lk.includes(c.toLowerCase()))) return row[k];
@@ -732,19 +729,18 @@ const Carteira: React.FC = () => {
 
       const alvoISO = normalizeISO(assembleia); // "YYYY-MM-DD"
 
-      // filtra pela data da assembleia (coluna pode ter nomes diferentes)
+      // nomes EXATOS conforme você enviou + tolerância
       const rowsNaData = rows.filter((g) => {
         const d =
-          getField(g, ["data_assembleia", "assembleia", "dt_assembleia", "dataAssembleia", "data", "data_ref", "data_assem"]) ??
+          getField(g, ["Assembleia", "assembleia", "data_assembleia", "dt_assembleia", "dataAssembleia", "data"]) ??
           null;
         return normalizeISO(d) === alvoISO;
       });
 
-      // set de grupos válidos nesta data
       const allowed = new Map<string, any>();
       for (const g of rowsNaData) {
-        const adm = (getField(g, ["administradora", "adm", "admin", "administrador"]) ?? "").toString().trim();
-        const grupo = (getField(g, ["grupo", "nr_grupo", "num_grupo"]) ?? "").toString().trim();
+        const adm = (getField(g, ["ADMINISTRADORA", "administradora", "adm"]) ?? "").toString().trim();
+        const grupo = (getField(g, ["GRUPO", "grupo", "nr_grupo", "num_grupo"]) ?? "").toString().trim();
         if (!adm || !grupo) continue;
         allowed.set(`${adm}::${grupo}`, g);
       }
@@ -754,19 +750,18 @@ const Carteira: React.FC = () => {
         if (!v.grupo || !v.cota) continue;
         const key = `${v.administradora}::${v.grupo}`;
         const info = allowed.get(key);
-        if (!info) continue; // só lista se o grupo tem assembleia exatamente na data
+        if (!info) continue;
 
-        const referencia = getField(info, ["referencia", "ref", "refer\u00EAncia"]);
-        const participantes = getField(info, ["participantes", "qtd_participantes", "particip"]);
-        const medianaRaw =
-          getField(info, ["mediana", "mediana_ll", "mediana_perc_ll", "maior_perc_ll", "mediana_%", "medianaPercentual"]) ?? null;
+        const referencia = getField(info, ["Referência", "referência", "referencia", "ref"]);
+        const participantes = getField(info, ["PARTICIPANTES", "participantes"]);
+        const medianaRaw = getField(info, ["Mediana", "mediana"]);
         const mediana =
           medianaRaw == null
             ? null
             : typeof medianaRaw === "number"
             ? medianaRaw
             : Number(String(medianaRaw).replace(",", "."));
-        const contemplados = getField(info, ["contemplados", "qt_contemplados", "entregas_ll", "entregas"]);
+        const contemplados = getField(info, ["Total Entregas", "total_entregas", "entregas_ll", "entregas"]);
 
         linhas.push({
           administradora: v.administradora,
@@ -779,7 +774,6 @@ const Carteira: React.FC = () => {
         });
       }
 
-      // ordenação estável
       linhas.sort((a, b) =>
         (a.administradora + a.grupo + a.cota).localeCompare(b.administradora + b.grupo + b.cota, "pt-BR", { numeric: true })
       );

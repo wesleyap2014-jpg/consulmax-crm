@@ -5,7 +5,8 @@ const items = [
   { to: '/oportunidades', label: 'Oportunidades' },
   { to: '/carteira', label: 'Carteira' },   // guia existente
   { to: '/usuarios', label: 'Usuários' },
-  { to: '/gestao-de-grupos', label: 'Gestão de Grupos' } // 🚀 nova guia
+  { to: '/gestao-de-grupos', label: 'Gestão de Grupos' }, // guia existente
+  { to: '/parametros', label: 'Parâmetros' }              // 👈 novo item
 ]
 
 export default function Sidebar() {

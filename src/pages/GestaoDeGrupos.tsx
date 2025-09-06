@@ -800,12 +800,11 @@ function normalizeKey(a?: string | null, g?: string | null) {
 }
 
 async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
-  // 1) Buscar grupos do dia na gestao_grupos_norm
+  // 1) Tenta buscar grupos do dia na gestao_grupos_norm (preferencial)
   const { data: gruposNorm, error: gErr } = await supabase
     .from("gestao_grupos_norm")
     .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
     .eq("assembleia_date", dateYMD);
-
   if (gErr) throw gErr;
 
   const gmap = new Map<
@@ -822,15 +821,32 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     });
   });
 
-  // 2) Buscar cotas encarteiradas ativas (uma linha por cota)
-  // Tentativa com 'observacao'; em caso de erro de coluna, refaz sem 'observacao'
-  let enc: any[] | null = null;
-  let vErr: any = null;
+  // 2) Fallback/complemento: groups.prox_assembleia = data (só se a view estiver vazia)
+  if ((gruposNorm ?? []).length === 0) {
+    const { data: gruposAsm, error: gaErr } = await supabase
+      .from("groups")
+      .select("administradora,codigo,participantes")
+      .eq("prox_assembleia", dateYMD);
+    if (gaErr) console.warn("[groups fallback] aviso:", gaErr);
 
-  const baseCols =
-    "administradora,grupo,cota,codigo,contemplada,status";
+    (gruposAsm ?? []).forEach((gr: any) => {
+      const k = normalizeKey(gr.administradora, gr.codigo);
+      if (!gmap.has(k)) {
+        gmap.set(k, {
+          referencia: null,
+          participantes: gr?.participantes ?? null,
+          mediana: null,
+          contemplados: null,
+        });
+      }
+    });
+  }
+
+  // 3) Pega cotas encarteiradas ativas
+  const baseCols = "administradora,grupo,cota,codigo,contemplada,status";
   const extraCol = ",observacao";
-  let tryWithObs = true;
+  let vendas: any[] = [];
+  let triedWithObs = true;
 
   try {
     const { data, error } = await supabase
@@ -840,13 +856,9 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
       .eq("codigo", "00")
       .is("contemplada", null);
     if (error) throw error;
-    enc = data || [];
-  } catch (err: any) {
-    vErr = err;
-    tryWithObs = false;
-  }
-
-  if (!tryWithObs) {
+    vendas = data || [];
+  } catch {
+    triedWithObs = false;
     const { data, error } = await supabase
       .from("vendas")
       .select(baseCols)
@@ -854,29 +866,30 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
       .eq("codigo", "00")
       .is("contemplada", null);
     if (error) throw error;
-    enc = data || [];
+    vendas = data || [];
   }
 
-  const linhas: OfertaRow[] = (enc ?? [])
-    .filter((v: any) => v.grupo && v.cota)
-    .map((v: any) => {
-      const k = normalizeKey(v.administradora, String(v.grupo));
-      const gi = gmap.get(k);
-      if (!gi) return null; // só entra se constar na assembleia do dia
-      return {
-        administradora: v.administradora,
-        grupo: String(v.grupo),
-        cota: v.cota ?? null,
-        referencia: gi.referencia,
-        participantes: gi.participantes,
-        mediana: gi.mediana,
-        contemplados: gi.contemplados,
-        observacao: (typeof v.observacao === "string" ? v.observacao : null) ?? null,
-      };
-    })
-    .filter(Boolean) as OfertaRow[];
+  // 4) Monta linhas: só entra se o par (adm,grupo) existir na view ou fallback
+  const linhas: OfertaRow[] = [];
+  for (const v of vendas) {
+    if (!v.grupo || !v.cota) continue;
+    const k = normalizeKey(v.administradora, String(v.grupo));
+    const gi = gmap.get(k);
+    if (!gi) continue;
 
-  // Ordenar por Administradora > Grupo > Cota
+    linhas.push({
+      administradora: v.administradora,
+      grupo: String(v.grupo),
+      cota: v.cota ?? null,
+      referencia: gi.referencia,
+      participantes: gi.participantes,
+      mediana: gi.mediana,
+      contemplados: gi.contemplados,
+      observacao: triedWithObs && typeof v.observacao === "string" ? v.observacao : null,
+    });
+  }
+
+  // 5) Ordena por Administradora > Grupo > Cota
   linhas.sort((a, b) => {
     const A = (a.administradora || "").localeCompare(b.administradora || "", "pt-BR");
     if (A !== 0) return A;

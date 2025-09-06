@@ -1,38 +1,34 @@
-// src/router.tsx
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { NavLink } from 'react-router-dom'
 
-import App from './App';
-import Login from './pages/Login';
-import Leads from './pages/Leads';
-import Oportunidades from './pages/Oportunidades';
-import Usuarios from './pages/Usuarios';
-import TermsLGPD from './pages/TermsLGPD';
-import RequireAuth from './components/auth/RequireAuth';
-import AlterarSenha from './pages/AlterarSenha';
-import Carteira from './pages/Carteira';               // guia já existente
-import GestaoDeGrupos from './pages/GestaoDeGrupos';    // ✅ NOVA GUIA
+const items = [
+  { to: '/leads', label: 'Leads' },
+  { to: '/oportunidades', label: 'Oportunidades' },
+  { to: '/carteira', label: 'Carteira' },   // guia existente
+  { to: '/usuarios', label: 'Usuários' },
+  { to: '/gestao-de-grupos', label: 'Gestão de Grupos' }, // guia existente
+  { to: '/parametros', label: 'Parâmetros' }              // 👈 novo item
+]
 
-export const router = createBrowserRouter([
-  { path: '/login', element: <Login /> },
-  {
-    path: '/',
-    element: <RequireAuth />,
-    children: [
-      { path: 'alterar-senha', element: <AlterarSenha /> },
-      {
-        element: <App />,
-        children: [
-          { index: true, element: <Navigate to="/leads" replace /> },
-          { path: 'leads', element: <Leads /> },
-          { path: 'oportunidades', element: <Oportunidades /> },
-          { path: 'usuarios', element: <Usuarios /> },
-          { path: 'carteira', element: <Carteira /> },
-          { path: 'gestao-de-grupos', element: <GestaoDeGrupos /> }, // ✅ ADICIONADA
-          { path: 'lgpd', element: <TermsLGPD /> },
-          { path: '*', element: <Navigate to="/leads" replace /> },
-        ],
-      },
-    ],
-  },
-  { path: '*', element: <Navigate to="/login" replace /> },
-]);
+export default function Sidebar() {
+  return (
+    <aside className="w-64 bg-white shadow h-[calc(100vh-56px)] sticky top-14 p-3">
+      <nav className="grid gap-2">
+        {items.map(i => (
+          <NavLink
+            key={i.to}
+            to={i.to}
+            className={({ isActive }) =>
+              `px-3 py-2 rounded-2xl ${
+                isActive
+                  ? 'bg-consulmax-primary text-white'
+                  : 'hover:bg-consulmax-neutral'
+              }`
+            }
+          >
+            {i.label}
+          </NavLink>
+        ))}
+      </nav>
+    </aside>
+  )
+}

@@ -87,7 +87,7 @@ function calcMediana(maior?: number | null, menor?: number | null) {
 function withinLLMedianFilter(mediana: number | null | undefined, alvo: number | null): boolean {
   if (alvo == null) return true;
   if (mediana == null) return false;
-  const min = Math.max(0, alvo * 0.7); // ±15%
+  const min = Math.max(0, alvo * 0.7); // ±30%
   const max = alvo * 1.3;
   return mediana >= min && mediana <= max;
 }
@@ -183,7 +183,7 @@ function referenciaPorAdministradora(params: {
 }
 
 /* =========================================================
-   OVERLAY: LOTERIA FEDERAL (inalterado)
+   OVERLAY: LOTERIA FEDERAL
    ========================================================= */
 
 function OverlayLoteria({
@@ -829,6 +829,95 @@ export default function GestaoDeGrupos() {
   const [importOpen, setImportOpen] = useState(false);
   const [importRows, setImportRows] = useState<NovoGrupoRow[]>([]);
 
+  // ======= NOVO: Painel Oferta de Lance =======
+  const [asmOferta, setAsmOferta] = useState<string>("");
+  const [oferta, setOferta] = useState<
+    Array<{
+      administradora: string;
+      grupo: string;
+      cota: string | null;
+      referencia: string | null;
+      participantes: number | null;
+      mediana: number | null;
+      contemplados: number | null;
+    }>
+  >([]);
+
+  const listarOfertaPorData = async () => {
+    try {
+      if (!asmOferta) {
+        setOferta([]);
+        return;
+      }
+
+      // 1) grupos do dia
+      const { data: gruposNorm, error: gErr } = await supabase
+        .from("gestao_grupos_norm")
+        .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
+        .eq("assembleia_date", asmOferta);
+      if (gErr) throw gErr;
+
+      const gmap = new Map<
+        string,
+        { referencia: string | null; participantes: number | null; mediana: number | null; contemplados: number | null }
+      >();
+      (gruposNorm ?? []).forEach((g: any) => {
+        const k = `${String(g.adm_norm || "").trim()}::${String(g.grupo_norm || "").trim()}`;
+        gmap.set(k, {
+          referencia: g.referencia ?? null,
+          participantes: g.participantes ?? null,
+          mediana: g.mediana ?? null,
+          contemplados: g.contemplados ?? null,
+        });
+      });
+
+      // 2) cotas encarteiradas ativas (globais) — uma linha por cota
+      const { data: enc, error: vErr } = await supabase
+        .from("vendas")
+        .select("administradora,grupo,cota,codigo,contemplada,status")
+        .eq("status", "encarteirada")
+        .eq("codigo", "00")
+        .is("contemplada", null); // não listamos contempladas
+      if (vErr) throw vErr;
+
+      const linhas = (enc ?? [])
+        .filter((v: any) => v.grupo && v.cota)
+        .map((v: any) => {
+          const k = `${String(v.administradora || "").toLowerCase().trim()}::${String(v.grupo || "").trim()}`;
+          const gi = gmap.get(k);
+          if (!gi) return null; // entra apenas se o grupo está na assembleia da data
+          return {
+            administradora: v.administradora,
+            grupo: String(v.grupo),
+            cota: v.cota,
+            referencia: gi.referencia,
+            participantes: gi.participantes,
+            mediana: gi.mediana,
+            contemplados: gi.contemplados,
+          };
+        })
+        .filter(Boolean) as any[];
+
+      setOferta(linhas);
+    } catch (e: any) {
+      console.error(e);
+      alert(e.message ?? "Falha ao listar oferta.");
+    }
+  };
+
+  const exportarOfertaPDF = () => {
+    const el = document.getElementById("grid-oferta-gestao");
+    if (!el) return;
+    const win = window.open("", "_blank", "width=1024,height=768");
+    if (!win) return;
+    const css = `<style>body{font-family:Arial,sans-serif;padding:24px}h1{margin:0 0 12px}.grid{width:100%;border-collapse:collapse;margin-top:12px}.grid th,.grid td{border:1px solid #e5e7eb;padding:8px;font-size:12px}</style>`;
+    win.document.write(
+      `<html><head><title>Oferta de Lance</title>${css}</head><body><h1>Oferta de Lance</h1>${el.innerHTML}<script>window.print();setTimeout(()=>window.close(),300);</script></body></html>`
+    );
+    win.document.close();
+  };
+  // ======= FIM NOVO =======
+
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
       const r = lastAsmByGroup.get(g.id);
@@ -957,15 +1046,12 @@ export default function GestaoDeGrupos() {
 
   // === sincronia a partir da Carteira (Ponto 1 & 2) ===
   const handleSync = async () => {
-    // chamamos a RPC mas tratamos retorno 0/erro benigno como sucesso informativo
     let importedCount = 0;
     try {
       const { data, error } = await supabase.rpc("sync_groups_from_carteira_safe");
       if (!error) {
         importedCount = typeof data === "number" ? data : (data as any)?.imported ?? 0;
       } else {
-        // alguns backends disparam erro mesmo quando nada novo foi importado;
-        // nesse caso, seguimos como 0 importados.
         console.warn("[sync_groups_from_carteira_safe] aviso:", error);
       }
     } catch (e) {
@@ -974,7 +1060,6 @@ export default function GestaoDeGrupos() {
 
     alert(`${importedCount} grupos importados a partir da Carteira.`);
 
-    // buscar grupos que precisam de complementação (os recém importados vão cair aqui)
     const { data: novos, error: novosErr } = await supabase
       .from("groups")
       .select("id, administradora, codigo, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia")
@@ -1122,6 +1207,54 @@ export default function GestaoDeGrupos() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ======= NOVO: Painel Oferta de Lance ======= */}
+      <Card>
+        <CardHeader className="pb-2 flex items-center justify-between">
+          <CardTitle className="text-base">Oferta de Lance (por data de assembleia)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3 mb-3">
+            <Input type="date" value={asmOferta} onChange={(e) => setAsmOferta(e.target.value)} />
+            <Button onClick={listarOfertaPorData}>Listar</Button>
+            <Button variant="secondary" onClick={exportarOfertaPDF}>Exportar PDF</Button>
+          </div>
+
+          <div id="grid-oferta-gestao" className="overflow-auto rounded-xl border">
+            <table className="min-w-[880px] w-full grid text-sm">
+              <thead className="bg-muted/60">
+                <tr>
+                  <th className="p-2 text-left">Adm</th>
+                  <th className="p-2 text-left">Grupo</th>
+                  <th className="p-2 text-left">Cota</th>
+                  <th className="p-2 text-left">Referência</th>
+                  <th className="p-2 text-left">Participantes</th>
+                  <th className="p-2 text-left">Mediana</th>
+                  <th className="p-2 text-left">Contemplados</th>
+                </tr>
+              </thead>
+              <tbody>
+                {oferta.length === 0 ? (
+                  <tr><td className="p-3 text-muted-foreground" colSpan={7}>Nenhum grupo com assembleia nesta data.</td></tr>
+                ) : (
+                  oferta.map((o, i) => (
+                    <tr key={i} className="odd:bg-muted/30">
+                      <td className="p-2">{o.administradora}</td>
+                      <td className="p-2">{o.grupo}</td>
+                      <td className="p-2">{o.cota ?? "—"}</td>
+                      <td className="p-2">{o.referencia ?? "—"}</td>
+                      <td className="p-2">{o.participantes ?? "—"}</td>
+                      <td className="p-2">{o.mediana != null ? `${o.mediana}%` : "—"}</td>
+                      <td className="p-2">{o.contemplados ?? "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+      {/* ======= FIM NOVO ======= */}
 
       {/* Editor / Criador de Grupo */}
       {(criando || editando) && (

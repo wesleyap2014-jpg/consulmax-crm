@@ -37,7 +37,7 @@ type Grupo = {
   id: string;
   administradora: Administradora;
   segmento: SegmentoUI;
-  codigo: string;
+  codigo: string; // ex.: 1234/5
   participantes: number | null;
   faixa_min: number | null;
   faixa_max: number | null;
@@ -93,14 +93,17 @@ function withinLLMedianFilter(mediana: number | null | undefined, alvo: number |
   return mediana >= min && mediana <= max;
 }
 
-/** 'YYYY-MM-DD' a partir de Date / ISO / 'DD/MM/YYYY' */
+/** Converte qualquer coisa (string Date, ISO, 'DD/MM/AAAA', timestamp) em 'YYYY-MM-DD' (UTC). */
 function toYMD(d: string | Date | null | undefined): string | null {
   if (!d) return null;
   const s = typeof d === "string" ? d.trim() : (d as Date).toISOString();
+
   const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+
   const isoHead = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoHead) return `${isoHead[1]}-${isoHead[2]}-${isoHead[3]}`;
+
   const dt = new Date(s);
   if (isNaN(dt.getTime())) return null;
   const y = dt.getUTCFullYear();
@@ -154,17 +157,19 @@ function keyRaw(adm?: string | null, grp?: string | number | null) {
 }
 
 /* =========================================================
-   REFERÊNCIA POR BILHETES (mantido p/ grade principal)
+   REFERÊNCIA POR BILHETES (para a grade principal)
    ========================================================= */
 
-type LoteriaParams = {
+function referenciaPorAdministradora(params: {
   administradora: Administradora;
   participantes: number | null | undefined;
   bilhetes: LoteriaFederal | null;
-};
-function referenciaPorAdministradora({ administradora, participantes, bilhetes }: LoteriaParams): number | null {
+}): number | null {
+  const { administradora, participantes, bilhetes } = params;
   if (!participantes || participantes <= 0 || !bilhetes) return null;
+
   const premios = [bilhetes.primeiro, bilhetes.segundo, bilhetes.terceiro, bilhetes.quarto, bilhetes.quinto];
+
   function reduceByCap(n: number, cap: number): number {
     if (cap <= 0) return 0;
     let v = n;
@@ -172,6 +177,7 @@ function referenciaPorAdministradora({ administradora, participantes, bilhetes }
     if (v === 0) v = cap;
     return v;
   }
+
   function tryTresUltimosOuInicio(num5: string, cap: number): number | null {
     const ult3 = parseInt(num5.slice(-3));
     if (ult3 >= 1 && ult3 <= cap) return ult3;
@@ -179,8 +185,10 @@ function referenciaPorAdministradora({ administradora, participantes, bilhetes }
     if (alt >= 1 && alt <= cap) return alt;
     return null;
   }
+
   for (const premio of premios) {
     const p5 = sanitizeBilhete5(premio);
+
     if (administradora.toLowerCase() === "embracon") {
       if (participantes <= 1000) {
         const tentativa = tryTresUltimosOuInicio(p5, participantes);
@@ -196,13 +204,16 @@ function referenciaPorAdministradora({ administradora, participantes, bilhetes }
         return reduceByCap(quatro, participantes);
       }
     }
+
     if (administradora.toLowerCase() === "hs") {
       const quatro = parseInt(p5.slice(-4));
       return reduceByCap(quatro, participantes);
     }
+
     const tres = parseInt(p5.slice(-3));
     return reduceByCap(tres, participantes);
   }
+
   return null;
 }
 
@@ -735,7 +746,7 @@ function OverlayGruposImportados({
 }
 
 /* =========================================================
-   OVERLAY: OFERTA DE LANCE (FUNCIONANDO)
+   OVERLAY: OFERTA DE LANCE (com fallback results)
    ========================================================= */
 
 type OfertaRow = {
@@ -750,57 +761,101 @@ type OfertaRow = {
 };
 
 async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
-  // 1) grupos da view normalizada
+  // 1) Fonte preferencial: view normalizada
   const { data: vn, error: vErr } = await supabase
     .from("gestao_grupos_norm")
     .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
     .eq("assembleia_date", dateYMD);
   if (vErr) throw vErr;
 
-  // 2) união com groups.prox_assembleia
-  const { data: gg, error: gErr } = await supabase
-    .from("groups")
-    .select("administradora,codigo,participantes")
-    .eq("prox_assembleia", dateYMD);
-  if (gErr) throw gErr;
+  type Info = {
+    referencia: string | null;
+    participantes: number | null;
+    mediana: number | null;
+    contemplados: number | null;
+    admSrc: string;
+    grpSrc: string;
+  };
 
-  // 3) mapa de grupos da data
-  type Info = { referencia: string | null; participantes: number | null; mediana: number | null; contemplados: number | null; admSrc: string; grpSrc: string; };
   const gmapDigits = new Map<string, Info>();
   const gmapRaw = new Map<string, Info>();
 
-  (vn ?? []).forEach((r: any) => {
-    const info: Info = {
-      referencia: r?.referencia ?? null,
-      participantes: r?.participantes ?? null,
-      mediana: r?.mediana ?? null,
-      contemplados: r?.contemplados ?? null,
-      admSrc: r?.adm_norm ?? "",
-      grpSrc: r?.grupo_norm ?? "",
-    };
-    gmapDigits.set(keyDigits(r.adm_norm, r.grupo_norm), info);
-    gmapRaw.set(keyRaw(r.adm_norm, r.grupo_norm), info);
-  });
-
-  (gg ?? []).forEach((r: any) => {
-    const kd = keyDigits(r.administradora, r.codigo);
-    if (!gmapDigits.has(kd)) {
+  if ((vn?.length ?? 0) > 0) {
+    (vn || []).forEach((r: any) => {
       const info: Info = {
-        referencia: null,
+        referencia: r?.referencia ?? null,
         participantes: r?.participantes ?? null,
-        mediana: null,
-        contemplados: null,
-        admSrc: r?.administradora ?? "",
-        grpSrc: r?.codigo ?? "",
+        mediana: r?.mediana ?? null,
+        contemplados: r?.contemplados ?? null,
+        admSrc: r?.adm_norm ?? "",
+        grpSrc: r?.grupo_norm ?? "",
       };
-      gmapDigits.set(kd, info);
-      gmapRaw.set(keyRaw(r.administradora, r.codigo), info);
+      gmapDigits.set(keyDigits(r.adm_norm, r.grupo_norm), info);
+      gmapRaw.set(keyRaw(r.adm_norm, r.grupo_norm), info);
+    });
+  } else {
+    // 2) Fallback: assemblies + assembly_results (+ groups)
+    const { data: asm, error: asmErr } = await supabase
+      .from("assemblies")
+      .select("id")
+      .eq("date", dateYMD)
+      .maybeSingle();
+    if (asmErr) throw asmErr;
+    const assemblyId = asm?.id ?? null;
+
+    if (assemblyId) {
+      const { data: res, error: resErr } = await supabase
+        .from("assembly_results")
+        .select("group_id, median, fixed25_deliveries, fixed50_deliveries, ll_deliveries, groups!inner(administradora,codigo,participantes)")
+        .eq("assembly_id", assemblyId);
+      if (resErr) throw resErr;
+
+      (res || []).forEach((r: any) => {
+        const adm = r.groups?.administradora ?? "";
+        const grp = r.groups?.codigo ?? "";
+        const contemplados = (r.fixed25_deliveries || 0) + (r.fixed50_deliveries || 0) + (r.ll_deliveries || 0);
+
+        const info: Info = {
+          referencia: null, // referência oficial só vem da view
+          participantes: r.groups?.participantes ?? null,
+          mediana: r.median ?? null,
+          contemplados,
+          admSrc: adm,
+          grpSrc: grp,
+        };
+        const kd = keyDigits(adm, grp);
+        gmapDigits.set(kd, info);
+        gmapRaw.set(keyRaw(adm, grp), info);
+      });
     }
-  });
+
+    // incluir grupos que têm prox_assembleia=data, mesmo sem results
+    const { data: gg, error: gErr } = await supabase
+      .from("groups")
+      .select("administradora,codigo,participantes")
+      .eq("prox_assembleia", dateYMD);
+    if (gErr) throw gErr;
+
+    (gg || []).forEach((r: any) => {
+      const kd = keyDigits(r.administradora, r.codigo);
+      if (!gmapDigits.has(kd)) {
+        const info: Info = {
+          referencia: null,
+          participantes: r?.participantes ?? null,
+          mediana: null,
+          contemplados: null,
+          admSrc: r?.administradora ?? "",
+          grpSrc: r?.codigo ?? "",
+        };
+        gmapDigits.set(kd, info);
+        gmapRaw.set(keyRaw(r.administradora, r.codigo), info);
+      }
+    });
+  }
 
   if (gmapDigits.size === 0) return [];
 
-  // 4) vendas encarteiradas ativas
+  // 3) Vendas encarteiradas ativas: uma linha por cota
   const baseCols = "administradora,grupo,cota,codigo,contemplada,status";
   let vendas: any[] = [];
   let temObs = true;
@@ -825,7 +880,6 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     vendas = data || [];
   }
 
-  // 5) uma linha por cota; se não houver venda, linha "em branco"
   const out: OfertaRow[] = [];
   const touched = new Set<string>();
 
@@ -834,13 +888,13 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     const kd = keyDigits(v.administradora, v.grupo);
     const kr = keyRaw(v.administradora, v.grupo);
     const info = gmapDigits.get(kd) ?? gmapRaw.get(kr);
-    if (!info) continue;
+    if (!info) continue; // venda não pertence a um grupo da assembleia na data
 
     out.push({
       administradora: normalizeAdmin(v.administradora),
       grupo: String(v.grupo),
       cota: v.cota ?? null,
-      referencia: info.referencia,
+      referencia: info.referencia, // da view; no fallback pode ser null
       participantes: info.participantes,
       mediana: info.mediana,
       contemplados: info.contemplados,
@@ -849,6 +903,7 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     touched.add(kd);
   }
 
+  // 4) Linhas “em branco” (sem venda)
   for (const [kd, info] of gmapDigits.entries()) {
     if (touched.has(kd)) continue;
     out.push({
@@ -863,6 +918,7 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     });
   }
 
+  // 5) Ordenação
   out.sort((a, b) => {
     const A = a.administradora.localeCompare(b.administradora, "pt-BR");
     if (A !== 0) return A;
@@ -871,7 +927,7 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     return String(a.cota ?? "").localeCompare(String(b.cota ?? ""), "pt-BR", { numeric: true });
   });
 
-  console.log("[Oferta] grupos_na_data:", gmapDigits.size, "linhas_final:", out.length, "vendas:", vendas.length);
+  console.log("[Oferta] data:", dateYMD, "grupos:", gmapDigits.size, "linhas:", out.length, "vendas:", vendas.length);
   return out;
 }
 
@@ -1177,6 +1233,7 @@ export default function GestaoDeGrupos() {
     (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
     setLastAsmByGroup(byGroup);
 
+    // carregar resultados de loteria para as datas presentes em prox_sorteio
     const dateSet = new Set<string>();
     for (const gRow of gruposFetched) {
       const ymd = toYMD(gRow.prox_sorteio);
@@ -1185,7 +1242,10 @@ export default function GestaoDeGrupos() {
     const want = Array.from(dateSet);
     let newDraws: Record<string, LoteriaFederal> = {};
     if (want.length > 0) {
-      const { data: ld, error: ldErr } = await supabase.from("lottery_draws").select("*").in("draw_date", want);
+      const { data: ld, error: ldErr } = await supabase
+        .from("lottery_draws")
+        .select("*")
+        .in("draw_date", want);
       if (ldErr) console.error(ldErr);
       (ld || []).forEach((d: any) => {
         newDraws[d.draw_date] = {
@@ -1212,6 +1272,7 @@ export default function GestaoDeGrupos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // === sincronia a partir da Carteira (Ponto 1 & 2) ===
   const handleSync = async () => {
     let importedCount = 0;
     try {
@@ -1464,7 +1525,7 @@ export default function GestaoDeGrupos() {
 }
 
 /* =========================================================
-   EDITOR DE GRUPO
+   EDITOR DE GRUPO (inalterado)
    ========================================================= */
 
 function EditorGrupo({
@@ -1548,9 +1609,11 @@ function EditorGrupo({
         <div><Label>Administradora</Label><Input value={form.administradora ?? ""} onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))} placeholder="Ex.: Embracon" /></div>
         <div><Label>Segmento</Label><Input value={form.segmento ?? ""} onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))} placeholder="Ex.: Imóvel" /></div>
         <div><Label>Código do Grupo</Label><Input value={form.codigo ?? ""} onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))} placeholder="Ex.: 1234/5" /></div>
+
         <div><Label>Participantes</Label><Input type="number" min={1} value={form.participantes ?? ""} onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))} /></div>
         <div><Label>Faixa Mínima</Label><Input type="number" step="0.01" value={form.faixa_min ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))} /></div>
         <div><Label>Faixa Máxima</Label><Input type="number" step="0.01" value={form.faixa_max ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))} /></div>
+
         <div><Label>Próx. Vencimento</Label><Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} /></div>
         <div><Label>Próx. Sorteio</Label><Input type="date" value={form.prox_sorteio ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))} /></div>
         <div><Label>Próx. Assembleia</Label><Input type="date" value={form.prox_assembleia ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))} /></div>

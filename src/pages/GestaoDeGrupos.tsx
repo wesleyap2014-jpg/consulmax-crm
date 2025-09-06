@@ -15,6 +15,7 @@ import {
   Save,
   Settings,
   X,
+  Target,
 } from "lucide-react";
 
 /* =========================================================
@@ -122,6 +123,12 @@ function formatBR(ymd: string | null | undefined): string {
   const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return "—";
   return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+function toPct4(v: number | null | undefined): string {
+  if (v == null) return "—";
+  const str = Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+  return `${str}%`;
 }
 
 /** Regras de Referência (Embracon/HS) */
@@ -772,6 +779,272 @@ function OverlayGruposImportados({
 }
 
 /* =========================================================
+   OVERLAY: OFERTA DE LANCE (NOVO)
+   ========================================================= */
+
+type OfertaRow = {
+  administradora: string;
+  grupo: string;
+  cota: string | null;
+  referencia: string | null;
+  participantes: number | null;
+  mediana: number | null;
+  contemplados: number | null;
+  observacao: string | null; // info digitada na venda (opcional)
+};
+
+function normalizeKey(a?: string | null, g?: string | null) {
+  const A = (a ?? "").toString().toLowerCase().trim();
+  const G = (g ?? "").toString().toLowerCase().trim();
+  return `${A}::${G}`;
+}
+
+async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
+  // 1) Buscar grupos do dia na gestao_grupos_norm
+  const { data: gruposNorm, error: gErr } = await supabase
+    .from("gestao_grupos_norm")
+    .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
+    .eq("assembleia_date", dateYMD);
+
+  if (gErr) throw gErr;
+
+  const gmap = new Map<
+    string,
+    { referencia: string | null; participantes: number | null; mediana: number | null; contemplados: number | null }
+  >();
+  (gruposNorm ?? []).forEach((g: any) => {
+    const k = normalizeKey(g.adm_norm, g.grupo_norm);
+    gmap.set(k, {
+      referencia: g?.referencia ?? null,
+      participantes: g?.participantes ?? null,
+      mediana: g?.mediana ?? null,
+      contemplados: g?.contemplados ?? null,
+    });
+  });
+
+  // 2) Buscar cotas encarteiradas ativas (uma linha por cota)
+  // Tentativa com 'observacao'; em caso de erro de coluna, refaz sem 'observacao'
+  let enc: any[] | null = null;
+  let vErr: any = null;
+
+  const baseCols =
+    "administradora,grupo,cota,codigo,contemplada,status";
+  const extraCol = ",observacao";
+  let tryWithObs = true;
+
+  try {
+    const { data, error } = await supabase
+      .from("vendas")
+      .select(baseCols + extraCol)
+      .eq("status", "encarteirada")
+      .eq("codigo", "00")
+      .is("contemplada", null);
+    if (error) throw error;
+    enc = data || [];
+  } catch (err: any) {
+    vErr = err;
+    tryWithObs = false;
+  }
+
+  if (!tryWithObs) {
+    const { data, error } = await supabase
+      .from("vendas")
+      .select(baseCols)
+      .eq("status", "encarteirada")
+      .eq("codigo", "00")
+      .is("contemplada", null);
+    if (error) throw error;
+    enc = data || [];
+  }
+
+  const linhas: OfertaRow[] = (enc ?? [])
+    .filter((v: any) => v.grupo && v.cota)
+    .map((v: any) => {
+      const k = normalizeKey(v.administradora, String(v.grupo));
+      const gi = gmap.get(k);
+      if (!gi) return null; // só entra se constar na assembleia do dia
+      return {
+        administradora: v.administradora,
+        grupo: String(v.grupo),
+        cota: v.cota ?? null,
+        referencia: gi.referencia,
+        participantes: gi.participantes,
+        mediana: gi.mediana,
+        contemplados: gi.contemplados,
+        observacao: (typeof v.observacao === "string" ? v.observacao : null) ?? null,
+      };
+    })
+    .filter(Boolean) as OfertaRow[];
+
+  // Ordenar por Administradora > Grupo > Cota
+  linhas.sort((a, b) => {
+    const A = (a.administradora || "").localeCompare(b.administradora || "", "pt-BR");
+    if (A !== 0) return A;
+    const G = (a.grupo || "").localeCompare(b.grupo || "", "pt-BR", { numeric: true });
+    if (G !== 0) return G;
+    return (a.cota || "").localeCompare(b.cota || "", "pt-BR", { numeric: true });
+  });
+
+  return linhas;
+}
+
+function OverlayOfertaLance({
+  onClose,
+}: {
+  onClose: () => void;
+}) {
+  const [dataAsm, setDataAsm] = useState<string>("");
+  const [linhas, setLinhas] = useState<OfertaRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const listar = async () => {
+    try {
+      if (!dataAsm) {
+        setLinhas([]);
+        return;
+      }
+      setLoading(true);
+      const items = await fetchVendasForOferta(dataAsm);
+      setLinhas(items);
+    } catch (e: any) {
+      console.error(e);
+      alert(e.message ?? "Falha ao listar oferta de lance.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportarPDF = () => {
+    const el = document.getElementById("oferta-grid-body");
+    const total = linhas.length;
+    if (!el) return;
+    const win = window.open("", "_blank", "width=1024,height=768");
+    if (!win) return;
+    const css = `<style>
+      body{font-family:Arial,sans-serif;padding:24px}
+      h1{margin:0 0 12px}
+      .meta{margin-bottom:8px;font-size:12px;color:#666}
+      table{width:100%;border-collapse:collapse;margin-top:12px}
+      th,td{border:1px solid #e5e7eb;padding:8px;font-size:12px;vertical-align:top}
+      .sub{font-style:italic;color:#555}
+    </style>`;
+    win.document.write(
+      `<html><head><title>Oferta de Lance</title>${css}</head><body>
+        <h1>Oferta de Lance</h1>
+        <div class="meta">Data da Assembleia: ${formatBR(toYMD(dataAsm))} • Total de cotas: ${total}</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Administradora</th><th>Grupo</th><th>Cota</th><th>Referência</th><th>Participantes</th><th>Mediana</th><th>Contemplados</th>
+            </tr>
+          </thead>
+          <tbody>${el.innerHTML}</tbody>
+        </table>
+        <script>window.print();setTimeout(()=>window.close(),300);</script>
+      </body></html>`
+    );
+    win.document.close();
+  };
+
+  const total = linhas.length;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-3 border-b">
+          <h2 className="text-xl font-semibold flex items-center gap-2">
+            <Target className="h-5 w-5" /> Oferta de Lance
+          </h2>
+          <Button variant="secondary" onClick={onClose} className="gap-2">
+            <X className="h-4 w-4" /> Fechar
+          </Button>
+        </div>
+
+        <div className="p-5 space-y-4 overflow-hidden">
+          <div className="flex flex-col md:flex-row md:items-end gap-3">
+            <div className="flex-1">
+              <Label>Data da Assembleia</Label>
+              <Input type="date" value={dataAsm} onChange={(e) => setDataAsm(e.target.value)} />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={listar} disabled={!dataAsm || loading}>
+                {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Listar
+              </Button>
+              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0}>
+                Exportar PDF
+              </Button>
+            </div>
+          </div>
+
+          <div className="text-sm text-muted-foreground">
+            {dataAsm ? (
+              <>Assembleia em {formatBR(toYMD(dataAsm))} • <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-foreground">{total} cotas</span></>
+            ) : (
+              <>Informe a data e clique em <b>Listar</b>.</>
+            )}
+          </div>
+
+          <div className="rounded-xl border overflow-auto">
+            <table className="min-w-[920px] w-full text-sm">
+              <thead className="sticky top-0 bg-muted/60 backdrop-blur">
+                <tr>
+                  <th className="p-2 text-left">Administradora</th>
+                  <th className="p-2 text-left">Grupo</th>
+                  <th className="p-2 text-left">Cota</th>
+                  <th className="p-2 text-left">Referência</th>
+                  <th className="p-2 text-left">Participantes</th>
+                  <th className="p-2 text-left">Mediana</th>
+                  <th className="p-2 text-left">Contemplados</th>
+                </tr>
+              </thead>
+              <tbody id="oferta-grid-body">
+                {loading ? (
+                  <tr>
+                    <td className="p-4 text-muted-foreground" colSpan={7}>
+                      <Loader2 className="h-4 w-4 inline animate-spin mr-2" />
+                      Carregando…
+                    </td>
+                  </tr>
+                ) : total === 0 ? (
+                  <tr>
+                    <td className="p-4 text-muted-foreground" colSpan={7}>
+                      {dataAsm ? "Nenhum grupo com assembleia nesta data." : "—"}
+                    </td>
+                  </tr>
+                ) : (
+                  linhas.map((o, i) => (
+                    <React.Fragment key={`${o.administradora}-${o.grupo}-${o.cota}-${i}`}>
+                      <tr className="odd:bg-muted/30">
+                        <td className="p-2">{o.administradora}</td>
+                        <td className="p-2">{o.grupo}</td>
+                        <td className="p-2">{o.cota ?? "—"}</td>
+                        <td className="p-2">{o.referencia ?? "—"}</td>
+                        <td className="p-2">{o.participantes ?? "—"}</td>
+                        <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
+                        <td className="p-2">{o.contemplados ?? "—"}</td>
+                      </tr>
+                      <tr className="odd:bg-muted/30">
+                        <td className="p-2 pt-0 pb-3" colSpan={7}>
+                          <div className="text-xs leading-relaxed text-muted-foreground">
+                            <span className="font-medium">Info da venda:</span>{" "}
+                            {o.observacao && o.observacao.trim().length > 0 ? o.observacao : "—"}
+                          </div>
+                        </td>
+                      </tr>
+                    </React.Fragment>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
    PÁGINA PRINCIPAL
    ========================================================= */
 
@@ -829,94 +1102,8 @@ export default function GestaoDeGrupos() {
   const [importOpen, setImportOpen] = useState(false);
   const [importRows, setImportRows] = useState<NovoGrupoRow[]>([]);
 
-  // ======= NOVO: Painel Oferta de Lance =======
-  const [asmOferta, setAsmOferta] = useState<string>("");
-  const [oferta, setOferta] = useState<
-    Array<{
-      administradora: string;
-      grupo: string;
-      cota: string | null;
-      referencia: string | null;
-      participantes: number | null;
-      mediana: number | null;
-      contemplados: number | null;
-    }>
-  >([]);
-
-  const listarOfertaPorData = async () => {
-    try {
-      if (!asmOferta) {
-        setOferta([]);
-        return;
-      }
-
-      // 1) grupos do dia
-      const { data: gruposNorm, error: gErr } = await supabase
-        .from("gestao_grupos_norm")
-        .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
-        .eq("assembleia_date", asmOferta);
-      if (gErr) throw gErr;
-
-      const gmap = new Map<
-        string,
-        { referencia: string | null; participantes: number | null; mediana: number | null; contemplados: number | null }
-      >();
-      (gruposNorm ?? []).forEach((g: any) => {
-        const k = `${String(g.adm_norm || "").trim()}::${String(g.grupo_norm || "").trim()}`;
-        gmap.set(k, {
-          referencia: g.referencia ?? null,
-          participantes: g.participantes ?? null,
-          mediana: g.mediana ?? null,
-          contemplados: g.contemplados ?? null,
-        });
-      });
-
-      // 2) cotas encarteiradas ativas (globais) — uma linha por cota
-      const { data: enc, error: vErr } = await supabase
-        .from("vendas")
-        .select("administradora,grupo,cota,codigo,contemplada,status")
-        .eq("status", "encarteirada")
-        .eq("codigo", "00")
-        .is("contemplada", null); // não listamos contempladas
-      if (vErr) throw vErr;
-
-      const linhas = (enc ?? [])
-        .filter((v: any) => v.grupo && v.cota)
-        .map((v: any) => {
-          const k = `${String(v.administradora || "").toLowerCase().trim()}::${String(v.grupo || "").trim()}`;
-          const gi = gmap.get(k);
-          if (!gi) return null; // entra apenas se o grupo está na assembleia da data
-          return {
-            administradora: v.administradora,
-            grupo: String(v.grupo),
-            cota: v.cota,
-            referencia: gi.referencia,
-            participantes: gi.participantes,
-            mediana: gi.mediana,
-            contemplados: gi.contemplados,
-          };
-        })
-        .filter(Boolean) as any[];
-
-      setOferta(linhas);
-    } catch (e: any) {
-      console.error(e);
-      alert(e.message ?? "Falha ao listar oferta.");
-    }
-  };
-
-  const exportarOfertaPDF = () => {
-    const el = document.getElementById("grid-oferta-gestao");
-    if (!el) return;
-    const win = window.open("", "_blank", "width=1024,height=768");
-    if (!win) return;
-    const css = `<style>body{font-family:Arial,sans-serif;padding:24px}h1{margin:0 0 12px}.grid{width:100%;border-collapse:collapse;margin-top:12px}.grid th,.grid td{border:1px solid #e5e7eb;padding:8px;font-size:12px}</style>`;
-    win.document.write(
-      `<html><head><title>Oferta de Lance</title>${css}</head><body><h1>Oferta de Lance</h1>${el.innerHTML}<script>window.print();setTimeout(()=>window.close(),300);</script></body></html>`
-    );
-    win.document.close();
-  };
-  // ======= FIM NOVO =======
+  // NOVO: overlay de oferta de lance
+  const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
 
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
@@ -1109,7 +1296,7 @@ export default function GestaoDeGrupos() {
     <div className="p-4 md:p-6 space-y-6">
       {/* Cabeçalho / Ações */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-        <Card className="lg:col-span-4">
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
             <div className="flex gap-2">
@@ -1131,7 +1318,7 @@ export default function GestaoDeGrupos() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-4">
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
             <Button variant="secondary" className="gap-2" onClick={() => setLfOpen(true)}>
@@ -1155,7 +1342,7 @@ export default function GestaoDeGrupos() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-4">
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
             <Button variant="secondary" className="gap-2" onClick={() => setAsmOpen(true)}>
@@ -1164,6 +1351,20 @@ export default function GestaoDeGrupos() {
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Informe resultados por data (passada). Atualizaremos os prazos do(s) grupo(s) com as próximas datas.
+          </CardContent>
+        </Card>
+
+        {/* NOVO: Card Oferta de Lance */}
+        <Card className="lg:col-span-3">
+          <CardHeader className="pb-2 flex items-center justify-between">
+            <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
+            <Button variant="secondary" className="gap-2" onClick={() => setOfertaOpen(true)}>
+              <Target className="h-4 w-4" />
+              Abrir
+            </Button>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Lista cotas encarteiradas para os grupos com assembleia na data informada.
           </CardContent>
         </Card>
       </div>
@@ -1207,54 +1408,6 @@ export default function GestaoDeGrupos() {
           </div>
         </CardContent>
       </Card>
-
-      {/* ======= NOVO: Painel Oferta de Lance ======= */}
-      <Card>
-        <CardHeader className="pb-2 flex items-center justify-between">
-          <CardTitle className="text-base">Oferta de Lance (por data de assembleia)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-3 mb-3">
-            <Input type="date" value={asmOferta} onChange={(e) => setAsmOferta(e.target.value)} />
-            <Button onClick={listarOfertaPorData}>Listar</Button>
-            <Button variant="secondary" onClick={exportarOfertaPDF}>Exportar PDF</Button>
-          </div>
-
-          <div id="grid-oferta-gestao" className="overflow-auto rounded-xl border">
-            <table className="min-w-[880px] w-full grid text-sm">
-              <thead className="bg-muted/60">
-                <tr>
-                  <th className="p-2 text-left">Adm</th>
-                  <th className="p-2 text-left">Grupo</th>
-                  <th className="p-2 text-left">Cota</th>
-                  <th className="p-2 text-left">Referência</th>
-                  <th className="p-2 text-left">Participantes</th>
-                  <th className="p-2 text-left">Mediana</th>
-                  <th className="p-2 text-left">Contemplados</th>
-                </tr>
-              </thead>
-              <tbody>
-                {oferta.length === 0 ? (
-                  <tr><td className="p-3 text-muted-foreground" colSpan={7}>Nenhum grupo com assembleia nesta data.</td></tr>
-                ) : (
-                  oferta.map((o, i) => (
-                    <tr key={i} className="odd:bg-muted/30">
-                      <td className="p-2">{o.administradora}</td>
-                      <td className="p-2">{o.grupo}</td>
-                      <td className="p-2">{o.cota ?? "—"}</td>
-                      <td className="p-2">{o.referencia ?? "—"}</td>
-                      <td className="p-2">{o.participantes ?? "—"}</td>
-                      <td className="p-2">{o.mediana != null ? `${o.mediana}%` : "—"}</td>
-                      <td className="p-2">{o.contemplados ?? "—"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-      {/* ======= FIM NOVO ======= */}
 
       {/* Editor / Criador de Grupo */}
       {(criando || editando) && (
@@ -1338,9 +1491,9 @@ export default function GestaoDeGrupos() {
                   <td className="p-2 text-right">{r.fix50_ofertas}</td>
                   <td className="p-2 text-right">{r.ll_entregas}</td>
                   <td className="p-2 text-right">{r.ll_ofertas}</td>
-                  <td className="p-2 text-right">{r.ll_maior != null ? `${r.ll_maior.toFixed(2)}%` : "—"}</td>
-                  <td className="p-2 text-right">{r.ll_menor != null ? `${r.ll_menor.toFixed(2)}%` : "—"}</td>
-                  <td className="p-2 text-right">{r.mediana != null ? `${r.mediana.toFixed(2)}%` : "—"}</td>
+                  <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
+                  <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
+                  <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                   <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
@@ -1401,6 +1554,8 @@ export default function GestaoDeGrupos() {
           onSaved={async () => await carregar()}
         />
       )}
+
+      {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
     </div>
   );
 }

@@ -520,21 +520,6 @@ const Carteira: React.FC = () => {
     text: string;
   }>({ open: false, title: "", text: "" });
 
-  const [assembleia, setAssembleia] = useState<string>(
-    new Date().toISOString().slice(0, 10)
-  );
-  const [oferta, setOferta] = useState<
-    Array<{
-      administradora: string;
-      grupo: string;
-      cota: string | null;
-      referencia?: string | null;
-      participantes?: number | null;
-      mediana?: number | null;
-      contemplados?: number | null;
-    }>
-  >([]);
-
   useEffect(() => {
     setForm((f) => ({ ...f, tabela: "" }));
   }, [form.produto]);
@@ -903,93 +888,6 @@ const Carteira: React.FC = () => {
     }
   };
 
-  /**
-   * ✅ Oferta de Lance (versão que cruza direto no banco + join no front)
-   * Regras:
-   *  - Só grupos que têm assembleia NA DATA na view gestao_grupos_norm
-   *  - Uma linha por cota encarteirada ATIVA (codigo='00') e não contemplada
-   *  - Se não for admin, só cotas do vendedor
-   */
-  const listarOferta = async () => {
-    try {
-      setOferta([]); // limpa visualmente ao trocar de data
-
-      // 1) Pega os grupos que têm assembleia na data
-      const { data: gruposNorm, error: gErr } = await supabase
-        .from("gestao_grupos_norm")
-        .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
-        .eq("assembleia_date", assembleia);
-      if (gErr) throw gErr;
-
-      if (!gruposNorm || gruposNorm.length === 0) {
-        setOferta([]);
-        return;
-      }
-
-      // Mapa rapido para cruzar por (adm, grupo)
-      const gruposSet = new Set(
-        gruposNorm.map((g: any) => `${String(g.adm_norm).trim()}::${String(g.grupo_norm).trim()}`)
-      );
-      const ginfoMap = new Map<string, { referencia?: string|null; participantes?: number|null; mediana?: number|null; contemplados?: number|null }>();
-      for (const g of gruposNorm) {
-        const key = `${String(g.adm_norm).trim()}::${String(g.grupo_norm).trim()}`;
-        ginfoMap.set(key, {
-          referencia: (g.referencia && String(g.referencia).trim() !== "" && String(g.referencia).trim() !== "—") ? g.referencia : null,
-          participantes: g.participantes ?? null,
-          mediana: g.mediana ?? null,
-          contemplados: g.contemplados ?? null
-        });
-      }
-
-      // 2) Busca as vendas encarteiradas (ativas, não contempladas, com grupo/cota)
-      const vq = supabase
-        .from("vendas")
-        .select("administradora,grupo,cota,contemplada,codigo,vendedor_id")
-        .eq("status", "encarteirada")
-        .not("grupo", "is", null)
-        .not("cota", "is", null)
-        .eq("codigo", "00") // somente cotas ativas
-        .or("contemplada.is.null,contemplada.eq.false"); // não contempladas
-      if (!isAdmin) vq.eq("vendedor_id", userId);
-
-      const { data: vs, error: vErr } = await vq;
-      if (vErr) throw vErr;
-
-      const linhas: any[] = [];
-      for (const v of vs ?? []) {
-        const key = `${String(v.administradora || "").toLowerCase().trim()}::${String(v.grupo || "").trim()}`;
-        if (!gruposSet.has(key)) continue; // só os grupos da data escolhida
-
-        const gi = ginfoMap.get(key) || {};
-        linhas.push({
-          administradora: v.administradora,
-          grupo: String(v.grupo),
-          cota: String(v.cota),
-          referencia: (gi.referencia && String(gi.referencia).trim() !== "" && String(gi.referencia).trim() !== "—") ? gi.referencia : null,
-          participantes: gi.participantes ?? null,
-          mediana: gi.mediana ?? null,
-          contemplados: gi.contemplados ?? null
-        });
-      }
-
-      setOferta(linhas);
-    } catch (e: any) {
-      alert(e.message ?? "Erro ao listar.");
-    }
-  };
-
-  const exportarOfertaPDF = () => {
-    const el = document.getElementById("relatorio-oferta");
-    if (!el) return;
-    const win = window.open("", "_blank", "width=1024,height=768");
-    if (!win) return;
-    const style = `<style>body{font-family:Arial,sans-serif;padding:24px}h1{margin:0 0 12px 0}.grid{width:100%;border-collapse:collapse;margin-top:12px}.grid th,.grid td{border:1px solid #e5e7eb;padding:8px;font-size:12px}.logo{height:40px;margin-bottom:12px}</style>`;
-    win.document.write(
-      `<html><head><title>Oferta de Lance - Consulmax</title>${style}</head><body><img src="/consulmax-logo.png" class="logo" onerror="this.style.display='none'"/><h1>Oferta de Lance</h1>${el.innerHTML}<script>window.print();setTimeout(()=>window.close(),300);</script></body></html>`
-    );
-    win.document.close();
-  };
-
   if (loading) return <div className="p-6 text-sm text-gray-600">Carregando carteira…</div>;
   if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
 
@@ -1000,7 +898,7 @@ const Carteira: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Carteira</h1>
-          <p className="text-gray-500 text-sm">Gerencie vendas, encarteiramento e oferta de lance.</p>
+          <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
         </div>
         <button
           onClick={() => setShowModal(true)}
@@ -1105,68 +1003,6 @@ const Carteira: React.FC = () => {
           ))}
         </section>
       )}
-
-      <section className="space-y-2">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-medium">Oferta de Lance</h2>
-          <div className="text-sm text-gray-500">(Data da Assembleia)</div>
-        </div>
-        <div className="flex items-center gap-3">
-          <input
-            type="date"
-            value={assembleia}
-            onChange={(e) => { setAssembleia(e.target.value); setOferta([]); }}
-            className="border rounded-xl px-3 py-2"
-          />
-          <button
-            onClick={listarOferta}
-            className="px-4 py-2 rounded-xl bg-gray-900 text-white hover:opacity-90"
-          >
-            Listar
-          </button>
-          <button
-            onClick={exportarOfertaPDF}
-            className="px-4 py-2 rounded-xl border hover:bg-gray-50"
-          >
-            Exportar PDF
-          </button>
-        </div>
-        <div id="relatorio-oferta" className="overflow-auto">
-          <table className="min-w-[880px] w-full border border-gray-200 rounded-xl">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-2">Adm</th>
-                <th className="text-left p-2">Grupo</th>
-                <th className="text-left p-2">Cota</th>
-                <th className="text-left p-2">Referência</th>
-                <th className="text-left p-2">Participantes</th>
-                <th className="text-left p-2">Mediana</th>
-                <th className="text-left p-2">Contemplados</th>
-              </tr>
-            </thead>
-            <tbody>
-              {oferta.length === 0 && (
-                <tr>
-                  <td className="p-3 text-gray-500" colSpan={7}>
-                    Nenhum grupo com assembleia nesta data.
-                  </td>
-                </tr>
-              )}
-              {oferta.map((o, idx) => (
-                <tr key={idx} className="border-t">
-                  <td className="p-2">{o.administradora}</td>
-                  <td className="p-2">{o.grupo}</td>
-                  <td className="p-2">{o.cota ?? "—"}</td>
-                  <td className="p-2">{o.referencia ?? "—"}</td>
-                  <td className="p-2">{o.participantes ?? "—"}</td>
-                  <td className="p-2">{o.mediana != null ? `${o.mediana}%` : "—"}</td>
-                  <td className="p-2">{o.contemplados ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
       {/* Modal Nova Venda */}
       {showModal && (

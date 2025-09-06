@@ -1,5 +1,5 @@
 // src/pages/Parametros.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import {
   Card, CardContent, CardHeader, CardTitle,
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
-  Building2, Factory, Link2, Pencil, Percent, Plus, RefreshCw, Save, Settings, Trash2, Upload, Users2,
+  Building2, Factory, Link2, Pencil, Percent, Plus, RefreshCw, Save, Settings, Trash2, Upload, Users2, Image as ImageIcon,
 } from "lucide-react";
 
 /** ======================== TIPOS ======================== */
@@ -92,6 +92,7 @@ export default function ParametrosPage() {
   const [settings, setSettings] = useState<SettingsT>({
     nome_corretora: "", slogan: "", logo_url: "", taxa_padrao: null, indice_atualizacao: "",
   });
+  const [logoUploading, setLogoUploading] = useState(false);
 
   // Administradoras
   const [administradoras, setAdministradoras] = useState<Administradora[]>([]);
@@ -165,6 +166,30 @@ export default function ParametrosPage() {
   }, []);
 
   /** ======================== AÇÕES ======================== */
+  // Upload de logo (Supabase Storage bucket 'logos')
+  const handleLogoUpload = async (file: File) => {
+    try {
+      setLogoUploading(true);
+      const ext = file.name.split(".").pop() || "png";
+      const path = `logo-${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("logos").upload(path, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+      if (upErr) throw upErr;
+
+      const { data: pub, error: pubErr } = supabase.storage.from("logos").getPublicUrl(path);
+      if (pubErr) throw pubErr;
+
+      setSettings((s) => ({ ...s, logo_url: pub?.publicUrl || "" }));
+      notify("Logo enviada com sucesso. Não esqueça de clicar em Salvar para persistir nas configurações.");
+    } catch (e: any) {
+      notify(`Falha no upload: ${e.message ?? e}`);
+    } finally {
+      setLogoUploading(false);
+    }
+  };
+
   // Gerais
   const saveSettings = async () => {
     try {
@@ -374,17 +399,47 @@ export default function ParametrosPage() {
 
               <div className="grid md:grid-cols-3 gap-4">
                 <div className="md:col-span-2">
-                  <Label>Logotipo (URL ou upload futuro)</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={settings.logo_url ?? ""}
-                      onChange={(e) => setSettings((s) => ({ ...s, logo_url: e.target.value }))}
-                      placeholder="https://.../logo.png"
-                    />
-                    <Button variant="outline" disabled>
-                      <Upload className="h-4 w-4 mr-2" /> Upload
-                    </Button>
+                  <Label>Logotipo</Label>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <Input
+                        value={settings.logo_url ?? ""}
+                        onChange={(e) => setSettings((s) => ({ ...s, logo_url: e.target.value }))}
+                        placeholder="https://.../logo.png"
+                      />
+                    </div>
+                    <div className="relative">
+                      <input
+                        id="logoFile"
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) handleLogoUpload(f);
+                        }}
+                      />
+                      <label htmlFor="logoFile">
+                        <Button variant="outline" type="button" disabled={logoUploading}>
+                          <Upload className="h-4 w-4 mr-2" />
+                          {logoUploading ? "Enviando..." : "Upload"}
+                        </Button>
+                      </label>
+                    </div>
                   </div>
+                  {settings.logo_url ? (
+                    <div className="mt-3 flex items-center gap-3">
+                      <div className="h-12 w-12 rounded bg-muted flex items-center justify-center overflow-hidden">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={settings.logo_url} alt="logo" className="h-12 w-12 object-contain" />
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{settings.logo_url}</div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 flex items-center gap-2 text-muted-foreground text-sm">
+                      <ImageIcon className="h-4 w-4" /> Nenhuma logo enviada.
+                    </div>
+                  )}
                 </div>
                 <div>
                   <Label>Taxa Padrão (%)</Label>
@@ -425,7 +480,7 @@ export default function ParametrosPage() {
                 <p className="text-sm text-muted-foreground">Cadastre, edite e ative/inative administradoras.</p>
                 <Dialog open={adminModalOpen} onOpenChange={setAdminModalOpen}>
                   <DialogTrigger asChild>
-                    <Button onClick={() => { startNewAdmin(); setAdminModalOpen(true); }}>
+                    <Button onClick={() => { setAdminEdit({ nome: "", ativa: true, email: "" }); setAdminModalOpen(true); }}>
                       <Plus className="h-4 w-4 mr-2" /> Nova Administradora
                     </Button>
                   </DialogTrigger>
@@ -522,7 +577,7 @@ export default function ParametrosPage() {
                 <p className="text-sm text-muted-foreground">Cadastre segmentos base (Imóvel, Automóvel, etc.).</p>
                 <Dialog open={segModalOpen} onOpenChange={setSegModalOpen}>
                   <DialogTrigger asChild>
-                    <Button onClick={() => { startNewSegmento(); setSegModalOpen(true); }}>
+                    <Button onClick={() => { setSegEdit({ nome: "", ativo: true }); setSegModalOpen(true); }}>
                       <Plus className="h-4 w-4 mr-2" /> Novo Segmento
                     </Button>
                   </DialogTrigger>
@@ -601,7 +656,10 @@ export default function ParametrosPage() {
                 <p className="text-sm text-muted-foreground">Vincule tabelas a um Segmento.</p>
                 <Dialog open={tabelaModalOpen} onOpenChange={setTabelaModalOpen}>
                   <DialogTrigger asChild>
-                    <Button onClick={() => { startNewTabela(); setTabelaModalOpen(true); }}>
+                    <Button onClick={() => { setTabelaEdit({
+                      segmento_id: "", nome_tabela: "", prazos: [],
+                      comissao_gestor: null, comissao_vendedor: null, fluxo_pagamento: "",
+                    }); setTabelaModalOpen(true); }}>
                       <Plus className="h-4 w-4 mr-2" /> Nova Tabela
                     </Button>
                   </DialogTrigger>
@@ -754,7 +812,14 @@ export default function ParametrosPage() {
                 <p className="text-sm text-muted-foreground">Permissões por guia e regra de comissionamento.</p>
                 <Dialog open={perfilModalOpen} onOpenChange={setPerfilModalOpen}>
                   <DialogTrigger asChild>
-                    <Button onClick={() => { startNewPerfil(); setPerfilModalOpen(true); }}>
+                    <Button onClick={() => { setPerfilEdit({
+                      perfil: "",
+                      permissoes: {
+                        Leads: true, Vendedores: true, Oportunidades: true, Carteira: true,
+                        "Gestão de Grupos": true, "Parâmetros/Admin": true,
+                      },
+                      comissionamento: { base: "credito", percentual: 2.5 },
+                    }); setPerfilModalOpen(true); }}>
                       <Plus className="h-4 w-4 mr-2" /> Novo Perfil/Política
                     </Button>
                   </DialogTrigger>

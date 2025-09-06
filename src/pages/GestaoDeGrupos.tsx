@@ -146,9 +146,20 @@ function normalizeAdmin(raw?: string | null): string {
   if (cleaned.includes("hs")) return "HS";
   return (raw ?? "").toString().trim();
 }
+
+/** 
+ * CORREÇÃO IMPORTANTE:
+ * Pega só o número-base do grupo (antes de "/" ou "-" ou espaço).
+ * Ex.: "7263/5" -> "7263"; "9954-01" -> "9954"; "1234 56" -> "1234".
+ */
 function normalizeGroupDigits(g?: string | number | null): string {
-  return String(g ?? "").replace(/\D/g, "");
+  const s = String(g ?? "").trim();
+  const first = s.split(/[\/\-\s]/)[0] || s;         // bloco antes de /, -, espaço
+  const m = first.match(/\d+/);                      // primeira sequência de dígitos
+  if (m) return m[0];
+  return s.replace(/\D/g, "");                       // fallback: remove não-dígitos
 }
+
 function keyDigits(adm?: string | null, grp?: string | number | null) {
   return `${normalizeAdmin(adm)}::${normalizeGroupDigits(grp)}`;
 }
@@ -716,15 +727,9 @@ function OverlayGruposImportados({
                           <Input type="number" step="0.01" placeholder="máx" value={r.faixa_max ?? ""} onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))} />
                         </div>
                       </td>
-                      <td className="p-2 text-center">
-                        <Input type="date" value={r.prox_vencimento ?? ""} onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)} />
-                      </td>
-                      <td className="p-2 text-center">
-                        <Input type="date" value={r.prox_sorteio ?? ""} onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)} />
-                      </td>
-                      <td className="p-2 text-center">
-                        <Input type="date" value={r.prox_assembleia ?? ""} onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)} />
-                      </td>
+                      <td className="p-2 text-center"><Input type="date" value={r.prox_vencimento ?? ""} onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)} /></td>
+                      <td className="p-2 text-center"><Input type="date" value={r.prox_sorteio ?? ""} onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)} /></td>
+                      <td className="p-2 text-center"><Input type="date" value={r.prox_assembleia ?? ""} onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)} /></td>
                     </tr>
                   ))}
                 </tbody>

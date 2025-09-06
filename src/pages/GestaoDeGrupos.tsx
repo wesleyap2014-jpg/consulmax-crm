@@ -93,7 +93,7 @@ function withinLLMedianFilter(mediana: number | null | undefined, alvo: number |
   return mediana >= min && mediana <= max;
 }
 
-/** Converte qualquer coisa (string Date, ISO, 'DD/MM/AAAA', timestamp) em 'YYYY-MM-DD' (UTC). */
+/** Converte qualquer coisa em 'YYYY-MM-DD' (UTC). */
 function toYMD(d: string | Date | null | undefined): string | null {
   if (!d) return null;
   const s = typeof d === "string" ? d.trim() : (d as Date).toISOString();
@@ -131,7 +131,7 @@ function toPct4(v: number | null | undefined): string {
   return `${str}%`;
 }
 
-/* ===== normalizações de nome/chave ===== */
+/* ===== normalizações ===== */
 
 function stripAccents(s: string) {
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -146,20 +146,14 @@ function normalizeAdmin(raw?: string | null): string {
   if (cleaned.includes("hs")) return "HS";
   return (raw ?? "").toString().trim();
 }
-
-/** 
- * CORREÇÃO IMPORTANTE:
- * Pega só o número-base do grupo (antes de "/" ou "-" ou espaço).
- * Ex.: "7263/5" -> "7263"; "9954-01" -> "9954"; "1234 56" -> "1234".
- */
+/** pega somente o número-base do grupo (antes de /, -, espaço) */
 function normalizeGroupDigits(g?: string | number | null): string {
   const s = String(g ?? "").trim();
-  const first = s.split(/[\/\-\s]/)[0] || s;         // bloco antes de /, -, espaço
-  const m = first.match(/\d+/);                      // primeira sequência de dígitos
+  const first = s.split(/[\/\-\s]/)[0] || s;
+  const m = first.match(/\d+/);
   if (m) return m[0];
-  return s.replace(/\D/g, "");                       // fallback: remove não-dígitos
+  return s.replace(/\D/g, "");
 }
-
 function keyDigits(adm?: string | null, grp?: string | number | null) {
   return `${normalizeAdmin(adm)}::${normalizeGroupDigits(grp)}`;
 }
@@ -168,7 +162,7 @@ function keyRaw(adm?: string | null, grp?: string | number | null) {
 }
 
 /* =========================================================
-   REFERÊNCIA POR BILHETES (para a grade principal)
+   REFERÊNCIA POR BILHETES (para grade principal)
    ========================================================= */
 
 function referenciaPorAdministradora(params: {
@@ -289,8 +283,7 @@ function OverlayLoteria({
       });
       onSaved({ ...form, data_sorteio: data });
       onClose();
-    } catch (e) {
-      console.error(e);
+    } catch {
       alert("Erro ao salvar o resultado da Loteria.");
     } finally {
       setLoading(false);
@@ -383,7 +376,6 @@ function OverlayAssembleias({
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
-  const todayYMD = toYMD(new Date())!;
   const [date, setDate] = useState<string>("");
   const [adminSel, setAdminSel] = useState<string>("");
   const [nextDue, setNextDue] = useState<string>("");
@@ -425,17 +417,12 @@ function OverlayAssembleias({
     setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
   };
 
-  const dataPassadaOk = Boolean(date) && toYMD(date)! <= todayYMD;
-  const datasFuturasOk =
-    (!nextDue || toYMD(nextDue)! > todayYMD) &&
-    (!nextDraw || toYMD(nextDraw)! > todayYMD) &&
-    (!nextAsm || toYMD(nextAsm)! > todayYMD);
-
-  const podeSalvar = dataPassadaOk && datasFuturasOk && linhas.length > 0;
+  // pode salvar qualquer data (passada ou futura)
+  const podeSalvar = Boolean(date) && linhas.length > 0;
 
   const handleSave = async () => {
     if (!podeSalvar) {
-      alert("Verifique as datas, administradora e os grupos listados.");
+      alert("Verifique data, administradora e os grupos listados.");
       return;
     }
     try {
@@ -523,8 +510,7 @@ function OverlayAssembleias({
             <CardContent className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div className="md:col-span-2">
                 <Label>Ocorrida em</Label>
-                <Input type="date" max={toYMD(new Date())!} value={date} onChange={(e) => setDate(e.target.value)} />
-                {!dataPassadaOk && date && <p className="text-xs text-red-600 mt-1">Use uma data passada.</p>}
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </div>
               <div className="md:col-span-3">
                 <Label>Administradora (opcional)</Label>
@@ -535,9 +521,7 @@ function OverlayAssembleias({
                 >
                   <option value="">Todas</option>
                   {administradoras.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
+                    <option key={a} value={a}>{a}</option>
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground mt-1">Selecione para reduzir a lista (opcional).</p>
@@ -550,20 +534,9 @@ function OverlayAssembleias({
               <CardTitle className="text-base">Informe os dados da próxima assembleia</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <Label>Próximo Vencimento</Label>
-                <Input type="date" min={toYMD(new Date())!} value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
-              </div>
-              <div>
-                <Label>Próximo Sorteio</Label>
-                <Input type="date" min={toYMD(new Date())!} value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} />
-              </div>
-              <div>
-                <Label>Próxima Assembleia</Label>
-                <Input type="date" min={toYMD(new Date())!} value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} />
-              </div>
-
-              {!datasFuturasOk && <div className="md:col-span-3 text-xs text-red-600">As datas aqui devem ser futuras.</div>}
+              <div><Label>Próximo Vencimento</Label><Input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} /></div>
+              <div><Label>Próximo Sorteio</Label><Input type="date" value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} /></div>
+              <div><Label>Próxima Assembleia</Label><Input type="date" value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} /></div>
             </CardContent>
           </Card>
 
@@ -751,7 +724,7 @@ function OverlayGruposImportados({
 }
 
 /* =========================================================
-   OVERLAY: OFERTA DE LANCE (com fallback results)
+   OVERLAY: OFERTA DE LANCE (usa assembly_results na data)
    ========================================================= */
 
 type OfertaRow = {
@@ -762,11 +735,11 @@ type OfertaRow = {
   participantes: number | null;
   mediana: number | null;
   contemplados: number | null;
-  observacao: string | null; // se existir no schema
+  observacao: string | null;
 };
 
 async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
-  // 1) Fonte preferencial: view normalizada
+  // 1) Fonte preferencial para Referência/participantes/mediana/contemplados
   const { data: vn, error: vErr } = await supabase
     .from("gestao_grupos_norm")
     .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
@@ -799,7 +772,7 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
       gmapRaw.set(keyRaw(r.adm_norm, r.grupo_norm), info);
     });
   } else {
-    // 2) Fallback: assemblies + assembly_results (+ groups)
+    // 2) Usar assembly_results (data exata) — o que você lançou no modal
     const { data: asm, error: asmErr } = await supabase
       .from("assemblies")
       .select("id")
@@ -811,49 +784,54 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     if (assemblyId) {
       const { data: res, error: resErr } = await supabase
         .from("assembly_results")
-        .select("group_id, median, fixed25_deliveries, fixed50_deliveries, ll_deliveries, groups!inner(administradora,codigo,participantes)")
+        .select("group_id, median, ll_high, ll_low, fixed25_deliveries, fixed50_deliveries, ll_deliveries, groups!inner(administradora,codigo,participantes)")
         .eq("assembly_id", assemblyId);
       if (resErr) throw resErr;
 
       (res || []).forEach((r: any) => {
         const adm = r.groups?.administradora ?? "";
         const grp = r.groups?.codigo ?? "";
+        const m = r?.median ?? calcMediana(r?.ll_high ?? null, r?.ll_low ?? null);
         const contemplados = (r.fixed25_deliveries || 0) + (r.fixed50_deliveries || 0) + (r.ll_deliveries || 0);
 
         const info: Info = {
-          referencia: null, // referência oficial só vem da view
+          referencia: null, // referência oficial só na view
           participantes: r.groups?.participantes ?? null,
-          mediana: r.median ?? null,
+          mediana: m ?? null,
           contemplados,
           admSrc: adm,
           grpSrc: grp,
         };
-        const kd = keyDigits(adm, grp);
-        gmapDigits.set(kd, info);
+        gmapDigits.set(keyDigits(adm, grp), info);
         gmapRaw.set(keyRaw(adm, grp), info);
       });
     }
 
-    // incluir grupos que têm prox_assembleia=data, mesmo sem results
+    // garantir presença dos grupos da data (mesmo sem results)
     const { data: gg, error: gErr } = await supabase
       .from("groups")
       .select("administradora,codigo,participantes")
       .eq("prox_assembleia", dateYMD);
     if (gErr) throw gErr;
-
     (gg || []).forEach((r: any) => {
       const kd = keyDigits(r.administradora, r.codigo);
       if (!gmapDigits.has(kd)) {
-        const info: Info = {
+        gmapDigits.set(kd, {
           referencia: null,
           participantes: r?.participantes ?? null,
           mediana: null,
           contemplados: null,
           admSrc: r?.administradora ?? "",
           grpSrc: r?.codigo ?? "",
-        };
-        gmapDigits.set(kd, info);
-        gmapRaw.set(keyRaw(r.administradora, r.codigo), info);
+        });
+        gmapRaw.set(keyRaw(r.administradora, r.codigo), {
+          referencia: null,
+          participantes: r?.participantes ?? null,
+          mediana: null,
+          contemplados: null,
+          admSrc: r?.administradora ?? "",
+          grpSrc: r?.codigo ?? "",
+        });
       }
     });
   }
@@ -893,13 +871,13 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     const kd = keyDigits(v.administradora, v.grupo);
     const kr = keyRaw(v.administradora, v.grupo);
     const info = gmapDigits.get(kd) ?? gmapRaw.get(kr);
-    if (!info) continue; // venda não pertence a um grupo da assembleia na data
+    if (!info) continue; // não pertence aos grupos dessa assembleia
 
     out.push({
       administradora: normalizeAdmin(v.administradora),
       grupo: String(v.grupo),
       cota: v.cota ?? null,
-      referencia: info.referencia, // da view; no fallback pode ser null
+      referencia: info.referencia,
       participantes: info.participantes,
       mediana: info.mediana,
       contemplados: info.contemplados,
@@ -908,7 +886,7 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     touched.add(kd);
   }
 
-  // 4) Linhas “em branco” (sem venda)
+  // 4) Completar com linhas sem venda (para visual)
   for (const [kd, info] of gmapDigits.entries()) {
     if (touched.has(kd)) continue;
     out.push({
@@ -932,7 +910,6 @@ async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
     return String(a.cota ?? "").localeCompare(String(b.cota ?? ""), "pt-BR", { numeric: true });
   });
 
-  console.log("[Oferta] data:", dateYMD, "grupos:", gmapDigits.size, "linhas:", out.length, "vendas:", vendas.length);
   return out;
 }
 
@@ -1274,23 +1251,15 @@ export default function GestaoDeGrupos() {
 
   useEffect(() => {
     carregar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // === sincronia a partir da Carteira (Ponto 1 & 2) ===
+  // sincronia
   const handleSync = async () => {
     let importedCount = 0;
     try {
       const { data, error } = await supabase.rpc("sync_groups_from_carteira_safe");
-      if (!error) {
-        importedCount = typeof data === "number" ? data : (data as any)?.imported ?? 0;
-      } else {
-        console.warn("[sync_groups_from_carteira_safe] aviso:", error);
-      }
-    } catch (e) {
-      console.warn("sync_groups_from_carteira_safe falhou; tratando como 0 importados.", e);
-    }
-
+      if (!error) importedCount = typeof data === "number" ? data : (data as any)?.imported ?? 0;
+    } catch {}
     alert(`${importedCount} grupos importados a partir da Carteira.`);
 
     const { data: novos, error: novosErr } = await supabase
@@ -1301,7 +1270,6 @@ export default function GestaoDeGrupos() {
       .order("codigo", { ascending: true });
 
     if (novosErr) {
-      console.error(novosErr);
       await carregar();
       return;
     }
@@ -1385,7 +1353,7 @@ export default function GestaoDeGrupos() {
             </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Informe resultados por data (passada). Atualizaremos próximas datas.
+            Informe resultados por data. Atualizaremos próximas datas.
           </CardContent>
         </Card>
 
@@ -1424,20 +1392,26 @@ export default function GestaoDeGrupos() {
         </CardContent>
       </Card>
 
-      {/* Editor / Criador de Grupo */}
-      {(criando || editando) && (
-        <Card>
-          <CardHeader><CardTitle className="text-base">{criando ? "Adicionar Grupo" : `Editar Grupo (${editando?.codigo})`}</CardTitle></CardHeader>
-          <CardContent>
-            <EditorGrupo group={editando} onClose={() => { setCriando(false); setEditando(null); }} onSaved={async () => await carregar()} />
-          </CardContent>
-        </Card>
-      )}
+      {/* Relação de Grupos */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold">Relação de Grupos</h3>
+      </div>
 
-      {/* Tabela principal */}
+      {/* Tabela principal com ressaltes */}
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
+            {/* Linha de agrupamento (ressaltes) */}
+            <tr className="text-xs">
+              <th className="p-2 text-left align-bottom" colSpan={5}></th>
+              <th className="p-2 text-center bg-muted/40" colSpan={1}></th>
+              <th className="p-2 text-center bg-muted/20" colSpan={2}>25%</th>
+              <th className="p-2 text-center bg-muted/20" colSpan={2}>50%</th>
+              <th className="p-2 text-center bg-muted/20" colSpan={5}>LL</th>
+              <th className="p-2 text-center" colSpan={5}></th>
+              <th className="p-2 text-center" colSpan={2}></th>
+            </tr>
+            {/* Cabeçalho normal */}
             <tr>
               <th className="p-2 text-left">ADMINISTRADORA</th>
               <th className="p-2 text-left">SEGMENTO</th>

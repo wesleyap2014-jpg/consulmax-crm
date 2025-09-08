@@ -2,14 +2,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
+/** Tipos */
 type Lead = {
   id: string;
   nome: string;
-  telefone?: string;
-  email?: string;
-  origem?: string;
-  descricao?: string;
-  owner_id?: string;
+  telefone?: string | null;
+  email?: string | null;
+  origem?: string | null;
+  descricao?: string | null;
+  owner_id?: string | null;
   created_at: string;
 };
 
@@ -20,14 +21,28 @@ type UserProfile = {
 };
 
 export default function LeadsPage() {
+  const PAGE_SIZE = 10;
+
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [users, setUsers] = useState<UserProfile[]>([]); // para admin reatribuir
-  const [form, setForm] = useState<Partial<Lead>>({ origem: "Site" });
+  const [users, setUsers] = useState<UserProfile[]>([]); // lista p/ admin reatribuir
+
+  // paginação
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState<number>(0);
 
   const isAdmin = me?.role === "admin";
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)),
+    [total]
+  );
+  const showingFrom = useMemo(() => (page - 1) * PAGE_SIZE + 1, [page]);
+  const showingTo = useMemo(
+    () => Math.min(page * PAGE_SIZE, total || 0),
+    [page, total]
+  );
 
   // 1) pega usuário logado + role do JWT (app_metadata.role)
   useEffect(() => {
@@ -39,18 +54,32 @@ export default function LeadsPage() {
     })();
   }, []);
 
-  // 2) carrega leads (RLS faz o filtro automaticamente)
-  async function loadLeads() {
-    const { data, error } = await supabase
-      .from("leads")
-      .select("id,nome,telefone,email,origem,descricao,owner_id,created_at")
-      .order("created_at", { ascending: false });
+  // 2) carrega leads com paginação (RLS filtra automaticamente)
+  async function loadLeads(targetPage = 1) {
+    const from = (targetPage - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
 
-    if (error) {
-      alert("Erro ao carregar leads: " + error.message);
-      return;
+    setLoading(true);
+    try {
+      const { data, error, count } = await supabase
+        .from("leads")
+        .select(
+          "id,nome,telefone,email,origem,descricao,owner_id,created_at",
+          { count: "exact" }
+        )
+        .order("created_at", { ascending: false })
+        .range(from, to);
+
+      if (error) {
+        alert("Erro ao carregar leads: " + error.message);
+        return;
+      }
+      setLeads(data || []);
+      setTotal(count || 0);
+      setPage(targetPage);
+    } finally {
+      setLoading(false);
     }
-    setLeads(data || []);
   }
 
   // 3) admins: carrega lista de usuários para reatribuição
@@ -62,9 +91,11 @@ export default function LeadsPage() {
     if (!error && data) setUsers(data as any);
   }
 
+  // carregar na entrada e quando o usuário (RLS) estiver pronto
   useEffect(() => {
-    loadLeads();
-  }, []);
+    loadLeads(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.id]);
 
   useEffect(() => {
     if (isAdmin) loadUsers();
@@ -94,7 +125,7 @@ export default function LeadsPage() {
         return;
       }
       setForm({ origem: "Site" });
-      await loadLeads();
+      await loadLeads(1); // volta para a primeira página (mais recentes)
       alert("Lead criado com sucesso!");
     } finally {
       setLoading(false);
@@ -109,7 +140,7 @@ export default function LeadsPage() {
     }
     setLoading(true);
     try {
-      const { data, error } = await supabase.rpc("reassign_lead", {
+      const { error } = await supabase.rpc("reassign_lead", {
         p_lead_id: leadId,
         p_new_owner: newOwnerId,
       });
@@ -117,14 +148,17 @@ export default function LeadsPage() {
         alert("Erro ao reatribuir: " + error.message);
         return;
       }
-      await loadLeads();
+      await loadLeads(page); // mantém página atual
       alert("Lead reatribuído!");
     } finally {
       setLoading(false);
     }
   }
 
-  // UI simples (sem Tailwind)
+  // estado do formulário
+  const [form, setForm] = useState<Partial<Lead>>({ origem: "Site" });
+
+  // UI (estilo simples, compatível com o que você já tem)
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto" }}>
       <h1 style={{ margin: "16px 0" }}>Leads</h1>
@@ -176,6 +210,7 @@ export default function LeadsPage() {
             <option value="Site">Site</option>
             <option value="Redes Sociais">Redes Sociais</option>
             <option value="Indicação">Indicação</option>
+            <option value="Whatsapp">Whatsapp</option>
           </select>
 
           <input
@@ -200,9 +235,21 @@ export default function LeadsPage() {
           boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
         }}
       >
-        <h3 style={{ margin: "0 0 12px 0" }}>
-          {isAdmin ? "Todos os Leads" : "Meus Leads"}
-        </h3>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "space-between",
+            marginBottom: 12,
+          }}
+        >
+          <h3 style={{ margin: 0 }}>{isAdmin ? "Todos os Leads" : "Meus Leads"}</h3>
+          <small style={{ color: "#64748b" }}>
+            {total > 0
+              ? `Mostrando ${showingFrom}-${showingTo} de ${total}`
+              : "Nenhum lead"}
+          </small>
+        </div>
 
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
@@ -253,19 +300,48 @@ export default function LeadsPage() {
               {leads.length === 0 && (
                 <tr>
                   <td style={td} colSpan={isAdmin ? 6 : 4}>
-                    Nenhum lead encontrado.
+                    {loading ? "Carregando..." : "Nenhum lead encontrado."}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {/* Controles de paginação */}
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            justifyContent: "flex-end",
+            marginTop: 12,
+          }}
+        >
+          <button
+            style={{ ...btnSecondary, opacity: page <= 1 ? 0.6 : 1 }}
+            disabled={page <= 1 || loading}
+            onClick={() => loadLeads(page - 1)}
+          >
+            ‹ Anterior
+          </button>
+          <span style={{ fontSize: 12, color: "#475569" }}>
+            Página {page} de {totalPages}
+          </span>
+          <button
+            style={{ ...btnSecondary, opacity: page >= totalPages ? 0.6 : 1 }}
+            disabled={page >= totalPages || loading}
+            onClick={() => loadLeads(page + 1)}
+          >
+            Próxima ›
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-// estilos simples
+/** Estilos simples */
 const input: React.CSSProperties = {
   padding: 10,
   borderRadius: 10,
@@ -280,6 +356,16 @@ const btn: React.CSSProperties = {
   color: "#fff",
   border: 0,
   fontWeight: 700,
+  cursor: "pointer",
+};
+
+const btnSecondary: React.CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 10,
+  background: "#f1f5f9",
+  color: "#0f172a",
+  border: "1px solid #e2e8f0",
+  fontWeight: 600,
   cursor: "pointer",
 };
 

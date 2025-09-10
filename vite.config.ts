@@ -1,3 +1,4 @@
+// vite.config.ts
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
@@ -6,8 +7,10 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'), // agora o Vite entende "@/..."
+      '@': path.resolve(__dirname, 'src'), // permite importar com "@/..."
     },
   },
-  build: { outDir: 'dist' },
+  build: {
+    outDir: 'dist', // saída padrão do build
+  },
 })

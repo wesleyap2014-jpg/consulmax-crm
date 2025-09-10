@@ -20,6 +20,15 @@ type UserProfile = {
   role: "admin" | "vendedor" | "viewer" | "operacoes";
 };
 
+const ORIGENS = [
+  "Site",
+  "Redes Sociais",
+  "Indicação",
+  "Whatsapp",
+  "Parceria",
+  "Relacionamento",
+] as const;
+
 export default function LeadsPage() {
   const PAGE_SIZE = 10;
 
@@ -40,6 +49,8 @@ export default function LeadsPage() {
   // modal de edição
   const [editing, setEditing] = useState<Lead | null>(null);
   const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
 
   const isAdmin = me?.role === "admin";
   const totalPages = useMemo(
@@ -83,7 +94,6 @@ export default function LeadsPage() {
         .order("created_at", { ascending: false });
 
       if (term) {
-        // busca por nome (case-insensitive)
         query = query.ilike("nome", `%${term}%`);
       }
 
@@ -180,18 +190,27 @@ export default function LeadsPage() {
     }
   }
 
-  // Abrir modal de edição
+  // Abrir/fechar modal de edição
   function openEditModal(lead: Lead) {
     setEditing(lead);
     setEditName(lead.nome || "");
+    setEditPhone(lead.telefone || "");
+    setEditEmail(lead.email || "");
   }
   function closeEditModal() {
     setEditing(null);
     setEditName("");
+    setEditPhone("");
+    setEditEmail("");
   }
+
+  // Salvar edição (nome, telefone, e-mail)
   async function saveEdit() {
     if (!editing) return;
     const novoNome = editName.trim();
+    const novoTelefone = editPhone.trim() || null;
+    const novoEmail = editEmail.trim() || null;
+
     if (!novoNome) {
       alert("O nome não pode ficar em branco.");
       return;
@@ -200,7 +219,7 @@ export default function LeadsPage() {
     try {
       const { error } = await supabase
         .from("leads")
-        .update({ nome: novoNome })
+        .update({ nome: novoNome, telefone: novoTelefone, email: novoEmail })
         .eq("id", editing.id);
       if (error) {
         alert("Não foi possível salvar: " + error.message);
@@ -249,10 +268,11 @@ export default function LeadsPage() {
             onChange={(e) => setForm((s) => ({ ...s, origem: e.target.value }))}
             style={input}
           >
-            <option value="Site">Site</option>
-            <option value="Redes Sociais">Redes Sociais</option>
-            <option value="Indicação">Indicação</option>
-            <option value="Whatsapp">Whatsapp</option>
+            {ORIGENS.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
           </select>
 
           <input
@@ -421,6 +441,26 @@ export default function LeadsPage() {
                   autoFocus
                 />
               </label>
+
+              <label style={label}>
+                Telefone
+                <input
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  style={input}
+                />
+              </label>
+
+              <label style={label}>
+                E-mail
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  style={input}
+                />
+              </label>
+
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button style={btnSecondary} onClick={closeEditModal} disabled={loading}>
                   Cancelar

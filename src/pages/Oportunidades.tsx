@@ -58,8 +58,8 @@ const uiToDB: Record<StageUI, EstagioDB> = {
 const dbToUI: Partial<Record<string, StageUI>> = {
   Novo: "novo",
   Qualificando: "qualificando",
-  Qualificação: "qualificando", // legado
-  Qualificacao: "qualificando", // legado
+  Qualificação: "qualificando",
+  Qualificacao: "qualificando",
   Proposta: "proposta",
   Negociação: "negociacao",
   Negociacao: "negociacao",
@@ -92,11 +92,9 @@ function onlyDigits(s?: string | null) {
 function normalizePhoneToWa(telefone?: string | null) {
   const d = onlyDigits(telefone);
   if (!d) return null;
-  // Se já vier com DDI 55 (13 ou 12 dígitos), mantém. Se vier 10/11 (BR sem DDI), prefixa 55.
-  if (d.startsWith("55")) return d;
-  if (d.length >= 10 && d.length <= 11) return "55" + d;
-  // fallback: se tiver 12/13 dígitos sem 55, ainda prefixa 55
-  if (d.length >= 12 && !d.startsWith("55")) return "55" + d;
+  if (d.startsWith("55")) return d; // já tem DDI
+  if (d.length >= 10 && d.length <= 11) return "55" + d; // BR sem DDI
+  if (d.length >= 12 && !d.startsWith("55")) return "55" + d; // fallback
   return null;
 }
 function formatPhoneBR(telefone?: string | null) {
@@ -170,7 +168,7 @@ export default function Oportunidades() {
     return base;
   }, [lista]);
 
-  /** Busca (lead | vendedor | estágio) */
+  /** Busca (lead | vendedor | estágio | telefone) */
   const visiveis = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return lista;
@@ -299,6 +297,52 @@ export default function Oportunidades() {
     closeEdit();
   }
 
+  /** ------------- UI: Ícone e Botão WhatsApp ------------- */
+
+  const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill={muted ? "none" : "currentColor"}
+      stroke={muted ? "currentColor" : "none"}
+      strokeWidth="1.2"
+      style={{ display: "inline-block", verticalAlign: "text-bottom" }}
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path d="M12.04 0C5.44 0 .1 5.34.1 11.94c0 2.06.54 4.08 1.57 5.87L0 24l6.39-1.8a12 12 0 0 0 5.65 1.4C18.64 23.6 24 18.26 24 11.96 24 5.36 18.64 0 12.04 0Zm0 21.2c-1.77 0-3.48-.46-4.97-1.34l-.36-.21-3.78 1.06 1.05-3.69-.22-.38A9.17 9.17 0 1 1 21.2 11.96c0 5.06-4.1 9.24-9.16 9.24Zm5.18-6.91c-.29-.15-1.72-.85-1.99-.95-.27-.1-.46-.15-.66.15-.19.29-.76.94-.93 1.13-.17.19-.34.21-.63.07-.29-.15-1.22-.44-2.33-1.42-.86-.76-1.44-1.69-1.61-1.98-.17-.29-.02-.45.13-.6.13-.12.29-.34.43-.51.14-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.57-.9-2.15-.24-.57-.49-.49-.66-.5h-.57c-.19 0-.5.07-.76.37-.26.3-1 1-1 2.41s1.03 2.8 1.17 3.01c.14.2 2 3.18 4.84 4.34 2.39.94 2.88.76 3.4.71.52-.05 1.68-.69 1.93-1.36.25-.67.25-1.23.17-1.36-.07-.13-.26-.2-.55-.35Z" />
+    </svg>
+  );
+
+  const WaButton: React.FC<{ phone?: string | null; name?: string }> = ({ phone, name }) => {
+    const wa = normalizePhoneToWa(phone);
+    const [hover, setHover] = React.useState(false);
+
+    if (!wa) {
+      return (
+        <span title="Sem telefone" style={{ ...waBtn, ...waBtnDisabled }}>
+          <WhatsappIcon muted />
+        </span>
+      );
+    }
+
+    return (
+      <a
+        href={`https://wa.me/${wa}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`Conversar com ${name || "o lead"} no WhatsApp`}
+        aria-label={`Abrir WhatsApp para ${name || "lead"}`}
+        style={{ ...waBtn, ...(hover ? waBtnHover : {}) }}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+      >
+        <WhatsappIcon />
+      </a>
+    );
+  };
+
   /** ------------- UI ------------- */
 
   // Cards KPI
@@ -338,24 +382,6 @@ export default function Oportunidades() {
     );
   };
 
-  const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill={muted ? "none" : "currentColor"}
-      stroke={muted ? "#94a3b8" : "currentColor"}
-      strokeWidth="1.5"
-      style={{ display: "inline-block", verticalAlign: "text-bottom" }}
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <path d="M20.52 3.48A11.89 11.89 0 0 0 12.07 0C5.61 0 .36 5.26.36 11.74c0 2.07.53 4.08 1.55 5.87L0 24l6.58-1.88a11.72 11.72 0 0 0 5.49 1.38h.01c6.46 0 11.71-5.26 11.71-11.74 0-3.13-1.22-6.07-3.27-8.28Z" fill="none"/>
-      <path d="M19.06 4.93A9.63 9.63 0 0 1 21.2 11.8c0 5.33-4.34 9.64-9.67 9.64-1.61 0-3.19-.41-4.6-1.2l-.33-.18-3.83 1.09 1.11-3.72-.21-.34A9.56 9.56 0 1 1 19.06 4.93Z" />
-      <path d="M8.72 7.78c-.2-.45-.41-.46-.6-.47H7.56c-.19 0-.5.07-.76.37-.26.3-1 1-1 2.42s1.03 2.81 1.17 3.01c.14.2 2 3.19 4.85 4.35 2.39.94 2.88.76 3.4.71.52-.05 1.68-.69 1.93-1.36.25-.67.25-1.24.18-1.36-.07-.12-.26-.19-.55-.34-.29-.15-1.68-.83-1.94-.92-.26-.1-.45-.14-.64.14-.19.29-.74.92-.91 1.11-.17.19-.34.22-.62.08-.29-.15-1.22-.45-2.33-1.43-.86-.76-1.44-1.7-1.61-1.99-.17-.29-.02-.45.13-.6.13-.12.29-.34.43-.51.14-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.58-.9-2.16Z" />
-    </svg>
-  );
-
   const ListaOportunidades = () => {
     // Esconde fechados (ganho/perdido)
     const rows = visiveis.filter((o) => {
@@ -383,28 +409,13 @@ export default function Oportunidades() {
             <tbody>
               {rows.map((o) => {
                 const lead = leads.find((l) => l.id === o.lead_id);
-                const wa = normalizePhoneToWa(lead?.telefone);
-                const link = wa ? `https://wa.me/${wa}` : undefined;
-
                 return (
                   <tr key={o.id}>
                     <td style={td}>
-                      <span>{lead?.nome || "-"}</span>{" "}
-                      {link ? (
-                        <a
-                          href={link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={`Conversar com ${lead?.nome} no WhatsApp`}
-                          style={{ color: "#1E293F", textDecoration: "none", marginLeft: 6 }}
-                        >
-                          <WhatsappIcon />
-                        </a>
-                      ) : (
-                        <span title="Sem telefone" style={{ marginLeft: 6, opacity: 0.6 }}>
-                          <WhatsappIcon muted />
-                        </span>
-                      )}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>{lead?.nome || "-"}</span>
+                        <WaButton phone={lead?.telefone} name={lead?.nome || undefined} />
+                      </div>
                     </td>
                     <td style={td}>
                       {vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}
@@ -456,7 +467,7 @@ export default function Oportunidades() {
           padding: 12,
           borderRadius: 12,
           boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-          marginBottom: 16, // distância entre busca e estágios
+          marginBottom: 16,
           display: "flex",
           gap: 12,
           alignItems: "center",
@@ -773,6 +784,32 @@ const btnGhost: React.CSSProperties = {
   border: "1px solid #e5e7eb",
   cursor: "pointer",
   fontWeight: 700,
+};
+/* WhatsApp button styles */
+const waBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 28,
+  height: 28,
+  borderRadius: 8,
+  border: "1px solid #e5e7eb",
+  background: "#fff",
+  color: "#64748b",
+  textDecoration: "none",
+  cursor: "pointer",
+  transition: "all .15s ease-in-out",
+};
+const waBtnHover: React.CSSProperties = {
+  background: "#f8fafc",
+  borderColor: "#cbd5e1",
+  color: "#1E293F",
+  transform: "translateY(-1px)",
+  boxShadow: "0 2px 6px rgba(0,0,0,.06)",
+};
+const waBtnDisabled: React.CSSProperties = {
+  opacity: 0.45,
+  cursor: "not-allowed",
 };
 const modalBackdrop: React.CSSProperties = {
   position: "fixed",

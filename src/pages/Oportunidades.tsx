@@ -3,7 +3,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /** ------------ Tipos ------------ */
-type Lead = { id: string; nome: string; owner_id?: string | null; telefone?: string | null; email?: string | null; origem?: string | null };
+type Lead = {
+  id: string;
+  nome: string;
+  owner_id?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+  origem?: string | null;
+};
 type Vendedor = { auth_user_id: string; nome: string };
 
 type EstagioDB =
@@ -42,7 +49,14 @@ type AuditRow = {
 type KpiRow = { stage: string; qtd: number; total: number };
 
 /** ------------ Helpers ------------ */
-const segmentos = ["Automóvel", "Imóvel", "Motocicleta", "Serviços", "Pesados", "Imóvel Estendido"] as const;
+const segmentos = [
+  "Automóvel",
+  "Imóvel",
+  "Motocicleta",
+  "Serviços",
+  "Pesados",
+  "Imóvel Estendido",
+] as const;
 
 const fmtBRL = (n: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
@@ -89,7 +103,7 @@ export default function Oportunidades() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyData, setHistoryData] = useState<AuditRow[]>([]);
 
-  // Nova oportunidade (overlay separado)
+  // Nova oportunidade (overlay)
   const [createOpen, setCreateOpen] = useState(false);
   const [leadId, setLeadId] = useState("");
   const [vendId, setVendId] = useState("");
@@ -101,18 +115,17 @@ export default function Oportunidades() {
   const [expectedDate, setExpectedDate] = useState<string>(""); // dd/mm/aaaa
   const [loadingCreate, setLoadingCreate] = useState(false);
 
-  /** Carregar dados essenciais (robusto a falhas) */
+  /** Carregar dados essenciais (via RPCs estáveis) */
   useEffect(() => {
     (async () => {
       // Leads (com telefone/email/origem se existirem)
-      const { data: l, error: el } = await supabase
+      const { data: l } = await supabase
         .from("leads")
         .select("id, nome, owner_id, telefone, email, origem")
         .order("created_at", { ascending: false });
-      if (el) console.error("Leads error:", el);
       setLeads(l || []);
 
-      // Vendedores via RPC; se falhar, tentar public.users
+      // Vendedores via RPC; se falhar, tenta public.users
       let vend: Vendedor[] = [];
       const rpc = await supabase.rpc("listar_vendedores").catch(() => null);
       if (rpc && (rpc as any).data) vend = (rpc as any).data as Vendedor[];
@@ -122,19 +135,15 @@ export default function Oportunidades() {
       }
       setVendedores(vend || []);
 
-      // Oportunidades
-      const { data: o, error: eo } = await supabase
-        .from("opportunities")
-        .select(
-          "id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at, updated_at"
-        )
+      // Oportunidades do usuário (RPC ignora RLS, mas filtra por auth.uid())
+      const { data: o } = await supabase
+        .rpc("my_opportunities")
         .order("created_at", { ascending: false });
-      if (eo) console.error("Opp error:", eo);
       setLista((o || []) as Oportunidade[]);
 
-      // KPIs pela view (se não existir, não quebra a tela)
-      const { data: k } = await supabase.from("vw_opportunities_kpi").select("*").catch(() => ({ data: [] as any }));
-      setKpis(((k as any) || []) as KpiRow[]);
+      // KPIs do usuário
+      const { data: k } = await supabase.rpc("my_opportunities_kpi");
+      setKpis((k || []) as KpiRow[]);
     })();
   }, []);
 
@@ -310,25 +319,28 @@ export default function Oportunidades() {
 
   /** ------------ UI ------------ */
 
-  // KPI via view
+  // KPI via RPC (com fallback visual)
   const CardsKPI = () => {
-    // ordem sugerida
     const order = ["Novo", "Qualificando", "Proposta", "Negociação", "Fechado (Ganho)", "Fechado (Perdido)"];
-    const rows = [...kpis].sort((a, b) => order.indexOf(String(a.stage)) - order.indexOf(String(b.stage)));
+    const rows = [...kpis].sort(
+      (a, b) => order.indexOf(String(a.stage)) - order.indexOf(String(b.stage))
+    );
     return (
       <div style={{ marginBottom: 16 }}>
         <div style={sectionSubtitle}>Pipeline por estágio</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 16 }}>
           {rows.map((k, idx) => (
             <div key={idx} style={card}>
-              <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{String(k.stage)}</div>
+              <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>
+                {String(k.stage)}
+              </div>
               <div style={{ color: "#1f2937" }}>Qtd: {k.qtd}</div>
-              <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(k.total)}</div>
+              <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(Number(k.total))}</div>
             </div>
           ))}
           {!rows.length && (
             <div style={{ gridColumn: "1 / span 6", color: "#64748b" }}>
-              (Sem dados na view <code>vw_opportunities_kpi</code>)
+              (Sem dados — verifique a função <code>my_opportunities_kpi</code>)
             </div>
           )}
         </div>
@@ -363,7 +375,9 @@ export default function Oportunidades() {
                   <tr key={o.id}>
                     <td style={td}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span title={`Telefone: ${lead?.telefone || "-"}\nEmail: ${lead?.email || "-"}\nOrigem: ${lead?.origem || "-"}`}>
+                        <span
+                          title={`Telefone: ${lead?.telefone || "-"}\nEmail: ${lead?.email || "-"}\nOrigem: ${lead?.origem || "-"}`}
+                        >
                           {lead?.nome || "-"}
                         </span>
                         {waNum && (
@@ -384,7 +398,11 @@ export default function Oportunidades() {
                     <td style={td}>{fmtBRL(o.valor_credito)}</td>
                     <td style={td}>{"●".repeat(Math.max(1, Math.min(5, o.score || 1)))}</td>
                     <td style={td}>{o.estagio}</td>
-                    <td style={td}>{o.expected_close_at ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR") : "-"}</td>
+                    <td style={td}>
+                      {o.expected_close_at
+                        ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
+                        : "-"}
+                    </td>
                     <td style={td}>
                       <button onClick={() => openEdit(o)} style={btnSmallPrimary}>
                         Tratar
@@ -419,7 +437,7 @@ export default function Oportunidades() {
         fontFamily: "Inter, system-ui, Arial",
       }}
     >
-      {/* Barra de busca + botão Nova oportunidade em overlay */}
+      {/* Barra de busca + botão Nova oportunidade */}
       <div
         style={{
           background: "#fff",
@@ -445,7 +463,7 @@ export default function Oportunidades() {
 
       <CardsKPI />
 
-      {/* Espaçamento extra entre KPI e tabela (pedido) */}
+      {/* Espaçamento extra entre KPI e tabela */}
       <div style={{ height: 12 }} />
 
       <ListaOportunidades />
@@ -493,17 +511,31 @@ export default function Oportunidades() {
 
               <div>
                 <label style={label}>Valor do crédito (R$)</label>
-                <input value={valor} onChange={(e) => setValor(e.target.value)} style={input} placeholder="Ex.: 80.000,00" />
+                <input
+                  value={valor}
+                  onChange={(e) => setValor(e.target.value)}
+                  style={input}
+                  placeholder="Ex.: 80.000,00"
+                />
               </div>
 
               <div>
                 <label style={label}>Observações</label>
-                <input value={obs} onChange={(e) => setObs(e.target.value)} style={input} placeholder="Observação inicial (opcional)" />
+                <input
+                  value={obs}
+                  onChange={(e) => setObs(e.target.value)}
+                  style={input}
+                  placeholder="Observação inicial (opcional)"
+                />
               </div>
 
               <div>
                 <label style={label}>Probabilidade de fechamento</label>
-                <select value={String(score)} onChange={(e) => setScore(Number(e.target.value))} style={input}>
+                <select
+                  value={String(score)}
+                  onChange={(e) => setScore(Number(e.target.value))}
+                  style={input}
+                >
                   {[1, 2, 3, 4, 5].map((n) => (
                     <option key={n} value={n}>
                       {"★".repeat(n)}
@@ -514,7 +546,11 @@ export default function Oportunidades() {
 
               <div>
                 <label style={label}>Estágio</label>
-                <select value={stageText} onChange={(e) => setStageText(e.target.value as EstagioDB)} style={input}>
+                <select
+                  value={stageText}
+                  onChange={(e) => setStageText(e.target.value as EstagioDB)}
+                  style={input}
+                >
                   <option value="Novo">Novo</option>
                   <option value="Qualificando">Qualificando</option>
                   <option value="Proposta">Proposta</option>
@@ -745,7 +781,7 @@ const btnGhost: React.CSSProperties = {
   borderRadius: 10,
   background: "#fff",
   color: "#1E293F",
-  border: "1px solid #e5e7eb",
+  border: "1px solid "#e5e7eb",
   cursor: "pointer",
   fontWeight: 700,
 };

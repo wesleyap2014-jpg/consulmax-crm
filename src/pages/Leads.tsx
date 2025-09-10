@@ -27,11 +27,15 @@ export default function LeadsPage() {
   const [loading, setLoading] = useState(false);
 
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [users, setUsers] = useState<UserProfile[]>([]); // lista p/ admin reatribuir
+  const [users, setUsers] = useState<UserProfile[]>([]);
 
   // paginação
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState<number>(0);
+
+  // edição inline do nome
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState<string>("");
 
   const isAdmin = me?.role === "admin";
   const totalPages = useMemo(
@@ -44,7 +48,7 @@ export default function LeadsPage() {
     [page, total]
   );
 
-  // 1) pega usuário logado + role do JWT (app_metadata.role)
+  // Usuário logado + role do JWT
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
@@ -54,7 +58,7 @@ export default function LeadsPage() {
     })();
   }, []);
 
-  // 2) carrega leads com paginação (RLS filtra automaticamente)
+  // Carrega leads com paginação
   async function loadLeads(targetPage = 1) {
     const from = (targetPage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
@@ -82,7 +86,7 @@ export default function LeadsPage() {
     }
   }
 
-  // 3) admins: carrega lista de usuários para reatribuição
+  // Carrega usuários (para admin reatribuir)
   async function loadUsers() {
     const { data, error } = await supabase
       .from("users")
@@ -91,7 +95,6 @@ export default function LeadsPage() {
     if (!error && data) setUsers(data as any);
   }
 
-  // carregar na entrada e quando o usuário (RLS) estiver pronto
   useEffect(() => {
     loadLeads(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -101,7 +104,8 @@ export default function LeadsPage() {
     if (isAdmin) loadUsers();
   }, [isAdmin]);
 
-  // criar lead (owner_id vem do trigger se omitir)
+  // Criar lead
+  const [form, setForm] = useState<Partial<Lead>>({ origem: "Site" });
   async function createLead() {
     const payload = {
       nome: (form.nome || "").trim(),
@@ -109,7 +113,6 @@ export default function LeadsPage() {
       email: (form.email || "").trim() || null,
       origem: form.origem || null,
       descricao: (form.descricao || "").trim() || null,
-      // owner_id omitido => trigger setará auth.uid()
     };
 
     if (!payload.nome) {
@@ -125,14 +128,14 @@ export default function LeadsPage() {
         return;
       }
       setForm({ origem: "Site" });
-      await loadLeads(1); // volta para a primeira página (mais recentes)
+      await loadLeads(1); // volta p/ início
       alert("Lead criado com sucesso!");
     } finally {
       setLoading(false);
     }
   }
 
-  // admin: reatribui owner_id de um lead
+  // Reatribuir lead (admin)
   async function reatribuir(leadId: string, newOwnerId: string) {
     if (!newOwnerId) {
       alert("Selecione o novo responsável.");
@@ -148,17 +151,53 @@ export default function LeadsPage() {
         alert("Erro ao reatribuir: " + error.message);
         return;
       }
-      await loadLeads(page); // mantém página atual
+      await loadLeads(page);
       alert("Lead reatribuído!");
     } finally {
       setLoading(false);
     }
   }
 
-  // estado do formulário
-  const [form, setForm] = useState<Partial<Lead>>({ origem: "Site" });
+  // ---- EDIÇÃO DO NOME ----
+  function startEditName(lead: Lead) {
+    setEditingId(lead.id);
+    setNameDraft(lead.nome || "");
+  }
 
-  // UI (estilo simples, compatível com o que você já tem)
+  function cancelEditName() {
+    setEditingId(null);
+    setNameDraft("");
+  }
+
+  async function saveEditName(leadId: string) {
+    const novoNome = nameDraft.trim();
+    if (!novoNome) {
+      alert("O nome não pode ficar em branco.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from("leads")
+        .update({ nome: novoNome })
+        .eq("id", leadId);
+
+      if (error) {
+        // Possíveis causas: RLS (não é owner nem admin)
+        alert("Não foi possível salvar: " + error.message);
+        return;
+      }
+
+      cancelEditName();
+      await loadLeads(page);
+      alert("Nome atualizado!");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // UI
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto" }}>
       <h1 style={{ margin: "16px 0" }}>Leads</h1>
@@ -260,22 +299,70 @@ export default function LeadsPage() {
                 <th style={th}>E-mail</th>
                 <th style={th}>Origem</th>
                 {isAdmin && <th style={th}>Responsável</th>}
+                <th style={th}>Ações</th>
                 {isAdmin && <th style={th}>Reatribuir</th>}
               </tr>
             </thead>
             <tbody>
-              {leads.map((l) => (
-                <tr key={l.id}>
-                  <td style={td}>{l.nome}</td>
-                  <td style={td}>{l.telefone || "-"}</td>
-                  <td style={td}>{l.email || "-"}</td>
-                  <td style={td}>{l.origem || "-"}</td>
+              {leads.map((l) => {
+                const isEditing = editingId === l.id;
+                return (
+                  <tr key={l.id}>
+                    <td style={td}>
+                      {isEditing ? (
+                        <input
+                          style={{ ...input, width: "100%" }}
+                          value={nameDraft}
+                          onChange={(e) => setNameDraft(e.target.value)}
+                          autoFocus
+                        />
+                      ) : (
+                        l.nome
+                      )}
+                    </td>
+                    <td style={td}>{l.telefone || "-"}</td>
+                    <td style={td}>{l.email || "-"}</td>
+                    <td style={td}>{l.origem || "-"}</td>
 
-                  {isAdmin && (
-                    <>
+                    {isAdmin && (
                       <td style={td}>
                         {users.find((u) => u.auth_user_id === l.owner_id)?.nome || "—"}
                       </td>
+                    )}
+
+                    {/* Ações (editar nome) */}
+                    <td style={td}>
+                      {isEditing ? (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            style={btn}
+                            disabled={loading}
+                            onClick={() => saveEditName(l.id)}
+                          >
+                            Salvar
+                          </button>
+                          <button
+                            style={btnSecondary}
+                            disabled={loading}
+                            onClick={cancelEditName}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          style={btnSecondary}
+                          disabled={loading}
+                          onClick={() => startEditName(l)}
+                          title="Editar nome"
+                        >
+                          Editar
+                        </button>
+                      )}
+                    </td>
+
+                    {/* Reatribuir (admin) */}
+                    {isAdmin && (
                       <td style={td}>
                         <select
                           defaultValue=""
@@ -293,13 +380,14 @@ export default function LeadsPage() {
                           ))}
                         </select>
                       </td>
-                    </>
-                  )}
-                </tr>
-              ))}
+                    )}
+                  </tr>
+                );
+              })}
+
               {leads.length === 0 && (
                 <tr>
-                  <td style={td} colSpan={isAdmin ? 6 : 4}>
+                  <td style={td} colSpan={isAdmin ? 7 : 5}>
                     {loading ? "Carregando..." : "Nenhum lead encontrado."}
                   </td>
                 </tr>
@@ -308,7 +396,7 @@ export default function LeadsPage() {
           </table>
         </div>
 
-        {/* Controles de paginação */}
+        {/* Paginação */}
         <div
           style={{
             display: "flex",

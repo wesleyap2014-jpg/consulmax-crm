@@ -278,7 +278,7 @@ export default function Oportunidades() {
 
   /** ------------- UI ------------- */
 
-  // Cards KPI
+  // Cards KPI (com margem inferior para afastar da tabela)
   const CardsKPI = () => {
     const ORDER: { id: StageUI; label: string }[] = [
       { id: "novo", label: "Novo" },
@@ -289,30 +289,38 @@ export default function Oportunidades() {
       { id: "fechado_perdido", label: "Fechado (Perdido)" },
     ];
     return (
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 16 }}>
-        {ORDER.map(({ id, label }) => {
-          const safe = kpi[id] ?? { qtd: 0, total: 0 };
-          return (
-            <div
-              key={id}
-              style={{
-                background: "#fff",
-                borderRadius: 14,
-                boxShadow: "0 2px 10px rgba(0,0,0,.06)",
-                padding: 14,
-              }}
-            >
-              <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{label}</div>
-              <div style={{ color: "#1f2937" }}>Qtd: {safe.qtd}</div>
-              <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(safe.total)}</div>
-            </div>
-          );
-        })}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 16 }}>
+          {ORDER.map(({ id, label }) => {
+            const safe = kpi[id] ?? { qtd: 0, total: 0 };
+            return (
+              <div
+                key={id}
+                style={{
+                  background: "#fff",
+                  borderRadius: 14,
+                  boxShadow: "0 2px 10px rgba(0,0,0,.06)",
+                  padding: 14,
+                }}
+              >
+                <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{label}</div>
+                <div style={{ color: "#1f2937" }}>Qtd: {safe.qtd}</div>
+                <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(safe.total)}</div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   };
 
   const ListaOportunidades = () => {
+    // Esconde fechados (ganho/perdido)
+    const rows = visiveis.filter((o) => {
+      const st = dbToUI[o.estagio as string];
+      return st !== "fechado_ganho" && st !== "fechado_perdido";
+    });
+
     return (
       <div style={card}>
         <h3 style={{ marginTop: 0 }}>Oportunidades</h3>
@@ -331,7 +339,7 @@ export default function Oportunidades() {
               </tr>
             </thead>
             <tbody>
-              {visiveis.map((o) => (
+              {rows.map((o) => (
                 <tr key={o.id}>
                   <td style={td}>{leads.find((l) => l.id === o.lead_id)?.nome || "-"}</td>
                   <td style={td}>
@@ -347,13 +355,13 @@ export default function Oportunidades() {
                       : "-"}
                   </td>
                   <td style={td}>
-                    <button onClick={() => openEdit(o)} style={btnPrimary}>
-                      Tratar Lead
+                    <button onClick={() => openEdit(o)} style={btnSmallPrimary}>
+                      Tratar
                     </button>
                   </td>
                 </tr>
               ))}
-              {!visiveis.length && (
+              {!rows.length && (
                 <tr>
                   <td style={td} colSpan={8}>
                     Nenhuma oportunidade encontrada.
@@ -383,7 +391,7 @@ export default function Oportunidades() {
           padding: 12,
           borderRadius: 12,
           boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-          marginBottom: 16,
+          marginBottom: 16, // distância entre busca e estágios
           display: "flex",
           gap: 12,
           alignItems: "center",
@@ -400,7 +408,7 @@ export default function Oportunidades() {
         </button>
       </div>
 
-      <CardsKPI />
+      <CardsKPI /> {/* agora tem marginBottom: 16 */}
       <ListaOportunidades />
 
       {/* Modal: Tratar Lead */}
@@ -672,6 +680,16 @@ const btnPrimary: React.CSSProperties = {
   border: 0,
   cursor: "pointer",
   fontWeight: 700,
+};
+const btnSmallPrimary: React.CSSProperties = {
+  padding: "6px 10px", // menor
+  borderRadius: 10,
+  background: "#A11C27",
+  color: "#fff",
+  border: 0,
+  cursor: "pointer",
+  fontWeight: 600,
+  whiteSpace: "nowrap", // garante 1 linha
 };
 const btnGhost: React.CSSProperties = {
   padding: "10px 14px",

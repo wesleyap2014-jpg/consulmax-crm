@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /** ------------- Tipos ------------- */
-type Lead = { id: string; nome: string; owner_id: string };
+type Lead = { id: string; nome: string; owner_id: string; telefone?: string | null };
 type Vendedor = { auth_user_id: string; nome: string };
 
 type StageUI =
@@ -85,6 +85,27 @@ function normalizeEstagioDB(label: string): EstagioDB {
   return "Novo";
 }
 
+/** Telefone helpers */
+function onlyDigits(s?: string | null) {
+  return (s || "").replace(/\D+/g, "");
+}
+function normalizePhoneToWa(telefone?: string | null) {
+  const d = onlyDigits(telefone);
+  if (!d) return null;
+  // Se já vier com DDI 55 (13 ou 12 dígitos), mantém. Se vier 10/11 (BR sem DDI), prefixa 55.
+  if (d.startsWith("55")) return d;
+  if (d.length >= 10 && d.length <= 11) return "55" + d;
+  // fallback: se tiver 12/13 dígitos sem 55, ainda prefixa 55
+  if (d.length >= 12 && !d.startsWith("55")) return "55" + d;
+  return null;
+}
+function formatPhoneBR(telefone?: string | null) {
+  const d = onlyDigits(telefone);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return telefone || "";
+}
+
 /** ------------- Página ------------- */
 export default function Oportunidades() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -113,7 +134,7 @@ export default function Oportunidades() {
     (async () => {
       const { data: l } = await supabase
         .from("leads")
-        .select("id, nome, owner_id")
+        .select("id, nome, owner_id, telefone")
         .order("created_at", { ascending: false });
       setLeads(l || []);
 
@@ -155,7 +176,8 @@ export default function Oportunidades() {
     if (!q) return lista;
 
     const match = (o: Oportunidade) => {
-      const leadNome = leads.find((l) => l.id === o.lead_id)?.nome?.toLowerCase() || "";
+      const lead = leads.find((l) => l.id === o.lead_id);
+      const leadNome = lead?.nome?.toLowerCase() || "";
       const vendNome =
         vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome?.toLowerCase() || "";
       const uiStage = dbToUI[o.estagio as string] ?? "novo";
@@ -172,7 +194,8 @@ export default function Oportunidades() {
         leadNome.includes(q) ||
         vendNome.includes(q) ||
         String(o.estagio).toLowerCase().includes(q) ||
-        stageLabel.includes(q)
+        stageLabel.includes(q) ||
+        (lead?.telefone ? formatPhoneBR(lead.telefone).toLowerCase().includes(q) : false)
       );
     };
 
@@ -278,7 +301,7 @@ export default function Oportunidades() {
 
   /** ------------- UI ------------- */
 
-  // Cards KPI (com margem inferior para afastar da tabela)
+  // Cards KPI
   const CardsKPI = () => {
     const ORDER: { id: StageUI; label: string }[] = [
       { id: "novo", label: "Novo" },
@@ -290,6 +313,7 @@ export default function Oportunidades() {
     ];
     return (
       <div style={{ marginBottom: 16 }}>
+        <div style={sectionTitle}>Pipeline por estágio</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 16 }}>
           {ORDER.map(({ id, label }) => {
             const safe = kpi[id] ?? { qtd: 0, total: 0 };
@@ -313,6 +337,24 @@ export default function Oportunidades() {
       </div>
     );
   };
+
+  const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill={muted ? "none" : "currentColor"}
+      stroke={muted ? "#94a3b8" : "currentColor"}
+      strokeWidth="1.5"
+      style={{ display: "inline-block", verticalAlign: "text-bottom" }}
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path d="M20.52 3.48A11.89 11.89 0 0 0 12.07 0C5.61 0 .36 5.26.36 11.74c0 2.07.53 4.08 1.55 5.87L0 24l6.58-1.88a11.72 11.72 0 0 0 5.49 1.38h.01c6.46 0 11.71-5.26 11.71-11.74 0-3.13-1.22-6.07-3.27-8.28Z" fill="none"/>
+      <path d="M19.06 4.93A9.63 9.63 0 0 1 21.2 11.8c0 5.33-4.34 9.64-9.67 9.64-1.61 0-3.19-.41-4.6-1.2l-.33-.18-3.83 1.09 1.11-3.72-.21-.34A9.56 9.56 0 1 1 19.06 4.93Z" />
+      <path d="M8.72 7.78c-.2-.45-.41-.46-.6-.47H7.56c-.19 0-.5.07-.76.37-.26.3-1 1-1 2.42s1.03 2.81 1.17 3.01c.14.2 2 3.19 4.85 4.35 2.39.94 2.88.76 3.4.71.52-.05 1.68-.69 1.93-1.36.25-.67.25-1.24.18-1.36-.07-.12-.26-.19-.55-.34-.29-.15-1.68-.83-1.94-.92-.26-.1-.45-.14-.64.14-.19.29-.74.92-.91 1.11-.17.19-.34.22-.62.08-.29-.15-1.22-.45-2.33-1.43-.86-.76-1.44-1.7-1.61-1.99-.17-.29-.02-.45.13-.6.13-.12.29-.34.43-.51.14-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.58-.9-2.16Z" />
+    </svg>
+  );
 
   const ListaOportunidades = () => {
     // Esconde fechados (ganho/perdido)
@@ -339,28 +381,51 @@ export default function Oportunidades() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((o) => (
-                <tr key={o.id}>
-                  <td style={td}>{leads.find((l) => l.id === o.lead_id)?.nome || "-"}</td>
-                  <td style={td}>
-                    {vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}
-                  </td>
-                  <td style={td}>{o.segmento}</td>
-                  <td style={td}>{fmtBRL(o.valor_credito)}</td>
-                  <td style={td}>{"★".repeat(Math.max(1, Math.min(5, o.score)))}</td>
-                  <td style={td}>{String(o.estagio)}</td>
-                  <td style={td}>
-                    {o.expected_close_at
-                      ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
-                      : "-"}
-                  </td>
-                  <td style={td}>
-                    <button onClick={() => openEdit(o)} style={btnSmallPrimary}>
-                      Tratar
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((o) => {
+                const lead = leads.find((l) => l.id === o.lead_id);
+                const wa = normalizePhoneToWa(lead?.telefone);
+                const link = wa ? `https://wa.me/${wa}` : undefined;
+
+                return (
+                  <tr key={o.id}>
+                    <td style={td}>
+                      <span>{lead?.nome || "-"}</span>{" "}
+                      {link ? (
+                        <a
+                          href={link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`Conversar com ${lead?.nome} no WhatsApp`}
+                          style={{ color: "#1E293F", textDecoration: "none", marginLeft: 6 }}
+                        >
+                          <WhatsappIcon />
+                        </a>
+                      ) : (
+                        <span title="Sem telefone" style={{ marginLeft: 6, opacity: 0.6 }}>
+                          <WhatsappIcon muted />
+                        </span>
+                      )}
+                    </td>
+                    <td style={td}>
+                      {vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}
+                    </td>
+                    <td style={td}>{o.segmento}</td>
+                    <td style={td}>{fmtBRL(o.valor_credito)}</td>
+                    <td style={td}>{"★".repeat(Math.max(1, Math.min(5, o.score)))}</td>
+                    <td style={td}>{String(o.estagio)}</td>
+                    <td style={td}>
+                      {o.expected_close_at
+                        ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
+                        : "-"}
+                    </td>
+                    <td style={td}>
+                      <button onClick={() => openEdit(o)} style={btnSmallPrimary}>
+                        Tratar
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {!rows.length && (
                 <tr>
                   <td style={td} colSpan={8}>
@@ -401,14 +466,14 @@ export default function Oportunidades() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ ...input, margin: 0, flex: 1 }}
-          placeholder="Buscar por lead, vendedor ou estágio (ex.: Novo, Proposta, Negociação...)"
+          placeholder="Buscar por lead, vendedor, estágio ou telefone"
         />
         <button onClick={() => setCreateOpen(true)} style={btnPrimary}>
           + Nova Oportunidade
         </button>
       </div>
 
-      <CardsKPI /> {/* agora tem marginBottom: 16 */}
+      <CardsKPI />
       <ListaOportunidades />
 
       {/* Modal: Tratar Lead */}
@@ -535,7 +600,7 @@ export default function Oportunidades() {
                   <option value="">Selecione um Lead</option>
                   {leads.map((l) => (
                     <option key={l.id} value={l.id}>
-                      {l.nome}
+                      {l.nome} {l.telefone ? `— ${formatPhoneBR(l.telefone)}` : ""}
                     </option>
                   ))}
                 </select>
@@ -644,6 +709,15 @@ export default function Oportunidades() {
 }
 
 /** ------------- estilos ------------- */
+const sectionTitle: React.CSSProperties = {
+  fontSize: 14,
+  fontWeight: 800,
+  color: "#1E293F",
+  marginBottom: 10,
+  letterSpacing: 0.2,
+  textTransform: "uppercase",
+};
+
 const card: React.CSSProperties = {
   background: "#fff",
   borderRadius: 16,
@@ -682,14 +756,14 @@ const btnPrimary: React.CSSProperties = {
   fontWeight: 700,
 };
 const btnSmallPrimary: React.CSSProperties = {
-  padding: "6px 10px", // menor
+  padding: "6px 10px",
   borderRadius: 10,
   background: "#A11C27",
   color: "#fff",
   border: 0,
   cursor: "pointer",
   fontWeight: 600,
-  whiteSpace: "nowrap", // garante 1 linha
+  whiteSpace: "nowrap",
 };
 const btnGhost: React.CSSProperties = {
   padding: "10px 14px",

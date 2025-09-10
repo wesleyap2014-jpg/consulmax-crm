@@ -29,6 +29,25 @@ const ORIGENS = [
   "Relacionamento",
 ] as const;
 
+/** ================= Helpers ================= */
+const normalizePhoneBR = (s?: string | null) =>
+  (s || "").replace(/\D+/g, "").replace(/^0+/, "");
+
+const waLink = (raw?: string | null, msg?: string) => {
+  const d = normalizePhoneBR(raw);
+  if (!d) return null;
+  const full =
+    d.length === 11 || d.length === 10
+      ? `55${d}`
+      : d.startsWith("55")
+      ? d
+      : `55${d}`;
+  const url = new URL(`https://wa.me/${full}`);
+  if (msg) url.searchParams.set("text", msg);
+  return url.toString();
+};
+/** =========================================== */
+
 export default function LeadsPage() {
   const PAGE_SIZE = 10;
 
@@ -57,7 +76,10 @@ export default function LeadsPage() {
     () => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)),
     [total]
   );
-  const showingFrom = useMemo(() => (total ? (page - 1) * PAGE_SIZE + 1 : 0), [page, total]);
+  const showingFrom = useMemo(
+    () => (total ? (page - 1) * PAGE_SIZE + 1 : 0),
+    [page, total]
+  );
   const showingTo = useMemo(
     () => Math.min(page * PAGE_SIZE, total || 0),
     [page, total]
@@ -88,13 +110,23 @@ export default function LeadsPage() {
     try {
       let query = supabase
         .from("leads")
-        .select("id,nome,telefone,email,origem,descricao,owner_id,created_at", {
-          count: "exact",
-        })
+        .select(
+          "id,nome,telefone,email,origem,descricao,owner_id,created_at",
+          { count: "exact" }
+        )
         .order("created_at", { ascending: false });
 
+      // 1.1 filtro por responsável quando NÃO-admin
+      if (me?.id && me.role !== "admin") {
+        query = query.eq("owner_id", me.id); // me.id é auth.user.id
+      }
+
+      // 1.1 busca por nome OR email OR telefone
       if (term) {
-        query = query.ilike("nome", `%${term}%`);
+        // Nota: Supabase .or usa vírgulas para separar expressões
+        query = query.or(
+          `nome.ilike.%${term}%,email.ilike.%${term}%,telefone.ilike.%${term}%`
+        );
       }
 
       const { data, error, count } = await query.range(from, to);
@@ -141,8 +173,8 @@ export default function LeadsPage() {
   async function createLead() {
     const payload = {
       nome: (form.nome || "").trim(),
-      telefone: (form.telefone || "").trim() || null,
-      email: (form.email || "").trim() || null,
+      telefone: normalizePhoneBR(form.telefone) || null, // 1.3 normaliza só dígitos
+      email: (form.email || "").trim().toLowerCase() || null, // 1.3 lower
       origem: form.origem || null,
       descricao: (form.descricao || "").trim() || null,
     };
@@ -154,7 +186,7 @@ export default function LeadsPage() {
 
     try {
       setLoading(true);
-      const { error } = await supabase.from("leads").insert([payload]);
+      const { error } = await supabase.from("leads").insert([payload]); // owner_id via trigger
       if (error) {
         alert("Erro ao criar lead: " + error.message);
         return;
@@ -208,8 +240,8 @@ export default function LeadsPage() {
   async function saveEdit() {
     if (!editing) return;
     const novoNome = editName.trim();
-    const novoTelefone = editPhone.trim() || null;
-    const novoEmail = editEmail.trim() || null;
+    const novoTelefone = normalizePhoneBR(editPhone) || null; // normaliza aqui também
+    const novoEmail = (editEmail || "").trim().toLowerCase() || null;
 
     if (!novoNome) {
       alert("O nome não pode ficar em branco.");
@@ -297,7 +329,7 @@ export default function LeadsPage() {
             <div style={{ position: "relative" }}>
               <input
                 style={{ ...input, paddingLeft: 36, width: 260 }}
-                placeholder="Buscar por nome…"
+                placeholder="Buscar por nome, e-mail ou telefone…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -330,7 +362,7 @@ export default function LeadsPage() {
                 <th style={th}>E-mail</th>
                 <th style={th}>Origem</th>
                 {isAdmin && <th style={th}>Responsável</th>}
-                <th style={{ ...th, width: 130 }}>Ações</th>
+                <th style={{ ...th, width: 180 }}>Ações</th>
                 {isAdmin && <th style={{ ...th, width: 260 }}>Reatribuir</th>}
               </tr>
             </thead>
@@ -348,15 +380,27 @@ export default function LeadsPage() {
                     </td>
                   )}
 
-                  {/* Ações */}
+                  {/* Ações (1.2 inclui WhatsApp) */}
                   <td style={td}>
-                    <button
-                      style={btnSecondary}
-                      disabled={loading}
-                      onClick={() => openEditModal(l)}
-                    >
-                      Editar
-                    </button>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        style={btnSecondary}
+                        disabled={loading}
+                        onClick={() => openEditModal(l)}
+                      >
+                        Editar
+                      </button>
+                      {l.telefone && waLink(l.telefone, `Olá ${l.nome}! Podemos falar?`) && (
+                        <a
+                          href={waLink(l.telefone, `Olá ${l.nome}! Podemos falar?`) as string}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ ...btnSecondary, textDecoration: "none", display: "inline-block" }}
+                        >
+                          WhatsApp
+                        </a>
+                      )}
+                    </div>
                   </td>
 
                   {/* Reatribuir */}

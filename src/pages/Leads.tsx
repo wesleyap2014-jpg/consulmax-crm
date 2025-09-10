@@ -33,15 +33,10 @@ const ORIGENS = [
 const normalizePhoneBR = (s?: string | null) =>
   (s || "").replace(/\D+/g, "").replace(/^0+/, "");
 
-const waLink = (raw?: string | null, msg?: string) => {
+const waHref = (raw?: string | null, msg?: string) => {
   const d = normalizePhoneBR(raw);
   if (!d) return null;
-  const full =
-    d.length === 11 || d.length === 10
-      ? `55${d}`
-      : d.startsWith("55")
-      ? d
-      : `55${d}`;
+  const full = d.startsWith("55") ? d : `55${d}`;
   const url = new URL(`https://wa.me/${full}`);
   if (msg) url.searchParams.set("text", msg);
   return url.toString();
@@ -70,6 +65,10 @@ export default function LeadsPage() {
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
+
+  // modal de reatribuir
+  const [reassigning, setReassigning] = useState<Lead | null>(null);
+  const [newOwnerId, setNewOwnerId] = useState<string>("");
 
   const isAdmin = me?.role === "admin";
   const totalPages = useMemo(
@@ -116,14 +115,10 @@ export default function LeadsPage() {
         )
         .order("created_at", { ascending: false });
 
-      // 1.1 filtro por responsável quando NÃO-admin
-      if (me?.id && me.role !== "admin") {
-        query = query.eq("owner_id", me.id); // me.id é auth.user.id
-      }
+      // filtro de não-admin (por segurança adicional — RLS já cobre)
+      if (me?.id && me.role !== "admin") query = query.eq("owner_id", me.id);
 
-      // 1.1 busca por nome OR email OR telefone
       if (term) {
-        // Nota: Supabase .or usa vírgulas para separar expressões
         query = query.or(
           `nome.ilike.%${term}%,email.ilike.%${term}%,telefone.ilike.%${term}%`
         );
@@ -158,7 +153,6 @@ export default function LeadsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.id]);
 
-  // Recarrega quando a busca mudar (debounced)
   useEffect(() => {
     loadLeads(1, debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -173,8 +167,8 @@ export default function LeadsPage() {
   async function createLead() {
     const payload = {
       nome: (form.nome || "").trim(),
-      telefone: normalizePhoneBR(form.telefone) || null, // 1.3 normaliza só dígitos
-      email: (form.email || "").trim().toLowerCase() || null, // 1.3 lower
+      telefone: normalizePhoneBR(form.telefone) || null,
+      email: (form.email || "").trim().toLowerCase() || null,
       origem: form.origem || null,
       descricao: (form.descricao || "").trim() || null,
     };
@@ -200,21 +194,30 @@ export default function LeadsPage() {
   }
 
   // Reatribuir lead (admin)
-  async function reatribuir(leadId: string, newOwnerId: string) {
-    if (!newOwnerId) {
+  function openReassignModal(lead: Lead) {
+    setReassigning(lead);
+    setNewOwnerId("");
+  }
+  function closeReassignModal() {
+    setReassigning(null);
+    setNewOwnerId("");
+  }
+  async function doReassign() {
+    if (!reassigning || !newOwnerId) {
       alert("Selecione o novo responsável.");
       return;
     }
     setLoading(true);
     try {
       const { error } = await supabase.rpc("reassign_lead", {
-        p_lead_id: leadId,
+        p_lead_id: reassigning.id,
         p_new_owner: newOwnerId,
       });
       if (error) {
         alert("Erro ao reatribuir: " + error.message);
         return;
       }
+      closeReassignModal();
       await loadLeads(page);
       alert("Lead reatribuído!");
     } finally {
@@ -240,7 +243,7 @@ export default function LeadsPage() {
   async function saveEdit() {
     if (!editing) return;
     const novoNome = editName.trim();
-    const novoTelefone = normalizePhoneBR(editPhone) || null; // normaliza aqui também
+    const novoTelefone = normalizePhoneBR(editPhone) || null;
     const novoEmail = (editEmail || "").trim().toLowerCase() || null;
 
     if (!novoNome) {
@@ -328,7 +331,7 @@ export default function LeadsPage() {
           <div style={rightHeader}>
             <div style={{ position: "relative" }}>
               <input
-                style={{ ...input, paddingLeft: 36, width: 260 }}
+                style={{ ...input, paddingLeft: 36, width: 320 }}
                 placeholder="Buscar por nome, e-mail ou telefone…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -362,8 +365,8 @@ export default function LeadsPage() {
                 <th style={th}>E-mail</th>
                 <th style={th}>Origem</th>
                 {isAdmin && <th style={th}>Responsável</th>}
-                <th style={{ ...th, width: 180 }}>Ações</th>
-                {isAdmin && <th style={{ ...th, width: 260 }}>Reatribuir</th>}
+                <th style={{ ...th, width: 140 }}>Ações</th>
+                {isAdmin && <th style={{ ...th, width: 120, textAlign: "center" }}>Reatribuir</th>}
               </tr>
             </thead>
             <tbody>
@@ -380,49 +383,47 @@ export default function LeadsPage() {
                     </td>
                   )}
 
-                  {/* Ações (1.2 inclui WhatsApp) */}
+                  {/* Ações: Editar + WhatsApp (ícone) */}
                   <td style={td}>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <button
                         style={btnSecondary}
                         disabled={loading}
                         onClick={() => openEditModal(l)}
+                        title="Editar"
                       >
                         Editar
                       </button>
-                      {l.telefone && waLink(l.telefone, `Olá ${l.nome}! Podemos falar?`) && (
+
+                      {waHref(l.telefone, `Olá ${l.nome}! Podemos falar?`) && (
                         <a
-                          href={waLink(l.telefone, `Olá ${l.nome}! Podemos falar?`) as string}
+                          href={waHref(l.telefone, `Olá ${l.nome}! Podemos falar?`) as string}
                           target="_blank"
                           rel="noreferrer"
-                          style={{ ...btnSecondary, textDecoration: "none", display: "inline-block" }}
+                          aria-label="Abrir WhatsApp"
+                          title="Abrir WhatsApp"
+                          style={waIconBtn}
                         >
-                          WhatsApp
+                          {/* Ícone simples em SVG (sem libs) */}
+                          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M20 3.5A10.5 10.5 0 0 0 3.6 19.2L3 22l2.9-.6A10.5 10.5 0 1 0 20 3.5Zm-8.9 3c.2 0 .5.1.7.7s.9 2.1.9 2.1.1.4-.1.6l-.7.7s-.2.2 0 .5c.3.3 1.1 1.7 2.6 2.3 1.6.6 1.6.4 1.9.1l.7-.8c.2-.2.4-.2.6-.1.2.1 1.9.9 2.1 1 .2.1.3.2.3.4 0 .2.1 1.2-.7 2s-2 1-3.3.6c-1.4-.4-3.1-1.2-4.6-2.7-1.5-1.5-2.3-3.2-2.7-4.6s-.1-2.6.6-3.3c.6-.7 1.4-.7 1.5-.7Z" />
+                          </svg>
                         </a>
                       )}
                     </div>
                   </td>
 
-                  {/* Reatribuir */}
+                  {/* Reatribuir abre overlay */}
                   {isAdmin && (
-                    <td style={{ ...td }}>
-                      <div style={{ minWidth: 240 }}>
-                        <select
-                          defaultValue=""
-                          style={{ ...input, width: "100%" }}
-                          onChange={(e) => {
-                            const newOwner = e.target.value;
-                            if (newOwner) reatribuir(l.id, newOwner);
-                          }}
-                        >
-                          <option value="">Selecionar usuário…</option>
-                          {users.map((u) => (
-                            <option key={u.auth_user_id} value={u.auth_user_id}>
-                              {u.nome} ({u.role})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                    <td style={{ ...td, textAlign: "center" }}>
+                      <button
+                        style={btnTertiary}
+                        disabled={loading}
+                        onClick={() => openReassignModal(l)}
+                        title="Reatribuir responsável"
+                      >
+                        Alterar
+                      </button>
                     </td>
                   )}
                 </tr>
@@ -517,6 +518,41 @@ export default function LeadsPage() {
           </div>
         </>
       )}
+
+      {/* Modal de reatribuir */}
+      {reassigning && (
+        <>
+          <div style={backdrop} onClick={closeReassignModal} />
+          <div role="dialog" aria-modal="true" style={modalSmall}>
+            <h3 style={{ marginTop: 0, marginBottom: 12 }}>Reatribuir Lead</h3>
+            <p style={{ marginTop: 0, marginBottom: 8, color: "#475569" }}>
+              <strong>Lead:</strong> {reassigning.nome}
+            </p>
+            <div style={{ display: "grid", gap: 12 }}>
+              <select
+                value={newOwnerId}
+                onChange={(e) => setNewOwnerId(e.target.value)}
+                style={input}
+              >
+                <option value="">Selecionar usuário…</option>
+                {users.map((u) => (
+                  <option key={u.auth_user_id} value={u.auth_user_id}>
+                    {u.nome} ({u.role})
+                  </option>
+                ))}
+              </select>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button style={btnSecondary} onClick={closeReassignModal} disabled={loading}>
+                  Cancelar
+                </button>
+                <button style={btnPrimary} onClick={doReassign} disabled={loading || !newOwnerId}>
+                  Salvar
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -545,6 +581,7 @@ const rightHeader: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 8,
+  flexWrap: "wrap",
 };
 const pager: React.CSSProperties = {
   display: "flex",
@@ -582,6 +619,28 @@ const btnSecondary: React.CSSProperties = {
   cursor: "pointer",
 };
 
+const btnTertiary: React.CSSProperties = {
+  padding: "6px 10px",
+  borderRadius: 10,
+  background: "#eef2f7",
+  color: "#0f172a",
+  border: "1px solid #e2e8f0",
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const waIconBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 36,
+  height: 36,
+  borderRadius: "9999px",
+  background: "#e8f5e9",
+  border: "1px solid #c8e6c9",
+  textDecoration: "none",
+};
+
 const th: React.CSSProperties = {
   textAlign: "left",
   fontSize: 12,
@@ -590,7 +649,7 @@ const th: React.CSSProperties = {
 };
 
 const td: React.CSSProperties = {
-  padding: "10px 8px",
+  padding: "12px 8px",
   borderTop: "1px solid #eee",
   verticalAlign: "middle",
 };
@@ -613,6 +672,11 @@ const modal: React.CSSProperties = {
   borderRadius: 14,
   padding: 18,
   boxShadow: "0 12px 48px rgba(0,0,0,0.22)",
+};
+
+const modalSmall: React.CSSProperties = {
+  ...modal,
+  width: "min(460px, 92vw)",
 };
 
 const label: React.CSSProperties = {

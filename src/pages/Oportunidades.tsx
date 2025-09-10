@@ -46,7 +46,6 @@ const segmentos = [
   "Imóvel Estendido",
 ] as const;
 
-/** Mapas UI ↔ DB (alinhados ao ENUM/CHECK) */
 const uiToDB: Record<StageUI, EstagioDB> = {
   novo: "Novo",
   qualificando: "Qualificando",
@@ -75,18 +74,14 @@ function moedaParaNumeroBR(valor: string) {
 function fmtBRL(n: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
 }
-
-/** Converte qualquer variação para um dos 6 canônicos aceitos */
 function normalizeEstagioDB(label: string): EstagioDB {
   const v = (label || "").toLowerCase();
-
   if (v.includes("fechado") && v.includes("ganho")) return "Fechado (Ganho)";
   if (v.includes("fechado") && v.includes("perdido")) return "Fechado (Perdido)";
   if (v.startsWith("qualifica")) return "Qualificando";
   if (v.startsWith("proposta")) return "Proposta";
   if (v.startsWith("negocia")) return "Negociação";
   if (v.startsWith("novo")) return "Novo";
-
   return "Novo";
 }
 
@@ -95,9 +90,14 @@ export default function Oportunidades() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [lista, setLista] = useState<Oportunidade[]>([]);
-  const [filtroVendedor, setFiltroVendedor] = useState<string>("all");
+  const [search, setSearch] = useState<string>("");
 
-  // formulário - Nova oportunidade
+  // modal "Tratar Lead"
+  const [editing, setEditing] = useState<Oportunidade | null>(null);
+  const [newNote, setNewNote] = useState("");
+
+  // modal "Nova oportunidade"
+  const [createOpen, setCreateOpen] = useState(false);
   const [leadId, setLeadId] = useState("");
   const [vendId, setVendId] = useState("");
   const [segmento, setSegmento] = useState<string>("Automóvel");
@@ -107,10 +107,6 @@ export default function Oportunidades() {
   const [stageUI, setStageUI] = useState<StageUI>("novo");
   const [expectedDate, setExpectedDate] = useState<string>("");
   const [loading, setLoading] = useState(false);
-
-  // modal "Tratar Lead"
-  const [editing, setEditing] = useState<Oportunidade | null>(null);
-  const [newNote, setNewNote] = useState("");
 
   /** Carregar listas iniciais */
   useEffect(() => {
@@ -135,12 +131,6 @@ export default function Oportunidades() {
     })();
   }, []);
 
-  /** Filtro por vendedor */
-  const visiveis = useMemo(
-    () => lista.filter((o) => (filtroVendedor === "all" ? true : o.vendedor_id === filtroVendedor)),
-    [lista, filtroVendedor]
-  );
-
   /** KPI por estágio */
   const kpi = useMemo(() => {
     const base: Record<StageUI, { qtd: number; total: number }> = {
@@ -158,6 +148,36 @@ export default function Oportunidades() {
     }
     return base;
   }, [lista]);
+
+  /** Busca (lead | vendedor | estágio) */
+  const visiveis = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return lista;
+
+    const match = (o: Oportunidade) => {
+      const leadNome = leads.find((l) => l.id === o.lead_id)?.nome?.toLowerCase() || "";
+      const vendNome =
+        vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome?.toLowerCase() || "";
+      const uiStage = dbToUI[o.estagio as string] ?? "novo";
+      const stageLabel = {
+        novo: "novo",
+        qualificando: "qualificando",
+        proposta: "proposta",
+        negociacao: "negociação",
+        fechado_ganho: "fechado (ganho)",
+        fechado_perdido: "fechado (perdido)",
+      }[uiStage];
+
+      return (
+        leadNome.includes(q) ||
+        vendNome.includes(q) ||
+        String(o.estagio).toLowerCase().includes(q) ||
+        stageLabel.includes(q)
+      );
+    };
+
+    return lista.filter(match);
+  }, [lista, leads, vendedores, search]);
 
   /** Criar oportunidade */
   async function criarOportunidade() {
@@ -202,6 +222,7 @@ export default function Oportunidades() {
 
     setLista((s) => [data as Oportunidade, ...s]);
 
+    // reset do form e fechar modal
     setLeadId("");
     setVendId("");
     setSegmento("Automóvel");
@@ -210,6 +231,7 @@ export default function Oportunidades() {
     setScore(1);
     setStageUI("novo");
     setExpectedDate("");
+    setCreateOpen(false);
     alert("Oportunidade criada!");
   }
 
@@ -291,11 +313,6 @@ export default function Oportunidades() {
   };
 
   const ListaOportunidades = () => {
-    const linhas = visiveis.filter(
-      (o) =>
-        dbToUI[o.estagio as string] !== "fechado_ganho" &&
-        dbToUI[o.estagio as string] !== "fechado_perdido"
-    );
     return (
       <div style={card}>
         <h3 style={{ marginTop: 0 }}>Oportunidades</h3>
@@ -314,7 +331,7 @@ export default function Oportunidades() {
               </tr>
             </thead>
             <tbody>
-              {linhas.map((o) => (
+              {visiveis.map((o) => (
                 <tr key={o.id}>
                   <td style={td}>{leads.find((l) => l.id === o.lead_id)?.nome || "-"}</td>
                   <td style={td}>
@@ -336,7 +353,7 @@ export default function Oportunidades() {
                   </td>
                 </tr>
               ))}
-              {!linhas.length && (
+              {!visiveis.length && (
                 <tr>
                   <td style={td} colSpan={8}>
                     Nenhuma oportunidade encontrada.
@@ -345,44 +362,6 @@ export default function Oportunidades() {
               )}
             </tbody>
           </table>
-        </div>
-      </div>
-    );
-  };
-
-  const CardsFechadas = () => {
-    const ganhos = visiveis.filter((o) => dbToUI[o.estagio as string] === "fechado_ganho");
-    const perdidos = visiveis.filter((o) => dbToUI[o.estagio as string] === "fechado_perdido");
-    return (
-      <div style={card}>
-        <h3 style={{ marginTop: 0 }}>Oportunidades Fechadas</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <div style={subCard}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>Ganhos</div>
-            <div style={{ color: "#475569", marginBottom: 8 }}>
-              Qtd: {ganhos.length} — Valor:{" "}
-              {fmtBRL(ganhos.reduce((s, x) => s + (x.valor_credito || 0), 0))}
-            </div>
-            {ganhos.map((g) => (
-              <div key={g.id} style={pill}>
-                {g.segmento} — {fmtBRL(g.valor_credito)}
-              </div>
-            ))}
-            {!ganhos.length && <div style={{ color: "#94a3b8" }}>(vazio)</div>}
-          </div>
-          <div style={subCard}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>Perdidos</div>
-            <div style={{ color: "#475569", marginBottom: 8 }}>
-              Qtd: {perdidos.length} — Valor:{" "}
-              {fmtBRL(perdidos.reduce((s, x) => s + (x.valor_credito || 0), 0))}
-            </div>
-            {perdidos.map((g) => (
-              <div key={g.id} style={pill}>
-                {g.segmento} — {fmtBRL(g.valor_credito)}
-              </div>
-            ))}
-            {!perdidos.length && <div style={{ color: "#94a3b8" }}>(vazio)</div>}
-          </div>
         </div>
       </div>
     );
@@ -397,156 +376,34 @@ export default function Oportunidades() {
         fontFamily: "Inter, system-ui, Arial",
       }}
     >
-      <CardsKPI />
-
+      {/* Topbar: busca + botão nova oportunidade */}
       <div
         style={{
           background: "#fff",
-          padding: 16,
+          padding: 12,
           borderRadius: 12,
           boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-          margin: "16px 0",
+          marginBottom: 16,
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
         }}
       >
-        <label style={label}>Filtrar por vendedor</label>
-        <select
-          value={filtroVendedor}
-          onChange={(e) => setFiltroVendedor(e.target.value)}
-          style={input}
-        >
-          <option value="all">Todos os vendedores</option>
-          {vendedores.map((v) => (
-            <option key={v.auth_user_id} value={v.auth_user_id}>
-              {v.nome}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <ListaOportunidades />
-      <CardsFechadas />
-
-      <div style={card}>
-        <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
-        <div style={grid2}>
-          <div>
-            <label style={label}>Selecionar um Lead</label>
-            <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={input}>
-              <option value="">Selecione um Lead</option>
-              {leads.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label style={label}>Selecione um Vendedor</label>
-            <select value={vendId} onChange={(e) => setVendId(e.target.value)} style={input}>
-              <option value="">Selecione um Vendedor</option>
-              {vendedores.map((v) => (
-                <option key={v.auth_user_id} value={v.auth_user_id}>
-                  {v.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label style={label}>Selecione um Segmento</label>
-            <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={input}>
-              {segmentos.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label style={label}>Valor do crédito (R$)</label>
-            <input
-              value={valor}
-              onChange={(e) => setValor(e.target.value)}
-              style={input}
-              placeholder="Ex.: 80.000,00"
-            />
-          </div>
-
-          <div>
-            <label style={label}>Observações</label>
-            <input
-              value={obs}
-              onChange={(e) => setObs(e.target.value)}
-              style={input}
-              placeholder="Observação inicial (opcional)"
-            />
-          </div>
-
-          <div>
-            <label style={label}>Probabilidade de fechamento</label>
-            <select
-              value={String(score)}
-              onChange={(e) => setScore(Number(e.target.value))}
-              style={input}
-            >
-              {[1, 2, 3, 4, 5].map((n) => (
-                <option key={n} value={n}>
-                  {"★".repeat(n)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label style={label}>Estágio</label>
-            <select
-              value={stageUI}
-              onChange={(e) => setStageUI(e.target.value as StageUI)}
-              style={input}
-            >
-              <option value="novo">Novo</option>
-              <option value="qualificando">Qualificando</option>
-              <option value="proposta">Proposta</option>
-              <option value="negociacao">Negociação</option>
-              <option value="fechado_ganho">Fechado (Ganho)</option>
-              <option value="fechado_perdido">Fechado (Perdido)</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={label}>Data prevista para fechamento</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              placeholder="dd/mm/aaaa"
-              value={expectedDate}
-              onChange={(e) => setExpectedDate(e.target.value)}
-              style={input}
-            />
-          </div>
-        </div>
-
-        <button
-          onClick={criarOportunidade}
-          disabled={loading}
-          style={{
-            marginTop: 12,
-            width: "100%",
-            padding: "12px 16px",
-            borderRadius: 12,
-            background: "#A11C27",
-            color: "#fff",
-            border: 0,
-            cursor: loading ? "not-allowed" : "pointer",
-            fontWeight: 800,
-          }}
-        >
-          {loading ? "Criando..." : "Criar oportunidade"}
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ ...input, margin: 0, flex: 1 }}
+          placeholder="Buscar por lead, vendedor ou estágio (ex.: Novo, Proposta, Negociação...)"
+        />
+        <button onClick={() => setCreateOpen(true)} style={btnPrimary}>
+          + Nova Oportunidade
         </button>
       </div>
 
+      <CardsKPI />
+      <ListaOportunidades />
+
+      {/* Modal: Tratar Lead */}
       {editing && (
         <div style={modalBackdrop}>
           <div style={modalCard}>
@@ -657,6 +514,123 @@ export default function Oportunidades() {
           </div>
         </div>
       )}
+
+      {/* Modal: Nova oportunidade */}
+      {createOpen && (
+        <div style={modalBackdrop}>
+          <div style={modalCard}>
+            <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
+            <div style={grid2}>
+              <div>
+                <label style={label}>Selecionar um Lead</label>
+                <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={input}>
+                  <option value="">Selecione um Lead</option>
+                  {leads.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Selecione um Vendedor</label>
+                <select value={vendId} onChange={(e) => setVendId(e.target.value)} style={input}>
+                  <option value="">Selecione um Vendedor</option>
+                  {vendedores.map((v) => (
+                    <option key={v.auth_user_id} value={v.auth_user_id}>
+                      {v.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Selecione um Segmento</label>
+                <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={input}>
+                  {segmentos.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Valor do crédito (R$)</label>
+                <input
+                  value={valor}
+                  onChange={(e) => setValor(e.target.value)}
+                  style={input}
+                  placeholder="Ex.: 80.000,00"
+                />
+              </div>
+
+              <div>
+                <label style={label}>Observações</label>
+                <input
+                  value={obs}
+                  onChange={(e) => setObs(e.target.value)}
+                  style={input}
+                  placeholder="Observação inicial (opcional)"
+                />
+              </div>
+
+              <div>
+                <label style={label}>Probabilidade de fechamento</label>
+                <select
+                  value={String(score)}
+                  onChange={(e) => setScore(Number(e.target.value))}
+                  style={input}
+                >
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {"★".repeat(n)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Estágio</label>
+                <select
+                  value={stageUI}
+                  onChange={(e) => setStageUI(e.target.value as StageUI)}
+                  style={input}
+                >
+                  <option value="novo">Novo</option>
+                  <option value="qualificando">Qualificando</option>
+                  <option value="proposta">Proposta</option>
+                  <option value="negociacao">Negociação</option>
+                  <option value="fechado_ganho">Fechado (Ganho)</option>
+                  <option value="fechado_perdido">Fechado (Perdido)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Data prevista (dd/mm/aaaa)</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="dd/mm/aaaa"
+                  value={expectedDate}
+                  onChange={(e) => setExpectedDate(e.target.value)}
+                  style={input}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={criarOportunidade} disabled={loading} style={btnPrimary}>
+                {loading ? "Criando..." : "Criar oportunidade"}
+              </button>
+              <button onClick={() => setCreateOpen(false)} style={btnGhost}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -668,19 +642,6 @@ const card: React.CSSProperties = {
   boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
   padding: 16,
   marginBottom: 16,
-};
-const subCard: React.CSSProperties = {
-  background: "#fff",
-  border: "1px solid #e5e7eb",
-  borderRadius: 12,
-  padding: 12,
-};
-const pill: React.CSSProperties = {
-  padding: "8px 10px",
-  borderRadius: 10,
-  border: "1px solid #e5e7eb",
-  background: "#f8fafc",
-  marginBottom: 8,
 };
 const grid2: React.CSSProperties = {
   display: "grid",

@@ -60,7 +60,7 @@ export function maskCEP(v: string) {
   return d.slice(0, 5) + "-" + d.slice(5);
 }
 
-/** Link de WhatsApp (auto 55 para números de 10–11 dígitos sem DDI) */
+/** Link de WhatsApp (auto 55 para números BR de 10–11 dígitos sem DDI) */
 export function waLink(phone?: string | null, text?: string) {
   const raw = String(phone || "");
   let d = onlyDigits(raw);
@@ -74,18 +74,64 @@ export function waLink(phone?: string | null, text?: string) {
   return `https://wa.me/${d}${q}`;
 }
 
+/** Alias simples do link do WhatsApp (compat com Cod 2) */
+export function whatsappHrefFromPhone(phone: string) {
+  const d = onlyDigits(phone);
+  if (!d) return "";
+  // Se vier sem DDI e parecer BR (10–11 dígitos), prefixa 55
+  const withDDI = d.startsWith("55") ? d : (d.length === 10 || d.length === 11) ? `55${d}` : d;
+  return `https://wa.me/${withDDI}`;
+}
+
 /** Formata moeda BRL */
 export function brMoney(v?: number | null) {
   if (v == null) return "—";
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-/** YYYY-MM-DD (local date -> string) */
-export function toYMD(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+/**
+ * Converte para YYYY-MM-DD.
+ * Aceita:
+ * - Date
+ * - string "dd/mm/aaaa"
+ * - string ISO "aaaa-mm-dd"
+ * - outras strings parseáveis por Date
+ */
+export function toYMD(input?: Date | string | null) {
+  if (!input) return "";
+
+  if (input instanceof Date) {
+    const y = input.getFullYear();
+    const m = String(input.getMonth() + 1).padStart(2, "0");
+    const d = String(input.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  const s = String(input);
+
+  // dd/mm/aaaa
+  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+
+  // aaaa-mm-dd (ou aaaa-mm-ddTHH:mm...)
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+  // tenta parsear
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "";
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** Converte YYYY-MM-DD -> dd/mm/aaaa */
+export function toBRDate(ymd?: string | null) {
+  if (!ymd) return "—";
+  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "—";
+  return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
 /** ISO começo/fim do dia em localtime */
@@ -96,16 +142,18 @@ export function dayISO(d: Date, end = false) {
   return z.toISOString();
 }
 
-/** DateTime legível pt-BR */
+/** DateTime legível pt-BR (a partir de ISO string) */
 export function fmtDateTime(iso?: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
   return d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
-/** Date legível dd/mm/aaaa */
+/** Date legível dd/mm/aaaa (a partir de ISO string) */
 export function fmtDateBR(iso?: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("pt-BR");
 }

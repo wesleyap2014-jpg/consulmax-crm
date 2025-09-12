@@ -1,20 +1,21 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { Phone, Pencil, CalendarPlus, Eye, Send } from "lucide-react";
+import { Pencil, CalendarPlus, Eye, Send } from "lucide-react";
 
 type Cliente = {
   id: string;
   nome: string;
-  cpf_dig?: string | null;      // vindo da view (só dígitos)
-  cpf?: string | null;          // fallback quando buscar direto da tabela
+  cpf_dig?: string | null;         // vindo da view (só dígitos)
+  cpf?: string | null;             // fallback se buscar direto da tabela
   telefone?: string | null;
   email?: string | null;
-  data_nascimento?: string | null;
+  data_nascimento?: string | null; // YYYY-MM-DD
   obs?: string | null;
 };
 
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
+
 const maskPhone = (v: string) => {
   const d = onlyDigits(v).slice(0, 11);
   const p1 = d.slice(0, 2);
@@ -28,6 +29,7 @@ const maskPhone = (v: string) => {
   if (p4) out += "-" + p4;
   return out.trim();
 };
+
 const formatBRDate = (iso?: string | null) => {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -53,6 +55,7 @@ export default function ClientesPage() {
   const [editNome, setEditNome] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPhone, setEditPhone] = useState("");
+  const [editBirth, setEditBirth] = useState<string>(""); // YYYY-MM-DD
   const [editObs, setEditObs] = useState("");
   const [editCEP, setEditCEP] = useState("");
   const [editLogr, setEditLogr] = useState("");
@@ -60,6 +63,9 @@ export default function ClientesPage() {
   const [editBairro, setEditBairro] = useState("");
   const [editCidade, setEditCidade] = useState("");
   const [editUF, setEditUF] = useState("");
+
+  // form novo cliente
+  const [form, setForm] = useState<Partial<Cliente>>({});
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 400);
@@ -114,14 +120,15 @@ export default function ClientesPage() {
     }
   }
 
-  // criar cliente manual (mantive simples)
-  const [form, setForm] = useState<Partial<Cliente>>({});
+  // criar cliente manual
   async function createCliente() {
     const payload = {
       nome: (form.nome || "").trim(),
-      cpf: onlyDigits(form.cpf || ""),
+      cpf: onlyDigits((form as any).cpf || ""),
       telefone: onlyDigits(form.telefone || ""),
       email: (form.email || "").trim() || null,
+      data_nascimento:
+        (form.data_nascimento || "") === "" ? null : form.data_nascimento!,
       obs: (form.obs || "").trim() || null,
     };
     if (!payload.nome) return alert("Informe o nome.");
@@ -136,13 +143,14 @@ export default function ClientesPage() {
           cpf: payload.cpf,
           telefone: payload.telefone || null,
           email: payload.email,
+          data_nascimento: payload.data_nascimento,
           obs: payload.obs,
         })
         .select("id")
         .single();
       if (error) throw error;
 
-      // cria/atualiza aniversário automático (se já tiver data depois)
+      // cria/atualiza aniversário automático
       await supabase.rpc("upsert_birthday_event", { p_cliente: data!.id });
 
       setForm({});
@@ -161,8 +169,9 @@ export default function ClientesPage() {
     setEditNome(c.nome || "");
     setEditEmail(c.email || "");
     setEditPhone(c.telefone ? maskPhone(c.telefone) : "");
+    setEditBirth(c.data_nascimento || "");
     setEditObs(c.obs || "");
-    // endereço (opcional) – só mostraremos se a tabela tiver colunas
+    // endereço (opcional)
     setEditCEP("");
     setEditLogr("");
     setEditNumero("");
@@ -203,10 +212,11 @@ export default function ClientesPage() {
         nome: editNome.trim() || null,
         email: editEmail.trim() || null,
         telefone: onlyDigits(editPhone) || null,
+        data_nascimento: editBirth || null,
         obs: editObs.trim() || null,
       };
 
-      // se você já tiver colunas de endereço em clientes, descomente:
+      // se já tiver colunas de endereço em clientes, descomente:
       // update.cep        = onlyDigits(editCEP) || null;
       // update.logradouro = editLogr || null;
       // update.numero     = editNumero || null;
@@ -219,6 +229,9 @@ export default function ClientesPage() {
         .update(update)
         .eq("id", editing.id);
       if (error) throw error;
+
+      // sincroniza/atualiza aniversário automático
+      await supabase.rpc("upsert_birthday_event", { p_cliente: editing.id });
 
       await load(page);
       closeEdit();
@@ -240,7 +253,7 @@ export default function ClientesPage() {
       {/* Novo cliente */}
       <div className="rounded-2xl bg-white p-4 shadow">
         <h3 className="mb-2 font-semibold">Novo Cliente</h3>
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
           <input
             placeholder="Nome"
             className="input"
@@ -250,8 +263,8 @@ export default function ClientesPage() {
           <input
             placeholder="CPF"
             className="input"
-            value={form.cpf || ""}
-            onChange={(e) => setForm((s) => ({ ...s, cpf: e.target.value }))}
+            value={(form as any).cpf || ""}
+            onChange={(e) => setForm((s: any) => ({ ...s, cpf: e.target.value }))}
           />
           <input
             placeholder="Telefone"
@@ -266,6 +279,15 @@ export default function ClientesPage() {
             className="input"
             value={form.email || ""}
             onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+          />
+          <input
+            type="date"
+            className="input"
+            value={form.data_nascimento || ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, data_nascimento: e.target.value }))
+            }
+            placeholder="Data de Nascimento"
           />
           <input
             placeholder="Observações"
@@ -378,7 +400,6 @@ export default function ClientesPage() {
                           className="icon-btn"
                           title="+ Evento na Agenda"
                           onClick={async () => {
-                            // abre overlay de evento manual? por ora só cria aniversário
                             await supabase.rpc("upsert_birthday_event", {
                               p_cliente: c.id,
                             });
@@ -390,7 +411,7 @@ export default function ClientesPage() {
                         <a
                           className="icon-btn"
                           title="Ver na Agenda"
-                          href="/agenda" /* quando a agenda estiver pronta, linke com anchor + filtro */
+                          href="/agenda"
                         >
                           <Eye className="h-4 w-4" />
                         </a>
@@ -428,10 +449,7 @@ export default function ClientesPage() {
       {/* Modal edição */}
       {editing && (
         <>
-          <div
-            className="fixed inset-0 bg-black/40 z-40"
-            onClick={closeEdit}
-          />
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={closeEdit} />
           <div className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(900px,92vw)] bg-white rounded-2xl shadow-xl p-4">
             <h3 className="font-semibold mb-2">Editar Cliente</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -452,6 +470,15 @@ export default function ClientesPage() {
                 placeholder="Telefone"
                 value={editPhone}
                 onChange={(e) => setEditPhone(e.target.value)}
+              />
+
+              {/* Data de nascimento */}
+              <input
+                type="date"
+                className="input"
+                value={editBirth}
+                onChange={(e) => setEditBirth(e.target.value)}
+                placeholder="Data de Nascimento"
               />
 
               {/* Endereço opcional */}
@@ -489,7 +516,9 @@ export default function ClientesPage() {
                 className="input"
                 placeholder="UF"
                 value={editUF}
-                onChange={(e) => setEditUF(e.target.value.toUpperCase().slice(0,2))}
+                onChange={(e) =>
+                  setEditUF(e.target.value.toUpperCase().slice(0, 2))
+                }
               />
 
               <input
@@ -503,7 +532,11 @@ export default function ClientesPage() {
               <button className="btn" onClick={closeEdit}>
                 Cancelar
               </button>
-              <button className="btn-primary" onClick={saveEdit} disabled={loading}>
+              <button
+                className="btn-primary"
+                onClick={saveEdit}
+                disabled={loading}
+              >
                 {loading ? "Salvando..." : "Salvar alterações"}
               </button>
             </div>

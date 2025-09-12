@@ -6,12 +6,12 @@ import { Pencil, CalendarPlus, Eye, Send } from "lucide-react";
 type Cliente = {
   id: string;
   nome: string;
-  cpf_dig?: string | null;         // vindo da view (só dígitos)
-  cpf?: string | null;             // fallback se buscar direto da tabela
+  cpf_dig?: string | null;          // vindo da view (só dígitos)
+  cpf?: string | null;              // fallback se buscar direto da tabela
   telefone?: string | null;
   email?: string | null;
-  data_nascimento?: string | null; // YYYY-MM-DD
-  obs?: string | null;
+  data_nascimento?: string | null;  // YYYY-MM-DD
+  observacoes?: string | null;      // <- nome correto no banco
 };
 
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
@@ -108,7 +108,7 @@ export default function ClientesPage() {
           telefone: r.telefone,
           email: r.email,
           data_nascimento: r.data_nascimento,
-          obs: r.obs,
+          observacoes: r.observacoes, // <- mapeia da view se existir
         }))
       );
       setTotal(count || 0);
@@ -129,7 +129,7 @@ export default function ClientesPage() {
       email: (form.email || "").trim() || null,
       data_nascimento:
         (form.data_nascimento || "") === "" ? null : form.data_nascimento!,
-      obs: (form.obs || "").trim() || null,
+      observacoes: (form.observacoes || "").trim() || null,
     };
     if (!payload.nome) return alert("Informe o nome.");
     if (!payload.cpf) return alert("Informe o CPF.");
@@ -144,7 +144,7 @@ export default function ClientesPage() {
           telefone: payload.telefone || null,
           email: payload.email,
           data_nascimento: payload.data_nascimento,
-          obs: payload.obs,
+          observacoes: payload.observacoes,
         })
         .select("id")
         .single();
@@ -170,7 +170,7 @@ export default function ClientesPage() {
     setEditEmail(c.email || "");
     setEditPhone(c.telefone ? maskPhone(c.telefone) : "");
     setEditBirth(c.data_nascimento || "");
-    setEditObs(c.obs || "");
+    setEditObs(c.observacoes || "");
     // endereço (opcional)
     setEditCEP("");
     setEditLogr("");
@@ -213,7 +213,7 @@ export default function ClientesPage() {
         email: editEmail.trim() || null,
         telefone: onlyDigits(editPhone) || null,
         data_nascimento: editBirth || null,
-        obs: editObs.trim() || null,
+        observacoes: editObs.trim() || null, // <- usa coluna correta
       };
 
       // se já tiver colunas de endereço em clientes, descomente:
@@ -292,8 +292,10 @@ export default function ClientesPage() {
           <input
             placeholder="Observações"
             className="input md:col-span-2"
-            value={(form as any).obs || ""}
-            onChange={(e) => setForm((s) => ({ ...s, obs: e.target.value }))}
+            value={form.observacoes || ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, observacoes: e.target.value }))
+            }
           />
           <button
             className="btn-primary md:col-span-2"
@@ -408,11 +410,7 @@ export default function ClientesPage() {
                         >
                           <CalendarPlus className="h-4 w-4" />
                         </button>
-                        <a
-                          className="icon-btn"
-                          title="Ver na Agenda"
-                          href="/agenda"
-                        >
+                        <a className="icon-btn" title="Ver na Agenda" href="/agenda">
                           <Eye className="h-4 w-4" />
                         </a>
                       </div>

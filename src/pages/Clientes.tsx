@@ -1,198 +1,96 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-
-// ===== tente usar seus utils de br.ts =====
+import { cpfMask, phoneMask, onlyDigits, toBRDate } from "@/lib/br";
 import {
-  // Ajuste os nomes abaixo conforme o seu lib/br.ts
-  onlyDigits as brOnlyDigits,
-  maskPhone as brMaskPhone,
-  maskCPF as brMaskCPF,
-  toYMD as brToYMD,
-  toBRDate as brToBRDate,
-  whatsappHrefFromPhone as brWaHref,
-} from "@/lib/br";
+  Pencil,
+  CalendarPlus,
+  Eye,
+  Search,
+} from "lucide-react";
 
-// ===== fallbacks (caso os nomes de br.ts sejam diferentes) =====
-const fallbackOnlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
-const fallbackMaskPhone = (v: string) => {
-  const d = fallbackOnlyDigits(v).slice(0, 11);
-  const p1 = d.slice(0, 2);
-  const p2 = d.slice(2, 3);
-  const p3 = d.slice(3, 7);
-  const p4 = d.slice(7, 11);
-  let out = "";
-  if (p1) out += `(${p1}) `;
-  if (p2) out += p2 + (p3 ? " " : "");
-  if (p3) out += p3;
-  if (p4) out += "-" + p4;
-  return out.trim();
-};
-const fallbackMaskCPF = (v: string) => {
-  const d = fallbackOnlyDigits(v).slice(0, 11);
-  const p1 = d.slice(0, 3);
-  const p2 = d.slice(3, 6);
-  const p3 = d.slice(6, 9);
-  const p4 = d.slice(9, 11);
-  let out = p1;
-  if (p2) out += "." + p2;
-  if (p3) out += "." + p3;
-  if (p4) out += "-" + p4;
-  return out;
-};
-const fallbackToYMD = (s?: string | null) => {
-  if (!s) return "";
-  // aceita DD/MM/AAAA ou ISO
-  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return "";
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
-const fallbackToBRDate = (ymd?: string | null) => {
-  if (!ymd) return "—";
-  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return "—";
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
-const fallbackWaHref = (phone: string) => {
-  const d = fallbackOnlyDigits(phone);
-  if (!d) return "";
-  // Brasil: prefixo 55
-  return `https://wa.me/55${d}`;
-};
-
-// usa lib se existir; senão, fallback:
-const onlyDigits = brOnlyDigits ?? fallbackOnlyDigits;
-const maskPhone = brMaskPhone ?? fallbackMaskPhone;
-const maskCPF = brMaskCPF ?? fallbackMaskCPF;
-const toYMD = brToYMD ?? fallbackToYMD;
-const toBRDate = brToBRDate ?? fallbackToBRDate;
-const whatsappHrefFromPhone = brWaHref ?? fallbackWaHref;
-
-// ===== Tipos =====
+/** Tipos */
 type Cliente = {
   id: string;
   nome: string;
-  data_nascimento: string | null;
   cpf: string | null;
   telefone: string | null;
   email: string | null;
-  endereco_cep: string | null;
-  logradouro: string | null;
-  numero: string | null;
-  bairro: string | null;
-  cidade: string | null;
-  uf: string | null;
+  data_nascimento: string | null;
   observacoes: string | null;
   lead_id: string | null;
-  created_by: string | null;
-  created_at: string | null;
-  updated_at: string | null;
+  created_at: string;
 };
 
-type UserLite = { id: string; role: string } | null;
-
-// ===== Componente =====
 export default function ClientesPage() {
   const PAGE_SIZE = 10;
 
-  const [me, setMe] = useState<UserLite>(null);
+  // ui
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
 
-  const [clientes, setClientes] = useState<Cliente[]>([]);
-  const [total, setTotal] = useState<number>(0);
+  // filtros
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [onlyWithCPF, setOnlyWithCPF] = useState<boolean>(true); // 👈 padrão: só clientes
+
+  // paginação
   const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
-  // busca
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  // dados
+  const [clientes, setClientes] = useState<Cliente[]>([]);
 
-  // criação
-  const [form, setForm] = useState<Partial<Cliente>>({
-    nome: "",
-    cpf: "",
-    telefone: "",
-    email: "",
-    data_nascimento: "",
-    observacoes: "",
-  });
-
-  // edição (modal)
-  const [editing, setEditing] = useState<Cliente | null>(null);
-  const [edit, setEdit] = useState<Partial<Cliente>>({});
-
-  // criar evento manual (modal)
-  const [eventForCliente, setEventForCliente] = useState<Cliente | null>(null);
-  const [evtTitle, setEvtTitle] = useState("");
-  const [evtInicio, setEvtInicio] = useState("");
-  const [evtFim, setEvtFim] = useState("");
-  const [evtVideo, setEvtVideo] = useState("");
-
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)),
-    [total]
-  );
-  const showingFrom = useMemo(
-    () => (total ? (page - 1) * PAGE_SIZE + 1 : 0),
-    [page, total]
-  );
-  const showingTo = useMemo(
-    () => Math.min(page * PAGE_SIZE, total || 0),
-    [page, total]
-  );
-
-  // user atual
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      const u = data?.user;
-      const role = (u?.app_metadata as any)?.role || "viewer";
-      if (u) setMe({ id: u.id, role });
-    })();
-  }, []);
+  // form novo
+  const [fNome, setFNome] = useState("");
+  const [fCPF, setFCPF] = useState("");
+  const [fTelefone, setFTelefone] = useState("");
+  const [fEmail, setFEmail] = useState("");
+  const [fNasc, setFNasc] = useState("");
+  const [fObs, setFObs] = useState("");
 
   // debounce busca
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(q.trim()), 350);
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 350);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [search]);
 
-  // carregar clientes
-  async function load(targetPage = 1, term = debouncedQ) {
-    const from = (targetPage - 1) * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
-
+  // carregar grid
+  async function load(targetPage = 1) {
     setLoading(true);
     try {
+      const from = (targetPage - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
       let query = supabase
         .from("clientes")
         .select(
-          "id,nome,data_nascimento,cpf,telefone,email,endereco_cep,logradouro,numero,bairro,cidade,uf,observacoes,lead_id,created_by,created_at,updated_at",
+          "id,nome,cpf,telefone,email,data_nascimento,observacoes,lead_id,created_at",
           { count: "exact" }
         )
-        .order("created_at", { ascending: false });
+        // ordenação A→Z (case-insensitive)
+        .order("nome", { ascending: true });
 
-      if (term) {
-        // busca simplificada: nome/telefone/email
+      if (onlyWithCPF) {
+        query = query.not("cpf", "is", null).neq("cpf", "");
+      }
+
+      if (debouncedSearch) {
+        const t = `%${debouncedSearch}%`;
+        // busca simples por nome/telefone/email
         query = query.or(
-          `nome.ilike.%${term}%,telefone.ilike.%${term}%,email.ilike.%${term}%`
+          `nome.ilike.${t},telefone.ilike.${t},email.ilike.${t}`
         );
       }
 
       const { data, error, count } = await query.range(from, to);
-      if (error) {
-        alert("Erro ao carregar clientes: " + error.message);
-        return;
-      }
-      setClientes(data || []);
+      if (error) throw error;
+
+      setClientes((data || []) as any);
       setTotal(count || 0);
       setPage(targetPage);
+    } catch (e: any) {
+      alert("Erro ao carregar clientes: " + (e?.message || e));
     } finally {
       setLoading(false);
     }
@@ -201,392 +99,310 @@ export default function ClientesPage() {
   useEffect(() => {
     load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.id]);
-
-  useEffect(() => {
-    load(1, debouncedQ);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQ]);
+  }, [debouncedSearch, onlyWithCPF]);
 
   // criar cliente
   async function createCliente() {
     const payload = {
-      nome: (form.nome || "").trim(),
-      cpf: (form.cpf || "").trim() || null,
-      telefone: (form.telefone || "").trim() || null,
-      email: (form.email || "").trim() || null,
-      data_nascimento: form.data_nascimento
-        ? toYMD(String(form.data_nascimento))
-        : null,
-      observacoes: (form.observacoes || "").trim() || null,
-      created_by: me?.id || null, // ok se houver trigger para preencher
+      nome: fNome.trim(),
+      cpf: onlyDigits(fCPF) || null,
+      telefone: onlyDigits(fTelefone) || null,
+      email: fEmail.trim() || null,
+      data_nascimento: fNasc || null,
+      observacoes: fObs.trim() || null,
     };
 
-    if (!payload.nome) {
-      alert("Informe o nome do cliente.");
-      return;
-    }
-    if (payload.cpf && onlyDigits(payload.cpf).length !== 11) {
-      alert("CPF inválido.");
-      return;
-    }
-
+    if (!payload.nome) return alert("Informe o nome.");
+    setCreating(true);
     try {
-      setLoading(true);
       const { error } = await supabase.from("clientes").insert([payload]);
-      if (error) {
-        alert("Erro ao criar cliente: " + error.message);
-        return;
-      }
-      // limpa
-      setForm({
-        nome: "",
-        cpf: "",
-        telefone: "",
-        email: "",
-        data_nascimento: "",
-        observacoes: "",
-      });
+      if (error) throw error;
+      setFNome("");
+      setFCPF("");
+      setFTelefone("");
+      setFEmail("");
+      setFNasc("");
+      setFObs("");
       await load(1);
-      alert("Cliente criado com sucesso!");
-      // 🔔 Trigger no DB já cuida de aniversário automático na agenda
+      alert("Cliente criado!");
+    } catch (e: any) {
+      alert("Erro ao criar cliente: " + (e?.message || e));
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   }
 
-  // abrir/fechar edição
-  function openEdit(c: Cliente) {
-    setEditing(c);
-    setEdit({
-      nome: c.nome,
-      cpf: c.cpf ? maskCPF(c.cpf) : "",
-      telefone: c.telefone ? maskPhone(c.telefone) : "",
-      email: c.email || "",
-      data_nascimento: c.data_nascimento ? toYMD(c.data_nascimento) : "",
-      observacoes: c.observacoes || "",
-      endereco_cep: c.endereco_cep || "",
-      logradouro: c.logradouro || "",
-      numero: c.numero || "",
-      bairro: c.bairro || "",
-      cidade: c.cidade || "",
-      uf: c.uf || "",
-    });
-  }
-  function closeEdit() {
-    setEditing(null);
-    setEdit({});
-  }
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)),
+    [total]
+  );
 
-  // salvar edição
-  async function saveEdit() {
-    if (!editing) return;
-    const upd: any = {
-      nome: (edit.nome || "").trim() || null,
-      cpf: edit.cpf ? onlyDigits(String(edit.cpf)) : null,
-      telefone: edit.telefone ? onlyDigits(String(edit.telefone)) : null,
-      email: (edit.email || "").trim() || null,
-      data_nascimento: edit.data_nascimento
-        ? toYMD(String(edit.data_nascimento))
-        : null,
-      observacoes: (edit.observacoes || "").trim() || null,
-      endereco_cep: (edit.endereco_cep || "").trim() || null,
-      logradouro: (edit.logradouro || "").trim() || null,
-      numero: (edit.numero || "").trim() || null,
-      bairro: (edit.bairro || "").trim() || null,
-      cidade: (edit.cidade || "").trim() || null,
-      uf: (edit.uf || "").trim().toUpperCase() || null,
-    };
+  const showing = useMemo(() => {
+    if (!total) return "Nenhum cliente";
+    const from = (page - 1) * PAGE_SIZE + 1;
+    const to = Math.min(page * PAGE_SIZE, total);
+    return `Mostrando ${from}-${to} de ${total}`;
+  }, [page, total]);
 
-    if (!upd.nome) {
-      alert("O nome não pode ficar em branco.");
-      return;
-    }
-    if (upd.cpf && String(upd.cpf).length !== 11) {
-      alert("CPF inválido.");
-      return;
-    }
+  // helpers UI
+  const waUrl = (tel: string | null) => {
+    const d = onlyDigits(tel || "");
+    if (!d) return null;
+    return `https://wa.me/55${d}`;
+  };
 
-    setLoading(true);
-    try {
-      const { error } = await supabase
-        .from("clientes")
-        .update(upd)
-        .eq("id", editing.id);
-      if (error) {
-        alert("Não foi possível salvar: " + error.message);
-        return;
+  const Badge: React.FC<{ type: "cliente" | "lead" }> = ({ type }) => (
+    <span
+      className={
+        "ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold " +
+        (type === "cliente"
+          ? "bg-green-100 text-green-700 border border-green-200"
+          : "bg-slate-100 text-slate-700 border border-slate-200")
       }
-      await load(page);
-      closeEdit();
-      alert("Cliente atualizado!");
-      // 🔔 Trigger de aniversário permanece cobrindo a automação
-    } finally {
-      setLoading(false);
-    }
-  }
+      title={type === "cliente" ? "Registro com CPF (Cliente)" : "Sem CPF (Lead)"}
+    >
+      {type === "cliente" ? "Cliente" : "Lead"}
+    </span>
+  );
 
-  // abrir/fechar modal de evento manual
-  function openEventModal(c: Cliente) {
-    setEventForCliente(c);
-    setEvtTitle(`Contato com ${c.nome}`);
-    setEvtInicio("");
-    setEvtFim("");
-    setEvtVideo("");
-  }
-  function closeEventModal() {
-    setEventForCliente(null);
-    setEvtTitle("");
-    setEvtInicio("");
-    setEvtFim("");
-    setEvtVideo("");
-  }
+  const WhatsAppIconBtn: React.FC<{ href: string; title?: string }> = ({
+    href,
+    title = "Abrir no WhatsApp",
+  }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={title}
+      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition"
+    >
+      {/* WhatsApp logo (mini SVG) */}
+      <svg viewBox="0 0 32 32" width="16" height="16" aria-hidden="true">
+        <path
+          fill="#10B981"
+          d="M27 15.5c0 6.1-5 11-11.1 11-1.9 0-3.7-.5-5.3-1.4L5 26.9l1.8-5.4c-.9-1.6-1.5-3.5-1.5-5.5C5.3 9.9 10.2 5 16 5s10.9 4.9 11 10.5z"
+        />
+        <path
+          fill="#fff"
+          d="M13.5 10.7c-.2-.6-.4-.6-.6-.6h-.5c-.2 0-.6.1-.8.4-.3.3-1.1 1.1-1.1 2.7s1.1 3.1 1.3 3.3c.2.3 2.1 3.3 5.2 4.5 2.6 1 3.1.8 3.7.8s1.8-.7 2-1.4.2-1.3.2-1.4c0-.1-.1-.2-.3-.3l-1.1-.5c-.2-.1-.3-.1-.5.1-.1.2-.6.8-.7.9-.2.1-.3.2-.5.1-.2-.1-.8-.3-1.5-.8-1.1-.6-1.8-2.1-2-2.3-.2-.3 0-.4.1-.5.1-.1.2-.3.3-.4.1-.1.1-.2.2-.4 0-.1 0-.3 0-.4 0-.1-.5-1.2-.7-1.6z"
+        />
+      </svg>
+    </a>
+  );
 
-  // criar evento manual (agenda_eventos)
-  async function createManualEvent() {
-    if (!eventForCliente) return;
-    if (!evtTitle.trim()) {
-      alert("Informe o título do evento.");
-      return;
-    }
-    if (!evtInicio || !evtFim) {
-      alert("Informe início e fim.");
-      return;
-    }
-    try {
-      setLoading(true);
-      const payload = {
-        tipo: "contato" as const,
-        titulo: evtTitle.trim(),
-        cliente_id: eventForCliente.id,
-        lead_id: null,
-        user_id: me?.id ?? null, // há trigger de preenchimento automático, mas enviamos se soubermos
-        inicio_at: new Date(evtInicio).toISOString(),
-        fim_at: new Date(evtFim).toISOString(),
-        videocall_url: evtVideo?.trim() || null,
-        origem: "manual" as const,
-        relacao_id: null,
-      };
-      const { error } = await supabase
-        .from("agenda_eventos")
-        .insert([payload]);
-      if (error) {
-        alert("Erro ao criar evento: " + error.message);
-        return;
-      }
-      closeEventModal();
-      alert("Evento criado na Agenda!");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // ===== UI =====
   return (
-    <div style={{ maxWidth: 1140, margin: "0 auto", paddingBottom: 24 }}>
-      <h1 style={{ margin: "16px 0" }}>Clientes</h1>
-
-      {/* Card: novo cliente */}
-      <div style={card}>
-        <h3 style={cardTitle}>Novo Cliente</h3>
-        <div style={grid3}>
+    <div className="space-y-4">
+      {/* NOVO CLIENTE */}
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <h2 className="mb-3 text-base font-semibold">Novo Cliente</h2>
+        <div className="grid gap-3 md:grid-cols-4">
           <input
+            className="h-10 rounded-xl border px-3"
             placeholder="Nome"
-            value={form.nome || ""}
-            onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
-            style={input}
+            value={fNome}
+            onChange={(e) => setFNome(e.target.value)}
           />
-
           <input
+            className="h-10 rounded-xl border px-3"
             placeholder="CPF"
-            value={form.cpf || ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))
-            }
-            style={input}
+            value={fCPF}
+            onChange={(e) => setFCPF(cpfMask(e.target.value))}
             inputMode="numeric"
           />
-
           <input
+            className="h-10 rounded-xl border px-3"
             placeholder="Telefone"
-            value={form.telefone || ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, telefone: maskPhone(e.target.value) }))
-            }
-            style={input}
+            value={fTelefone}
+            onChange={(e) => setFTelefone(phoneMask(e.target.value))}
             inputMode="tel"
           />
-
           <input
+            className="h-10 rounded-xl border px-3"
             placeholder="E-mail"
-            value={form.email || ""}
-            onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
-            style={input}
+            value={fEmail}
+            onChange={(e) => setFEmail(e.target.value)}
             type="email"
           />
-
-          <label style={label}>
-            Data de Nascimento
-            <input
-              type="date"
-              value={toYMD(String(form.data_nascimento || ""))}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, data_nascimento: e.target.value }))
-              }
-              style={input}
-            />
-          </label>
-
           <input
-            placeholder="Observações"
-            value={form.observacoes || ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, observacoes: e.target.value }))
-            }
-            style={input}
+            className="h-10 rounded-xl border px-3 md:col-span-1"
+            placeholder="dd/mm/aaaa"
+            value={fNasc}
+            onChange={(e) => setFNasc(e.target.value)}
+            type="date"
           />
-
-          <button onClick={createCliente} disabled={loading} style={btnPrimary}>
-            {loading ? "Salvando..." : "Criar Cliente"}
+          <input
+            className="h-10 rounded-xl border px-3 md:col-span-2"
+            placeholder="Observações"
+            value={fObs}
+            onChange={(e) => setFObs(e.target.value)}
+          />
+          <button
+            onClick={createCliente}
+            disabled={creating}
+            className="h-10 rounded-xl bg-consulmax-primary font-bold text-white hover:opacity-95 md:col-span-1"
+          >
+            {creating ? "Salvando..." : "Criar Cliente"}
           </button>
         </div>
       </div>
 
-      {/* Card: busca/listagem */}
-      <div style={card}>
-        <div style={listHeader}>
-          <h3 style={{ margin: 0 }}>Lista de Clientes</h3>
-
-          <div style={rightHeader}>
-            <div style={{ position: "relative" }}>
+      {/* LISTA */}
+      <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <label className="inline-flex select-none items-center gap-2 text-sm">
               <input
-                style={{ ...input, paddingLeft: 36, width: 300 }}
-                placeholder="Buscar por nome, telefone ou e-mail…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
+                type="checkbox"
+                checked={onlyWithCPF}
+                onChange={(e) => setOnlyWithCPF(e.target.checked)}
               />
-              <span
-                style={{
-                  position: "absolute",
-                  left: 10,
-                  top: 10,
-                  fontSize: 14,
-                  opacity: 0.6,
-                }}
-              >
-                🔎
-              </span>
-            </div>
-            <small style={{ color: "#64748b", marginLeft: 12 }}>
-              {total > 0
-                ? `Mostrando ${showingFrom}-${showingTo} de ${total}`
-                : "Nenhum cliente"}
-            </small>
+              Somente com CPF
+            </label>
+            <span className="text-xs text-slate-500">{showing}</span>
+          </div>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input
+              className="h-10 w-[280px] rounded-xl border pl-9 pr-3"
+              placeholder="Buscar por nome, telefone ou e-mail"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
         </div>
 
-        <div style={{ overflowX: "auto" }}>
-          <table
-            style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}
-          >
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
             <thead>
-              <tr>
-                <th style={th}>Nome</th>
-                <th style={th}>Telefone</th>
-                <th style={th}>E-mail</th>
-                <th style={th}>Nascimento</th>
-                <th style={{ ...th, width: 240 }}>Ações</th>
+              <tr className="text-left text-slate-600">
+                <th className="p-2">Nome</th>
+                <th className="p-2">Telefone</th>
+                <th className="p-2">E-mail</th>
+                <th className="p-2">Nascimento</th>
+                <th className="p-2 text-center">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {clientes.map((c) => (
-                <tr key={c.id}>
-                  <td style={td}>
-                    <div style={{ fontWeight: 600 }}>{c.nome}</div>
-                    {c.cpf ? (
-                      <div style={{ fontSize: 12, color: "#64748b" }}>
-                        CPF: {maskCPF(String(c.cpf))}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 12, color: "#94a3b8" }}>—</div>
-                    )}
-                  </td>
-                  <td style={td}>
-                    {c.telefone ? (
-                      <>
-                        {maskPhone(String(c.telefone))}{" "}
-                        <a
-                          href={whatsappHrefFromPhone(String(c.telefone))}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={waLink}
-                          title="Abrir WhatsApp"
-                        >
-                          WhatsApp
-                        </a>
-                      </>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                  <td style={td}>{c.email || "-"}</td>
-                  <td style={td}>
-                    {c.data_nascimento ? toBRDate(toYMD(c.data_nascimento)) : "—"}
-                  </td>
-                  <td style={td}>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        style={btnSecondary}
-                        disabled={loading}
-                        onClick={() => openEdit(c)}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        style={btnSecondary}
-                        onClick={() => openEventModal(c)}
-                        disabled={loading}
-                        title="Criar evento manual (Agenda)"
-                      >
-                        + Evento
-                      </button>
-                      <a
-                        href={`/agenda?cliente_id=${c.id}`}
-                        style={btnGhostLink}
-                        title="Ver na Agenda"
-                      >
-                        Ver na Agenda
-                      </a>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-
-              {clientes.length === 0 && (
+              {loading && (
                 <tr>
-                  <td style={td} colSpan={5}>
-                    {loading ? "Carregando..." : "Nenhum cliente encontrado."}
+                  <td className="p-4 text-slate-500" colSpan={5}>
+                    Carregando…
                   </td>
                 </tr>
               )}
+
+              {!loading && clientes.length === 0 && (
+                <tr>
+                  <td className="p-4 text-slate-500" colSpan={5}>
+                    Nenhum cliente encontrado.
+                  </td>
+                </tr>
+              )}
+
+              {!loading &&
+                clientes.map((c, idx) => {
+                  const isCliente = !!c.cpf && c.cpf.trim() !== "";
+                  const wa = waUrl(c.telefone);
+
+                  return (
+                    <tr
+                      key={c.id}
+                      className={`${
+                        idx % 2 ? "bg-slate-50/70" : "bg-white"
+                      } border-t`}
+                    >
+                      {/* NOME + badge + cpf pequenino */}
+                      <td className="p-2">
+                        <div className="flex items-center">
+                          <span className="font-medium">{c.nome}</span>
+                          <Badge type={isCliente ? "cliente" : "lead"} />
+                        </div>
+                        {isCliente && (
+                          <div className="text-[11px] text-slate-500">
+                            CPF: {cpfMask(c.cpf || "")}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* TELEFONE + botão whatsapp */}
+                      <td className="p-2">
+                        <div className="flex items-center gap-2">
+                          {c.telefone ? phoneMask(c.telefone) : "—"}
+                          {wa && <WhatsAppIconBtn href={wa} />}
+                        </div>
+                      </td>
+
+                      {/* EMAIL */}
+                      <td className="p-2">
+                        {c.email ? (
+                          <a
+                            href={`mailto:${c.email}`}
+                            className="text-sky-700 underline-offset-2 hover:underline"
+                          >
+                            {c.email}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+
+                      {/* NASCIMENTO */}
+                      <td className="p-2">
+                        {c.data_nascimento ? toBRDate(c.data_nascimento) : "—"}
+                      </td>
+
+                      {/* AÇÕES (ícones com title) */}
+                      <td className="p-2">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            title="Editar"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border hover:bg-slate-100"
+                            onClick={() => alert("TODO: abrir modal de edição")}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            title="Adicionar Evento"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border hover:bg-slate-100"
+                            onClick={() =>
+                              alert("TODO: abrir modal para criar evento")
+                            }
+                          >
+                            <CalendarPlus className="h-5 w-5" />
+                          </button>
+                          <button
+                            title="Ver na Agenda"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border hover:bg-slate-100"
+                            onClick={() =>
+                              alert("TODO: navegar para Agenda filtrando cliente")
+                            }
+                          >
+                            <Eye className="h-5 w-5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>
 
-        {/* Paginação */}
-        <div style={pager}>
+        {/* paginação */}
+        <div className="mt-3 flex items-center justify-end gap-2">
           <button
-            style={{ ...btnSecondary, opacity: page <= 1 ? 0.6 : 1 }}
+            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
             disabled={page <= 1 || loading}
             onClick={() => load(page - 1)}
           >
             ‹ Anterior
           </button>
-          <span style={{ fontSize: 12, color: "#475569" }}>
+          <span className="text-xs text-slate-600">
             Página {page} de {totalPages}
           </span>
           <button
-            style={{ ...btnSecondary, opacity: page >= totalPages ? 0.6 : 1 }}
+            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
             disabled={page >= totalPages || loading}
             onClick={() => load(page + 1)}
           >
@@ -594,327 +410,6 @@ export default function ClientesPage() {
           </button>
         </div>
       </div>
-
-      {/* Modal Edição */}
-      {editing && (
-        <>
-          <div style={backdrop} onClick={closeEdit} />
-          <div
-            role="dialog"
-            aria-modal="true"
-            style={modal}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") closeEdit();
-              if (e.key === "Enter") saveEdit();
-            }}
-          >
-            <h3 style={{ marginTop: 0, marginBottom: 12 }}>
-              Editar Cliente — {editing.nome}
-            </h3>
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(3, minmax(0,1fr))" }}>
-              <label style={label}>
-                Nome
-                <input
-                  value={edit.nome || ""}
-                  onChange={(e) => setEdit((s) => ({ ...s, nome: e.target.value }))}
-                  style={input}
-                  autoFocus
-                />
-              </label>
-
-              <label style={label}>
-                CPF
-                <input
-                  value={edit.cpf || ""}
-                  onChange={(e) =>
-                    setEdit((s) => ({ ...s, cpf: maskCPF(String(e.target.value)) }))
-                  }
-                  style={input}
-                  inputMode="numeric"
-                />
-              </label>
-
-              <label style={label}>
-                Telefone
-                <input
-                  value={edit.telefone || ""}
-                  onChange={(e) =>
-                    setEdit((s) => ({ ...s, telefone: maskPhone(e.target.value) }))
-                  }
-                  style={input}
-                  inputMode="tel"
-                />
-              </label>
-
-              <label style={label}>
-                E-mail
-                <input
-                  type="email"
-                  value={edit.email || ""}
-                  onChange={(e) => setEdit((s) => ({ ...s, email: e.target.value }))}
-                  style={input}
-                />
-              </label>
-
-              <label style={label}>
-                Data de Nascimento
-                <input
-                  type="date"
-                  value={toYMD(String(edit.data_nascimento || ""))}
-                  onChange={(e) =>
-                    setEdit((s) => ({ ...s, data_nascimento: e.target.value }))
-                  }
-                  style={input}
-                />
-              </label>
-
-              <label style={label}>
-                Observações
-                <input
-                  value={edit.observacoes || ""}
-                  onChange={(e) =>
-                    setEdit((s) => ({ ...s, observacoes: e.target.value }))
-                  }
-                  style={input}
-                />
-              </label>
-
-              {/* Endereço opcional */}
-              <label style={label}>
-                CEP
-                <input
-                  value={edit.endereco_cep || ""}
-                  onChange={(e) =>
-                    setEdit((s) => ({ ...s, endereco_cep: e.target.value }))
-                  }
-                  style={input}
-                />
-              </label>
-              <label style={label}>
-                Logradouro
-                <input
-                  value={edit.logradouro || ""}
-                  onChange={(e) =>
-                    setEdit((s) => ({ ...s, logradouro: e.target.value }))
-                  }
-                  style={input}
-                />
-              </label>
-              <label style={label}>
-                Número
-                <input
-                  value={edit.numero || ""}
-                  onChange={(e) => setEdit((s) => ({ ...s, numero: e.target.value }))}
-                  style={input}
-                />
-              </label>
-              <label style={label}>
-                Bairro
-                <input
-                  value={edit.bairro || ""}
-                  onChange={(e) => setEdit((s) => ({ ...s, bairro: e.target.value }))}
-                  style={input}
-                />
-              </label>
-              <label style={label}>
-                Cidade
-                <input
-                  value={edit.cidade || ""}
-                  onChange={(e) => setEdit((s) => ({ ...s, cidade: e.target.value }))}
-                  style={input}
-                />
-              </label>
-              <label style={label}>
-                UF
-                <input
-                  value={edit.uf || ""}
-                  onChange={(e) =>
-                    setEdit((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))
-                  }
-                  style={input}
-                />
-              </label>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-              <button style={btnSecondary} onClick={closeEdit} disabled={loading}>
-                Cancelar
-              </button>
-              <button style={btnPrimary} onClick={saveEdit} disabled={loading}>
-                Salvar
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Modal Evento Manual */}
-      {eventForCliente && (
-        <>
-          <div style={backdrop} onClick={closeEventModal} />
-          <div role="dialog" aria-modal="true" style={modal}>
-            <h3 style={{ marginTop: 0, marginBottom: 12 }}>
-              Novo evento — {eventForCliente.nome}
-            </h3>
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(2, minmax(0,1fr))" }}>
-              <label style={label}>
-                Título
-                <input
-                  value={evtTitle}
-                  onChange={(e) => setEvtTitle(e.target.value)}
-                  style={input}
-                />
-              </label>
-
-              <label style={label}>
-                Link de vídeo (opcional)
-                <input
-                  value={evtVideo}
-                  onChange={(e) => setEvtVideo(e.target.value)}
-                  style={input}
-                />
-              </label>
-
-              <label style={label}>
-                Início
-                <input
-                  type="datetime-local"
-                  value={evtInicio}
-                  onChange={(e) => setEvtInicio(e.target.value)}
-                  style={input}
-                />
-              </label>
-
-              <label style={label}>
-                Fim
-                <input
-                  type="datetime-local"
-                  value={evtFim}
-                  onChange={(e) => setEvtFim(e.target.value)}
-                  style={input}
-                />
-              </label>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-              <button style={btnSecondary} onClick={closeEventModal} disabled={loading}>
-                Cancelar
-              </button>
-              <button style={btnPrimary} onClick={createManualEvent} disabled={loading}>
-                Criar evento
-              </button>
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 }
-
-// ===== estilos inline (mesmo padrão que você usa nas outras guias) =====
-const card: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 14,
-  padding: 16,
-  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-  marginBottom: 16,
-};
-const cardTitle: React.CSSProperties = { margin: "0 0 12px 0" };
-const grid3: React.CSSProperties = {
-  display: "grid",
-  gap: 12,
-  gridTemplateColumns: "repeat(3, minmax(0,1fr))",
-};
-const input: React.CSSProperties = {
-  padding: 10,
-  borderRadius: 10,
-  border: "1px solid #e5e7eb",
-  outline: "none",
-  background: "#fff",
-};
-const btnPrimary: React.CSSProperties = {
-  padding: "10px 16px",
-  borderRadius: 12,
-  background: "#A11C27",
-  color: "#fff",
-  border: 0,
-  fontWeight: 700,
-  cursor: "pointer",
-};
-const btnSecondary: React.CSSProperties = {
-  padding: "8px 12px",
-  borderRadius: 10,
-  background: "#f1f5f9",
-  color: "#0f172a",
-  border: "1px solid #e2e8f0",
-  fontWeight: 600,
-  cursor: "pointer",
-};
-const btnGhostLink: React.CSSProperties = {
-  padding: "8px 12px",
-  borderRadius: 10,
-  background: "#fff",
-  color: "#0f172a",
-  border: "1px solid #e2e8f0",
-  fontWeight: 600,
-  textDecoration: "none",
-};
-const th: React.CSSProperties = {
-  textAlign: "left",
-  fontSize: 12,
-  color: "#475569",
-  padding: "10px 8px",
-};
-const td: React.CSSProperties = {
-  padding: "10px 8px",
-  borderTop: "1px solid #eee",
-  verticalAlign: "middle",
-};
-const listHeader: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  marginBottom: 12,
-};
-const rightHeader: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-};
-const pager: React.CSSProperties = {
-  display: "flex",
-  gap: 8,
-  alignItems: "center",
-  justifyContent: "flex-end",
-  marginTop: 12,
-};
-const backdrop: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(15, 23, 42, 0.45)",
-  zIndex: 40,
-};
-const modal: React.CSSProperties = {
-  position: "fixed",
-  zIndex: 50,
-  top: "50%",
-  left: "50%",
-  transform: "translate(-50%, -50%)",
-  width: "min(720px, 92vw)",
-  background: "#fff",
-  borderRadius: 14,
-  padding: 18,
-  boxShadow: "0 12px 48px rgba(0,0,0,0.22)",
-};
-const label: React.CSSProperties = {
-  display: "grid",
-  gap: 6,
-  fontSize: 12,
-  color: "#334155",
-};
-const waLink: React.CSSProperties = {
-  marginLeft: 8,
-  fontSize: 12,
-  color: "#0ea5e9",
-  textDecoration: "underline",
-};

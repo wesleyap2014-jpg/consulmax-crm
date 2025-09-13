@@ -479,6 +479,11 @@ function OverlayAssembleias({
         )
       );
 
+      // Atualiza MV usada em Oferta de Lance
+      try {
+        await supabase.rpc("refresh_gestao_mv");
+      } catch {}
+
       await onSaved();
       alert("Resultados salvos com sucesso!");
       onClose();
@@ -1099,6 +1104,11 @@ export default function GestaoDeGrupos() {
     } catch {}
     alert(`${importedCount} grupos importados a partir da Carteira.`);
 
+    // Atualiza MV pós-sincronia
+    try {
+      await supabase.rpc("refresh_gestao_mv");
+    } catch {}
+
     const { data: novos, error: novosErr } = await supabase
       .from("groups")
       .select("id, administradora, codigo, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia")
@@ -1334,6 +1344,15 @@ export default function GestaoDeGrupos() {
       )}
       {importOpen && <OverlayGruposImportados rows={importRows} onClose={() => setImportOpen(false)} onSaved={async () => await carregar()} />}
       {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
+
+      {/* Editor de Grupo (opcional: você pode abrir em modal se preferir) */}
+      {false && (editando || criando) && (
+        <EditorGrupo
+          group={editando}
+          onClose={() => { setEditando(null); setCriando(false); }}
+          onSaved={async () => await carregar()}
+        />
+      )}
     </div>
   );
 }

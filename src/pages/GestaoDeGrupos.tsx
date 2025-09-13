@@ -724,7 +724,7 @@ function OverlayGruposImportados({
 }
 
 /* =========================================================
-   OVERLAY: OFERTA DE LANCE (usa assembly_results na data)
+   OVERLAY: OFERTA DE LANCE (agora usa a view oferta_lance_all)
    ========================================================= */
 
 type OfertaRow = {
@@ -735,182 +735,29 @@ type OfertaRow = {
   participantes: number | null;
   mediana: number | null;
   contemplados: number | null;
-  observacao: string | null;
 };
 
 async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
-  // 1) Fonte preferencial para Referência/participantes/mediana/contemplados
-  const { data: vn, error: vErr } = await supabase
-    .from("gestao_grupos_norm")
-    .select("adm_norm,grupo_norm,referencia,participantes,mediana,contemplados")
-    .eq("assembleia_date", dateYMD);
-  if (vErr) throw vErr;
+  // Agora tudo vem direto da view consolidada (carteira_itens + gestao_grupos_norm_mv)
+  const { data, error } = await supabase
+    .from("oferta_lance_all")
+    .select("administradora,grupo,cota,referencia,participantes,mediana,contemplados")
+    .eq("assembleia", dateYMD)
+    .order("administradora", { ascending: true })
+    .order("grupo", { ascending: true })
+    .order("cota", { ascending: true });
 
-  type Info = {
-    referencia: string | null;
-    participantes: number | null;
-    mediana: number | null;
-    contemplados: number | null;
-    admSrc: string;
-    grpSrc: string;
-  };
+  if (error) throw error;
 
-  const gmapDigits = new Map<string, Info>();
-  const gmapRaw = new Map<string, Info>();
-
-  if ((vn?.length ?? 0) > 0) {
-    (vn || []).forEach((r: any) => {
-      const info: Info = {
-        referencia: r?.referencia ?? null,
-        participantes: r?.participantes ?? null,
-        mediana: r?.mediana ?? null,
-        contemplados: r?.contemplados ?? null,
-        admSrc: r?.adm_norm ?? "",
-        grpSrc: r?.grupo_norm ?? "",
-      };
-      gmapDigits.set(keyDigits(r.adm_norm, r.grupo_norm), info);
-      gmapRaw.set(keyRaw(r.adm_norm, r.grupo_norm), info);
-    });
-  } else {
-    // 2) Usar assembly_results (data exata) — o que você lançou no modal
-    const { data: asm, error: asmErr } = await supabase
-      .from("assemblies")
-      .select("id")
-      .eq("date", dateYMD)
-      .maybeSingle();
-    if (asmErr) throw asmErr;
-    const assemblyId = asm?.id ?? null;
-
-    if (assemblyId) {
-      const { data: res, error: resErr } = await supabase
-        .from("assembly_results")
-        .select("group_id, median, ll_high, ll_low, fixed25_deliveries, fixed50_deliveries, ll_deliveries, groups!inner(administradora,codigo,participantes)")
-        .eq("assembly_id", assemblyId);
-      if (resErr) throw resErr;
-
-      (res || []).forEach((r: any) => {
-        const adm = r.groups?.administradora ?? "";
-        const grp = r.groups?.codigo ?? "";
-        const m = r?.median ?? calcMediana(r?.ll_high ?? null, r?.ll_low ?? null);
-        const contemplados = (r.fixed25_deliveries || 0) + (r.fixed50_deliveries || 0) + (r.ll_deliveries || 0);
-
-        const info: Info = {
-          referencia: null, // referência oficial só na view
-          participantes: r.groups?.participantes ?? null,
-          mediana: m ?? null,
-          contemplados,
-          admSrc: adm,
-          grpSrc: grp,
-        };
-        gmapDigits.set(keyDigits(adm, grp), info);
-        gmapRaw.set(keyRaw(adm, grp), info);
-      });
-    }
-
-    // garantir presença dos grupos da data (mesmo sem results)
-    const { data: gg, error: gErr } = await supabase
-      .from("groups")
-      .select("administradora,codigo,participantes")
-      .eq("prox_assembleia", dateYMD);
-    if (gErr) throw gErr;
-    (gg || []).forEach((r: any) => {
-      const kd = keyDigits(r.administradora, r.codigo);
-      if (!gmapDigits.has(kd)) {
-        gmapDigits.set(kd, {
-          referencia: null,
-          participantes: r?.participantes ?? null,
-          mediana: null,
-          contemplados: null,
-          admSrc: r?.administradora ?? "",
-          grpSrc: r?.codigo ?? "",
-        });
-        gmapRaw.set(keyRaw(r.administradora, r.codigo), {
-          referencia: null,
-          participantes: r?.participantes ?? null,
-          mediana: null,
-          contemplados: null,
-          admSrc: r?.administradora ?? "",
-          grpSrc: r?.codigo ?? "",
-        });
-      }
-    });
-  }
-
-  if (gmapDigits.size === 0) return [];
-
-  // 3) Vendas encarteiradas ativas: uma linha por cota
-  const baseCols = "administradora,grupo,cota,codigo,contemplada,status";
-  let vendas: any[] = [];
-  let temObs = true;
-  try {
-    const { data, error } = await supabase
-      .from("vendas")
-      .select(`${baseCols},observacao`)
-      .eq("status", "encarteirada")
-      .eq("codigo", "00")
-      .is("contemplada", null);
-    if (error) throw error;
-    vendas = data || [];
-  } catch {
-    temObs = false;
-    const { data, error } = await supabase
-      .from("vendas")
-      .select(baseCols)
-      .eq("status", "encarteirada")
-      .eq("codigo", "00")
-      .is("contemplada", null);
-    if (error) throw error;
-    vendas = data || [];
-  }
-
-  const out: OfertaRow[] = [];
-  const touched = new Set<string>();
-
-  for (const v of vendas) {
-    if (!v.grupo) continue;
-    const kd = keyDigits(v.administradora, v.grupo);
-    const kr = keyRaw(v.administradora, v.grupo);
-    const info = gmapDigits.get(kd) ?? gmapRaw.get(kr);
-    if (!info) continue; // não pertence aos grupos dessa assembleia
-
-    out.push({
-      administradora: normalizeAdmin(v.administradora),
-      grupo: String(v.grupo),
-      cota: v.cota ?? null,
-      referencia: info.referencia,
-      participantes: info.participantes,
-      mediana: info.mediana,
-      contemplados: info.contemplados,
-      observacao: temObs && typeof v.observacao === "string" ? v.observacao : null,
-    });
-    touched.add(kd);
-  }
-
-  // 4) Completar com linhas sem venda (para visual)
-  for (const [kd, info] of gmapDigits.entries()) {
-    if (touched.has(kd)) continue;
-    out.push({
-      administradora: normalizeAdmin(info.admSrc),
-      grupo: String(info.grpSrc),
-      cota: null,
-      referencia: info.referencia,
-      participantes: info.participantes,
-      mediana: info.mediana,
-      contemplados: info.contemplados,
-      observacao: null,
-    });
-  }
-
-  // 5) Ordenação
-  out.sort((a, b) => {
-    const A = a.administradora.localeCompare(b.administradora, "pt-BR");
-    if (A !== 0) return A;
-    const G = normalizeGroupDigits(a.grupo).localeCompare(normalizeGroupDigits(b.grupo), "pt-BR", { numeric: true });
-    if (G !== 0) return G;
-    return String(a.cota ?? "").localeCompare(String(b.cota ?? ""), "pt-BR", { numeric: true });
-  });
-
-  return out;
+  return (data ?? []).map((r: any) => ({
+    administradora: r.administradora,
+    grupo: String(r.grupo),
+    cota: r.cota != null ? String(r.cota) : null,
+    referencia: r.referencia,
+    participantes: r.participantes,
+    mediana: r.mediana,
+    contemplados: r.contemplados,
+  }));
 }
 
 function OverlayOfertaLance({ onClose }: { onClose: () => void }) {
@@ -1039,25 +886,15 @@ function OverlayOfertaLance({ onClose }: { onClose: () => void }) {
                   </tr>
                 ) : (
                   linhas.map((o, i) => (
-                    <React.Fragment key={`${o.administradora}-${o.grupo}-${o.cota}-${i}`}>
-                      <tr className="odd:bg-muted/30">
-                        <td className="p-2">{o.administradora}</td>
-                        <td className="p-2">{o.grupo}</td>
-                        <td className="p-2">{o.cota ?? "—"}</td>
-                        <td className="p-2">{o.referencia ?? "—"}</td>
-                        <td className="p-2">{o.participantes ?? "—"}</td>
-                        <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
-                        <td className="p-2">{o.contemplados ?? "—"}</td>
-                      </tr>
-                      <tr className="odd:bg-muted/30">
-                        <td className="p-2 pt-0 pb-3" colSpan={7}>
-                          <div className="text-xs leading-relaxed text-muted-foreground">
-                            <span className="font-medium">Info da venda:</span>{" "}
-                            {o.observacao && o.observacao.trim().length > 0 ? o.observacao : "—"}
-                          </div>
-                        </td>
-                      </tr>
-                    </React.Fragment>
+                    <tr key={`${o.administradora}-${o.grupo}-${o.cota}-${i}`} className="odd:bg-muted/30">
+                      <td className="p-2">{o.administradora}</td>
+                      <td className="p-2">{o.grupo}</td>
+                      <td className="p-2">{o.cota ?? "—"}</td>
+                      <td className="p-2">{o.referencia ?? "—"}</td>
+                      <td className="p-2">{o.participantes ?? "—"}</td>
+                      <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
+                      <td className="p-2">{o.contemplados ?? "—"}</td>
+                    </tr>
                   ))
                 )}
               </tbody>
@@ -1357,7 +1194,7 @@ export default function GestaoDeGrupos() {
           </CardContent>
         </Card>
 
-        {/* NOVO: Card Oferta de Lance */}
+        {/* Card Oferta de Lance */}
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
@@ -1397,11 +1234,10 @@ export default function GestaoDeGrupos() {
         <h3 className="text-base font-semibold">Relação de Grupos</h3>
       </div>
 
-      {/* Tabela principal com ressaltes */}
+      {/* Tabela principal */}
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
-            {/* Linha de agrupamento (ressaltes) */}
             <tr className="text-xs">
               <th className="p-2 text-left align-bottom" colSpan={5}></th>
               <th className="p-2 text-center bg-muted/40" colSpan={1}></th>
@@ -1411,7 +1247,6 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-center" colSpan={5}></th>
               <th className="p-2 text-center" colSpan={2}></th>
             </tr>
-            {/* Cabeçalho normal */}
             <tr>
               <th className="p-2 text-left">ADMINISTRADORA</th>
               <th className="p-2 text-left">SEGMENTO</th>

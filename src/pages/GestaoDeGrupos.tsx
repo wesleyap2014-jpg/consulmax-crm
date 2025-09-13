@@ -161,6 +161,15 @@ function keyRaw(adm?: string | null, grp?: string | number | null) {
   return `${normalizeAdmin(adm)}::${String(grp ?? "").trim()}`;
 }
 
+/* ===== stubs (grupos vindos de vendas sem cadastro em groups) ===== */
+
+function isStubId(id: string) {
+  return id.startsWith("stub:");
+}
+function makeStubId(adm?: string | null, grp?: string | number | null) {
+  return `stub:${keyDigits(adm, grp)}`;
+}
+
 /* =========================================================
    REFERÊNCIA POR BILHETES (para grade principal)
    ========================================================= */
@@ -396,6 +405,7 @@ function OverlayAssembleias({
       return;
     }
     const subset = gruposBase
+      .filter((g) => !isStubId(g.id)) // ignora stubs (não têm id real)
       .filter((g) => sameDay(g.prox_assembleia, date) && (!adminSel || g.administradora === adminSel))
       .map<LinhaAsm>((g) => ({
         group_id: g.id,
@@ -699,7 +709,7 @@ function OverlayGruposImportados({
                       <td className="p-2">{r.administradora}</td>
                       <td className="p-2 font-medium">{r.codigo}</td>
                       <td className="p-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items中心 gap-2">
                           <Input type="number" step="0.01" placeholder="mín" value={r.faixa_min ?? ""} onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))} />
                           <span className="text-muted-foreground">—</span>
                           <Input type="number" step="0.01" placeholder="máx" value={r.faixa_max ?? ""} onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))} />
@@ -729,7 +739,7 @@ function OverlayGruposImportados({
 }
 
 /* =========================================================
-   OVERLAY: OFERTA DE LANCE (agora usa a view oferta_lance_all)
+   OVERLAY: OFERTA DE LANCE (usa a view oferta_lance_all)
    ========================================================= */
 
 type OfertaRow = {
@@ -743,7 +753,6 @@ type OfertaRow = {
 };
 
 async function fetchVendasForOferta(dateYMD: string): Promise<OfertaRow[]> {
-  // Agora tudo vem direto da view consolidada (carteira_itens + gestao_grupos_norm_mv)
   const { data, error } = await supabase
     .from("oferta_lance_all")
     .select("administradora,grupo,cota,referencia,participantes,mediana,contemplados")
@@ -1019,9 +1028,13 @@ export default function GestaoDeGrupos() {
     setRows(linhas);
   }, [grupos, lastAsmByGroup, drawsByDate]);
 
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  // CARREGAR: usa public.vendas como fonte base (encarteirada & !contemplada)
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
   const carregar = async () => {
     setLoading(true);
 
+    // 1) groups (para enriquecer quando houver cadastro)
     const { data: g, error: gErr } = await supabase
       .from("groups")
       .select(
@@ -1029,7 +1042,7 @@ export default function GestaoDeGrupos() {
       );
     if (gErr) console.error(gErr);
 
-    const gruposFetched: Grupo[] =
+    const groupsAll: Grupo[] =
       (g || []).map((r: any) => ({
         id: r.id,
         administradora: r.administradora,
@@ -1044,22 +1057,74 @@ export default function GestaoDeGrupos() {
         prazo_encerramento_meses: r.prazo_encerramento_meses,
       })) || [];
 
-    setGrupos(gruposFetched);
+    const byKey = new Map<string, Grupo>();
+    for (const gr of groupsAll) {
+      byKey.set(keyDigits(gr.administradora, gr.codigo), gr);
+    }
 
-    const { data: ar, error: arErr } = await supabase
-      .from("v_group_last_assembly")
-      .select(
-        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
-      );
-    if (arErr) console.error(arErr);
+    // 2) vendas encarteiradas e não contempladas
+    const { data: vend, error: vErr } = await supabase
+      .from("vendas")
+      .select("administradora, segmento, grupo, status, contemplada")
+      .eq("status", "encarteirada")
+      .eq("contemplada", false);
 
-    const byGroup = new Map<string, UltimoResultado>();
-    (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
+    if (vErr) console.error(vErr);
+
+    // distinct por admin+grupo normalizados
+    const distinct = new Map<string, { administradora: string; segmento: string; grupo: string }>();
+    (vend || []).forEach((v: any) => {
+      const adm = (v.administradora ?? "").toString();
+      const seg = (v.segmento ?? "").toString();
+      const grp = (v.grupo ?? "").toString();
+      const k = keyDigits(adm, grp);
+      if (!k) return;
+      if (!distinct.has(k)) distinct.set(k, { administradora: normalizeAdmin(adm), segmento: seg, grupo: grp });
+    });
+
+    // 3) monta base para grade: real se existir em groups, senão stub
+    const gruposBase: Grupo[] = [];
+    for (const { administradora, segmento, grupo } of distinct.values()) {
+      const k = keyDigits(administradora, grupo);
+      const hit = byKey.get(k);
+      if (hit) {
+        gruposBase.push(hit);
+      } else {
+        gruposBase.push({
+          id: makeStubId(administradora, grupo),
+          administradora,
+          segmento: segmento === "Imóvel Estendido" ? "Imóvel" : (segmento as SegmentoUI),
+          codigo: String(grupo),
+          participantes: null,
+          faixa_min: null,
+          faixa_max: null,
+          prox_vencimento: null,
+          prox_sorteio: null,
+          prox_assembleia: null,
+          prazo_encerramento_meses: null,
+        });
+      }
+    }
+
+    // 4) últimos resultados apenas para ids reais
+    const reais = gruposBase.filter((g) => !isStubId(g.id)).map((g) => g.id);
+    let byGroup = new Map<string, UltimoResultado>();
+    if (reais.length > 0) {
+      const { data: ar, error: arErr } = await supabase
+        .from("v_group_last_assembly")
+        .select(
+          "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
+        )
+        .in("group_id", reais);
+      if (arErr) console.error(arErr);
+      byGroup = new Map<string, UltimoResultado>();
+      (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
+    }
     setLastAsmByGroup(byGroup);
 
-    // carregar resultados de loteria para as datas presentes em prox_sorteio
+    // 5) loteria para datas presentes em prox_sorteio (quando houver nos cadastros reais)
     const dateSet = new Set<string>();
-    for (const gRow of gruposFetched) {
+    for (const gRow of gruposBase) {
       const ymd = toYMD(gRow.prox_sorteio);
       if (ymd) dateSet.add(ymd);
     }
@@ -1084,6 +1149,8 @@ export default function GestaoDeGrupos() {
     }
     setDrawsByDate(newDraws);
 
+    // 6) seta base
+    setGrupos(gruposBase);
     setLoading(false);
   };
 
@@ -1095,45 +1162,8 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
-  // sincronia
+  // "Atualizar": apenas recarrega, pois agora a grade vem de vendas
   const handleSync = async () => {
-    let importedCount = 0;
-    try {
-      const { data, error } = await supabase.rpc("sync_groups_from_carteira_safe");
-      if (!error) importedCount = typeof data === "number" ? data : (data as any)?.imported ?? 0;
-    } catch {}
-    alert(`${importedCount} grupos importados a partir da Carteira.`);
-
-    // Atualiza MV pós-sincronia
-    try {
-      await supabase.rpc("refresh_gestao_mv");
-    } catch {}
-
-    const { data: novos, error: novosErr } = await supabase
-      .from("groups")
-      .select("id, administradora, codigo, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia")
-      .or("faixa_min.is.null,faixa_max.is.null,prox_vencimento.is.null,prox_sorteio.is.null,prox_assembleia.is.null")
-      .order("administradora", { ascending: true })
-      .order("codigo", { ascending: true });
-
-    if (novosErr) {
-      await carregar();
-      return;
-    }
-
-    const rows: NovoGrupoRow[] = (novos || []).map((r: any) => ({
-      id: r.id,
-      administradora: r.administradora,
-      codigo: r.codigo,
-      faixa_min: r.faixa_min,
-      faixa_max: r.faixa_max,
-      prox_vencimento: r.prox_vencimento,
-      prox_sorteio: r.prox_sorteio,
-      prox_assembleia: r.prox_assembleia,
-    }));
-
-    setImportRows(rows);
-    setImportOpen(true);
     await carregar();
   };
 
@@ -1317,9 +1347,15 @@ export default function GestaoDeGrupos() {
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
                   <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
                   <td className="p-2 text-center">
-                    <Button variant="secondary" className="gap-1" onClick={() => { const g = grupos.find((x) => x.id === r.id) || null; setEditando(g); setCriando(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-                      <Pencil className="h-4 w-4" /> Editar
-                    </Button>
+                    {isStubId(r.id) ? (
+                      <Button variant="secondary" className="gap-1" disabled title="Cadastre o grupo em 'Adicionar Grupo'">
+                        <Pencil className="h-4 w-4" /> Cadastrar
+                      </Button>
+                    ) : (
+                      <Button variant="secondary" className="gap-1" onClick={() => { const g = grupos.find((x) => x.id === r.id) || null; setEditando(g); setCriando(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                        <Pencil className="h-4 w-4" /> Editar
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))
@@ -1345,7 +1381,7 @@ export default function GestaoDeGrupos() {
       {importOpen && <OverlayGruposImportados rows={importRows} onClose={() => setImportOpen(false)} onSaved={async () => await carregar()} />}
       {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
 
-      {/* Editor de Grupo (opcional: você pode abrir em modal se preferir) */}
+      {/* Editor de Grupo (oculto por padrão; deixe "false" para não abrir em linha) */}
       {false && (editando || criando) && (
         <EditorGrupo
           group={editando}

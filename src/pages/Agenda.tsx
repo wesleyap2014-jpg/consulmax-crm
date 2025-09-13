@@ -68,7 +68,6 @@ function fmtDateBR(iso?: string | null): string {
 }
 
 function defaultEndFromStart(isoStart: string): string {
-  // 30 min padrão
   const start = new Date(isoStart);
   const end = new Date(start.getTime() + 30 * 60 * 1000);
   return end.toISOString();
@@ -78,7 +77,7 @@ function whatsappUrlFromPhones(...phones: (string | null | undefined)[]): string
   for (const p of phones) {
     const d = onlyDigits(String(p || ""));
     if (d.length >= 10) {
-      const withCountry = d.length === 11 ? `55${d}` : d.startsWith("55") ? d : `55${d}`;
+      const withCountry = d.startsWith("55") ? d : `55${d}`;
       return `https://wa.me/${withCountry}`;
     }
   }
@@ -90,7 +89,6 @@ function clipboardCopy(text: string) {
     navigator.clipboard?.writeText(text);
     alert("Copiado para a área de transferência.");
   } catch {
-    // fallback tosco
     prompt("Copie o link:", text);
   }
 }
@@ -109,7 +107,7 @@ export default function AgendaPage() {
   const [fOrigem, setFOrigem] = useState<"" | AgendaOrigem>("");
   const [fUser, setFUser] = useState<string>(""); // users.id
 
-  // dados
+  // dados (grade principal)
   const [events, setEvents] = useState<AgendaEvento[]>([]);
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -123,6 +121,12 @@ export default function AgendaPage() {
   const [editing, setEditing] = useState<AgendaEvento | null>(null);
   const [editStart, setEditStart] = useState<string>("");
   const [editEnd, setEditEnd] = useState<string>("");
+
+  // **NOVO** painéis laterais/listas rápidas
+  const [birthdays, setBirthdays] = useState<AgendaEvento[]>([]);
+  const [assemblies, setAssemblies] = useState<AgendaEvento[]>([]);
+  const [loadingSide, setLoadingSide] = useState(false);
+  const [quickSearch, setQuickSearch] = useState("");
 
   /** Carrega usuário atual */
   useEffect(() => {
@@ -146,7 +150,7 @@ export default function AgendaPage() {
     })();
   }, [isAdmin]);
 
-  /** Busca eventos */
+  /** Busca eventos da grade principal */
   async function loadEvents(targetPage = 1) {
     if (!dateFrom || !dateTo) {
       alert("Informe período (início e fim).");
@@ -170,7 +174,10 @@ export default function AgendaPage() {
           { count: "exact" }
         )
         .gte("inicio_at", new Date(dateFrom).toISOString())
-        .lte("inicio_at", new Date(new Date(dateTo).getTime() + 23 * 60 * 60 * 1000 + 59 * 60 * 1000).toISOString()) // até fim do dia
+        .lte(
+          "inicio_at",
+          new Date(new Date(dateTo).getTime() + 23 * 60 * 60 * 1000 + 59 * 60 * 1000).toISOString()
+        ) // até fim do dia
         .order("inicio_at", { ascending: true });
 
       if (fTipo) query = query.eq("tipo", fTipo);
@@ -202,16 +209,86 @@ export default function AgendaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo, fTipo, fOrigem, fUser]);
 
-  /** Abrir modal de reagendar */
+  /** ===== NOVO: pequenas listas de Aniversários e Assembleias ===== */
+  async function loadSideLists() {
+    setLoadingSide(true);
+    try {
+      const baseFrom = new Date().toISOString();
+      const to = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(); // próximos 90 dias
+
+      // Aniversários (ordenado do mais próximo)
+      let q1 = supabase
+        .from("agenda_eventos")
+        .select(
+          `id,tipo,titulo,cliente_id,inicio_at,origem,videocall_url,
+           cliente:clientes!agenda_eventos_cliente_id_fkey (id,nome,telefone)`
+        )
+        .eq("tipo", "aniversario")
+        .gte("inicio_at", baseFrom)
+        .lte("inicio_at", to)
+        .order("inicio_at", { ascending: true })
+        .limit(50);
+
+      // Assembleias
+      let q2 = supabase
+        .from("agenda_eventos")
+        .select(
+          `id,tipo,titulo,relacao_id,inicio_at,origem,videocall_url`
+        )
+        .eq("tipo", "assembleia")
+        .gte("inicio_at", baseFrom)
+        .lte("inicio_at", to)
+        .order("inicio_at", { ascending: true })
+        .limit(50);
+
+      if (quickSearch) {
+        q1 = q1.ilike("titulo", `%${quickSearch}%`);
+        q2 = q2.ilike("titulo", `%${quickSearch}%`);
+      }
+
+      const [{ data: b }, { data: a }] = await Promise.all([q1, q2]);
+      setBirthdays((b || []) as any);
+      setAssemblies((a || []) as any);
+    } finally {
+      setLoadingSide(false);
+    }
+  }
+
+  // carregar as listas laterais na abertura e quando a busca rápida mudar
+  useEffect(() => {
+    loadSideLists();
+  }, [quickSearch]);
+
+  // Realtime para atualizar tudo automaticamente
+  useEffect(() => {
+    const ch = supabase
+      .channel("agenda-realtime-all")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "agenda_eventos" },
+        () => {
+          // recarrega grade e painéis
+          loadEvents(page);
+          loadSideLists();
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  /** Abrir modal reagendar */
   function openEdit(ev: AgendaEvento) {
     setEditing(ev);
-    // formata valor default em inputs tipo datetime-local
     const s = new Date(ev.inicio_at);
     const e = new Date(ev.fim_at || defaultEndFromStart(ev.inicio_at));
     const fmt = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(
-        d.getHours()
-      ).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(
+        2,
+        "0"
+      )}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     setEditStart(fmt(s));
     setEditEnd(fmt(e));
   }
@@ -293,7 +370,6 @@ export default function AgendaPage() {
 
     setLoading(true);
     try {
-      // user_id será preenchido automaticamente pelo trigger (se você ativou)
       const { error } = await supabase.from("agenda_eventos").insert([
         {
           tipo: newTipo,
@@ -326,55 +402,156 @@ export default function AgendaPage() {
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <h1 style={{ margin: "16px 0" }}>Agenda</h1>
 
-      {/* Filtros */}
+      {/* ============ NOVO: painéis rápidos ============ */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        {/* Aniversários */}
+        <div style={card}>
+          <div style={listHeader}>
+            <h3 style={{ margin: 0 }}>Aniversários (próximos)</h3>
+            <input
+              style={{ ...input, width: 220 }}
+              placeholder="Buscar título/nome…"
+              value={quickSearch}
+              onChange={(e) => setQuickSearch(e.target.value)}
+            />
+          </div>
+          <div style={{ maxHeight: 290, overflow: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Quando</th>
+                  <th style={th}>Cliente</th>
+                  <th style={th}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingSide && (
+                  <tr>
+                    <td style={td} colSpan={3}>Carregando…</td>
+                  </tr>
+                )}
+                {!loadingSide && birthdays.length === 0 && (
+                  <tr>
+                    <td style={td} colSpan={3}>Nenhum aniversário próximo.</td>
+                  </tr>
+                )}
+                {birthdays.map((b, i) => {
+                  const phone = b.cliente?.telefone || null;
+                  const wa = whatsappUrlFromPhones(phone);
+                  return (
+                    <tr key={b.id} className={i % 2 ? "bgRow" : undefined}>
+                      <td style={td}>{fmtDateBR(b.inicio_at)}</td>
+                      <td style={td}>{b.cliente?.nome || b.titulo || "Aniversário"}</td>
+                      <td style={td}>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          {wa ? (
+                            <a href={wa} target="_blank" rel="noreferrer" style={btnSecondary}>WhatsApp</a>
+                          ) : (
+                            <button style={{ ...btnSecondary, opacity: 0.5 }} disabled>WhatsApp</button>
+                          )}
+                          {b.videocall_url ? (
+                            <>
+                              <a href={b.videocall_url} target="_blank" rel="noreferrer" style={btnSecondary}>
+                                Abrir link
+                              </a>
+                              <button style={btnSecondary} onClick={() => clipboardCopy(b.videocall_url!)}>
+                                Copiar
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Assembleias */}
+        <div style={card}>
+          <div style={listHeader}>
+            <h3 style={{ margin: 0 }}>Assembleias (próximas)</h3>
+            <button style={btnSecondary} onClick={loadSideLists} disabled={loadingSide}>
+              Atualizar
+            </button>
+          </div>
+          <div style={{ maxHeight: 290, overflow: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Quando</th>
+                  <th style={th}>Título/Grupo</th>
+                  <th style={th}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingSide && (
+                  <tr>
+                    <td style={td} colSpan={3}>Carregando…</td>
+                  </tr>
+                )}
+                {!loadingSide && assemblies.length === 0 && (
+                  <tr>
+                    <td style={td} colSpan={3}>Nenhuma assembleia próxima.</td>
+                  </tr>
+                )}
+                {assemblies.map((a, i) => (
+                  <tr key={a.id} className={i % 2 ? "bgRow" : undefined}>
+                    <td style={td}>{fmtDateTimeBR(a.inicio_at)}</td>
+                    <td style={td}>{a.titulo || "Assembleia"}</td>
+                    <td style={td}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {a.videocall_url ? (
+                          <>
+                            <a href={a.videocall_url} target="_blank" rel="noreferrer" style={btnSecondary}>
+                              Abrir link
+                            </a>
+                            <button style={btnSecondary} onClick={() => clipboardCopy(a.videocall_url!)}>
+                              Copiar
+                            </button>
+                          </>
+                        ) : (
+                          <button style={{ ...btnSecondary, opacity: 0.5 }} disabled>Sem link</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Filtros (grade principal) */}
       <div style={card}>
         <h3 style={cardTitle}>Filtros</h3>
         <div style={grid4}>
           <label style={label}>
             De
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              style={input}
-            />
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={input} />
           </label>
           <label style={label}>
             Até
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              style={input}
-            />
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={input} />
           </label>
           <label style={label}>
             Tipo
-            <select
-              value={fTipo}
-              onChange={(e) => setFTipo(e.target.value as any)}
-              style={input}
-            >
+            <select value={fTipo} onChange={(e) => setFTipo(e.target.value as any)} style={input}>
               <option value="">Todos</option>
               {TIPOS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+                <option key={t} value={t}>{t}</option>
               ))}
             </select>
           </label>
           <label style={label}>
             Origem
-            <select
-              value={fOrigem}
-              onChange={(e) => setFOrigem(e.target.value as any)}
-              style={input}
-            >
+            <select value={fOrigem} onChange={(e) => setFOrigem(e.target.value as any)} style={input}>
               <option value="">Todas</option>
               {ORIGENS.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
+                <option key={o} value={o}>{o}</option>
               ))}
             </select>
           </label>
@@ -382,11 +559,7 @@ export default function AgendaPage() {
           {isAdmin && (
             <label style={label}>
               Usuário
-              <select
-                value={fUser}
-                onChange={(e) => setFUser(e.target.value)}
-                style={input}
-              >
+              <select value={fUser} onChange={(e) => setFUser(e.target.value)} style={input}>
                 <option value="">Equipe toda</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
@@ -427,11 +600,7 @@ export default function AgendaPage() {
       <div style={card}>
         <div style={listHeader}>
           <h3 style={{ margin: 0 }}>Criar evento manual</h3>
-          <button
-            style={btnSecondary}
-            onClick={() => setCreating((v) => !v)}
-            disabled={loading}
-          >
+          <button style={btnSecondary} onClick={() => setCreating((v) => !v)} disabled={loading}>
             {creating ? "Fechar" : "Novo"}
           </button>
         </div>
@@ -439,58 +608,30 @@ export default function AgendaPage() {
           <div style={grid4}>
             <label style={label}>
               Título
-              <input
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                style={input}
-                placeholder="Ex.: Reunião com cliente"
-              />
+              <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} style={input} placeholder="Ex.: Reunião com cliente" />
             </label>
             <label style={label}>
               Tipo
-              <select
-                value={newTipo}
-                onChange={(e) => setNewTipo(e.target.value as AgendaTipo)}
-                style={input}
-              >
+              <select value={newTipo} onChange={(e) => setNewTipo(e.target.value as AgendaTipo)} style={input}>
                 {TIPOS.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
+                  <option key={t} value={t}>{t}</option>
                 ))}
               </select>
             </label>
             <label style={label}>
               Início
-              <input
-                type="datetime-local"
-                value={newStart}
-                onChange={(e) => setNewStart(e.target.value)}
-                style={input}
-              />
+              <input type="datetime-local" value={newStart} onChange={(e) => setNewStart(e.target.value)} style={input} />
             </label>
             <label style={label}>
               Fim
-              <input
-                type="datetime-local"
-                value={newEnd}
-                onChange={(e) => setNewEnd(e.target.value)}
-                style={input}
-              />
+              <input type="datetime-local" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} style={input} />
             </label>
             <label style={{ ...label, gridColumn: "1 / span 4" }}>
               Link de vídeo (opcional)
-              <input
-                value={newLink}
-                onChange={(e) => setNewLink(e.target.value)}
-                style={input}
-                placeholder="https://meet..."
-              />
+              <input value={newLink} onChange={(e) => setNewLink(e.target.value)} style={input} placeholder="https://meet..." />
             </label>
             <div style={{ gridColumn: "1 / span 4", display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button style={btnGhost} onClick={() => setCreating(false)} disabled={loading}>
-                Cancelar
-              </button>
+              <button style={btnGhost} onClick={() => setCreating(false)} disabled={loading}>Cancelar</button>
               <button style={btnPrimary} onClick={createManual} disabled={loading}>
                 {loading ? "Criando..." : "Criar"}
               </button>
@@ -499,7 +640,7 @@ export default function AgendaPage() {
         )}
       </div>
 
-      {/* Lista de eventos */}
+      {/* Lista de eventos (grade principal) */}
       <div style={card}>
         <div style={listHeader}>
           <h3 style={{ margin: 0 }}>Eventos</h3>
@@ -522,20 +663,14 @@ export default function AgendaPage() {
               </tr>
             </thead>
             <tbody>
-              {events.map((e) => {
-                const person =
-                  e.cliente?.nome ||
-                  e.lead?.nome ||
-                  "—";
-                const phone =
-                  e.cliente?.telefone ||
-                  e.lead?.telefone ||
-                  null;
+              {events.map((e, i) => {
+                const person = e.cliente?.nome || e.lead?.nome || "—";
+                const phone = e.cliente?.telefone || e.lead?.telefone || null;
                 const wa = whatsappUrlFromPhones(phone);
                 const ownerName = e.owner?.nome || "—";
                 const canEdit = e.origem === "manual";
                 return (
-                  <tr key={e.id}>
+                  <tr key={e.id} className={i % 2 ? "bgRow" : undefined}>
                     <td style={td}>{fmtDateTimeBR(e.inicio_at)}</td>
                     <td style={td}>{fmtDateTimeBR(e.fim_at)}</td>
                     <td style={td}>{e.tipo}</td>
@@ -546,36 +681,20 @@ export default function AgendaPage() {
                     <td style={td}>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         {wa ? (
-                          <a href={wa} target="_blank" rel="noreferrer" style={btnSecondary}>
-                            WhatsApp
-                          </a>
+                          <a href={wa} target="_blank" rel="noreferrer" style={btnSecondary}>WhatsApp</a>
                         ) : (
-                          <button style={{ ...btnSecondary, opacity: 0.5 }} disabled>
-                            WhatsApp
-                          </button>
+                          <button style={{ ...btnSecondary, opacity: 0.5 }} disabled>WhatsApp</button>
                         )}
 
                         {e.videocall_url ? (
                           <>
-                            <a
-                              href={e.videocall_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={btnSecondary}
-                            >
-                              Abrir link
-                            </a>
-                            <button
-                              style={btnSecondary}
-                              onClick={() => clipboardCopy(e.videocall_url!)}
-                            >
+                            <a href={e.videocall_url} target="_blank" rel="noreferrer" style={btnSecondary}>Abrir link</a>
+                            <button style={btnSecondary} onClick={() => clipboardCopy(e.videocall_url!)}>
                               Copiar link
                             </button>
                           </>
                         ) : (
-                          <button style={{ ...btnSecondary, opacity: 0.5 }} disabled>
-                            Sem link
-                          </button>
+                          <button style={{ ...btnSecondary, opacity: 0.5 }} disabled>Sem link</button>
                         )}
 
                         <button
@@ -618,27 +737,15 @@ export default function AgendaPage() {
             <div style={grid2}>
               <label style={label}>
                 Início
-                <input
-                  type="datetime-local"
-                  value={editStart}
-                  onChange={(e) => setEditStart(e.target.value)}
-                  style={input}
-                />
+                <input type="datetime-local" value={editStart} onChange={(e) => setEditStart(e.target.value)} style={input} />
               </label>
               <label style={label}>
                 Fim
-                <input
-                  type="datetime-local"
-                  value={editEnd}
-                  onChange={(e) => setEditEnd(e.target.value)}
-                  style={input}
-                />
+                <input type="datetime-local" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} style={input} />
               </label>
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-              <button style={btnGhost} onClick={closeEdit} disabled={loading}>
-                Cancelar
-              </button>
+              <button style={btnGhost} onClick={closeEdit} disabled={loading}>Cancelar</button>
               <button style={btnPrimary} onClick={saveReschedule} disabled={loading}>
                 {loading ? "Salvando..." : "Salvar"}
               </button>
@@ -646,6 +753,9 @@ export default function AgendaPage() {
           </div>
         </>
       )}
+
+      {/* estilos extras para zebra nas linhas rápidas */}
+      <style>{`.bgRow{background:#f8fafc}`}</style>
     </div>
   );
 }

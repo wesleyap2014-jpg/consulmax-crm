@@ -10,7 +10,6 @@ import {
   Filter as FilterIcon,
   Percent,
   Plus,
-  Pencil,
   RefreshCw,
   Save,
   Settings,
@@ -154,23 +153,17 @@ function normalizeGroupDigits(g?: string | number | null): string {
   if (m) return m[0];
   return s.replace(/\D/g, "");
 }
-function keyDigits(adm?: string | null, grp?: string | number | null) {
-  return `${normalizeAdmin(adm)}::${normalizeGroupDigits(grp)}`;
-}
-function keyRaw(adm?: string | null, grp?: string | number | null) {
-  return `${normalizeAdmin(adm)}::${String(grp ?? "").trim()}`;
-}
 
 /* =========================================================
-   REFERÊNCIA POR BILHETES
+   REFERÊNCIA POR BILHETES (para grade principal)
    ========================================================= */
 
-type RefParams = {
+function referenciaPorAdministradora(params: {
   administradora: Administradora;
   participantes: number | null | undefined;
   bilhetes: LoteriaFederal | null;
-};
-function referenciaPorAdministradora({ administradora, participantes, bilhetes }: RefParams): number | null {
+}): number | null {
+  const { administradora, participantes, bilhetes } = params;
   if (!participantes || participantes <= 0 || !bilhetes) return null;
 
   const premios = [bilhetes.primeiro, bilhetes.segundo, bilhetes.terceiro, bilhetes.quarto, bilhetes.quinto];
@@ -417,7 +410,6 @@ function OverlayAssembleias({
     setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
   };
 
-  // pode salvar qualquer data (passada ou futura)
   const podeSalvar = Boolean(date) && linhas.length > 0;
 
   const handleSave = async () => {
@@ -605,10 +597,10 @@ function OverlayAssembleias({
 }
 
 /* =========================================================
-   OVERLAY: ATUALIZAÇÃO EM MASSA (volta o comportamento do "Atualizar")
+   OVERLAY: ATUALIZAR GRUPOS (somente faltantes)
    ========================================================= */
 
-type MassRow = {
+type AtualizaRow = {
   id: string;
   administradora: string;
   codigo: string;
@@ -620,41 +612,52 @@ type MassRow = {
   prox_assembleia: string | null;
 };
 
-function OverlayMassUpdate({
+function faltaInfo(g: Grupo) {
+  return (
+    g.participantes == null ||
+    g.faixa_min == null ||
+    g.faixa_max == null ||
+    !g.prox_vencimento ||
+    !g.prox_sorteio ||
+    !g.prox_assembleia
+  );
+}
+
+function OverlayAtualizarGrupos({
   rows,
   onClose,
   onSaved,
 }: {
-  rows: MassRow[];
+  rows: AtualizaRow[];
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
-  const [dados, setDados] = useState<MassRow[]>(rows);
+  const [busca, setBusca] = useState("");
+  const [dados, setDados] = useState<AtualizaRow[]>(rows);
   const [saving, setSaving] = useState(false);
-  const [q, setQ] = useState("");
 
-  const upd = (id: string, campo: keyof MassRow, val: any) => {
+  const upd = (id: string, campo: keyof AtualizaRow, val: any) => {
     setDados((prev) => prev.map((r) => (r.id === id ? { ...r, [campo]: val } : r)));
   };
 
-  const list = useMemo(() => {
-    if (!q.trim()) return dados;
-    const s = q.toLowerCase();
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return dados;
     return dados.filter(
       (r) =>
-        r.administradora.toLowerCase().includes(s) ||
-        r.codigo.toLowerCase().includes(s)
+        r.administradora.toLowerCase().includes(q) ||
+        r.codigo.toLowerCase().includes(q)
     );
-  }, [dados, q]);
+  }, [busca, dados]);
 
-  const canSave = dados.length > 0;
+  const canSave = filtrados.length > 0;
 
   const handleSave = async () => {
     if (!canSave) return;
     try {
       setSaving(true);
       await Promise.all(
-        dados.map((r) =>
+        filtrados.map((r) =>
           supabase
             .from("groups")
             .update({
@@ -673,7 +676,7 @@ function OverlayMassUpdate({
       onClose();
     } catch (e: any) {
       console.error(e);
-      alert(e.message ?? "Erro ao salvar grupos.");
+      alert(e.message ?? "Erro ao salvar atualizações.");
     } finally {
       setSaving(false);
     }
@@ -683,102 +686,109 @@ function OverlayMassUpdate({
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-lg font-semibold">Atualizar Grupos</h2>
+          <h2 className="text-xl font-semibold">Atualizar Grupos</h2>
           <Button variant="secondary" onClick={onClose} className="gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
 
-        <div className="p-5 pt-3 flex-1 min-h-0">
-          <div className="mb-3">
+        <div className="p-5 space-y-4 overflow-hidden">
+          <div>
             <Label>Buscar (administradora ou grupo)</Label>
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ex.: Embracon ou 9955" />
+            <Input
+              placeholder="Ex.: Embracon ou 9955"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+            />
           </div>
 
-          <div className="rounded-xl border overflow-auto h-full">
-            <table className="w-full text-sm min-w-[960px]">
-              <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+          <div className="rounded-xl border overflow-auto">
+            <table className="min-w-[980px] w-full text-sm">
+              <thead className="sticky top-0 bg-muted/60 backdrop-blur">
                 <tr>
                   <th className="p-2 text-left">Administradora</th>
                   <th className="p-2 text-left">Grupo</th>
-                  <th className="p-2 text-center">Participantes</th>
+                  <th className="p-2 text-left">Participantes</th>
                   <th className="p-2 text-center">Faixa de Crédito</th>
-                  <th className="p-2 text-center">Vencimento</th>
-                  <th className="p-2 text-center">Sorteio</th>
-                  <th className="p-2 text-center">Assembleia</th>
+                  <th className="p-2 text-left">Vencimento</th>
+                  <th className="p-2 text-left">Sorteio</th>
+                  <th className="p-2 text-left">Assembleia</th>
                 </tr>
               </thead>
               <tbody>
-                {list.map((r) => (
-                  <tr key={r.id} className="odd:bg-muted/30">
-                    <td className="p-2">{r.administradora}</td>
-                    <td className="p-2 font-medium">{r.codigo}</td>
-                    <td className="p-2 text-center">
-                      <Input
-                        type="number"
-                        min={0}
-                        value={r.participantes ?? ""}
-                        onChange={(e) => upd(r.id, "participantes", e.target.value === "" ? null : Number(e.target.value))}
-                      />
-                    </td>
-                    <td className="p-2">
-                      <div className="flex items-center gap-2">
-                        <Input
-                          type="number"
-                          step="0.01"
-                          placeholder="mín"
-                          value={r.faixa_min ?? ""}
-                          onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))}
-                        />
-                        <span className="text-muted-foreground">—</span>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          placeholder="máx"
-                          value={r.faixa_max ?? ""}
-                          onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))}
-                        />
-                      </div>
-                    </td>
-                    <td className="p-2 text-center">
-                      <Input
-                        type="date"
-                        value={r.prox_vencimento ?? ""}
-                        onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)}
-                      />
-                    </td>
-                    <td className="p-2 text-center">
-                      <Input
-                        type="date"
-                        value={r.prox_sorteio ?? ""}
-                        onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)}
-                      />
-                    </td>
-                    <td className="p-2 text-center">
-                      <Input
-                        type="date"
-                        value={r.prox_assembleia ?? ""}
-                        onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)}
-                      />
-                    </td>
-                  </tr>
-                ))}
-                {list.length === 0 && (
+                {filtrados.length === 0 ? (
                   <tr>
-                    <td className="p-4 text-muted-foreground" colSpan={7}>Nenhum registro.</td>
+                    <td className="p-4 text-muted-foreground" colSpan={7}>
+                      Nenhum grupo com informações em falta.
+                    </td>
                   </tr>
+                ) : (
+                  filtrados.map((r) => (
+                    <tr key={r.id} className="odd:bg-muted/30">
+                      <td className="p-2">{r.administradora}</td>
+                      <td className="p-2 font-medium">{r.codigo}</td>
+                      <td className="p-2">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={r.participantes ?? ""}
+                          onChange={(e) => upd(r.id, "participantes", e.target.value === "" ? null : Number(e.target.value))}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="mín"
+                            value={r.faixa_min ?? ""}
+                            onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))}
+                          />
+                          <span className="text-muted-foreground">—</span>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="máx"
+                            value={r.faixa_max ?? ""}
+                            onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))}
+                          />
+                        </div>
+                      </td>
+                      <td className="p-2">
+                        <Input
+                          type="date"
+                          value={r.prox_vencimento ?? ""}
+                          onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <Input
+                          type="date"
+                          value={r.prox_sorteio ?? ""}
+                          onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <Input
+                          type="date"
+                          value={r.prox_assembleia ?? ""}
+                          onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)}
+                        />
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
           </div>
-        </div>
 
-        <div className="px-5 pb-4 flex justify-end">
-          <Button onClick={handleSave} disabled={!canSave || saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            <Save className="h-4 w-4 mr-2" />
-            Salvar
-          </Button>
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={!canSave || saving}>
+              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              <Save className="h-4 w-4 mr-2" />
+              Salvar
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -898,11 +908,11 @@ function OverlayOfertaLance({ onClose }: { onClose: () => void }) {
               <Input type="date" value={dataAsm} onChange={(e) => setDataAsm(e.target.value)} />
             </div>
             <div className="flex gap-2">
-              <Button onClick={listar} disabled={!dataAsm || loading} className="h-10 w-36">
+              <Button onClick={listar} disabled={!dataAsm || loading}>
                 {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Listar
               </Button>
-              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="h-10 w-36">
+              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0}>
                 Exportar PDF
               </Button>
             </div>
@@ -1016,9 +1026,10 @@ export default function GestaoDeGrupos() {
 
   const [asmOpen, setAsmOpen] = useState<boolean>(false);
   const [lfOpen, setLfOpen] = useState<boolean>(false);
+  const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
 
-  const [massOpen, setMassOpen] = useState(false);
-  const [massRows, setMassRows] = useState<MassRow[]>([]);
+  const [updOpen, setUpdOpen] = useState(false);
+  const [updRows, setUpdRows] = useState<AtualizaRow[]>([]);
 
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
@@ -1106,7 +1117,7 @@ export default function GestaoDeGrupos() {
     (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
     setLastAsmByGroup(byGroup);
 
-    // carregar resultados de loteria para as datas presentes em prox_sorteio
+    // carregar resultados de loteria
     const dateSet = new Set<string>();
     for (const gRow of gruposFetched) {
       const ymd = toYMD(gRow.prox_sorteio);
@@ -1134,6 +1145,9 @@ export default function GestaoDeGrupos() {
     setDrawsByDate(newDraws);
 
     setLoading(false);
+
+    // retorna grupos para quem chamar (útil no Atualizar)
+    return gruposFetched;
   };
 
   useEffect(() => {
@@ -1144,34 +1158,34 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
-  // abrir overlay de atualização em massa (novo "Atualizar")
-  const openMassUpdate = async () => {
-    const { data, error } = await supabase
-      .from("groups")
-      .select("id, administradora, codigo, participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia")
-      .order("administradora", { ascending: true })
-      .order("codigo", { ascending: true });
+  // Atualizar: sincroniza e abre overlay com faltantes (usando dados frescos)
+  const handleAtualizar = async () => {
+    try {
+      await supabase.rpc("sync_groups_from_carteira_safe").catch(() => {});
+      await supabase.rpc("refresh_gestao_mv").catch(() => {});
+      const gruposFrescos = await carregar(); // retorna os grupos atualizados
 
-    if (error) {
-      console.error(error);
-      alert("Não foi possível carregar os grupos.");
-      return;
+      const faltantes = (gruposFrescos || [])
+        .filter((g) => faltaInfo(g))
+        .map<AtualizaRow>((g) => ({
+          id: g.id,
+          administradora: g.administradora,
+          codigo: g.codigo,
+          participantes: g.participantes,
+          faixa_min: g.faixa_min,
+          faixa_max: g.faixa_max,
+          prox_vencimento: g.prox_vencimento,
+          prox_sorteio: g.prox_sorteio,
+          prox_assembleia: g.prox_assembleia,
+        }));
+
+      setUpdRows(faltantes);
+      setUpdOpen(true);
+    } catch (e) {
+      console.error(e);
+      setUpdRows([]);
+      setUpdOpen(true);
     }
-
-    const rows: MassRow[] = (data || []).map((r: any) => ({
-      id: r.id,
-      administradora: r.administradora,
-      codigo: r.codigo,
-      participantes: r.participantes,
-      faixa_min: r.faixa_min,
-      faixa_max: r.faixa_max,
-      prox_vencimento: r.prox_vencimento,
-      prox_sorteio: r.prox_sorteio,
-      prox_assembleia: r.prox_assembleia,
-    }));
-
-    setMassRows(rows);
-    setMassOpen(true);
   };
 
   const filtered = useMemo(() => {
@@ -1190,70 +1204,116 @@ export default function GestaoDeGrupos() {
 
   const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
 
+  // Resumos para cards de modalidades
+  const resumo25 = useMemo(() => {
+    const ent = filtered.reduce((a, r) => a + r.fix25_entregas, 0);
+    const of = filtered.reduce((a, r) => a + r.fix25_ofertas, 0);
+    return { ent, of };
+  }, [filtered]);
+  const resumo50 = useMemo(() => {
+    const ent = filtered.reduce((a, r) => a + r.fix50_entregas, 0);
+    const of = filtered.reduce((a, r) => a + r.fix50_ofertas, 0);
+    return { ent, of };
+  }, [filtered]);
+  const resumoLL = useMemo(() => {
+    const ent = filtered.reduce((a, r) => a + r.ll_entregas, 0);
+    const of = filtered.reduce((a, r) => a + r.ll_ofertas, 0);
+    const meds = filtered.map((r) => r.mediana).filter((x): x is number => x != null);
+    const medMediana = meds.length ? meds.reduce((a, b) => a + b, 0) / meds.length : null;
+    return { ent, of, medMediana };
+  }, [filtered]);
+
+  const SectionCard = ({
+    title,
+    description,
+    actions,
+  }: {
+    title: string;
+    description: React.ReactNode;
+    actions: React.ReactNode;
+  }) => (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-lg">{title}</CardTitle>
+          <div className="flex gap-2">{actions}</div>
+        </div>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">{description}</CardContent>
+    </Card>
+  );
+
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Cabeçalho / Ações */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-        <Card className="lg:col-span-3">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={openMassUpdate} className="h-10 w-36">
+
+      {/* Topo - cards padronizados */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
+        <SectionCard
+          title="GESTÃO DE GRUPOS"
+          actions={
+            <>
+              <Button onClick={handleAtualizar} className="min-w-[140px] justify-center">
                 <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
               </Button>
-              <Button onClick={() => alert('Use o overlay de atualização para cadastrar/editar os dados do grupo.')} className="h-10 w-36">
-                <Plus className="h-4 w-4 mr-2" /> Adicionar Grupo
+              <Button onClick={() => alert('Em breve: modal de criação.')} variant="secondary" className="min-w-[140px] justify-center">
+                <Plus className="h-4 w-4 mr-2" /> Adicionar
               </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Visão consolidada por grupo: resultados de assembleias, filtros e referência do sorteio.
-          </CardContent>
-        </Card>
+            </>
+          }
+          description={<>Visão consolidada por grupo: resultados de assembleias, filtros e referência do sorteio.</>}
+        />
 
-        <Card className="lg:col-span-3">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
-            <Button variant="secondary" className="gap-2 h-10 w-36" onClick={() => setLfOpen(true)}>
-              <Percent className="h-4 w-4" />
-              Informar resultados
+        <SectionCard
+          title="LOTERIA FEDERAL"
+          actions={
+            <Button variant="secondary" className="min-w-[140px] justify-center" onClick={() => setLfOpen(true)}>
+              <Percent className="h-4 w-4 mr-2" />
+              Informar
             </Button>
-          </CardHeader>
-          <CardContent className="text-sm grid grid-cols-5 gap-2 items-center">
-            <div className="col-span-5 text-xs text-muted-foreground">
-              {loteria?.data_sorteio ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}` : "Sem resultado selecionado"}
-            </div>
-            {([loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[]).map((v, i) => (
-              <div key={i} className="px-2 py-1 rounded bg-muted text-center font-mono">{v}</div>
-            ))}
-          </CardContent>
-        </Card>
+          }
+          description={<>{loteria?.data_sorteio ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}` : "Sem resultado selecionado"}</>}
+        />
 
-        <Card className="lg:col-span-3">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
-            <Button variant="secondary" className="gap-2 h-10 w-36" onClick={() => setAsmOpen(true)}>
-              <Settings className="h-4 w-4" /> Informar resultados
+        <SectionCard
+          title="ASSEMBLEIAS"
+          actions={
+            <Button variant="secondary" className="min-w-[140px] justify-center" onClick={() => setAsmOpen(true)}>
+              <Settings className="h-4 w-4 mr-2" />
+              Informar
             </Button>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Informe resultados por data. Atualizaremos próximas datas.
-          </CardContent>
-        </Card>
+          }
+          description={<>Informe resultados por data. Atualizaremos próximas datas.</>}
+        />
 
-        {/* Card Oferta de Lance */}
-        <Card className="lg:col-span-3">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
-            <Button variant="secondary" className="gap-2 h-10 w-36" onClick={() => setOfertaOpen(true)}>
-              <Target className="h-4 w-4" />
+        <SectionCard
+          title="OFERTA DE LANCE"
+          actions={
+            <Button variant="secondary" className="min-w-[140px] justify-center" onClick={() => setOfertaOpen(true)}>
+              <Target className="h-4 w-4 mr-2" />
               Abrir
             </Button>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Lista cotas encarteiradas para os grupos com assembleia na data informada.
-          </CardContent>
-        </Card>
+          }
+          description={<>Lista cotas encarteiradas para os grupos com assembleia na data informada.</>}
+        />
+      </div>
+
+      {/* Cards de destaque das modalidades */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="rounded-xl border p-3 bg-emerald-50/40">
+          <div className="text-xs font-medium text-emerald-800 mb-1">25%</div>
+          <div className="text-sm">Entregas: <b>{resumo25.ent}</b></div>
+          <div className="text-sm">Ofertas: <b>{resumo25.of}</b></div>
+        </div>
+        <div className="rounded-xl border p-3 bg-sky-50/50">
+          <div className="text-xs font-medium text-sky-800 mb-1">50%</div>
+          <div className="text-sm">Entregas: <b>{resumo50.ent}</b></div>
+          <div className="text-sm">Ofertas: <b>{resumo50.of}</b></div>
+        </div>
+        <div className="rounded-xl border p-3 bg-amber-50/60">
+          <div className="text-xs font-medium text-amber-800 mb-1">Lance Livre</div>
+          <div className="text-sm">Entregas: <b>{resumoLL.ent}</b> • Ofertas: <b>{resumoLL.of}</b></div>
+          <div className="text-sm">Mediana: <b>{resumoLL.medMediana != null ? toPct4(resumoLL.medMediana) : "—"}</b></div>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -1281,18 +1341,17 @@ export default function GestaoDeGrupos() {
         <h3 className="text-base font-semibold">Relação de Grupos</h3>
       </div>
 
-      {/* Tabela principal (sem "Apuração Dia" e sem "Ações") */}
+      {/* Tabela principal — blocos 25/50/LL com “faixas” visuais */}
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
             <tr className="text-xs">
               <th className="p-2 text-left align-bottom" colSpan={5}></th>
               <th className="p-2 text-center bg-muted/40" colSpan={1}></th>
-              <th className="p-2 text-center bg-muted/20" colSpan={2}>25%</th>
-              <th className="p-2 text-center bg-muted/20" colSpan={2}>50%</th>
-              <th className="p-2 text-center bg-muted/20" colSpan={5}>LL</th>
-              <th className="p-2 text-center" colSpan={4}></th>
-              <th className="p-2 text-center" colSpan={1}></th>
+              <th className="p-2 text-center bg-emerald-50/60 border-x" colSpan={2}>25%</th>
+              <th className="p-2 text-center bg-sky-50/60 border-x" colSpan={2}>50%</th>
+              <th className="p-2 text-center bg-amber-50/70 border-x" colSpan={5}>LL</th>
+              <th className="p-2 text-center" colSpan={5}></th>
             </tr>
             <tr>
               <th className="p-2 text-left">ADMINISTRADORA</th>
@@ -1301,15 +1360,19 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-right">PARTICIPANTES</th>
               <th className="p-2 text-center">FAIXA DE CRÉDITO</th>
               <th className="p-2 text-right">Total Entregas</th>
-              <th className="p-2 text-right">25% Entregas</th>
-              <th className="p-2 text-right">25% Ofertas</th>
-              <th className="p-2 text-right">50% Entregas</th>
-              <th className="p-2 text-right">50% Ofertas</th>
-              <th className="p-2 text-right">LL Entregas</th>
-              <th className="p-2 text-right">LL Ofertas</th>
-              <th className="p-2 text-right">Maior %</th>
-              <th className="p-2 text-right">Menor %</th>
-              <th className="p-2 text-right">Mediana</th>
+
+              <th className="p-2 text-right bg-emerald-50/60 border-l rounded-l-lg">25% Entregas</th>
+              <th className="p-2 text-right bg-emerald-50/60 border-r rounded-r-lg">25% Ofertas</th>
+
+              <th className="p-2 text-right bg-sky-50/60 border-l rounded-l-lg">50% Entregas</th>
+              <th className="p-2 text-right bg-sky-50/60 border-r rounded-r-lg">50% Ofertas</th>
+
+              <th className="p-2 text-right bg-amber-50/70 border-l rounded-l-lg">LL Entregas</th>
+              <th className="p-2 text-right bg-amber-50/70">LL Ofertas</th>
+              <th className="p-2 text-right bg-amber-50/70">Maior %</th>
+              <th className="p-2 text-right bg-amber-50/70">Menor %</th>
+              <th className="p-2 text-right bg-amber-50/70 border-r rounded-r-lg">Mediana</th>
+
               <th className="p-2 text-center">Pz Enc</th>
               <th className="p-2 text-center">Vencimento</th>
               <th className="p-2 text-center">Sorteio</th>
@@ -1332,19 +1395,24 @@ export default function GestaoDeGrupos() {
                   <td className="p-2 text-center">
                     {r.faixa_min != null && r.faixa_max != null
                       ? r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) + " — " +
-                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", "currency": "BRL" })
+                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
                       : "—"}
                   </td>
+
                   <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
-                  <td className="p-2 text-right">{r.fix25_entregas}</td>
-                  <td className="p-2 text-right">{r.fix25_ofertas}</td>
-                  <td className="p-2 text-right">{r.fix50_entregas}</td>
-                  <td className="p-2 text-right">{r.fix50_ofertas}</td>
-                  <td className="p-2 text-right">{r.ll_entregas}</td>
-                  <td className="p-2 text-right">{r.ll_ofertas}</td>
-                  <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
-                  <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
-                  <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
+
+                  <td className="p-2 text-right bg-emerald-50/40 border-l">{r.fix25_entregas}</td>
+                  <td className="p-2 text-right bg-emerald-50/40 border-r">{r.fix25_ofertas}</td>
+
+                  <td className="p-2 text-right bg-sky-50/40 border-l">{r.fix50_entregas}</td>
+                  <td className="p-2 text-right bg-sky-50/40 border-r">{r.fix50_ofertas}</td>
+
+                  <td className="p-2 text-right bg-amber-50/50 border-l">{r.ll_entregas}</td>
+                  <td className="p-2 text-right bg-amber-50/50">{r.ll_ofertas}</td>
+                  <td className="p-2 text-right bg-amber-50/50">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
+                  <td className="p-2 text-right bg-amber-50/50">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
+                  <td className="p-2 text-right bg-amber-50/50 border-r">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
+
                   <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
@@ -1371,112 +1439,8 @@ export default function GestaoDeGrupos() {
           }}
         />
       )}
-      {massOpen && <OverlayMassUpdate rows={massRows} onClose={() => setMassOpen(false)} onSaved={async () => await carregar()} />}
-      {false && <div />} {/* placeholder p/ manter a estrutura */}
-    </div>
-  );
-}
-
-/* =========================================================
-   EDITOR DE GRUPO (opcional; mantido caso você queira reativar depois)
-   ========================================================= */
-
-function EditorGrupo({
-  group,
-  onClose,
-  onSaved,
-}: {
-  group?: Grupo | null;
-  onClose: () => void;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [form, setForm] = useState<Partial<Grupo>>(
-    group || {
-      administradora: "" as Administradora,
-      segmento: "" as SegmentoUI,
-      codigo: "",
-      participantes: null,
-      faixa_min: null,
-      faixa_max: null,
-      prox_vencimento: null,
-      prox_sorteio: null,
-      prox_assembleia: null,
-      prazo_encerramento_meses: null,
-    }
-  );
-
-  const isNew = !group?.id;
-
-  const handleSave = async () => {
-    if (!form.codigo || !form.administradora || !form.segmento) {
-      alert("Preencha Administradora, Segmento e Código do Grupo.");
-      return;
-    }
-    if (isNew) {
-      const { error } = await supabase.from("groups").insert({
-        administradora: form.administradora,
-        segmento: form.segmento,
-        codigo: form.codigo,
-        participantes: form.participantes,
-        faixa_min: form.faixa_min,
-        faixa_max: form.faixa_max,
-        prox_vencimento: form.prox_vencimento,
-        prox_sorteio: form.prox_sorteio,
-        prox_assembleia: form.prox_assembleia,
-        prazo_encerramento_meses: form.prazo_encerramento_meses,
-      });
-      if (error) {
-        console.error(error);
-        alert("Erro ao inserir grupo.");
-        return;
-      }
-    } else {
-      const { error } = await supabase
-        .from("groups")
-        .update({
-          administradora: form.administradora,
-          segmento: form.segmento,
-          codigo: form.codigo,
-          participantes: form.participantes,
-          faixa_min: form.faixa_min,
-          faixa_max: form.faixa_max,
-          prox_vencimento: form.prox_vencimento,
-          prox_sorteio: form.prox_sorteio,
-          prox_assembleia: form.prox_assembleia,
-          prazo_encerramento_meses: form.prazo_encerramento_meses,
-        })
-        .eq("id", group!.id);
-      if (error) {
-        console.error(error);
-        alert("Erro ao atualizar grupo.");
-        return;
-      }
-    }
-    await onSaved();
-    onClose();
-  };
-
-  return (
-    <div className="rounded-xl border p-4 space-y-3">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div><Label>Administradora</Label><Input value={form.administradora ?? ""} onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))} placeholder="Ex.: Embracon" /></div>
-        <div><Label>Segmento</Label><Input value={form.segmento ?? ""} onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))} placeholder="Ex.: Imóvel" /></div>
-        <div><Label>Código do Grupo</Label><Input value={form.codigo ?? ""} onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))} placeholder="Ex.: 1234/5" /></div>
-
-        <div><Label>Participantes</Label><Input type="number" min={1} value={form.participantes ?? ""} onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))} /></div>
-        <div><Label>Faixa Mínima</Label><Input type="number" step="0.01" value={form.faixa_min ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))} /></div>
-        <div><Label>Faixa Máxima</Label><Input type="number" step="0.01" value={form.faixa_max ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))} /></div>
-
-        <div><Label>Próx. Vencimento</Label><Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} /></div>
-        <div><Label>Próx. Sorteio</Label><Input type="date" value={form.prox_sorteio ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))} /></div>
-        <div><Label>Próx. Assembleia</Label><Input type="date" value={form.prox_assembleia ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))} /></div>
-        <div><Label>Prazo Enc. (meses)</Label><Input type="number" min={0} value={form.prazo_encerramento_meses ?? ""} onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))} /></div>
-      </div>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-        <Button onClick={handleSave}><Save className="h-4 w-4 mr-2" /> Salvar Grupo</Button>
-      </div>
+      {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
+      {updOpen && <OverlayAtualizarGrupos rows={updRows} onClose={() => setUpdOpen(false)} onSaved={async () => await carregar()} />}
     </div>
   );
 }

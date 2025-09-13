@@ -161,25 +161,16 @@ function keyRaw(adm?: string | null, grp?: string | number | null) {
   return `${normalizeAdmin(adm)}::${String(grp ?? "").trim()}`;
 }
 
-/* ===== stubs (grupos vindos de vendas sem cadastro em groups) ===== */
-
-function isStubId(id: string) {
-  return id.startsWith("stub:");
-}
-function makeStubId(adm?: string | null, grp?: string | number | null) {
-  return `stub:${keyDigits(adm, grp)}`;
-}
-
 /* =========================================================
-   REFERÊNCIA POR BILHETES (para grade principal)
+   REFERÊNCIA POR BILHETES
    ========================================================= */
 
-function referenciaPorAdministradora(params: {
+type RefParams = {
   administradora: Administradora;
   participantes: number | null | undefined;
   bilhetes: LoteriaFederal | null;
-}): number | null {
-  const { administradora, participantes, bilhetes } = params;
+};
+function referenciaPorAdministradora({ administradora, participantes, bilhetes }: RefParams): number | null {
   if (!participantes || participantes <= 0 || !bilhetes) return null;
 
   const premios = [bilhetes.primeiro, bilhetes.segundo, bilhetes.terceiro, bilhetes.quarto, bilhetes.quinto];
@@ -405,7 +396,6 @@ function OverlayAssembleias({
       return;
     }
     const subset = gruposBase
-      .filter((g) => !isStubId(g.id)) // ignora stubs (não têm id real)
       .filter((g) => sameDay(g.prox_assembleia, date) && (!adminSel || g.administradora === adminSel))
       .map<LinhaAsm>((g) => ({
         group_id: g.id,
@@ -489,7 +479,6 @@ function OverlayAssembleias({
         )
       );
 
-      // Atualiza MV usada em Oferta de Lance
       try {
         await supabase.rpc("refresh_gestao_mv");
       } catch {}
@@ -616,13 +605,14 @@ function OverlayAssembleias({
 }
 
 /* =========================================================
-   OVERLAY: GRUPOS IMPORTADOS
+   OVERLAY: ATUALIZAÇÃO EM MASSA (volta o comportamento do "Atualizar")
    ========================================================= */
 
-type NovoGrupoRow = {
+type MassRow = {
   id: string;
   administradora: string;
   codigo: string;
+  participantes: number | null;
   faixa_min: number | null;
   faixa_max: number | null;
   prox_vencimento: string | null;
@@ -630,21 +620,32 @@ type NovoGrupoRow = {
   prox_assembleia: string | null;
 };
 
-function OverlayGruposImportados({
+function OverlayMassUpdate({
   rows,
   onClose,
   onSaved,
 }: {
-  rows: NovoGrupoRow[];
+  rows: MassRow[];
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
-  const [dados, setDados] = useState<NovoGrupoRow[]>(rows);
+  const [dados, setDados] = useState<MassRow[]>(rows);
   const [saving, setSaving] = useState(false);
+  const [q, setQ] = useState("");
 
-  const upd = (id: string, campo: keyof NovoGrupoRow, val: any) => {
+  const upd = (id: string, campo: keyof MassRow, val: any) => {
     setDados((prev) => prev.map((r) => (r.id === id ? { ...r, [campo]: val } : r)));
   };
+
+  const list = useMemo(() => {
+    if (!q.trim()) return dados;
+    const s = q.toLowerCase();
+    return dados.filter(
+      (r) =>
+        r.administradora.toLowerCase().includes(s) ||
+        r.codigo.toLowerCase().includes(s)
+    );
+  }, [dados, q]);
 
   const canSave = dados.length > 0;
 
@@ -657,6 +658,7 @@ function OverlayGruposImportados({
           supabase
             .from("groups")
             .update({
+              participantes: r.participantes ?? null,
               faixa_min: r.faixa_min ?? null,
               faixa_max: r.faixa_max ?? null,
               prox_vencimento: r.prox_vencimento ?? null,
@@ -671,7 +673,7 @@ function OverlayGruposImportados({
       onClose();
     } catch (e: any) {
       console.error(e);
-      alert(e.message ?? "Erro ao salvar grupos importados.");
+      alert(e.message ?? "Erro ao salvar grupos.");
     } finally {
       setSaving(false);
     }
@@ -679,51 +681,96 @@ function OverlayGruposImportados({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-5xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
+      <div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-lg font-semibold">Grupos importados</h2>
+          <h2 className="text-lg font-semibold">Atualizar Grupos</h2>
           <Button variant="secondary" onClick={onClose} className="gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
 
         <div className="p-5 pt-3 flex-1 min-h-0">
-          {dados.length === 0 ? (
-            <div className="text-sm text-muted-foreground">Nenhum grupo precisa de complementação.</div>
-          ) : (
-            <div className="rounded-xl border overflow-auto h-full">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-muted/70 backdrop-blur">
-                  <tr>
-                    <th className="p-2 text-left">Administradora</th>
-                    <th className="p-2 text-left">Grupo</th>
-                    <th className="p-2 text-center">Faixa de Crédito</th>
-                    <th className="p-2 text-center">Vencimento</th>
-                    <th className="p-2 text-center">Sorteio</th>
-                    <th className="p-2 text-center">Assembleia</th>
+          <div className="mb-3">
+            <Label>Buscar (administradora ou grupo)</Label>
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ex.: Embracon ou 9955" />
+          </div>
+
+          <div className="rounded-xl border overflow-auto h-full">
+            <table className="w-full text-sm min-w-[960px]">
+              <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                <tr>
+                  <th className="p-2 text-left">Administradora</th>
+                  <th className="p-2 text-left">Grupo</th>
+                  <th className="p-2 text-center">Participantes</th>
+                  <th className="p-2 text-center">Faixa de Crédito</th>
+                  <th className="p-2 text-center">Vencimento</th>
+                  <th className="p-2 text-center">Sorteio</th>
+                  <th className="p-2 text-center">Assembleia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((r) => (
+                  <tr key={r.id} className="odd:bg-muted/30">
+                    <td className="p-2">{r.administradora}</td>
+                    <td className="p-2 font-medium">{r.codigo}</td>
+                    <td className="p-2 text-center">
+                      <Input
+                        type="number"
+                        min={0}
+                        value={r.participantes ?? ""}
+                        onChange={(e) => upd(r.id, "participantes", e.target.value === "" ? null : Number(e.target.value))}
+                      />
+                    </td>
+                    <td className="p-2">
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="mín"
+                          value={r.faixa_min ?? ""}
+                          onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))}
+                        />
+                        <span className="text-muted-foreground">—</span>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="máx"
+                          value={r.faixa_max ?? ""}
+                          onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))}
+                        />
+                      </div>
+                    </td>
+                    <td className="p-2 text-center">
+                      <Input
+                        type="date"
+                        value={r.prox_vencimento ?? ""}
+                        onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)}
+                      />
+                    </td>
+                    <td className="p-2 text-center">
+                      <Input
+                        type="date"
+                        value={r.prox_sorteio ?? ""}
+                        onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)}
+                      />
+                    </td>
+                    <td className="p-2 text-center">
+                      <Input
+                        type="date"
+                        value={r.prox_assembleia ?? ""}
+                        onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)}
+                      />
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {dados.map((r) => (
-                    <tr key={r.id} className="odd:bg-muted/30">
-                      <td className="p-2">{r.administradora}</td>
-                      <td className="p-2 font-medium">{r.codigo}</td>
-                      <td className="p-2">
-                        <div className="flex items中心 gap-2">
-                          <Input type="number" step="0.01" placeholder="mín" value={r.faixa_min ?? ""} onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))} />
-                          <span className="text-muted-foreground">—</span>
-                          <Input type="number" step="0.01" placeholder="máx" value={r.faixa_max ?? ""} onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))} />
-                        </div>
-                      </td>
-                      <td className="p-2 text-center"><Input type="date" value={r.prox_vencimento ?? ""} onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)} /></td>
-                      <td className="p-2 text-center"><Input type="date" value={r.prox_sorteio ?? ""} onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)} /></td>
-                      <td className="p-2 text-center"><Input type="date" value={r.prox_assembleia ?? ""} onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                ))}
+                {list.length === 0 && (
+                  <tr>
+                    <td className="p-4 text-muted-foreground" colSpan={7}>Nenhum registro.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div className="px-5 pb-4 flex justify-end">
@@ -739,7 +786,7 @@ function OverlayGruposImportados({
 }
 
 /* =========================================================
-   OVERLAY: OFERTA DE LANCE (usa a view oferta_lance_all)
+   OVERLAY: OFERTA DE LANCE (usa view oferta_lance_all)
    ========================================================= */
 
 type OfertaRow = {
@@ -851,11 +898,11 @@ function OverlayOfertaLance({ onClose }: { onClose: () => void }) {
               <Input type="date" value={dataAsm} onChange={(e) => setDataAsm(e.target.value)} />
             </div>
             <div className="flex gap-2">
-              <Button onClick={listar} disabled={!dataAsm || loading}>
+              <Button onClick={listar} disabled={!dataAsm || loading} className="h-10 w-36">
                 {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Listar
               </Button>
-              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0}>
+              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="h-10 w-36">
                 Exportar PDF
               </Button>
             </div>
@@ -944,7 +991,6 @@ type LinhaUI = {
   ll_menor: number | null;
   mediana: number | null;
 
-  apuracao_dia: string | null;
   prazo_encerramento_meses: number | null;
   prox_vencimento: string | null;
   prox_sorteio: string | null;
@@ -968,16 +1014,11 @@ export default function GestaoDeGrupos() {
   const [fFaixa, setFFaixa] = useState("");
   const [fMedianaAlvo, setFMedianaAlvo] = useState("");
 
-  const [editando, setEditando] = useState<Grupo | null>(null);
-  const [criando, setCriando] = useState<boolean>(false);
-
   const [asmOpen, setAsmOpen] = useState<boolean>(false);
   const [lfOpen, setLfOpen] = useState<boolean>(false);
 
-  const [importOpen, setImportOpen] = useState(false);
-  const [importRows, setImportRows] = useState<NovoGrupoRow[]>([]);
-
-  const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
+  const [massOpen, setMassOpen] = useState(false);
+  const [massRows, setMassRows] = useState<MassRow[]>([]);
 
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
@@ -1011,7 +1052,6 @@ export default function GestaoDeGrupos() {
         ll_menor: r?.ll_low ?? null,
         mediana: med,
 
-        apuracao_dia: r?.date ?? null,
         prazo_encerramento_meses: g.prazo_encerramento_meses,
         prox_vencimento: g.prox_vencimento,
         prox_sorteio: g.prox_sorteio,
@@ -1028,13 +1068,9 @@ export default function GestaoDeGrupos() {
     setRows(linhas);
   }, [grupos, lastAsmByGroup, drawsByDate]);
 
-  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-  // CARREGAR: usa public.vendas como fonte base (encarteirada & !contemplada)
-  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
   const carregar = async () => {
     setLoading(true);
 
-    // 1) groups (para enriquecer quando houver cadastro)
     const { data: g, error: gErr } = await supabase
       .from("groups")
       .select(
@@ -1042,7 +1078,7 @@ export default function GestaoDeGrupos() {
       );
     if (gErr) console.error(gErr);
 
-    const groupsAll: Grupo[] =
+    const gruposFetched: Grupo[] =
       (g || []).map((r: any) => ({
         id: r.id,
         administradora: r.administradora,
@@ -1057,74 +1093,22 @@ export default function GestaoDeGrupos() {
         prazo_encerramento_meses: r.prazo_encerramento_meses,
       })) || [];
 
-    const byKey = new Map<string, Grupo>();
-    for (const gr of groupsAll) {
-      byKey.set(keyDigits(gr.administradora, gr.codigo), gr);
-    }
+    setGrupos(gruposFetched);
 
-    // 2) vendas encarteiradas e não contempladas
-    const { data: vend, error: vErr } = await supabase
-      .from("vendas")
-      .select("administradora, segmento, grupo, status, contemplada")
-      .eq("status", "encarteirada")
-      .eq("contemplada", false);
+    const { data: ar, error: arErr } = await supabase
+      .from("v_group_last_assembly")
+      .select(
+        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
+      );
+    if (arErr) console.error(arErr);
 
-    if (vErr) console.error(vErr);
-
-    // distinct por admin+grupo normalizados
-    const distinct = new Map<string, { administradora: string; segmento: string; grupo: string }>();
-    (vend || []).forEach((v: any) => {
-      const adm = (v.administradora ?? "").toString();
-      const seg = (v.segmento ?? "").toString();
-      const grp = (v.grupo ?? "").toString();
-      const k = keyDigits(adm, grp);
-      if (!k) return;
-      if (!distinct.has(k)) distinct.set(k, { administradora: normalizeAdmin(adm), segmento: seg, grupo: grp });
-    });
-
-    // 3) monta base para grade: real se existir em groups, senão stub
-    const gruposBase: Grupo[] = [];
-    for (const { administradora, segmento, grupo } of distinct.values()) {
-      const k = keyDigits(administradora, grupo);
-      const hit = byKey.get(k);
-      if (hit) {
-        gruposBase.push(hit);
-      } else {
-        gruposBase.push({
-          id: makeStubId(administradora, grupo),
-          administradora,
-          segmento: segmento === "Imóvel Estendido" ? "Imóvel" : (segmento as SegmentoUI),
-          codigo: String(grupo),
-          participantes: null,
-          faixa_min: null,
-          faixa_max: null,
-          prox_vencimento: null,
-          prox_sorteio: null,
-          prox_assembleia: null,
-          prazo_encerramento_meses: null,
-        });
-      }
-    }
-
-    // 4) últimos resultados apenas para ids reais
-    const reais = gruposBase.filter((g) => !isStubId(g.id)).map((g) => g.id);
-    let byGroup = new Map<string, UltimoResultado>();
-    if (reais.length > 0) {
-      const { data: ar, error: arErr } = await supabase
-        .from("v_group_last_assembly")
-        .select(
-          "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
-        )
-        .in("group_id", reais);
-      if (arErr) console.error(arErr);
-      byGroup = new Map<string, UltimoResultado>();
-      (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
-    }
+    const byGroup = new Map<string, UltimoResultado>();
+    (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
     setLastAsmByGroup(byGroup);
 
-    // 5) loteria para datas presentes em prox_sorteio (quando houver nos cadastros reais)
+    // carregar resultados de loteria para as datas presentes em prox_sorteio
     const dateSet = new Set<string>();
-    for (const gRow of gruposBase) {
+    for (const gRow of gruposFetched) {
       const ymd = toYMD(gRow.prox_sorteio);
       if (ymd) dateSet.add(ymd);
     }
@@ -1149,8 +1133,6 @@ export default function GestaoDeGrupos() {
     }
     setDrawsByDate(newDraws);
 
-    // 6) seta base
-    setGrupos(gruposBase);
     setLoading(false);
   };
 
@@ -1162,9 +1144,34 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
-  // "Atualizar": apenas recarrega, pois agora a grade vem de vendas
-  const handleSync = async () => {
-    await carregar();
+  // abrir overlay de atualização em massa (novo "Atualizar")
+  const openMassUpdate = async () => {
+    const { data, error } = await supabase
+      .from("groups")
+      .select("id, administradora, codigo, participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia")
+      .order("administradora", { ascending: true })
+      .order("codigo", { ascending: true });
+
+    if (error) {
+      console.error(error);
+      alert("Não foi possível carregar os grupos.");
+      return;
+    }
+
+    const rows: MassRow[] = (data || []).map((r: any) => ({
+      id: r.id,
+      administradora: r.administradora,
+      codigo: r.codigo,
+      participantes: r.participantes,
+      faixa_min: r.faixa_min,
+      faixa_max: r.faixa_max,
+      prox_vencimento: r.prox_vencimento,
+      prox_sorteio: r.prox_sorteio,
+      prox_assembleia: r.prox_assembleia,
+    }));
+
+    setMassRows(rows);
+    setMassOpen(true);
   };
 
   const filtered = useMemo(() => {
@@ -1191,10 +1198,10 @@ export default function GestaoDeGrupos() {
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={handleSync}>
+              <Button variant="secondary" onClick={openMassUpdate} className="h-10 w-36">
                 <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
               </Button>
-              <Button onClick={() => { setCriando(true); setEditando(null); }}>
+              <Button onClick={() => alert('Use o overlay de atualização para cadastrar/editar os dados do grupo.')} className="h-10 w-36">
                 <Plus className="h-4 w-4 mr-2" /> Adicionar Grupo
               </Button>
             </div>
@@ -1207,7 +1214,7 @@ export default function GestaoDeGrupos() {
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setLfOpen(true)}>
+            <Button variant="secondary" className="gap-2 h-10 w-36" onClick={() => setLfOpen(true)}>
               <Percent className="h-4 w-4" />
               Informar resultados
             </Button>
@@ -1225,7 +1232,7 @@ export default function GestaoDeGrupos() {
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setAsmOpen(true)}>
+            <Button variant="secondary" className="gap-2 h-10 w-36" onClick={() => setAsmOpen(true)}>
               <Settings className="h-4 w-4" /> Informar resultados
             </Button>
           </CardHeader>
@@ -1238,7 +1245,7 @@ export default function GestaoDeGrupos() {
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setOfertaOpen(true)}>
+            <Button variant="secondary" className="gap-2 h-10 w-36" onClick={() => setOfertaOpen(true)}>
               <Target className="h-4 w-4" />
               Abrir
             </Button>
@@ -1274,7 +1281,7 @@ export default function GestaoDeGrupos() {
         <h3 className="text-base font-semibold">Relação de Grupos</h3>
       </div>
 
-      {/* Tabela principal */}
+      {/* Tabela principal (sem "Apuração Dia" e sem "Ações") */}
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
@@ -1284,8 +1291,8 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-center bg-muted/20" colSpan={2}>25%</th>
               <th className="p-2 text-center bg-muted/20" colSpan={2}>50%</th>
               <th className="p-2 text-center bg-muted/20" colSpan={5}>LL</th>
-              <th className="p-2 text-center" colSpan={5}></th>
-              <th className="p-2 text-center" colSpan={2}></th>
+              <th className="p-2 text-center" colSpan={4}></th>
+              <th className="p-2 text-center" colSpan={1}></th>
             </tr>
             <tr>
               <th className="p-2 text-left">ADMINISTRADORA</th>
@@ -1303,20 +1310,18 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-right">Maior %</th>
               <th className="p-2 text-right">Menor %</th>
               <th className="p-2 text-right">Mediana</th>
-              <th className="p-2 text-center">Apuração Dia</th>
               <th className="p-2 text-center">Pz Enc</th>
               <th className="p-2 text-center">Vencimento</th>
               <th className="p-2 text-center">Sorteio</th>
               <th className="p-2 text-center">Assembleia</th>
               <th className="p-2 text-right">Referência</th>
-              <th className="p-2 text-center">Ações</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
+              <tr><td colSpan={21} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
+              <tr><td colSpan={21} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
             ) : (
               filtered.map((r) => (
                 <tr key={r.id} className="odd:bg-muted/30">
@@ -1327,7 +1332,7 @@ export default function GestaoDeGrupos() {
                   <td className="p-2 text-center">
                     {r.faixa_min != null && r.faixa_max != null
                       ? r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) + " — " +
-                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", "currency": "BRL" })
                       : "—"}
                   </td>
                   <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
@@ -1340,23 +1345,11 @@ export default function GestaoDeGrupos() {
                   <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
                   <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
                   <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
-                  <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                   <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
                   <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
-                  <td className="p-2 text-center">
-                    {isStubId(r.id) ? (
-                      <Button variant="secondary" className="gap-1" disabled title="Cadastre o grupo em 'Adicionar Grupo'">
-                        <Pencil className="h-4 w-4" /> Cadastrar
-                      </Button>
-                    ) : (
-                      <Button variant="secondary" className="gap-1" onClick={() => { const g = grupos.find((x) => x.id === r.id) || null; setEditando(g); setCriando(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-                        <Pencil className="h-4 w-4" /> Editar
-                      </Button>
-                    )}
-                  </td>
                 </tr>
               ))
             )}
@@ -1378,23 +1371,14 @@ export default function GestaoDeGrupos() {
           }}
         />
       )}
-      {importOpen && <OverlayGruposImportados rows={importRows} onClose={() => setImportOpen(false)} onSaved={async () => await carregar()} />}
-      {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
-
-      {/* Editor de Grupo (oculto por padrão; deixe "false" para não abrir em linha) */}
-      {false && (editando || criando) && (
-        <EditorGrupo
-          group={editando}
-          onClose={() => { setEditando(null); setCriando(false); }}
-          onSaved={async () => await carregar()}
-        />
-      )}
+      {massOpen && <OverlayMassUpdate rows={massRows} onClose={() => setMassOpen(false)} onSaved={async () => await carregar()} />}
+      {false && <div />} {/* placeholder p/ manter a estrutura */}
     </div>
   );
 }
 
 /* =========================================================
-   EDITOR DE GRUPO (inalterado)
+   EDITOR DE GRUPO (opcional; mantido caso você queira reativar depois)
    ========================================================= */
 
 function EditorGrupo({

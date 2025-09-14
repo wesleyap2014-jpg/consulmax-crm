@@ -709,15 +709,33 @@ function OverlayGruposImportados({
                       <td className="p-2">{r.administradora}</td>
                       <td className="p-2 font-medium">{r.codigo}</td>
                       <td className="p-2">
-                        <div className="flex items中心 gap-2">
-                          <Input type="number" step="0.01" placeholder="mín" value={r.faixa_min ?? ""} onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))} />
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="mín"
+                            value={r.faixa_min ?? ""}
+                            onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))}
+                          />
                           <span className="text-muted-foreground">—</span>
-                          <Input type="number" step="0.01" placeholder="máx" value={r.faixa_max ?? ""} onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))} />
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="máx"
+                            value={r.faixa_max ?? ""}
+                            onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))}
+                          />
                         </div>
                       </td>
-                      <td className="p-2 text-center"><Input type="date" value={r.prox_vencimento ?? ""} onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)} /></td>
-                      <td className="p-2 text-center"><Input type="date" value={r.prox_sorteio ?? ""} onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)} /></td>
-                      <td className="p-2 text-center"><Input type="date" value={r.prox_assembleia ?? ""} onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)} /></td>
+                      <td className="p-2 text-center">
+                        <Input type="date" value={r.prox_vencimento ?? ""} onChange={(e) => upd(r.id, "prox_vencimento", e.target.value || null)} />
+                      </td>
+                      <td className="p-2 text-center">
+                        <Input type="date" value={r.prox_sorteio ?? ""} onChange={(e) => upd(r.id, "prox_sorteio", e.target.value || null)} />
+                      </td>
+                      <td className="p-2 text-center">
+                        <Input type="date" value={r.prox_assembleia ?? ""} onChange={(e) => upd(r.id, "prox_assembleia", e.target.value || null)} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -979,6 +997,79 @@ export default function GestaoDeGrupos() {
 
   const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
 
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  // NOVO: estado de edição inline por linha (apenas 4 campos)
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  const [editRowId, setEditRowId] = useState<string | null>(null);
+  const [draftEdits, setDraftEdits] = useState<
+    Record<string, { participantes: number | null; prox_vencimento: string | null; prox_sorteio: string | null; prox_assembleia: string | null }>
+  >({});
+
+  const startEdit = (row: LinhaUI) => {
+    const id = row.id;
+    setEditRowId(id);
+    setDraftEdits((prev) => ({
+      ...prev,
+      [id]: {
+        participantes: row.participantes ?? null,
+        prox_vencimento: toYMD(row.prox_vencimento),
+        prox_sorteio: toYMD(row.prox_sorteio),
+        prox_assembleia: toYMD(row.prox_assembleia),
+      },
+    }));
+  };
+
+  const cancelEdit = () => setEditRowId(null);
+
+  const saveEdit = async (row: LinhaUI) => {
+    const d = draftEdits[row.id] || {
+      participantes: row.participantes ?? null,
+      prox_vencimento: toYMD(row.prox_vencimento),
+      prox_sorteio: toYMD(row.prox_sorteio),
+      prox_assembleia: toYMD(row.prox_assembleia),
+    };
+
+    try {
+      if (isStubId(row.id)) {
+        // INSERT: cria o grupo real com os 4 campos atualizados
+        const gStub = grupos.find((g) => g.id === row.id);
+        if (!gStub) throw new Error("Grupo não encontrado para inserir.");
+
+        const { error } = await supabase.from("groups").insert({
+          administradora: gStub.administradora,
+          segmento: gStub.segmento,
+          codigo: gStub.codigo,
+          participantes: d.participantes,
+          faixa_min: gStub.faixa_min ?? null,
+          faixa_max: gStub.faixa_max ?? null,
+          prox_vencimento: d.prox_vencimento ?? null,
+          prox_sorteio: d.prox_sorteio ?? null,
+          prox_assembleia: d.prox_assembleia ?? null,
+          prazo_encerramento_meses: gStub.prazo_encerramento_meses ?? null,
+        });
+        if (error) throw error;
+      } else {
+        // UPDATE: atualiza somente os 4 campos
+        const { error } = await supabase
+          .from("groups")
+          .update({
+            participantes: d.participantes,
+            prox_vencimento: d.prox_vencimento ?? null,
+            prox_sorteio: d.prox_sorteio ?? null,
+            prox_assembleia: d.prox_assembleia ?? null,
+          })
+          .eq("id", row.id);
+        if (error) throw error;
+      }
+
+      await carregar();
+      setEditRowId(null);
+    } catch (e: any) {
+      console.error(e);
+      alert(e.message ?? "Erro ao salvar alterações do grupo.");
+    }
+  };
+
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
       const r = lastAsmByGroup.get(g.id);
@@ -1194,7 +1285,12 @@ export default function GestaoDeGrupos() {
               <Button variant="secondary" onClick={handleSync}>
                 <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
               </Button>
-              <Button onClick={() => { setCriando(true); setEditando(null); }}>
+              <Button
+                onClick={() => {
+                  setCriando(true);
+                  setEditando(null);
+                }}
+              >
                 <Plus className="h-4 w-4 mr-2" /> Adicionar Grupo
               </Button>
             </div>
@@ -1216,7 +1312,7 @@ export default function GestaoDeGrupos() {
             <div className="col-span-5 text-xs text-muted-foreground">
               {loteria?.data_sorteio ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}` : "Sem resultado selecionado"}
             </div>
-            {([loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[]).map((v, i) => (
+            {( [loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[] ).map((v, i) => (
               <div key={i} className="px-2 py-1 rounded bg-muted text-center font-mono">{v}</div>
             ))}
           </CardContent>
@@ -1318,47 +1414,138 @@ export default function GestaoDeGrupos() {
             ) : filtered.length === 0 ? (
               <tr><td colSpan={22} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
             ) : (
-              filtered.map((r) => (
-                <tr key={r.id} className="odd:bg-muted/30">
-                  <td className="p-2">{r.administradora}</td>
-                  <td className="p-2">{r.segmento}</td>
-                  <td className="p-2 font-medium">{r.codigo}</td>
-                  <td className="p-2 text-right">{r.participantes ?? "—"}</td>
-                  <td className="p-2 text-center">
-                    {r.faixa_min != null && r.faixa_max != null
-                      ? r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) + " — " +
-                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-                      : "—"}
-                  </td>
-                  <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
-                  <td className="p-2 text-right">{r.fix25_entregas}</td>
-                  <td className="p-2 text-right">{r.fix25_ofertas}</td>
-                  <td className="p-2 text-right">{r.fix50_entregas}</td>
-                  <td className="p-2 text-right">{r.fix50_ofertas}</td>
-                  <td className="p-2 text-right">{r.ll_entregas}</td>
-                  <td className="p-2 text-right">{r.ll_ofertas}</td>
-                  <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
-                  <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
-                  <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
-                  <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
-                  <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
-                  <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
-                  <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
-                  <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
-                  <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
-                  <td className="p-2 text-center">
-                    {isStubId(r.id) ? (
-                      <Button variant="secondary" className="gap-1" disabled title="Cadastre o grupo em 'Adicionar Grupo'">
-                        <Pencil className="h-4 w-4" /> Cadastrar
-                      </Button>
-                    ) : (
-                      <Button variant="secondary" className="gap-1" onClick={() => { const g = grupos.find((x) => x.id === r.id) || null; setEditando(g); setCriando(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
-                        <Pencil className="h-4 w-4" /> Editar
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))
+              filtered.map((r) => {
+                const isEditing = editRowId === r.id;
+                const draft = draftEdits[r.id];
+                return (
+                  <tr key={r.id} className="odd:bg-muted/30">
+                    <td className="p-2">{r.administradora}</td>
+                    <td className="p-2">{r.segmento}</td>
+                    <td className="p-2 font-medium">{r.codigo}</td>
+
+                    {/* PARTICIPANTES */}
+                    <td className="p-2 text-right">
+                      {isEditing ? (
+                        <Input
+                          type="number"
+                          value={draft?.participantes ?? ""}
+                          onChange={(e) =>
+                            setDraftEdits((prev) => ({
+                              ...prev,
+                              [r.id]: {
+                                ...(prev[r.id] || { participantes: null, prox_vencimento: null, prox_sorteio: null, prox_assembleia: null }),
+                                participantes: e.target.value === "" ? null : Number(e.target.value),
+                              },
+                            }))
+                          }
+                          placeholder="0"
+                        />
+                      ) : (
+                        r.participantes ?? "—"
+                      )}
+                    </td>
+
+                    {/* FAIXA */}
+                    <td className="p-2 text-center">
+                      {r.faixa_min != null && r.faixa_max != null
+                        ? r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) + " — " +
+                          r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+                        : "—"}
+                    </td>
+
+                    <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
+                    <td className="p-2 text-right">{r.fix25_entregas}</td>
+                    <td className="p-2 text-right">{r.fix25_ofertas}</td>
+                    <td className="p-2 text-right">{r.fix50_entregas}</td>
+                    <td className="p-2 text-right">{r.fix50_ofertas}</td>
+                    <td className="p-2 text-right">{r.ll_entregas}</td>
+                    <td className="p-2 text-right">{r.ll_ofertas}</td>
+                    <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
+                    <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
+                    <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
+                    <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
+                    <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
+
+                    {/* VENCIMENTO */}
+                    <td className="p-2 text-center">
+                      {isEditing ? (
+                        <Input
+                          type="date"
+                          value={draft?.prox_vencimento ?? ""}
+                          onChange={(e) =>
+                            setDraftEdits((prev) => ({
+                              ...prev,
+                              [r.id]: { ...(prev[r.id] || {}), prox_vencimento: e.target.value || null },
+                            }))
+                          }
+                        />
+                      ) : (
+                        formatBR(toYMD(r.prox_vencimento))
+                      )}
+                    </td>
+
+                    {/* SORTEIO */}
+                    <td className="p-2 text-center">
+                      {isEditing ? (
+                        <Input
+                          type="date"
+                          value={draft?.prox_sorteio ?? ""}
+                          onChange={(e) =>
+                            setDraftEdits((prev) => ({
+                              ...prev,
+                              [r.id]: { ...(prev[r.id] || {}), prox_sorteio: e.target.value || null },
+                            }))
+                          }
+                        />
+                      ) : (
+                        formatBR(toYMD(r.prox_sorteio))
+                      )}
+                    </td>
+
+                    {/* ASSEMBLEIA */}
+                    <td className="p-2 text-center">
+                      {isEditing ? (
+                        <Input
+                          type="date"
+                          value={draft?.prox_assembleia ?? ""}
+                          onChange={(e) =>
+                            setDraftEdits((prev) => ({
+                              ...prev,
+                              [r.id]: { ...(prev[r.id] || {}), prox_assembleia: e.target.value || null },
+                            }))
+                          }
+                        />
+                      ) : (
+                        formatBR(toYMD(r.prox_assembleia))
+                      )}
+                    </td>
+
+                    <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
+
+                    {/* AÇÕES */}
+                    <td className="p-2 text-center">
+                      {isEditing ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <Button size="sm" onClick={() => saveEdit(r)}>
+                            <Save className="h-4 w-4 mr-1" /> Salvar
+                          </Button>
+                          <Button size="sm" variant="secondary" onClick={cancelEdit}>
+                            <X className="h-4 w-4 mr-1" /> Cancelar
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          className="gap-1"
+                          onClick={() => startEdit(r)}
+                        >
+                          <Pencil className="h-4 w-4" /> Editar
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -1381,11 +1568,14 @@ export default function GestaoDeGrupos() {
       {importOpen && <OverlayGruposImportados rows={importRows} onClose={() => setImportOpen(false)} onSaved={async () => await carregar()} />}
       {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
 
-      {/* Editor de Grupo (oculto por padrão; deixe "false" para não abrir em linha) */}
+      {/* Editor de Grupo (inalterado e desativado) */}
       {false && (editando || criando) && (
         <EditorGrupo
           group={editando}
-          onClose={() => { setEditando(null); setCriando(false); }}
+          onClose={() => {
+            setEditando(null);
+            setCriando(false);
+          }}
           onSaved={async () => await carregar()}
         />
       )}

@@ -536,7 +536,9 @@ function OverlayAssembleias({
                 >
                   <option value="">Todas</option>
                   {administradoras.map((a) => (
-                    <option key={a} value={a}>{a}</option>
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground mt-1">Selecione para reduzir a lista (opcional).</p>
@@ -549,9 +551,18 @@ function OverlayAssembleias({
               <CardTitle className="text-base">Informe os dados da próxima assembleia</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div><Label>Próximo Vencimento</Label><Input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} /></div>
-              <div><Label>Próximo Sorteio</Label><Input type="date" value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} /></div>
-              <div><Label>Próxima Assembleia</Label><Input type="date" value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} /></div>
+              <div>
+                <Label>Próximo Vencimento</Label>
+                <Input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
+              </div>
+              <div>
+                <Label>Próximo Sorteio</Label>
+                <Input type="date" value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} />
+              </div>
+              <div>
+                <Label>Próxima Assembleia</Label>
+                <Input type="date" value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} />
+              </div>
             </CardContent>
           </Card>
 
@@ -585,15 +596,33 @@ function OverlayAssembleias({
                       {linhas.map((l) => (
                         <tr key={l.group_id} className="odd:bg-muted/30">
                           <td className="p-2 font-medium">{l.codigo}</td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} step="0.01" value={l.ll_maior ?? ""} onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} step="0.01" value={l.ll_menor ?? ""} onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.prazo_enc_meses ?? ""} onChange={(e) => upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))} /></td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} step="0.01" value={l.ll_maior ?? ""} onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} step="0.01" value={l.ll_menor ?? ""} onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))} />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input type="number" min={0} value={l.prazo_enc_meses ?? ""} onChange={(e) => upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))} />
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -603,8 +632,7 @@ function OverlayAssembleias({
 
               <div className="flex justify-end pt-3">
                 <Button disabled={!podeSalvar || loading} onClick={handleSave}>
-                  {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  <Save className="h-4 w-4 mr-2" /> Salvar Resultados
+                  {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} <Save className="h-4 w-4 mr-2" /> Salvar Resultados
                 </Button>
               </div>
             </CardContent>
@@ -746,8 +774,7 @@ function OverlayGruposImportados({
 
         <div className="px-5 pb-4 flex justify-end">
           <Button onClick={handleSave} disabled={!canSave || saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            <Save className="h-4 w-4 mr-2" />
+            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} <Save className="h-4 w-4 mr-2" />
             Salvar
           </Button>
         </div>
@@ -881,7 +908,8 @@ function OverlayOfertaLance({ onClose }: { onClose: () => void }) {
 
           <div className="text-sm text-muted-foreground">
             {dataAsm ? (
-              <>Assembleia em {formatBR(toYMD(dataAsm))} •{" "}
+              <>
+                Assembleia em {formatBR(toYMD(dataAsm))} •{" "}
                 <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-foreground">{total} cotas</span>
               </>
             ) : (
@@ -1021,53 +1049,84 @@ export default function GestaoDeGrupos() {
 
   const cancelEdit = () => setEditRowId(null);
 
+  // *** CORRIGIDO: 'returning: "minimal"' + recarregar em try/catch ***
   const saveEdit = async (row: LinhaUI) => {
-    const d = draftEdits[row.id] || {
-      participantes: row.participantes ?? null,
-      prox_vencimento: toYMD(row.prox_vencimento),
-      prox_sorteio: toYMD(row.prox_sorteio),
-      prox_assembleia: toYMD(row.prox_assembleia),
-    };
+    const d =
+      draftEdits[row.id] || {
+        participantes: row.participantes ?? null,
+        prox_vencimento: toYMD(row.prox_vencimento),
+        prox_sorteio: toYMD(row.prox_sorteio),
+        prox_assembleia: toYMD(row.prox_assembleia),
+      };
 
+    // 1) Persiste no banco SEM retornar representação, evitando SELECT com 'titulo' ambíguo
     try {
       if (isStubId(row.id)) {
-        // INSERT: cria o grupo real com os 4 campos atualizados
         const gStub = grupos.find((g) => g.id === row.id);
         if (!gStub) throw new Error("Grupo não encontrado para inserir.");
 
-        const { error } = await supabase.from("groups").insert({
-          administradora: gStub.administradora,
-          segmento: gStub.segmento,
-          codigo: gStub.codigo,
-          participantes: d.participantes,
-          faixa_min: gStub.faixa_min ?? null,
-          faixa_max: gStub.faixa_max ?? null,
-          prox_vencimento: d.prox_vencimento ?? null,
-          prox_sorteio: d.prox_sorteio ?? null,
-          prox_assembleia: d.prox_assembleia ?? null,
-          prazo_encerramento_meses: gStub.prazo_encerramento_meses ?? null,
-        });
-        if (error) throw error;
-      } else {
-        // UPDATE: atualiza somente os 4 campos
         const { error } = await supabase
           .from("groups")
-          .update({
-            participantes: d.participantes,
-            prox_vencimento: d.prox_vencimento ?? null,
-            prox_sorteio: d.prox_sorteio ?? null,
-            prox_assembleia: d.prox_assembleia ?? null,
-          })
+          .insert(
+            [
+              {
+                administradora: gStub.administradora,
+                segmento: gStub.segmento,
+                codigo: gStub.codigo,
+                participantes: d.participantes,
+                faixa_min: gStub.faixa_min ?? null,
+                faixa_max: gStub.faixa_max ?? null,
+                prox_vencimento: d.prox_vencimento ?? null,
+                prox_sorteio: d.prox_sorteio ?? null,
+                prox_assembleia: d.prox_assembleia ?? null,
+                prazo_encerramento_meses: gStub.prazo_encerramento_meses ?? null,
+              },
+            ],
+            { returning: "minimal" }
+          );
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("groups")
+          .update(
+            {
+              participantes: d.participantes,
+              prox_vencimento: d.prox_vencimento ?? null,
+              prox_sorteio: d.prox_sorteio ?? null,
+              prox_assembleia: d.prox_assembleia ?? null,
+            },
+            { returning: "minimal" }
+          )
           .eq("id", row.id);
         if (error) throw error;
       }
-
-      await carregar();
-      setEditRowId(null);
     } catch (e: any) {
       console.error(e);
-      alert(e.message ?? "Erro ao salvar alterações do grupo.");
+      alert(e?.message ?? "Erro ao salvar alterações do grupo.");
+      return; // não tenta recarregar se falhou o DML
     }
+
+    // 2) Recarrega; se falhar, mantém a alteração visualmente como fallback
+    try {
+      await carregar();
+    } catch (e) {
+      console.error("Falha ao recarregar após salvar:", e);
+      setRows((prev) =>
+        prev.map((r0) =>
+          r0.id === row.id
+            ? {
+                ...r0,
+                participantes: d.participantes,
+                prox_vencimento: d.prox_vencimento,
+                prox_sorteio: d.prox_sorteio,
+                prox_assembleia: d.prox_assembleia,
+              }
+            : r0
+        )
+      );
+    }
+
+    setEditRowId(null);
   };
 
   const rebuildRows = useCallback(() => {
@@ -1222,10 +1281,7 @@ export default function GestaoDeGrupos() {
     const want = Array.from(dateSet);
     let newDraws: Record<string, LoteriaFederal> = {};
     if (want.length > 0) {
-      const { data: ld, error: ldErr } = await supabase
-        .from("lottery_draws")
-        .select("*")
-        .in("draw_date", want);
+      const { data: ld, error: ldErr } = await supabase.from("lottery_draws").select("*").in("draw_date", want);
       if (ldErr) console.error(ldErr);
       (ld || []).forEach((d: any) => {
         newDraws[d.draw_date] = {
@@ -1353,10 +1409,22 @@ export default function GestaoDeGrupos() {
           </CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-3">
-          <div><Label>Administradora</Label><Input value={fAdmin} onChange={(e) => setFAdmin(e.target.value)} placeholder="Filtrar Administradora" /></div>
-          <div><Label>Segmento</Label><Input value={fSeg} onChange={(e) => setFSeg(e.target.value)} placeholder="Filtrar Segmento" /></div>
-          <div><Label>Grupo</Label><Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" /></div>
-          <div><Label>Faixa de Crédito</Label><Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" /></div>
+          <div>
+            <Label>Administradora</Label>
+            <Input value={fAdmin} onChange={(e) => setFAdmin(e.target.value)} placeholder="Filtrar Administradora" />
+          </div>
+          <div>
+            <Label>Segmento</Label>
+            <Input value={fSeg} onChange={(e) => setFSeg(e.target.value)} placeholder="Filtrar Segmento" />
+          </div>
+          <div>
+            <Label>Grupo</Label>
+            <Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" />
+          </div>
+          <div>
+            <Label>Faixa de Crédito</Label>
+            <Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" />
+          </div>
           <div>
             <Label>% Lance Livre (mediana ±15%)</Label>
             <Input type="number" step="0.01" value={fMedianaAlvo} onChange={(e) => setFMedianaAlvo(e.target.value)} placeholder="ex.: 45" />
@@ -1410,9 +1478,17 @@ export default function GestaoDeGrupos() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
+              <tr>
+                <td colSpan={22} className="p-6 text-center text-muted-foreground">
+                  <Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…
+                </td>
+              </tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
+              <tr>
+                <td colSpan={22} className="p-6 text-center text-muted-foreground">
+                  Sem registros para os filtros aplicados.
+                </td>
+              </tr>
             ) : (
               filtered.map((r) => {
                 const isEditing = editRowId === r.id;
@@ -1448,7 +1524,8 @@ export default function GestaoDeGrupos() {
                     {/* FAIXA */}
                     <td className="p-2 text-center">
                       {r.faixa_min != null && r.faixa_max != null
-                        ? r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) + " — " +
+                        ? r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) +
+                          " — " +
                           r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
                         : "—"}
                     </td>
@@ -1534,11 +1611,7 @@ export default function GestaoDeGrupos() {
                           </Button>
                         </div>
                       ) : (
-                        <Button
-                          variant="secondary"
-                          className="gap-1"
-                          onClick={() => startEdit(r)}
-                        >
+                        <Button variant="secondary" className="gap-1" onClick={() => startEdit(r)}>
                           <Pencil className="h-4 w-4" /> Editar
                         </Button>
                       )}
@@ -1665,23 +1738,57 @@ function EditorGrupo({
   return (
     <div className="rounded-xl border p-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div><Label>Administradora</Label><Input value={form.administradora ?? ""} onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))} placeholder="Ex.: Embracon" /></div>
-        <div><Label>Segmento</Label><Input value={form.segmento ?? ""} onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))} placeholder="Ex.: Imóvel" /></div>
-        <div><Label>Código do Grupo</Label><Input value={form.codigo ?? ""} onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))} placeholder="Ex.: 1234/5" /></div>
+        <div>
+          <Label>Administradora</Label>
+          <Input value={form.administradora ?? ""} onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))} placeholder="Ex.: Embracon" />
+        </div>
+        <div>
+          <Label>Segmento</Label>
+          <Input value={form.segmento ?? ""} onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))} placeholder="Ex.: Imóvel" />
+        </div>
+        <div>
+          <Label>Código do Grupo</Label>
+          <Input value={form.codigo ?? ""} onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))} placeholder="Ex.: 1234/5" />
+        </div>
 
-        <div><Label>Participantes</Label><Input type="number" min={1} value={form.participantes ?? ""} onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))} /></div>
-        <div><Label>Faixa Mínima</Label><Input type="number" step="0.01" value={form.faixa_min ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))} /></div>
-        <div><Label>Faixa Máxima</Label><Input type="number" step="0.01" value={form.faixa_max ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))} /></div>
+        <div>
+          <Label>Participantes</Label>
+          <Input type="number" min={1} value={form.participantes ?? ""} onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))} />
+        </div>
+        <div>
+          <Label>Faixa Mínima</Label>
+          <Input type="number" step="0.01" value={form.faixa_min ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))} />
+        </div>
+        <div>
+          <Label>Faixa Máxima</Label>
+          <Input type="number" step="0.01" value={form.faixa_max ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))} />
+        </div>
 
-        <div><Label>Próx. Vencimento</Label><Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} /></div>
-        <div><Label>Próx. Sorteio</Label><Input type="date" value={form.prox_sorteio ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))} /></div>
-        <div><Label>Próx. Assembleia</Label><Input type="date" value={form.prox_assembleia ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))} /></div>
-        <div><Label>Prazo Enc. (meses)</Label><Input type="number" min={0} value={form.prazo_encerramento_meses ?? ""} onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))} /></div>
+        <div>
+          <Label>Próx. Vencimento</Label>
+          <Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} />
+        </div>
+        <div>
+          <Label>Próx. Sorteio</Label>
+          <Input type="date" value={form.prox_sorteio ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))} />
+        </div>
+        <div>
+          <Label>Próx. Assembleia</Label>
+          <Input type="date" value={form.prox_assembleia ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))} />
+        </div>
+        <div>
+          <Label>Prazo Enc. (meses)</Label>
+          <Input type="number" min={0} value={form.prazo_encerramento_meses ?? ""} onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))} />
+        </div>
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-        <Button onClick={handleSave}><Save className="h-4 w-4 mr-2" /> Salvar Grupo</Button>
+        <Button variant="secondary" onClick={onClose}>
+          Cancelar
+        </Button>
+        <Button onClick={handleSave}>
+          <Save className="h-4 w-4 mr-2" /> Salvar Grupo
+        </Button>
       </div>
     </div>
   );

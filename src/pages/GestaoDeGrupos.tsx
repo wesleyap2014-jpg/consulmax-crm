@@ -405,7 +405,7 @@ function OverlayAssembleias({
       return;
     }
     const subset = gruposBase
-      .filter((g) => !isStubId(g.id))
+      .filter((g) => !isStubId(g.id)) // ignora stubs (não têm id real)
       .filter((g) => sameDay(g.prox_assembleia, date) && (!adminSel || g.administradora === adminSel))
       .map<LinhaAsm>((g) => ({
         group_id: g.id,
@@ -427,6 +427,7 @@ function OverlayAssembleias({
     setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
   };
 
+  // pode salvar qualquer data (passada ou futura)
   const podeSalvar = Boolean(date) && linhas.length > 0;
 
   const handleSave = async () => {
@@ -488,6 +489,7 @@ function OverlayAssembleias({
         )
       );
 
+      // Atualiza MV usada em Oferta de Lance
       try {
         await supabase.rpc("refresh_gestao_mv");
       } catch {}
@@ -614,7 +616,7 @@ function OverlayAssembleias({
 }
 
 /* =========================================================
-   OVERLAY: GRUPOS IMPORTADOS (ATUALIZAR)
+   OVERLAY: GRUPOS IMPORTADOS
    ========================================================= */
 
 type NovoGrupoRow = {
@@ -664,15 +666,12 @@ function OverlayGruposImportados({
             .eq("id", r.id)
         )
       );
-      try {
-        await supabase.rpc("refresh_gestao_mv");
-      } catch {}
       await onSaved();
       alert("Grupos atualizados com sucesso!");
       onClose();
     } catch (e: any) {
       console.error(e);
-      alert(e.message ?? "Erro ao salvar grupos.");
+      alert(e.message ?? "Erro ao salvar grupos importados.");
     } finally {
       setSaving(false);
     }
@@ -682,7 +681,7 @@ function OverlayGruposImportados({
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-5xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-lg font-semibold">Atualizar dados pendentes dos grupos</h2>
+          <h2 className="text-lg font-semibold">Grupos importados</h2>
           <Button variant="secondary" onClick={onClose} className="gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
@@ -710,7 +709,7 @@ function OverlayGruposImportados({
                       <td className="p-2">{r.administradora}</td>
                       <td className="p-2 font-medium">{r.codigo}</td>
                       <td className="p-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items中心 gap-2">
                           <Input type="number" step="0.01" placeholder="mín" value={r.faixa_min ?? ""} onChange={(e) => upd(r.id, "faixa_min", e.target.value === "" ? null : Number(e.target.value))} />
                           <span className="text-muted-foreground">—</span>
                           <Input type="number" step="0.01" placeholder="máx" value={r.faixa_max ?? ""} onChange={(e) => upd(r.id, "faixa_max", e.target.value === "" ? null : Number(e.target.value))} />
@@ -1029,11 +1028,13 @@ export default function GestaoDeGrupos() {
     setRows(linhas);
   }, [grupos, lastAsmByGroup, drawsByDate]);
 
-  // Carregar: vendas como fonte (encarteirada || codigo '00') e contemplada=false
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  // CARREGAR: usa public.vendas como fonte base (encarteirada & !contemplada)
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
   const carregar = async () => {
     setLoading(true);
 
-    // 1) groups
+    // 1) groups (para enriquecer quando houver cadastro)
     const { data: g, error: gErr } = await supabase
       .from("groups")
       .select(
@@ -1061,12 +1062,12 @@ export default function GestaoDeGrupos() {
       byKey.set(keyDigits(gr.administradora, gr.codigo), gr);
     }
 
-    // 2) vendas: encarteiradas OU codigo = '00', e contemplada = false
+    // 2) vendas encarteiradas e não contempladas
     const { data: vend, error: vErr } = await supabase
       .from("vendas")
-      .select("administradora, segmento, grupo, status, codigo, contemplada")
-      .eq("contemplada", false)
-      .or("status.eq.encarteirada,codigo.eq.00");
+      .select("administradora, segmento, grupo, status, contemplada")
+      .eq("status", "encarteirada")
+      .eq("contemplada", false);
 
     if (vErr) console.error(vErr);
 
@@ -1081,7 +1082,7 @@ export default function GestaoDeGrupos() {
       if (!distinct.has(k)) distinct.set(k, { administradora: normalizeAdmin(adm), segmento: seg, grupo: grp });
     });
 
-    // 3) base: real se existir em groups, senão stub
+    // 3) monta base para grade: real se existir em groups, senão stub
     const gruposBase: Grupo[] = [];
     for (const { administradora, segmento, grupo } of distinct.values()) {
       const k = keyDigits(administradora, grupo);
@@ -1105,7 +1106,7 @@ export default function GestaoDeGrupos() {
       }
     }
 
-    // 4) últimos resultados só para ids reais
+    // 4) últimos resultados apenas para ids reais
     const reais = gruposBase.filter((g) => !isStubId(g.id)).map((g) => g.id);
     let byGroup = new Map<string, UltimoResultado>();
     if (reais.length > 0) {
@@ -1161,98 +1162,9 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
-  /** Atualizar:
-   * 1) Sincroniza public.groups a partir de vendas (cria grupos não existentes)
-   * 2) Lista grupos com dados faltando e abre overlay
-   * 3) Ao fechar/salvar overlay: refresh_gestao_mv e recarregar
-   */
+  // "Atualizar": apenas recarrega, pois agora a grade vem de vendas
   const handleSync = async () => {
-    try {
-      // 1) Buscar vendas (encarteiradas OU codigo '00') e contemplada=false
-      const { data: vend, error: vErr } = await supabase
-        .from("vendas")
-        .select("administradora, segmento, grupo, status, codigo, contemplada")
-        .eq("contemplada", false)
-        .or("status.eq.encarteirada,codigo.eq.00");
-      if (vErr) throw vErr;
-
-      // Distinct by adm+grupo normalizados
-      const distinct = new Map<string, { administradora: string; segmento: string; grupo: string }>();
-      (vend || []).forEach((v: any) => {
-        const adm = normalizeAdmin(v.administradora);
-        const seg = (v.segmento ?? "").toString();
-        const grp = (v.grupo ?? "").toString();
-        const k = keyDigits(adm, grp);
-        if (!k) return;
-        if (!distinct.has(k)) distinct.set(k, { administradora: adm, segmento: seg, grupo: grp });
-      });
-
-      // 2) Verifica em groups
-      const { data: g, error: gErr } = await supabase
-        .from("groups")
-        .select("id, administradora, segmento, codigo");
-      if (gErr) throw gErr;
-
-      const have = new Set((g || []).map((r: any) => keyDigits(r.administradora, r.codigo)));
-
-      // 3) Monta payload de upsert para grupos ausentes (defaults)
-      const toInsert = Array.from(distinct.values())
-        .filter(({ administradora, grupo }) => !have.has(keyDigits(administradora, grupo)))
-        .map(({ administradora, segmento, grupo }) => ({
-          administradora,
-          segmento: segmento === "Imóvel Estendido" ? "Imóvel" : segmento,
-          codigo: String(grupo),
-          participantes: null,
-          faixa_min: null,
-          faixa_max: null,
-          prox_vencimento: null,
-          prox_sorteio: null,
-          prox_assembleia: null,
-          prazo_encerramento_meses: null,
-        }));
-
-      if (toInsert.length > 0) {
-        // onConflict depende do índice único no seu schema (ajuste se necessário)
-        const { error: insErr } = await supabase
-          .from("groups")
-          .upsert(toInsert, { onConflict: "administradora,codigo", ignoreDuplicates: false });
-        if (insErr) throw insErr;
-      }
-
-      // 4) Busca todos os grupos e filtra apenas os com campos faltando
-      const { data: all, error: allErr } = await supabase
-        .from("groups")
-        .select("id, administradora, codigo, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia, participantes");
-      if (allErr) throw allErr;
-
-      const faltando: NovoGrupoRow[] = (all || [])
-        .filter((r: any) =>
-          !r.participantes ||
-          r.faixa_min == null ||
-          r.faixa_max == null ||
-          !r.prox_vencimento ||
-          !r.prox_sorteio ||
-          !r.prox_assembleia
-        )
-        .map((r: any) => ({
-          id: r.id,
-          administradora: r.administradora,
-          codigo: r.codigo,
-          faixa_min: r.faixa_min,
-          faixa_max: r.faixa_max,
-          prox_vencimento: r.prox_vencimento,
-          prox_sorteio: r.prox_sorteio,
-          prox_assembleia: r.prox_assembleia,
-        }));
-
-      setImportRows(faltando);
-      setImportOpen(true);
-    } catch (e: any) {
-      console.error(e);
-      alert(e.message ?? "Erro ao atualizar.");
-    } finally {
-      await carregar();
-    }
+    await carregar();
   };
 
   const filtered = useMemo(() => {
@@ -1276,17 +1188,15 @@ export default function GestaoDeGrupos() {
       {/* Cabeçalho / Ações */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
         <Card className="lg:col-span-3">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-xl">Gestão de Grupos</CardTitle>
-              <div className="grid grid-cols-2 gap-2 min-w-[260px]">
-                <Button variant="secondary" className="w-full" onClick={handleSync}>
-                  <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
-                </Button>
-                <Button className="w-full" onClick={() => { setCriando(true); setEditando(null); }}>
-                  <Plus className="h-4 w-4 mr-2" /> Adicionar
-                </Button>
-              </div>
+          <CardHeader className="pb-2 flex items-center justify-between">
+            <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={handleSync}>
+                <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
+              </Button>
+              <Button onClick={() => { setCriando(true); setEditando(null); }}>
+                <Plus className="h-4 w-4 mr-2" /> Adicionar Grupo
+              </Button>
             </div>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
@@ -1295,17 +1205,12 @@ export default function GestaoDeGrupos() {
         </Card>
 
         <Card className="lg:col-span-3">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Loteria Federal</CardTitle>
-              <div className="grid grid-cols-2 gap-2 min-w-[260px]">
-                <Button variant="secondary" className="w-full" onClick={() => setLfOpen(true)}>
-                  <Percent className="h-4 w-4 mr-2" />
-                  Informar resultados
-                </Button>
-                <span className="hidden md:block" />
-              </div>
-            </div>
+          <CardHeader className="pb-2 flex items-center justify-between">
+            <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
+            <Button variant="secondary" className="gap-2" onClick={() => setLfOpen(true)}>
+              <Percent className="h-4 w-4" />
+              Informar resultados
+            </Button>
           </CardHeader>
           <CardContent className="text-sm grid grid-cols-5 gap-2 items-center">
             <div className="col-span-5 text-xs text-muted-foreground">
@@ -1318,34 +1223,25 @@ export default function GestaoDeGrupos() {
         </Card>
 
         <Card className="lg:col-span-3">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Assembleias</CardTitle>
-              <div className="grid grid-cols-2 gap-2 min-w-[260px]">
-                <Button variant="secondary" className="w-full" onClick={() => setAsmOpen(true)}>
-                  <Settings className="h-4 w-4 mr-2" /> Informar resultados
-                </Button>
-                <span className="hidden md:block" />
-              </div>
-            </div>
+          <CardHeader className="pb-2 flex items-center justify-between">
+            <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
+            <Button variant="secondary" className="gap-2" onClick={() => setAsmOpen(true)}>
+              <Settings className="h-4 w-4" /> Informar resultados
+            </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Informe resultados por data. Atualizaremos próximas datas.
           </CardContent>
         </Card>
 
+        {/* Card Oferta de Lance */}
         <Card className="lg:col-span-3">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Oferta de Lance</CardTitle>
-              <div className="grid grid-cols-2 gap-2 min-w-[260px]">
-                <Button variant="secondary" className="w-full" onClick={() => setOfertaOpen(true)}>
-                  <Target className="h-4 w-4 mr-2" />
-                  Abrir
-                </Button>
-                <span className="hidden md:block" />
-              </div>
-            </div>
+          <CardHeader className="pb-2 flex items-center justify-between">
+            <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
+            <Button variant="secondary" className="gap-2" onClick={() => setOfertaOpen(true)}>
+              <Target className="h-4 w-4" />
+              Abrir
+            </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Lista cotas encarteiradas para os grupos com assembleia na data informada.
@@ -1366,10 +1262,10 @@ export default function GestaoDeGrupos() {
           <div><Label>Grupo</Label><Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" /></div>
           <div><Label>Faixa de Crédito</Label><Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" /></div>
           <div>
-            <Label>% Lance Livre (mediana ±30%)</Label>
+            <Label>% Lance Livre (mediana ±15%)</Label>
             <Input type="number" step="0.01" value={fMedianaAlvo} onChange={(e) => setFMedianaAlvo(e.target.value)} placeholder="ex.: 45" />
           </div>
-          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 31,5% e 58,5%.</div>
+          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 30% e 60%.</div>
         </CardContent>
       </Card>
 
@@ -1382,49 +1278,45 @@ export default function GestaoDeGrupos() {
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
-            {/* Linha 1 (faixas de agrupamento) */}
             <tr className="text-xs">
               <th className="p-2 text-left align-bottom" colSpan={5}></th>
               <th className="p-2 text-center bg-muted/40" colSpan={1}></th>
-              <th className="p-2 text-center bg-gradient-to-b from-muted/50 to-muted/30 rounded-l-md shadow-inner" colSpan={2}>25%</th>
-              <th className="p-2 text-center bg-gradient-to-b from-muted/50 to-muted/30 shadow-inner" colSpan={2}>50%</th>
-              <th className="p-2 text-center bg-gradient-to-b from-muted/50 to-muted/30 rounded-r-md shadow-inner" colSpan={5}>LL</th>
-              <th className="p-2 text-center" colSpan={4}></th>
+              <th className="p-2 text-center bg-muted/20" colSpan={2}>25%</th>
+              <th className="p-2 text-center bg-muted/20" colSpan={2}>50%</th>
+              <th className="p-2 text-center bg-muted/20" colSpan={5}>LL</th>
+              <th className="p-2 text-center" colSpan={5}></th>
+              <th className="p-2 text-center" colSpan={2}></th>
             </tr>
-            {/* Linha 2 (nomes das colunas) */}
             <tr>
               <th className="p-2 text-left">ADMINISTRADORA</th>
               <th className="p-2 text-left">SEGMENTO</th>
               <th className="p-2 text-left">GRUPO</th>
               <th className="p-2 text-right">PARTICIPANTES</th>
               <th className="p-2 text-center">FAIXA DE CRÉDITO</th>
-
               <th className="p-2 text-right">Total Entregas</th>
-
               <th className="p-2 text-right">25% Entregas</th>
               <th className="p-2 text-right">25% Ofertas</th>
-
               <th className="p-2 text-right">50% Entregas</th>
               <th className="p-2 text-right">50% Ofertas</th>
-
               <th className="p-2 text-right">LL Entregas</th>
               <th className="p-2 text-right">LL Ofertas</th>
               <th className="p-2 text-right">Maior %</th>
               <th className="p-2 text-right">Menor %</th>
               <th className="p-2 text-right">Mediana</th>
-
-              {/* Removidos: Apuração Dia, Ações */}
+              <th className="p-2 text-center">Apuração Dia</th>
               <th className="p-2 text-center">Pz Enc</th>
               <th className="p-2 text-center">Vencimento</th>
               <th className="p-2 text-center">Sorteio</th>
               <th className="p-2 text-center">Assembleia</th>
+              <th className="p-2 text-right">Referência</th>
+              <th className="p-2 text-center">Ações</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={21} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
+              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={21} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
+              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
             ) : (
               filtered.map((r) => (
                 <tr key={r.id} className="odd:bg-muted/30">
@@ -1438,25 +1330,33 @@ export default function GestaoDeGrupos() {
                         r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
                       : "—"}
                   </td>
-
                   <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
-
                   <td className="p-2 text-right">{r.fix25_entregas}</td>
                   <td className="p-2 text-right">{r.fix25_ofertas}</td>
-
                   <td className="p-2 text-right">{r.fix50_entregas}</td>
                   <td className="p-2 text-right">{r.fix50_ofertas}</td>
-
                   <td className="p-2 text-right">{r.ll_entregas}</td>
                   <td className="p-2 text-right">{r.ll_ofertas}</td>
                   <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
                   <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
                   <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
-
+                  <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                   <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
                   <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
+                  <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
+                  <td className="p-2 text-center">
+                    {isStubId(r.id) ? (
+                      <Button variant="secondary" className="gap-1" disabled title="Cadastre o grupo em 'Adicionar Grupo'">
+                        <Pencil className="h-4 w-4" /> Cadastrar
+                      </Button>
+                    ) : (
+                      <Button variant="secondary" className="gap-1" onClick={() => { const g = grupos.find((x) => x.id === r.id) || null; setEditando(g); setCriando(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+                        <Pencil className="h-4 w-4" /> Editar
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               ))
             )}
@@ -1481,7 +1381,7 @@ export default function GestaoDeGrupos() {
       {importOpen && <OverlayGruposImportados rows={importRows} onClose={() => setImportOpen(false)} onSaved={async () => await carregar()} />}
       {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
 
-      {/* Editor de Grupo (opcional; mantido oculto) */}
+      {/* Editor de Grupo (oculto por padrão; deixe "false" para não abrir em linha) */}
       {false && (editando || criando) && (
         <EditorGrupo
           group={editando}

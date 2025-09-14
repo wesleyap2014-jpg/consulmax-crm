@@ -10,7 +10,6 @@ import {
   Filter as FilterIcon,
   Percent,
   Plus,
-  Pencil,
   RefreshCw,
   Save,
   Settings,
@@ -153,12 +152,6 @@ function normalizeGroupDigits(g?: string | number | null): string {
   const m = first.match(/\d+/);
   if (m) return m[0];
   return s.replace(/\D/g, "");
-}
-function keyDigits(adm?: string | null, grp?: string | number | null) {
-  return `${normalizeAdmin(adm)}::${normalizeGroupDigits(grp)}`;
-}
-function keyRaw(adm?: string | null, grp?: string | number | null) {
-  return `${normalizeAdmin(adm)}::${String(grp ?? "").trim()}`;
 }
 
 /* =========================================================
@@ -739,7 +732,7 @@ function OverlayAtualizarGrupos({
                           type="number"
                           min={0}
                           value={r.participantes ?? ""}
-                          onChange={(e) => upd(r.id, "partici pantes" as any, e.target.value === "" ? null : Number(e.target.value))}
+                          onChange={(e) => upd(r.id, "participantes", e.target.value === "" ? null : Number(e.target.value))}
                         />
                       </td>
                       <td className="p-2">
@@ -1124,6 +1117,7 @@ export default function GestaoDeGrupos() {
     (ar || []).forEach((r: any) => byGroup.set(r.group_id, r));
     setLastAsmByGroup(byGroup);
 
+    // carregar resultados de loteria
     const dateSet = new Set<string>();
     for (const gRow of gruposFetched) {
       const ymd = toYMD(gRow.prox_sorteio);
@@ -1151,6 +1145,9 @@ export default function GestaoDeGrupos() {
     setDrawsByDate(newDraws);
 
     setLoading(false);
+
+    // retorna grupos para quem chamar (útil no Atualizar)
+    return gruposFetched;
   };
 
   useEffect(() => {
@@ -1161,23 +1158,14 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
-  // Atualizar: sincroniza e abre overlay com faltantes
+  // Atualizar: sincroniza e abre overlay com faltantes (usando dados frescos)
   const handleAtualizar = async () => {
     try {
-      // 1) Sincroniza para trazer possíveis "novos grupos"
-      try {
-        await supabase.rpc("sync_groups_from_carteira_safe");
-      } catch {}
-      // Atualiza MV (para telas dependentes)
-      try {
-        await supabase.rpc("refresh_gestao_mv");
-      } catch {}
+      await supabase.rpc("sync_groups_from_carteira_safe").catch(() => {});
+      await supabase.rpc("refresh_gestao_mv").catch(() => {});
+      const gruposFrescos = await carregar(); // retorna os grupos atualizados
 
-      // 2) Recarrega base
-      await carregar();
-
-      // 3) Prepara overlay só com faltantes
-      const faltantes = grupos
+      const faltantes = (gruposFrescos || [])
         .filter((g) => faltaInfo(g))
         .map<AtualizaRow>((g) => ({
           id: g.id,
@@ -1216,7 +1204,7 @@ export default function GestaoDeGrupos() {
 
   const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
 
-  // Resumos para os cards de modalidades
+  // Resumos para cards de modalidades
   const resumo25 = useMemo(() => {
     const ent = filtered.reduce((a, r) => a + r.fix25_entregas, 0);
     const of = filtered.reduce((a, r) => a + r.fix25_ofertas, 0);
@@ -1235,7 +1223,6 @@ export default function GestaoDeGrupos() {
     return { ent, of, medMediana };
   }, [filtered]);
 
-  // UI helpers — card de seção com título, botões e descrição
   const SectionCard = ({
     title,
     description,
@@ -1259,7 +1246,7 @@ export default function GestaoDeGrupos() {
   return (
     <div className="p-4 md:p-6 space-y-6">
 
-      {/* Linha de cards do topo (mesmo layout) */}
+      {/* Topo - cards padronizados */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
         <SectionCard
           title="GESTÃO DE GRUPOS"
@@ -1268,7 +1255,7 @@ export default function GestaoDeGrupos() {
               <Button onClick={handleAtualizar} className="min-w-[140px] justify-center">
                 <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
               </Button>
-              <Button onClick={() => alert('Use o Editor de Grupo (em breve modal dedicado).')} variant="secondary" className="min-w-[140px] justify-center">
+              <Button onClick={() => alert('Em breve: modal de criação.')} variant="secondary" className="min-w-[140px] justify-center">
                 <Plus className="h-4 w-4 mr-2" /> Adicionar
               </Button>
             </>
@@ -1310,7 +1297,7 @@ export default function GestaoDeGrupos() {
         />
       </div>
 
-      {/* Cards-resumo das modalidades (destaque visual) */}
+      {/* Cards de destaque das modalidades */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="rounded-xl border p-3 bg-emerald-50/40">
           <div className="text-xs font-medium text-emerald-800 mb-1">25%</div>
@@ -1354,7 +1341,7 @@ export default function GestaoDeGrupos() {
         <h3 className="text-base font-semibold">Relação de Grupos</h3>
       </div>
 
-      {/* Tabela principal — colunas 25/50/LL com “faixas” visuais */}
+      {/* Tabela principal — blocos 25/50/LL com “faixas” visuais */}
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
@@ -1408,7 +1395,7 @@ export default function GestaoDeGrupos() {
                   <td className="p-2 text-center">
                     {r.faixa_min != null && r.faixa_max != null
                       ? r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) + " — " +
-                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", "currency": "BRL" })
+                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
                       : "—"}
                   </td>
 
@@ -1454,110 +1441,6 @@ export default function GestaoDeGrupos() {
       )}
       {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
       {updOpen && <OverlayAtualizarGrupos rows={updRows} onClose={() => setUpdOpen(false)} onSaved={async () => await carregar()} />}
-    </div>
-  );
-}
-
-/* =========================================================
-   (Opcional) Editor de Grupo — mantido fora de uso
-   ========================================================= */
-
-function EditorGrupo({
-  group,
-  onClose,
-  onSaved,
-}: {
-  group?: Grupo | null;
-  onClose: () => void;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [form, setForm] = useState<Partial<Grupo>>(
-    group || {
-      administradora: "" as Administradora,
-      segmento: "" as SegmentoUI,
-      codigo: "",
-      participantes: null,
-      faixa_min: null,
-      faixa_max: null,
-      prox_vencimento: null,
-      prox_sorteio: null,
-      prox_assembleia: null,
-      prazo_encerramento_meses: null,
-    }
-  );
-
-  const isNew = !group?.id;
-
-  const handleSave = async () => {
-    if (!form.codigo || !form.administradora || !form.segmento) {
-      alert("Preencha Administradora, Segmento e Código do Grupo.");
-      return;
-    }
-    if (isNew) {
-      const { error } = await supabase.from("groups").insert({
-        administradora: form.administradora,
-        segmento: form.segmento,
-        codigo: form.codigo,
-        participantes: form.participantes,
-        faixa_min: form.faixa_min,
-        faixa_max: form.faixa_max,
-        prox_vencimento: form.prox_vencimento,
-        prox_sorteio: form.prox_sorteio,
-        prox_assembleia: form.prox_assembleia,
-        prazo_encerramento_meses: form.prazo_encerramento_meses,
-      });
-      if (error) {
-        console.error(error);
-        alert("Erro ao inserir grupo.");
-        return;
-      }
-    } else {
-      const { error } = await supabase
-        .from("groups")
-        .update({
-          administradora: form.administradora,
-          segmento: form.segmento,
-          codigo: form.codigo,
-          participantes: form.participantes,
-          faixa_min: form.faixa_min,
-          faixa_max: form.faixa_max,
-          prox_vencimento: form.prox_vencimento,
-          prox_sorteio: form.prox_sorteio,
-          prox_assembleia: form.prox_assembleia,
-          prazo_encerramento_meses: form.prazo_encerramento_meses,
-        })
-        .eq("id", group!.id);
-      if (error) {
-        console.error(error);
-        alert("Erro ao atualizar grupo.");
-        return;
-      }
-    }
-    await onSaved();
-    onClose();
-  };
-
-  return (
-    <div className="rounded-xl border p-4 space-y-3">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div><Label>Administradora</Label><Input value={form.administradora ?? ""} onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))} placeholder="Ex.: Embracon" /></div>
-        <div><Label>Segmento</Label><Input value={form.segmento ?? ""} onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))} placeholder="Ex.: Imóvel" /></div>
-        <div><Label>Código do Grupo</Label><Input value={form.codigo ?? ""} onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))} placeholder="Ex.: 1234/5" /></div>
-
-        <div><Label>Participantes</Label><Input type="number" min={1} value={form.participantes ?? ""} onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))} /></div>
-        <div><Label>Faixa Mínima</Label><Input type="number" step="0.01" value={form.faixa_min ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))} /></div>
-        <div><Label>Faixa Máxima</Label><Input type="number" step="0.01" value={form.faixa_max ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))} /></div>
-
-        <div><Label>Próx. Vencimento</Label><Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} /></div>
-        <div><Label>Próx. Sorteio</Label><Input type="date" value={form.prox_sorteio ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))} /></div>
-        <div><Label>Próx. Assembleia</Label><Input type="date" value={form.prox_assembleia ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))} /></div>
-        <div><Label>Prazo Enc. (meses)</Label><Input type="number" min={0} value={form.prazo_encerramento_meses ?? ""} onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))} /></div>
-      </div>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-        <Button onClick={handleSave}><Save className="h-4 w-4 mr-2" /> Salvar Grupo</Button>
-      </div>
     </div>
   );
 }

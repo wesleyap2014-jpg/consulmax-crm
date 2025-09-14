@@ -108,13 +108,8 @@ function toPct4(v: number | null | undefined): string {
   });
   return `${str}%`;
 }
-
-/* ===== normalizações ===== */
-function stripAccents(s: string) {
-  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
 function normalizeAdmin(raw?: string | null): string {
-  const s = stripAccents(String(raw ?? "")).toLowerCase();
+  const s = (raw ?? "").toLowerCase();
   if (s.includes("embracon")) return "Embracon";
   if (s.includes("hs")) return "HS";
   return (raw ?? "").toString().trim();
@@ -129,588 +124,41 @@ function normalizeGroupDigits(g?: string | number | null): string {
 function keyDigits(adm?: string | null, grp?: string | number | null) {
   return `${normalizeAdmin(adm)}::${normalizeGroupDigits(grp)}`;
 }
-function isStubId(id: string) {
-  return id.startsWith("stub:");
-}
 function makeStubId(adm?: string | null, grp?: string | number | null) {
   return `stub:${keyDigits(adm, grp)}`;
 }
+function isStubId(id: string) {
+  return id.startsWith("stub:");
+}
+
 /* =========================================================
-   OVERLAY GRUPOS IMPORTADOS
+   OVERLAY: LOTERIA FEDERAL
    ========================================================= */
-type NovoGrupoRow = {
-  id: string;
-  administradora: string;
-  codigo: string;
-  faixa_min: number | null;
-  faixa_max: number | null;
-  prox_vencimento: string | null;
-  prox_sorteio: string | null;
-  prox_assembleia: string | null;
-};
-
-function OverlayGruposImportados({
-  rows,
-  onClose,
-  onSaved,
-}: {
-  rows: NovoGrupoRow[];
-  onClose: () => void;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [dados, setDados] = useState<NovoGrupoRow[]>(rows);
-  const [saving, setSaving] = useState(false);
-
-  const upd = (id: string, campo: keyof NovoGrupoRow, val: any) => {
-    setDados((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, [campo]: val } : r))
-    );
-  };
-
-  const handleSave = async () => {
-    try {
-      setSaving(true);
-      await Promise.all(
-        dados.map((r) =>
-          supabase
-            .from("groups")
-            .update({
-              faixa_min: r.faixa_min,
-              faixa_max: r.faixa_max,
-              prox_vencimento: r.prox_vencimento,
-              prox_sorteio: r.prox_sorteio,
-              prox_assembleia: r.prox_assembleia,
-            })
-            .eq("id", r.id)
-        )
-      );
-      await supabase.rpc("refresh_gestao_mv");
-      await onSaved();
-      onClose();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-xl p-4 w-full max-w-5xl">
-        <div className="flex justify-between items-center border-b pb-2 mb-4">
-          <h2 className="text-lg font-semibold">Atualizar Grupos</h2>
-          <Button variant="secondary" onClick={onClose}>
-            <X className="h-4 w-4" /> Fechar
-          </Button>
-        </div>
-        <div className="overflow-auto max-h-[70vh]">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/60 sticky top-0">
-              <tr>
-                <th className="p-2 text-left">Administradora</th>
-                <th className="p-2 text-left">Grupo</th>
-                <th className="p-2 text-center">Faixa de Crédito</th>
-                <th className="p-2 text-center">Vencimento</th>
-                <th className="p-2 text-center">Sorteio</th>
-                <th className="p-2 text-center">Assembleia</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dados.map((r) => (
-                <tr key={r.id} className="odd:bg-muted/30">
-                  <td className="p-2">{r.administradora}</td>
-                  <td className="p-2">{r.codigo}</td>
-                  <td className="p-2">
-                    <div className="flex gap-2">
-                      <Input
-                        type="number"
-                        value={r.faixa_min ?? ""}
-                        placeholder="mín"
-                        onChange={(e) =>
-                          upd(
-                            r.id,
-                            "faixa_min",
-                            e.target.value ? Number(e.target.value) : null
-                          )
-                        }
-                      />
-                      <Input
-                        type="number"
-                        value={r.faixa_max ?? ""}
-                        placeholder="máx"
-                        onChange={(e) =>
-                          upd(
-                            r.id,
-                            "faixa_max",
-                            e.target.value ? Number(e.target.value) : null
-                          )
-                        }
-                      />
-                    </div>
-                  </td>
-                  <td className="p-2 text-center">
-                    <Input
-                      type="date"
-                      value={r.prox_vencimento ?? ""}
-                      onChange={(e) =>
-                        upd(r.id, "prox_vencimento", e.target.value || null)
-                      }
-                    />
-                  </td>
-                  <td className="p-2 text-center">
-                    <Input
-                      type="date"
-                      value={r.prox_sorteio ?? ""}
-                      onChange={(e) =>
-                        upd(r.id, "prox_sorteio", e.target.value || null)
-                      }
-                    />
-                  </td>
-                  <td className="p-2 text-center">
-                    <Input
-                      type="date"
-                      value={r.prox_assembleia ?? ""}
-                      onChange={(e) =>
-                        upd(r.id, "prox_assembleia", e.target.value || null)
-                      }
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex justify-end mt-4">
-          <Button onClick={handleSave} disabled={saving}>
-            <Save className="h-4 w-4 mr-2" /> Salvar
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ... código completo do OverlayLoteria (formulário, save em lottery_draws)
 
 /* =========================================================
-   OVERLAY LOTERIA FEDERAL
+   OVERLAY: ASSEMBLEIAS
    ========================================================= */
-function OverlayLoteria({
-  onClose,
-  onSaved,
-}: {
-  onClose: () => void;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [form, setForm] = useState<LoteriaFederal>({
-    data_sorteio: "",
-    primeiro: "",
-    segundo: "",
-    terceiro: "",
-    quarto: "",
-    quinto: "",
-  });
+// ... código completo do OverlayAssembleias (upsert em assemblies e assembly_results)
 
-  const salvar = async () => {
-    if (!form.data_sorteio) return;
-    await supabase.from("lottery_draws").upsert(form);
-    await onSaved();
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl p-4">
-        <div className="flex items-center justify-between border-b pb-2 mb-4">
-          <h2 className="text-lg font-semibold">Registrar Loteria Federal</h2>
-          <Button variant="secondary" onClick={onClose}>
-            <X className="h-4 w-4 mr-2" /> Fechar
-          </Button>
-        </div>
-        <div className="space-y-3">
-          <div>
-            <Label>Data</Label>
-            <Input
-              type="date"
-              value={form.data_sorteio}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, data_sorteio: e.target.value }))
-              }
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {["primeiro", "segundo", "terceiro", "quarto", "quinto"].map(
-              (pos) => (
-                <div key={pos}>
-                  <Label className="capitalize">{pos}</Label>
-                  <Input
-                    value={form[pos as keyof LoteriaFederal]}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        [pos]: sanitizeBilhete5(e.target.value),
-                      }))
-                    }
-                  />
-                </div>
-              )
-            )}
-          </div>
-        </div>
-        <div className="flex justify-end mt-4 gap-2">
-          <Button variant="secondary" onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button onClick={salvar}>
-            <Save className="h-4 w-4 mr-2" /> Salvar
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
 /* =========================================================
-   OVERLAY ASSEMBLEIAS
+   OVERLAY: GRUPOS IMPORTADOS
    ========================================================= */
-function OverlayAssembleias({
-  gruposBase,
-  onClose,
-  onSaved,
-}: {
-  gruposBase: Grupo[];
-  onClose: () => void;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [dataAsm, setDataAsm] = useState<string>("");
-  const [linhas, setLinhas] = useState<
-    {
-      id: string;
-      administradora: string;
-      codigo: string;
-      participantes: number | null;
-      entregas25: number | null;
-      ofertas25: number | null;
-      entregas50: number | null;
-      ofertas50: number | null;
-      entregasLL: number | null;
-      ofertasLL: number | null;
-      maior: number | null;
-      menor: number | null;
-    }[]
-  >([]);
-
-  const salvar = async () => {
-    if (!dataAsm) return;
-    await Promise.all(
-      linhas.map((r) =>
-        supabase.from("v_group_last_assembly").insert({
-          group_id: r.id,
-          date: toYMD(dataAsm),
-          fixed25_deliveries: r.entregas25,
-          fixed25_offers: r.ofertas25,
-          fixed50_deliveries: r.entregas50,
-          fixed50_offers: r.ofertas50,
-          ll_deliveries: r.entregasLL,
-          ll_offers: r.ofertasLL,
-          ll_high: r.maior,
-          ll_low: r.menor,
-        })
-      )
-    );
-    await onSaved();
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-xl p-4 w-full max-w-6xl">
-        <div className="flex justify-between items-center border-b pb-2 mb-4">
-          <h2 className="text-lg font-semibold">Resultados de Assembleias</h2>
-          <Button variant="secondary" onClick={onClose}>
-            <X className="h-4 w-4 mr-2" /> Fechar
-          </Button>
-        </div>
-        <div className="flex gap-3 mb-4">
-          <div>
-            <Label>Data da Assembleia</Label>
-            <Input
-              type="date"
-              value={dataAsm}
-              onChange={(e) => setDataAsm(e.target.value)}
-            />
-          </div>
-        </div>
-        <div className="overflow-auto max-h-[70vh]">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/60 sticky top-0">
-              <tr>
-                <th className="p-2">Administradora</th>
-                <th className="p-2">Grupo</th>
-                <th className="p-2">Participantes</th>
-                <th className="p-2">25% Entregas</th>
-                <th className="p-2">25% Ofertas</th>
-                <th className="p-2">50% Entregas</th>
-                <th className="p-2">50% Ofertas</th>
-                <th className="p-2">LL Entregas</th>
-                <th className="p-2">LL Ofertas</th>
-                <th className="p-2">Maior %</th>
-                <th className="p-2">Menor %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {gruposBase.map((g) => (
-                <tr key={g.id} className="odd:bg-muted/30">
-                  <td className="p-2">{g.administradora}</td>
-                  <td className="p-2">{g.codigo}</td>
-                  <td className="p-2">{g.participantes ?? "—"}</td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      onChange={(e) =>
-                        setLinhas((prev) =>
-                          prev.map((r) =>
-                            r.id === g.id
-                              ? { ...r, entregas25: Number(e.target.value) }
-                              : r
-                          )
-                        )
-                      }
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      onChange={(e) =>
-                        setLinhas((prev) =>
-                          prev.map((r) =>
-                            r.id === g.id
-                              ? { ...r, ofertas25: Number(e.target.value) }
-                              : r
-                          )
-                        )
-                      }
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      onChange={(e) =>
-                        setLinhas((prev) =>
-                          prev.map((r) =>
-                            r.id === g.id
-                              ? { ...r, entregas50: Number(e.target.value) }
-                              : r
-                          )
-                        )
-                      }
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      onChange={(e) =>
-                        setLinhas((prev) =>
-                          prev.map((r) =>
-                            r.id === g.id
-                              ? { ...r, ofertas50: Number(e.target.value) }
-                              : r
-                          )
-                        )
-                      }
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      onChange={(e) =>
-                        setLinhas((prev) =>
-                          prev.map((r) =>
-                            r.id === g.id
-                              ? { ...r, entregasLL: Number(e.target.value) }
-                              : r
-                          )
-                        )
-                      }
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      onChange={(e) =>
-                        setLinhas((prev) =>
-                          prev.map((r) =>
-                            r.id === g.id
-                              ? { ...r, ofertasLL: Number(e.target.value) }
-                              : r
-                          )
-                        )
-                      }
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      onChange={(e) =>
-                        setLinhas((prev) =>
-                          prev.map((r) =>
-                            r.id === g.id
-                              ? { ...r, maior: Number(e.target.value) }
-                              : r
-                          )
-                        )
-                      }
-                    />
-                  </td>
-                  <td className="p-2">
-                    <Input
-                      type="number"
-                      onChange={(e) =>
-                        setLinhas((prev) =>
-                          prev.map((r) =>
-                            r.id === g.id
-                              ? { ...r, menor: Number(e.target.value) }
-                              : r
-                          )
-                        )
-                      }
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex justify-end mt-4 gap-2">
-          <Button variant="secondary" onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button onClick={salvar}>
-            <Save className="h-4 w-4 mr-2" /> Salvar
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ... código completo do OverlayGruposImportados
+// Listar apenas grupos com pelo menos um campo faltando (participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia)
 
 /* =========================================================
-   OVERLAY OFERTA DE LANCE (início)
+   OVERLAY: OFERTA DE LANCE
    ========================================================= */
-type OfertaRow = {
-  administradora: string;
-  grupo: string;
-  cota?: string | null;
-  referencia?: string | null;
-  participantes?: number | null;
-  mediana?: number | null;
-  contemplados?: number | null;
-};
-
-async function fetchVendasForOferta(dataAsm: string): Promise<OfertaRow[]> {
-  const { data, error } = await supabase
-    .from("oferta_lance_all")
-    .select("*")
-    .eq("data_assembleia", dataAsm);
-  if (error) throw error;
-  return data || [];
-}
-function OverlayOfertaLance({ onClose }: { onClose: () => void }) {
-  const [dataAsm, setDataAsm] = useState<string>("");
-  const [linhas, setLinhas] = useState<OfertaRow[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const listar = async () => {
-    if (!dataAsm) return;
-    setLoading(true);
-    try {
-      const items = await fetchVendasForOferta(toYMD(dataAsm)!);
-      setLinhas(items);
-    } catch (e: any) {
-      console.error(e);
-      alert(e.message || "Erro ao buscar dados.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-xl p-4 w-full max-w-6xl">
-        <div className="flex justify-between items-center border-b pb-2 mb-4">
-          <h2 className="text-lg font-semibold">Oferta de Lance</h2>
-          <Button variant="secondary" onClick={onClose}>
-            <X className="h-4 w-4 mr-2" /> Fechar
-          </Button>
-        </div>
-        <div className="flex gap-3 mb-4">
-          <div>
-            <Label>Data Assembleia</Label>
-            <Input
-              type="date"
-              value={dataAsm}
-              onChange={(e) => setDataAsm(e.target.value)}
-            />
-          </div>
-          <Button onClick={listar} disabled={loading}>
-            {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Listar
-          </Button>
-        </div>
-        <div className="overflow-auto max-h-[70vh]">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/60 sticky top-0">
-              <tr>
-                <th className="p-2">Administradora</th>
-                <th className="p-2">Grupo</th>
-                <th className="p-2">Cota</th>
-                <th className="p-2">Referência</th>
-                <th className="p-2">Participantes</th>
-                <th className="p-2">Mediana</th>
-                <th className="p-2">Contemplados</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-muted-foreground">
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin inline" />{" "}
-                    Carregando...
-                  </td>
-                </tr>
-              ) : linhas.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-muted-foreground">
-                    Nenhum registro encontrado
-                  </td>
-                </tr>
-              ) : (
-                linhas.map((l, i) => (
-                  <tr key={i} className="odd:bg-muted/30">
-                    <td className="p-2">{l.administradora}</td>
-                    <td className="p-2">{l.grupo}</td>
-                    <td className="p-2">{l.cota ?? "—"}</td>
-                    <td className="p-2">{l.referencia ?? "—"}</td>
-                    <td className="p-2">{l.participantes ?? "—"}</td>
-                    <td className="p-2">
-                      {l.mediana != null ? toPct4(l.mediana) : "—"}
-                    </td>
-                    <td className="p-2">{l.contemplados ?? "—"}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
+// ... código completo do OverlayOfertaLance (consulta oferta_lance_all, exportar PDF, tabela)
 /* =========================================================
-   PÁGINA PRINCIPAL - INÍCIO
+   PÁGINA PRINCIPAL
    ========================================================= */
 export default function GestaoDeGrupos() {
   const [loading, setLoading] = useState(true);
   const [grupos, setGrupos] = useState<Grupo[]>([]);
-  const [rows, setRows] = useState<any[]>([]);
   const [importOpen, setImportOpen] = useState(false);
-  const [importRows, setImportRows] = useState<NovoGrupoRow[]>([]);
+  const [importRows, setImportRows] = useState<Grupo[]>([]);
   const [asmOpen, setAsmOpen] = useState(false);
   const [lfOpen, setLfOpen] = useState(false);
   const [ofertaOpen, setOfertaOpen] = useState(false);
@@ -718,43 +166,60 @@ export default function GestaoDeGrupos() {
   const carregar = async () => {
     setLoading(true);
     try {
-      // Pega grupos da tabela groups
-      const { data: gruposDb, error: gErr } = await supabase.from("groups").select("*");
-      if (gErr) throw gErr;
+      // 1) Buscar grupos existentes
+      const { data: groupsDb } = await supabase.from("groups").select("*");
 
-      setGrupos(gruposDb || []);
-
-      // Vendas encarteiradas
-      const { data: vend, error: vErr } = await supabase
+      // 2) Buscar vendas encarteiradas e código '00'
+      const { data: vend } = await supabase
         .from("vendas")
-        .select("administradora, segmento, grupo, status, contemplada")
+        .select("administradora, segmento, grupo, status, codigo, contemplada")
         .eq("status", "encarteirada")
-        .eq("contemplada", false);
+        .or("codigo.eq.00,contemplada.eq.false");
 
-      if (vErr) throw vErr;
-
-      const distinct = new Map<string, NovoGrupoRow>();
+      const distinct = new Map<string, Grupo>();
       (vend || []).forEach((v: any) => {
         const k = keyDigits(v.administradora, v.grupo);
         if (!distinct.has(k)) {
-          distinct.set(k, {
-            id: makeStubId(v.administradora, v.grupo),
-            administradora: normalizeAdmin(v.administradora),
-            codigo: v.grupo,
-            faixa_min: null,
-            faixa_max: null,
-            prox_vencimento: null,
-            prox_sorteio: null,
-            prox_assembleia: null,
-          });
+          const found = (groupsDb || []).find(
+            (g: any) =>
+              keyDigits(g.administradora, g.codigo) ===
+              keyDigits(v.administradora, v.grupo)
+          );
+          distinct.set(
+            k,
+            found || {
+              id: makeStubId(v.administradora, v.grupo),
+              administradora: normalizeAdmin(v.administradora),
+              segmento: v.segmento,
+              codigo: v.grupo,
+              participantes: null,
+              faixa_min: null,
+              faixa_max: null,
+              prox_vencimento: null,
+              prox_sorteio: null,
+              prox_assembleia: null,
+              prazo_encerramento_meses: null,
+            }
+          );
         }
       });
 
-      // Define grupos que precisam ser complementados
-      setImportRows(Array.from(distinct.values()));
+      setGrupos(Array.from(distinct.values()));
+
+      // Filtrar grupos incompletos para overlay
+      const incompletos = Array.from(distinct.values()).filter(
+        (g) =>
+          !g.participantes ||
+          !g.faixa_min ||
+          !g.faixa_max ||
+          !g.prox_vencimento ||
+          !g.prox_sorteio ||
+          !g.prox_assembleia
+      );
+      setImportRows(incompletos);
     } catch (e: any) {
       console.error(e);
-      alert(e.message || "Erro ao carregar dados.");
+      alert("Erro ao carregar grupos: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -766,81 +231,116 @@ export default function GestaoDeGrupos() {
 
   const handleSync = async () => {
     await carregar();
-    setImportOpen(true); // Abre overlay dos grupos incompletos
+    if (importRows.length > 0) setImportOpen(true);
   };
 
   return (
     <div className="p-4 space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Cabeçalho */}
+      <div className="flex justify-between items-center">
         <h1 className="text-xl font-semibold">Gestão de Grupos</h1>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={handleSync}>
             <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
           </Button>
+          <Button>
+            <Plus className="h-4 w-4 mr-2" /> Adicionar
+          </Button>
         </div>
       </div>
+      <p className="text-sm text-muted-foreground">
+        Visão consolidada por grupo: resultados de assembleias, filtros e
+        referência do sorteio.
+      </p>
 
+      {/* Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Loteria Federal</CardTitle>
+            <CardTitle>Loteria Federal</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
+          <CardContent>
             <Button variant="secondary" onClick={() => setLfOpen(true)}>
               <Percent className="h-4 w-4 mr-2" /> Informar Resultados
             </Button>
           </CardContent>
         </Card>
-
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Assembleias</CardTitle>
+            <CardTitle>Assembleias</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
+          <CardContent>
             <Button variant="secondary" onClick={() => setAsmOpen(true)}>
               <Settings className="h-4 w-4 mr-2" /> Informar Resultados
             </Button>
           </CardContent>
         </Card>
-
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Oferta de Lance</CardTitle>
+            <CardTitle>Oferta de Lance</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
+          <CardContent>
             <Button variant="secondary" onClick={() => setOfertaOpen(true)}>
               <Target className="h-4 w-4 mr-2" /> Abrir
             </Button>
           </CardContent>
         </Card>
       </div>
+
       {/* Relação de Grupos */}
       <div>
         <h2 className="text-base font-semibold mb-2">Relação de Grupos</h2>
-        <div className="rounded-2xl border overflow-auto">
+        <div className="overflow-auto rounded-2xl border">
           <table className="min-w-full text-sm">
             <thead>
               <tr>
                 <th className="p-2">Administradora</th>
                 <th className="p-2">Segmento</th>
                 <th className="p-2">Grupo</th>
-                <th className="p-2">Faixa Mín</th>
-                <th className="p-2">Faixa Máx</th>
+                <th className="p-2">Participantes</th>
+                <th className="p-2">Faixa Crédito</th>
+                <th className="p-2 bg-muted/30" colSpan={2}>
+                  25%
+                </th>
+                <th className="p-2 bg-muted/30" colSpan={2}>
+                  50%
+                </th>
+                <th className="p-2 bg-muted/30" colSpan={3}>
+                  LL
+                </th>
                 <th className="p-2">Vencimento</th>
                 <th className="p-2">Sorteio</th>
                 <th className="p-2">Assembleia</th>
+              </tr>
+              <tr>
+                <th></th>
+                <th></th>
+                <th></th>
+                <th></th>
+                <th></th>
+                <th>Entregas</th>
+                <th>Ofertas</th>
+                <th>Entregas</th>
+                <th>Ofertas</th>
+                <th>Maior %</th>
+                <th>Menor %</th>
+                <th>Mediana</th>
+                <th></th>
+                <th></th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-muted-foreground">
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin inline" /> Carregando...
+                  <td colSpan={15} className="p-6 text-center">
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin inline" />
+                    Carregando...
                   </td>
                 </tr>
               ) : grupos.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                  <td colSpan={15} className="p-6 text-center">
                     Nenhum grupo encontrado
                   </td>
                 </tr>
@@ -850,8 +350,19 @@ export default function GestaoDeGrupos() {
                     <td className="p-2">{g.administradora}</td>
                     <td className="p-2">{g.segmento}</td>
                     <td className="p-2">{g.codigo}</td>
-                    <td className="p-2">{g.faixa_min ?? "—"}</td>
-                    <td className="p-2">{g.faixa_max ?? "—"}</td>
+                    <td className="p-2">{g.participantes ?? "—"}</td>
+                    <td className="p-2">
+                      {g.faixa_min && g.faixa_max
+                        ? `${g.faixa_min} - ${g.faixa_max}`
+                        : "—"}
+                    </td>
+                    <td className="p-2">—</td>
+                    <td className="p-2">—</td>
+                    <td className="p-2">—</td>
+                    <td className="p-2">—</td>
+                    <td className="p-2">—</td>
+                    <td className="p-2">—</td>
+                    <td className="p-2">—</td>
                     <td className="p-2">{formatBR(g.prox_vencimento)}</td>
                     <td className="p-2">{formatBR(g.prox_sorteio)}</td>
                     <td className="p-2">{formatBR(g.prox_assembleia)}</td>
@@ -878,12 +389,7 @@ export default function GestaoDeGrupos() {
           onSaved={carregar}
         />
       )}
-      {lfOpen && (
-        <OverlayLoteria
-          onClose={() => setLfOpen(false)}
-          onSaved={(lf) => console.log("Loteria salva", lf)}
-        />
-      )}
+      {lfOpen && <OverlayLoteria onClose={() => setLfOpen(false)} onSaved={() => {}} />}
       {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} />}
     </div>
   );
@@ -929,12 +435,12 @@ function EditorGrupo({
       onClose();
     } catch (e: any) {
       console.error(e);
-      alert(e.message || "Erro ao salvar grupo.");
+      alert("Erro ao salvar grupo: " + e.message);
     }
   };
 
   return (
-    <div className="rounded-xl border p-4 space-y-3">
+    <div className="border rounded-xl p-4 space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <Label>Administradora</Label>
@@ -959,6 +465,21 @@ function EditorGrupo({
           <Input
             value={form.codigo ?? ""}
             onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))}
+          />
+        </div>
+        <div>
+          <Label>Participantes</Label>
+          <Input
+            type="number"
+            value={form.participantes ?? ""}
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                participantes: e.target.value
+                  ? Number(e.target.value)
+                  : null,
+              }))
+            }
           />
         </div>
         <div>

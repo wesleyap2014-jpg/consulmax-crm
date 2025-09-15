@@ -2,14 +2,14 @@ import { NavLink } from 'react-router-dom'
 
 const items = [
   { to: '/leads', label: 'Leads' },
-  { to: '/clientes', label: 'Clientes' },          
+  { to: '/clientes', label: 'Clientes' },          // 👈 novo item
   { to: '/oportunidades', label: 'Oportunidades' },
-  { to: '/agenda', label: 'Agenda' },              
-  { to: '/carteira', label: 'Carteira' },          
+  { to: '/agenda', label: 'Agenda' },              // 👈 novo item
+  { to: '/simuladores', label: 'Simuladores' },    // 👈 adicionamos aqui
+  { to: '/carteira', label: 'Carteira' },          // guia existente
   { to: '/usuarios', label: 'Usuários' },
-  { to: '/gestao-de-grupos', label: 'Gestão de Grupos' }, 
-  { to: '/parametros', label: 'Parâmetros' },
-  { to: '/simuladores', label: 'Simuladores' }     // ✅ novo item
+  { to: '/gestao-de-grupos', label: 'Gestão de Grupos' }, // guia existente
+  { to: '/parametros', label: 'Parâmetros' }       // guia existente
 ]
 
 export default function Sidebar() {

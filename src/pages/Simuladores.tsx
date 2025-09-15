@@ -5,8 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Loader2, Plus } from "lucide-react";
 
 /* =========================================================
@@ -329,70 +327,78 @@ export default function Simuladores() {
           <CardTitle>Simuladores</CardTitle>
         </CardHeader>
         <CardContent>
-          <Tabs value={activeAdminId ?? undefined} onValueChange={(v) => setActiveAdminId(v)}>
-            <TabsList className="flex flex-wrap gap-2">
-              {admins.map((a) => (
-                <TabsTrigger key={a.id} value={a.id}>
-                  {a.name}
-                </TabsTrigger>
-              ))}
-              <Button
-                variant="secondary"
-                size="sm"
-                className="ml-2"
-                onClick={() => alert("Em breve: adicionar administradora pelo app.")}
-              >
-                <Plus className="h-4 w-4 mr-1" /> Adicionar
-              </Button>
-            </TabsList>
-
+          {/* Botões de administradora (substitui Tabs) */}
+          <div className="flex flex-wrap gap-2">
             {admins.map((a) => (
-              <TabsContent key={a.id} value={a.id} className="mt-6">
-                {a.name === "Embracon" ? (
-                  <EmbraconSimulator
-                    leads={leads}
-                    adminTables={adminTables}
-                    tablesBySegment={tablesBySegment}
-                    tabelaSelecionada={tabelaSelecionada}
-                    prazoAte={prazoAte}
-                    faixa={faixa}
-                    leadId={leadId}
-                    setLeadId={setLeadId}
-                    leadInfo={leadInfo}
-                    grupo={grupo}
-                    setGrupo={setGrupo}
-                    segmento={segmento}
-                    setSegmento={setSegmento}
-                    tabelaId={tabelaId}
-                    setTabelaId={setTabelaId}
-                    credito={credito}
-                    setCredito={setCredito}
-                    prazoVenda={prazoVenda}
-                    setPrazoVenda={setPrazoVenda}
-                    forma={forma}
-                    setForma={setForma}
-                    seguroPrest={seguroPrest}
-                    setSeguroPrest={setSeguroPrest}
-                    lanceOfertPct={lanceOfertPct}
-                    setLanceOfertPct={setLanceOfertPct}
-                    lanceEmbutPct={lanceEmbutPct}
-                    setLanceEmbutPct={setLanceEmbutPct}
-                    parcContemplacao={parcContemplacao}
-                    setParcContemplacao={setParcContemplacao}
-                    prazoAviso={prazoAviso}
-                    calc={calc}
-                    salvar={salvarSimulacao}
-                    salvando={salvando}
-                    simCode={simCode}
-                  />
-                ) : (
-                  <div className="text-sm text-muted-foreground">
-                    Em breve: simulador para <strong>{a.name}</strong>.
-                  </div>
-                )}
-              </TabsContent>
+              <Button
+                key={a.id}
+                variant={activeAdminId === a.id ? "default" : "secondary"}
+                onClick={() => setActiveAdminId(a.id)}
+              >
+                {a.name}
+              </Button>
             ))}
-          </Tabs>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-2"
+              onClick={() => alert("Em breve: adicionar administradora pelo app.")}
+            >
+              <Plus className="h-4 w-4 mr-1" /> Adicionar
+            </Button>
+          </div>
+
+          {/* Conteúdo da administradora ativa */}
+          <div className="mt-6">
+            {admins.map((a) =>
+              a.id !== activeAdminId ? null : (
+                <div key={a.id}>
+                  {a.name === "Embracon" ? (
+                    <EmbraconSimulator
+                      leads={leads}
+                      adminTables={adminTables}
+                      tablesBySegment={tablesBySegment}
+                      tabelaSelecionada={tabelaSelecionada}
+                      prazoAte={prazoAte}
+                      faixa={faixa}
+                      leadId={leadId}
+                      setLeadId={setLeadId}
+                      leadInfo={leadInfo}
+                      grupo={grupo}
+                      setGrupo={setGrupo}
+                      segmento={segmento}
+                      setSegmento={setSegmento}
+                      tabelaId={tabelaId}
+                      setTabelaId={setTabelaId}
+                      credito={credito}
+                      setCredito={setCredito}
+                      prazoVenda={prazoVenda}
+                      setPrazoVenda={setPrazoVenda}
+                      forma={forma}
+                      setForma={setForma}
+                      seguroPrest={seguroPrest}
+                      setSeguroPrest={setSeguroPrest}
+                      lanceOfertPct={lanceOfertPct}
+                      setLanceOfertPct={setLanceOfertPct}
+                      lanceEmbutPct={lanceEmbutPct}
+                      setLanceEmbutPct={setLanceEmbutPct}
+                      parcContemplacao={parcContemplacao}
+                      setParcContemplacao={setParcContemplacao}
+                      prazoAviso={prazoAviso}
+                      calc={calc}
+                      salvar={salvarSimulacao}
+                      salvando={salvando}
+                      simCode={simCode}
+                    />
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      Em breve: simulador para <strong>{a.name}</strong>.
+                    </div>
+                  )}
+                </div>
+              )
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -449,14 +455,16 @@ function EmbraconSimulator(p: EmbraconProps) {
           <div className="grid gap-4 md:grid-cols-3">
             <div>
               <Label>Selecionar Lead</Label>
-              <Select value={p.leadId} onValueChange={(v) => p.setLeadId(v)}>
-                <SelectTrigger><SelectValue placeholder="Escolha um lead" /></SelectTrigger>
-                <SelectContent>
-                  {p.leads.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={p.leadId}
+                onChange={(e) => p.setLeadId(e.target.value)}
+              >
+                <option value="">Escolha um lead</option>
+                {p.leads.map((l) => (
+                  <option key={l.id} value={l.id}>{l.nome}</option>
+                ))}
+              </select>
               {p.leadInfo && (
                 <p className="text-xs text-muted-foreground mt-1">
                   {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
@@ -480,24 +488,29 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Segmento</Label>
-                <Select value={p.segmento} onValueChange={(v) => { p.setSegmento(v); p.setTabelaId(""); }}>
-                  <SelectTrigger><SelectValue placeholder="Selecione o segmento" /></SelectTrigger>
-                  <SelectContent>
-                    {segmentos.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.segmento}
+                  onChange={(e) => { p.setSegmento(e.target.value); p.setTabelaId(""); }}
+                >
+                  <option value="">Selecione o segmento</option>
+                  {segmentos.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
               </div>
 
               <div>
                 <Label>Tabela</Label>
-                <Select value={p.tabelaId} onValueChange={p.setTabelaId} disabled={!p.segmento}>
-                  <SelectTrigger><SelectValue placeholder="Selecione a tabela" /></SelectTrigger>
-                  <SelectContent>
-                    {p.tablesBySegment.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>{t.nome_tabela}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.tabelaId}
+                  disabled={!p.segmento}
+                  onChange={(e) => p.setTabelaId(e.target.value)}
+                >
+                  <option value="">{p.segmento ? "Selecione a tabela" : "Selecione um segmento antes"}</option>
+                  {p.tablesBySegment.map((t) => (
+                    <option key={t.id} value={t.id}>{t.nome_tabela}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -538,14 +551,17 @@ function EmbraconSimulator(p: EmbraconProps) {
 
               <div>
                 <Label>Forma de Contratação</Label>
-                <Select value={p.forma} onValueChange={(v) => p.setForma(v as any)} disabled={!p.tabelaSelecionada}>
-                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                  <SelectContent>
-                    {p.tabelaSelecionada?.contrata_parcela_cheia && <SelectItem value="Parcela Cheia">Parcela Cheia</SelectItem>}
-                    {p.tabelaSelecionada?.contrata_reduzida_25 && <SelectItem value="Reduzida 25%">Reduzida 25%</SelectItem>}
-                    {p.tabelaSelecionada?.contrata_reduzida_50 && <SelectItem value="Reduzida 50%">Reduzida 50%</SelectItem>}
-                  </SelectContent>
-                </Select>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.forma}
+                  disabled={!p.tabelaSelecionada}
+                  onChange={(e) => p.setForma(e.target.value as any)}
+                >
+                  <option value="">Selecione</option>
+                  {p.tabelaSelecionada?.contrata_parcela_cheia && <option value="Parcela Cheia">Parcela Cheia</option>}
+                  {p.tabelaSelecionada?.contrata_reduzida_25 && <option value="Reduzida 25%">Reduzida 25%</option>}
+                  {p.tabelaSelecionada?.contrata_reduzida_50 && <option value="Reduzida 50%">Reduzida 50%</option>}
+                </select>
               </div>
 
               <div>

@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Loader2, Plus } from "lucide-react";
 
 /* =========================================================
-   Tipos (ajuste se tiver um types.ts global)
+   Tipos
    ========================================================= */
 type UUID = string;
 
@@ -21,6 +21,7 @@ type Lead = {
 };
 
 type Admin = { id: UUID; name: string };
+
 type SimTable = {
   id: UUID;
   admin_id: UUID;
@@ -93,14 +94,12 @@ type CalcInput = {
   forma: FormaContratacao;
   seguro: boolean;
   segmento: string;
-  // da tabela
   taxaAdmFull: number;
   frPct: number;
   antecipPct: number;
   antecipParcelas: 0 | 1 | 2;
   limitadorPct: number;
   seguroPrestPct: number;
-  // lance
   lanceOfertPct: number;
   lanceEmbutPct: number; // validado <= 0.25
   parcContemplacao: number;
@@ -126,17 +125,14 @@ function calcularSimulacao(i: CalcInput) {
   const valorCategoria = C * (1 + taxaAdmFull + frPct); // base p/ seguro/limitador
 
   // Base mensal conforme forma
-  const fundoComumFactor =
-    forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
+  const fundoComumFactor = forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-  const baseMensalSemSeguro =
-    (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
+  const baseMensalSemSeguro = (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
   // Antecipação: só nas 1 ou 2 primeiras
-  const antecipAdicionalCada =
-    antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
+  const antecipAdicionalCada = antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
 
   const parcelaAte =
     antecipParcelas === 0
@@ -152,29 +148,20 @@ function calcularSimulacao(i: CalcInput) {
 
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
-  const valorCatNovo =
-    novoCredito * (1 + TA_efetiva + frPct);
+  const valorCatNovo = novoCredito * (1 + TA_efetiva + frPct);
 
-  // prazo restante (se quiser, pode usar i.parcContemplacao; aqui seguimos o conjunto pós)
+  // Prazo restante (com base na parcela de contemplação)
   const prazoRestante = Math.max(1, prazo - Math.max(0, i.parcContemplacao));
 
-  const novaParcelaSemLimite =
-    valorCatNovo / prazoRestante + seguroMensal; // mantém seguro igual (base original) – pedido: incide também após
+  const novaParcelaSemLimite = valorCatNovo / prazoRestante + seguroMensal; // seguro permanece (incide antes e depois)
 
   const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
+  const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
 
-  const parcelaLimitante =
-    limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
-
-  // Se limitador = 0 (e não for a exceção da moto >= 20k), não aplica mínimo: só usa a sem limite
   const aplicaLimitador = limitadorBase > 0;
-
-  const parcelaEscolhida = aplicaLimitador
-    ? Math.max(novaParcelaSemLimite, parcelaLimitante)
-    : novaParcelaSemLimite;
+  const parcelaEscolhida = aplicaLimitador ? Math.max(novaParcelaSemLimite, parcelaLimitante) : novaParcelaSemLimite;
 
   const saldoDevedorFinal = Math.max(0, valorCatNovo - lanceProprioValor);
-
   const novoPrazo = Math.max(1, Math.ceil(saldoDevedorFinal / parcelaEscolhida));
 
   return {
@@ -197,7 +184,7 @@ function calcularSimulacao(i: CalcInput) {
 /* =========================================================
    Página
    ========================================================= */
-export default function SimuladoresPage() {
+export default function Simuladores() {
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
@@ -271,7 +258,7 @@ export default function SimuladoresPage() {
     // Ajusta forma permitida
     if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25) setForma("Parcela Cheia");
     if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
-  }, [tabelaSelecionada]);
+  }, [tabelaSelecionada]); // eslint-disable-line
 
   // Validações rápidas do input
   const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
@@ -285,11 +272,7 @@ export default function SimuladoresPage() {
       : null;
 
   const podeCalcular =
-    !!tabelaSelecionada &&
-    credito > 0 &&
-    prazoVenda > 0 &&
-    parcContemplacao > 0 &&
-    parcContemplacao < prazoVenda;
+    !!tabelaSelecionada && credito > 0 && prazoVenda > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
 
   // Recalcular
   useEffect(() => {
@@ -314,21 +297,11 @@ export default function SimuladoresPage() {
       parcContemplacao,
     };
     setCalc(calcularSimulacao(inp));
-  }, [
-    tabelaSelecionada,
-    credito,
-    prazoVenda,
-    forma,
-    seguroPrest,
-    lanceOfertPct,
-    lanceEmbutPctValid,
-    parcContemplacao,
-  ]); // eslint-disable-line
+  }, [tabelaSelecionada, credito, prazoVenda, forma, seguroPrest, lanceOfertPct, lanceEmbutPctValid, parcContemplacao]); // eslint-disable-line
 
   async function salvarSimulacao() {
     if (!tabelaSelecionada || !calc) return;
     setSalvando(true);
-    const admin = admins.find((x) => x.id === activeAdminId);
     const payload = {
       admin_id: activeAdminId,
       table_id: tabelaSelecionada.id,
@@ -384,17 +357,19 @@ export default function SimuladoresPage() {
           <CardTitle>Simuladores</CardTitle>
         </CardHeader>
         <CardContent>
-          <Tabs
-            value={activeAdminId ?? undefined}
-            onValueChange={(v) => setActiveAdminId(v)}
-          >
+          <Tabs value={activeAdminId ?? undefined} onValueChange={(v) => setActiveAdminId(v)}>
             <TabsList className="flex flex-wrap gap-2">
               {admins.map((a) => (
                 <TabsTrigger key={a.id} value={a.id}>
                   {a.name}
                 </TabsTrigger>
               ))}
-              <Button variant="secondary" size="sm" className="ml-2" onClick={() => alert("Em breve: adicionar administradora pelo app.")}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="ml-2"
+                onClick={() => alert("Em breve: adicionar administradora pelo app.")}
+              >
                 <Plus className="h-4 w-4 mr-1" /> Adicionar
               </Button>
             </TabsList>
@@ -642,7 +617,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 
           {/* Configurações do lance */}
           <Card>
-            <CardHeader><CardTitle>Configurações do Lance</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Configurações do Lance</CardHeader></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div>
                 <Label>Lance Ofertado (%)</Label>
@@ -704,7 +679,7 @@ function EmbraconSimulator(p: EmbraconProps) {
               <div>
                 <Label>Novo Crédito</Label>
                 <Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly />
-              </div>
+              </div }
               <div>
                 <Label>Nova Parcela (sem limite)</Label>
                 <Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly />

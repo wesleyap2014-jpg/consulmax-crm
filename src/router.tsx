@@ -19,6 +19,9 @@ import Agenda from './pages/Agenda'
 // já existia
 import Parametros from './pages/Parametros'
 
+// ✅ NOVO: Simuladores
+import Simuladores from './pages/Simuladores'
+
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
   {
@@ -42,6 +45,7 @@ export const router = createBrowserRouter([
           { path: 'usuarios', element: <Usuarios /> },
           { path: 'gestao-de-grupos', element: <GestaoDeGrupos /> },
           { path: 'parametros', element: <Parametros /> },
+          { path: 'simuladores', element: <Simuladores /> },    // ✅ NOVO
           { path: 'lgpd', element: <TermsLGPD /> },
 
           // fallback interno autenticado

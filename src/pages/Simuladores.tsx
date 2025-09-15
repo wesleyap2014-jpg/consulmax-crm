@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -153,6 +153,8 @@ function calcularSimulacao(i: CalcInput) {
     parcelaEscolhida,
     saldoDevedorFinal,
     novoPrazo,
+    TA_efetiva,
+    fundoComumFactor,
   };
 }
 
@@ -210,7 +212,7 @@ export default function Simuladores() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
 
-  const [addOpen, setAddOpen] = useState(false);
+  const [mgrOpen, setMgrOpen] = useState(false); // overlay lista/edição
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -218,8 +220,8 @@ export default function Simuladores() {
   const [grupo, setGrupo] = useState<string>("");
 
   const [segmento, setSegmento] = useState<string>("");
-  const [nomeTabela, setNomeTabela] = useState<string>(""); // << novo: nome base
-  const [tabelaId, setTabelaId] = useState<string>("");     // id da linha (variante por prazo)
+  const [nomeTabela, setNomeTabela] = useState<string>("");
+  const [tabelaId, setTabelaId] = useState<string>("");
   const [prazoAte, setPrazoAte] = useState<number>(0);
   const [faixa, setFaixa] = useState<{ min: number; max: number } | null>(null);
 
@@ -363,14 +365,16 @@ export default function Simuladores() {
     setSimCode(data?.code ?? null);
   }
 
-  function handleTableCreated(newTable: SimTable) {
-    setTables((prev) => [newTable, ...prev]);
-    setAddOpen(false);
-    if (newTable.admin_id === activeAdminId) {
-      setSegmento(newTable.segmento);
-      setNomeTabela(newTable.nome_tabela);
-      setTabelaId(newTable.id);
-    }
+  function handleTableCreatedOrUpdated(newTable: SimTable) {
+    setTables((prev) => {
+      const exists = prev.find((t) => t.id === newTable.id);
+      if (exists) return prev.map((t) => (t.id === newTable.id ? newTable : t));
+      return [newTable, ...prev];
+    });
+  }
+
+  function handleTableDeleted(id: string) {
+    setTables((prev) => prev.filter((t) => t.id !== id));
   }
 
   if (loading) {
@@ -384,42 +388,37 @@ export default function Simuladores() {
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
 
   return (
-    <div className="p-6 space-y-6">
-      <Card>
-        <CardHeader><CardTitle>Simuladores</CardTitle></CardHeader>
-        <CardContent>
-          {/* Administradoras */}
-          <div className="flex flex-wrap gap-2">
-            {admins.map((a) => (
-              <Button
-                key={a.id}
-                variant={activeAdminId === a.id ? "default" : "secondary"}
-                onClick={() => { setActiveAdminId(a.id); setAddOpen(false); }}
-              >
-                {a.name}
-              </Button>
-            ))}
-            <Button variant="secondary" size="sm" className="ml-2" onClick={() => alert("Em breve: adicionar administradora.")}>
-              <Plus className="h-4 w-4 mr-1" /> Adicionar Administradora
-            </Button>
-          </div>
+    <div className="p-6 space-y-4">
+      {/* topo: admins + botões */}
+      <div className="flex flex-wrap items-center gap-2">
+        {admins.map((a) => (
+          <Button
+            key={a.id}
+            variant={activeAdminId === a.id ? "default" : "secondary"}
+            onClick={() => { setActiveAdminId(a.id); }}
+          >
+            {a.name}
+          </Button>
+        ))}
+        <Button variant="secondary" size="sm" onClick={() => alert("Em breve: adicionar administradora.")}>
+          <Plus className="h-4 w-4 mr-1" /> Adicionar Administradora
+        </Button>
+        {activeAdmin && (
+          <Button variant="secondary" size="sm" onClick={() => setMgrOpen(true)} className="ml-auto">
+            Gerenciar Tabelas
+          </Button>
+        )}
+      </div>
 
-          {/* Conteúdo do admin */}
-          <div className="mt-6">
-            {activeAdmin ? (
-              <>
-                <div className="mb-4 flex items-center gap-2">
-                  <Button variant={addOpen ? "default" : "secondary"} onClick={() => setAddOpen((v) => !v)}>
-                    <Plus className="h-4 w-4 mr-1" /> {addOpen ? "Fechar cadastro de Tabela" : "Incluir Tabela"}
-                  </Button>
-                  <span className="text-sm text-muted-foreground">Admin ativa: <strong>{activeAdmin.name}</strong></span>
-                </div>
-
-                {addOpen && (
-                  <AddTableForm adminId={activeAdmin.id} onSaved={handleTableCreated} onCancel={() => setAddOpen(false)} />
-                )}
-
-                {activeAdmin.name === "Embracon" ? (
+      {/* layout em duas colunas */}
+      <div className="grid grid-cols-12 gap-4">
+        {/* coluna esquerda: simulador (um pouco menor) */}
+        <div className="col-span-12 lg:col-span-8">
+          <Card>
+            <CardHeader><CardTitle>Simuladores</CardTitle></CardHeader>
+            <CardContent>
+              {activeAdmin ? (
+                activeAdmin.name === "Embracon" ? (
                   <EmbraconSimulator
                     leads={leads}
                     adminTables={adminTables}
@@ -449,48 +448,246 @@ export default function Simuladores() {
                   />
                 ) : (
                   <div className="text-sm text-muted-foreground">Em breve: simulador para <strong>{activeAdmin.name}</strong>.</div>
-                )}
-              </>
-            ) : (
-              <div className="text-sm text-muted-foreground">Nenhuma administradora encontrada.</div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+                )
+              ) : (
+                <div className="text-sm text-muted-foreground">Nenhuma administradora encontrada.</div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* coluna direita: memória de cálculo */}
+        <div className="col-span-12 lg:col-span-4">
+          <Card>
+            <CardHeader><CardTitle>Memória de Cálculo</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {!tabelaSelecionada ? (
+                <div className="text-muted-foreground">Selecione uma tabela para ver os detalhes.</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>Crédito</div><div className="text-right font-medium">{brMoney(credito || 0)}</div>
+                    <div>Prazo da Venda</div><div className="text-right">{prazoVenda || "-"}</div>
+                    <div>Forma</div><div className="text-right">{forma}</div>
+                    <div>Seguro / parcela</div>
+                    <div className="text-right">
+                      {seguroPrest ? pctHuman(tabelaSelecionada.seguro_prest_pct) : "—"}
+                    </div>
+                  </div>
+                  <hr className="my-2" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>Fundo Comum (fator)</div>
+                    <div className="text-right">{calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}</div>
+                    <div>Taxa Adm (total)</div>
+                    <div className="text-right">{pctHuman(tabelaSelecionada.taxa_adm_pct)}</div>
+                    <div>TA efetiva (após antecipação)</div>
+                    <div className="text-right">{calc ? pctHuman(calc.TA_efetiva) : "—"}</div>
+                    <div>Fundo Reserva</div>
+                    <div className="text-right">{pctHuman(tabelaSelecionada.fundo_reserva_pct)}</div>
+                    <div>Antecipação Adm</div>
+                    <div className="text-right">{pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x</div>
+                    <div>Limitador Parcela</div>
+                    <div className="text-right">
+                      {pctHuman(resolveLimitadorPct(tabelaSelecionada.limitador_parcela_pct, tabelaSelecionada.segmento, credito || 0))}
+                    </div>
+                    <div>Valor de Categoria</div>
+                    <div className="text-right">{calc ? brMoney(calc.valorCategoria) : "—"}</div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Overlay de gerenciamento de tabelas */}
+      {mgrOpen && activeAdmin && (
+        <TableManagerModal
+          admin={activeAdmin}
+          allTables={adminTables}
+          onClose={() => setMgrOpen(false)}
+          onCreatedOrUpdated={handleTableCreatedOrUpdated}
+          onDeleted={handleTableDeleted}
+        />
+      )}
     </div>
   );
 }
 
-/* =============== Formulário: Incluir Tabela =============== */
-function AddTableForm({ adminId, onSaved, onCancel }: { adminId: string; onSaved: (t: SimTable) => void; onCancel: () => void; }) {
-  const [segmento, setSegmento] = useState("Imóvel Estendido");
-  const [nome, setNome] = useState("Select Estendido");
-  const [faixaMin, setFaixaMin] = useState(120000);
-  const [faixaMax, setFaixaMax] = useState(1200000);
-  const [prazoLimite, setPrazoLimite] = useState(240);
+/* =============== Modal: Gerenciar Tabelas ================= */
+function ModalBase({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <div className="font-semibold">Gerenciador de Tabelas</div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
 
-  const [taxaAdmHuman, setTaxaAdmHuman] = useState("22,0000");
-  const [frHuman, setFrHuman] = useState("2,0000");
-  const [antecipHuman, setAntecipHuman] = useState("2,0000");
-  const [antecipParcelas, setAntecipParcelas] = useState(1);
-  const [limHuman, setLimHuman] = useState("0,2565");
-  const [seguroHuman, setSeguroHuman] = useState("0,0061");
+function TableManagerModal({
+  admin,
+  allTables,
+  onClose,
+  onCreatedOrUpdated,
+  onDeleted,
+}: {
+  admin: Admin;
+  allTables: SimTable[];
+  onClose: () => void;
+  onCreatedOrUpdated: (t: SimTable) => void;
+  onDeleted: (id: string) => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<SimTable | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const [perEmbutido, setPerEmbutido] = useState(true);
-  const [perFixo25, setPerFixo25] = useState(true);
-  const [perFixo50, setPerFixo50] = useState(true);
-  const [perLivre, setPerLivre] = useState(true);
+  const grouped = useMemo(() => {
+    // agrupar por segmento / nome / prazo
+    return [...allTables].sort((a, b) => {
+      const sa = (a.segmento + a.nome_tabela + a.prazo_limite).toLowerCase();
+      const sb = (b.segmento + b.nome_tabela + b.prazo_limite).toLowerCase();
+      return sa.localeCompare(sb);
+    });
+  }, [allTables]);
 
-  const [cParcelaCheia, setCParcelaCheia] = useState(true);
-  const [cRed25, setCRed25] = useState(true);
-  const [cRed50, setCRed50] = useState(true);
-  const [indices, setIndices] = useState("IPCA");
+  async function deletar(id: string) {
+    if (!confirm("Confirmar exclusão desta tabela?")) return;
+    setBusyId(id);
+    const { error } = await supabase.from("sim_tables").delete().eq("id", id);
+    setBusyId(null);
+    if (error) { alert("Erro ao excluir: " + error.message); return; }
+    onDeleted(id);
+  }
+
+  return (
+    <ModalBase onClose={onClose}>
+      <div className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm text-muted-foreground">
+            Admin ativa: <strong>{admin.name}</strong>
+          </div>
+          <Button onClick={() => { setEditing(null); setShowForm(true); }}>
+            <Plus className="h-4 w-4 mr-1" /> Nova Tabela
+          </Button>
+        </div>
+
+        <div className="overflow-auto rounded-lg border">
+          <table className="min-w-full text-sm">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="text-left p-2">Segmento</th>
+                <th className="text-left p-2">Tabela</th>
+                <th className="text-left p-2">Prazo</th>
+                <th className="text-left p-2">% Adm</th>
+                <th className="text-left p-2">% FR</th>
+                <th className="text-left p-2">% Antecip</th>
+                <th className="text-left p-2">Parc Ant.</th>
+                <th className="text-left p-2">% Limite</th>
+                <th className="text-left p-2">% Seguro</th>
+                <th className="text-right p-2">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grouped.map((t) => (
+                <tr key={t.id} className="border-t">
+                  <td className="p-2">{t.segmento}</td>
+                  <td className="p-2">{t.nome_tabela}</td>
+                  <td className="p-2">{t.prazo_limite}</td>
+                  <td className="p-2">{pctHuman(t.taxa_adm_pct)}</td>
+                  <td className="p-2">{pctHuman(t.fundo_reserva_pct)}</td>
+                  <td className="p-2">{pctHuman(t.antecip_pct)}</td>
+                  <td className="p-2">{t.antecip_parcelas}</td>
+                  <td className="p-2">{pctHuman(t.limitador_parcela_pct)}</td>
+                  <td className="p-2">{pctHuman(t.seguro_prest_pct)}</td>
+                  <td className="p-2">
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => { setEditing(t); setShowForm(true); }}
+                      >
+                        <Pencil className="h-4 w-4 mr-1" /> Editar
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={busyId === t.id}
+                        onClick={() => deletar(t.id)}
+                      >
+                        {busyId === t.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
+                        Excluir
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {grouped.length === 0 && (
+                <tr><td colSpan={10} className="p-4 text-center text-muted-foreground">Sem tabelas para esta administradora.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showForm && (
+        <TableFormOverlay
+          adminId={admin.id}
+          initial={editing || undefined}
+          onClose={() => setShowForm(false)}
+          onSaved={(t) => { onCreatedOrUpdated(t); setShowForm(false); }}
+        />
+      )}
+    </ModalBase>
+  );
+}
+
+/* ===== Overlay de Formulário (Novo / Editar) de Tabela ==== */
+function TableFormOverlay({
+  adminId,
+  initial,
+  onSaved,
+  onClose,
+}: {
+  adminId: string;
+  initial?: SimTable;
+  onSaved: (t: SimTable) => void;
+  onClose: () => void;
+}) {
+  const [segmento, setSegmento] = useState(initial?.segmento || "Imóvel Estendido");
+  const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
+  const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
+  const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
+  const [prazoLimite, setPrazoLimite] = useState(initial?.prazo_limite ?? 240);
+
+  const [taxaAdmHuman, setTaxaAdmHuman] = useState(formatPctInputFromDecimal(initial?.taxa_adm_pct ?? 0.22));
+  const [frHuman, setFrHuman] = useState(formatPctInputFromDecimal(initial?.fundo_reserva_pct ?? 0.02));
+  const [antecipHuman, setAntecipHuman] = useState(formatPctInputFromDecimal(initial?.antecip_pct ?? 0.02));
+  const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
+  const [limHuman, setLimHuman] = useState(formatPctInputFromDecimal(initial?.limitador_parcela_pct ?? 0.002565));
+  const [seguroHuman, setSeguroHuman] = useState(formatPctInputFromDecimal(initial?.seguro_prest_pct ?? 0.00061));
+
+  const [perEmbutido, setPerEmbutido] = useState(initial?.permite_lance_embutido ?? true);
+  const [perFixo25, setPerFixo25] = useState(initial?.permite_lance_fixo_25 ?? true);
+  const [perFixo50, setPerFixo50] = useState(initial?.permite_lance_fixo_50 ?? true);
+  const [perLivre, setPerLivre] = useState(initial?.permite_lance_livre ?? true);
+
+  const [cParcelaCheia, setCParcelaCheia] = useState(initial?.contrata_parcela_cheia ?? true);
+  const [cRed25, setCRed25] = useState(initial?.contrata_reduzida_25 ?? true);
+  const [cRed50, setCRed50] = useState(initial?.contrata_reduzida_50 ?? true);
+  const [indices, setIndices] = useState((initial?.indice_correcao || ["IPCA"]).join(", "));
 
   const [saving, setSaving] = useState(false);
 
   async function salvar() {
     setSaving(true);
-    const payload = {
+    const payload: Omit<SimTable, "id"> = {
       admin_id: adminId,
       segmento,
       nome_tabela: nome,
@@ -513,60 +710,76 @@ function AddTableForm({ adminId, onSaved, onCancel }: { adminId: string; onSaved
       indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
     };
 
-    const { data, error } = await supabase.from("sim_tables").insert(payload).select("*").single();
+    let res;
+    if (initial) {
+      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
+    } else {
+      res = await supabase.from("sim_tables").insert(payload).select("*").single();
+    }
     setSaving(false);
-    if (error) { alert("Erro ao salvar tabela: " + error.message); return; }
-    onSaved(data as SimTable);
+    if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
+    onSaved(res.data as SimTable);
   }
 
   return (
-    <Card className="mb-6">
-      <CardHeader><CardTitle>Incluir Tabela</CardTitle></CardHeader>
-      <CardContent className="grid gap-3 md:grid-cols-4">
-        <div><Label>Segmento</Label><Input value={segmento} onChange={(e) => setSegmento(e.target.value)} /></div>
-        <div><Label>Nome da Tabela</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
-        <div><Label>Faixa (mín)</Label><Input type="number" value={faixaMin} onChange={(e) => setFaixaMin(Number(e.target.value))} /></div>
-        <div><Label>Faixa (máx)</Label><Input type="number" value={faixaMax} onChange={(e) => setFaixaMax(Number(e.target.value))} /></div>
-        <div><Label>Prazo Limite (meses)</Label><Input type="number" value={prazoLimite} onChange={(e) => setPrazoLimite(Number(e.target.value))} /></div>
+    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <div className="font-semibold">{initial ? "Editar Tabela" : "Nova Tabela"}</div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
 
-        <div><Label>% Taxa Adm</Label><Input value={taxaAdmHuman} onChange={(e) => setTaxaAdmHuman(e.target.value)} /></div>
-        <div><Label>% Fundo Reserva</Label><Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} /></div>
-        <div><Label>% Antecipação da Adm</Label><Input value={antecipHuman} onChange={(e) => setAntecipHuman(e.target.value)} /></div>
-        <div><Label>Parcelas da Antecipação</Label><Input type="number" value={antecipParcelas} onChange={(e) => setAntecipParcelas(Number(e.target.value))} /></div>
+        <div className="p-4 grid gap-3 md:grid-cols-4">
+          <div><Label>Segmento</Label><Input value={segmento} onChange={(e) => setSegmento(e.target.value)} /></div>
+          <div><Label>Nome da Tabela</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+          <div><Label>Faixa (mín)</Label><Input type="number" value={faixaMin} onChange={(e) => setFaixaMin(Number(e.target.value))} /></div>
+          <div><Label>Faixa (máx)</Label><Input type="number" value={faixaMax} onChange={(e) => setFaixaMax(Number(e.target.value))} /></div>
+          <div><Label>Prazo Limite (meses)</Label><Input type="number" value={prazoLimite} onChange={(e) => setPrazoLimite(Number(e.target.value))} /></div>
 
-        <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
-        <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
+          <div><Label>% Taxa Adm</Label><Input value={taxaAdmHuman} onChange={(e) => setTaxaAdmHuman(e.target.value)} /></div>
+          <div><Label>% Fundo Reserva</Label><Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} /></div>
+          <div><Label>% Antecipação da Adm</Label><Input value={antecipHuman} onChange={(e) => setAntecipHuman(e.target.value)} /></div>
+          <div><Label>Parcelas da Antecipação</Label><Input type="number" value={antecipParcelas} onChange={(e) => setAntecipParcelas(Number(e.target.value))} /></div>
 
-        <div className="col-span-2">
-          <Label>Lances Permitidos</Label>
-          <div className="flex gap-4 mt-1 text-sm">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={perEmbutido} onChange={(e) => setPerEmbutido(e.target.checked)} />Embutido</label>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo25} onChange={(e) => setPerFixo25(e.target.checked)} />Fixo 25%</label>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo50} onChange={(e) => setPerFixo50(e.target.checked)} />Fixo 50%</label>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={perLivre} onChange={(e) => setPerLivre(e.target.checked)} />Livre</label>
+          <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
+          <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
+
+          <div className="col-span-2">
+            <Label>Lances Permitidos</Label>
+            <div className="flex gap-4 mt-1 text-sm">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={perEmbutido} onChange={(e) => setPerEmbutido(e.target.checked)} />Embutido</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo25} onChange={(e) => setPerFixo25(e.target.checked)} />Fixo 25%</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo50} onChange={(e) => setPerFixo50(e.target.checked)} />Fixo 50%</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={perLivre} onChange={(e) => setPerLivre(e.target.checked)} />Livre</label>
+            </div>
+          </div>
+
+          <div className="col-span-2">
+            <Label>Formas de Contratação</Label>
+            <div className="flex gap-4 mt-1 text-sm">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={cParcelaCheia} onChange={(e) => setCParcelaCheia(e.target.checked)} />Parcela Cheia</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={cRed25} onChange={(e) => setCRed25(e.target.checked)} />Reduzida 25%</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={cRed50} onChange={(e) => setCRed50(e.target.checked)} />Reduzida 50%</label>
+            </div>
+          </div>
+
+          <div className="md:col-span-4">
+            <Label>Índice de Correção (separar por vírgula)</Label>
+            <Input value={indices} onChange={(e) => setIndices(e.target.value)} placeholder="IPCA, INCC, IGP-M" />
+          </div>
+
+          <div className="md:col-span-4 flex gap-2">
+            <Button onClick={salvar} disabled={saving}>
+              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {initial ? "Salvar alterações" : "Salvar Tabela"}
+            </Button>
+            <Button variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button>
           </div>
         </div>
-
-        <div className="col-span-2">
-          <Label>Formas de Contratação</Label>
-          <div className="flex gap-4 mt-1 text-sm">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={cParcelaCheia} onChange={(e) => setCParcelaCheia(e.target.checked)} />Parcela Cheia</label>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={cRed25} onChange={(e) => setCRed25(e.target.checked)} />Reduzida 25%</label>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={cRed50} onChange={(e) => setCRed50(e.target.checked)} />Reduzida 50%</label>
-          </div>
-        </div>
-
-        <div className="md:col-span-2">
-          <Label>Índice de Correção (separar por vírgula)</Label>
-          <Input value={indices} onChange={(e) => setIndices(e.target.value)} placeholder="IPCA, INCC, IGP-M" />
-        </div>
-
-        <div className="md:col-span-4 flex gap-2">
-          <Button onClick={salvar} disabled={saving}>{saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Salvar Tabela</Button>
-          <Button variant="secondary" onClick={onCancel} disabled={saving}>Cancelar</Button>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -718,8 +931,20 @@ function EmbraconSimulator(p: EmbraconProps) {
               <div>
                 <Label>Seguro Prestamista</Label>
                 <div className="flex gap-2">
-                  <Button type="button" variant={p.seguroPrest ? "default" : "secondary"} onClick={() => p.setSeguroPrest(true)}>Sim</Button>
-                  <Button type="button" variant={!p.seguroPrest ? "default" : "secondary"} onClick={() => p.setSeguroPrest(false)}>Não</Button>
+                  <Button
+                    type="button"
+                    className={p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"}
+                    onClick={() => p.setSeguroPrest(true)}
+                  >
+                    Sim
+                  </Button>
+                  <Button
+                    type="button"
+                    className={!p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"}
+                    onClick={() => p.setSeguroPrest(false)}
+                  >
+                    Não
+                  </Button>
                 </div>
               </div>
 

@@ -1,4 +1,3 @@
-// src/router.tsx
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 
 import App from './App'
@@ -16,11 +15,11 @@ import GestaoDeGrupos from './pages/GestaoDeGrupos'
 import Clientes from './pages/Clientes'
 import Agenda from './pages/Agenda'
 
+// ✅ simuladores
+import Simuladores from './pages/Simuladores'
+
 // já existia
 import Parametros from './pages/Parametros'
-
-// ✅ NOVO: Simuladores
-import Simuladores from './pages/Simuladores'
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -39,13 +38,13 @@ export const router = createBrowserRouter([
           { path: 'clientes', element: <Clientes /> },          // novo
           { path: 'oportunidades', element: <Oportunidades /> },
           { path: 'agenda', element: <Agenda /> },              // novo
+          { path: 'simuladores', element: <Simuladores /> },    // 👈 simuladores
 
           // 👇 demais guias existentes
           { path: 'carteira', element: <Carteira /> },
           { path: 'usuarios', element: <Usuarios /> },
           { path: 'gestao-de-grupos', element: <GestaoDeGrupos /> },
           { path: 'parametros', element: <Parametros /> },
-          { path: 'simuladores', element: <Simuladores /> },    // ✅ NOVO
           { path: 'lgpd', element: <TermsLGPD /> },
 
           // fallback interno autenticado

@@ -31,9 +31,9 @@ type SimTable = {
   taxa_adm_pct: number;
   fundo_reserva_pct: number;
   antecip_pct: number;
-  antecip_parcelas: number;
-  limitador_parcela_pct: number;
-  seguro_prest_pct: number;
+  antecip_parcelas: number; // 0 | 1 | 2
+  limitador_parcela_pct: number; // 0 => sem limite; exceção Moto >= 20k => 1%
+  seguro_prest_pct: number; // por parcela (sobre valor de categoria)
   permite_lance_embutido: boolean;
   permite_lance_fixo_25: boolean;
   permite_lance_fixo_50: boolean;
@@ -53,6 +53,32 @@ const brMoney = (v: number) =>
   v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
 
 const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
+
+/** Formata/parse de BRL para o input “mascarado” */
+function formatBRLInputFromNumber(n: number): string {
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+function parseBRLInputToNumber(s: string): number {
+  // mantém só dígitos; trata como centavos
+  const digits = (s || "").replace(/\D/g, "");
+  const cents = digits.length ? parseInt(digits, 10) : 0;
+  return cents / 100;
+}
+
+/** Percentual “humanizado”: 25,0000%  <->  0.25 */
+function formatPctInputFromDecimal(d: number): string {
+  // sem símbolo na string do input; mostramos o % ao lado
+  return (d * 100).toFixed(4).replace(".", ",");
+}
+function parsePctInputToDecimal(s: string): number {
+  const clean = (s || "")
+    .replace(/\s|%/g, "")
+    .replace(/\./g, "") // milhar
+    .replace(",", "."); // decimal
+  const val = parseFloat(clean);
+  if (isNaN(val)) return 0;
+  return val / 100;
+}
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -79,8 +105,8 @@ type CalcInput = {
   antecipParcelas: 0 | 1 | 2;
   limitadorPct: number;
   seguroPrestPct: number;
-  lanceOfertPct: number;
-  lanceEmbutPct: number; // <= 0.25
+  lanceOfertPct: number;  // decimal
+  lanceEmbutPct: number;  // decimal <= 0.25
   parcContemplacao: number;
 };
 
@@ -152,6 +178,54 @@ function calcularSimulacao(i: CalcInput) {
 }
 
 /* =========================================================
+   Componentes de Input (Money / Percent)
+   ========================================================= */
+function MoneyInput({
+  value,
+  onChange,
+  ...rest
+}: { value: number; onChange: (n: number) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <Input
+      {...rest}
+      inputMode="numeric"
+      value={formatBRLInputFromNumber(value || 0)}
+      onChange={(e) => onChange(parseBRLInputToNumber(e.target.value))}
+      className={`text-right ${rest.className || ""}`}
+    />
+  );
+}
+
+function PercentInput({
+  valueDecimal,
+  onChangeDecimal,
+  maxDecimal,
+  ...rest
+}: {
+  valueDecimal: number;
+  onChangeDecimal: (d: number) => void;
+  maxDecimal?: number;
+} & React.InputHTMLAttributes<HTMLInputElement>) {
+  const display = formatPctInputFromDecimal(valueDecimal || 0);
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        {...rest}
+        inputMode="decimal"
+        value={display}
+        onChange={(e) => {
+          let d = parsePctInputToDecimal(e.target.value);
+          if (typeof maxDecimal === "number") d = clamp(d, 0, maxDecimal);
+          onChangeDecimal(d);
+        }}
+        className={`text-right ${rest.className || ""}`}
+      />
+      <span className="text-sm text-muted-foreground">%</span>
+    </div>
+  );
+}
+
+/* =========================================================
    Página
    ========================================================= */
 export default function Simuladores() {
@@ -160,6 +234,9 @@ export default function Simuladores() {
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
+
+  // “Incluir tabela” (form inline)
+  const [addOpen, setAddOpen] = useState(false);
 
   // Seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -176,8 +253,8 @@ export default function Simuladores() {
   const [forma, setForma] = useState<FormaContratacao>("Parcela Cheia");
   const [seguroPrest, setSeguroPrest] = useState<boolean>(false);
 
-  const [lanceOfertPct, setLanceOfertPct] = useState<number>(0);
-  const [lanceEmbutPct, setLanceEmbutPct] = useState<number>(0);
+  const [lanceOfertPct, setLanceOfertPct] = useState<number>(0);  // decimal
+  const [lanceEmbutPct, setLanceEmbutPct] = useState<number>(0);  // decimal
   const [parcContemplacao, setParcContemplacao] = useState<number>(1);
 
   const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacao> | null>(null);
@@ -196,7 +273,6 @@ export default function Simuladores() {
       setAdmins(a ?? []);
       setTables(t ?? []);
       setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
-      // Embracon como ativa por padrão
       const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
       setActiveAdminId(embr?.id ?? (a?.[0]?.id ?? null));
       setLoading(false);
@@ -229,7 +305,7 @@ export default function Simuladores() {
     if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
   }, [tabelaSelecionada]); // eslint-disable-line
 
-  // Validações rápidas
+  // valida % embutido
   const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
   useEffect(() => {
     if (lanceEmbutPct !== lanceEmbutPctValid) setLanceEmbutPct(lanceEmbutPctValid);
@@ -312,6 +388,17 @@ export default function Simuladores() {
     setSimCode(data?.code ?? null);
   }
 
+  // callback depois de criar uma tabela nova
+  function handleTableCreated(newTable: SimTable) {
+    setTables((prev) => [newTable, ...prev]);
+    setAddOpen(false);
+    // se a tabela pertencer ao admin ativo, já seleciona o segmento dela
+    if (newTable.admin_id === activeAdminId) {
+      setSegmento(newTable.segmento);
+      setTabelaId(newTable.id);
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2">
@@ -320,6 +407,8 @@ export default function Simuladores() {
     );
   }
 
+  const activeAdmin = admins.find((a) => a.id === activeAdminId);
+
   return (
     <div className="p-6 space-y-6">
       <Card>
@@ -327,13 +416,16 @@ export default function Simuladores() {
           <CardTitle>Simuladores</CardTitle>
         </CardHeader>
         <CardContent>
-          {/* Botões de administradora (substitui Tabs) */}
+          {/* Administradoras */}
           <div className="flex flex-wrap gap-2">
             {admins.map((a) => (
               <Button
                 key={a.id}
                 variant={activeAdminId === a.id ? "default" : "secondary"}
-                onClick={() => setActiveAdminId(a.id)}
+                onClick={() => {
+                  setActiveAdminId(a.id);
+                  setAddOpen(false);
+                }}
               >
                 {a.name}
               </Button>
@@ -344,64 +436,206 @@ export default function Simuladores() {
               className="ml-2"
               onClick={() => alert("Em breve: adicionar administradora pelo app.")}
             >
-              <Plus className="h-4 w-4 mr-1" /> Adicionar
+              <Plus className="h-4 w-4 mr-1" /> Adicionar Administradora
             </Button>
           </div>
 
           {/* Conteúdo da administradora ativa */}
           <div className="mt-6">
-            {admins.map((a) =>
-              a.id !== activeAdminId ? null : (
-                <div key={a.id}>
-                  {a.name === "Embracon" ? (
-                    <EmbraconSimulator
-                      leads={leads}
-                      adminTables={adminTables}
-                      tablesBySegment={tablesBySegment}
-                      tabelaSelecionada={tabelaSelecionada}
-                      prazoAte={prazoAte}
-                      faixa={faixa}
-                      leadId={leadId}
-                      setLeadId={setLeadId}
-                      leadInfo={leadInfo}
-                      grupo={grupo}
-                      setGrupo={setGrupo}
-                      segmento={segmento}
-                      setSegmento={setSegmento}
-                      tabelaId={tabelaId}
-                      setTabelaId={setTabelaId}
-                      credito={credito}
-                      setCredito={setCredito}
-                      prazoVenda={prazoVenda}
-                      setPrazoVenda={setPrazoVenda}
-                      forma={forma}
-                      setForma={setForma}
-                      seguroPrest={seguroPrest}
-                      setSeguroPrest={setSeguroPrest}
-                      lanceOfertPct={lanceOfertPct}
-                      setLanceOfertPct={setLanceOfertPct}
-                      lanceEmbutPct={lanceEmbutPct}
-                      setLanceEmbutPct={setLanceEmbutPct}
-                      parcContemplacao={parcContemplacao}
-                      setParcContemplacao={setParcContemplacao}
-                      prazoAviso={prazoAviso}
-                      calc={calc}
-                      salvar={salvarSimulacao}
-                      salvando={salvando}
-                      simCode={simCode}
-                    />
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      Em breve: simulador para <strong>{a.name}</strong>.
-                    </div>
-                  )}
+            {activeAdmin ? (
+              <>
+                {/* Botão para cadastrar TABELA da administradora */}
+                <div className="mb-4 flex items-center gap-2">
+                  <Button variant={addOpen ? "default" : "secondary"} onClick={() => setAddOpen((v) => !v)}>
+                    <Plus className="h-4 w-4 mr-1" /> {addOpen ? "Fechar cadastro de Tabela" : "Incluir Tabela"}
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Admin ativa: <strong>{activeAdmin.name}</strong>
+                  </span>
                 </div>
-              )
+
+                {addOpen && (
+                  <AddTableForm
+                    adminId={activeAdmin.id}
+                    onSaved={handleTableCreated}
+                    onCancel={() => setAddOpen(false)}
+                  />
+                )}
+
+                {activeAdmin.name === "Embracon" ? (
+                  <EmbraconSimulator
+                    leads={leads}
+                    adminTables={adminTables}
+                    tablesBySegment={tablesBySegment}
+                    tabelaSelecionada={tabelaSelecionada}
+                    prazoAte={prazoAte}
+                    faixa={faixa}
+                    leadId={leadId}
+                    setLeadId={setLeadId}
+                    leadInfo={leadInfo}
+                    grupo={grupo}
+                    setGrupo={setGrupo}
+                    segmento={segmento}
+                    setSegmento={setSegmento}
+                    tabelaId={tabelaId}
+                    setTabelaId={setTabelaId}
+                    credito={credito}
+                    setCredito={setCredito}
+                    prazoVenda={prazoVenda}
+                    setPrazoVenda={setPrazoVenda}
+                    forma={forma}
+                    setForma={setForma}
+                    seguroPrest={seguroPrest}
+                    setSeguroPrest={setSeguroPrest}
+                    lanceOfertPct={lanceOfertPct}
+                    setLanceOfertPct={setLanceOfertPct}
+                    lanceEmbutPct={lanceEmbutPct}
+                    setLanceEmbutPct={setLanceEmbutPct}
+                    parcContemplacao={parcContemplacao}
+                    setParcContemplacao={setParcContemplacao}
+                    prazoAviso={prazoAviso}
+                    calc={calc}
+                    salvar={salvarSimulacao}
+                    salvando={salvando}
+                    simCode={simCode}
+                  />
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-sm text-muted-foreground">Nenhuma administradora encontrada.</div>
             )}
           </div>
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/* =========================================================
+   Formulário: Incluir Tabela (inline, sem modal)
+   ========================================================= */
+function AddTableForm({
+  adminId,
+  onSaved,
+  onCancel,
+}: {
+  adminId: string;
+  onSaved: (t: SimTable) => void;
+  onCancel: () => void;
+}) {
+  // campos básicos + percentuais em formato humano (25,0000)
+  const [segmento, setSegmento] = useState("ESTENDIDO");
+  const [nome, setNome] = useState("Select_Estendido");
+  const [faixaMin, setFaixaMin] = useState(0);
+  const [faixaMax, setFaixaMax] = useState(1200000);
+  const [prazoLimite, setPrazoLimite] = useState(240);
+
+  const [taxaAdmHuman, setTaxaAdmHuman] = useState("22,0000");
+  const [frHuman, setFrHuman] = useState("1,0000");
+  const [antecipHuman, setAntecipHuman] = useState("2,0000");
+  const [antecipParcelas, setAntecipParcelas] = useState(1);
+  const [limHuman, setLimHuman] = useState("0,0000");
+  const [seguroHuman, setSeguroHuman] = useState("0,0061");
+
+  const [perEmbutido, setPerEmbutido] = useState(true);
+  const [perFixo25, setPerFixo25] = useState(true);
+  const [perFixo50, setPerFixo50] = useState(true);
+  const [perLivre, setPerLivre] = useState(true);
+
+  const [cParcelaCheia, setCParcelaCheia] = useState(true);
+  const [cRed25, setCRed25] = useState(true);
+  const [cRed50, setCRed50] = useState(true);
+
+  const [indices, setIndices] = useState("IPCA");
+
+  const [saving, setSaving] = useState(false);
+
+  async function salvar() {
+    setSaving(true);
+    const payload = {
+      admin_id: adminId,
+      segmento,
+      nome_tabela: nome,
+      faixa_min: Number(faixaMin) || 0,
+      faixa_max: Number(faixaMax) || 0,
+      prazo_limite: Number(prazoLimite) || 0,
+      taxa_adm_pct: parsePctInputToDecimal(taxaAdmHuman),
+      fundo_reserva_pct: parsePctInputToDecimal(frHuman),
+      antecip_pct: parsePctInputToDecimal(antecipHuman),
+      antecip_parcelas: Number(antecipParcelas) || 0,
+      limitador_parcela_pct: parsePctInputToDecimal(limHuman),
+      seguro_prest_pct: parsePctInputToDecimal(seguroHuman),
+      permite_lance_embutido: perEmbutido,
+      permite_lance_fixo_25: perFixo25,
+      permite_lance_fixo_50: perFixo50,
+      permite_lance_livre: perLivre,
+      contrata_parcela_cheia: cParcelaCheia,
+      contrata_reduzida_25: cRed25,
+      contrata_reduzida_50: cRed50,
+      indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
+    };
+
+    const { data, error } = await supabase.from("sim_tables").insert(payload).select("*").single();
+    setSaving(false);
+    if (error) {
+      alert("Erro ao salvar tabela: " + error.message);
+      return;
+    }
+    onSaved(data as SimTable);
+  }
+
+  return (
+    <Card className="mb-6">
+      <CardHeader><CardTitle>Incluir Tabela</CardTitle></CardHeader>
+      <CardContent className="grid gap-3 md:grid-cols-4">
+        <div><Label>Segmento</Label><Input value={segmento} onChange={(e) => setSegmento(e.target.value)} /></div>
+        <div><Label>Nome da Tabela</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+        <div><Label>Faixa (mín)</Label><Input type="number" value={faixaMin} onChange={(e) => setFaixaMin(Number(e.target.value))} /></div>
+        <div><Label>Faixa (máx)</Label><Input type="number" value={faixaMax} onChange={(e) => setFaixaMax(Number(e.target.value))} /></div>
+        <div><Label>Prazo Limite</Label><Input type="number" value={prazoLimite} onChange={(e) => setPrazoLimite(Number(e.target.value))} /></div>
+
+        <div><Label>% Taxa Adm</Label><Input value={taxaAdmHuman} onChange={(e) => setTaxaAdmHuman(e.target.value)} /></div>
+        <div><Label>% Fundo Reserva</Label><Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} /></div>
+        <div><Label>% Antecipação da Adm</Label><Input value={antecipHuman} onChange={(e) => setAntecipHuman(e.target.value)} /></div>
+        <div><Label>Parcelas da Antecipação</Label><Input type="number" value={antecipParcelas} onChange={(e) => setAntecipParcelas(Number(e.target.value))} /></div>
+
+        <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
+        <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
+
+        <div className="col-span-2">
+          <Label>Lances Permitidos</Label>
+          <div className="flex gap-4 mt-1 text-sm">
+            <label className="flex items-center gap-2"><input type="checkbox" checked={perEmbutido} onChange={(e) => setPerEmbutido(e.target.checked)} />Embutido</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo25} onChange={(e) => setPerFixo25(e.target.checked)} />Fixo 25%</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo50} onChange={(e) => setPerFixo50(e.target.checked)} />Fixo 50%</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={perLivre} onChange={(e) => setPerLivre(e.target.checked)} />Livre</label>
+          </div>
+        </div>
+
+        <div className="col-span-2">
+          <Label>Formas de Contratação</Label>
+          <div className="flex gap-4 mt-1 text-sm">
+            <label className="flex items-center gap-2"><input type="checkbox" checked={cParcelaCheia} onChange={(e) => setCParcelaCheia(e.target.checked)} />Parcela Cheia</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={cRed25} onChange={(e) => setCRed25(e.target.checked)} />Reduzida 25%</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={cRed50} onChange={(e) => setCRed50(e.target.checked)} />Reduzida 50%</label>
+          </div>
+        </div>
+
+        <div className="md:col-span-2">
+          <Label>Índice de Correção (separar por vírgula)</Label>
+          <Input value={indices} onChange={(e) => setIndices(e.target.value)} placeholder="IPCA, INCC, IGP-M" />
+        </div>
+
+        <div className="md:col-span-4 flex gap-2">
+          <Button onClick={salvar} disabled={saving}>{saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Salvar Tabela</Button>
+          <Button variant="secondary" onClick={onCancel} disabled={saving}>Cancelar</Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -531,12 +765,7 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Valor do Crédito</Label>
-                <Input
-                  type="number"
-                  value={p.credito || ""}
-                  onChange={(e) => p.setCredito(Number(e.target.value))}
-                  placeholder="Ex.: 100000"
-                />
+                <MoneyInput value={p.credito || 0} onChange={p.setCredito} />
               </div>
 
               <div>
@@ -609,26 +838,24 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div>
                 <Label>Lance Ofertado (%)</Label>
-                <Input
-                  type="number" step="0.0001"
-                  value={p.lanceOfertPct}
-                  onChange={(e) => p.setLanceOfertPct(Number(e.target.value))}
+                <PercentInput
+                  valueDecimal={p.lanceOfertPct}
+                  onChangeDecimal={p.setLanceOfertPct}
                 />
               </div>
               <div>
                 <Label>Lance Embutido (%)</Label>
-                <Input
-                  type="number" step="0.0001"
-                  value={p.lanceEmbutPct}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (v > 0.25) {
+                <PercentInput
+                  valueDecimal={p.lanceEmbutPct}
+                  onChangeDecimal={(d) => {
+                    if (d > 0.25) {
                       alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
                       p.setLanceEmbutPct(0.25);
                     } else {
-                      p.setLanceEmbutPct(v);
+                      p.setLanceEmbutPct(d);
                     }
                   }}
+                  maxDecimal={0.25}
                 />
               </div>
               <div>

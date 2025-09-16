@@ -490,9 +490,11 @@ export default function Simuladores() {
   const resumoTexto = useMemo(() => {
     if (!tabelaSelecionada || !calc || !podeCalcular) return "";
 
+    // (Alteração 1) tratar “Serviços” -> “serviço” (e padronizar para minúsculo)
     const bem = (() => {
       const seg = (segmento || tabelaSelecionada.segmento || "").toLowerCase();
-      if (seg.includes("imó")) return "Imóvel";
+      if (seg.includes("imó")) return "imóvel";
+      if (seg.includes("serv")) return "serviço";
       if (seg.includes("moto")) return "motocicleta";
       return "veículo";
     })();
@@ -522,11 +524,12 @@ export default function Simuladores() {
 
 💰 Crédito contratado: ${brMoney(credito)}
 
-💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (em até 3x sem juros no cartão)
+💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (Primeira parcela em até 3x sem juros no cartão)
 
 💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
+🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
 

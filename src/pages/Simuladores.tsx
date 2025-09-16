@@ -93,8 +93,31 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-/** Regra alinhada com os exemplos do Excel enviados */
-function calcularSimulacao(i: CalcInput) {
+type CalcOut = {
+  valorCategoria: number;
+  parcelaAte: number;
+  parcelaDemais: number;
+  lanceOfertadoValor: number;
+  lanceEmbutidoValor: number;
+  lanceProprioValor: number;
+  lancePercebidoPct: number;
+  novoCredito: number;
+  novaParcelaSemLimite: number;
+  parcelaLimitante: number;
+  parcelaEscolhida: number;
+  segundaParcelaComAntecipacao: number; // NOVO: exibimos quando aplica a regra
+  saldoDevedorFinal: number;
+  novoPrazo: number;
+  TA_efetiva: number;
+  fundoComumFactor: number;
+};
+
+/** Regra alinhada com os exemplos do Excel enviados
+ *  + Regra Especial: se antecipação em 2(+) parcelas e contemplação = 1ª assembleia,
+ *    a 2ª parcela também contém a antecipação e recalculamos o prazo com
+ *    ceil((saldo após a 2ª) / parcelaEscolhida).
+ */
+function calcularSimulacao(i: CalcInput): CalcOut {
   const {
     credito: C,
     prazoVenda,
@@ -172,10 +195,28 @@ function calcularSimulacao(i: CalcInput) {
     ? parcelaLimitante
     : novaParcelaSemLimite;
 
-  // NOVO PRAZO
-  const novoPrazo = aplicouLimitador
-    ? Math.round(saldoDevedorFinal / parcelaEscolhida)
-    : prazoRestante;
+  // ===== Regra Especial da 2ª parcela com antecipação =====
+  let segundaParcelaComAntecipacao = 0;
+  let novoPrazo: number;
+
+  if (antecipParcelas >= 2 && parcContemplacao === 1) {
+    // Mesmo contemplado na 1ª, a 2ª parcela inclui a antecipação
+    segundaParcelaComAntecipacao = parcelaEscolhida + antecipAdicionalCada;
+
+    // Saldo após quitar a 2ª parcela
+    const saldoAposSegunda = Math.max(
+      0,
+      saldoDevedorFinal - segundaParcelaComAntecipacao
+    );
+
+    // Novo prazo: ceil(saldo remanescente / parcela escolhida)
+    novoPrazo = Math.ceil(saldoAposSegunda / Math.max(parcelaEscolhida, 1e-9));
+  } else {
+    // Regra anterior
+    novoPrazo = aplicouLimitador
+      ? Math.round(saldoDevedorFinal / Math.max(parcelaEscolhida, 1e-9))
+      : prazoRestante;
+  }
 
   return {
     valorCategoria,
@@ -189,6 +230,7 @@ function calcularSimulacao(i: CalcInput) {
     novaParcelaSemLimite, // (SEM seguro)
     parcelaLimitante,     // (SEM seguro)
     parcelaEscolhida,     // (SEM seguro)
+    segundaParcelaComAntecipacao, // (quando aplicável)
     saldoDevedorFinal,
     novoPrazo,
     TA_efetiva,
@@ -1134,6 +1176,15 @@ function EmbraconSimulator(p: EmbraconProps) {
               <div><Label>Nova Parcela (sem limite)</Label><Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly /></div>
               <div><Label>Parcela Limitante</Label><Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly /></div>
               <div><Label>Parcela Escolhida</Label><Input value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""} readOnly /></div>
+
+              {/* NOVO: 2ª parcela com antecipação quando a regra se aplica */}
+              {p.calc && p.calc.segundaParcelaComAntecipacao > 0 && (
+                <div>
+                  <Label>2ª parcela (c/ antecipação)</Label>
+                  <Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly />
+                </div>
+              )}
+
               <div><Label>Novo Prazo (meses)</Label><Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly /></div>
             </CardContent>
           </Card>

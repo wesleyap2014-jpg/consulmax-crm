@@ -5,12 +5,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Loader2, Plus, Trash2, Pencil, X, ChevronLeft, ChevronRight } from "lucide-react";
 
-/* ========================= Tipos ========================= */
+/* =========================================================
+   Tipos
+   ========================================================= */
 type UUID = string;
 
 type Lead = { id: UUID; nome: string; telefone?: string | null };
+
 type Admin = { id: UUID; name: string };
 
 type SimTable = {
@@ -21,12 +32,12 @@ type SimTable = {
   faixa_min: number;
   faixa_max: number;
   prazo_limite: number;
-  taxa_adm_pct: number;
-  fundo_reserva_pct: number;
-  antecip_pct: number;
+  taxa_adm_pct: number; // fracionário (0.22)
+  fundo_reserva_pct: number; // fracionário
+  antecip_pct: number; // fracionário
   antecip_parcelas: number; // 0|1|2
-  limitador_parcela_pct: number;
-  seguro_prest_pct: number;
+  limitador_parcela_pct: number; // fracionário (0.01)
+  seguro_prest_pct: number; // fracionário por parcela
   permite_lance_embutido: boolean;
   permite_lance_fixo_25: boolean;
   permite_lance_fixo_50: boolean;
@@ -39,61 +50,66 @@ type SimTable = {
 
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
-/* ======================= Helpers ========================= */
+/* =========================================================
+   Helpers de formatação
+   ========================================================= */
 const brMoney = (v: number) =>
-  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
+  isFinite(v)
+    ? v.toLocaleString("pt-BR", {
+        style: "currency",
+        currency: "BRL",
+        maximumFractionDigits: 2,
+      })
+    : "";
+
+const parseMoney = (s: string) => {
+  // remove tudo que não é dígito
+  const onlyDigits = s.replace(/\D+/g, "");
+  if (!onlyDigits) return 0;
+  // interpreta em centavos
+  return Number(onlyDigits) / 100;
+};
 
 const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
-
-/** BRL mask */
-function formatBRLInputFromNumber(n: number): string {
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-function parseBRLInputToNumber(s: string): number {
-  const digits = (s || "").replace(/\D/g, "");
-  const cents = digits.length ? parseInt(digits, 10) : 0;
-  return cents / 100;
-}
-
-/** Percent “25,0000” <-> 0.25 (decimal) */
-function formatPctInputFromDecimal(d: number): string {
-  return (d * 100).toFixed(4).replace(".", ",");
-}
-function parsePctInputToDecimal(s: string): number {
-  const clean = (s || "").replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
-  const val = parseFloat(clean);
-  return isNaN(val) ? 0 : val / 100;
-}
+const pctToInput = (v: number) => (v * 100).toFixed(4).replace(".", ","); // 0.25 -> "25,0000"
+const inputToPct = (s: string) => {
+  const norm = s.replace(/\./g, "").replace(",", ".");
+  const n = Number(norm);
+  return isFinite(n) ? n / 100 : 0;
+};
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-/** Exceção do limitador: Motocicleta >= 20k => 1% */
+/** Regras especiais do limitador (moto >= 20k vira 1%) */
 function resolveLimitadorPct(baseLimitadorPct: number, segmento: string, credito: number): number {
   if (segmento?.toLowerCase() === "motocicleta" && credito >= 20000) return 0.01;
   return baseLimitadorPct;
 }
 
-/* ======================= Cálculo ========================= */
+/* =========================================================
+   Cálculo
+   ========================================================= */
 type CalcInput = {
   credito: number;
   prazoVenda: number;
   forma: FormaContratacao;
   seguro: boolean;
   segmento: string;
+
   taxaAdmFull: number;
   frPct: number;
   antecipPct: number;
   antecipParcelas: 0 | 1 | 2;
   limitadorPct: number;
   seguroPrestPct: number;
+
   lanceOfertPct: number;
-  lanceEmbutPct: number; // <= 0.25
+  lanceEmbutPct: number;
   parcContemplacao: number;
 };
 
-/** Regra alinhada com os exemplos do Excel enviados */
 function calcularSimulacao(i: CalcInput) {
   const {
     credito: C,
@@ -114,10 +130,10 @@ function calcularSimulacao(i: CalcInput) {
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
-  // TA efetiva (parte que vai para as parcelas mensais)
+  // TA efetiva que vai para a parcela mensal
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
 
-  // Valor de categoria (base para saldo + limitador + seguro)
+  // Valor de categoria
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
   // Fator do Fundo Comum conforme contratação
@@ -128,23 +144,28 @@ function calcularSimulacao(i: CalcInput) {
   const baseMensalSemSeguro =
     (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
-  // Seguro mensal (só soma na parcela, não abate saldo)
+  // Seguro apenas para exibição
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
-  // Antecipação (somada nas primeiras 1 ou 2 parcelas)
-  const antecipAdicionalCada =
-    antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
+  // Antecipação
+  const antecipTotal = C * antecipPct;
+  const antecipPorParcela =
+    antecipParcelas > 0 ? antecipTotal / antecipParcelas : 0;
 
   // Exibição até a contemplação
   const parcelaAte =
-    (baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0)) +
+    baseMensalSemSeguro +
+    (antecipParcelas > 0 ? antecipPorParcela : 0) +
     seguroMensal;
+
   const parcelaDemais = baseMensalSemSeguro + seguroMensal;
 
-  // TOTAL PAGO ATÉ A CONTEMPLAÇÃO (SEM seguro)
-  const totalPagoSemSeguro =
+  // Total pago até a contemplação (SEM seguro)
+  const pagoAteContemplacaoSemSeguro =
     baseMensalSemSeguro * parcelasPagas +
-    antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
+    (antecipParcelas > 0
+      ? antecipPorParcela * Math.min(parcelasPagas, antecipParcelas)
+      : 0);
 
   // Lances
   const lanceOfertadoValor = C * lanceOfertPct;
@@ -152,16 +173,16 @@ function calcularSimulacao(i: CalcInput) {
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
-  // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
+  // Saldo após 1ª parcela/assembleia e lance (SEM seguro)
   const saldoDevedorFinal = Math.max(
     0,
-    valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
+    valorCategoria - pagoAteContemplacaoSemSeguro - lanceOfertadoValor
   );
 
-  // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
-  const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
+  // Nova parcela sem limite (SEM seguro)
+  const novaParcelaSemLimite = saldoDevedorFinal / Math.max(1, prazoRestante);
 
-  // LIMITADOR (sobre valor de categoria)
+  // Limitador
   const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
   const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
 
@@ -172,116 +193,105 @@ function calcularSimulacao(i: CalcInput) {
     ? parcelaLimitante
     : novaParcelaSemLimite;
 
-  // NOVO PRAZO
-  const novoPrazo = aplicouLimitador
-    ? Math.round(saldoDevedorFinal / parcelaEscolhida)
-    : prazoRestante;
+  // ===== Regra especial: antecipação em 2 parcelas + contemplação na 1ª =====
+  let segundaParcelaComAntecipacao = 0;
+  let novoPrazo: number;
+
+  if (antecipParcelas === 2 && parcContemplacao === 1) {
+    segundaParcelaComAntecipacao = parcelaEscolhida + antecipPorParcela;
+    const saldoAposSegunda = Math.max(
+      0,
+      saldoDevedorFinal - segundaParcelaComAntecipacao
+    );
+    // usa ceil conforme combinado
+    novoPrazo = Math.ceil(saldoAposSegunda / Math.max(parcelaEscolhida, 1e-9));
+  } else {
+    // regra padrão
+    novoPrazo = aplicouLimitador
+      ? Math.round(saldoDevedorFinal / Math.max(parcelaEscolhida, 1e-9))
+      : Math.max(1, prazoRestante);
+  }
 
   return {
+    // exibição / memória
     valorCategoria,
+    TA_efetiva,
+    fundoComumFactor,
+    baseMensalSemSeguro,
+    antecipPorParcela,
+    seguroMensal,
+
+    // até contemplação
     parcelaAte,
     parcelaDemais,
+
+    // lances
     lanceOfertadoValor,
     lanceEmbutidoValor,
     lanceProprioValor,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
-    novaParcelaSemLimite, // (SEM seguro)
-    parcelaLimitante,     // (SEM seguro)
-    parcelaEscolhida,     // (SEM seguro)
+
+    // pós
+    novaParcelaSemLimite,
+    parcelaLimitante,
+    parcelaEscolhida,
+    segundaParcelaComAntecipacao, // 0 quando não aplicável
     saldoDevedorFinal,
     novoPrazo,
-    TA_efetiva,
-    fundoComumFactor,
   };
 }
 
-/* ========== Inputs com máscara (Money / Percent) ========== */
-function MoneyInput({
-  value,
-  onChange,
-  ...rest
-}: { value: number; onChange: (n: number) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <Input
-      {...rest}
-      inputMode="numeric"
-      value={formatBRLInputFromNumber(value || 0)}
-      onChange={(e) => onChange(parseBRLInputToNumber(e.target.value))}
-      className={`text-right ${rest.className || ""}`}
-    />
-  );
-}
-
-function PercentInput({
-  valueDecimal,
-  onChangeDecimal,
-  maxDecimal,
-  ...rest
-}: {
-  valueDecimal: number;
-  onChangeDecimal: (d: number) => void;
-  maxDecimal?: number;
-} & React.InputHTMLAttributes<HTMLInputElement>) {
-  const display = formatPctInputFromDecimal(valueDecimal || 0);
-  return (
-    <div className="flex items-center gap-2">
-      <Input
-        {...rest}
-        inputMode="decimal"
-        value={display}
-        onChange={(e) => {
-          let d = parsePctInputToDecimal(e.target.value);
-          if (typeof maxDecimal === "number") d = clamp(d, 0, maxDecimal);
-          onChangeDecimal(d);
-        }}
-        className={`text-right ${rest.className || ""}`}
-      />
-      <span className="text-sm text-muted-foreground">%</span>
-    </div>
-  );
-}
-
-/* ========================= Página ======================== */
-export default function Simuladores() {
+/* =========================================================
+   Página
+   ========================================================= */
+export default function SimuladoresPage() {
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
 
-  const [mgrOpen, setMgrOpen] = useState(false); // overlay lista/edição
+  // modal de tabelas
+  const [managerOpen, setManagerOpen] = useState(false);
 
-  // seleção Embracon
+  // Seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
   const [grupo, setGrupo] = useState<string>("");
 
   const [segmento, setSegmento] = useState<string>("");
-  const [nomeTabela, setNomeTabela] = useState<string>("");
   const [tabelaId, setTabelaId] = useState<string>("");
   const [prazoAte, setPrazoAte] = useState<number>(0);
   const [faixa, setFaixa] = useState<{ min: number; max: number } | null>(null);
 
-  const [credito, setCredito] = useState<number>(0);
+  const [creditoText, setCreditoText] = useState<string>(""); // exibido como R$
+  const credito = parseMoney(creditoText);
+
   const [prazoVenda, setPrazoVenda] = useState<number>(0);
   const [forma, setForma] = useState<FormaContratacao>("Parcela Cheia");
   const [seguroPrest, setSeguroPrest] = useState<boolean>(false);
 
-  const [lanceOfertPct, setLanceOfertPct] = useState<number>(0);
-  const [lanceEmbutPct, setLanceEmbutPct] = useState<number>(0);
+  const [lanceOfertPctText, setLanceOfertPctText] = useState<string>("0,0000");
+  const lanceOfertPct = inputToPct(lanceOfertPctText);
+
+  const [lanceEmbutPctText, setLanceEmbutPctText] = useState<string>("0,0000");
+  const lanceImputPctRaw = inputToPct(lanceEmbutPctText);
+  const lanceEmbutPct = clamp(lanceImputPctRaw, 0, 0.25);
+
   const [parcContemplacao, setParcContemplacao] = useState<number>(1);
 
   const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacao> | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
+  // Carregar admins, tables e leads
   useEffect(() => {
     (async () => {
       setLoading(true);
       const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
         supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-        supabase.from("sim_tables").select("*"),
+        supabase.from("sim_tables").select("*").order("segmento", { ascending: true }),
         supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
       setAdmins(a ?? []);
@@ -293,44 +303,45 @@ export default function Simuladores() {
     })();
   }, []);
 
+  // Lead selecionado
   useEffect(() => {
     const found = leads.find((x) => x.id === leadId);
     setLeadInfo(found ? { nome: found.nome, telefone: found.telefone } : null);
   }, [leadId, leads]);
 
-  const adminTables = useMemo(() => tables.filter((t) => t.admin_id === activeAdminId), [tables, activeAdminId]);
+  // Tabelas do admin ativo
+  const adminTables = useMemo(
+    () => tables.filter((t) => t.admin_id === activeAdminId),
+    [tables, activeAdminId]
+  );
 
-  // nomes de tabela distintos por segmento
-  const nomesTabelaSegmento = useMemo(() => {
-    const list = adminTables
-      .filter((t) => (segmento ? t.segmento === segmento : true))
-      .map((t) => t.nome_tabela);
-    return Array.from(new Set(list));
-  }, [adminTables, segmento]);
-
-  // variantes (linhas) do nome escolhido (prazo e taxas diferentes)
-  const variantesDaTabela = useMemo(() => {
-    return adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela);
-  }, [adminTables, segmento, nomeTabela]);
+  // Tabelas por segmento escolhido
+  const tablesBySegment = useMemo(
+    () => adminTables.filter((t) => (segmento ? t.segmento === segmento : true)),
+    [adminTables, segmento]
+  );
 
   const tabelaSelecionada = useMemo(
     () => tables.find((t) => t.id === tabelaId) || null,
     [tables, tabelaId]
   );
 
+  // Ao escolher tabela, propaga prazo e faixa
   useEffect(() => {
     if (!tabelaSelecionada) return;
     setPrazoAte(tabelaSelecionada.prazo_limite);
     setFaixa({ min: tabelaSelecionada.faixa_min, max: tabelaSelecionada.faixa_max });
+    // Ajusta forma permitida
     if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25) setForma("Parcela Cheia");
     if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
-  }, [tabelaSelecionada]); // eslint-disable-line
+  }, [tabelaSelecionada]);
 
-  // valida % embutido
-  const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
+  // Validações rápidas do input
   useEffect(() => {
-    if (lanceEmbutPct !== lanceEmbutPctValid) setLanceEmbutPct(lanceEmbutPctValid);
-  }, [lanceEmbutPct]); // eslint-disable-line
+    if (lanceImputPctRaw !== lanceEmbutPct) {
+      setLanceEmbutPctText(pctToInput(lanceEmbutPct));
+    }
+  }, [lanceImputPctRaw, lanceEmbutPct]);
 
   const prazoAviso =
     prazoVenda > 0 && prazoAte > 0 && prazoVenda > prazoAte
@@ -338,8 +349,13 @@ export default function Simuladores() {
       : null;
 
   const podeCalcular =
-    !!tabelaSelecionada && credito > 0 && prazoVenda > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
+    !!tabelaSelecionada &&
+    credito > 0 &&
+    prazoVenda > 0 &&
+    parcContemplacao > 0 &&
+    parcContemplacao < prazoVenda;
 
+  // Recalcular
   useEffect(() => {
     if (!tabelaSelecionada || !podeCalcular) {
       setCalc(null);
@@ -358,16 +374,24 @@ export default function Simuladores() {
       limitadorPct: tabelaSelecionada.limitador_parcela_pct,
       seguroPrestPct: tabelaSelecionada.seguro_prest_pct,
       lanceOfertPct,
-      lanceEmbutPct: lanceEmbutPctValid,
+      lanceEmbutPct,
       parcContemplacao,
     };
     setCalc(calcularSimulacao(inp));
-  }, [tabelaSelecionada, credito, prazoVenda, forma, seguroPrest, lanceOfertPct, lanceEmbutPctValid, parcContemplacao]); // eslint-disable-line
+  }, [
+    tabelaSelecionada,
+    credito,
+    prazoVenda,
+    forma,
+    seguroPrest,
+    lanceOfertPct,
+    lanceEmbutPct,
+    parcContemplacao,
+  ]); // eslint-disable-line
 
   async function salvarSimulacao() {
     if (!tabelaSelecionada || !calc) return;
     setSalvando(true);
-
     const payload = {
       admin_id: activeAdminId,
       table_id: tabelaSelecionada.id,
@@ -382,7 +406,7 @@ export default function Simuladores() {
       forma_contratacao: forma,
       seguro_prestamista: seguroPrest,
       lance_ofertado_pct: lanceOfertPct,
-      lance_embutido_pct: lanceEmbutPctValid,
+      lance_embutido_pct: lanceEmbutPct,
       parcela_contemplacao: parcContemplacao,
       valor_categoria: calc.valorCategoria,
       parcela_ate_1_ou_2: calc.parcelaAte,
@@ -395,27 +419,33 @@ export default function Simuladores() {
       nova_parcela_sem_limite: calc.novaParcelaSemLimite,
       parcela_limitante: calc.parcelaLimitante,
       parcela_escolhida: calc.parcelaEscolhida,
+      parcela2_antecip: calc.segundaParcelaComAntecipacao,
       saldo_devedor_final: calc.saldoDevedorFinal,
       novo_prazo: calc.novoPrazo,
     };
 
-    const { data, error } = await supabase.from("sim_simulations").insert(payload).select("code").single();
+    const { data, error } = await supabase
+      .from("sim_simulations")
+      .insert(payload)
+      .select("code")
+      .single();
     setSalvando(false);
-    if (error) { alert("Erro ao salvar simulação: " + error.message); return; }
+    if (error) {
+      alert("Erro ao salvar simulação: " + error.message);
+      return;
+    }
     setSimCode(data?.code ?? null);
   }
 
-  function handleTableCreatedOrUpdated(newTable: SimTable) {
-    setTables((prev) => {
-      const exists = prev.find((t) => t.id === newTable.id);
-      if (exists) return prev.map((t) => (t.id === newTable.id ? newTable : t));
-      return [newTable, ...prev];
-    });
-  }
-
-  function handleTableDeleted(id: string) {
-    setTables((prev) => prev.filter((t) => t.id !== id));
-  }
+  // overlay: ESC fecha
+  useEffect(() => {
+    if (!managerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setManagerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [managerOpen]);
 
   if (loading) {
     return (
@@ -425,509 +455,160 @@ export default function Simuladores() {
     );
   }
 
-  const activeAdmin = admins.find((a) => a.id === activeAdminId);
-
   return (
-    <div className="p-6 space-y-4">
-      {/* topo: admins + botões */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-2">
-          {admins.map((a) => (
-            <Button
-              key={a.id}
-              variant={activeAdminId === a.id ? "default" : "secondary"}
-              onClick={() => { setActiveAdminId(a.id); }}
-              className="h-10 rounded-2xl px-4"
-            >
-              {a.name}
-            </Button>
-          ))}
-        </div>
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <Tabs value={activeAdminId ?? undefined} onValueChange={(v) => setActiveAdminId(v)} className="flex-1">
+          <TabsList className="flex flex-wrap gap-2">
+            {admins.map((a) => (
+              <TabsTrigger key={a.id} value={a.id} className="rounded-2xl px-4 py-2">
+                {a.name}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {/* conteúdo dos tabs está mais embaixo dentro do Card */}
+        </Tabs>
 
-        <div className="ml-auto flex items-center gap-2">
-          {activeAdmin && (
-            <>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setMgrOpen(true)}
-                className="h-10 rounded-2xl px-4"
-              >
-                Gerenciar Tabelas
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => alert("Em breve: adicionar administradora.")}
-                className="h-10 rounded-2xl px-4"
-              >
-                <Plus className="h-4 w-4 mr-1" /> Adicionar Administradora
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* layout em duas colunas */}
-      <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador (menor) */}
-        <div className="col-span-12 lg:col-span-8">
-          <Card>
-            <CardHeader><CardTitle>Simuladores</CardTitle></CardHeader>
-            <CardContent>
-              {activeAdmin ? (
-                activeAdmin.name === "Embracon" ? (
-                  <EmbraconSimulator
-                    leads={leads}
-                    adminTables={adminTables}
-                    nomesTabelaSegmento={nomesTabelaSegmento}
-                    variantesDaTabela={variantesDaTabela}
-                    tabelaSelecionada={tabelaSelecionada}
-                    prazoAte={prazoAte}
-                    faixa={faixa}
-                    leadId={leadId} setLeadId={setLeadId}
-                    leadInfo={leadInfo}
-                    grupo={grupo} setGrupo={setGrupo}
-                    segmento={segmento} setSegmento={(v)=>{ setSegmento(v); setNomeTabela(""); setTabelaId(""); }}
-                    nomeTabela={nomeTabela} setNomeTabela={(v)=>{ setNomeTabela(v); setTabelaId(""); }}
-                    tabelaId={tabelaId} setTabelaId={setTabelaId}
-                    credito={credito} setCredito={setCredito}
-                    prazoVenda={prazoVenda} setPrazoVenda={setPrazoVenda}
-                    forma={forma} setForma={setForma}
-                    seguroPrest={seguroPrest} setSeguroPrest={setSeguroPrest}
-                    lanceOfertPct={lanceOfertPct} setLanceOfertPct={setLanceOfertPct}
-                    lanceEmbutPct={lanceEmbutPct} setLanceEmbutPct={setLanceEmbutPct}
-                    parcContemplacao={parcContemplacao} setParcContemplacao={setParcContemplacao}
-                    prazoAviso={prazoAviso}
-                    calc={calc}
-                    salvar={salvarSimulacao}
-                    salvando={salvando}
-                    simCode={simCode}
-                  />
-                ) : (
-                  <div className="text-sm text-muted-foreground">Em breve: simulador para <strong>{activeAdmin.name}</strong>.</div>
-                )
-              ) : (
-                <div className="text-sm text-muted-foreground">Nenhuma administradora encontrada.</div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* coluna direita: memória de cálculo */}
-        <div className="col-span-12 lg:col-span-4">
-          <Card>
-            <CardHeader><CardTitle>Memória de Cálculo</CardTitle></CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {!tabelaSelecionada ? (
-                <div className="text-muted-foreground">Selecione uma tabela para ver os detalhes.</div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>Crédito</div><div className="text-right font-medium">{brMoney(credito || 0)}</div>
-                    <div>Prazo da Venda</div><div className="text-right">{prazoVenda || "-"}</div>
-                    <div>Forma</div><div className="text-right">{forma}</div>
-                    <div>Seguro / parcela</div>
-                    <div className="text-right">
-                      {seguroPrest ? pctHuman(tabelaSelecionada.seguro_prest_pct) : "—"}
-                    </div>
-                  </div>
-                  <hr className="my-2" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>Fundo Comum (fator)</div>
-                    <div className="text-right">{calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}</div>
-                    <div>Taxa Adm (total)</div>
-                    <div className="text-right">{pctHuman(tabelaSelecionada.taxa_adm_pct)}</div>
-                    <div>TA efetiva</div>
-                    <div className="text-right">{calc ? pctHuman(calc.TA_efetiva) : "—"}</div>
-                    <div>Fundo Reserva</div>
-                    <div className="text-right">{pctHuman(tabelaSelecionada.fundo_reserva_pct)}</div>
-                    <div>Antecipação Adm</div>
-                    <div className="text-right">{pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x</div>
-                    <div>Limitador Parcela</div>
-                    <div className="text-right">
-                      {pctHuman(resolveLimitadorPct(tabelaSelecionada.limitador_parcela_pct, tabelaSelecionada.segmento, credito || 0))}
-                    </div>
-                    <div>Valor de Categoria</div>
-                    <div className="text-right">{calc ? brMoney(calc.valorCategoria) : "—"}</div>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Overlay de gerenciamento de tabelas */}
-      {mgrOpen && activeAdmin && (
-        <TableManagerModal
-          admin={activeAdmin}
-          allTables={adminTables}
-          onClose={() => setMgrOpen(false)}
-          onCreatedOrUpdated={handleTableCreatedOrUpdated}
-          onDeleted={handleTableDeleted}
-        />
-      )}
-    </div>
-  );
-}
-
-/* =============== Modal: base com ESC para fechar =============== */
-function ModalBase({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="font-semibold">{title}</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/* ============== Modal: Gerenciar Tabelas (com paginação) ============== */
-function TableManagerModal({
-  admin,
-  allTables,
-  onClose,
-  onCreatedOrUpdated,
-  onDeleted,
-}: {
-  admin: Admin;
-  allTables: SimTable[];
-  onClose: () => void;
-  onCreatedOrUpdated: (t: SimTable) => void;
-  onDeleted: (id: string) => void;
-}) {
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<SimTable | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
-
-  // reset página quando muda a lista
-  useEffect(() => setPage(1), [allTables.length]);
-
-  const grouped = useMemo(() => {
-    return [...allTables].sort((a, b) => {
-      const sa = (a.segmento + a.nome_tabela + String(a.prazo_limite)).toLowerCase();
-      const sb = (b.segmento + b.nome_tabela + String(b.prazo_limite)).toLowerCase();
-      return sa.localeCompare(sb);
-    });
-  }, [allTables]);
-
-  const totalPages = Math.max(1, Math.ceil(grouped.length / pageSize));
-  const pageItems = useMemo(
-    () => grouped.slice((page - 1) * pageSize, page * pageSize),
-    [grouped, page]
-  );
-
-  async function deletar(id: string) {
-    if (!confirm("Confirmar exclusão desta tabela?")) return;
-    setBusyId(id);
-    const { error } = await supabase.from("sim_tables").delete().eq("id", id);
-    setBusyId(null);
-    if (error) { alert("Erro ao excluir: " + error.message); return; }
-    onDeleted(id);
-  }
-
-  return (
-    <ModalBase onClose={onClose} title="Gerenciador de Tabelas">
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm text-muted-foreground">
-            Admin ativa: <strong>{admin.name}</strong>
-          </div>
-          <Button onClick={() => { setEditing(null); setShowForm(true); }} className="h-10 rounded-2xl px-4">
-            <Plus className="h-4 w-4 mr-1" /> Nova Tabela
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setManagerOpen(true)} className="rounded-2xl px-4 py-2">
+            Gerenciar Tabelas
+          </Button>
+          <Button variant="secondary" onClick={() => alert("Em breve: adicionar administradora.")} className="rounded-2xl px-4 py-2">
+            <Plus className="h-4 w-4 mr-1" /> Adicionar administradora
           </Button>
         </div>
-
-        <div className="overflow-auto rounded-lg border">
-          <table className="min-w-full text-sm">
-            <thead className="bg-muted/40">
-              <tr>
-                <th className="text-left p-2">Segmento</th>
-                <th className="text-left p-2">Tabela</th>
-                <th className="text-left p-2">Prazo</th>
-                <th className="text-left p-2">% Adm</th>
-                <th className="text-left p-2">% FR</th>
-                <th className="text-left p-2">% Antecip</th>
-                <th className="text-left p-2">Parc Ant.</th>
-                <th className="text-left p-2">% Limite</th>
-                <th className="text-left p-2">% Seguro</th>
-                <th className="text-right p-2">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageItems.map((t) => (
-                <tr key={t.id} className="border-t">
-                  <td className="p-2">{t.segmento}</td>
-                  <td className="p-2">{t.nome_tabela}</td>
-                  <td className="p-2">{t.prazo_limite}</td>
-                  <td className="p-2">{pctHuman(t.taxa_adm_pct)}</td>
-                  <td className="p-2">{pctHuman(t.fundo_reserva_pct)}</td>
-                  <td className="p-2">{pctHuman(t.antecip_pct)}</td>
-                  <td className="p-2">{t.antecip_parcelas}</td>
-                  <td className="p-2">{pctHuman(t.limitador_parcela_pct)}</td>
-                  <td className="p-2">{pctHuman(t.seguro_prest_pct)}</td>
-                  <td className="p-2">
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => { setEditing(t); setShowForm(true); }}
-                        className="h-9 rounded-xl px-3"
-                      >
-                        <Pencil className="h-4 w-4 mr-1" /> Editar
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={busyId === t.id}
-                        onClick={() => deletar(t.id)}
-                        className="h-9 rounded-xl px-3"
-                      >
-                        {busyId === t.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
-                        Excluir
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {pageItems.length === 0 && (
-                <tr><td colSpan={10} className="p-4 text-center text-muted-foreground">Sem tabelas para esta administradora.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* paginação */}
-        <div className="flex items-center justify-between mt-3 text-sm">
-          <div>
-            {grouped.length > 0 && (
-              <>
-                Mostrando{" "}
-                <strong>
-                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}
-                </strong>{" "}
-                de <strong>{grouped.length}</strong>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
-              Anterior
-            </Button>
-            <span>Página {page} de {totalPages}</span>
-            <Button
-              variant="secondary"
-              className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
-              Próxima
-            </Button>
-          </div>
-        </div>
       </div>
 
-      {showForm && (
-        <TableFormOverlay
-          adminId={admin.id}
-          initial={editing || undefined}
-          onClose={() => setShowForm(false)}
-          onSaved={(t) => { onCreatedOrUpdated(t); setShowForm(false); }}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
+        {/* Simuladores */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Simuladores</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Tabs value={activeAdminId ?? undefined} onValueChange={(v) => setActiveAdminId(v)}>
+              {admins.map((a) => (
+                <TabsContent key={a.id} value={a.id}>
+                  {a.name === "Embracon" ? (
+                    <EmbraconSimulator
+                      leads={leads}
+                      adminTables={adminTables}
+                      tablesBySegment={tablesBySegment}
+                      tabelaSelecionada={tabelaSelecionada}
+                      prazoAte={prazoAte}
+                      faixa={faixa}
+                      leadId={leadId}
+                      setLeadId={setLeadId}
+                      leadInfo={leadInfo}
+                      grupo={grupo}
+                      setGrupo={setGrupo}
+                      segmento={segmento}
+                      setSegmento={setSegmento}
+                      tabelaId={tabelaId}
+                      setTabelaId={setTabelaId}
+                      credito={credito}
+                      creditoText={creditoText}
+                      setCreditoText={setCreditoText}
+                      prazoVenda={prazoVenda}
+                      setPrazoVenda={setPrazoVenda}
+                      forma={forma}
+                      setForma={setForma}
+                      seguroPrest={seguroPrest}
+                      setSeguroPrest={setSeguroPrest}
+                      lanceOfertPctText={lanceOfertPctText}
+                      setLanceOfertPctText={setLanceOfertPctText}
+                      lanceEmbutPctText={lanceEmbutPctText}
+                      setLanceEmbutPctText={setLanceEmbutPctText}
+                      parcContemplacao={parcContemplacao}
+                      setParcContemplacao={setParcContemplacao}
+                      prazoAviso={prazoAviso}
+                      calc={calc}
+                      salvar={salvarSimulacao}
+                      salvando={salvando}
+                      simCode={simCode}
+                    />
+                  ) : (
+                    <div className="text-sm text-muted-foreground p-4">
+                      Em breve: simulador para <strong>{a.name}</strong>.
+                    </div>
+                  )}
+                </TabsContent>
+              ))}
+            </Tabs>
+          </CardContent>
+        </Card>
+
+        {/* Memória de Cálculo */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Memória de Cálculo</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm space-y-2">
+            {tabelaSelecionada ? (
+              <>
+                <div>Valor de Categoria: <strong>{calc ? brMoney(calc.valorCategoria) : "-"}</strong></div>
+                <div>TA efetiva (p/ parcela): <strong>{calc ? pctHuman(calc.TA_efetiva) : "-"}</strong></div>
+                <div>Parcela base (sem seguro): <strong>{calc ? brMoney(calc.baseMensalSemSeguro) : "-"}</strong></div>
+                <div>Antecipação por parcela: <strong>{calc ? brMoney(calc.antecipPorParcela) : "-"}</strong></div>
+                <div>Seguro mensal (exibição): <strong>{calc ? brMoney(calc.seguroMensal) : "-"}</strong></div>
+                <div>Nova Parcela (sem limite): <strong>{calc ? brMoney(calc.novaParcelaSemLimite) : "-"}</strong></div>
+                <div>Parcela Limitante: <strong>{calc ? brMoney(calc.parcelaLimitante) : "-"}</strong></div>
+                <div>Parcela Escolhida: <strong>{calc ? brMoney(calc.parcelaEscolhida) : "-"}</strong></div>
+                {calc?.segundaParcelaComAntecipacao > 0 && (
+                  <div>Parcela 2 (c/ antecipação): <strong>{brMoney(calc.segundaParcelaComAntecipacao)}</strong></div>
+                )}
+                <div>Novo Prazo: <strong>{calc ? String(calc.novoPrazo) : "-"}</strong> meses</div>
+              </>
+            ) : (
+              <div className="text-muted-foreground">Selecione uma tabela para ver os detalhes.</div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Overlay: Gerenciar Tabelas */}
+      {managerOpen && (
+        <TablesManager
+          onClose={() => setManagerOpen(false)}
+          adminId={activeAdminId!}
+          tables={adminTables}
+          onReload={async () => {
+            const { data } = await supabase.from("sim_tables").select("*");
+            setTables(data ?? []);
+          }}
         />
       )}
-    </ModalBase>
-  );
-}
-
-/* ===== Overlay de Formulário (Novo / Editar) de Tabela ==== */
-function TableFormOverlay({
-  adminId,
-  initial,
-  onSaved,
-  onClose,
-}: {
-  adminId: string;
-  initial?: SimTable;
-  onSaved: (t: SimTable) => void;
-  onClose: () => void;
-}) {
-  const [segmento, setSegmento] = useState(initial?.segmento || "Imóvel Estendido");
-  const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
-  const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
-  const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
-  const [prazoLimite, setPrazoLimite] = useState(initial?.prazo_limite ?? 240);
-
-  const [taxaAdmHuman, setTaxaAdmHuman] = useState(formatPctInputFromDecimal(initial?.taxa_adm_pct ?? 0.22));
-  const [frHuman, setFrHuman] = useState(formatPctInputFromDecimal(initial?.fundo_reserva_pct ?? 0.02));
-  const [antecipHuman, setAntecipHuman] = useState(formatPctInputFromDecimal(initial?.antecip_pct ?? 0.02));
-  const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
-  const [limHuman, setLimHuman] = useState(formatPctInputFromDecimal(initial?.limitador_parcela_pct ?? 0.002565));
-  const [seguroHuman, setSeguroHuman] = useState(formatPctInputFromDecimal(initial?.seguro_prest_pct ?? 0.00061));
-
-  const [perEmbutido, setPerEmbutido] = useState(initial?.permite_lance_embutido ?? true);
-  const [perFixo25, setPerFixo25] = useState(initial?.permite_lance_fixo_25 ?? true);
-  const [perFixo50, setPerFixo50] = useState(initial?.permite_lance_fixo_50 ?? true);
-  const [perLivre, setPerLivre] = useState(initial?.permite_lance_livre ?? true);
-
-  const [cParcelaCheia, setCParcelaCheia] = useState(initial?.contrata_parcela_cheia ?? true);
-  const [cRed25, setCRed25] = useState(initial?.contrata_reduzida_25 ?? true);
-  const [cRed50, setCRed50] = useState(initial?.contrata_reduzida_50 ?? true);
-  const [indices, setIndices] = useState((initial?.indice_correcao || ["IPCA"]).join(", "));
-
-  const [saving, setSaving] = useState(false);
-
-  // ESC para fechar
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  async function salvar() {
-    setSaving(true);
-    const payload: Omit<SimTable, "id"> = {
-      admin_id: adminId,
-      segmento,
-      nome_tabela: nome,
-      faixa_min: Number(faixaMin) || 0,
-      faixa_max: Number(faixaMax) || 0,
-      prazo_limite: Number(prazoLimite) || 0,
-      taxa_adm_pct: parsePctInputToDecimal(taxaAdmHuman),
-      fundo_reserva_pct: parsePctInputToDecimal(frHuman),
-      antecip_pct: parsePctInputToDecimal(antecipHuman),
-      antecip_parcelas: Number(antecipParcelas) || 0,
-      limitador_parcela_pct: parsePctInputToDecimal(limHuman),
-      seguro_prest_pct: parsePctInputToDecimal(seguroHuman),
-      permite_lance_embutido: perEmbutido,
-      permite_lance_fixo_25: perFixo25,
-      permite_lance_fixo_50: perFixo50,
-      permite_lance_livre: perLivre,
-      contrata_parcela_cheia: cParcelaCheia,
-      contrata_reduzida_25: cRed25,
-      contrata_reduzida_50: cRed50,
-      indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
-    };
-
-    let res;
-    if (initial) {
-      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
-    } else {
-      res = await supabase.from("sim_tables").insert(payload).select("*").single();
-    }
-    setSaving(false);
-    if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
-    onSaved(res.data as SimTable);
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="font-semibold">{initial ? "Editar Tabela" : "Nova Tabela"}</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="p-4 grid gap-3 md:grid-cols-4">
-          <div><Label>Segmento</Label><Input value={segmento} onChange={(e) => setSegmento(e.target.value)} /></div>
-          <div><Label>Nome da Tabela</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
-          <div><Label>Faixa (mín)</Label><Input type="number" value={faixaMin} onChange={(e) => setFaixaMin(Number(e.target.value))} /></div>
-          <div><Label>Faixa (máx)</Label><Input type="number" value={faixaMax} onChange={(e) => setFaixaMax(Number(e.target.value))} /></div>
-          <div><Label>Prazo Limite (meses)</Label><Input type="number" value={prazoLimite} onChange={(e) => setPrazoLimite(Number(e.target.value))} /></div>
-
-          <div><Label>% Taxa Adm</Label><Input value={taxaAdmHuman} onChange={(e) => setTaxaAdmHuman(e.target.value)} /></div>
-          <div><Label>% Fundo Reserva</Label><Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} /></div>
-          <div><Label>% Antecipação da Adm</Label><Input value={antecipHuman} onChange={(e) => setAntecipHuman(e.target.value)} /></div>
-          <div><Label>Parcelas da Antecipação</Label><Input type="number" value={antecipParcelas} onChange={(e) => setAntecipParcelas(Number(e.target.value))} /></div>
-
-          <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
-          <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
-
-          <div className="col-span-2">
-            <Label>Lances Permitidos</Label>
-            <div className="flex gap-4 mt-1 text-sm">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perEmbutido} onChange={(e) => setPerEmbutido(e.target.checked)} />Embutido</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo25} onChange={(e) => setPerFixo25(e.target.checked)} />Fixo 25%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo50} onChange={(e) => setPerFixo50(e.target.checked)} />Fixo 50%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perLivre} onChange={(e) => setPerLivre(e.target.checked)} />Livre</label>
-            </div>
-          </div>
-
-          <div className="col-span-2">
-            <Label>Formas de Contratação</Label>
-            <div className="flex gap-4 mt-1 text-sm">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={cParcelaCheia} onChange={(e) => setCParcelaCheia(e.target.checked)} />Parcela Cheia</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={cRed25} onChange={(e) => setCRed25(e.target.checked)} />Reduzida 25%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={cRed50} onChange={(e) => setCRed50(e.target.checked)} />Reduzida 50%</label>
-            </div>
-          </div>
-
-          <div className="md:col-span-4">
-            <Label>Índice de Correção (separar por vírgula)</Label>
-            <Input value={indices} onChange={(e) => setIndices(e.target.value)} placeholder="IPCA, INCC, IGP-M" />
-          </div>
-
-          <div className="md:col-span-4 flex gap-2">
-            <Button onClick={salvar} disabled={saving} className="h-10 rounded-2xl px-4">
-              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {initial ? "Salvar alterações" : "Salvar Tabela"}
-            </Button>
-            <Button variant="secondary" onClick={onClose} disabled={saving} className="h-10 rounded-2xl px-4">
-              Cancelar
-            </Button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
 
-/* ====================== Embracon UI ====================== */
+/* =========================================================
+   Embracon UI
+   ========================================================= */
 type EmbraconProps = {
   leads: Lead[];
   adminTables: SimTable[];
-  nomesTabelaSegmento: string[];
-  variantesDaTabela: SimTable[];
+  tablesBySegment: SimTable[];
   tabelaSelecionada: SimTable | null;
   prazoAte: number;
   faixa: { min: number; max: number } | null;
-  leadId: string; setLeadId: (v: string) => void;
+  leadId: string;
+  setLeadId: (v: string) => void;
   leadInfo: { nome: string; telefone?: string | null } | null;
-  grupo: string; setGrupo: (v: string) => void;
+  grupo: string;
+  setGrupo: (v: string) => void;
 
   segmento: string; setSegmento: (v: string) => void;
-  nomeTabela: string; setNomeTabela: (v: string) => void;
   tabelaId: string; setTabelaId: (v: string) => void;
 
-  credito: number; setCredito: (v: number) => void;
+  credito: number;
+  creditoText: string; setCreditoText: (v: string) => void;
   prazoVenda: number; setPrazoVenda: (v: number) => void;
   forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
   seguroPrest: boolean; setSeguroPrest: (v: boolean) => void;
 
-  lanceOfertPct: number; setLanceOfertPct: (v: number) => void;
-  lanceEmbutPct: number; setLanceEmbutPct: (v: number) => void;
+  lanceOfertPctText: string; setLanceOfertPctText: (v: string) => void;
+  lanceEmbutPctText: string; setLanceEmbutPctText: (v: string) => void;
   parcContemplacao: number; setParcContemplacao: (v: number) => void;
 
   prazoAviso: string | null;
@@ -939,21 +620,34 @@ type EmbraconProps = {
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
+  const segmentos = Array.from(new Set(p.adminTables.map((t) => t.segmento)));
+
   return (
     <div className="space-y-6">
-      {/* Lead */}
+      {/* Seleção de Lead */}
       <Card>
-        <CardHeader><CardTitle>Embracon</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle>Embracon</CardTitle>
+        </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
               <Label>Selecionar Lead</Label>
-              <select className="w-full h-10 border rounded-md px-3" value={p.leadId} onChange={(e) => p.setLeadId(e.target.value)}>
-                <option value="">Escolha um lead</option>
-                {p.leads.map((l) => (<option key={l.id} value={l.id}>{l.nome}</option>))}
-              </select>
-              {p.leadInfo && <p className="text-xs text-muted-foreground mt-1">{p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}</p>}
+              <Select value={p.leadId} onValueChange={(v) => p.setLeadId(v)}>
+                <SelectTrigger><SelectValue placeholder="Escolha um lead" /></SelectTrigger>
+                <SelectContent>
+                  {p.leads.map((l) => (
+                    <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {p.leadInfo && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+                </p>
+              )}
             </div>
+
             <div>
               <Label>Nº do Grupo (opcional)</Label>
               <Input value={p.grupo} onChange={(e) => p.setGrupo(e.target.value)} placeholder="ex.: 9957" />
@@ -962,7 +656,7 @@ function EmbraconSimulator(p: EmbraconProps) {
         </CardContent>
       </Card>
 
-      {/* Plano */}
+      {/* Configurações do Plano */}
       {p.leadId ? (
         <>
           <Card>
@@ -970,46 +664,29 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Segmento</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.segmento}
-                  onChange={(e) => p.setSegmento(e.target.value)}
-                >
-                  <option value="">Selecione o segmento</option>
-                  {Array.from(new Set(p.adminTables.map(t => t.segmento))).map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                <Select value={p.segmento} onValueChange={(v) => { p.setSegmento(v); p.setTabelaId(""); }}>
+                  <SelectTrigger><SelectValue placeholder="Selecione o segmento" /></SelectTrigger>
+                  <SelectContent>
+                    {segmentos.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>
                 <Label>Tabela</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.nomeTabela}
-                  disabled={!p.segmento}
-                  onChange={(e) => p.setNomeTabela(e.target.value)}
-                >
-                  <option value="">{p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}</option>
-                  {p.nomesTabelaSegmento.map((n) => (<option key={n} value={n}>{n}</option>))}
-                </select>
+                <Select value={p.tabelaId} onValueChange={p.setTabelaId} disabled={!p.segmento}>
+                  <SelectTrigger><SelectValue placeholder="Selecione a tabela" /></SelectTrigger>
+                  <SelectContent>
+                    {p.tablesBySegment.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.nome_tabela}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>
                 <Label>Prazo Até</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.tabelaId}
-                  disabled={!p.nomeTabela}
-                  onChange={(e) => p.setTabelaId(e.target.value)}
-                >
-                  <option value="">{p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}</option>
-                  {p.variantesDaTabela.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR {pctHuman(t.fundo_reserva_pct)}
-                    </option>
-                  ))}
-                </select>
+                <Input value={p.prazoAte || ""} readOnly />
               </div>
 
               <div>
@@ -1019,34 +696,53 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* Venda */}
+          {/* Configurações da Venda */}
           <Card>
             <CardHeader><CardTitle>Configurações da Venda</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Valor do Crédito</Label>
-                <MoneyInput value={p.credito || 0} onChange={p.setCredito} />
+                <Input
+                  inputMode="numeric"
+                  value={p.creditoText}
+                  onChange={(e) => {
+                    const val = parseMoney(e.target.value);
+                    p.setCreditoText(brMoney(val));
+                  }}
+                  onFocus={(e) => {
+                    // ao focar, tira símbolo para facilitar digitação
+                    const val = parseMoney(e.target.value);
+                    e.currentTarget.value = String(val.toFixed(2)).replace(".", ",");
+                  }}
+                  onBlur={(e) => {
+                    const n = Number(e.currentTarget.value.replace(/\./g, "").replace(",", "."));
+                    const val = isFinite(n) ? n : 0;
+                    p.setCreditoText(brMoney(val));
+                  }}
+                  placeholder="R$ 0,00"
+                />
               </div>
 
               <div>
                 <Label>Prazo da Venda (meses)</Label>
-                <Input type="number" value={p.prazoVenda || ""} onChange={(e) => p.setPrazoVenda(Number(e.target.value))} />
+                <Input
+                  type="number"
+                  value={p.prazoVenda || ""}
+                  onChange={(e) => p.setPrazoVenda(Number(e.target.value))}
+                />
                 {p.prazoAviso && <p className="text-xs text-yellow-600 mt-1">{p.prazoAviso}</p>}
               </div>
 
               <div>
                 <Label>Forma de Contratação</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.forma}
-                  disabled={!p.tabelaSelecionada}
-                  onChange={(e) => p.setForma(e.target.value as any)}
-                >
-                  <option value="">Selecione</option>
-                  {p.tabelaSelecionada?.contrata_parcela_cheia && <option value="Parcela Cheia">Parcela Cheia</option>}
-                  {p.tabelaSelecionada?.contrata_reduzida_25 && <option value="Reduzida 25%">Reduzida 25%</option>}
-                  {p.tabelaSelecionada?.contrata_reduzida_50 && <option value="Reduzida 50%">Reduzida 50%</option>}
-                </select>
+                <Select value={p.forma} onValueChange={(v) => p.setForma(v as any)} disabled={!p.tabelaSelecionada}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {p.tabelaSelecionada?.contrata_parcela_cheia && <SelectItem value="Parcela Cheia">Parcela Cheia</SelectItem>}
+                    {p.tabelaSelecionada?.contrata_reduzida_25 && <SelectItem value="Reduzida 25%">Reduzida 25%</SelectItem>}
+                    {p.tabelaSelecionada?.contrata_reduzida_50 && <SelectItem value="Reduzida 50%">Reduzida 50%</SelectItem>}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>
@@ -1054,14 +750,14 @@ function EmbraconSimulator(p: EmbraconProps) {
                 <div className="flex gap-2">
                   <Button
                     type="button"
-                    className={p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"}
+                    variant={p.seguroPrest ? "destructive" : "secondary"}
                     onClick={() => p.setSeguroPrest(true)}
                   >
                     Sim
                   </Button>
                   <Button
                     type="button"
-                    className={!p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"}
+                    variant={!p.seguroPrest ? "destructive" : "secondary"}
                     onClick={() => p.setSeguroPrest(false)}
                   >
                     Não
@@ -1080,9 +776,11 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* Até a contemplação */}
+          {/* Plano até a contemplação */}
           <Card>
-            <CardHeader><CardTitle>Plano de Pagamento até a Contemplação</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Plano de Pagamento até a Contemplação</CardTitle>
+            </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div>
                 <Label>
@@ -1098,49 +796,100 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* Lance */}
+          {/* Configurações do lance */}
           <Card>
             <CardHeader><CardTitle>Configurações do Lance</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div>
                 <Label>Lance Ofertado (%)</Label>
-                <PercentInput valueDecimal={p.lanceOfertPct} onChangeDecimal={p.setLanceOfertPct} />
+                <Input
+                  inputMode="decimal"
+                  value={p.lanceOfertPctText}
+                  onChange={(e) => p.setLanceOfertPctText(e.target.value)}
+                />
               </div>
               <div>
                 <Label>Lance Embutido (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceEmbutPct}
-                  onChangeDecimal={(d) => { if (d > 0.25) { alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%."); p.setLanceEmbutPct(0.25); } else { p.setLanceEmbutPct(d); } }}
-                  maxDecimal={0.25}
+                <Input
+                  inputMode="decimal"
+                  value={p.lanceEmbutPctText}
+                  onChange={(e) => {
+                    const frac = inputToPct(e.target.value);
+                    if (frac > 0.25) {
+                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25,0000%.");
+                      p.setLanceEmbutPctText("25,0000");
+                    } else {
+                      p.setLanceEmbutPctText(e.target.value);
+                    }
+                  }}
                 />
               </div>
               <div>
                 <Label>Parcela da Contemplação</Label>
-                <Input type="number" value={p.parcContemplacao} onChange={(e) => p.setParcContemplacao(Math.max(1, Number(e.target.value)))} />
+                <Input
+                  type="number"
+                  value={p.parcContemplacao}
+                  onChange={(e) => p.setParcContemplacao(Math.max(1, Number(e.target.value)))}
+                />
                 <p className="text-xs text-muted-foreground mt-1">Deve ser menor que o Prazo da Venda.</p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Pós */}
+          {/* Pós-contemplação */}
           <Card>
             <CardHeader><CardTitle>Plano de Pagamento após a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
-              <div><Label>Lance Ofertado</Label><Input value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""} readOnly /></div>
-              <div><Label>Lance Embutido</Label><Input value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""} readOnly /></div>
-              <div><Label>Lance Próprio</Label><Input value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""} readOnly /></div>
-              <div><Label>Lance Percebido (%)</Label><Input value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""} readOnly /></div>
-              <div><Label>Novo Crédito</Label><Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly /></div>
-              <div><Label>Nova Parcela (sem limite)</Label><Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly /></div>
-              <div><Label>Parcela Limitante</Label><Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly /></div>
-              <div><Label>Parcela Escolhida</Label><Input value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""} readOnly /></div>
-              <div><Label>Novo Prazo (meses)</Label><Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly /></div>
+              <div>
+                <Label>Lance Ofertado</Label>
+                <Input value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""} readOnly />
+              </div>
+              <div>
+                <Label>Lance Embutido</Label>
+                <Input value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""} readOnly />
+              </div>
+              <div>
+                <Label>Lance Próprio</Label>
+                <Input value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""} readOnly />
+              </div>
+
+              <div>
+                <Label>Lance Percebido (%)</Label>
+                <Input value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""} readOnly />
+              </div>
+              <div>
+                <Label>Novo Crédito</Label>
+                <Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly />
+              </div>
+              <div>
+                <Label>Nova Parcela (sem limite)</Label>
+                <Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly />
+              </div>
+
+              <div>
+                <Label>Parcela Limitante</Label>
+                <Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly />
+              </div>
+              <div>
+                <Label>Parcela Escolhida</Label>
+                <Input value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""} readOnly />
+              </div>
+              {p.calc?.segundaParcelaComAntecipacao > 0 && (
+                <div>
+                  <Label>Parcela 2 (c/ antecipação)</Label>
+                  <Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly />
+                </div>
+              )}
+              <div>
+                <Label>Novo Prazo (meses)</Label>
+                <Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly />
+              </div>
             </CardContent>
           </Card>
 
           {/* Ações */}
           <div className="flex items-center gap-3">
-            <Button disabled={!p.calc || p.salvando} onClick={p.salvar} className="h-10 rounded-2xl px-4">
+            <Button disabled={!p.calc || p.salvando} onClick={p.salvar}>
               {p.salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
             </Button>
@@ -1150,6 +899,360 @@ function EmbraconSimulator(p: EmbraconProps) {
       ) : (
         <div className="text-sm text-muted-foreground">Selecione um lead para abrir o simulador.</div>
       )}
+    </div>
+  );
+}
+
+/* =========================================================
+   Overlay de Gerenciamento de Tabelas (lista + edição + paginação)
+   ========================================================= */
+function TablesManager({
+  onClose,
+  adminId,
+  tables,
+  onReload,
+}: {
+  onClose: () => void;
+  adminId: string;
+  tables: SimTable[];
+  onReload: () => Promise<void>;
+}) {
+  const [editing, setEditing] = useState<SimTable | null>(null);
+  const [creating, setCreating] = useState<boolean>(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  const items = useMemo(
+    () => tables.filter((t) => t.admin_id === adminId),
+    [tables, adminId]
+  );
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const pageItems = items.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [totalPages, page]);
+
+  async function remove(id: string) {
+    if (!confirm("Excluir esta tabela?")) return;
+    const { error } = await supabase.from("sim_tables").delete().eq("id", id);
+    if (error) {
+      alert("Erro ao excluir: " + error.message);
+    } else {
+      await onReload();
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-start justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl">
+        <div className="flex items-center justify-between border-b p-4">
+          <h3 className="text-lg font-semibold">Gerenciar Tabelas</h3>
+          <Button variant="ghost" onClick={onClose}><X className="h-5 w-5" /></Button>
+        </div>
+
+        <div className="p-4">
+          {/* Lista + Paginação */}
+          {!editing && !creating && (
+            <>
+              <div className="flex justify-between mb-3">
+                <div className="text-sm text-muted-foreground">
+                  {items.length} tabela(s) • página {page} de {totalPages}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => setCreating(true)}
+                    className="rounded-2xl"
+                  >
+                    <Plus className="h-4 w-4 mr-1" /> Nova Tabela
+                  </Button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-muted-foreground">
+                      <th className="py-2 pr-2">Segmento</th>
+                      <th className="py-2 pr-2">Tabela</th>
+                      <th className="py-2 pr-2">Prazo</th>
+                      <th className="py-2 pr-2">% Adm</th>
+                      <th className="py-2 pr-2">% FR</th>
+                      <th className="py-2 pr-2">% Antecip</th>
+                      <th className="py-2 pr-2">Parc Ant</th>
+                      <th className="py-2 pr-2">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageItems.map((t) => (
+                      <tr key={t.id} className="border-t">
+                        <td className="py-2 pr-2">{t.segmento}</td>
+                        <td className="py-2 pr-2">{t.nome_tabela}</td>
+                        <td className="py-2 pr-2">{t.prazo_limite}</td>
+                        <td className="py-2 pr-2">{pctHuman(t.taxa_adm_pct)}</td>
+                        <td className="py-2 pr-2">{pctHuman(t.fundo_reserva_pct)}</td>
+                        <td className="py-2 pr-2">{pctHuman(t.antecip_pct)}</td>
+                        <td className="py-2 pr-2">{t.antecip_parcelas}</td>
+                        <td className="py-2 pr-2">
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="secondary" onClick={() => setEditing(t)}>
+                              <Pencil className="h-4 w-4 mr-1" /> Editar
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => remove(t.id)}>
+                              <Trash2 className="h-4 w-4 mr-1" /> Excluir
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {pageItems.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-6 text-center text-muted-foreground">
+                          Nenhuma tabela nesta página.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center justify-between mt-4">
+                <Button
+                  variant="secondary"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
+                </Button>
+                <div className="text-sm">
+                  Página {page} de {totalPages}
+                </div>
+                <Button
+                  variant="secondary"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Próxima <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </>
+          )}
+
+          {(editing || creating) && (
+            <TableForm
+              adminId={adminId}
+              initial={editing ?? undefined}
+              onCancel={() => { setEditing(null); setCreating(false); }}
+              onSaved={async () => { setEditing(null); setCreating(false); await onReload(); }}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TableForm({
+  adminId,
+  initial,
+  onCancel,
+  onSaved,
+}: {
+  adminId: string;
+  initial?: SimTable;
+  onCancel: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [form, setForm] = useState<Partial<SimTable>>(
+    initial ?? {
+      admin_id: adminId,
+      segmento: "",
+      nome_tabela: "",
+      faixa_min: 0,
+      faixa_max: 0,
+      prazo_limite: 0,
+      taxa_adm_pct: 0,
+      fundo_reserva_pct: 0,
+      antecip_pct: 0,
+      antecip_parcelas: 0,
+      limitador_parcela_pct: 0,
+      seguro_prest_pct: 0,
+      permite_lance_embutido: true,
+      permite_lance_fixo_25: true,
+      permite_lance_fixo_50: true,
+      permite_lance_livre: true,
+      contrata_parcela_cheia: true,
+      contrata_reduzida_25: true,
+      contrata_reduzida_50: true,
+      indice_correcao: ["IPCA"],
+    }
+  );
+
+  const isEdit = !!initial;
+
+  async function save() {
+    const payload = { ...form, admin_id: adminId } as any;
+    // normaliza percentuais digitados como 22,0000 -> fracionário
+    const pctKeys: (keyof SimTable)[] = [
+      "taxa_adm_pct",
+      "fundo_reserva_pct",
+      "antecip_pct",
+      "limitador_parcela_pct",
+      "seguro_prest_pct",
+    ];
+    pctKeys.forEach((k) => {
+      const v = (payload[k] ?? 0) as number;
+      // se veio >= 1, assumimos que usou 22 para 22%
+      if (v > 1.0000001) payload[k] = Number(v) / 100;
+    });
+
+    if (isEdit) {
+      const { error } = await supabase.from("sim_tables").update(payload).eq("id", initial!.id);
+      if (error) return alert("Erro ao salvar: " + error.message);
+    } else {
+      const { error } = await supabase.from("sim_tables").insert(payload);
+      if (error) return alert("Erro ao salvar tabela: " + error.message);
+    }
+    await onSaved();
+  }
+
+  return (
+    <div className="bg-muted/40 rounded-xl p-4">
+      <div className="grid gap-3 md:grid-cols-2">
+        <div>
+          <Label>Segmento</Label>
+          <Input value={form.segmento || ""} onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value }))} />
+        </div>
+        <div>
+          <Label>Nome da Tabela</Label>
+          <Input value={form.nome_tabela || ""} onChange={(e) => setForm((f) => ({ ...f, nome_tabela: e.target.value }))} />
+        </div>
+
+        <div>
+          <Label>Faixa (mín)</Label>
+          <Input
+            value={String(form.faixa_min ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) }))}
+          />
+        </div>
+        <div>
+          <Label>Faixa (máx)</Label>
+          <Input
+            value={String(form.faixa_max ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) }))}
+          />
+        </div>
+
+        <div>
+          <Label>Prazo Limite (meses)</Label>
+          <Input
+            value={String(form.prazo_limite ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, prazo_limite: Number(e.target.value) }))}
+          />
+        </div>
+        <div>
+          <Label>% Taxa Adm</Label>
+          <Input
+            value={String(form.taxa_adm_pct ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, taxa_adm_pct: Number(e.target.value) }))}
+            placeholder="22 (para 22%)"
+          />
+        </div>
+
+        <div>
+          <Label>% Fundo Reserva</Label>
+          <Input
+            value={String(form.fundo_reserva_pct ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, fundo_reserva_pct: Number(e.target.value) }))}
+          />
+        </div>
+        <div>
+          <Label>% Antecipação da Adm</Label>
+          <Input
+            value={String(form.antecip_pct ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, antecip_pct: Number(e.target.value) }))}
+          />
+        </div>
+
+        <div>
+          <Label>Parcelas da Antecipação</Label>
+          <Input
+            value={String(form.antecip_parcelas ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, antecip_parcelas: Number(e.target.value) }))}
+          />
+        </div>
+        <div>
+          <Label>% Limitador Parcela</Label>
+          <Input
+            value={String(form.limitador_parcela_pct ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, limitador_parcela_pct: Number(e.target.value) }))}
+          />
+        </div>
+
+        <div>
+          <Label>% Seguro por parcela</Label>
+          <Input
+            value={String(form.seguro_prest_pct ?? 0)}
+            onChange={(e) => setForm((f) => ({ ...f, seguro_prest_pct: Number(e.target.value) }))}
+          />
+        </div>
+
+        <div className="md:col-span-2">
+          <Label>Lances Permitidos</Label>
+          <div className="flex flex-wrap gap-3 mt-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!form.permite_lance_embutido}
+                onChange={(e) => setForm((f) => ({ ...f, permite_lance_embutido: e.target.checked }))} /> Embutido
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!form.permite_lance_fixo_25}
+                onChange={(e) => setForm((f) => ({ ...f, permite_lance_fixo_25: e.target.checked }))} /> Fixo 25%
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!form.permite_lance_fixo_50}
+                onChange={(e) => setForm((f) => ({ ...f, permite_lance_fixo_50: e.target.checked }))} /> Fixo 50%
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!form.permite_lance_livre}
+                onChange={(e) => setForm((f) => ({ ...f, permite_lance_livre: e.target.checked }))} /> Livre
+            </label>
+          </div>
+        </div>
+
+        <div className="md:col-span-2">
+          <Label>Formas de Contratação</Label>
+          <div className="flex flex-wrap gap-3 mt-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!form.contrata_parcela_cheia}
+                onChange={(e) => setForm((f) => ({ ...f, contrata_parcela_cheia: e.target.checked }))} /> Parcela Cheia
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!form.contrata_reduzida_25}
+                onChange={(e) => setForm((f) => ({ ...f, contrata_reduzida_25: e.target.checked }))} /> Reduzida 25%
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!form.contrata_reduzida_50}
+                onChange={(e) => setForm((f) => ({ ...f, contrata_reduzida_50: e.target.checked }))} /> Reduzida 50%
+            </label>
+          </div>
+        </div>
+
+        <div className="md:col-span-2">
+          <Label>Índice de Correção (separe por vírgula)</Label>
+          <Input
+            value={(form.indice_correcao ?? []).join(",")}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, indice_correcao: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) }))
+            }
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-2 justify-end mt-4">
+        <Button variant="secondary" onClick={onCancel}>Cancelar</Button>
+        <Button onClick={save}>{isEdit ? "Salvar" : "Salvar Tabela"}</Button>
+      </div>
     </div>
   );
 }

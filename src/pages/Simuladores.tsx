@@ -32,12 +32,12 @@ type SimTable = {
   faixa_min: number;
   faixa_max: number;
   prazo_limite: number;
-  taxa_adm_pct: number; // fracionário (0.22)
-  fundo_reserva_pct: number; // fracionário
-  antecip_pct: number; // fracionário
-  antecip_parcelas: number; // 0|1|2
-  limitador_parcela_pct: number; // fracionário (0.01)
-  seguro_prest_pct: number; // fracionário por parcela
+  taxa_adm_pct: number;
+  fundo_reserva_pct: number;
+  antecip_pct: number;
+  antecip_parcelas: number;
+  limitador_parcela_pct: number;
+  seguro_prest_pct: number;
   permite_lance_embutido: boolean;
   permite_lance_fixo_25: boolean;
   permite_lance_fixo_50: boolean;
@@ -51,7 +51,7 @@ type SimTable = {
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
 /* =========================================================
-   Helpers de formatação
+   Helpers
    ========================================================= */
 const brMoney = (v: number) =>
   isFinite(v)
@@ -63,15 +63,13 @@ const brMoney = (v: number) =>
     : "";
 
 const parseMoney = (s: string) => {
-  // remove tudo que não é dígito
   const onlyDigits = s.replace(/\D+/g, "");
   if (!onlyDigits) return 0;
-  // interpreta em centavos
   return Number(onlyDigits) / 100;
 };
 
 const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
-const pctToInput = (v: number) => (v * 100).toFixed(4).replace(".", ","); // 0.25 -> "25,0000"
+const pctToInput = (v: number) => (v * 100).toFixed(4).replace(".", ",");
 const inputToPct = (s: string) => {
   const norm = s.replace(/\./g, "").replace(",", ".");
   const n = Number(norm);
@@ -82,14 +80,13 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-/** Regras especiais do limitador (moto >= 20k vira 1%) */
 function resolveLimitadorPct(baseLimitadorPct: number, segmento: string, credito: number): number {
   if (segmento?.toLowerCase() === "motocicleta" && credito >= 20000) return 0.01;
   return baseLimitadorPct;
 }
 
 /* =========================================================
-   Cálculo
+   Cálculo (com regra especial 2ª parcela c/ antecipação)
    ========================================================= */
 type CalcInput = {
   credito: number;
@@ -130,29 +127,21 @@ function calcularSimulacao(i: CalcInput) {
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
-  // TA efetiva que vai para a parcela mensal
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
-
-  // Valor de categoria
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
-  // Fator do Fundo Comum conforme contratação
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-  // Parcela base (SEM seguro)
   const baseMensalSemSeguro =
     (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
-  // Seguro apenas para exibição
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
-  // Antecipação
   const antecipTotal = C * antecipPct;
   const antecipPorParcela =
     antecipParcelas > 0 ? antecipTotal / antecipParcelas : 0;
 
-  // Exibição até a contemplação
   const parcelaAte =
     baseMensalSemSeguro +
     (antecipParcelas > 0 ? antecipPorParcela : 0) +
@@ -160,29 +149,24 @@ function calcularSimulacao(i: CalcInput) {
 
   const parcelaDemais = baseMensalSemSeguro + seguroMensal;
 
-  // Total pago até a contemplação (SEM seguro)
   const pagoAteContemplacaoSemSeguro =
     baseMensalSemSeguro * parcelasPagas +
     (antecipParcelas > 0
       ? antecipPorParcela * Math.min(parcelasPagas, antecipParcelas)
       : 0);
 
-  // Lances
   const lanceOfertadoValor = C * lanceOfertPct;
   const lanceEmbutidoValor = C * lanceEmbutPct;
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
-  // Saldo após 1ª parcela/assembleia e lance (SEM seguro)
   const saldoDevedorFinal = Math.max(
     0,
     valorCategoria - pagoAteContemplacaoSemSeguro - lanceOfertadoValor
   );
 
-  // Nova parcela sem limite (SEM seguro)
   const novaParcelaSemLimite = saldoDevedorFinal / Math.max(1, prazoRestante);
 
-  // Limitador
   const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
   const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
 
@@ -193,7 +177,7 @@ function calcularSimulacao(i: CalcInput) {
     ? parcelaLimitante
     : novaParcelaSemLimite;
 
-  // ===== Regra especial: antecipação em 2 parcelas + contemplação na 1ª =====
+  // Regra especial
   let segundaParcelaComAntecipacao = 0;
   let novoPrazo: number;
 
@@ -203,17 +187,14 @@ function calcularSimulacao(i: CalcInput) {
       0,
       saldoDevedorFinal - segundaParcelaComAntecipacao
     );
-    // usa ceil conforme combinado
     novoPrazo = Math.ceil(saldoAposSegunda / Math.max(parcelaEscolhida, 1e-9));
   } else {
-    // regra padrão
     novoPrazo = aplicouLimitador
       ? Math.round(saldoDevedorFinal / Math.max(parcelaEscolhida, 1e-9))
       : Math.max(1, prazoRestante);
   }
 
   return {
-    // exibição / memória
     valorCategoria,
     TA_efetiva,
     fundoComumFactor,
@@ -221,22 +202,19 @@ function calcularSimulacao(i: CalcInput) {
     antecipPorParcela,
     seguroMensal,
 
-    // até contemplação
     parcelaAte,
     parcelaDemais,
 
-    // lances
     lanceOfertadoValor,
     lanceEmbutidoValor,
     lanceProprioValor,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
 
-    // pós
     novaParcelaSemLimite,
     parcelaLimitante,
     parcelaEscolhida,
-    segundaParcelaComAntecipacao, // 0 quando não aplicável
+    segundaParcelaComAntecipacao,
     saldoDevedorFinal,
     novoPrazo,
   };
@@ -252,7 +230,6 @@ export default function SimuladoresPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
 
-  // modal de tabelas
   const [managerOpen, setManagerOpen] = useState(false);
 
   // Seleção Embracon
@@ -265,7 +242,7 @@ export default function SimuladoresPage() {
   const [prazoAte, setPrazoAte] = useState<number>(0);
   const [faixa, setFaixa] = useState<{ min: number; max: number } | null>(null);
 
-  const [creditoText, setCreditoText] = useState<string>(""); // exibido como R$
+  const [creditoText, setCreditoText] = useState<string>("");
   const credito = parseMoney(creditoText);
 
   const [prazoVenda, setPrazoVenda] = useState<number>(0);
@@ -285,7 +262,6 @@ export default function SimuladoresPage() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // Carregar admins, tables e leads
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -303,40 +279,32 @@ export default function SimuladoresPage() {
     })();
   }, []);
 
-  // Lead selecionado
   useEffect(() => {
     const found = leads.find((x) => x.id === leadId);
     setLeadInfo(found ? { nome: found.nome, telefone: found.telefone } : null);
   }, [leadId, leads]);
 
-  // Tabelas do admin ativo
   const adminTables = useMemo(
     () => tables.filter((t) => t.admin_id === activeAdminId),
     [tables, activeAdminId]
   );
-
-  // Tabelas por segmento escolhido
   const tablesBySegment = useMemo(
     () => adminTables.filter((t) => (segmento ? t.segmento === segmento : true)),
     [adminTables, segmento]
   );
-
   const tabelaSelecionada = useMemo(
     () => tables.find((t) => t.id === tabelaId) || null,
     [tables, tabelaId]
   );
 
-  // Ao escolher tabela, propaga prazo e faixa
   useEffect(() => {
     if (!tabelaSelecionada) return;
     setPrazoAte(tabelaSelecionada.prazo_limite);
     setFaixa({ min: tabelaSelecionada.faixa_min, max: tabelaSelecionada.faixa_max });
-    // Ajusta forma permitida
     if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25) setForma("Parcela Cheia");
     if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
   }, [tabelaSelecionada]);
 
-  // Validações rápidas do input
   useEffect(() => {
     if (lanceImputPctRaw !== lanceEmbutPct) {
       setLanceEmbutPctText(pctToInput(lanceEmbutPct));
@@ -355,7 +323,6 @@ export default function SimuladoresPage() {
     parcContemplacao > 0 &&
     parcContemplacao < prazoVenda;
 
-  // Recalcular
   useEffect(() => {
     if (!tabelaSelecionada || !podeCalcular) {
       setCalc(null);
@@ -387,7 +354,7 @@ export default function SimuladoresPage() {
     lanceOfertPct,
     lanceEmbutPct,
     parcContemplacao,
-  ]); // eslint-disable-line
+  ]);
 
   async function salvarSimulacao() {
     if (!tabelaSelecionada || !calc) return;
@@ -437,7 +404,6 @@ export default function SimuladoresPage() {
     setSimCode(data?.code ?? null);
   }
 
-  // overlay: ESC fecha
   useEffect(() => {
     if (!managerOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -466,7 +432,6 @@ export default function SimuladoresPage() {
               </TabsTrigger>
             ))}
           </TabsList>
-          {/* conteúdo dos tabs está mais embaixo dentro do Card */}
         </Tabs>
 
         <div className="flex gap-2">
@@ -710,7 +675,6 @@ function EmbraconSimulator(p: EmbraconProps) {
                     p.setCreditoText(brMoney(val));
                   }}
                   onFocus={(e) => {
-                    // ao focar, tira símbolo para facilitar digitação
                     const val = parseMoney(e.target.value);
                     e.currentTarget.value = String(val.toFixed(2)).replace(".", ",");
                   }}
@@ -748,16 +712,19 @@ function EmbraconSimulator(p: EmbraconProps) {
               <div>
                 <Label>Seguro Prestamista</Label>
                 <div className="flex gap-2">
+                  {/* sem variant "destructive": aplico vermelho via className */}
                   <Button
                     type="button"
-                    variant={p.seguroPrest ? "destructive" : "secondary"}
+                    variant="secondary"
+                    className={p.seguroPrest ? "bg-red-600 text-white hover:bg-red-600" : ""}
                     onClick={() => p.setSeguroPrest(true)}
                   >
                     Sim
                   </Button>
                   <Button
                     type="button"
-                    variant={!p.seguroPrest ? "destructive" : "secondary"}
+                    variant="secondary"
+                    className={!p.seguroPrest ? "bg-red-600 text-white hover:bg-red-600" : ""}
                     onClick={() => p.setSeguroPrest(false)}
                   >
                     Não
@@ -904,7 +871,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 }
 
 /* =========================================================
-   Overlay de Gerenciamento de Tabelas (lista + edição + paginação)
+   Overlay: Gerenciar Tabelas
    ========================================================= */
 function TablesManager({
   onClose,
@@ -948,11 +915,11 @@ function TablesManager({
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl">
         <div className="flex items-center justify-between border-b p-4">
           <h3 className="text-lg font-semibold">Gerenciar Tabelas</h3>
-          <Button variant="ghost" onClick={onClose}><X className="h-5 w-5" /></Button>
+          {/* sem variant 'ghost' */}
+          <Button variant="secondary" onClick={onClose}><X className="h-5 w-5" /></Button>
         </div>
 
         <div className="p-4">
-          {/* Lista + Paginação */}
           {!editing && !creating && (
             <>
               <div className="flex justify-between mb-3">
@@ -999,7 +966,7 @@ function TablesManager({
                             <Button size="sm" variant="secondary" onClick={() => setEditing(t)}>
                               <Pencil className="h-4 w-4 mr-1" /> Editar
                             </Button>
-                            <Button size="sm" variant="destructive" onClick={() => remove(t.id)}>
+                            <Button size="sm" variant="secondary" className="bg-red-600 text-white hover:bg-red-600" onClick={() => remove(t.id)}>
                               <Trash2 className="h-4 w-4 mr-1" /> Excluir
                             </Button>
                           </div>
@@ -1093,7 +1060,6 @@ function TableForm({
 
   async function save() {
     const payload = { ...form, admin_id: adminId } as any;
-    // normaliza percentuais digitados como 22,0000 -> fracionário
     const pctKeys: (keyof SimTable)[] = [
       "taxa_adm_pct",
       "fundo_reserva_pct",
@@ -1103,7 +1069,6 @@ function TableForm({
     ];
     pctKeys.forEach((k) => {
       const v = (payload[k] ?? 0) as number;
-      // se veio >= 1, assumimos que usou 22 para 22%
       if (v > 1.0000001) payload[k] = Number(v) / 100;
     });
 
@@ -1147,7 +1112,7 @@ function TableForm({
         <div>
           <Label>Prazo Limite (meses)</Label>
           <Input
-            value={String(form.prazo_limite ?? 0)}
+            value={String(form.prazo_limite ?? 0))}
             onChange={(e) => setForm((f) => ({ ...f, prazo_limite: Number(e.target.value) }))}
           />
         </div>

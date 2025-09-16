@@ -12,7 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Loader2, Plus, Trash2, Pencil, X, ChevronLeft, ChevronRight } from "lucide-react";
 
 /* =========================================================
@@ -21,7 +20,6 @@ import { Loader2, Plus, Trash2, Pencil, X, ChevronLeft, ChevronRight } from "luc
 type UUID = string;
 
 type Lead = { id: UUID; nome: string; telefone?: string | null };
-
 type Admin = { id: UUID; name: string };
 
 type SimTable = {
@@ -49,6 +47,41 @@ type SimTable = {
 };
 
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
+
+/* =========================================================
+   PillTabs (substitui shadcn/ui/tabs para evitar erro no build)
+   ========================================================= */
+function PillTabs({
+  value,
+  onChange,
+  items,
+}: {
+  value: string | null;
+  onChange: (v: string) => void;
+  items: { value: string; label: string }[];
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((it) => {
+        const active = it.value === value;
+        return (
+          <button
+            key={it.value}
+            onClick={() => onChange(it.value)}
+            className={
+              "px-4 py-2 rounded-2xl border transition-colors " +
+              (active
+                ? "bg-consulmax-primary text-white border-consulmax-primary"
+                : "bg-white hover:bg-consulmax-neutral border-gray-200")
+            }
+          >
+            {it.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /* =========================================================
    Helpers
@@ -127,21 +160,28 @@ function calcularSimulacao(i: CalcInput) {
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
+  // TA efetiva p/ parcelamento (antecipação sai daqui)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
+
+  // Valor de categoria (base das regras)
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
+  // Fundo comum (forma de contratação)
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
+  // Parcela base sem seguro
   const baseMensalSemSeguro =
     (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
+  // Antecipação
   const antecipTotal = C * antecipPct;
   const antecipPorParcela =
     antecipParcelas > 0 ? antecipTotal / antecipParcelas : 0;
 
+  // Exibição pré-contemplação
   const parcelaAte =
     baseMensalSemSeguro +
     (antecipParcelas > 0 ? antecipPorParcela : 0) +
@@ -149,35 +189,39 @@ function calcularSimulacao(i: CalcInput) {
 
   const parcelaDemais = baseMensalSemSeguro + seguroMensal;
 
+  // Pago até a contemplação (sem seguro)
   const pagoAteContemplacaoSemSeguro =
     baseMensalSemSeguro * parcelasPagas +
     (antecipParcelas > 0
       ? antecipPorParcela * Math.min(parcelasPagas, antecipParcelas)
       : 0);
 
+  // Lances
   const lanceOfertadoValor = C * lanceOfertPct;
   const lanceEmbutidoValor = C * lanceEmbutPct;
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
+  // Saldo após contemplação
   const saldoDevedorFinal = Math.max(
     0,
     valorCategoria - pagoAteContemplacaoSemSeguro - lanceOfertadoValor
   );
 
+  // Nova parcela sem limite (média)
   const novaParcelaSemLimite = saldoDevedorFinal / Math.max(1, prazoRestante);
 
+  // Limitador
   const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
   const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
-
-  const aplicouLimitador =
-    limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite;
+  const aplicouLimitador = limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite;
 
   const parcelaEscolhida = aplicouLimitador
     ? parcelaLimitante
     : novaParcelaSemLimite;
 
-  // Regra especial
+  // Regra: se antecipação em 2 parcelas e contemplado na 1ª,
+  // somar a antecipação também na 2ª parcela.
   let segundaParcelaComAntecipacao = 0;
   let novoPrazo: number;
 
@@ -232,7 +276,7 @@ export default function SimuladoresPage() {
 
   const [managerOpen, setManagerOpen] = useState(false);
 
-  // Seleção Embracon
+  // Embracon controls
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
   const [grupo, setGrupo] = useState<string>("");
@@ -262,6 +306,7 @@ export default function SimuladoresPage() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
+  // bootstrap
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -421,18 +466,18 @@ export default function SimuladoresPage() {
     );
   }
 
+  const adminItems = admins.map((a) => ({ value: a.id, label: a.name }));
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between gap-3">
-        <Tabs value={activeAdminId ?? undefined} onValueChange={(v) => setActiveAdminId(v)} className="flex-1">
-          <TabsList className="flex flex-wrap gap-2">
-            {admins.map((a) => (
-              <TabsTrigger key={a.id} value={a.id} className="rounded-2xl px-4 py-2">
-                {a.name}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <div className="flex-1">
+          <PillTabs
+            value={activeAdminId}
+            onChange={(v) => setActiveAdminId(v)}
+            items={adminItems}
+          />
+        </div>
 
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => setManagerOpen(true)} className="rounded-2xl px-4 py-2">
@@ -451,9 +496,9 @@ export default function SimuladoresPage() {
             <CardTitle>Simuladores</CardTitle>
           </CardHeader>
           <CardContent>
-            <Tabs value={activeAdminId ?? undefined} onValueChange={(v) => setActiveAdminId(v)}>
-              {admins.map((a) => (
-                <TabsContent key={a.id} value={a.id}>
+            {admins.map((a) =>
+              a.id === activeAdminId ? (
+                <div key={a.id}>
                   {a.name === "Embracon" ? (
                     <EmbraconSimulator
                       leads={leads}
@@ -497,9 +542,9 @@ export default function SimuladoresPage() {
                       Em breve: simulador para <strong>{a.name}</strong>.
                     </div>
                   )}
-                </TabsContent>
-              ))}
-            </Tabs>
+                </div>
+              ) : null
+            )}
           </CardContent>
         </Card>
 
@@ -539,7 +584,7 @@ export default function SimuladoresPage() {
           tables={adminTables}
           onReload={async () => {
             const { data } = await supabase.from("sim_tables").select("*");
-            setTables(data ?? []);
+            (data ?? []).length && setTables(data as any);
           }}
         />
       )}

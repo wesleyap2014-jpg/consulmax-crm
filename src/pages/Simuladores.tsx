@@ -97,7 +97,9 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-/** Regra alinhada com os exemplos do Excel enviados + tratamento “2ª parcela com antecipação” */
+/** Regra alinhada com os exemplos do Excel + tratamento “2ª parcela com antecipação” e
+ * regra especial para Serviços e Moto < 20k: não reduz parcela, apenas o prazo.
+ */
 function calcularSimulacao(i: CalcInput) {
   const {
     credito: C,
@@ -117,6 +119,11 @@ function calcularSimulacao(i: CalcInput) {
   const prazo = Math.max(1, Math.floor(prazoVenda));
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
+
+  // Flags de categoria
+  const segLower = (segmento || "").toLowerCase();
+  const isServico = segLower.includes("serv");
+  const isMoto = segLower.includes("moto");
 
   // TA efetiva (parte que vai para as parcelas mensais)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
@@ -169,12 +176,22 @@ function calcularSimulacao(i: CalcInput) {
   const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
   const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
 
-  const aplicouLimitador =
-    limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite;
+  // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
+  const manterParcela = isServico || (isMoto && C < 20000);
 
-  const parcelaEscolhida = aplicouLimitador
-    ? parcelaLimitante
-    : novaParcelaSemLimite;
+  let aplicouLimitador = false;
+  let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
+
+  if (!manterParcela) {
+    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
+    if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
+      aplicouLimitador = true;
+      parcelaEscolhida = parcelaLimitante;
+    } else {
+      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
+      parcelaEscolhida = novaParcelaSemLimite;
+    }
+  }
 
   // Caso especial: antecipação em 2x e contemplação na 1ª parcela
   const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
@@ -182,15 +199,22 @@ function calcularSimulacao(i: CalcInput) {
     ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
     : null;
 
-  // NOVO PRAZO
+  // NOVO PRAZO (regra unificada)
+  // - Se a parcela escolhida for igual à novaParcelaSemLimite e não há 2ª com antecipação, mantém prazoRestante.
+  // - Caso contrário, recalcula pelo saldo / parcelaEscolhida (considerando a 2ª com antecipação quando existir).
+  const parcelasIguais =
+    Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
+
   let novoPrazo: number;
-  if (aplicouLimitador && has2aAntecipDepois) {
-    // saldo após pagar a 2ª parcela com antecipação
-    const saldoApos2a = Math.max(0, saldoDevedorFinal - (parcelaEscolhida + antecipAdicionalCada));
-    novoPrazo = Math.max(1, Math.ceil(saldoApos2a / parcelaEscolhida));
+  if (parcelasIguais && !has2aAntecipDepois) {
+    novoPrazo = prazoRestante;
   } else {
-    // sem limite: mantém o prazoRestante; com limite sem caso especial: arredonda por segurança
-    novoPrazo = aplicouLimitador ? Math.max(1, Math.round(saldoDevedorFinal / parcelaEscolhida)) : prazoRestante;
+    let saldoParaPrazo = saldoDevedorFinal;
+    if (has2aAntecipDepois) {
+      saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada));
+    }
+    // arredonda para cima para não deixar fração de mês
+    novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
   }
 
   return {
@@ -490,7 +514,6 @@ export default function Simuladores() {
   const resumoTexto = useMemo(() => {
     if (!tabelaSelecionada || !calc || !podeCalcular) return "";
 
-    // (Alteração 1) tratar “Serviços” -> “serviço” (e padronizar para minúsculo)
     const bem = (() => {
       const seg = (segmento || tabelaSelecionada.segmento || "").toLowerCase();
       if (seg.includes("imó")) return "imóvel";
@@ -603,7 +626,7 @@ ${wa}`
                 }
                 className="h-10 rounded-2xl px-4"
               >
-                <Plus className="h-4 w-4 mr-1" /> Adicionar Administradora
+                <Plus className="h-4 w-4 mr-1" /> Add Administradora
               </Button>
             </>
           )}
@@ -761,7 +784,8 @@ ${wa}`
             </CardHeader>
             <CardContent className="space-y-2">
               <textarea
-                className="w-full h-60 border rounded-md p-3 text-sm"
+                className="w-full h-96 border rounded-md p-3 text-sm leading-relaxed"
+                style={{ lineHeight: "1.6" }}
                 readOnly
                 value={resumoTexto}
                 placeholder="Preencha os campos da simulação para gerar o resumo."
@@ -865,8 +889,18 @@ function TableManagerModal({
   );
 
   async function deletar(id: string) {
-    if (!confirm("Confirmar exclusão desta tabela?")) return;
+    if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
     setBusyId(id);
+
+    // 1) Exclui simulações dependentes (evita erro de FK)
+    const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
+    if (delSims.error) {
+      setBusyId(null);
+      alert("Erro ao excluir simulações vinculadas: " + delSims.error.message);
+      return;
+    }
+
+    // 2) Exclui a tabela
     const { error } = await supabase.from("sim_tables").delete().eq("id", id);
     setBusyId(null);
     if (error) {

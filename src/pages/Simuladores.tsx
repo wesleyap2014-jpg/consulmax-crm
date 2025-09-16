@@ -24,7 +24,7 @@ type SimTable = {
   taxa_adm_pct: number;
   fundo_reserva_pct: number;
   antecip_pct: number;
-  antecip_parcelas: number;         // 0 | 1 | 2
+  antecip_parcelas: number; // 0|1|2
   limitador_parcela_pct: number;
   seguro_prest_pct: number;
   permite_lance_embutido: boolean;
@@ -93,6 +93,7 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
+/** Regra alinhada com os exemplos do Excel enviados */
 function calcularSimulacao(i: CalcInput) {
   const {
     credito: C,
@@ -106,38 +107,75 @@ function calcularSimulacao(i: CalcInput) {
     antecipParcelas,
     lanceOfertPct,
     lanceEmbutPct,
+    parcContemplacao,
   } = i;
 
   const prazo = Math.max(1, Math.floor(prazoVenda));
+  const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
+  const prazoRestante = Math.max(1, prazo - parcelasPagas);
+
+  // TA efetiva (parte que vai para as parcelas mensais)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
+
+  // Valor de categoria (base para saldo + limitador + seguro)
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
-  const fundoComumFactor = forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
-  const baseMensalSemSeguro = (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
+  // Fator do Fundo Comum conforme contratação
+  const fundoComumFactor =
+    forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
+
+  // Parcela base (SEM seguro)
+  const baseMensalSemSeguro =
+    (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
+
+  // Seguro mensal (só soma na parcela, não abate saldo)
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
-  const antecipAdicionalCada = antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
+  // Antecipação (somada nas primeiras 1 ou 2 parcelas)
+  const antecipAdicionalCada =
+    antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
+
+  // Exibição até a contemplação
   const parcelaAte =
-    antecipParcelas === 0
-      ? baseMensalSemSeguro + seguroMensal
-      : baseMensalSemSeguro + seguroMensal + antecipAdicionalCada;
+    (baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0)) +
+    seguroMensal;
   const parcelaDemais = baseMensalSemSeguro + seguroMensal;
 
+  // TOTAL PAGO ATÉ A CONTEMPLAÇÃO (SEM seguro)
+  const totalPagoSemSeguro =
+    baseMensalSemSeguro * parcelasPagas +
+    antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
+
+  // Lances
   const lanceOfertadoValor = C * lanceOfertPct;
   const lanceEmbutidoValor = C * lanceEmbutPct;
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
-  const valorCatNovo = novoCredito * (1 + TA_efetiva + frPct);
-  const prazoRestante = Math.max(1, prazo - Math.max(0, i.parcContemplacao));
-  const novaParcelaSemLimite = valorCatNovo / prazoRestante + seguroMensal;
+  // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
+  const saldoDevedorFinal = Math.max(
+    0,
+    valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
+  );
 
+  // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
+  const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
+
+  // LIMITADOR (sobre valor de categoria)
   const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
   const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
-  const parcelaEscolhida = limitadorBase > 0 ? Math.max(novaParcelaSemLimite, parcelaLimitante) : novaParcelaSemLimite;
 
-  const saldoDevedorFinal = Math.max(0, valorCatNovo - lanceProprioValor);
-  const novoPrazo = Math.max(1, Math.ceil(saldoDevedorFinal / parcelaEscolhida));
+  const aplicouLimitador =
+    limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite;
+
+  const parcelaEscolhida = aplicouLimitador
+    ? parcelaLimitante
+    : novaParcelaSemLimite;
+
+  // NOVO PRAZO
+  const novoPrazo = aplicouLimitador
+    ? Math.round(saldoDevedorFinal / parcelaEscolhida)
+    : prazoRestante;
 
   return {
     valorCategoria,
@@ -148,9 +186,9 @@ function calcularSimulacao(i: CalcInput) {
     lanceProprioValor,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
-    novaParcelaSemLimite,
-    parcelaLimitante,
-    parcelaEscolhida,
+    novaParcelaSemLimite, // (SEM seguro)
+    parcelaLimitante,     // (SEM seguro)
+    parcelaEscolhida,     // (SEM seguro)
     saldoDevedorFinal,
     novoPrazo,
     TA_efetiva,
@@ -264,13 +302,15 @@ export default function Simuladores() {
 
   // nomes de tabela distintos por segmento
   const nomesTabelaSegmento = useMemo(() => {
-    const list = adminTables.filter(t => (segmento ? t.segmento === segmento : true)).map(t => t.nome_tabela);
+    const list = adminTables
+      .filter((t) => (segmento ? t.segmento === segmento : true))
+      .map((t) => t.nome_tabela);
     return Array.from(new Set(list));
   }, [adminTables, segmento]);
 
   // variantes (linhas) do nome escolhido (prazo e taxas diferentes)
   const variantesDaTabela = useMemo(() => {
-    return adminTables.filter(t => t.segmento === segmento && t.nome_tabela === nomeTabela);
+    return adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela);
   }, [adminTables, segmento, nomeTabela]);
 
   const tabelaSelecionada = useMemo(
@@ -391,28 +431,46 @@ export default function Simuladores() {
     <div className="p-6 space-y-4">
       {/* topo: admins + botões */}
       <div className="flex flex-wrap items-center gap-2">
-        {admins.map((a) => (
-          <Button
-            key={a.id}
-            variant={activeAdminId === a.id ? "default" : "secondary"}
-            onClick={() => { setActiveAdminId(a.id); }}
-          >
-            {a.name}
-          </Button>
-        ))}
-        <Button variant="secondary" size="sm" onClick={() => alert("Em breve: adicionar administradora.")}>
-          <Plus className="h-4 w-4 mr-1" /> Adicionar Administradora
-        </Button>
-        {activeAdmin && (
-          <Button variant="secondary" size="sm" onClick={() => setMgrOpen(true)} className="ml-auto">
-            Gerenciar Tabelas
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {admins.map((a) => (
+            <Button
+              key={a.id}
+              variant={activeAdminId === a.id ? "default" : "secondary"}
+              onClick={() => { setActiveAdminId(a.id); }}
+              className="h-10 rounded-2xl px-4"
+            >
+              {a.name}
+            </Button>
+          ))}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {activeAdmin && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setMgrOpen(true)}
+                className="h-10 rounded-2xl px-4"
+              >
+                Gerenciar Tabelas
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => alert("Em breve: adicionar administradora.")}
+                className="h-10 rounded-2xl px-4"
+              >
+                <Plus className="h-4 w-4 mr-1" /> Adicionar Administradora
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador (um pouco menor) */}
+        {/* coluna esquerda: simulador (menor) */}
         <div className="col-span-12 lg:col-span-8">
           <Card>
             <CardHeader><CardTitle>Simuladores</CardTitle></CardHeader>
@@ -480,7 +538,7 @@ export default function Simuladores() {
                     <div className="text-right">{calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}</div>
                     <div>Taxa Adm (total)</div>
                     <div className="text-right">{pctHuman(tabelaSelecionada.taxa_adm_pct)}</div>
-                    <div>TA efetiva (após antecipação)</div>
+                    <div>TA efetiva</div>
                     <div className="text-right">{calc ? pctHuman(calc.TA_efetiva) : "—"}</div>
                     <div>Fundo Reserva</div>
                     <div className="text-right">{pctHuman(tabelaSelecionada.fundo_reserva_pct)}</div>
@@ -514,14 +572,22 @@ export default function Simuladores() {
   );
 }
 
-/* =============== Modal: Gerenciar Tabelas ================= */
-function ModalBase({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+/* =============== Modal: base com ESC para fechar =============== */
+function ModalBase({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="font-semibold">Gerenciador de Tabelas</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted">
+          <div className="font-semibold">{title}</div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -531,6 +597,7 @@ function ModalBase({ children, onClose }: { children: React.ReactNode; onClose: 
   );
 }
 
+/* ============== Modal: Gerenciar Tabelas (com paginação) ============== */
 function TableManagerModal({
   admin,
   allTables,
@@ -547,15 +614,25 @@ function TableManagerModal({
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<SimTable | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  // reset página quando muda a lista
+  useEffect(() => setPage(1), [allTables.length]);
 
   const grouped = useMemo(() => {
-    // agrupar por segmento / nome / prazo
     return [...allTables].sort((a, b) => {
-      const sa = (a.segmento + a.nome_tabela + a.prazo_limite).toLowerCase();
-      const sb = (b.segmento + b.nome_tabela + b.prazo_limite).toLowerCase();
+      const sa = (a.segmento + a.nome_tabela + String(a.prazo_limite)).toLowerCase();
+      const sb = (b.segmento + b.nome_tabela + String(b.prazo_limite)).toLowerCase();
       return sa.localeCompare(sb);
     });
   }, [allTables]);
+
+  const totalPages = Math.max(1, Math.ceil(grouped.length / pageSize));
+  const pageItems = useMemo(
+    () => grouped.slice((page - 1) * pageSize, page * pageSize),
+    [grouped, page]
+  );
 
   async function deletar(id: string) {
     if (!confirm("Confirmar exclusão desta tabela?")) return;
@@ -567,13 +644,13 @@ function TableManagerModal({
   }
 
   return (
-    <ModalBase onClose={onClose}>
+    <ModalBase onClose={onClose} title="Gerenciador de Tabelas">
       <div className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="text-sm text-muted-foreground">
             Admin ativa: <strong>{admin.name}</strong>
           </div>
-          <Button onClick={() => { setEditing(null); setShowForm(true); }}>
+          <Button onClick={() => { setEditing(null); setShowForm(true); }} className="h-10 rounded-2xl px-4">
             <Plus className="h-4 w-4 mr-1" /> Nova Tabela
           </Button>
         </div>
@@ -595,7 +672,7 @@ function TableManagerModal({
               </tr>
             </thead>
             <tbody>
-              {grouped.map((t) => (
+              {pageItems.map((t) => (
                 <tr key={t.id} className="border-t">
                   <td className="p-2">{t.segmento}</td>
                   <td className="p-2">{t.nome_tabela}</td>
@@ -612,6 +689,7 @@ function TableManagerModal({
                         variant="secondary"
                         size="sm"
                         onClick={() => { setEditing(t); setShowForm(true); }}
+                        className="h-9 rounded-xl px-3"
                       >
                         <Pencil className="h-4 w-4 mr-1" /> Editar
                       </Button>
@@ -620,6 +698,7 @@ function TableManagerModal({
                         size="sm"
                         disabled={busyId === t.id}
                         onClick={() => deletar(t.id)}
+                        className="h-9 rounded-xl px-3"
                       >
                         {busyId === t.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
                         Excluir
@@ -628,11 +707,45 @@ function TableManagerModal({
                   </td>
                 </tr>
               ))}
-              {grouped.length === 0 && (
+              {pageItems.length === 0 && (
                 <tr><td colSpan={10} className="p-4 text-center text-muted-foreground">Sem tabelas para esta administradora.</td></tr>
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* paginação */}
+        <div className="flex items-center justify-between mt-3 text-sm">
+          <div>
+            {grouped.length > 0 && (
+              <>
+                Mostrando{" "}
+                <strong>
+                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}
+                </strong>{" "}
+                de <strong>{grouped.length}</strong>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              className="h-9 rounded-xl px-3"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+            >
+              Anterior
+            </Button>
+            <span>Página {page} de {totalPages}</span>
+            <Button
+              variant="secondary"
+              className="h-9 rounded-xl px-3"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+            >
+              Próxima
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -685,6 +798,12 @@ function TableFormOverlay({
 
   const [saving, setSaving] = useState(false);
 
+  // ESC para fechar
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   async function salvar() {
     setSaving(true);
     const payload: Omit<SimTable, "id"> = {
@@ -726,7 +845,7 @@ function TableFormOverlay({
       <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{initial ? "Editar Tabela" : "Nova Tabela"}</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted">
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -771,11 +890,13 @@ function TableFormOverlay({
           </div>
 
           <div className="md:col-span-4 flex gap-2">
-            <Button onClick={salvar} disabled={saving}>
+            <Button onClick={salvar} disabled={saving} className="h-10 rounded-2xl px-4">
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {initial ? "Salvar alterações" : "Salvar Tabela"}
             </Button>
-            <Button variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button>
+            <Button variant="secondary" onClick={onClose} disabled={saving} className="h-10 rounded-2xl px-4">
+              Cancelar
+            </Button>
           </div>
         </div>
       </div>
@@ -1019,7 +1140,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 
           {/* Ações */}
           <div className="flex items-center gap-3">
-            <Button disabled={!p.calc || p.salvando} onClick={p.salvar}>
+            <Button disabled={!p.calc || p.salvando} onClick={p.salvar} className="h-10 rounded-2xl px-4">
               {p.salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
             </Button>

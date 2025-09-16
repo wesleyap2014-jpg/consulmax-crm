@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, X, Copy } from "lucide-react";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -71,7 +71,7 @@ function clamp(n: number, min: number, max: number) {
 
 /** Exceção do limitador: Motocicleta >= 20k => 1% */
 function resolveLimitadorPct(baseLimitadorPct: number, segmento: string, credito: number): number {
-  if (segmento?.toLowerCase() === "motocicleta" && credito >= 20000) return 0.01;
+  if (segmento?.toLowerCase().includes("motocic") && credito >= 20000) return 0.01;
   return baseLimitadorPct;
 }
 
@@ -93,31 +93,8 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-type CalcOut = {
-  valorCategoria: number;
-  parcelaAte: number;
-  parcelaDemais: number;
-  lanceOfertadoValor: number;
-  lanceEmbutidoValor: number;
-  lanceProprioValor: number;
-  lancePercebidoPct: number;
-  novoCredito: number;
-  novaParcelaSemLimite: number;
-  parcelaLimitante: number;
-  parcelaEscolhida: number;
-  segundaParcelaComAntecipacao: number; // NOVO: exibimos quando aplica a regra
-  saldoDevedorFinal: number;
-  novoPrazo: number;
-  TA_efetiva: number;
-  fundoComumFactor: number;
-};
-
-/** Regra alinhada com os exemplos do Excel enviados
- *  + Regra Especial: se antecipação em 2(+) parcelas e contemplação = 1ª assembleia,
- *    a 2ª parcela também contém a antecipação e recalculamos o prazo com
- *    ceil((saldo após a 2ª) / parcelaEscolhida).
- */
-function calcularSimulacao(i: CalcInput): CalcOut {
+/** Regra alinhada com os exemplos do Excel enviados */
+function calcularSimulacao(i: CalcInput) {
   const {
     credito: C,
     prazoVenda,
@@ -195,27 +172,21 @@ function calcularSimulacao(i: CalcInput): CalcOut {
     ? parcelaLimitante
     : novaParcelaSemLimite;
 
-  // ===== Regra Especial da 2ª parcela com antecipação =====
-  let segundaParcelaComAntecipacao = 0;
-  let novoPrazo: number;
+  // 2ª parcela com antecipação (regra especial)
+  const segundaParcelaComAntecip =
+    parcContemplacao === 1 && antecipParcelas >= 2
+      ? parcelaEscolhida + antecipAdicionalCada
+      : null;
 
-  if (antecipParcelas >= 2 && parcContemplacao === 1) {
-    // Mesmo contemplado na 1ª, a 2ª parcela inclui a antecipação
-    segundaParcelaComAntecipacao = parcelaEscolhida + antecipAdicionalCada;
+  // NOVO PRAZO
+  let novoPrazo = aplicouLimitador
+    ? Math.round(saldoDevedorFinal / parcelaEscolhida)
+    : prazoRestante;
 
-    // Saldo após quitar a 2ª parcela
-    const saldoAposSegunda = Math.max(
-      0,
-      saldoDevedorFinal - segundaParcelaComAntecipacao
-    );
-
-    // Novo prazo: ceil(saldo remanescente / parcela escolhida)
-    novoPrazo = Math.ceil(saldoAposSegunda / Math.max(parcelaEscolhida, 1e-9));
-  } else {
-    // Regra anterior
-    novoPrazo = aplicouLimitador
-      ? Math.round(saldoDevedorFinal / Math.max(parcelaEscolhida, 1e-9))
-      : prazoRestante;
+  // Se contemplado na 1ª e houver 2 parcelas de antecipação, desconta a 2ª parcela turbinada e recalcula
+  if (segundaParcelaComAntecip) {
+    const saldoApos2a = Math.max(0, saldoDevedorFinal - segundaParcelaComAntecip);
+    novoPrazo = Math.ceil(saldoApos2a / parcelaEscolhida);
   }
 
   return {
@@ -230,11 +201,12 @@ function calcularSimulacao(i: CalcInput): CalcOut {
     novaParcelaSemLimite, // (SEM seguro)
     parcelaLimitante,     // (SEM seguro)
     parcelaEscolhida,     // (SEM seguro)
-    segundaParcelaComAntecipacao, // (quando aplicável)
     saldoDevedorFinal,
     novoPrazo,
     TA_efetiva,
     fundoComumFactor,
+    antecipAdicionalCada,
+    segundaParcelaComAntecip,
   };
 }
 
@@ -318,6 +290,9 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
+  // telefone do usuário logado (public.users)
+  const [myPhone, setMyPhone] = useState<string>("");
+
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -326,6 +301,18 @@ export default function Simuladores() {
         supabase.from("sim_tables").select("*"),
         supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
+
+      // usuário logado
+      const u = await supabase.auth.getUser();
+      if (u.data?.user?.id) {
+        const { data: usr } = await supabase
+          .from("users")
+          .select("phone")
+          .eq("auth_user_id", u.data.user.id)
+          .maybeSingle();
+        if (usr?.phone) setMyPhone(String(usr.phone).replace(/\D/g, ""));
+      }
+
       setAdmins(a ?? []);
       setTables(t ?? []);
       setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
@@ -469,6 +456,63 @@ export default function Simuladores() {
 
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
 
+  // ======== Texto do Resumo de Proposta ========
+  const resumoTexto = useMemo(() => {
+    if (!tabelaSelecionada || !calc || !podeCalcular) return "";
+
+    // Bem (normalizado)
+    const seg = (segmento || "").toLowerCase();
+    const bem =
+      seg.includes("imóv") ? "Imóvel" :
+      seg.includes("moto") ? "Motocicleta" :
+      seg.includes("auto") || seg.includes("carro") || seg.includes("veíc") ? "Veículo" :
+      segmento || "bem";
+
+    const primeiraParcelaLabel =
+      tabelaSelecionada.antecip_parcelas === 2 ? "Parcela 1 e 2" :
+      tabelaSelecionada.antecip_parcelas === 1 ? "Parcela 1" : "Parcela Inicial";
+
+    const segundaObservacao = calc.segundaParcelaComAntecip
+      ? ` (obs.: na 2ª parcela: ${brMoney(calc.segundaParcelaComAntecip)} por conta da antecipação)`
+      : "";
+
+    const whats = myPhone ? `https://wa.me/${myPhone}` : "https://wa.me/";
+
+    return [
+      `🎯 Com a estratégia certa, você conquista seu ${bem} sem pagar juros, sem entrada e ainda economiza!`,
+      ``,
+      `📌 Confira essa simulação real:`,
+      ``,
+      `💰 Crédito contratado: ${brMoney(credito)}`,
+      ``,
+      `💳 Primeira parcela (${primeiraParcelaLabel}): ${brMoney(calc.parcelaAte)} (em até 3x sem juros no cartão)`,
+      ``,
+      `💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}`,
+      ``,
+      `📈 Após a contemplação (prevista na parcela ${parcContemplacao}):`,
+      ``,
+      `✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}`,
+      ``,
+      `📆 Parcelas restantes: ${brMoney(calc.parcelaEscolhida)}${segundaObservacao}`,
+      ``,
+      `⏳ Prazo restante: ${calc.novoPrazo} meses`,
+      ``,
+      `💡 Um planejamento inteligente que cabe no seu bolso e acelera a realização do seu sonho!`,
+      ``,
+      `👉 Quer simular com o valor do seu ${bem.toLowerCase()} dos sonhos?`,
+      `Me chama aqui e eu te mostro o melhor caminho 👇`,
+      whats,
+    ].join("\n");
+  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, myPhone]);
+
+  async function copiarResumo() {
+    try {
+      await navigator.clipboard.writeText(resumoTexto || "");
+    } catch {
+      alert("Não foi possível copiar o resumo.");
+    }
+  }
+
   return (
     <div className="p-6 space-y-4">
       {/* topo: admins + botões */}
@@ -556,8 +600,8 @@ export default function Simuladores() {
           </Card>
         </div>
 
-        {/* coluna direita: memória de cálculo */}
-        <div className="col-span-12 lg:col-span-4">
+        {/* coluna direita: memória de cálculo + resumo */}
+        <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader><CardTitle>Memória de Cálculo</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
@@ -592,9 +636,33 @@ export default function Simuladores() {
                     </div>
                     <div>Valor de Categoria</div>
                     <div className="text-right">{calc ? brMoney(calc.valorCategoria) : "—"}</div>
+                    {calc?.segundaParcelaComAntecip ? (
+                      <>
+                        <div>2ª parcela (com antecipação)</div>
+                        <div className="text-right">{brMoney(calc.segundaParcelaComAntecip)}</div>
+                      </>
+                    ) : null}
                   </div>
                 </>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Resumo da Proposta */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>Resumo da Proposta</CardTitle>
+              <Button size="sm" variant="secondary" onClick={copiarResumo} disabled={!resumoTexto}>
+                <Copy className="h-4 w-4 mr-1" /> Copiar
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <textarea
+                className="w-full h-64 rounded-md border p-3 text-sm leading-6"
+                readOnly
+                value={resumoTexto}
+                placeholder="Faça uma simulação para gerar o resumo."
+              />
             </CardContent>
           </Card>
         </div>
@@ -1176,15 +1244,12 @@ function EmbraconSimulator(p: EmbraconProps) {
               <div><Label>Nova Parcela (sem limite)</Label><Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly /></div>
               <div><Label>Parcela Limitante</Label><Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly /></div>
               <div><Label>Parcela Escolhida</Label><Input value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""} readOnly /></div>
-
-              {/* NOVO: 2ª parcela com antecipação quando a regra se aplica */}
-              {p.calc && p.calc.segundaParcelaComAntecipacao > 0 && (
-                <div>
-                  <Label>2ª parcela (c/ antecipação)</Label>
-                  <Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly />
+              {p.calc?.segundaParcelaComAntecip ? (
+                <div className="md:col-span-3">
+                  <Label>2ª Parcela (com antecipação)</Label>
+                  <Input value={brMoney(p.calc.segundaParcelaComAntecip)} readOnly />
                 </div>
-              )}
-
+              ) : null}
               <div><Label>Novo Prazo (meses)</Label><Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly /></div>
             </CardContent>
           </Card>

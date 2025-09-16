@@ -372,8 +372,8 @@ export default function SimuladoresPage() {
       prazo_venda: prazoVenda,
       forma_contratacao: forma,
       seguro_prestamista: seguroPrest,
-      lance_ofertado_pct: lanceOfertPct,
-      lance_embutido_pct: lanceEmbutPct,
+      lance_ofertado_pct: inputToPct(lanceOfertPctText),
+      lance_embutido_pct: inputToPct(lanceEmbutPctText),
       parcela_contemplacao: parcContemplacao,
       valor_categoria: calc.valorCategoria,
       parcela_ate_1_ou_2: calc.parcelaAte,
@@ -712,7 +712,6 @@ function EmbraconSimulator(p: EmbraconProps) {
               <div>
                 <Label>Seguro Prestamista</Label>
                 <div className="flex gap-2">
-                  {/* sem variant "destructive": aplico vermelho via className */}
                   <Button
                     type="button"
                     variant="secondary"
@@ -915,7 +914,6 @@ function TablesManager({
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl">
         <div className="flex items-center justify-between border-b p-4">
           <h3 className="text-lg font-semibold">Gerenciar Tabelas</h3>
-          {/* sem variant 'ghost' */}
           <Button variant="secondary" onClick={onClose}><X className="h-5 w-5" /></Button>
         </div>
 
@@ -1112,7 +1110,7 @@ function TableForm({
         <div>
           <Label>Prazo Limite (meses)</Label>
           <Input
-            value={String(form.prazo_limite ?? 0))}
+            value={String(form.prazo_limite ?? 0)}
             onChange={(e) => setForm((f) => ({ ...f, prazo_limite: Number(e.target.value) }))}
           />
         </div>

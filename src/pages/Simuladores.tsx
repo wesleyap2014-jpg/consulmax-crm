@@ -5,13 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Loader2, Plus, Trash2, Pencil, X, ChevronLeft, ChevronRight } from "lucide-react";
 
 /* =========================================================
@@ -49,7 +42,7 @@ type SimTable = {
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
 /* =========================================================
-   PillTabs (substitui shadcn/ui/tabs para evitar erro no build)
+   PillTabs (evita dependência externa de Tabs)
    ========================================================= */
 function PillTabs({
   value,
@@ -80,6 +73,39 @@ function PillTabs({
         );
       })}
     </div>
+  );
+}
+
+/* =========================================================
+   NativeSelect (substitui '@/components/ui/select')
+   ========================================================= */
+function NativeSelect({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  children,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      className="w-full h-9 rounded-md border border-gray-300 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-consulmax-primary"
+    >
+      {placeholder ? (
+        <option value="" disabled>
+          {placeholder}
+        </option>
+      ) : null}
+      {children}
+    </select>
   );
 }
 
@@ -643,14 +669,15 @@ function EmbraconSimulator(p: EmbraconProps) {
           <div className="grid gap-4 md:grid-cols-3">
             <div>
               <Label>Selecionar Lead</Label>
-              <Select value={p.leadId} onValueChange={(v) => p.setLeadId(v)}>
-                <SelectTrigger><SelectValue placeholder="Escolha um lead" /></SelectTrigger>
-                <SelectContent>
-                  {p.leads.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>{l.nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <NativeSelect
+                value={p.leadId || ""}
+                onChange={(v) => p.setLeadId(v)}
+                placeholder="Escolha um lead"
+              >
+                {p.leads.map((l) => (
+                  <option key={l.id} value={l.id}>{l.nome}</option>
+                ))}
+              </NativeSelect>
               {p.leadInfo && (
                 <p className="text-xs text-muted-foreground mt-1">
                   {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
@@ -674,24 +701,27 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Segmento</Label>
-                <Select value={p.segmento} onValueChange={(v) => { p.setSegmento(v); p.setTabelaId(""); }}>
-                  <SelectTrigger><SelectValue placeholder="Selecione o segmento" /></SelectTrigger>
-                  <SelectContent>
-                    {segmentos.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <NativeSelect
+                  value={p.segmento || ""}
+                  onChange={(v) => { p.setSegmento(v); p.setTabelaId(""); }}
+                  placeholder="Selecione o segmento"
+                >
+                  {segmentos.map((s) => <option key={s} value={s}>{s}</option>)}
+                </NativeSelect>
               </div>
 
               <div>
                 <Label>Tabela</Label>
-                <Select value={p.tabelaId} onValueChange={p.setTabelaId} disabled={!p.segmento}>
-                  <SelectTrigger><SelectValue placeholder="Selecione a tabela" /></SelectTrigger>
-                  <SelectContent>
-                    {p.tablesBySegment.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>{t.nome_tabela}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <NativeSelect
+                  value={p.tabelaId || ""}
+                  onChange={p.setTabelaId}
+                  disabled={!p.segmento}
+                  placeholder="Selecione a tabela"
+                >
+                  {p.tablesBySegment.map((t) => (
+                    <option key={t.id} value={t.id}>{t.nome_tabela}</option>
+                  ))}
+                </NativeSelect>
               </div>
 
               <div>
@@ -744,14 +774,16 @@ function EmbraconSimulator(p: EmbraconProps) {
 
               <div>
                 <Label>Forma de Contratação</Label>
-                <Select value={p.forma} onValueChange={(v) => p.setForma(v as any)} disabled={!p.tabelaSelecionada}>
-                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                  <SelectContent>
-                    {p.tabelaSelecionada?.contrata_parcela_cheia && <SelectItem value="Parcela Cheia">Parcela Cheia</SelectItem>}
-                    {p.tabelaSelecionada?.contrata_reduzida_25 && <SelectItem value="Reduzida 25%">Reduzida 25%</SelectItem>}
-                    {p.tabelaSelecionada?.contrata_reduzida_50 && <SelectItem value="Reduzida 50%">Reduzida 50%</SelectItem>}
-                  </SelectContent>
-                </Select>
+                <NativeSelect
+                  value={p.forma}
+                  onChange={(v) => p.setForma(v as any)}
+                  disabled={!p.tabelaSelecionada}
+                  placeholder="Selecione"
+                >
+                  {p.tabelaSelecionada?.contrata_parcela_cheia && <option value="Parcela Cheia">Parcela Cheia</option>}
+                  {p.tabelaSelecionada?.contrata_reduzida_25 && <option value="Reduzida 25%">Reduzida 25%</option>}
+                  {p.tabelaSelecionada?.contrata_reduzida_50 && <option value="Reduzida 50%">Reduzida 50%</option>}
+                </NativeSelect>
               </div>
 
               <div>
@@ -915,7 +947,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 }
 
 /* =========================================================
-   Overlay: Gerenciar Tabelas
+   Overlay: Gerenciar Tabelas (paginação + ESC)
    ========================================================= */
 function TablesManager({
   onClose,
@@ -953,6 +985,12 @@ function TablesManager({
       await onReload();
     }
   }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-start justify-center p-6">

@@ -15,6 +15,23 @@ const items = [
 export default function Sidebar() {
   return (
     <aside className="w-64 bg-white shadow h-[calc(100vh-56px)] sticky top-14 p-3">
+      
+      {/* Cabeçalho com logo e slogan */}
+      <div className="flex items-center gap-3 mb-6 px-2">
+        <img
+          src="/logo-consulmax.png"
+          alt="Consulmax"
+          className="h-10 w-10 object-contain rounded-md"
+        />
+        <div className="flex flex-col">
+          <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
+          <span className="text-xs text-consulmax-secondary">
+            Maximize as suas conquistas
+          </span>
+        </div>
+      </div>
+
+      {/* Navegação */}
       <nav className="grid gap-2">
         {items.map((i) => (
           <NavLink

@@ -1,5 +1,5 @@
 // src/pages/Simuladores.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -98,9 +98,7 @@ type CalcInput = {
 };
 
 /** Regra alinhada com os exemplos do Excel + tratamento “2ª parcela com antecipação”
- * e regras especiais:
- *  - Serviços: NÃO reduz parcela após contemplação (só prazo)
- *  - Motocicleta com crédito < 20k: idem Serviços
+ * e regra especial para Serviços e Moto < 20k: não reduz parcela, apenas o prazo.
  */
 function calcularSimulacao(i: CalcInput) {
   const {
@@ -185,10 +183,12 @@ function calcularSimulacao(i: CalcInput) {
   let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
 
   if (!manterParcela) {
+    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
     if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
       aplicouLimitador = true;
       parcelaEscolhida = parcelaLimitante;
     } else {
+      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
       parcelaEscolhida = novaParcelaSemLimite;
     }
   }
@@ -199,7 +199,7 @@ function calcularSimulacao(i: CalcInput) {
     ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
     : null;
 
-  // NOVO PRAZO
+  // NOVO PRAZO (regra unificada)
   const parcelasIguais =
     Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
 
@@ -211,6 +211,7 @@ function calcularSimulacao(i: CalcInput) {
     if (has2aAntecipDepois) {
       saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada));
     }
+    // arredonda para cima para não deixar fração de mês
     novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
   }
 
@@ -283,6 +284,21 @@ function PercentInput({
   );
 }
 
+/* =================== Paleta Consulmax (ajustável) =================== */
+const CM = {
+  white: "#FFFFFF",
+  gray100: "#F3F4F6",
+  gray200: "#E5E7EB",
+  gray300: "#D1D5DB",
+  gray400: "#9CA3AF",
+  gray600: "#4B5563",
+  gray800: "#1F2937",
+  blue: "#1E3A8A",         // Azul escuro
+  blueBright: "#2563EB",   // Azul destaque
+  red: "#E11D2A",          // Vermelho
+  shadow: "rgba(17,24,39,0.08)",
+};
+
 /* ========================= Página ======================== */
 export default function Simuladores() {
   const [loading, setLoading] = useState(true);
@@ -317,8 +333,14 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // telefone do usuário logado (para o Resumo)
+  // dados do usuário logado (telefone para Resumo / avatar para Arte)
   const [userPhone, setUserPhone] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+
+  // Poster (prévia e controle)
+  const [posterDataUrl, setPosterDataUrl] = useState<string>("");
+  const posterBusyRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -337,18 +359,25 @@ export default function Simuladores() {
     })();
   }, []);
 
-  // pega telefone do usuário logado
+  // pega telefone do usuário logado + metadados (nome/avatar) via Auth metadata
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
-      if (!uid) return;
-      const { data } = await supabase
-        .from("users")
-        .select("phone")
-        .eq("auth_user_id", uid)
-        .maybeSingle();
-      setUserPhone((data?.phone || "").toString());
+      if (uid) {
+        // phone da tabela users
+        const { data } = await supabase
+          .from("users")
+          .select("phone")
+          .eq("auth_user_id", uid)
+          .maybeSingle();
+        setUserPhone((data?.phone || "").toString());
+
+        // nome / avatar do Auth (mais seguro que supor colunas na tabela)
+        const um: any = userRes?.user?.user_metadata || {};
+        setUserName(um?.name || um?.full_name || userRes?.user?.email || "");
+        setUserAvatar(um?.avatar_url || um?.picture || null);
+      }
     })();
   }, []);
 
@@ -575,6 +604,348 @@ ${wa}`
     }
   }
 
+  /* ==================== Poster 1080x1920 (Canvas) ==================== */
+
+  function segmentTitle(segRaw: string) {
+    const s = (segRaw || "").toLowerCase();
+    if (s.includes("moto")) return "Motocicletas";
+    if (s.includes("serv")) return "Serviços";
+    if (s.includes("pesad") || s.includes("máq") || s.includes("caminh") || s.includes("utilit")) return "Máquinas e Pesados";
+    if (s.includes("imó")) return "Imóveis";
+    return "Automóveis";
+  }
+
+  function seedFrom(str: string) {
+    // hash simples para "aleatoriedade" estável por (segmento+lead)
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+    }
+    return Math.abs(h);
+  }
+
+  function pickVariant(segmento: string, salt: string) {
+    const bank: Record<string, number> = {
+      moto: 3,
+      serv: 3,
+      pesados: 3,
+      imovel: 3,
+      auto: 3,
+    };
+    const key =
+      segmento.toLowerCase().includes("moto") ? "moto" :
+      segmento.toLowerCase().includes("serv") ? "serv" :
+      segmento.toLowerCase().includes("imó") ? "imovel" :
+      (segmento.toLowerCase().includes("pesad") || segmento.toLowerCase().includes("máq") || segmento.toLowerCase().includes("caminh")) ? "pesados" :
+      "auto";
+    const count = bank[key] || 3;
+    const idx = seedFrom(segmento + "|" + salt) % count;
+    return { key, idx };
+  }
+
+  function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  function drawCard(
+    ctx: CanvasRenderingContext2D,
+    x: number, y: number, w: number, h: number,
+    label: string, value: string, highlight = false
+  ) {
+    // sombra
+    ctx.fillStyle = CM.shadow;
+    drawRoundedRect(ctx, x, y + 6, w, h, 24);
+    ctx.fill();
+
+    // fundo
+    ctx.fillStyle = CM.white;
+    drawRoundedRect(ctx, x, y, w, h, 24);
+    ctx.fill();
+
+    // borda destaque
+    if (highlight) {
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = CM.blueBright;
+      drawRoundedRect(ctx, x, y, w, h, 24);
+      ctx.stroke();
+    }
+
+    // label
+    ctx.fillStyle = CM.gray600;
+    ctx.font = "28px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+    ctx.textBaseline = "top";
+    ctx.fillText(label, x + 20, y + 16);
+
+    // value (negrito)
+    ctx.fillStyle = CM.gray800;
+    ctx.font = "700 40px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+    ctx.fillText(value, x + 20, y + 60);
+  }
+
+  function drawSilhouette(ctx: CanvasRenderingContext2D, key: string, idx: number) {
+    // Silhuetas simples e suaves
+    ctx.save();
+    ctx.globalAlpha = 0.10;
+    ctx.fillStyle = CM.gray300;
+
+    // área base
+    const cx = 860, cy = 1320; // canto inferior direito
+    const scale = 1;
+
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+
+    if (key === "imovel") {
+      // Casa simples
+      ctx.beginPath(); // base
+      ctx.moveTo(-260, 160); ctx.lineTo(260, 160); ctx.lineTo(260, -40); ctx.lineTo(-260, -40); ctx.closePath();
+      ctx.fill();
+      ctx.beginPath(); // telhado
+      ctx.moveTo(-300, -40); ctx.lineTo(0, -280 - idx * 20); ctx.lineTo(300, -40); ctx.closePath();
+      ctx.fill();
+      // porta
+      ctx.fillRect(-40, 20, 80, 140);
+    } else if (key === "moto") {
+      // Moto minimalista
+      const off = idx * 30;
+      // rodas
+      ctx.beginPath(); ctx.arc(-180 - off, 120, 90, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(100 + off, 120, 90, 0, Math.PI * 2); ctx.fill();
+      // corpo
+      ctx.fillRect(-80, 40, 260, 60);
+      ctx.fillRect(60, -40, 80, 80);
+      ctx.fillRect(-220, 0, 120, 40);
+    } else if (key === "pesados") {
+      // Trator/colheitadeira simples
+      const off = idx * 20;
+      ctx.beginPath(); ctx.arc(-220 - off, 140, 110, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(120 + off, 140, 80, 0, Math.PI * 2); ctx.fill();
+      ctx.fillRect(-320, -20, 520, 120);
+      ctx.fillRect(-300, -160, 160, 140);
+    } else if (key === "serv") {
+      // Avião estilizado
+      const off = idx * 20;
+      ctx.beginPath();
+      ctx.moveTo(-300 - off, 60);
+      ctx.lineTo(320, -30);
+      ctx.lineTo(300, 60);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillRect(-60, -20, 120, 40); // corpo
+      ctx.fillRect(-220, -40, 160, 30); // asa esquerda
+      ctx.fillRect(60, -35, 160, 30); // asa direita
+    } else {
+      // Automóvel
+      const off = idx * 25;
+      ctx.beginPath(); ctx.arc(-200 - off, 140, 90, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(120 + off, 140, 90, 0, Math.PI * 2); ctx.fill();
+      ctx.fillRect(-320, 20, 560, 100);
+      ctx.beginPath(); // cabine
+      ctx.moveTo(-150, 20); ctx.lineTo(40, -80 - off); ctx.lineTo(200, 20); ctx.closePath(); ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  async function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => resolve(im);
+      im.onerror = reject;
+      im.src = src;
+    });
+  }
+
+  function drawAvatarCircle(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    r: number,
+    name: string,
+    img: HTMLImageElement | null
+  ) {
+    // fundo
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    if (img) {
+      ctx.drawImage(img, x - r, y - r, r * 2, r * 2);
+    } else {
+      ctx.fillStyle = CM.gray300;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      // iniciais
+      const initials = (name || "")
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((s) => s[0]?.toUpperCase() || "")
+        .join("");
+      ctx.fillStyle = CM.white;
+      ctx.font = "700 52px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(initials || "?", x, y);
+    }
+    ctx.restore();
+
+    // borda branca
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = CM.white;
+    ctx.lineWidth = 6;
+    ctx.stroke();
+  }
+
+  async function generatePoster(): Promise<string> {
+    if (!calc || !tabelaSelecionada || !podeCalcular) {
+      return "";
+    }
+    if (posterBusyRef.current) return posterDataUrl;
+    posterBusyRef.current = true;
+
+    const W = 1080, H = 1920;
+    const cnv = document.createElement("canvas");
+    cnv.width = W; cnv.height = H;
+    const ctx = cnv.getContext("2d")!;
+    ctx.imageSmoothingEnabled = true;
+
+    // fundo branco
+    ctx.fillStyle = CM.white;
+    ctx.fillRect(0, 0, W, H);
+
+    // formas de fundo (bolhas suaves)
+    ctx.fillStyle = CM.gray200;
+    ctx.globalAlpha = 1;
+    drawRoundedRect(ctx, 120, 120, 840, 160, 80); ctx.fill(); // faixa cinza onde ficará "Consórcio {Segmento}"
+    // bolha inferior direita
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = CM.gray200;
+    drawRoundedRect(ctx, 360, 1120, 620, 620, 240); ctx.fill();
+
+    // Etiqueta "Cartas de crédito"
+    ctx.fillStyle = CM.blue;
+    drawRoundedRect(ctx, 120, 80, 250, 60, 20); ctx.fill();
+    ctx.fillStyle = CM.white;
+    ctx.font = "700 34px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Cartas de crédito", 140, 110);
+
+    // Texto "Consórcio {Segmento}" DENTRO da faixa cinza
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = CM.gray800;
+    ctx.font = "600 52px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+    ctx.fillText("Consórcio ", 140, 210);
+    ctx.fillStyle = CM.blueBright;
+    ctx.font = "700 52px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+    ctx.fillText(segmentTitle(tabelaSelecionada.segmento), 360, 210);
+
+    // Caixa dos cards
+    const left = 120, top = 280;
+    const cardW = 420, cardH = 140, gapX = 40, gapY = 28;
+
+    // Valores
+    const vCredito = brMoney(calc.novoCredito);
+    const vParc1 = brMoney(calc.parcelaAte);
+    const vParc2 = calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null ? brMoney(calc.segundaParcelaComAntecipacao) : "";
+    const vDemais = brMoney(calc.parcelaEscolhida);
+    const vLanceProprio = brMoney(calc.lanceProprioValor);
+    const vGrupo = (grupo || "").toString();
+
+    // Cards (2 colunas x 3 linhas)
+    drawCard(ctx, left, top, cardW, cardH, "Crédito", vCredito, true);
+    drawCard(ctx, left + cardW + gapX, top, cardW, cardH, "Primeira parcela", vParc1);
+
+    drawCard(ctx, left, top + cardH + gapY, cardW, cardH, "Parcela 2", vParc2 || "—");
+    drawCard(ctx, left + cardW + gapX, top + cardH + gapY, cardW, cardH, "Demais parcelas", vDemais);
+
+    drawCard(ctx, left, top + (cardH + gapY) * 2, cardW, cardH, "Lance próprio", vLanceProprio);
+    drawCard(ctx, left + cardW + gapX, top + (cardH + gapY) * 2, cardW, cardH, "Grupo", vGrupo || "—");
+
+    // Campo arredondado com avatar + WhatsApp
+    const boxY = top + (cardH + gapY) * 2 + cardH + 40;
+    const boxH = 160;
+    ctx.fillStyle = CM.white;
+    drawRoundedRect(ctx, left, boxY, cardW * 2 + gapX, boxH, 40);
+    // sombra
+    ctx.fillStyle = CM.shadow;
+    drawRoundedRect(ctx, left, boxY + 6, cardW * 2 + gapX, boxH, 40); ctx.fill();
+    // fundo
+    ctx.fillStyle = CM.white;
+    drawRoundedRect(ctx, left, boxY, cardW * 2 + gapX, boxH, 40); ctx.fill();
+
+    // avatar
+    let avatarImg: HTMLImageElement | null = null;
+    try {
+      if (userAvatar) avatarImg = await loadImage(userAvatar);
+    } catch {}
+    drawAvatarCircle(ctx, left + 80, boxY + boxH / 2, 56, userName, avatarImg);
+
+    // texto whatsapp
+    ctx.fillStyle = CM.gray800;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.font = "700 42px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+    const waDigits = (userPhone || "").replace(/\D/g, "");
+    ctx.fillText(`WhatsApp: ${waDigits || "—"}`, left + 160, boxY + boxH / 2);
+
+    // Silhueta de fundo por segmento (suave e aleatória)
+    const variant = pickVariant(tabelaSelecionada.segmento, leadId || "x");
+    drawSilhouette(ctx, variant.key, variant.idx);
+
+    // Logo + site
+    try {
+      const logo = await loadImage("/logo-consulmax.png");
+      const logoW = 420, logoH = (logo.height / logo.width) * logoW;
+      ctx.drawImage(logo, left, H - 200 - logoH, logoW, logoH);
+    } catch {}
+    ctx.fillStyle = CM.gray600;
+    ctx.font = "28px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+    ctx.textAlign = "left";
+    ctx.fillText("consulmaxconsorcios.com.br", left, H - 60);
+
+    // Exporta
+    const url = cnv.toDataURL("image/png", 1.0);
+    posterBusyRef.current = false;
+    return url;
+  }
+
+  useEffect(() => {
+    // gera prévia sempre que os dados principais mudarem
+    (async () => {
+      if (!calc || !tabelaSelecionada || !podeCalcular) {
+        setPosterDataUrl("");
+        return;
+      }
+      const url = await generatePoster();
+      setPosterDataUrl(url);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calc, tabelaSelecionada, podeCalcular, grupo, userAvatar, userName, userPhone]);
+
+  async function handleDownload() {
+    if (!calc || !tabelaSelecionada || !podeCalcular) return;
+    const url = await generatePoster();
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `consulmax_${segmentTitle(tabelaSelecionada.segmento).toLowerCase().replace(/\s+/g, "-")}_${Date.now()}.png`;
+    a.click();
+  }
+
+  /* ============================ UI ============================ */
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2">
@@ -701,7 +1072,7 @@ ${wa}`
           </Card>
         </div>
 
-        {/* coluna direita: memória de cálculo + resumo + arte 9:16 */}
+        {/* coluna direita: memória de cálculo + resumo + poster */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader>
@@ -795,30 +1166,31 @@ ${wa}`
             </CardContent>
           </Card>
 
-          {/* Arte 9:16 */}
+          {/* Poster 9:16 */}
           <Card>
             <CardHeader>
               <CardTitle>Arte 9:16 (1080×1920)</CardTitle>
             </CardHeader>
-            <CardContent>
-              {!calc || !tabelaSelecionada ? (
-                <div className="text-sm text-muted-foreground">
-                  Preencha a simulação para gerar a arte.
-                </div>
-              ) : (
+            <CardContent className="space-y-3">
+              {posterDataUrl ? (
                 <div className="space-y-2">
                   <div className="text-xs text-muted-foreground">
                     Prévia escalada para caber (tamanho real 1080×1920).
                   </div>
-                  <PosterPreview
-                    segmento={tabelaSelecionada.segmento || segmento}
-                    grupo={grupo}
-                    creditoNovo={calc.novoCredito}
-                    primeiraParcela={calc.parcelaAte}
-                    segundaParcela={calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null ? calc.segundaParcelaComAntecipacao : null}
-                    demaisParcelas={calc.parcelaEscolhida}
-                    lanceProprio={calc.lanceProprioValor}
-                  />
+                  <div className="rounded-lg border bg-white p-2 flex items-center justify-center">
+                    <img
+                      src={posterDataUrl}
+                      alt="Prévia da arte 9:16"
+                      style={{ width: 300, height: (300 * 1920) / 1080, objectFit: "cover", borderRadius: 16 }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-end">
+                    <Button onClick={handleDownload}>Baixar imagem (1080×1920)</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  Preencha a simulação para gerar a arte.
                 </div>
               )}
             </CardContent>
@@ -1632,167 +2004,6 @@ function EmbraconSimulator(p: EmbraconProps) {
           Selecione um lead para abrir o simulador.
         </div>
       )}
-    </div>
-  );
-}
-
-/* ====================== Poster 9:16 ====================== */
-type PosterPreviewProps = {
-  segmento: string;
-  grupo: string;
-  creditoNovo: number;
-  primeiraParcela: number;
-  segundaParcela: number | null;
-  demaisParcelas: number;
-  lanceProprio: number;
-};
-
-function PosterPreview({
-  segmento,
-  grupo,
-  creditoNovo,
-  primeiraParcela,
-  segundaParcela,
-  demaisParcelas,
-  lanceProprio,
-}: PosterPreviewProps) {
-  const seg = (segmento || "").toLowerCase();
-
-  // Cores de tema por segmento
-  const theme = (() => {
-    if (seg.includes("imó")) return { name: "Imóveis", dark: "#445066", accent: "#0E9F6E" };
-    if (seg.includes("moto")) return { name: "Motocicletas", dark: "#3E5166", accent: "#F59E0B" };
-    if (seg.includes("auto") || seg.includes("veí")) return { name: "Automóveis", dark: "#384657", accent: "#2563EB" };
-    if (seg.includes("serv")) return { name: "Serviços", dark: "#4B5563", accent: "#EF4444" };
-    return { name: segmento || "Consórcio", dark: "#475569", accent: "#0EA5E9" };
-  })();
-
-  // Contêiner real 1080x1920, mas escalado para preview
-  const scale = 0.3334; // ~360x640 na tela
-  const wrapperStyle: React.CSSProperties = {
-    width: 1080,
-    height: 1920,
-    position: "relative",
-    background: "#fff",
-    transform: `scale(${scale})`,
-    transformOrigin: "top left",
-    boxShadow: "0 10px 30px rgba(0,0,0,.15)",
-    borderRadius: 16,
-    overflow: "hidden",
-  };
-
-  const labelStyle: React.CSSProperties = {
-    position: "absolute",
-    top: 80,
-    left: 120,
-    padding: "18px 28px",
-    background: theme.dark,
-    color: "#fff",
-    borderRadius: 20,
-    fontSize: 44,
-    fontWeight: 700,
-  };
-
-  const titleStyle: React.CSSProperties = {
-    position: "absolute",
-    top: 320,
-    left: 120,
-    color: theme.dark,
-    fontSize: 60,
-    fontWeight: 700,
-    letterSpacing: 0.2,
-  };
-
-  const valueBlock: React.CSSProperties = {
-    position: "absolute",
-    top: 520,
-    left: 120,
-    right: 120,
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 24,
-    fontSize: 40,
-    color: "#111827",
-  };
-
-  const chip: React.CSSProperties = {
-    fontSize: 30,
-    color: "#6B7280",
-    marginBottom: 6,
-  };
-
-  const card: React.CSSProperties = {
-    border: `2px solid ${theme.dark}22`,
-    borderRadius: 24,
-    padding: 24,
-    background: "#fff",
-  };
-
-  return (
-    <div style={{ width: Math.round(1080 * scale), height: Math.round(1920 * scale) }}>
-      <div style={wrapperStyle}>
-        {/* fundos/elementos */}
-        <div style={{ position: "absolute", top: 120, left: 120, width: 840, height: 160, background: theme.dark, opacity: 0.22, borderRadius: 80 }} />
-        <div style={{ position: "absolute", bottom: 0, right: 0, width: 880, height: 880, background: theme.dark, opacity: 0.18, borderTopLeftRadius: 440 }} />
-        <div style={{ position: "absolute", top: 480, right: -200, width: 720, height: 720, background: theme.dark, opacity: 0.22, borderRadius: 360 }} />
-
-        {/* cabeçalho/etiqueta */}
-        <div style={labelStyle}>Cartas de crédito</div>
-
-        {/* Título Segmento */}
-        <div style={titleStyle}>
-          Consórcio <span style={{ color: theme.accent }}>{theme.name}</span>
-        </div>
-
-        {/* Bloco principal de valores */}
-        <div style={valueBlock}>
-          <div style={card}>
-            <div style={chip}>Crédito</div>
-            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(creditoNovo || 0)}</div>
-          </div>
-
-          <div style={card}>
-            <div style={chip}>Primeira parcela</div>
-            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(primeiraParcela || 0)}</div>
-          </div>
-
-          {segundaParcela != null && (
-            <div style={card}>
-              <div style={chip}>Parcela 2</div>
-              <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(segundaParcela)}</div>
-            </div>
-          )}
-
-          <div style={card}>
-            <div style={chip}>Demais parcelas</div>
-            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(demaisParcelas || 0)}</div>
-          </div>
-
-          <div style={card}>
-            <div style={chip}>Lance próprio</div>
-            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(lanceProprio || 0)}</div>
-          </div>
-
-          <div style={card}>
-            <div style={chip}>Grupo</div>
-            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{grupo || "—"}</div>
-          </div>
-        </div>
-
-        {/* Rodapé com “logo” tipográfica */}
-        <div style={{
-          position: "absolute", bottom: 120, left: 120, right: 120,
-          display: "flex", alignItems: "center", justifyContent: "space-between"
-        }}>
-          <div style={{ fontSize: 36, color: "#6B7280" }}>consulmaxconsorcios.com.br</div>
-          <div style={{
-            fontWeight: 900, fontSize: 56, letterSpacing: 1,
-            color: theme.dark
-          }}>
-            CONSULMAX
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

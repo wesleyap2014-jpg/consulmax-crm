@@ -1,27 +1,33 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, Link } from 'react-router-dom'
 
 const items = [
   { to: '/leads', label: 'Leads' },
-  { to: '/clientes', label: 'Clientes' },          // 👈 novo item
+  { to: '/clientes', label: 'Clientes' },
   { to: '/oportunidades', label: 'Oportunidades' },
-  { to: '/agenda', label: 'Agenda' },              // 👈 novo item
-  { to: '/simuladores', label: 'Simuladores' },    // 👈 adicionamos aqui
-  { to: '/carteira', label: 'Carteira' },          // guia existente
+  { to: '/agenda', label: 'Agenda' },
+  { to: '/simuladores', label: 'Simuladores' },
+  { to: '/carteira', label: 'Carteira' },
   { to: '/usuarios', label: 'Usuários' },
-  { to: '/gestao-de-grupos', label: 'Gestão de Grupos' }, // guia existente
-  { to: '/parametros', label: 'Parâmetros' }       // guia existente
+  { to: '/gestao-de-grupos', label: 'Gestão de Grupos' },
+  { to: '/parametros', label: 'Parâmetros' },
 ]
+
+const LOGO_URL = `${import.meta.env.BASE_URL}logo-consulmax.png?v=2`
 
 export default function Sidebar() {
   return (
     <aside className="w-64 bg-white shadow h-[calc(100vh-56px)] sticky top-14 p-3">
-      
-      {/* Cabeçalho com logo e slogan */}
-      <div className="flex items-center gap-3 mb-6 px-2">
+
+      {/* Cabeçalho com logo e slogan (clicável) */}
+      <Link to="/leads" className="flex items-center gap-3 mb-6 px-2">
         <img
-          src="/logo-consulmax.png"
+          src={LOGO_URL}
           alt="Consulmax"
           className="h-10 w-10 object-contain rounded-md"
+          onError={(e) => {
+            // fallback simples: usa o favicon se a logo não carregar
+            (e.currentTarget as HTMLImageElement).src = `${import.meta.env.BASE_URL}favicon.ico?v=2`
+          }}
         />
         <div className="flex flex-col">
           <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
@@ -29,7 +35,7 @@ export default function Sidebar() {
             Maximize as suas conquistas
           </span>
         </div>
-      </div>
+      </Link>
 
       {/* Navegação */}
       <nav className="grid gap-2">

@@ -813,6 +813,7 @@ ${wa}`
                 telefone={userPhone}
                 avatarUrl={userAvatar}
                 userName={userName}
+                credito={credito} // <— NOVO: mantém visual correto quando ainda não há novoCredito
               />
             </CardContent>
           </Card>
@@ -1636,26 +1637,29 @@ type StoriesArtProps = {
   telefone: string;
   avatarUrl: string | null;
   userName: string;
+  credito: number; // NOVO: para exibir crédito contratado quando ainda não há novoCredito
 };
 
 function StoriesArt(props: StoriesArtProps) {
-  const { canRender, segmento, grupo, calc, telefone, avatarUrl, userName } = props;
+  const { canRender, segmento, grupo, calc, telefone, avatarUrl, userName, credito } = props;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [seed, setSeed] = useState(Math.floor(Math.random() * 1e9));
   const [downloading, setDownloading] = useState(false);
 
+  // Paleta (fixa)
   const colors = {
     white: "#FFFFFF",
-    gray: "#F5F5F5",
-    blue: "#1E293F",
-    red: "#A11C27",
+    gray: "#F3F4F6",
+    blue: "#172135",  // azul escuro
+    red: "#A11C27",   // vinho Consulmax
+    textMuted: "#6B7280"
   };
 
+  /* ===== util ===== */
   function rngFactory(s: number) {
     let x = s || 1234567;
     return () => {
-      // xorshift32
       x ^= x << 13; x ^= x >> 17; x ^= x << 5;
       return (x >>> 0) / 4294967296;
     };
@@ -1682,6 +1686,15 @@ function StoriesArt(props: StoriesArtProps) {
     ctx.closePath();
   }
 
+  function hexToRgba(hex: string, alpha: number) {
+    const h = hex.replace("#", "");
+    const bigint = parseInt(h, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
   function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, baseSize: number, minSize = 16) {
     let size = baseSize;
     do {
@@ -1692,15 +1705,7 @@ function StoriesArt(props: StoriesArtProps) {
     return size;
   }
 
-  type CardOpts = {
-    border?: string;
-    fill?: string;
-    titleColor?: string;
-    valueColor?: string;
-    valueBold?: boolean;
-  };
-
-  function drawValueCard(
+  function drawLabelValueCard(
     ctx: CanvasRenderingContext2D,
     title: string,
     value: string,
@@ -1708,55 +1713,37 @@ function StoriesArt(props: StoriesArtProps) {
     y: number,
     w: number,
     h: number,
-    options: CardOpts = {}
+    style: { border?: string; fill?: string; titleColor?: string; valueColor?: string } = {}
   ) {
     ctx.save();
-    drawRoundedRect(ctx, x, y, w, h, 16);
-    ctx.fillStyle = options.fill || colors.white;
+    drawRoundedRect(ctx, x, y, w, h, 14);
+    ctx.fillStyle = style.fill || colors.white;
     ctx.fill();
-    if (options.border) {
-      ctx.lineWidth = 2.5;
-      ctx.strokeStyle = options.border;
+    if (style.border) {
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = style.border;
       ctx.stroke();
     }
 
-    // title
-    ctx.fillStyle = options.titleColor || "#6B7280"; // slate-500
+    // título
+    ctx.fillStyle = style.titleColor || colors.textMuted;
     ctx.font = `600 26px 'Inter', system-ui, -apple-system, Arial`;
     ctx.textBaseline = "top";
-    ctx.fillText(title, x + 18, y + 14);
+    ctx.fillText(title, x + 16, y + 12);
 
-    // value
-    ctx.fillStyle = options.valueColor || colors.blue;
-    ctx.font = `${options.valueBold ? "800" : "700"} 36px 'Inter', system-ui, -apple-system, Arial`;
+    // valor
+    ctx.fillStyle = style.valueColor || colors.blue;
+    ctx.font = `800 34px 'Inter', system-ui, -apple-system, Arial`;
     ctx.textBaseline = "alphabetic";
-    const v = value || "—";
-    ctx.fillText(v, x + 18, y + h - 18);
+    const display = value || "—";
+    ctx.fillText(display, x + 16, y + h - 16);
     ctx.restore();
-  }
-
-  function drawChip(
-    ctx: CanvasRenderingContext2D,
-    text: string,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    fill: string,
-    fg: string
-  ) {
-    drawRoundedRect(ctx, x, y, w, h, h / 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.fillStyle = fg;
-    ctx.font = `700 30px 'Inter', system-ui, -apple-system, Arial`;
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, x + 22, y + h / 2);
   }
 
   async function render() {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     const dpr = window.devicePixelRatio || 1;
     const W = 1080, H = 1920;
 
@@ -1766,190 +1753,184 @@ function StoriesArt(props: StoriesArtProps) {
     if (!ctx) return;
     ctx.scale(dpr, dpr);
 
-    // fundo branco
+    /* ===== background ===== */
     ctx.fillStyle = colors.white;
     ctx.fillRect(0, 0, W, H);
 
-    // formas abstratas (variáveis por seed)
     const rnd = rngFactory(seed);
-    const shapeCount = 4 + Math.floor(rnd() * 3);
+    const shapeCount = 5 + Math.floor(rnd() * 4);
     for (let i = 0; i < shapeCount; i++) {
-      const kind = rnd() > 0.5 ? "circle" : "rect";
-      const alpha = 0.06 + rnd() * 0.06;
+      const isCircle = rnd() > 0.5;
+      const alpha = 0.07 + rnd() * 0.05;
       const palette = [colors.gray, colors.blue, colors.red];
-      const c = palette[Math.floor(rnd() * palette.length)];
-      ctx.fillStyle = hexToRgba(c, alpha);
+      ctx.fillStyle = hexToRgba(palette[Math.floor(rnd() * palette.length)], alpha);
       const cx = rnd() * W, cy = rnd() * H;
 
-      if (kind === "circle") {
-        const r = 100 + rnd() * 280;
+      if (isCircle) {
+        const r = 120 + rnd() * 260;
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        const w = 240 + rnd() * 420;
-        const h = 140 + rnd() * 320;
+        const ww = 260 + rnd() * 420;
+        const hh = 140 + rnd() * 280;
         ctx.save();
         ctx.translate(cx, cy);
-        ctx.rotate((rnd() - 0.5) * 0.6);
-        drawRoundedRect(ctx, -w / 2, -h / 2, w, h, 40 + rnd() * 60);
+        ctx.rotate((rnd() - 0.5) * 0.7);
+        drawRoundedRect(ctx, -ww / 2, -hh / 2, ww, hh, 40);
         ctx.fill();
         ctx.restore();
       }
     }
 
-    // Pill: Cartas de Crédito (vermelho)
-    const pillX = 60;
-    const pillY = 60;
-    drawChip(ctx, "Cartas de Crédito", pillX, pillY, 300, 60, colors.red, colors.white);
+    /* ===== Header: pill + barra Consórcio [SEGMENTO] ===== */
+    // Pill "Cartas de Crédito"
+    const pillX = 80, pillY = 80;
+    const pillPadX = 28, pillPadY = 14;
+    const pillText = "Cartas de Crédito";
+    ctx.font = `700 34px 'Inter', system-ui, -apple-system, Arial`;
+    const pillW = ctx.measureText(pillText).width + pillPadX * 2;
+    const pillH = 46 + pillPadY;
+    drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 999);
+    ctx.fillStyle = colors.red;
+    ctx.fill();
+    ctx.fillStyle = colors.white;
+    ctx.textBaseline = "middle";
+    ctx.fillText(pillText, pillX + pillPadX, pillY + pillH / 2);
 
-    // Barra: Consórcio [SEGMENTO] (azul, texto branco)
-    const segText = `Consórcio ${segmento?.split(" ")[0] || ""}`.trim();
-    const barX = 60;
-    const barY = pillY + 90;
-    const barW = 820;
-    const barH = 68;
-    drawRoundedRect(ctx, barX, barY, barW, barH, 22);
+    // Barra "Consórcio [SEGMENTO]"
+    const barX = 80, barY = pillY + pillH + 28, barW = W - 160, barH = 64;
+    drawRoundedRect(ctx, barX, barY, barW, barH, 18);
     ctx.fillStyle = colors.blue;
     ctx.fill();
     ctx.fillStyle = colors.white;
-    ctx.font = `700 36px 'Inter', system-ui, -apple-system, Arial`;
-    ctx.textBaseline = "middle";
-    ctx.fillText(segText || "Consórcio", barX + 22, barY + barH / 2);
+    ctx.font = `700 34px 'Inter', system-ui, -apple-system, Arial`;
+    const seg = (segmento || "").toUpperCase().split(" ")[0] || "—";
+    const label = `Consórcio ${seg}`;
+    const labelSize = fitText(ctx, label, barW - 32, 34, 22);
+    ctx.font = `700 ${labelSize}px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.fillText(label, barX + 16, barY + barH / 2 + labelSize * 0.36);
 
-    // Layout base dos cards
-    const columns = 2;
-    const cardW = 420;
-    const cardH = 120;
-    const gapX = 30;
-    const gapY = 28;
-    const totalW = columns * cardW + (columns - 1) * gapX;
-    const startX = (W - totalW) / 2;
-    const startY = 420;
+    /* ===== Cards ===== */
+    const gridX = 80;
+    let y = barY + barH + 40;
 
-    const row1Y = startY;                    // primeira linha de 2 colunas
-    const row2Y = startY + cardH + gapY;     // segunda linha
-    const row3Y = startY + (cardH + gapY) * 2; // terceira linha
+    // CARD 1 (DESTACADO): Crédito
+    const creditW = W - gridX * 2;
+    const creditH = 110;
+    drawRoundedRect(ctx, gridX, y, creditW, creditH, 14);
+    ctx.fillStyle = colors.blue;
+    ctx.fill();
+    ctx.fillStyle = colors.white;
+    ctx.font = `600 24px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.fillText("Crédito", gridX + 16, y + 12);
 
-    // Valores de exibição
-    const showParc2 = !!(calc?.has2aAntecipDepois && calc?.segundaParcelaComAntecipacao != null);
-    const vCredito = calc ? brMoney(calc.novoCredito) : "";
-    const vP1 = calc ? brMoney(calc.parcelaAte) : "";
-    const vP2 = showParc2 && calc?.segundaParcelaComAntecipacao ? brMoney(calc.segundaParcelaComAntecipacao) : "";
-    const vDemais = calc ? brMoney(calc.parcelaEscolhida) : "";
-    const vLance = calc ? brMoney(calc.lanceProprioValor) : "";
-    const vPrazo = calc ? `${calc.novoPrazo} meses` : "";
+    const creditoVal = calc ? (calc.novoCredito > 0 ? calc.novoCredito : credito) : credito;
+    ctx.font = `800 36px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.fillText(brMoney(creditoVal || 0), gridX + 16, y + creditH - 16);
+    // borda vermelha
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = colors.red;
+    drawRoundedRect(ctx, gridX, y, creditW, creditH, 14);
+    ctx.stroke();
 
-    // Card de CRÉDITO — largo, preenchido azul, texto branco
-    const bigW = totalW;          // ocupa as duas colunas
-    const bigH = 120;
-    const bigX = startX;
-    const bigY = startY - bigH - 20; // acima da primeira linha
-    drawValueCard(ctx, "Crédito", vCredito, bigX, bigY, bigW, bigH, {
-      fill: colors.blue,
-      titleColor: "#FFFFFF",
-      valueColor: "#FFFFFF",
-      valueBold: true,
-    });
+    // grid 2 colunas x 2 linhas
+    y += creditH + 24;
+    const colW = (W - gridX * 2 - 24) / 2;
+    const rowH = 100;
 
-    // Linha 1: Primeira Parcela | Parcela 2 (se existir)
-    drawValueCard(ctx, "Primeira Parcela", vP1, startX, row1Y, cardW, cardH, {
-      border: hexToRgba(colors.blue, 0.6),
-    });
-    if (showParc2) {
-      drawValueCard(ctx, "Segunda Parcela", vP2, startX + cardW + gapX, row1Y, cardW, cardH, {
-        border: hexToRgba(colors.blue, 0.6),
-      });
-    } else {
-      // quando não há 2ª parcela, deixamos este espaço para simetria
-      drawValueCard(ctx, " ", " ", startX + cardW + gapX, row1Y, cardW, cardH, {
-        border: hexToRgba(colors.blue, 0.08),
-      });
-    }
+    // Primeira parcela
+    drawLabelValueCard(ctx, "Primeira Parcela", calc ? brMoney(calc.parcelaAte) : "", gridX, y, colW, rowH);
 
-    // Linha 2: Demais parcelas | Lance Próprio (destaque)
-    drawValueCard(ctx, "Demais Parcelas", vDemais, startX, row2Y, cardW, cardH, {
-      border: hexToRgba(colors.blue, 0.6),
-    });
-    drawValueCard(ctx, "Lance Próprio", vLance, startX + cardW + gapX, row2Y, cardW, cardH, {
-      fill: hexToRgba(colors.red, 0.08),
-      border: hexToRgba(colors.red, 0.35),
-      valueBold: true,
-    });
+    // Parcela 2 (se existir)
+    const showP2 = !!(calc?.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
+    drawLabelValueCard(
+      ctx,
+      showP2 ? "Parcela 2" : " ",
+      showP2 ? brMoney(calc!.segundaParcelaComAntecipacao as number) : "",
+      gridX + colW + 24, y, colW, rowH
+    );
 
-    // Linha 3: Novo Prazo | Grupo
-    drawValueCard(ctx, "Novo Prazo", vPrazo, startX, row3Y, cardW, cardH, {
-      border: hexToRgba(colors.blue, 0.6),
-    });
-    drawValueCard(ctx, "Grupo", grupo || "—", startX + cardW + gapX, row3Y, cardW, cardH, {
-      border: hexToRgba(colors.blue, 0.6),
-    });
+    // Demais parcelas
+    y += rowH + 16;
+    drawLabelValueCard(ctx, "Demais Parcelas", calc ? brMoney(calc.parcelaEscolhida) : "", gridX, y, colW, rowH);
 
-    // Chip Whatsapp com foto
-    const chipY = row3Y + cardH + 36;
-    const chipH = 74;
-    const chipW = 760;
-    const chipX = (W - chipW) / 2;
-    drawRoundedRect(ctx, chipX, chipY, chipW, chipH, 999);
+    // Lance próprio (destaque com fundo vermelho 6%)
+    drawLabelValueCard(
+      ctx,
+      "Lance Próprio",
+      calc ? brMoney(calc.lanceProprioValor) : "",
+      gridX + colW + 24, y, colW, rowH,
+      { fill: hexToRgba(colors.red, 0.06), titleColor: colors.textMuted, valueColor: colors.blue }
+    );
+
+    // Nova linha: Novo Prazo | Grupo
+    y += rowH + 16;
+    drawLabelValueCard(ctx, "Novo Prazo", calc ? `${calc.novoPrazo} meses` : "", gridX, y, colW, rowH);
+    drawLabelValueCard(ctx, "Grupo", grupo || "—", gridX + colW + 24, y, colW, rowH);
+
+    /* ===== Chip WhatsApp ===== */
+    const chipY = y + rowH + 24;
+    const chipH = 72;
+    const chipW = W - gridX * 2;
+    drawRoundedRect(ctx, gridX, chipY, chipW, chipH, 999);
     ctx.fillStyle = colors.white;
     ctx.fill();
-    ctx.strokeStyle = hexToRgba(colors.blue, 0.12);
     ctx.lineWidth = 2;
+    ctx.strokeStyle = hexToRgba(colors.blue, 0.12);
     ctx.stroke();
 
     // avatar
-    const avatarSize = 58;
-    const avatarX = chipX + 16 + avatarSize / 2;
-    const avatarY = chipY + chipH / 2;
+    const avatarSize = 56;
+    const avatarCX = gridX + 16 + avatarSize / 2;
+    const avatarCY = chipY + chipH / 2;
 
     if (avatarUrl) {
       try {
         const img = await loadImage(avatarUrl);
         ctx.save();
         ctx.beginPath();
-        ctx.arc(avatarX, avatarY, avatarSize / 2, 0, Math.PI * 2);
+        ctx.arc(avatarCX, avatarCY, avatarSize / 2, 0, Math.PI * 2);
         ctx.closePath();
         ctx.clip();
-        ctx.drawImage(img, avatarX - avatarSize / 2, avatarY - avatarSize / 2, avatarSize, avatarSize);
+        ctx.drawImage(img, avatarCX - avatarSize / 2, avatarCY - avatarSize / 2, avatarSize, avatarSize);
         ctx.restore();
       } catch {
-        drawInitial(ctx, userName, avatarX, avatarY, avatarSize, colors.red);
+        drawInitial(ctx, userName, avatarCX, avatarCY, avatarSize, colors.blue);
       }
     } else {
-      drawInitial(ctx, userName, avatarX, avatarY, avatarSize, colors.red);
+      drawInitial(ctx, userName, avatarCX, avatarCY, avatarSize, colors.blue);
     }
 
-    // Whatsapp text
     ctx.fillStyle = colors.blue;
-    ctx.font = `700 28px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.font = `800 26px 'Inter', system-ui, -apple-system, Arial`;
+    const phoneTxt = `WhatsApp: ${formatPhone(telefone) || "—"}`;
     ctx.textBaseline = "middle";
-    const t = `WhatsApp: ${formatPhone(telefone) || "—"}`;
-    ctx.fillText(t, chipX + 16 + avatarSize + 16, chipY + chipH / 2);
+    ctx.fillText(phoneTxt, gridX + 16 + avatarSize + 16, chipY + chipH / 2);
 
-    // logo + site (rodapé)
+    /* ===== Rodapé: logo e site ===== */
     try {
       const logo = await loadImage("/logo-consulmax.png");
       const logoTargetW = 240;
       const scale = logoTargetW / logo.width;
       const logoTargetH = logo.height * scale;
-      const logoX = (W - logoTargetW) / 2;
-      const logoY = H - 160;
-      ctx.drawImage(logo, logoX, logoY, logoTargetW, logoTargetH);
+      ctx.drawImage(logo, (W - logoTargetW) / 2, H - 180, logoTargetW, logoTargetH);
     } catch {
-      // fallback: somente o nome
       ctx.fillStyle = colors.blue;
-      ctx.font = `800 30px 'Inter', system-ui, -apple-system, Arial`;
-      ctx.fillText("CONSULMAX", (W - ctx.measureText("CONSULMAX").width) / 2, H - 120);
+      ctx.font = `900 32px 'Inter', system-ui, -apple-system, Arial`;
+      const txt = "CONSULMAX";
+      ctx.fillText(txt, (W - ctx.measureText(txt).width) / 2, H - 160);
     }
-    ctx.fillStyle = "#6B7280";
-    ctx.font = `500 22px 'Inter', system-ui, -apple-system, Arial`;
+
+    ctx.fillStyle = colors.textMuted;
+    ctx.font = `600 22px 'Inter', system-ui, -apple-system, Arial`;
     const site = "consulmaxconsorcios.com.br";
-    ctx.fillText(site, (W - ctx.measureText(site).width) / 2, H - 40);
+    ctx.fillText(site, (W - ctx.measureText(site).width) / 2, H - 48);
   }
 
   useEffect(() => {
     if (canRender) render(); // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canRender, calc, segmento, grupo, telefone, avatarUrl, seed]);
+  }, [canRender, calc, segmento, grupo, telefone, avatarUrl, seed, credito]);
 
   function onShuffle() {
     setSeed(Math.floor(Math.random() * 1e9));
@@ -2012,15 +1993,6 @@ function StoriesArt(props: StoriesArtProps) {
 }
 
 /* ===== helpers visuais da arte ===== */
-function hexToRgba(hex: string, alpha: number) {
-  const h = hex.replace("#", "");
-  const bigint = parseInt(h, 16);
-  const r = (bigint >> 16) & 255;
-  const g = (bigint >> 8) & 255;
-  const b = bigint & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
 function drawInitial(
   ctx: CanvasRenderingContext2D,
   name: string,
@@ -2029,7 +2001,7 @@ function drawInitial(
   size: number,
   color: string
 ) {
-  ctx.fillStyle = hexToRgba(color, 0.15);
+  ctx.fillStyle = `rgba(23, 33, 53, 0.08)`;
   ctx.beginPath();
   ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
   ctx.fill();
@@ -2044,7 +2016,6 @@ function drawInitial(
 function formatPhone(p: string) {
   const d = (p || "").replace(/\D/g, "");
   if (d.length === 13 && d.startsWith("55")) {
-    // formato internacional +55
     const dd = d.slice(2);
     return `(${dd.slice(0,2)}) ${dd.slice(2,7)}-${dd.slice(7)}`;
   }

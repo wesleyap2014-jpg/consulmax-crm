@@ -12,7 +12,9 @@ const items = [
   { to: '/parametros', label: 'Parâmetros' },
 ]
 
-const LOGO_URL = `${import.meta.env.BASE_URL}logo-consulmax.png?v=2`
+// usa caminho absoluto do Vite/public + cache-bust
+const LOGO_URL = '/logo-consulmax.png?v=3'
+const FALLBACK_URL = '/favicon.ico?v=3'
 
 export default function Sidebar() {
   return (
@@ -23,13 +25,16 @@ export default function Sidebar() {
         <img
           src={LOGO_URL}
           alt="Consulmax"
-          className="h-10 w-10 object-contain rounded-md"
+          title="Consulmax"
+          width={40}
+          height={40}
+          loading="eager"
+          className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
           onError={(e) => {
-            // fallback simples: usa o favicon se a logo não carregar
-            (e.currentTarget as HTMLImageElement).src = `${import.meta.env.BASE_URL}favicon.ico?v=2`
+            (e.currentTarget as HTMLImageElement).src = FALLBACK_URL
           }}
         />
-        <div className="flex flex-col">
+        <div className="flex flex-col leading-tight">
           <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
           <span className="text-xs text-consulmax-secondary">
             Maximize as suas conquistas

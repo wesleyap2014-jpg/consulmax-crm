@@ -97,8 +97,8 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-/** Regra alinhada com os exemplos do Excel + tratamento “2ª parcela com antecipação”
- * e regra especial para Serviços e Moto < 20k: não reduz parcela, apenas o prazo.
+/** Regra alinhada com os exemplos do Excel + tratamento “2ª parcela com antecipação” e
+ * regra especial para Serviços e Moto < 20k: não reduz parcela, apenas o prazo.
  */
 function calcularSimulacao(i: CalcInput) {
   const {
@@ -183,12 +183,10 @@ function calcularSimulacao(i: CalcInput) {
   let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
 
   if (!manterParcela) {
-    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
     if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
       aplicouLimitador = true;
       parcelaEscolhida = parcelaLimitante;
     } else {
-      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
       parcelaEscolhida = novaParcelaSemLimite;
     }
   }
@@ -199,7 +197,7 @@ function calcularSimulacao(i: CalcInput) {
     ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
     : null;
 
-  // NOVO PRAZO (regra unificada)
+  // NOVO PRAZO
   const parcelasIguais =
     Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
 
@@ -211,7 +209,6 @@ function calcularSimulacao(i: CalcInput) {
     if (has2aAntecipDepois) {
       saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada));
     }
-    // arredonda para cima para não deixar fração de mês
     novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
   }
 
@@ -284,21 +281,6 @@ function PercentInput({
   );
 }
 
-/* =================== Paleta Consulmax (ajustável) =================== */
-const CM = {
-  white: "#FFFFFF",
-  gray100: "#F3F4F6",
-  gray200: "#E5E7EB",
-  gray300: "#D1D5DB",
-  gray400: "#9CA3AF",
-  gray600: "#4B5563",
-  gray800: "#1F2937",
-  blue: "#1E3A8A",         // Azul escuro
-  blueBright: "#2563EB",   // Azul destaque
-  red: "#E11D2A",          // Vermelho
-  shadow: "rgba(17,24,39,0.08)",
-};
-
 /* ========================= Página ======================== */
 export default function Simuladores() {
   const [loading, setLoading] = useState(true);
@@ -333,14 +315,9 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // dados do usuário logado (telefone para Resumo / avatar para Arte)
+  // telefone & avatar do usuário logado (para a Arte)
   const [userPhone, setUserPhone] = useState<string>("");
-  const [userName, setUserName] = useState<string>("");
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
-
-  // Poster (prévia e controle)
-  const [posterDataUrl, setPosterDataUrl] = useState<string>("");
-  const posterBusyRef = useRef(false);
+  const [userAvatarUrl, setUserAvatarUrl] = useState<string>("");
 
   useEffect(() => {
     (async () => {
@@ -359,25 +336,20 @@ export default function Simuladores() {
     })();
   }, []);
 
-  // pega telefone do usuário logado + metadados (nome/avatar) via Auth metadata
+  // pega telefone + possível foto do usuário logado
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
-      if (uid) {
-        // phone da tabela users
-        const { data } = await supabase
-          .from("users")
-          .select("phone")
-          .eq("auth_user_id", uid)
-          .maybeSingle();
-        setUserPhone((data?.phone || "").toString());
-
-        // nome / avatar do Auth (mais seguro que supor colunas na tabela)
-        const um: any = userRes?.user?.user_metadata || {};
-        setUserName(um?.name || um?.full_name || userRes?.user?.email || "");
-        setUserAvatar(um?.avatar_url || um?.picture || null);
-      }
+      if (!uid) return;
+      const { data } = await supabase
+        .from("users")
+        .select("phone, avatar_url, photo_url, picture_url")
+        .eq("auth_user_id", uid)
+        .maybeSingle();
+      setUserPhone((data?.phone || "").toString());
+      const url = (data as any)?.avatar_url || (data as any)?.photo_url || (data as any)?.picture_url || "";
+      setUserAvatarUrl(url || "");
     })();
   }, []);
 
@@ -604,47 +576,32 @@ ${wa}`
     }
   }
 
-  /* ==================== Poster 1080x1920 (Canvas) ==================== */
+  /* ================= Arte Para Stories (1080x1920) ================= */
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  function segmentTitle(segRaw: string) {
-    const s = (segRaw || "").toLowerCase();
-    if (s.includes("moto")) return "Motocicletas";
-    if (s.includes("serv")) return "Serviços";
-    if (s.includes("pesad") || s.includes("máq") || s.includes("caminh") || s.includes("utilit")) return "Máquinas e Pesados";
-    if (s.includes("imó")) return "Imóveis";
-    return "Automóveis";
-  }
+  // Cores (paleta Consulmax)
+  const PALETTE = {
+    red: "#A11C27",
+    blue: "#1E293F",
+    gray: "#F5F5F5",
+    sand: "#E0CE8C",
+    brass: "#B5A573",
+    white: "#FFFFFF",
+    text: "#1E293F",
+    muted: "#6B7280",
+  };
 
-  function seedFrom(str: string) {
-    // hash simples para "aleatoriedade" estável por (segmento+lead)
-    let h = 2166136261;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+  function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number, baseSize: number, family = "Inter, system-ui, -apple-system, Segoe UI, Roboto") {
+    let size = baseSize;
+    while (size > 16) {
+      ctx.font = `700 ${size}px ${family}`;
+      if (ctx.measureText(text).width <= maxW) break;
+      size -= 2;
     }
-    return Math.abs(h);
+    return size;
   }
 
-  function pickVariant(segmento: string, salt: string) {
-    const bank: Record<string, number> = {
-      moto: 3,
-      serv: 3,
-      pesados: 3,
-      imovel: 3,
-      auto: 3,
-    };
-    const key =
-      segmento.toLowerCase().includes("moto") ? "moto" :
-      segmento.toLowerCase().includes("serv") ? "serv" :
-      segmento.toLowerCase().includes("imó") ? "imovel" :
-      (segmento.toLowerCase().includes("pesad") || segmento.toLowerCase().includes("máq") || segmento.toLowerCase().includes("caminh")) ? "pesados" :
-      "auto";
-    const count = bank[key] || 3;
-    const idx = seedFrom(segmento + "|" + salt) % count;
-    return { key, idx };
-  }
-
-  function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
     const rr = Math.min(r, w / 2, h / 2);
     ctx.beginPath();
     ctx.moveTo(x + rr, y);
@@ -655,297 +612,227 @@ ${wa}`
     ctx.closePath();
   }
 
-  function drawCard(
-    ctx: CanvasRenderingContext2D,
-    x: number, y: number, w: number, h: number,
-    label: string, value: string, highlight = false
-  ) {
-    // sombra
-    ctx.fillStyle = CM.shadow;
-    drawRoundedRect(ctx, x, y + 6, w, h, 24);
-    ctx.fill();
-
-    // fundo
-    ctx.fillStyle = CM.white;
-    drawRoundedRect(ctx, x, y, w, h, 24);
-    ctx.fill();
-
-    // borda destaque
-    if (highlight) {
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = CM.blueBright;
-      drawRoundedRect(ctx, x, y, w, h, 24);
-      ctx.stroke();
-    }
-
-    // label
-    ctx.fillStyle = CM.gray600;
-    ctx.font = "28px Inter, system-ui, -apple-system, Segoe UI, Roboto";
-    ctx.textBaseline = "top";
-    ctx.fillText(label, x + 20, y + 16);
-
-    // value (negrito)
-    ctx.fillStyle = CM.gray800;
-    ctx.font = "700 40px Inter, system-ui, -apple-system, Segoe UI, Roboto";
-    ctx.fillText(value, x + 20, y + 60);
-  }
-
-  function drawSilhouette(ctx: CanvasRenderingContext2D, key: string, idx: number) {
-    // Silhuetas simples e suaves
+  function drawChip(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, bg: string, color: string, text: string, bold = 600) {
     ctx.save();
-    ctx.globalAlpha = 0.10;
-    ctx.fillStyle = CM.gray300;
-
-    // área base
-    const cx = 860, cy = 1320; // canto inferior direito
-    const scale = 1;
-
-    ctx.translate(cx, cy);
-    ctx.scale(scale, scale);
-
-    if (key === "imovel") {
-      // Casa simples
-      ctx.beginPath(); // base
-      ctx.moveTo(-260, 160); ctx.lineTo(260, 160); ctx.lineTo(260, -40); ctx.lineTo(-260, -40); ctx.closePath();
-      ctx.fill();
-      ctx.beginPath(); // telhado
-      ctx.moveTo(-300, -40); ctx.lineTo(0, -280 - idx * 20); ctx.lineTo(300, -40); ctx.closePath();
-      ctx.fill();
-      // porta
-      ctx.fillRect(-40, 20, 80, 140);
-    } else if (key === "moto") {
-      // Moto minimalista
-      const off = idx * 30;
-      // rodas
-      ctx.beginPath(); ctx.arc(-180 - off, 120, 90, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(100 + off, 120, 90, 0, Math.PI * 2); ctx.fill();
-      // corpo
-      ctx.fillRect(-80, 40, 260, 60);
-      ctx.fillRect(60, -40, 80, 80);
-      ctx.fillRect(-220, 0, 120, 40);
-    } else if (key === "pesados") {
-      // Trator/colheitadeira simples
-      const off = idx * 20;
-      ctx.beginPath(); ctx.arc(-220 - off, 140, 110, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(120 + off, 140, 80, 0, Math.PI * 2); ctx.fill();
-      ctx.fillRect(-320, -20, 520, 120);
-      ctx.fillRect(-300, -160, 160, 140);
-    } else if (key === "serv") {
-      // Avião estilizado
-      const off = idx * 20;
-      ctx.beginPath();
-      ctx.moveTo(-300 - off, 60);
-      ctx.lineTo(320, -30);
-      ctx.lineTo(300, 60);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillRect(-60, -20, 120, 40); // corpo
-      ctx.fillRect(-220, -40, 160, 30); // asa esquerda
-      ctx.fillRect(60, -35, 160, 30); // asa direita
-    } else {
-      // Automóvel
-      const off = idx * 25;
-      ctx.beginPath(); ctx.arc(-200 - off, 140, 90, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(120 + off, 140, 90, 0, Math.PI * 2); ctx.fill();
-      ctx.fillRect(-320, 20, 560, 100);
-      ctx.beginPath(); // cabine
-      ctx.moveTo(-150, 20); ctx.lineTo(40, -80 - off); ctx.lineTo(200, 20); ctx.closePath(); ctx.fill();
-    }
-
+    ctx.fillStyle = bg;
+    roundRect(ctx, x, y, w, h, 28);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.font = `${bold} 44px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, x + 28, y + h / 2);
     ctx.restore();
   }
 
-  async function loadImage(src: string): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
-      const im = new Image();
-      im.crossOrigin = "anonymous";
-      im.onload = () => resolve(im);
-      im.onerror = reject;
-      im.src = src;
+  async function loadImage(src: string): Promise<HTMLImageElement | null> {
+    if (!src) return null;
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = src;
     });
   }
 
-  function drawAvatarCircle(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    r: number,
-    name: string,
-    img: HTMLImageElement | null
-  ) {
-    // fundo
+  function drawField(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, label: string, value: string, highlight = false) {
+    ctx.save();
+    // card
+    ctx.shadowColor = "rgba(0,0,0,.06)";
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = PALETTE.white;
+    roundRect(ctx, x, y, w, h, 20);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // border
+    ctx.lineWidth = highlight ? 4 : 2;
+    ctx.strokeStyle = highlight ? PALETTE.red : "#E5E7EB";
+    roundRect(ctx, x, y, w, h, 20);
+    ctx.stroke();
+
+    // texts
+    ctx.fillStyle = PALETTE.muted;
+    ctx.font = `500 36px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
+    ctx.fillText(label, x + 24, y + 52);
+
+    ctx.fillStyle = PALETTE.text;
+    ctx.font = `800 48px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
+    ctx.fillText(value, x + 24, y + 104);
+    ctx.restore();
+  }
+
+  async function drawStoriesArt() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const W = 1080, H = 1920;
+    canvas.width = W;
+    canvas.height = H;
+
+    // fundo branco
+    ctx.fillStyle = PALETTE.white;
+    ctx.fillRect(0, 0, W, H);
+
+    // formas abstratas (baixa opacidade)
+    ctx.save();
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = PALETTE.blue;
+    roundRect(ctx, -60, 420, 760, 760, 200); ctx.fill();
+    ctx.fillStyle = PALETTE.sand;
+    roundRect(ctx, 560, 980, 520, 520, 140); ctx.fill();
+    ctx.fillStyle = PALETTE.brass;
+    roundRect(ctx, -80, 1260, 760, 520, 160); ctx.fill();
+    ctx.restore();
+
+    // chips topo (margem maior)
+    const padX = 96;
+    const topY = 96;
+
+    drawChip(ctx, padX, topY, 360, 70, PALETTE.blue, "#fff", "Cartas de crédito", 700);
+
+    // tarja com "Consórcio + Segmento"
+    const segmentoNome = (segmento || tabelaSelecionada?.segmento || "—").toLowerCase();
+    const segHuman =
+      segmentoNome.includes("imó") ? "Imóveis" :
+      segmentoNome.includes("serv") ? "Serviços" :
+      segmentoNome.includes("moto") ? "Motocicletas" :
+      segmentoNome.includes("pesad") ? "Pesados" :
+      segmentoNome.includes("auto") ? "Automóveis" : segmento || "—";
+
+    const chipW = 760;
+    const chipH = 86;
+    const chipX = padX;
+    const chipY = topY + 94;
+
+    ctx.save();
+    ctx.fillStyle = "#E5E7EB";
+    roundRect(ctx, chipX, chipY, chipW, chipH, 40);
+    ctx.fill();
+
+    const label = `Consórcio ${segHuman}`;
+    const fs = fitText(ctx, label, chipW - 40, 60);
+    ctx.font = `800 ${fs}px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
+    ctx.fillStyle = PALETTE.text;
+    ctx.fillText(label, chipX + 24, chipY + chipH / 2 + fs / 3);
+    ctx.restore();
+
+    // grid de campos
+    const gridTop = chipY + chipH + 64; // mais distante do topo
+    const colW = 440;
+    const colGap = 40;
+    const rowH = 140;
+    const col1 = padX;
+    const col2 = padX + colW + colGap;
+
+    // valores
+    const creditoNovo = calc?.novoCredito ?? 0;
+    const primeiraParcela = calc?.parcelaAte ?? 0;
+    const parcela2 = calc?.segundaParcelaComAntecipacao ?? 0;
+    const mostrarParcela2 = !!calc?.has2aAntecipDepois && !!calc?.segundaParcelaComAntecipacao;
+    const demaisParcelas = calc?.parcelaEscolhida ?? 0;
+    const lanceProprio = calc?.lanceProprioValor ?? 0;
+    const mostrarLance = lanceProprio > 0.005;
+    const novoPrazo = calc?.novoPrazo ?? 0;
+
+    drawField(ctx, col1, gridTop, colW, rowH, "Crédito", creditoNovo ? brMoney(creditoNovo) : "—", true);
+    drawField(ctx, col2, gridTop, colW, rowH, "Primeira parcela", primeiraParcela ? brMoney(primeiraParcela) : "—");
+
+    drawField(ctx, col1, gridTop + rowH + 24, colW, rowH, "Parcela 2", mostrarParcela2 ? brMoney(parcela2) : "—");
+    drawField(ctx, col2, gridTop + rowH + 24, colW, rowH, "Demais parcelas", demaisParcelas ? brMoney(demaisParcelas) : "—");
+
+    drawField(ctx, col1, gridTop + (rowH + 24) * 2, colW, rowH, "Lance próprio", mostrarLance ? brMoney(lanceProprio) : "—");
+    drawField(ctx, col2, gridTop + (rowH + 24) * 2, colW, rowH, "Novo prazo", novoPrazo ? `${novoPrazo} meses` : "—");
+
+    // grupo (se houver)
+    const grupoVal = (grupo || "").trim();
+    if (grupoVal) {
+      drawField(ctx, col1, gridTop + (rowH + 24) * 3, colW, rowH, "Grupo", grupoVal);
+    }
+
+    // cartão WhatsApp + avatar
+    const waY = gridTop + (rowH + 24) * 3 + (grupoVal ? rowH + 24 : 0);
+    const waH = 120;
+    const waW = colW * 2 + colGap;
+    const waX = col1;
+
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,.06)";
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = PALETTE.white;
+    roundRect(ctx, waX, waY, waW, waH, 24); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "#E5E7EB"; ctx.lineWidth = 2;
+    roundRect(ctx, waX, waY, waW, waH, 24); ctx.stroke();
+
+    // avatar (círculo)
+    const avSize = 80;
+    const avX = waX + 24, avY = waY + (waH - avSize) / 2;
+
+    const avatar = await loadImage(userAvatarUrl);
     ctx.save();
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2, 0, Math.PI * 2);
     ctx.closePath();
     ctx.clip();
-    if (img) {
-      ctx.drawImage(img, x - r, y - r, r * 2, r * 2);
+    if (avatar) {
+      ctx.drawImage(avatar, avX, avY, avSize, avSize);
     } else {
-      ctx.fillStyle = CM.gray300;
-      ctx.fillRect(x - r, y - r, r * 2, r * 2);
-      // iniciais
-      const initials = (name || "")
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((s) => s[0]?.toUpperCase() || "")
-        .join("");
-      ctx.fillStyle = CM.white;
-      ctx.font = "700 52px Inter, system-ui, -apple-system, Segoe UI, Roboto";
+      // fallback com inicial
+      ctx.fillStyle = PALETTE.gray;
+      ctx.fillRect(avX, avY, avSize, avSize);
+      ctx.fillStyle = PALETTE.blue;
+      ctx.font = `800 40px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(initials || "?", x, y);
+      const ini = (leadInfo?.nome || "W").slice(0, 1).toUpperCase();
+      ctx.fillText(ini, avX + avSize / 2, avY + avSize / 2);
+      ctx.textAlign = "left";
     }
     ctx.restore();
 
-    // borda branca
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.strokeStyle = CM.white;
-    ctx.lineWidth = 6;
-    ctx.stroke();
+    // texto WhatsApp
+    ctx.fillStyle = PALETTE.text;
+    ctx.font = `800 40px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
+    const phoneTxt = (userPhone || "").replace(/\D/g, "") || "—";
+    ctx.fillText(`WhatsApp: ${phoneTxt}`, avX + avSize + 20, waY + waH / 2 + 12);
+    ctx.restore();
+
+    // logo centralizada no rodapé + site
+    const logoImg = await loadImage("/logo-consulmax.png");
+    const logoW = 340, logoH = 110;
+    const logoX = (W - logoW) / 2;
+    const logoY = H - 220;
+    if (logoImg) {
+      ctx.drawImage(logoImg, logoX, logoY, logoW, logoH);
+    }
+
+    ctx.fillStyle = PALETTE.muted;
+    ctx.font = `600 32px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
+    const site = "consulmaxconsorcios.com.br";
+    const siteW = ctx.measureText(site).width;
+    ctx.fillText(site, (W - siteW) / 2, logoY + logoH + 48);
   }
 
-  async function generatePoster(): Promise<string> {
-    if (!calc || !tabelaSelecionada || !podeCalcular) {
-      return "";
-    }
-    if (posterBusyRef.current) return posterDataUrl;
-    posterBusyRef.current = true;
-
-    const W = 1080, H = 1920;
-    const cnv = document.createElement("canvas");
-    cnv.width = W; cnv.height = H;
-    const ctx = cnv.getContext("2d")!;
-    ctx.imageSmoothingEnabled = true;
-
-    // fundo branco
-    ctx.fillStyle = CM.white;
-    ctx.fillRect(0, 0, W, H);
-
-    // formas de fundo (bolhas suaves)
-    ctx.fillStyle = CM.gray200;
-    ctx.globalAlpha = 1;
-    drawRoundedRect(ctx, 120, 120, 840, 160, 80); ctx.fill(); // faixa cinza onde ficará "Consórcio {Segmento}"
-    // bolha inferior direita
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = CM.gray200;
-    drawRoundedRect(ctx, 360, 1120, 620, 620, 240); ctx.fill();
-
-    // Etiqueta "Cartas de crédito"
-    ctx.fillStyle = CM.blue;
-    drawRoundedRect(ctx, 120, 80, 250, 60, 20); ctx.fill();
-    ctx.fillStyle = CM.white;
-    ctx.font = "700 34px Inter, system-ui, -apple-system, Segoe UI, Roboto";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Cartas de crédito", 140, 110);
-
-    // Texto "Consórcio {Segmento}" DENTRO da faixa cinza
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillStyle = CM.gray800;
-    ctx.font = "600 52px Inter, system-ui, -apple-system, Segoe UI, Roboto";
-    ctx.fillText("Consórcio ", 140, 210);
-    ctx.fillStyle = CM.blueBright;
-    ctx.font = "700 52px Inter, system-ui, -apple-system, Segoe UI, Roboto";
-    ctx.fillText(segmentTitle(tabelaSelecionada.segmento), 360, 210);
-
-    // Caixa dos cards
-    const left = 120, top = 280;
-    const cardW = 420, cardH = 140, gapX = 40, gapY = 28;
-
-    // Valores
-    const vCredito = brMoney(calc.novoCredito);
-    const vParc1 = brMoney(calc.parcelaAte);
-    const vParc2 = calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null ? brMoney(calc.segundaParcelaComAntecipacao) : "";
-    const vDemais = brMoney(calc.parcelaEscolhida);
-    const vLanceProprio = brMoney(calc.lanceProprioValor);
-    const vGrupo = (grupo || "").toString();
-
-    // Cards (2 colunas x 3 linhas)
-    drawCard(ctx, left, top, cardW, cardH, "Crédito", vCredito, true);
-    drawCard(ctx, left + cardW + gapX, top, cardW, cardH, "Primeira parcela", vParc1);
-
-    drawCard(ctx, left, top + cardH + gapY, cardW, cardH, "Parcela 2", vParc2 || "—");
-    drawCard(ctx, left + cardW + gapX, top + cardH + gapY, cardW, cardH, "Demais parcelas", vDemais);
-
-    drawCard(ctx, left, top + (cardH + gapY) * 2, cardW, cardH, "Lance próprio", vLanceProprio);
-    drawCard(ctx, left + cardW + gapX, top + (cardH + gapY) * 2, cardW, cardH, "Grupo", vGrupo || "—");
-
-    // Campo arredondado com avatar + WhatsApp
-    const boxY = top + (cardH + gapY) * 2 + cardH + 40;
-    const boxH = 160;
-    ctx.fillStyle = CM.white;
-    drawRoundedRect(ctx, left, boxY, cardW * 2 + gapX, boxH, 40);
-    // sombra
-    ctx.fillStyle = CM.shadow;
-    drawRoundedRect(ctx, left, boxY + 6, cardW * 2 + gapX, boxH, 40); ctx.fill();
-    // fundo
-    ctx.fillStyle = CM.white;
-    drawRoundedRect(ctx, left, boxY, cardW * 2 + gapX, boxH, 40); ctx.fill();
-
-    // avatar
-    let avatarImg: HTMLImageElement | null = null;
-    try {
-      if (userAvatar) avatarImg = await loadImage(userAvatar);
-    } catch {}
-    drawAvatarCircle(ctx, left + 80, boxY + boxH / 2, 56, userName, avatarImg);
-
-    // texto whatsapp
-    ctx.fillStyle = CM.gray800;
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.font = "700 42px Inter, system-ui, -apple-system, Segoe UI, Roboto";
-    const waDigits = (userPhone || "").replace(/\D/g, "");
-    ctx.fillText(`WhatsApp: ${waDigits || "—"}`, left + 160, boxY + boxH / 2);
-
-    // Silhueta de fundo por segmento (suave e aleatória)
-    const variant = pickVariant(tabelaSelecionada.segmento, leadId || "x");
-    drawSilhouette(ctx, variant.key, variant.idx);
-
-    // Logo + site
-    try {
-      const logo = await loadImage("/logo-consulmax.png");
-      const logoW = 420, logoH = (logo.height / logo.width) * logoW;
-      ctx.drawImage(logo, left, H - 200 - logoH, logoW, logoH);
-    } catch {}
-    ctx.fillStyle = CM.gray600;
-    ctx.font = "28px Inter, system-ui, -apple-system, Segoe UI, Roboto";
-    ctx.textAlign = "left";
-    ctx.fillText("consulmaxconsorcios.com.br", left, H - 60);
-
-    // Exporta
-    const url = cnv.toDataURL("image/png", 1.0);
-    posterBusyRef.current = false;
-    return url;
+  function baixarPNG() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const url = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "arte-stories.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   useEffect(() => {
-    // gera prévia sempre que os dados principais mudarem
-    (async () => {
-      if (!calc || !tabelaSelecionada || !podeCalcular) {
-        setPosterDataUrl("");
-        return;
-      }
-      const url = await generatePoster();
-      setPosterDataUrl(url);
-    })();
+    // redesenha sempre que entradas mudarem
+    drawStoriesArt();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calc, tabelaSelecionada, podeCalcular, grupo, userAvatar, userName, userPhone]);
+  }, [calc, segmento, tabelaSelecionada, grupo, userPhone, userAvatarUrl]);
 
-  async function handleDownload() {
-    if (!calc || !tabelaSelecionada || !podeCalcular) return;
-    const url = await generatePoster();
-    if (!url) return;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `consulmax_${segmentTitle(tabelaSelecionada.segmento).toLowerCase().replace(/\s+/g, "-")}_${Date.now()}.png`;
-    a.click();
-  }
-
-  /* ============================ UI ============================ */
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2">
@@ -1072,7 +959,7 @@ ${wa}`
           </Card>
         </div>
 
-        {/* coluna direita: memória de cálculo + resumo + poster */}
+        {/* coluna direita: memória de cálculo + resumo + arte */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader>
@@ -1166,33 +1053,33 @@ ${wa}`
             </CardContent>
           </Card>
 
-          {/* Poster 9:16 */}
+          {/* ARTE PARA STORIES */}
           <Card>
             <CardHeader>
-              <CardTitle>Arte 9:16 (1080×1920)</CardTitle>
+              <CardTitle>Arte Para Stories</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {posterDataUrl ? (
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground">
-                    Prévia escalada para caber (tamanho real 1080×1920).
-                  </div>
-                  <div className="rounded-lg border bg-white p-2 flex items-center justify-center">
-                    <img
-                      src={posterDataUrl}
-                      alt="Prévia da arte 9:16"
-                      style={{ width: 300, height: (300 * 1920) / 1080, objectFit: "cover", borderRadius: 16 }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-end">
-                    <Button onClick={handleDownload}>Baixar imagem (1080×1920)</Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground">
-                  Preencha a simulação para gerar a arte.
-                </div>
-              )}
+              <div className="rounded-xl border bg-white p-2 flex items-center justify-center">
+                {/* Preview escalado, mas o canvas mantém 1080x1920 */}
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    width: "100%",
+                    maxWidth: 360, // preview confortável na barra lateral
+                    height: "auto",
+                    borderRadius: 16,
+                    boxShadow: "0 2px 12px rgba(0,0,0,.06)",
+                  }}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={drawStoriesArt}>
+                  Atualizar prévia
+                </Button>
+                <Button onClick={baixarPNG}>
+                  Baixar PNG
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>

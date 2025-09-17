@@ -1,11 +1,11 @@
 // src/pages/Simuladores.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X, Download } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -64,10 +64,7 @@ function formatPctInputFromDecimal(d: number): string {
   return (d * 100).toFixed(4).replace(".", ",");
 }
 function parsePctInputToDecimal(s: string): number {
-  const clean = (s || "")
-    .replace(/\s|%/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
+  const clean = (s || "").replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
   const val = parseFloat(clean);
   return isNaN(val) ? 0 : val / 100;
 }
@@ -77,13 +74,8 @@ function clamp(n: number, min: number, max: number) {
 }
 
 /** Exceção do limitador: Motocicleta >= 20k => 1% */
-function resolveLimitadorPct(
-  baseLimitadorPct: number,
-  segmento: string,
-  credito: number
-): number {
-  if (segmento?.toLowerCase().includes("motocicleta") && credito >= 20000)
-    return 0.01;
+function resolveLimitadorPct(baseLimitadorPct: number, segmento: string, credito: number): number {
+  if (segmento?.toLowerCase().includes("motocicleta") && credito >= 20000) return 0.01;
   return baseLimitadorPct;
 }
 
@@ -105,8 +97,10 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-/** Regra alinhada com os exemplos + tratamento “2ª parcela com antecipação”
- * e regra especial para Serviços e Moto < 20k: não reduz parcela, apenas o prazo.
+/** Regra alinhada com os exemplos do Excel + tratamento “2ª parcela com antecipação”
+ * e regras especiais:
+ *  - Serviços: NÃO reduz parcela após contemplação (só prazo)
+ *  - Motocicleta com crédito < 20k: idem Serviços
  */
 function calcularSimulacao(i: CalcInput) {
   const {
@@ -156,8 +150,7 @@ function calcularSimulacao(i: CalcInput) {
 
   // Exibição até a contemplação
   const parcelaAte =
-    baseMensalSemSeguro +
-    (antecipParcelas > 0 ? antecipAdicionalCada : 0) +
+    (baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0)) +
     seguroMensal;
   const parcelaDemais = baseMensalSemSeguro + seguroMensal;
 
@@ -203,7 +196,7 @@ function calcularSimulacao(i: CalcInput) {
   // Caso especial: antecipação em 2x e contemplação na 1ª parcela
   const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada // sem seguro no saldo
+    ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
     : null;
 
   // NOVO PRAZO
@@ -216,10 +209,7 @@ function calcularSimulacao(i: CalcInput) {
   } else {
     let saldoParaPrazo = saldoDevedorFinal;
     if (has2aAntecipDepois) {
-      saldoParaPrazo = Math.max(
-        0,
-        saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada)
-      );
+      saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada));
     }
     novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
   }
@@ -234,8 +224,8 @@ function calcularSimulacao(i: CalcInput) {
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
     novaParcelaSemLimite, // (SEM seguro)
-    parcelaLimitante, // (SEM seguro)
-    parcelaEscolhida, // (SEM seguro)
+    parcelaLimitante,     // (SEM seguro)
+    parcelaEscolhida,     // (SEM seguro)
     saldoDevedorFinal,
     novoPrazo,
     TA_efetiva,
@@ -252,10 +242,7 @@ function MoneyInput({
   value,
   onChange,
   ...rest
-}: {
-  value: number;
-  onChange: (n: number) => void;
-} & React.InputHTMLAttributes<HTMLInputElement>) {
+}: { value: number; onChange: (n: number) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <Input
       {...rest}
@@ -308,10 +295,7 @@ export default function Simuladores() {
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
-  const [leadInfo, setLeadInfo] = useState<{
-    nome: string;
-    telefone?: string | null;
-  } | null>(null);
+  const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
   const [grupo, setGrupo] = useState<string>("");
 
   const [segmento, setSegmento] = useState<string>("");
@@ -329,9 +313,7 @@ export default function Simuladores() {
   const [lanceEmbutPct, setLanceEmbutPct] = useState<number>(0);
   const [parcContemplacao, setParcContemplacao] = useState<number>(1);
 
-  const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacao> | null>(
-    null
-  );
+  const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacao> | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
@@ -342,27 +324,15 @@ export default function Simuladores() {
     (async () => {
       setLoading(true);
       const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
-        supabase.from("sim_admins").select("id,name").order("name", {
-          ascending: true,
-        }),
+        supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
         supabase.from("sim_tables").select("*"),
-        supabase
-          .from("leads")
-          .select("id, nome, telefone")
-          .limit(200)
-          .order("created_at", { ascending: false }),
+        supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
       setAdmins(a ?? []);
       setTables(t ?? []);
-      setLeads(
-        (l ?? []).map((x: any) => ({
-          id: x.id,
-          nome: x.nome,
-          telefone: x.telefone,
-        }))
-      );
+      setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
       const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-      setActiveAdminId(embr?.id ?? a?.[0]?.id ?? null);
+      setActiveAdminId(embr?.id ?? (a?.[0]?.id ?? null));
       setLoading(false);
     })();
   }, []);
@@ -428,7 +398,8 @@ export default function Simuladores() {
   // valida % embutido
   const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
   useEffect(() => {
-    if (lanceEmbutPct !== lanceEmbutPctValid) setLanceEmbutPct(lanceEmbutPctValid);
+    if (lanceEmbutPct !== lanceEmbutPctValid)
+      setLanceEmbutPct(lanceEmbutPctValid);
   }, [lanceEmbutPct]); // eslint-disable-line
 
   const prazoAviso =
@@ -566,15 +537,14 @@ export default function Simuladores() {
     const telDigits = (userPhone || "").replace(/\D/g, "");
     const wa = `https://wa.me/${telDigits || ""}`;
 
-    return `🎯 Com a estratégia certa, você conquista seu ${bem} sem pagar juros, sem entrada e ainda economiza!
+    return (
+`🎯 Com a estratégia certa, você conquista seu ${bem} sem pagar juros, sem entrada e ainda economiza!
 
 📌 Confira essa simulação real:
 
 💰 Crédito contratado: ${brMoney(credito)}
 
-💳 ${primeiraParcelaLabel}: ${brMoney(
-      calc.parcelaAte
-    )} (Primeira parcela em até 3x sem juros no cartão)
+💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (Primeira parcela em até 3x sem juros no cartão)
 
 💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
 
@@ -592,16 +562,9 @@ export default function Simuladores() {
 
 👉 Quer simular com o valor do seu ${bem} dos sonhos?
 Me chama aqui e eu te mostro o melhor caminho 👇
-${wa}`;
-  }, [
-    tabelaSelecionada,
-    calc,
-    podeCalcular,
-    segmento,
-    credito,
-    parcContemplacao,
-    userPhone,
-  ]);
+${wa}`
+    );
+  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone]);
 
   async function copiarResumo() {
     try {
@@ -621,39 +584,6 @@ ${wa}`;
   }
 
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
-
-  // ================== Poster (arte 1080x1920) ==================
-  const posterData = useMemo(() => {
-    if (!calc || !podeCalcular || !tabelaSelecionada) return null;
-
-    const seg = (segmento || tabelaSelecionada.segmento || "").toLowerCase();
-    let theme:
-      | { name: string; dark: string; mid: string; accent: string }
-      | null = null;
-
-    if (seg.includes("imó"))
-      theme = { name: "Imóveis", dark: "#334155", mid: "#64748b", accent: "#ba8b4a" };
-    else if (seg.includes("moto"))
-      theme = { name: "Motocicletas", dark: "#1f2937", mid: "#374151", accent: "#f59e0b" };
-    else if (seg.includes("auto"))
-      theme = { name: "Automóveis", dark: "#0f172a", mid: "#1e293b", accent: "#22c55e" };
-    else if (seg.includes("serv"))
-      theme = { name: "Serviços", dark: "#312e81", mid: "#4338ca", accent: "#f97316" };
-    else theme = { name: "Consórcios", dark: "#111827", mid: "#374151", accent: "#ef4444" };
-
-    return {
-      theme,
-      creditoNovo: calc.novoCredito,
-      primeiraParcela: calc.parcelaAte,
-      parcela2:
-        calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao
-          ? calc.segundaParcelaComAntecipacao
-          : null,
-      demaisParcelas: calc.parcelaEscolhida,
-      lanceProprio: calc.lanceProprioValor,
-      grupo,
-    };
-  }, [calc, podeCalcular, tabelaSelecionada, segmento, grupo]);
 
   return (
     <div className="p-6 space-y-4">
@@ -688,7 +618,9 @@ ${wa}`;
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => alert("Em breve: adicionar administradora.")}
+                onClick={() =>
+                  alert("Em breve: adicionar administradora.")
+                }
                 className="h-10 rounded-2xl px-4"
               >
                 <Plus className="h-4 w-4 mr-1" /> Add Administradora
@@ -769,7 +701,7 @@ ${wa}`;
           </Card>
         </div>
 
-        {/* coluna direita: memória de cálculo + resumo + arte */}
+        {/* coluna direita: memória de cálculo + resumo + arte 9:16 */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader>
@@ -802,7 +734,9 @@ ${wa}`;
                   <div className="grid grid-cols-2 gap-2">
                     <div>Fundo Comum (fator)</div>
                     <div className="text-right">
-                      {calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}
+                      {calc
+                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
+                        : "—"}
                     </div>
                     <div>Taxa Adm (total)</div>
                     <div className="text-right">
@@ -847,8 +781,8 @@ ${wa}`;
             </CardHeader>
             <CardContent className="space-y-2">
               <textarea
-                className="w-full min-h-[26rem] resize-y border rounded-md p-3 text-sm leading-relaxed whitespace-pre-line"
-                style={{ lineHeight: 1.7 as number }}
+                className="w-full h-96 border rounded-md p-3 text-sm leading-relaxed"
+                style={{ lineHeight: "1.6" }}
                 readOnly
                 value={resumoTexto}
                 placeholder="Preencha os campos da simulação para gerar o resumo."
@@ -861,8 +795,34 @@ ${wa}`;
             </CardContent>
           </Card>
 
-          {/* Arte/Poster 9:16 */}
-          <PosterCard data={posterData} />
+          {/* Arte 9:16 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Arte 9:16 (1080×1920)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!calc || !tabelaSelecionada ? (
+                <div className="text-sm text-muted-foreground">
+                  Preencha a simulação para gerar a arte.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-xs text-muted-foreground">
+                    Prévia escalada para caber (tamanho real 1080×1920).
+                  </div>
+                  <PosterPreview
+                    segmento={tabelaSelecionada.segmento || segmento}
+                    grupo={grupo}
+                    creditoNovo={calc.novoCredito}
+                    primeiraParcela={calc.parcelaAte}
+                    segundaParcela={calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null ? calc.segundaParcelaComAntecipacao : null}
+                    demaisParcelas={calc.parcelaEscolhida}
+                    lanceProprio={calc.lanceProprioValor}
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
 
@@ -877,257 +837,6 @@ ${wa}`;
         />
       )}
     </div>
-  );
-}
-
-/* =============== Poster Card (Canvas 1080x1920) =============== */
-function PosterCard({
-  data,
-}: {
-  data: | {
-    theme: { name: string; dark: string; mid: string; accent: string };
-    creditoNovo: number;
-    primeiraParcela: number;
-    parcela2: number | null;
-    demaisParcelas: number;
-    lanceProprio: number;
-    grupo: string;
-  } | null;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // helpers de desenho
-  function roundRect(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    r: number
-  ) {
-    const rr = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + rr, y);
-    ctx.arcTo(x + w, y, x + w, y + h, rr);
-    ctx.arcTo(x + w, y + h, x, y + h, rr);
-    ctx.arcTo(x, y + h, x, y, rr);
-    ctx.arcTo(x, y, x + w, y, rr);
-    ctx.closePath();
-  }
-
-  function drawText(
-    ctx: CanvasRenderingContext2D,
-    text: string,
-    x: number,
-    y: number,
-    options?: { font?: string; color?: string; align?: CanvasTextAlign }
-  ) {
-    if (options?.font) ctx.font = options.font;
-    if (options?.color) ctx.fillStyle = options.color;
-    if (options?.align) ctx.textAlign = options.align;
-    ctx.fillText(text, x, y);
-  }
-
-  // desenho
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !data) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const W = 1080;
-    const H = 1920;
-
-    // bg
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, W, H);
-
-    // elementos de fundo
-    ctx.globalAlpha = 0.22;
-    ctx.fillStyle = data.theme.dark;
-    roundRect(ctx, 120, 120, 840, 160, 80);
-    ctx.fill();
-
-    ctx.globalAlpha = 0.18;
-    ctx.beginPath();
-    ctx.moveTo(W, H * 0.4);
-    ctx.lineTo(W, H);
-    ctx.lineTo(0, H);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.globalAlpha = 0.22;
-    roundRect(ctx, 120, 520, 720, 280, 140);
-    ctx.fill();
-
-    ctx.globalAlpha = 1;
-
-    // etiqueta topo
-    ctx.fillStyle = data.theme.dark;
-    roundRect(ctx, 120, 80, 420, 72, 20);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 44px Inter, system-ui, -apple-system, Segoe UI, Arial";
-    drawText(ctx, "Cartas de crédito", 140, 130);
-
-    // título
-    ctx.fillStyle = data.theme.dark;
-    ctx.font = "700 60px Inter, system-ui, -apple-system, Segoe UI, Arial";
-    drawText(
-      ctx,
-      `Consórcio ${data.theme.name}`,
-      120,
-      340
-    );
-
-    // bloco principal
-    const BX = 120;
-    const BY = 520;
-    const BW = 840;
-    const BH = 880;
-    ctx.fillStyle = "#f8fafc";
-    roundRect(ctx, BX, BY, BW, BH, 32);
-    ctx.fill();
-    ctx.strokeStyle = data.theme.mid;
-    ctx.lineWidth = 3;
-    roundRect(ctx, BX, BY, BW, BH, 32);
-    ctx.stroke();
-
-    // títulos e valores
-    const labelFont = "600 40px Inter, system-ui, -apple-system, Segoe UI, Arial";
-    const valueFont = "700 64px Inter, system-ui, -apple-system, Segoe UI, Arial";
-    const smallFont = "500 34px Inter, system-ui, -apple-system, Segoe UI, Arial";
-
-    const line = (n: number) => BY + 110 + n * 120;
-
-    ctx.fillStyle = data.theme.mid;
-    ctx.font = labelFont;
-    drawText(ctx, "Crédito (líquido):", BX + 40, line(0));
-    ctx.fillStyle = data.theme.dark;
-    ctx.font = valueFont;
-    drawText(ctx, brMoney(data.creditoNovo), BX + 40, line(0) + 58);
-
-    ctx.fillStyle = data.theme.mid;
-    ctx.font = labelFont;
-    drawText(ctx, "Primeira parcela:", BX + 40, line(1));
-    ctx.fillStyle = data.theme.dark;
-    ctx.font = valueFont;
-    drawText(ctx, brMoney(data.primeiraParcela), BX + 40, line(1) + 58);
-
-    if (data.parcela2 != null) {
-      ctx.fillStyle = data.theme.mid;
-      ctx.font = labelFont;
-      drawText(ctx, "Parcela 2 (com antecipação):", BX + 40, line(2));
-      ctx.fillStyle = data.theme.dark;
-      ctx.font = valueFont;
-      drawText(ctx, brMoney(data.parcela2), BX + 40, line(2) + 58);
-    }
-
-    const idx = data.parcela2 != null ? 3 : 2;
-
-    ctx.fillStyle = data.theme.mid;
-    ctx.font = labelFont;
-    drawText(ctx, "Demais parcelas:", BX + 40, line(idx));
-    ctx.fillStyle = data.theme.dark;
-    ctx.font = valueFont;
-    drawText(ctx, brMoney(data.demaisParcelas), BX + 40, line(idx) + 58);
-
-    ctx.fillStyle = data.theme.mid;
-    ctx.font = labelFont;
-    drawText(ctx, "Lance próprio:", BX + 40, line(idx + 1));
-    ctx.fillStyle = data.theme.dark;
-    ctx.font = valueFont;
-    drawText(ctx, brMoney(data.lanceProprio), BX + 40, line(idx + 1) + 58);
-
-    ctx.fillStyle = data.theme.mid;
-    ctx.font = labelFont;
-    drawText(ctx, "Grupo:", BX + 40, line(idx + 2));
-    ctx.fillStyle = data.theme.dark;
-    ctx.font = valueFont;
-    drawText(ctx, data.grupo ? data.grupo : "—", BX + 40, line(idx + 2) + 58);
-
-    // rodapé/logo
-    const footerY = 1720;
-    ctx.fillStyle = data.theme.accent;
-    ctx.font = "800 64px Inter, system-ui, -apple-system, Segoe UI, Arial";
-
-    const img = new Image();
-    img.onload = () => {
-      // barra translúcida
-      ctx.globalAlpha = 0.12;
-      ctx.fillStyle = data.theme.dark;
-      ctx.fillRect(0, footerY - 60, 1080, 200);
-      ctx.globalAlpha = 1;
-
-      const h = 88;
-      const ratio = img.width ? h / img.height : 1;
-      const w = img.width ? img.width * ratio : 0;
-      const x = 120;
-      ctx.drawImage(img, x, footerY, w, h);
-
-      ctx.fillStyle = data.theme.dark;
-      ctx.font = "700 44px Inter, system-ui, -apple-system, Segoe UI, Arial";
-      drawText(ctx, "consulmax.com.br", x + w + 24, footerY + 64);
-    };
-    img.onerror = () => {
-      // se não houver logo, escreve o nome
-      ctx.globalAlpha = 0.12;
-      ctx.fillStyle = data.theme.dark;
-      ctx.fillRect(0, footerY - 60, 1080, 200);
-      ctx.globalAlpha = 1;
-
-      ctx.fillStyle = data.theme.dark;
-      ctx.font = "800 72px Inter, system-ui, -apple-system, Segoe UI, Arial";
-      drawText(ctx, "CONSULMAX", 120, footerY + 68);
-    };
-    img.src = "/logo-consulmax.png"; // coloque o arquivo na pasta /public
-  }, [data]);
-
-  function downloadPng() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const url = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "simulacao-consulmax-1080x1920.png";
-    a.click();
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Arte para WhatsApp (9:16)</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!data ? (
-          <div className="text-sm text-muted-foreground">
-            Preencha a simulação para gerar a imagem.
-          </div>
-        ) : (
-          <>
-            <div className="rounded-lg border overflow-hidden">
-              <canvas
-                ref={canvasRef}
-                width={1080}
-                height={1920}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  height: "auto",
-                }}
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button onClick={downloadPng}>
-                <Download className="h-4 w-4 mr-2" />
-                Baixar imagem (PNG)
-              </Button>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -1193,16 +902,8 @@ function TableManagerModal({
 
   const grouped = useMemo(() => {
     return [...allTables].sort((a, b) => {
-      const sa = (
-        a.segmento +
-        a.nome_tabela +
-        String(a.prazo_limite)
-      ).toLowerCase();
-      const sb = (
-        b.segmento +
-        b.nome_tabela +
-        String(b.prazo_limite)
-      ).toLowerCase();
+      const sa = (a.segmento + a.nome_tabela + String(a.prazo_limite)).toLowerCase();
+      const sb = (b.segmento + b.nome_tabela + String(b.prazo_limite)).toLowerCase();
       return sa.localeCompare(sb);
     });
   }, [allTables]);
@@ -1214,19 +915,11 @@ function TableManagerModal({
   );
 
   async function deletar(id: string) {
-    if (
-      !confirm(
-        "Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)"
-      )
-    )
-      return;
+    if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
     setBusyId(id);
 
     // 1) Exclui simulações dependentes (evita erro de FK)
-    const delSims = await supabase
-      .from("sim_simulations")
-      .delete()
-      .eq("table_id", id);
+    const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
     if (delSims.error) {
       setBusyId(null);
       alert("Erro ao excluir simulações vinculadas: " + delSims.error.message);
@@ -1398,62 +1091,34 @@ function TableFormOverlay({
   onSaved: (t: SimTable) => void;
   onClose: () => void;
 }) {
-  const [segmento, setSegmento] = useState(
-    initial?.segmento || "Imóvel Estendido"
-  );
+  const [segmento, setSegmento] = useState(initial?.segmento || "Imóvel Estendido");
   const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
   const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
   const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
   const [prazoLimite, setPrazoLimite] = useState(initial?.prazo_limite ?? 240);
 
-  const [taxaAdmHuman, setTaxaAdmHuman] = useState(
-    formatPctInputFromDecimal(initial?.taxa_adm_pct ?? 0.22)
-  );
-  const [frHuman, setFrHuman] = useState(
-    formatPctInputFromDecimal(initial?.fundo_reserva_pct ?? 0.02)
-  );
-  const [antecipHuman, setAntecipHuman] = useState(
-    formatPctInputFromDecimal(initial?.antecip_pct ?? 0.02)
-  );
-  const [antecipParcelas, setAntecipParcelas] = useState(
-    initial?.antecip_parcelas ?? 1
-  );
-  const [limHuman, setLimHuman] = useState(
-    formatPctInputFromDecimal(initial?.limitador_parcela_pct ?? 0.002565)
-  );
-  const [seguroHuman, setSeguroHuman] = useState(
-    formatPctInputFromDecimal(initial?.seguro_prest_pct ?? 0.00061)
-  );
+  const [taxaAdmHuman, setTaxaAdmHuman] = useState(formatPctInputFromDecimal(initial?.taxa_adm_pct ?? 0.22));
+  const [frHuman, setFrHuman] = useState(formatPctInputFromDecimal(initial?.fundo_reserva_pct ?? 0.02));
+  const [antecipHuman, setAntecipHuman] = useState(formatPctInputFromDecimal(initial?.antecip_pct ?? 0.02));
+  const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
+  const [limHuman, setLimHuman] = useState(formatPctInputFromDecimal(initial?.limitador_parcela_pct ?? 0.002565));
+  const [seguroHuman, setSeguroHuman] = useState(formatPctInputFromDecimal(initial?.seguro_prest_pct ?? 0.00061));
 
-  const [perEmbutido, setPerEmbutido] = useState(
-    initial?.permite_lance_embutido ?? true
-  );
-  const [perFixo25, setPerFixo25] = useState(
-    initial?.permite_lance_fixo_25 ?? true
-  );
-  const [perFixo50, setPerFixo50] = useState(
-    initial?.permite_lance_fixo_50 ?? true
-  );
-  const [perLivre, setPerLivre] = useState(
-    initial?.permite_lance_livre ?? true
-  );
+  const [perEmbutido, setPerEmbutido] = useState(initial?.permite_lance_embutido ?? true);
+  const [perFixo25, setPerFixo25] = useState(initial?.permite_lance_fixo_25 ?? true);
+  const [perFixo50, setPerFixo50] = useState(initial?.permite_lance_fixo_50 ?? true);
+  const [perLivre, setPerLivre] = useState(initial?.permite_lance_livre ?? true);
 
-  const [cParcelaCheia, setCParcelaCheia] = useState(
-    initial?.contrata_parcela_cheia ?? true
-  );
+  const [cParcelaCheia, setCParcelaCheia] = useState(initial?.contrata_parcela_cheia ?? true);
   const [cRed25, setCRed25] = useState(initial?.contrata_reduzida_25 ?? true);
   const [cRed50, setCRed50] = useState(initial?.contrata_reduzida_50 ?? true);
-  const [indices, setIndices] = useState(
-    (initial?.indice_correcao || ["IPCA"]).join(", ")
-  );
+  const [indices, setIndices] = useState((initial?.indice_correcao || ["IPCA"]).join(", "));
 
   const [saving, setSaving] = useState(false);
 
   // ESC para fechar
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -1480,32 +1145,17 @@ function TableFormOverlay({
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
       contrata_reduzida_50: cRed50,
-      indice_correcao: indices
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
+      indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
     };
 
     let res;
     if (initial) {
-      res = await supabase
-        .from("sim_tables")
-        .update(payload)
-        .eq("id", initial.id)
-        .select("*")
-        .single();
+      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
     } else {
-      res = await supabase
-        .from("sim_tables")
-        .insert(payload)
-        .select("*")
-        .single();
+      res = await supabase.from("sim_tables").insert(payload).select("*").single();
     }
     setSaving(false);
-    if (res.error) {
-      alert("Erro ao salvar tabela: " + res.error.message);
-      return;
-    }
+    if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
     onSaved(res.data as SimTable);
   }
 
@@ -1513,169 +1163,49 @@ function TableFormOverlay({
     <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="font-semibold">
-            {initial ? "Editar Tabela" : "Nova Tabela"}
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-muted"
-            aria-label="Fechar"
-          >
+          <div className="font-semibold">{initial ? "Editar Tabela" : "Nova Tabela"}</div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="p-4 grid gap-3 md:grid-cols-4">
-          <div>
-            <Label>Segmento</Label>
-            <Input
-              value={segmento}
-              onChange={(e) => setSegmento(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>Nome da Tabela</Label>
-            <Input value={nome} onChange={(e) => setNome(e.target.value)} />
-          </div>
-          <div>
-            <Label>Faixa (mín)</Label>
-            <Input
-              type="number"
-              value={faixaMin}
-              onChange={(e) => setFaixaMin(Number(e.target.value))}
-            />
-          </div>
-          <div>
-            <Label>Faixa (máx)</Label>
-            <Input
-              type="number"
-              value={faixaMax}
-              onChange={(e) => setFaixaMax(Number(e.target.value))}
-            />
-          </div>
-          <div>
-            <Label>Prazo Limite (meses)</Label>
-            <Input
-              type="number"
-              value={prazoLimite}
-              onChange={(e) => setPrazoLimite(Number(e.target.value))}
-            />
-          </div>
+          <div><Label>Segmento</Label><Input value={segmento} onChange={(e) => setSegmento(e.target.value)} /></div>
+          <div><Label>Nome da Tabela</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+          <div><Label>Faixa (mín)</Label><Input type="number" value={faixaMin} onChange={(e) => setFaixaMin(Number(e.target.value))} /></div>
+          <div><Label>Faixa (máx)</Label><Input type="number" value={faixaMax} onChange={(e) => setFaixaMax(Number(e.target.value))} /></div>
+          <div><Label>Prazo Limite (meses)</Label><Input type="number" value={prazoLimite} onChange={(e) => setPrazoLimite(Number(e.target.value))} /></div>
 
-          <div>
-            <Label>% Taxa Adm</Label>
-            <Input
-              value={taxaAdmHuman}
-              onChange={(e) => setTaxaAdmHuman(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>% Fundo Reserva</Label>
-            <Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} />
-          </div>
-          <div>
-            <Label>% Antecipação da Adm</Label>
-            <Input
-              value={antecipHuman}
-              onChange={(e) => setAntecipHuman(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>Parcelas da Antecipação</Label>
-            <Input
-              type="number"
-              value={antecipParcelas}
-              onChange={(e) => setAntecipParcelas(Number(e.target.value))}
-            />
-          </div>
+          <div><Label>% Taxa Adm</Label><Input value={taxaAdmHuman} onChange={(e) => setTaxaAdmHuman(e.target.value)} /></div>
+          <div><Label>% Fundo Reserva</Label><Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} /></div>
+          <div><Label>% Antecipação da Adm</Label><Input value={antecipHuman} onChange={(e) => setAntecipHuman(e.target.value)} /></div>
+          <div><Label>Parcelas da Antecipação</Label><Input type="number" value={antecipParcelas} onChange={(e) => setAntecipParcelas(Number(e.target.value))} /></div>
 
-          <div>
-            <Label>% Limitador Parcela</Label>
-            <Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} />
-          </div>
-          <div>
-            <Label>% Seguro por parcela</Label>
-            <Input
-              value={seguroHuman}
-              onChange={(e) => setSeguroHuman(e.target.value)}
-            />
-          </div>
+          <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
+          <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
 
           <div className="col-span-2">
             <Label>Lances Permitidos</Label>
             <div className="flex gap-4 mt-1 text-sm">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={perEmbutido}
-                  onChange={(e) => setPerEmbutido(e.target.checked)}
-                />
-                Embutido
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={perFixo25}
-                  onChange={(e) => setPerFixo25(e.target.checked)}
-                />
-                Fixo 25%
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={perFixo50}
-                  onChange={(e) => setPerFixo50(e.target.checked)}
-                />
-                Fixo 50%
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={perLivre}
-                  onChange={(e) => setPerLivre(e.target.checked)}
-                />
-                Livre
-              </label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={perEmbutido} onChange={(e) => setPerEmbutido(e.target.checked)} />Embutido</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo25} onChange={(e) => setPerFixo25(e.target.checked)} />Fixo 25%</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo50} onChange={(e) => setPerFixo50(e.target.checked)} />Fixo 50%</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={perLivre} onChange={(e) => setPerLivre(e.target.checked)} />Livre</label>
             </div>
           </div>
 
           <div className="col-span-2">
             <Label>Formas de Contratação</Label>
             <div className="flex gap-4 mt-1 text-sm">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={cParcelaCheia}
-                  onChange={(e) => setCParcelaCheia(e.target.checked)}
-                />
-                Parcela Cheia
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={cRed25}
-                  onChange={(e) => setCRed25(e.target.checked)}
-                />
-                Reduzida 25%
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={cRed50}
-                  onChange={(e) => setCRed50(e.target.checked)}
-                />
-                Reduzida 50%
-              </label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={cParcelaCheia} onChange={(e) => setCParcelaCheia(e.target.checked)} />Parcela Cheia</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={cRed25} onChange={(e) => setCRed25(e.target.checked)} />Reduzida 25%</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={cRed50} onChange={(e) => setCRed50(e.target.checked)} />Reduzida 50%</label>
             </div>
           </div>
 
           <div className="md:col-span-4">
             <Label>Índice de Correção (separar por vírgula)</Label>
-            <Input
-              value={indices}
-              onChange={(e) => setIndices(e.target.value)}
-              placeholder="IPCA, INCC, IGP-M"
-            />
+            <Input value={indices} onChange={(e) => setIndices(e.target.value)} placeholder="IPCA, INCC, IGP-M" />
           </div>
 
           <div className="md:col-span-4 flex gap-2">
@@ -1683,12 +1213,7 @@ function TableFormOverlay({
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {initial ? "Salvar alterações" : "Salvar Tabela"}
             </Button>
-            <Button
-              variant="secondary"
-              onClick={onClose}
-              disabled={saving}
-              className="h-10 rounded-2xl px-4"
-            >
+            <Button variant="secondary" onClick={onClose} disabled={saving} className="h-10 rounded-2xl px-4">
               Cancelar
             </Button>
           </div>
@@ -1707,34 +1232,22 @@ type EmbraconProps = {
   tabelaSelecionada: SimTable | null;
   prazoAte: number;
   faixa: { min: number; max: number } | null;
-  leadId: string;
-  setLeadId: (v: string) => void;
+  leadId: string; setLeadId: (v: string) => void;
   leadInfo: { nome: string; telefone?: string | null } | null;
-  grupo: string;
-  setGrupo: (v: string) => void;
+  grupo: string; setGrupo: (v: string) => void;
 
-  segmento: string;
-  setSegmento: (v: string) => void;
-  nomeTabela: string;
-  setNomeTabela: (v: string) => void;
-  tabelaId: string;
-  setTabelaId: (v: string) => void;
+  segmento: string; setSegmento: (v: string) => void;
+  nomeTabela: string; setNomeTabela: (v: string) => void;
+  tabelaId: string; setTabelaId: (v: string) => void;
 
-  credito: number;
-  setCredito: (v: number) => void;
-  prazoVenda: number;
-  setPrazoVenda: (v: number) => void;
-  forma: FormaContratacao;
-  setForma: (v: FormaContratacao) => void;
-  seguroPrest: boolean;
-  setSeguroPrest: (v: boolean) => void;
+  credito: number; setCredito: (v: number) => void;
+  prazoVenda: number; setPrazoVenda: (v: number) => void;
+  forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
+  seguroPrest: boolean; setSeguroPrest: (v: boolean) => void;
 
-  lanceOfertPct: number;
-  setLanceOfertPct: (v: number) => void;
-  lanceEmbutPct: number;
-  setLanceEmbutPct: (v: number) => void;
-  parcContemplacao: number;
-  setParcContemplacao: (v: number) => void;
+  lanceOfertPct: number; setLanceOfertPct: (v: number) => void;
+  lanceEmbutPct: number; setLanceEmbutPct: (v: number) => void;
+  parcContemplacao: number; setParcContemplacao: (v: number) => void;
 
   prazoAviso: string | null;
   calc: ReturnType<typeof calcularSimulacao> | null;
@@ -1749,9 +1262,7 @@ function EmbraconSimulator(p: EmbraconProps) {
     <div className="space-y-6">
       {/* Lead */}
       <Card>
-        <CardHeader>
-          <CardTitle>Embracon</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>Embracon</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
@@ -1790,9 +1301,7 @@ function EmbraconSimulator(p: EmbraconProps) {
       {p.leadId ? (
         <>
           <Card>
-            <CardHeader>
-              <CardTitle>Configurações do Plano</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Configurações do Plano</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Segmento</Label>
@@ -1802,13 +1311,13 @@ function EmbraconSimulator(p: EmbraconProps) {
                   onChange={(e) => p.setSegmento(e.target.value)}
                 >
                   <option value="">Selecione o segmento</option>
-                  {Array.from(
-                    new Set(p.adminTables.map((t) => t.segmento))
-                  ).map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
+                  {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map(
+                    (s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    )
+                  )}
                 </select>
               </div>
 
@@ -1821,9 +1330,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                   onChange={(e) => p.setNomeTabela(e.target.value)}
                 >
                   <option value="">
-                    {p.segmento
-                      ? "Selecione a tabela"
-                      : "Selecione o segmento primeiro"}
+                    {p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}
                   </option>
                   {p.nomesTabelaSegmento.map((n) => (
                     <option key={n} value={n}>
@@ -1842,14 +1349,12 @@ function EmbraconSimulator(p: EmbraconProps) {
                   onChange={(e) => p.setTabelaId(e.target.value)}
                 >
                   <option value="">
-                    {p.nomeTabela
-                      ? "Selecione o prazo"
-                      : "Selecione a tabela antes"}
+                    {p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}
                   </option>
                   {p.variantesDaTabela.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} •
-                      FR {pctHuman(t.fundo_reserva_pct)}
+                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR{" "}
+                      {pctHuman(t.fundo_reserva_pct)}
                     </option>
                   ))}
                 </select>
@@ -1858,11 +1363,7 @@ function EmbraconSimulator(p: EmbraconProps) {
               <div>
                 <Label>Faixa de Crédito</Label>
                 <Input
-                  value={
-                    p.faixa
-                      ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}`
-                      : ""
-                  }
+                  value={p.faixa ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}` : ""}
                   readOnly
                 />
               </div>
@@ -1871,9 +1372,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 
           {/* Venda */}
           <Card>
-            <CardHeader>
-              <CardTitle>Configurações da Venda</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Configurações da Venda</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Valor do Crédito</Label>
@@ -1991,10 +1490,7 @@ function EmbraconSimulator(p: EmbraconProps) {
               </div>
               <div>
                 <Label>Demais Parcelas</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.parcelaDemais) : ""}
-                  readOnly
-                />
+                <Input value={p.calc ? brMoney(p.calc.parcelaDemais) : ""} readOnly />
               </div>
             </CardContent>
           </Card>
@@ -2007,10 +1503,7 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div>
                 <Label>Lance Ofertado (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceOfertPct}
-                  onChangeDecimal={p.setLanceOfertPct}
-                />
+                <PercentInput valueDecimal={p.lanceOfertPct} onChangeDecimal={p.setLanceOfertPct} />
               </div>
               <div>
                 <Label>Lance Embutido (%)</Label>
@@ -2018,9 +1511,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                   valueDecimal={p.lanceEmbutPct}
                   onChangeDecimal={(d) => {
                     if (d > 0.25) {
-                      alert(
-                        "Lance embutido limitado a 25,0000% do crédito. Voltando para 25%."
-                      );
+                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
                       p.setLanceEmbutPct(0.25);
                     } else {
                       p.setLanceEmbutPct(d);
@@ -2082,7 +1573,10 @@ function EmbraconSimulator(p: EmbraconProps) {
               </div>
               <div>
                 <Label>Novo Crédito</Label>
-                <Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly />
+                <Input
+                  value={p.calc ? brMoney(p.calc.novoCredito) : ""}
+                  readOnly
+                />
               </div>
               <div>
                 <Label>Nova Parcela (sem limite)</Label>
@@ -2111,26 +1605,18 @@ function EmbraconSimulator(p: EmbraconProps) {
                 <Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly />
               </div>
 
-              {p.calc?.has2aAntecipDepois &&
-                p.calc?.segundaParcelaComAntecipacao != null && (
-                  <div className="md:col-span-3">
-                    <Label>2ª parcela (com antecipação)</Label>
-                    <Input
-                      value={brMoney(p.calc.segundaParcelaComAntecipacao)}
-                      readOnly
-                    />
-                  </div>
-                )}
+              {p.calc?.has2aAntecipDepois && p.calc?.segundaParcelaComAntecipacao != null && (
+                <div className="md:col-span-3">
+                  <Label>2ª parcela (com antecipação)</Label>
+                  <Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly />
+                </div>
+              )}
             </CardContent>
           </Card>
 
           {/* Ações */}
           <div className="flex items-center gap-3">
-            <Button
-              disabled={!p.calc || p.salvando}
-              onClick={p.salvar}
-              className="h-10 rounded-2xl px-4"
-            >
+            <Button disabled={!p.calc || p.salvando} onClick={p.salvar} className="h-10 rounded-2xl px-4">
               {p.salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
             </Button>
@@ -2146,6 +1632,167 @@ function EmbraconSimulator(p: EmbraconProps) {
           Selecione um lead para abrir o simulador.
         </div>
       )}
+    </div>
+  );
+}
+
+/* ====================== Poster 9:16 ====================== */
+type PosterPreviewProps = {
+  segmento: string;
+  grupo: string;
+  creditoNovo: number;
+  primeiraParcela: number;
+  segundaParcela: number | null;
+  demaisParcelas: number;
+  lanceProprio: number;
+};
+
+function PosterPreview({
+  segmento,
+  grupo,
+  creditoNovo,
+  primeiraParcela,
+  segundaParcela,
+  demaisParcelas,
+  lanceProprio,
+}: PosterPreviewProps) {
+  const seg = (segmento || "").toLowerCase();
+
+  // Cores de tema por segmento
+  const theme = (() => {
+    if (seg.includes("imó")) return { name: "Imóveis", dark: "#445066", accent: "#0E9F6E" };
+    if (seg.includes("moto")) return { name: "Motocicletas", dark: "#3E5166", accent: "#F59E0B" };
+    if (seg.includes("auto") || seg.includes("veí")) return { name: "Automóveis", dark: "#384657", accent: "#2563EB" };
+    if (seg.includes("serv")) return { name: "Serviços", dark: "#4B5563", accent: "#EF4444" };
+    return { name: segmento || "Consórcio", dark: "#475569", accent: "#0EA5E9" };
+  })();
+
+  // Contêiner real 1080x1920, mas escalado para preview
+  const scale = 0.3334; // ~360x640 na tela
+  const wrapperStyle: React.CSSProperties = {
+    width: 1080,
+    height: 1920,
+    position: "relative",
+    background: "#fff",
+    transform: `scale(${scale})`,
+    transformOrigin: "top left",
+    boxShadow: "0 10px 30px rgba(0,0,0,.15)",
+    borderRadius: 16,
+    overflow: "hidden",
+  };
+
+  const labelStyle: React.CSSProperties = {
+    position: "absolute",
+    top: 80,
+    left: 120,
+    padding: "18px 28px",
+    background: theme.dark,
+    color: "#fff",
+    borderRadius: 20,
+    fontSize: 44,
+    fontWeight: 700,
+  };
+
+  const titleStyle: React.CSSProperties = {
+    position: "absolute",
+    top: 320,
+    left: 120,
+    color: theme.dark,
+    fontSize: 60,
+    fontWeight: 700,
+    letterSpacing: 0.2,
+  };
+
+  const valueBlock: React.CSSProperties = {
+    position: "absolute",
+    top: 520,
+    left: 120,
+    right: 120,
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 24,
+    fontSize: 40,
+    color: "#111827",
+  };
+
+  const chip: React.CSSProperties = {
+    fontSize: 30,
+    color: "#6B7280",
+    marginBottom: 6,
+  };
+
+  const card: React.CSSProperties = {
+    border: `2px solid ${theme.dark}22`,
+    borderRadius: 24,
+    padding: 24,
+    background: "#fff",
+  };
+
+  return (
+    <div style={{ width: Math.round(1080 * scale), height: Math.round(1920 * scale) }}>
+      <div style={wrapperStyle}>
+        {/* fundos/elementos */}
+        <div style={{ position: "absolute", top: 120, left: 120, width: 840, height: 160, background: theme.dark, opacity: 0.22, borderRadius: 80 }} />
+        <div style={{ position: "absolute", bottom: 0, right: 0, width: 880, height: 880, background: theme.dark, opacity: 0.18, borderTopLeftRadius: 440 }} />
+        <div style={{ position: "absolute", top: 480, right: -200, width: 720, height: 720, background: theme.dark, opacity: 0.22, borderRadius: 360 }} />
+
+        {/* cabeçalho/etiqueta */}
+        <div style={labelStyle}>Cartas de crédito</div>
+
+        {/* Título Segmento */}
+        <div style={titleStyle}>
+          Consórcio <span style={{ color: theme.accent }}>{theme.name}</span>
+        </div>
+
+        {/* Bloco principal de valores */}
+        <div style={valueBlock}>
+          <div style={card}>
+            <div style={chip}>Crédito</div>
+            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(creditoNovo || 0)}</div>
+          </div>
+
+          <div style={card}>
+            <div style={chip}>Primeira parcela</div>
+            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(primeiraParcela || 0)}</div>
+          </div>
+
+          {segundaParcela != null && (
+            <div style={card}>
+              <div style={chip}>Parcela 2</div>
+              <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(segundaParcela)}</div>
+            </div>
+          )}
+
+          <div style={card}>
+            <div style={chip}>Demais parcelas</div>
+            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(demaisParcelas || 0)}</div>
+          </div>
+
+          <div style={card}>
+            <div style={chip}>Lance próprio</div>
+            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{brMoney(lanceProprio || 0)}</div>
+          </div>
+
+          <div style={card}>
+            <div style={chip}>Grupo</div>
+            <div style={{ fontSize: 56, fontWeight: 800, color: theme.dark }}>{grupo || "—"}</div>
+          </div>
+        </div>
+
+        {/* Rodapé com “logo” tipográfica */}
+        <div style={{
+          position: "absolute", bottom: 120, left: 120, right: 120,
+          display: "flex", alignItems: "center", justifyContent: "space-between"
+        }}>
+          <div style={{ fontSize: 36, color: "#6B7280" }}>consulmaxconsorcios.com.br</div>
+          <div style={{
+            fontWeight: 900, fontSize: 56, letterSpacing: 1,
+            color: theme.dark
+          }}>
+            CONSULMAX
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

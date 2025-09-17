@@ -1692,50 +1692,66 @@ function StoriesArt(props: StoriesArtProps) {
     return size;
   }
 
-  function drawChip(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, padX: number, padY: number, bg: string, fg: string, baseSize: number) {
-    const maxWidth = 1080 - x * 2;
-    let size = baseSize;
-    ctx.font = `600 ${size}px 'Inter', system-ui, -apple-system, Arial`;
-    let width = ctx.measureText(text).width + padX * 2;
-    if (width > maxWidth) {
-      size = fitText(ctx, text, maxWidth - padX * 2, baseSize);
-      ctx.font = `600 ${size}px 'Inter', system-ui, -apple-system, Arial`;
-      width = ctx.measureText(text).width + padX * 2;
-    }
-    const height = size + padY * 2;
-    ctx.fillStyle = bg;
-    drawRoundedRect(ctx, x, y, width, height, height / 2);
-    ctx.fill();
-    ctx.fillStyle = fg;
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, x + padX, y + height / 2);
-    return { w: width, h: height };
-  }
+  type CardOpts = {
+    border?: string;
+    fill?: string;
+    titleColor?: string;
+    valueColor?: string;
+    valueBold?: boolean;
+  };
 
-  function drawValueCard(ctx: CanvasRenderingContext2D, title: string, value: string, x: number, y: number, w: number, h: number, options?: { border?: string; fill?: string; text?: string }) {
+  function drawValueCard(
+    ctx: CanvasRenderingContext2D,
+    title: string,
+    value: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    options: CardOpts = {}
+  ) {
     ctx.save();
     drawRoundedRect(ctx, x, y, w, h, 16);
-    ctx.fillStyle = options?.fill || colors.white;
+    ctx.fillStyle = options.fill || colors.white;
     ctx.fill();
-    if (options?.border) {
-      ctx.lineWidth = 3;
+    if (options.border) {
+      ctx.lineWidth = 2.5;
       ctx.strokeStyle = options.border;
       ctx.stroke();
     }
 
     // title
-    ctx.fillStyle = "#6B7280"; // slate-500
-    ctx.font = `500 26px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.fillStyle = options.titleColor || "#6B7280"; // slate-500
+    ctx.font = `600 26px 'Inter', system-ui, -apple-system, Arial`;
     ctx.textBaseline = "top";
     ctx.fillText(title, x + 18, y + 14);
 
     // value
-    ctx.fillStyle = colors.blue;
-    ctx.font = `800 36px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.fillStyle = options.valueColor || colors.blue;
+    ctx.font = `${options.valueBold ? "800" : "700"} 36px 'Inter', system-ui, -apple-system, Arial`;
     ctx.textBaseline = "alphabetic";
     const v = value || "—";
     ctx.fillText(v, x + 18, y + h - 18);
     ctx.restore();
+  }
+
+  function drawChip(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    fill: string,
+    fg: string
+  ) {
+    drawRoundedRect(ctx, x, y, w, h, h / 2);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.fillStyle = fg;
+    ctx.font = `700 30px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, x + 22, y + h / 2);
   }
 
   async function render() {
@@ -1782,42 +1798,41 @@ function StoriesArt(props: StoriesArtProps) {
       }
     }
 
-    // chips superiores
-    ctx.fillStyle = colors.red;
-    ctx.font = `600 44px 'Inter', system-ui, -apple-system, Arial`;
-    const chip1 = drawChip(ctx, "Cartas de Crédito", 60, 60, 22, 14, colors.red, colors.white, 36);
+    // Pill: Cartas de Crédito (vermelho)
+    const pillX = 60;
+    const pillY = 60;
+    drawChip(ctx, "Cartas de Crédito", pillX, pillY, 300, 60, colors.red, colors.white);
 
-    ctx.font = `600 50px 'Inter', system-ui, -apple-system, Arial`;
-    const segName = segmento?.split(" ")[0] || "";
-    const chip2W = 780;
-    drawRoundedRect(ctx, 60, chip1.h + 80, chip2W, 64, 32);
-    ctx.fillStyle = colors.gray;
+    // Barra: Consórcio [SEGMENTO] (azul, texto branco)
+    const segText = `Consórcio ${segmento?.split(" ")[0] || ""}`.trim();
+    const barX = 60;
+    const barY = pillY + 90;
+    const barW = 820;
+    const barH = 68;
+    drawRoundedRect(ctx, barX, barY, barW, barH, 22);
+    ctx.fillStyle = colors.blue;
     ctx.fill();
-    ctx.fillStyle = colors.blue;
+    ctx.fillStyle = colors.white;
+    ctx.font = `700 36px 'Inter', system-ui, -apple-system, Arial`;
     ctx.textBaseline = "middle";
-    ctx.fillText("Consórcio ", 84, chip1.h + 80 + 32);
-    const baseW = ctx.measureText("Consórcio ").width;
-    ctx.fillStyle = colors.blue;
-    ctx.font = `700 50px 'Inter', system-ui, -apple-system, Arial`;
-    ctx.fillText(segName || "—", 84 + baseW, chip1.h + 80 + 32);
+    ctx.fillText(segText || "Consórcio", barX + 22, barY + barH / 2);
 
-    // cards centralizados
-    const showParc2 = !!(calc?.has2aAntecipDepois && calc?.segundaParcelaComAntecipacao != null);
+    // Layout base dos cards
     const columns = 2;
     const cardW = 420;
     const cardH = 120;
     const gapX = 30;
     const gapY = 28;
     const totalW = columns * cardW + (columns - 1) * gapX;
-    let startX = (W - totalW) / 2;
-    let startY = 420;
+    const startX = (W - totalW) / 2;
+    const startY = 420;
 
-    const rows = showParc2 ? 3 : 3; // layout permanece, mas reposiciona sem "Parcela 2"
-    const row1Y = startY;
-    const row2Y = startY + cardH + gapY;
-    const row3Y = startY + (cardH + gapY) * 2;
+    const row1Y = startY;                    // primeira linha de 2 colunas
+    const row2Y = startY + cardH + gapY;     // segunda linha
+    const row3Y = startY + (cardH + gapY) * 2; // terceira linha
 
-    // valores
+    // Valores de exibição
+    const showParc2 = !!(calc?.has2aAntecipDepois && calc?.segundaParcelaComAntecipacao != null);
     const vCredito = calc ? brMoney(calc.novoCredito) : "";
     const vP1 = calc ? brMoney(calc.parcelaAte) : "";
     const vP2 = showParc2 && calc?.segundaParcelaComAntecipacao ? brMoney(calc.segundaParcelaComAntecipacao) : "";
@@ -1825,29 +1840,52 @@ function StoriesArt(props: StoriesArtProps) {
     const vLance = calc ? brMoney(calc.lanceProprioValor) : "";
     const vPrazo = calc ? `${calc.novoPrazo} meses` : "";
 
-    // linha 1
-    drawValueCard(ctx, "Crédito", vCredito, startX, row1Y, cardW, cardH, { border: colors.red });
-    drawValueCard(ctx, "Primeira parcela", vP1, startX + cardW + gapX, row1Y, cardW, cardH);
+    // Card de CRÉDITO — largo, preenchido azul, texto branco
+    const bigW = totalW;          // ocupa as duas colunas
+    const bigH = 120;
+    const bigX = startX;
+    const bigY = startY - bigH - 20; // acima da primeira linha
+    drawValueCard(ctx, "Crédito", vCredito, bigX, bigY, bigW, bigH, {
+      fill: colors.blue,
+      titleColor: "#FFFFFF",
+      valueColor: "#FFFFFF",
+      valueBold: true,
+    });
 
-    // linha 2
+    // Linha 1: Primeira Parcela | Parcela 2 (se existir)
+    drawValueCard(ctx, "Primeira Parcela", vP1, startX, row1Y, cardW, cardH, {
+      border: hexToRgba(colors.blue, 0.6),
+    });
     if (showParc2) {
-      drawValueCard(ctx, "Parcela 2", vP2, startX, row2Y, cardW, cardH);
-      drawValueCard(ctx, "Demais parcelas", vDemais, startX + cardW + gapX, row2Y, cardW, cardH);
+      drawValueCard(ctx, "Segunda Parcela", vP2, startX + cardW + gapX, row1Y, cardW, cardH, {
+        border: hexToRgba(colors.blue, 0.6),
+      });
     } else {
-      drawValueCard(ctx, "Demais parcelas", vDemais, startX, row2Y, cardW, cardH);
-      drawValueCard(ctx, "Lance próprio", vLance, startX + cardW + gapX, row2Y, cardW, cardH, { fill: hexToRgba(colors.red, 0.06) });
+      // quando não há 2ª parcela, deixamos este espaço para simetria
+      drawValueCard(ctx, " ", " ", startX + cardW + gapX, row1Y, cardW, cardH, {
+        border: hexToRgba(colors.blue, 0.08),
+      });
     }
 
-    // linha 3
-    if (showParc2) {
-      drawValueCard(ctx, "Lance próprio", vLance, startX, row3Y, cardW, cardH, { fill: hexToRgba(colors.red, 0.06) });
-      drawValueCard(ctx, "Novo prazo", vPrazo, startX + cardW + gapX, row3Y, cardW, cardH);
-    } else {
-      drawValueCard(ctx, "Novo prazo", vPrazo, startX, row3Y, cardW, cardH);
-      drawValueCard(ctx, "Grupo", grupo || "—", startX + cardW + gapX, row3Y, cardW, cardH);
-    }
+    // Linha 2: Demais parcelas | Lance Próprio (destaque)
+    drawValueCard(ctx, "Demais Parcelas", vDemais, startX, row2Y, cardW, cardH, {
+      border: hexToRgba(colors.blue, 0.6),
+    });
+    drawValueCard(ctx, "Lance Próprio", vLance, startX + cardW + gapX, row2Y, cardW, cardH, {
+      fill: hexToRgba(colors.red, 0.08),
+      border: hexToRgba(colors.red, 0.35),
+      valueBold: true,
+    });
 
-    // chip Whatsapp com foto
+    // Linha 3: Novo Prazo | Grupo
+    drawValueCard(ctx, "Novo Prazo", vPrazo, startX, row3Y, cardW, cardH, {
+      border: hexToRgba(colors.blue, 0.6),
+    });
+    drawValueCard(ctx, "Grupo", grupo || "—", startX + cardW + gapX, row3Y, cardW, cardH, {
+      border: hexToRgba(colors.blue, 0.6),
+    });
+
+    // Chip Whatsapp com foto
     const chipY = row3Y + cardH + 36;
     const chipH = 74;
     const chipW = 760;
@@ -1875,10 +1913,10 @@ function StoriesArt(props: StoriesArtProps) {
         ctx.drawImage(img, avatarX - avatarSize / 2, avatarY - avatarSize / 2, avatarSize, avatarSize);
         ctx.restore();
       } catch {
-        drawInitial(ctx, userName, avatarX, avatarY, avatarSize, colors.blue);
+        drawInitial(ctx, userName, avatarX, avatarY, avatarSize, colors.red);
       }
     } else {
-      drawInitial(ctx, userName, avatarX, avatarY, avatarSize, colors.blue);
+      drawInitial(ctx, userName, avatarX, avatarY, avatarSize, colors.red);
     }
 
     // Whatsapp text
@@ -1991,7 +2029,7 @@ function drawInitial(
   size: number,
   color: string
 ) {
-  ctx.fillStyle = hexToRgba(color, 0.1);
+  ctx.fillStyle = hexToRgba(color, 0.15);
   ctx.beginPath();
   ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
   ctx.fill();

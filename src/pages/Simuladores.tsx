@@ -97,8 +97,9 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-/** Regra alinhada com os exemplos do Excel + tratamento “2ª parcela com antecipação” e
- * regra especial para Serviços e Moto < 20k: não reduz parcela, apenas o prazo.
+/** Regra alinhada com exemplos e:
+ * - Serviços e Moto < 20k: não reduz parcela, só prazo
+ * - tratamento “2ª parcela com antecipação”
  */
 function calcularSimulacao(i: CalcInput) {
   const {
@@ -194,7 +195,7 @@ function calcularSimulacao(i: CalcInput) {
   // Caso especial: antecipação em 2x e contemplação na 1ª parcela
   const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
+    ? parcelaEscolhida + antecipAdicionalCada
     : null;
 
   // NOVO PRAZO
@@ -315,9 +316,10 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // telefone & avatar do usuário logado (para a Arte)
+  // dados do usuário logado (para Resumo/WhatsApp/Foto)
   const [userPhone, setUserPhone] = useState<string>("");
-  const [userAvatarUrl, setUserAvatarUrl] = useState<string>("");
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string>("");
 
   useEffect(() => {
     (async () => {
@@ -336,7 +338,7 @@ export default function Simuladores() {
     })();
   }, []);
 
-  // pega telefone + possível foto do usuário logado
+  // pega dados do usuário logado
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
@@ -344,12 +346,13 @@ export default function Simuladores() {
       if (!uid) return;
       const { data } = await supabase
         .from("users")
-        .select("phone, avatar_url, photo_url, picture_url")
+        .select("phone, avatar_url, name, whatsapp")
         .eq("auth_user_id", uid)
         .maybeSingle();
-      setUserPhone((data?.phone || "").toString());
-      const url = (data as any)?.avatar_url || (data as any)?.photo_url || (data as any)?.picture_url || "";
-      setUserAvatarUrl(url || "");
+      const phone = (data?.whatsapp || data?.phone || "").toString();
+      setUserPhone(phone);
+      setUserAvatar((data as any)?.avatar_url || null);
+      setUserName(((data as any)?.name || "").toString());
     })();
   }, []);
 
@@ -576,263 +579,6 @@ ${wa}`
     }
   }
 
-  /* ================= Arte Para Stories (1080x1920) ================= */
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // Cores (paleta Consulmax)
-  const PALETTE = {
-    red: "#A11C27",
-    blue: "#1E293F",
-    gray: "#F5F5F5",
-    sand: "#E0CE8C",
-    brass: "#B5A573",
-    white: "#FFFFFF",
-    text: "#1E293F",
-    muted: "#6B7280",
-  };
-
-  function fitText(ctx: CanvasRenderingContext2D, text: string, maxW: number, baseSize: number, family = "Inter, system-ui, -apple-system, Segoe UI, Roboto") {
-    let size = baseSize;
-    while (size > 16) {
-      ctx.font = `700 ${size}px ${family}`;
-      if (ctx.measureText(text).width <= maxW) break;
-      size -= 2;
-    }
-    return size;
-  }
-
-  function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-    const rr = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + rr, y);
-    ctx.arcTo(x + w, y, x + w, y + h, rr);
-    ctx.arcTo(x + w, y + h, x, y + h, rr);
-    ctx.arcTo(x, y + h, x, y, rr);
-    ctx.arcTo(x, y, x + w, y, rr);
-    ctx.closePath();
-  }
-
-  function drawChip(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, bg: string, color: string, text: string, bold = 600) {
-    ctx.save();
-    ctx.fillStyle = bg;
-    roundRect(ctx, x, y, w, h, 28);
-    ctx.fill();
-    ctx.fillStyle = color;
-    ctx.font = `${bold} 44px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, x + 28, y + h / 2);
-    ctx.restore();
-  }
-
-  async function loadImage(src: string): Promise<HTMLImageElement | null> {
-    if (!src) return null;
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = src;
-    });
-  }
-
-  function drawField(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, label: string, value: string, highlight = false) {
-    ctx.save();
-    // card
-    ctx.shadowColor = "rgba(0,0,0,.06)";
-    ctx.shadowBlur = 18;
-    ctx.fillStyle = PALETTE.white;
-    roundRect(ctx, x, y, w, h, 20);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    // border
-    ctx.lineWidth = highlight ? 4 : 2;
-    ctx.strokeStyle = highlight ? PALETTE.red : "#E5E7EB";
-    roundRect(ctx, x, y, w, h, 20);
-    ctx.stroke();
-
-    // texts
-    ctx.fillStyle = PALETTE.muted;
-    ctx.font = `500 36px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
-    ctx.fillText(label, x + 24, y + 52);
-
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = `800 48px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
-    ctx.fillText(value, x + 24, y + 104);
-    ctx.restore();
-  }
-
-  async function drawStoriesArt() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const W = 1080, H = 1920;
-    canvas.width = W;
-    canvas.height = H;
-
-    // fundo branco
-    ctx.fillStyle = PALETTE.white;
-    ctx.fillRect(0, 0, W, H);
-
-    // formas abstratas (baixa opacidade)
-    ctx.save();
-    ctx.globalAlpha = 0.16;
-    ctx.fillStyle = PALETTE.blue;
-    roundRect(ctx, -60, 420, 760, 760, 200); ctx.fill();
-    ctx.fillStyle = PALETTE.sand;
-    roundRect(ctx, 560, 980, 520, 520, 140); ctx.fill();
-    ctx.fillStyle = PALETTE.brass;
-    roundRect(ctx, -80, 1260, 760, 520, 160); ctx.fill();
-    ctx.restore();
-
-    // chips topo (margem maior)
-    const padX = 96;
-    const topY = 96;
-
-    drawChip(ctx, padX, topY, 360, 70, PALETTE.blue, "#fff", "Cartas de crédito", 700);
-
-    // tarja com "Consórcio + Segmento"
-    const segmentoNome = (segmento || tabelaSelecionada?.segmento || "—").toLowerCase();
-    const segHuman =
-      segmentoNome.includes("imó") ? "Imóveis" :
-      segmentoNome.includes("serv") ? "Serviços" :
-      segmentoNome.includes("moto") ? "Motocicletas" :
-      segmentoNome.includes("pesad") ? "Pesados" :
-      segmentoNome.includes("auto") ? "Automóveis" : segmento || "—";
-
-    const chipW = 760;
-    const chipH = 86;
-    const chipX = padX;
-    const chipY = topY + 94;
-
-    ctx.save();
-    ctx.fillStyle = "#E5E7EB";
-    roundRect(ctx, chipX, chipY, chipW, chipH, 40);
-    ctx.fill();
-
-    const label = `Consórcio ${segHuman}`;
-    const fs = fitText(ctx, label, chipW - 40, 60);
-    ctx.font = `800 ${fs}px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
-    ctx.fillStyle = PALETTE.text;
-    ctx.fillText(label, chipX + 24, chipY + chipH / 2 + fs / 3);
-    ctx.restore();
-
-    // grid de campos
-    const gridTop = chipY + chipH + 64; // mais distante do topo
-    const colW = 440;
-    const colGap = 40;
-    const rowH = 140;
-    const col1 = padX;
-    const col2 = padX + colW + colGap;
-
-    // valores
-    const creditoNovo = calc?.novoCredito ?? 0;
-    const primeiraParcela = calc?.parcelaAte ?? 0;
-    const parcela2 = calc?.segundaParcelaComAntecipacao ?? 0;
-    const mostrarParcela2 = !!calc?.has2aAntecipDepois && !!calc?.segundaParcelaComAntecipacao;
-    const demaisParcelas = calc?.parcelaEscolhida ?? 0;
-    const lanceProprio = calc?.lanceProprioValor ?? 0;
-    const mostrarLance = lanceProprio > 0.005;
-    const novoPrazo = calc?.novoPrazo ?? 0;
-
-    drawField(ctx, col1, gridTop, colW, rowH, "Crédito", creditoNovo ? brMoney(creditoNovo) : "—", true);
-    drawField(ctx, col2, gridTop, colW, rowH, "Primeira parcela", primeiraParcela ? brMoney(primeiraParcela) : "—");
-
-    drawField(ctx, col1, gridTop + rowH + 24, colW, rowH, "Parcela 2", mostrarParcela2 ? brMoney(parcela2) : "—");
-    drawField(ctx, col2, gridTop + rowH + 24, colW, rowH, "Demais parcelas", demaisParcelas ? brMoney(demaisParcelas) : "—");
-
-    drawField(ctx, col1, gridTop + (rowH + 24) * 2, colW, rowH, "Lance próprio", mostrarLance ? brMoney(lanceProprio) : "—");
-    drawField(ctx, col2, gridTop + (rowH + 24) * 2, colW, rowH, "Novo prazo", novoPrazo ? `${novoPrazo} meses` : "—");
-
-    // grupo (se houver)
-    const grupoVal = (grupo || "").trim();
-    if (grupoVal) {
-      drawField(ctx, col1, gridTop + (rowH + 24) * 3, colW, rowH, "Grupo", grupoVal);
-    }
-
-    // cartão WhatsApp + avatar
-    const waY = gridTop + (rowH + 24) * 3 + (grupoVal ? rowH + 24 : 0);
-    const waH = 120;
-    const waW = colW * 2 + colGap;
-    const waX = col1;
-
-    ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,.06)";
-    ctx.shadowBlur = 18;
-    ctx.fillStyle = PALETTE.white;
-    roundRect(ctx, waX, waY, waW, waH, 24); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = "#E5E7EB"; ctx.lineWidth = 2;
-    roundRect(ctx, waX, waY, waW, waH, 24); ctx.stroke();
-
-    // avatar (círculo)
-    const avSize = 80;
-    const avX = waX + 24, avY = waY + (waH - avSize) / 2;
-
-    const avatar = await loadImage(userAvatarUrl);
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-    if (avatar) {
-      ctx.drawImage(avatar, avX, avY, avSize, avSize);
-    } else {
-      // fallback com inicial
-      ctx.fillStyle = PALETTE.gray;
-      ctx.fillRect(avX, avY, avSize, avSize);
-      ctx.fillStyle = PALETTE.blue;
-      ctx.font = `800 40px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const ini = (leadInfo?.nome || "W").slice(0, 1).toUpperCase();
-      ctx.fillText(ini, avX + avSize / 2, avY + avSize / 2);
-      ctx.textAlign = "left";
-    }
-    ctx.restore();
-
-    // texto WhatsApp
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = `800 40px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
-    const phoneTxt = (userPhone || "").replace(/\D/g, "") || "—";
-    ctx.fillText(`WhatsApp: ${phoneTxt}`, avX + avSize + 20, waY + waH / 2 + 12);
-    ctx.restore();
-
-    // logo centralizada no rodapé + site
-    const logoImg = await loadImage("/logo-consulmax.png");
-    const logoW = 340, logoH = 110;
-    const logoX = (W - logoW) / 2;
-    const logoY = H - 220;
-    if (logoImg) {
-      ctx.drawImage(logoImg, logoX, logoY, logoW, logoH);
-    }
-
-    ctx.fillStyle = PALETTE.muted;
-    ctx.font = `600 32px Inter, system-ui, -apple-system, Segoe UI, Roboto`;
-    const site = "consulmaxconsorcios.com.br";
-    const siteW = ctx.measureText(site).width;
-    ctx.fillText(site, (W - siteW) / 2, logoY + logoH + 48);
-  }
-
-  function baixarPNG() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const url = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "arte-stories.png";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-
-  useEffect(() => {
-    // redesenha sempre que entradas mudarem
-    drawStoriesArt();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calc, segmento, tabelaSelecionada, grupo, userPhone, userAvatarUrl]);
-
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2">
@@ -890,7 +636,7 @@ ${wa}`
 
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador (menor) */}
+        {/* coluna esquerda: simulador */}
         <div className="col-span-12 lg:col-span-8">
           <Card>
             <CardHeader>
@@ -959,7 +705,7 @@ ${wa}`
           </Card>
         </div>
 
-        {/* coluna direita: memória de cálculo + resumo + arte */}
+        {/* coluna direita: memória + resumo + arte */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader>
@@ -1053,33 +799,21 @@ ${wa}`
             </CardContent>
           </Card>
 
-          {/* ARTE PARA STORIES */}
+          {/* ======= Arte para Stories ======= */}
           <Card>
             <CardHeader>
-              <CardTitle>Arte Para Stories</CardTitle>
+              <CardTitle>Arte Para Stories (1080×1920)</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="rounded-xl border bg-white p-2 flex items-center justify-center">
-                {/* Preview escalado, mas o canvas mantém 1080x1920 */}
-                <canvas
-                  ref={canvasRef}
-                  style={{
-                    width: "100%",
-                    maxWidth: 360, // preview confortável na barra lateral
-                    height: "auto",
-                    borderRadius: 16,
-                    boxShadow: "0 2px 12px rgba(0,0,0,.06)",
-                  }}
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={drawStoriesArt}>
-                  Atualizar prévia
-                </Button>
-                <Button onClick={baixarPNG}>
-                  Baixar PNG
-                </Button>
-              </div>
+              <StoriesArt
+                canRender={!!(calc && tabelaSelecionada)}
+                segmento={tabelaSelecionada?.segmento || segmento}
+                grupo={grupo}
+                calc={calc}
+                telefone={userPhone}
+                avatarUrl={userAvatar}
+                userName={userName}
+              />
             </CardContent>
           </Card>
         </div>
@@ -1156,7 +890,6 @@ function TableManagerModal({
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
-  // reset página quando muda a lista
   useEffect(() => setPage(1), [allTables.length]);
 
   const grouped = useMemo(() => {
@@ -1286,7 +1019,6 @@ function TableManagerModal({
           </table>
         </div>
 
-        {/* paginação */}
         <div className="flex items-center justify-between mt-3 text-sm">
           <div>
             {grouped.length > 0 && (
@@ -1375,7 +1107,6 @@ function TableFormOverlay({
 
   const [saving, setSaving] = useState(false);
 
-  // ESC para fechar
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -1893,4 +1624,393 @@ function EmbraconSimulator(p: EmbraconProps) {
       )}
     </div>
   );
+}
+
+/* ====================== Arte para Stories (Canvas) ====================== */
+
+type StoriesArtProps = {
+  canRender: boolean;
+  segmento: string;
+  grupo: string;
+  calc: ReturnType<typeof calcularSimulacao> | null;
+  telefone: string;
+  avatarUrl: string | null;
+  userName: string;
+};
+
+function StoriesArt(props: StoriesArtProps) {
+  const { canRender, segmento, grupo, calc, telefone, avatarUrl, userName } = props;
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [seed, setSeed] = useState(Math.floor(Math.random() * 1e9));
+  const [downloading, setDownloading] = useState(false);
+
+  const colors = {
+    white: "#FFFFFF",
+    gray: "#F5F5F5",
+    blue: "#1E293F",
+    red: "#A11C27",
+  };
+
+  function rngFactory(s: number) {
+    let x = s || 1234567;
+    return () => {
+      // xorshift32
+      x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+      return (x >>> 0) / 4294967296;
+    };
+  }
+
+  function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, baseSize: number, minSize = 16) {
+    let size = baseSize;
+    do {
+      ctx.font = `600 ${size}px 'Inter', system-ui, -apple-system, Arial`;
+      if (ctx.measureText(text).width <= maxWidth) break;
+      size -= 1;
+    } while (size > minSize);
+    return size;
+  }
+
+  function drawChip(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, padX: number, padY: number, bg: string, fg: string, baseSize: number) {
+    const maxWidth = 1080 - x * 2;
+    let size = baseSize;
+    ctx.font = `600 ${size}px 'Inter', system-ui, -apple-system, Arial`;
+    let width = ctx.measureText(text).width + padX * 2;
+    if (width > maxWidth) {
+      size = fitText(ctx, text, maxWidth - padX * 2, baseSize);
+      ctx.font = `600 ${size}px 'Inter', system-ui, -apple-system, Arial`;
+      width = ctx.measureText(text).width + padX * 2;
+    }
+    const height = size + padY * 2;
+    ctx.fillStyle = bg;
+    drawRoundedRect(ctx, x, y, width, height, height / 2);
+    ctx.fill();
+    ctx.fillStyle = fg;
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, x + padX, y + height / 2);
+    return { w: width, h: height };
+  }
+
+  function drawValueCard(ctx: CanvasRenderingContext2D, title: string, value: string, x: number, y: number, w: number, h: number, options?: { border?: string; fill?: string; text?: string }) {
+    ctx.save();
+    drawRoundedRect(ctx, x, y, w, h, 16);
+    ctx.fillStyle = options?.fill || colors.white;
+    ctx.fill();
+    if (options?.border) {
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = options.border;
+      ctx.stroke();
+    }
+
+    // title
+    ctx.fillStyle = "#6B7280"; // slate-500
+    ctx.font = `500 26px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.textBaseline = "top";
+    ctx.fillText(title, x + 18, y + 14);
+
+    // value
+    ctx.fillStyle = colors.blue;
+    ctx.font = `800 36px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.textBaseline = "alphabetic";
+    const v = value || "—";
+    ctx.fillText(v, x + 18, y + h - 18);
+    ctx.restore();
+  }
+
+  async function render() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = 1080, H = 1920;
+
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+
+    // fundo branco
+    ctx.fillStyle = colors.white;
+    ctx.fillRect(0, 0, W, H);
+
+    // formas abstratas (variáveis por seed)
+    const rnd = rngFactory(seed);
+    const shapeCount = 4 + Math.floor(rnd() * 3);
+    for (let i = 0; i < shapeCount; i++) {
+      const kind = rnd() > 0.5 ? "circle" : "rect";
+      const alpha = 0.06 + rnd() * 0.06;
+      const palette = [colors.gray, colors.blue, colors.red];
+      const c = palette[Math.floor(rnd() * palette.length)];
+      ctx.fillStyle = hexToRgba(c, alpha);
+      const cx = rnd() * W, cy = rnd() * H;
+
+      if (kind === "circle") {
+        const r = 100 + rnd() * 280;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        const w = 240 + rnd() * 420;
+        const h = 140 + rnd() * 320;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate((rnd() - 0.5) * 0.6);
+        drawRoundedRect(ctx, -w / 2, -h / 2, w, h, 40 + rnd() * 60);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // chips superiores
+    ctx.fillStyle = colors.red;
+    ctx.font = `600 44px 'Inter', system-ui, -apple-system, Arial`;
+    const chip1 = drawChip(ctx, "Cartas de Crédito", 60, 60, 22, 14, colors.red, colors.white, 36);
+
+    ctx.font = `600 50px 'Inter', system-ui, -apple-system, Arial`;
+    const segName = segmento?.split(" ")[0] || "";
+    const chip2W = 780;
+    drawRoundedRect(ctx, 60, chip1.h + 80, chip2W, 64, 32);
+    ctx.fillStyle = colors.gray;
+    ctx.fill();
+    ctx.fillStyle = colors.blue;
+    ctx.textBaseline = "middle";
+    ctx.fillText("Consórcio ", 84, chip1.h + 80 + 32);
+    const baseW = ctx.measureText("Consórcio ").width;
+    ctx.fillStyle = colors.blue;
+    ctx.font = `700 50px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.fillText(segName || "—", 84 + baseW, chip1.h + 80 + 32);
+
+    // cards centralizados
+    const showParc2 = !!(calc?.has2aAntecipDepois && calc?.segundaParcelaComAntecipacao != null);
+    const columns = 2;
+    const cardW = 420;
+    const cardH = 120;
+    const gapX = 30;
+    const gapY = 28;
+    const totalW = columns * cardW + (columns - 1) * gapX;
+    let startX = (W - totalW) / 2;
+    let startY = 420;
+
+    const rows = showParc2 ? 3 : 3; // layout permanece, mas reposiciona sem "Parcela 2"
+    const row1Y = startY;
+    const row2Y = startY + cardH + gapY;
+    const row3Y = startY + (cardH + gapY) * 2;
+
+    // valores
+    const vCredito = calc ? brMoney(calc.novoCredito) : "";
+    const vP1 = calc ? brMoney(calc.parcelaAte) : "";
+    const vP2 = showParc2 && calc?.segundaParcelaComAntecipacao ? brMoney(calc.segundaParcelaComAntecipacao) : "";
+    const vDemais = calc ? brMoney(calc.parcelaEscolhida) : "";
+    const vLance = calc ? brMoney(calc.lanceProprioValor) : "";
+    const vPrazo = calc ? `${calc.novoPrazo} meses` : "";
+
+    // linha 1
+    drawValueCard(ctx, "Crédito", vCredito, startX, row1Y, cardW, cardH, { border: colors.red });
+    drawValueCard(ctx, "Primeira parcela", vP1, startX + cardW + gapX, row1Y, cardW, cardH);
+
+    // linha 2
+    if (showParc2) {
+      drawValueCard(ctx, "Parcela 2", vP2, startX, row2Y, cardW, cardH);
+      drawValueCard(ctx, "Demais parcelas", vDemais, startX + cardW + gapX, row2Y, cardW, cardH);
+    } else {
+      drawValueCard(ctx, "Demais parcelas", vDemais, startX, row2Y, cardW, cardH);
+      drawValueCard(ctx, "Lance próprio", vLance, startX + cardW + gapX, row2Y, cardW, cardH, { fill: hexToRgba(colors.red, 0.06) });
+    }
+
+    // linha 3
+    if (showParc2) {
+      drawValueCard(ctx, "Lance próprio", vLance, startX, row3Y, cardW, cardH, { fill: hexToRgba(colors.red, 0.06) });
+      drawValueCard(ctx, "Novo prazo", vPrazo, startX + cardW + gapX, row3Y, cardW, cardH);
+    } else {
+      drawValueCard(ctx, "Novo prazo", vPrazo, startX, row3Y, cardW, cardH);
+      drawValueCard(ctx, "Grupo", grupo || "—", startX + cardW + gapX, row3Y, cardW, cardH);
+    }
+
+    // chip Whatsapp com foto
+    const chipY = row3Y + cardH + 36;
+    const chipH = 74;
+    const chipW = 760;
+    const chipX = (W - chipW) / 2;
+    drawRoundedRect(ctx, chipX, chipY, chipW, chipH, 999);
+    ctx.fillStyle = colors.white;
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba(colors.blue, 0.12);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // avatar
+    const avatarSize = 58;
+    const avatarX = chipX + 16 + avatarSize / 2;
+    const avatarY = chipY + chipH / 2;
+
+    if (avatarUrl) {
+      try {
+        const img = await loadImage(avatarUrl);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(avatarX, avatarY, avatarSize / 2, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(img, avatarX - avatarSize / 2, avatarY - avatarSize / 2, avatarSize, avatarSize);
+        ctx.restore();
+      } catch {
+        drawInitial(ctx, userName, avatarX, avatarY, avatarSize, colors.blue);
+      }
+    } else {
+      drawInitial(ctx, userName, avatarX, avatarY, avatarSize, colors.blue);
+    }
+
+    // Whatsapp text
+    ctx.fillStyle = colors.blue;
+    ctx.font = `700 28px 'Inter', system-ui, -apple-system, Arial`;
+    ctx.textBaseline = "middle";
+    const t = `WhatsApp: ${formatPhone(telefone) || "—"}`;
+    ctx.fillText(t, chipX + 16 + avatarSize + 16, chipY + chipH / 2);
+
+    // logo + site (rodapé)
+    try {
+      const logo = await loadImage("/logo-consulmax.png");
+      const logoTargetW = 240;
+      const scale = logoTargetW / logo.width;
+      const logoTargetH = logo.height * scale;
+      const logoX = (W - logoTargetW) / 2;
+      const logoY = H - 160;
+      ctx.drawImage(logo, logoX, logoY, logoTargetW, logoTargetH);
+    } catch {
+      // fallback: somente o nome
+      ctx.fillStyle = colors.blue;
+      ctx.font = `800 30px 'Inter', system-ui, -apple-system, Arial`;
+      ctx.fillText("CONSULMAX", (W - ctx.measureText("CONSULMAX").width) / 2, H - 120);
+    }
+    ctx.fillStyle = "#6B7280";
+    ctx.font = `500 22px 'Inter', system-ui, -apple-system, Arial`;
+    const site = "consulmaxconsorcios.com.br";
+    ctx.fillText(site, (W - ctx.measureText(site).width) / 2, H - 40);
+  }
+
+  useEffect(() => {
+    if (canRender) render(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canRender, calc, segmento, grupo, telefone, avatarUrl, seed]);
+
+  function onShuffle() {
+    setSeed(Math.floor(Math.random() * 1e9));
+  }
+
+  function onDownload() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    setDownloading(true);
+    try {
+      const link = document.createElement("a");
+      link.download = `consulmax-stories-${Date.now()}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {!canRender ? (
+        <div className="text-sm text-muted-foreground">
+          Preencha a simulação para liberar a prévia da arte.
+        </div>
+      ) : (
+        <>
+          <div className="rounded-xl border bg-white p-2">
+            {/* preview responsivo (canvas real 1080x1920) */}
+            <div className="w-full">
+              <div className="mx-auto" style={{ maxWidth: 320 }}>
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    width: "100%",
+                    height: "auto",
+                    display: "block",
+                    borderRadius: 16,
+                  }}
+                />
+              </div>
+              <div className="text-center text-xs text-muted-foreground mt-1">
+                Prévia escalada para caber (tamanho real 1080×1920).
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" onClick={onShuffle}>
+              Atualizar Prévia
+            </Button>
+            <Button onClick={onDownload} disabled={downloading}>
+              {downloading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Baixar PNG 1080×1920
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ===== helpers visuais da arte ===== */
+function hexToRgba(hex: string, alpha: number) {
+  const h = hex.replace("#", "");
+  const bigint = parseInt(h, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function drawInitial(
+  ctx: CanvasRenderingContext2D,
+  name: string,
+  cx: number,
+  cy: number,
+  size: number,
+  color: string
+) {
+  ctx.fillStyle = hexToRgba(color, 0.1);
+  ctx.beginPath();
+  ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+  const initial = (name || "U").trim().charAt(0).toUpperCase();
+  ctx.fillStyle = color;
+  ctx.font = `800 ${Math.round(size * 0.48)}px 'Inter', system-ui, -apple-system, Arial`;
+  ctx.textBaseline = "middle";
+  const w = ctx.measureText(initial).width;
+  ctx.fillText(initial, cx - w / 2, cy);
+}
+
+function formatPhone(p: string) {
+  const d = (p || "").replace(/\D/g, "");
+  if (d.length === 13 && d.startsWith("55")) {
+    // formato internacional +55
+    const dd = d.slice(2);
+    return `(${dd.slice(0,2)}) ${dd.slice(2,7)}-${dd.slice(7)}`;
+  }
+  if (d.length === 11) return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+  return d;
 }

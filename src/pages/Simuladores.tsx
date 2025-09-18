@@ -1,5 +1,5 @@
 // src/pages/Simuladores.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,7 +49,6 @@ const brMoney = (v: number) =>
 
 const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
 
-/** BRL mask */
 function formatBRLInputFromNumber(n: number): string {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -59,7 +58,6 @@ function parseBRLInputToNumber(s: string): number {
   return cents / 100;
 }
 
-/** Percent “25,0000” <-> 0.25 (decimal) */
 function formatPctInputFromDecimal(d: number): string {
   return (d * 100).toFixed(4).replace(".", ",");
 }
@@ -280,16 +278,11 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // dados do usuário logado
+  // telefone do usuário logado (para uso no resumo antigo)
   const [userPhone, setUserPhone] = useState<string>("");
-  const [userName, setUserName] = useState<string>("");
-  const [userAvatarUrl, setUserAvatarUrl] = useState<string>("");
 
-  // pré-visualização do status
-  const [statusPreviewUrl, setStatusPreviewUrl] = useState<string | null>(null);
-
-  // ref da arte
-  const statusRef = useRef<HTMLDivElement | null>(null);
+  // Texto livre para “Assembleia”
+  const [assembleia, setAssembleia] = useState<string>("15/10");
 
   useEffect(() => {
     (async () => {
@@ -308,27 +301,18 @@ export default function Simuladores() {
     })();
   }, []);
 
-  // pega dados do usuário logado (telefone, nome, avatar)
+  // pega telefone do usuário logado
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
       if (!uid) return;
-
-      const { data: phoneData } = await supabase
+      const { data } = await supabase
         .from("users")
         .select("phone")
         .eq("auth_user_id", uid)
         .maybeSingle();
-      setUserPhone((phoneData?.phone || "").toString());
-
-      const { data: pubUser } = await supabase
-        .from("public_users")
-        .select("name, avatar_url")
-        .eq("auth_user_id", uid)
-        .maybeSingle();
-      setUserName(pubUser?.name || "");
-      setUserAvatarUrl(pubUser?.avatar_url || "");
+      setUserPhone((data?.phone || "").toString());
     })();
   }, []);
 
@@ -551,58 +535,72 @@ ${wa}`
     }
   }
 
-  // ========= Util: iniciais para fallback do avatar =========
-  function getInitials(name: string) {
-    const parts = (name || "").trim().split(/\s+/).slice(0, 2);
-    return parts.map(p => p[0]?.toUpperCase() || "").join("");
+  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
+  function normalizarSegmento(seg?: string) {
+    const s = (seg || "").toLowerCase();
+    if (s.includes("imó")) return "Imóvel";
+    if (s.includes("auto")) return "Automóvel";
+    if (s.includes("moto")) return "Motocicleta";
+    if (s.includes("serv")) return "Serviços";
+    if (s.includes("pesad")) return "Pesados";
+    return (seg || "Automóvel");
+  }
+  function emojiDoSegmento(seg?: string) {
+    const s = (seg || "").toLowerCase();
+    if (s.includes("imó")) return "🏠";
+    if (s.includes("moto")) return "🏍️";
+    if (s.includes("serv")) return "✈️";
+    if (s.includes("pesad")) return "🚚";
+    return "🚗";
   }
 
-  // ========= Geração da Imagem para Status (1080x1920) =========
-  const canGenerateStatus = !!calc && !!tabelaSelecionada && !!podeCalcular;
+  const propostaTexto = useMemo(() => {
+    if (!calc || !podeCalcular) return "";
 
-  // aguarda as imagens do container carregarem (evita branco)
-  async function waitImagesLoaded(root: HTMLElement) {
-    const imgs = Array.from(root.querySelectorAll("img"));
-    await Promise.all(
-      imgs.map(img => {
-        if (img.complete && img.naturalWidth > 0) return Promise.resolve(true);
-        return new Promise((res) => {
-          img.onload = () => res(true);
-          img.onerror = () => res(true); // fallback: não trava
-        });
-      })
+    const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
+    const seg = normalizarSegmento(segBase);
+    const emoji = emojiDoSegmento(segBase);
+
+    const parcela1 = brMoney(calc.parcelaAte);
+    const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
+    const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
+
+    const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
+
+    const grupoTxt = grupo || "—";
+
+    return (
+`🚨OPORTUNIDADE 🚨
+
+🔥 PROPOSTA EMBRACON🔥
+
+Proposta ${seg}
+
+${emoji} Crédito: ${brMoney(calc.novoCredito)}
+💰 Parcela 1: ${parcela1} (Em até 3x no cartão)${linhaParc2}
+${linhaPrazo}
+💵 Lance Próprio: ${brMoney(calc.lanceProprioValor)}
+📢 Grupo: ${grupoTxt}
+
+🚨 POUCAS VAGAS DISPONÍVEIS🚨
+
+Assembleia ${assembleia}
+
+📲 Garanta sua vaga agora!
+
+Vantagens
+✅ Primeira parcela em até 3x no cartão
+✅ Parcelas acessíveis
+✅ Alta taxa de contemplação`
     );
-  }
+  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia]);
 
-  async function gerarImagemStatus() {
-    if (!statusRef.current || !canGenerateStatus) {
-      alert("Preencha a simulação antes de gerar a imagem.");
-      return;
-    }
-
+  async function copiarProposta() {
     try {
-      await waitImagesLoaded(statusRef.current); // garante imagens prontas
-      const { toPng } = await import("html-to-image");
-
-      const dataUrl = await toPng(statusRef.current, {
-        width: 1080,
-        height: 1920,
-        pixelRatio: 2,
-        cacheBust: true,
-        backgroundColor: "#F5F5F5",
-        style: { transform: "none" },
-      });
-
-      setStatusPreviewUrl(dataUrl); // mostra preview
-      // dispara download
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      const code = simCode ? `sim-${simCode}` : Date.now().toString();
-      a.download = `consulmax-status-${code}.png`;
-      a.click();
-    } catch (err) {
-      console.error(err);
-      alert("Não foi possível gerar a imagem. Tente novamente.");
+      await navigator.clipboard.writeText(propostaTexto);
+      alert("Texto copiado!");
+    } catch {
+      alert("Não foi possível copiar o texto.");
     }
   }
 
@@ -615,16 +613,6 @@ ${wa}`
   }
 
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
-
-  // Paleta Consulmax
-  const COLOR_NAVY = "#1E293F";
-  const COLOR_RED = "#A11C27";
-  const COLOR_OFFWHITE = "#F5F5F5";
-  const COLOR_GOLD = "#B5A573";
-
-  const vendedorNome = userName || leadInfo?.nome || "Consultor Consulmax";
-  const vendedorIniciais = getInitials(vendedorNome);
-  const telLegivel = (userPhone || "").replace(/\s+/g, "");
 
   return (
     <div className="p-6 space-y-4">
@@ -659,7 +647,9 @@ ${wa}`
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => alert("Em breve: adicionar administradora.")}
+                onClick={() =>
+                  alert("Em breve: adicionar administradora.")
+                }
                 className="h-10 rounded-2xl px-4 whitespace-nowrap"
               >
                 <Plus className="h-4 w-4 mr-1" /> + Add Administradora
@@ -671,7 +661,7 @@ ${wa}`
 
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda */}
+        {/* coluna esquerda: simulador */}
         <div className="col-span-12 lg:col-span-8">
           <Card>
             <CardHeader>
@@ -739,23 +729,12 @@ ${wa}`
             </CardContent>
           </Card>
 
-          {/* Ações extras */}
+          {/* Ações principais */}
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
               {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
             </Button>
-
-            <Button
-              variant="secondary"
-              className="h-10 rounded-2xl px-4"
-              onClick={gerarImagemStatus}
-              disabled={!canGenerateStatus}
-              title={!canGenerateStatus ? "Preencha a simulação para habilitar" : "Gerar imagem"}
-            >
-              Gerar Imagem para Status
-            </Button>
-
             {simCode && (
               <span className="text-sm">
                 ✅ Salvo como <strong>Simulação #{simCode}</strong>
@@ -764,7 +743,7 @@ ${wa}`
           </div>
         </div>
 
-        {/* coluna direita */}
+        {/* coluna direita: memória + textos */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader>
@@ -797,7 +776,9 @@ ${wa}`
                   <div className="grid grid-cols-2 gap-2">
                     <div>Fundo Comum (fator)</div>
                     <div className="text-right">
-                      {calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}
+                      {calc
+                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
+                        : "—"}
                     </div>
                     <div>Taxa Adm (total)</div>
                     <div className="text-right">
@@ -813,7 +794,8 @@ ${wa}`
                     </div>
                     <div>Antecipação Adm</div>
                     <div className="text-right">
-                      {pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x
+                      {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
+                      {tabelaSelecionada.antecip_parcelas}x
                     </div>
                     <div>Limitador Parcela</div>
                     <div className="text-right">
@@ -835,13 +817,14 @@ ${wa}`
             </CardContent>
           </Card>
 
+          {/* Resumo antigo */}
           <Card>
             <CardHeader>
               <CardTitle>Resumo da Proposta</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               <textarea
-                className="w-full h-96 border rounded-md p-3 text-sm leading-relaxed"
+                className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
                 style={{ lineHeight: "1.6" }}
                 readOnly
                 value={resumoTexto}
@@ -852,20 +835,37 @@ ${wa}`
                   Copiar
                 </Button>
               </div>
+            </CardContent>
+          </Card>
 
-              {/* PRÉ-VISUALIZAÇÃO DA IMAGEM GERADA */}
-              {statusPreviewUrl && (
-                <div className="mt-3">
-                  <div className="text-xs text-muted-foreground mb-1">
-                    Pré-visualização “Para Status” (1080×1920):
-                  </div>
-                  <img
-                    src={statusPreviewUrl}
-                    alt="Pré-visualização do status"
-                    className="w-full rounded-lg border shadow-sm"
+          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <Label>Assembleia (ex.: 15/10)</Label>
+                  <Input
+                    value={assembleia}
+                    onChange={(e) => setAssembleia(e.target.value)}
+                    placeholder="dd/mm"
                   />
                 </div>
-              )}
+              </div>
+              <textarea
+                className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
+                style={{ lineHeight: "1.6" }}
+                readOnly
+                value={propostaTexto}
+                placeholder="Preencha a simulação para gerar o texto."
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button onClick={copiarProposta} disabled={!propostaTexto}>
+                  Copiar
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -881,204 +881,6 @@ ${wa}`
           onDeleted={handleTableDeleted}
         />
       )}
-
-      {/* ================================================================== */}
-      {/*            ARTE INVISÍVEL: "PARA STATUS" (1080x1920)               */}
-      {/*  Mantemos no fluxo (opacity:0) para garantir layout correto        */}
-      {/* ================================================================== */}
-      <div
-        ref={statusRef}
-        style={{
-          position: "absolute",
-          inset: 0,
-          opacity: 0,            // invisível, mas renderiza
-          pointerEvents: "none",
-          width: "1080px",
-          height: "1920px",
-          margin: 0,
-          padding: 0,
-          zIndex: -1,
-          fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
-          background: COLOR_OFFWHITE,
-          color: "#0f172a",
-        }}
-      >
-        {/* Fundo com shapes elegantes */}
-        <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
-          <div
-            style={{
-              position: "absolute",
-              width: 900,
-              height: 900,
-              top: -250,
-              right: -200,
-              borderRadius: "50%",
-              background: COLOR_NAVY,
-              opacity: 0.08,
-              filter: "blur(2px)",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              width: 1100,
-              height: 1100,
-              bottom: -300,
-              left: -250,
-              borderRadius: "50%",
-              background: COLOR_RED,
-              opacity: 0.07,
-              filter: "blur(2px)",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              width: 1400,
-              height: 140,
-              top: 700,
-              left: -160,
-              transform: "rotate(-8deg)",
-              background: `${COLOR_NAVY}20`,
-              borderTopLeftRadius: 9999,
-              borderTopRightRadius: 9999,
-            }}
-          />
-        </div>
-
-        {/* Conteúdo */}
-        <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", height: "100%", padding: "64px 72px" }}>
-          {/* Chips topo */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div
-              style={{
-                alignSelf: "flex-start",
-                padding: "10px 20px",
-                borderRadius: 9999,
-                background: COLOR_RED,
-                color: "white",
-                fontWeight: 700,
-                letterSpacing: "0.06em",
-                fontSize: 24,
-              }}
-            >
-              CARTA DE CRÉDITO
-            </div>
-            <div
-              style={{
-                alignSelf: "flex-start",
-                padding: "10px 20px",
-                borderRadius: 9999,
-                background: COLOR_NAVY,
-                color: "white",
-                fontWeight: 700,
-                letterSpacing: "0.06em",
-                fontSize: 22,
-              }}
-            >
-              {`CONSÓRCIO ${((segmento || tabelaSelecionada?.segmento || "IMÓVEL")+"").toUpperCase()}`}
-            </div>
-          </div>
-
-          {/* Centro: Valor e lista */}
-          <div style={{ marginTop: 56 }}>
-            <div style={{ color: COLOR_NAVY, fontSize: 42, fontWeight: 600, marginBottom: 10 }}>
-              Crédito disponível
-            </div>
-            <div style={{ fontSize: 96, fontWeight: 800, lineHeight: 1.05, color: COLOR_RED, textShadow: "0 6px 24px rgba(0,0,0,0.05)" }}>
-              {calc ? brMoney(calc.novoCredito) : "R$ —"}
-            </div>
-
-            {/* Lista de detalhes */}
-            <div style={{ marginTop: 36, display: "grid", rowGap: 14 }}>
-              {calc?.segundaParcelaComAntecipacao != null && (
-                <LinhaInfo label="2ª Parcela" value={brMoney(calc.segundaParcelaComAntecipacao)} corA={COLOR_NAVY} corB={COLOR_GOLD} />
-              )}
-              <LinhaInfo label="Demais Parcelas" value={calc ? brMoney(calc.parcelaEscolhida) : "—"} corA={COLOR_NAVY} corB={COLOR_GOLD} />
-              <LinhaInfo label="Novo Prazo" value={calc ? `${calc.novoPrazo} meses` : "—"} corA={COLOR_NAVY} corB={COLOR_GOLD} />
-              <LinhaInfo label="Grupo" value={grupo || "—"} corA={COLOR_NAVY} corB={COLOR_GOLD} />
-              <LinhaInfo label="Lance Próprio" value={calc ? brMoney(calc.lanceProprioValor) : "—"} corA={COLOR_NAVY} corB={COLOR_GOLD} />
-            </div>
-          </div>
-
-          {/* Vendedor */}
-          <div style={{ marginTop: "auto", display: "flex", alignItems: "center", gap: 16 }}>
-            <div
-              style={{
-                width: 120,
-                height: 120,
-                borderRadius: "50%",
-                background: "#e2e8f0",
-                border: `4px solid ${COLOR_NAVY}`,
-                overflow: "hidden",
-                display: "grid",
-                placeItems: "center",
-                fontWeight: 800,
-                fontSize: 40,
-                color: COLOR_NAVY,
-              }}
-            >
-              {userAvatarUrl ? (
-                <img
-                  src={userAvatarUrl}
-                  alt="Foto do consultor"
-                  crossOrigin="anonymous"
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                />
-              ) : (
-                getInitials(vendedorNome) || "CC"
-              )}
-            </div>
-            <div style={{ display: "grid" }}>
-              <div style={{ fontSize: 28, color: COLOR_NAVY, fontWeight: 700, lineHeight: 1.15 }}>
-                {vendedorNome}
-              </div>
-              <div style={{ fontSize: 24, color: "#334155", marginTop: 6 }}>
-                {telLegivel || "—"}
-              </div>
-            </div>
-          </div>
-
-          {/* Rodapé com logo e site */}
-          <div style={{ marginTop: 24, display: "grid", placeItems: "center", gap: 8 }}>
-            <img
-              src="/logo-consulmax.png"
-              alt="Consulmax"
-              crossOrigin="anonymous"
-              style={{ width: 240, height: "auto", objectFit: "contain", filter: "drop-shadow(0 2px 12px rgba(0,0,0,0.08))" }}
-            />
-            <div style={{ fontSize: 20, color: COLOR_NAVY, fontWeight: 600 }}>
-              https://consulmaxconsorcios.com.br/
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* =============== Componente auxiliar para a arte =============== */
-function LinhaInfo({
-  label,
-  value,
-  corA = "#1E293F",
-  corB = "#B5A573",
-}: {
-  label: string;
-  value: string;
-  corA?: string;
-  corB?: string;
-}) {
-  return (
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: "1fr auto",
-      alignItems: "end",
-      borderBottom: `1px dashed ${corA}22`,
-      paddingBottom: 10,
-    }}>
-      <div style={{ fontSize: 28, color: corA, fontWeight: 600 }}>{label}</div>
-      <div style={{ fontSize: 32, fontWeight: 800, color: corB }}>{value}</div>
     </div>
   );
 }
@@ -1380,6 +1182,7 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
+      permite_livre: perLivre as any, // compat
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1592,7 +1395,8 @@ function EmbraconSimulator(p: EmbraconProps) {
                   </option>
                   {p.variantesDaTabela.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR {pctHuman(t.fundo_reserva_pct)}
+                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR{" "}
+                      {pctHuman(t.fundo_reserva_pct)}
                     </option>
                   ))}
                 </select>
@@ -1681,13 +1485,17 @@ function EmbraconSimulator(p: EmbraconProps) {
               {p.tabelaSelecionada && (
                 <div className="md:col-span-4 grid grid-cols-2 gap-3 text-sm bg-muted/30 rounded-lg p-3">
                   <div>
-                    % Taxa de Adm: <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong>
+                    % Taxa de Adm:{" "}
+                    <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong>
                   </div>
                   <div>
-                    % Fundo Reserva: <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong>
+                    % Fundo Reserva:{" "}
+                    <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong>
                   </div>
                   <div>
-                    % Antecipação: <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> • Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong>
+                    % Antecipação:{" "}
+                    <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> •
+                    Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong>
                   </div>
                   <div>
                     Limitador de Parcela:{" "}
@@ -1729,47 +1537,6 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* Lance */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Configurações do Lance</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              <div>
-                <Label>Lance Ofertado (%)</Label>
-                <PercentInput valueDecimal={p.lanceOfertPct} onChangeDecimal={p.setLanceOfertPct} />
-              </div>
-              <div>
-                <Label>Lance Embutido (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceEmbutPct}
-                  onChangeDecimal={(d) => {
-                    if (d > 0.25) {
-                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
-                      p.setLanceEmbutPct(0.25);
-                    } else {
-                      p.setLanceEmbutPct(d);
-                    }
-                  }}
-                  maxDecimal={0.25}
-                />
-              </div>
-              <div>
-                <Label>Parcela da Contemplação</Label>
-                <Input
-                  type="number"
-                  value={p.parcContemplacao}
-                  onChange={(e) =>
-                    p.setParcContemplacao(Math.max(1, Number(e.target.value)))
-                  }
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Deve ser menor que o Prazo da Venda.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Pós */}
           <Card>
             <CardHeader>
@@ -1778,37 +1545,61 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div>
                 <Label>Lance Ofertado</Label>
-                <Input value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""} readOnly />
+                <Input
+                  value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""}
+                  readOnly
+                />
               </div>
               <div>
                 <Label>Lance Embutido</Label>
-                <Input value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""} readOnly />
+                <Input
+                  value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""}
+                  readOnly
+                />
               </div>
               <div>
                 <Label>Lance Próprio</Label>
-                <Input value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""} readOnly />
+                <Input
+                  value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""}
+                  readOnly
+                />
               </div>
 
               <div>
                 <Label>Lance Percebido (%)</Label>
-                <Input value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""} readOnly />
+                <Input
+                  value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""}
+                  readOnly
+                />
               </div>
               <div>
                 <Label>Novo Crédito</Label>
-                <Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly />
+                <Input
+                  value={p.calc ? brMoney(p.calc.novoCredito) : ""}
+                  readOnly
+                />
               </div>
               <div>
                 <Label>Nova Parcela (sem limite)</Label>
-                <Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly />
+                <Input
+                  value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""}
+                  readOnly
+                />
               </div>
 
               <div>
                 <Label>Parcela Limitante</Label>
-                <Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly />
+                <Input
+                  value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""}
+                  readOnly
+                />
               </div>
               <div>
                 <Label>Parcela Escolhida</Label>
-                <Input value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""} readOnly />
+                <Input
+                  value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""}
+                  readOnly
+                />
               </div>
               <div>
                 <Label>Novo Prazo (meses)</Label>
@@ -1824,7 +1615,7 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          <div className="flex items-center gap-3" />
+          <div className="flex items-center gap-3"></div>
         </>
       ) : (
         <div className="text-sm text-muted-foreground">

@@ -5,7 +5,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Trash2, Copy, FileText, ExternalLink, Plus, ChevronDown } from "lucide-react";
+import {
+  Loader2,
+  Trash2,
+  Copy,
+  FileText,
+  ExternalLink,
+  Plus,
+  ChevronDown,
+} from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -101,15 +109,30 @@ type SimTable = {
   antecip_parcelas: number;
   antecip_pct: number;
   seguro_prest_pct: number;
+  // (pode existir no banco, usamos via any quando houver:)
+  // taxa_adm_pct?: number;
+  // fundo_reserva_pct?: number;
 };
 
 type TemplateKind =
+  | "capa"
   | "direcionada"
   | "alav_fin"
   | "alav_patr"
   | "previdencia"
   | "correcao"
   | "extrato";
+
+type TemplateParams = {
+  selicAA: number;
+  cdiAA: number;
+  cdiPct: number;
+  ipcaAA: number;
+  inccAA: number;
+  ganhoVendaPct: number;
+  aluguelEstimado?: number;
+  yieldPct?: number;
+};
 
 /* ============== Página ============== */
 export default function Propostas() {
@@ -135,6 +158,19 @@ export default function Propostas() {
   const [piSelected, setPiSelected] = useState<Record<string, boolean>>({});
   const [piTemplate, setPiTemplate] = useState<TemplateKind>("direcionada");
   const [modalOpen, setModalOpen] = useState(false);
+
+  // Parâmetros dos templates
+  const [tplParams, setTplParams] = useState<TemplateParams>({
+    selicAA: 0.15,
+    cdiAA: 0.149,
+    cdiPct: 0.97,
+    ipcaAA: 0.0535,
+    inccAA: 0.0743,
+    ganhoVendaPct: 0.2,
+    aluguelEstimado: undefined,
+    yieldPct: undefined,
+  });
+  const [showTplParams, setShowTplParams] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -185,7 +221,9 @@ export default function Propostas() {
     if (ids.length) {
       const { data: tData } = await supabase
         .from("sim_tables")
-        .select("id, segmento, nome_tabela, antecip_parcelas, antecip_pct, seguro_prest_pct")
+        .select(
+          "id, segmento, nome_tabela, antecip_parcelas, antecip_pct, seguro_prest_pct"
+        )
         .in("id", ids);
       const map: Record<string, SimTable> = {};
       (tData || []).forEach((t) => (map[t.id] = t as any));
@@ -235,7 +273,9 @@ export default function Propostas() {
 
 💰 Crédito contratado: ${brMoney(sim.credito)}
 
-💳 ${primeiraParcelaLabel}: ${brMoney(sim.parcela_ate_1_ou_2)} (Primeira parcela em até 3x sem juros no cartão)
+💳 ${primeiraParcelaLabel}: ${brMoney(
+      sim.parcela_ate_1_ou_2
+    )} (Primeira parcela em até 3x sem juros no cartão)
 
 💵 Demais parcelas até a contemplação: ${brMoney(sim.parcela_demais)}
 
@@ -262,8 +302,7 @@ ${wa}`;
 
     const parc2 = has2a
       ? sim.parcela_escolhida +
-        (sim.credito * (table?.antecip_pct || 0)) /
-          (table?.antecip_parcelas || 1)
+        (sim.credito * (table?.antecip_pct || 0)) / (table?.antecip_parcelas || 1)
       : null;
 
     const whatsappFmt = formatPhoneBR(userPhone);
@@ -378,6 +417,7 @@ Vantagens
     }
   }
 
+  /* ===== PDF individual da linha (mantido) ===== */
   async function exportarPDF(sim: SimRow) {
     const doc = new jsPDF();
     const brand = { r: 30, g: 41, b: 63 };
@@ -426,27 +466,32 @@ Vantagens
     doc.save(`proposta-${sim.code || sim.id}.pdf`);
   }
 
-  async function excluir(sim: SimRow) {
-    if (!confirm("Confirmar exclusão desta proposta?")) return;
-    const { error } = await supabase.from("sim_simulations").delete().eq("id", sim.id);
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-      return;
-    }
-    setRows((prev) => prev.filter((r) => r.id !== sim.id));
+  /* ======= Templates PDF (bundle) ======= */
+  function renderCover(doc: jsPDF, logo: string | null, sims: SimRow[]) {
+    addWatermarkAndHeader(doc, logo, "Projeto de Investimento");
+    const lead = sims[0]?.lead_nome || "Cliente";
+    doc.setFontSize(16);
+    doc.text(`Estudo Especial para ${lead}`, 14, 40);
+    autoTable(doc, {
+      head: [["Conteúdo", "Quantidade"]],
+      body: [["Modelos selecionados", String(sims.length)]],
+      startY: 50,
+      theme: "grid",
+    });
+    addFooter(doc, logo);
   }
 
-  /* ======= Templates PDF (bundle) ======= */
   function renderTemplatePage(
     doc: jsPDF,
     logo: string | null,
     tpl: TemplateKind,
-    sim: SimRow
+    sim: SimRow,
+    params: TemplateParams,
+    table?: SimTable
   ) {
-    const brand = { r: 30, g: 41, b: 63 };
-    const accent = { r: 161, g: 28, b: 39 };
-
+    const seg = normalizeSegment(sim.segmento);
     const titles: Record<TemplateKind, string> = {
+      capa: "Projeto de Investimento",
       direcionada: "Proposta Direcionada",
       alav_fin: "Alavancagem Financeira",
       alav_patr: "Alavancagem Patrimonial",
@@ -456,110 +501,163 @@ Vantagens
     };
     addWatermarkAndHeader(doc, logo, titles[tpl]);
 
-    // Cabeçalho técnico
-    const head = [
-      ["Código", sim.code ?? "-"],
-      ["Criada em", fmtDate(sim.created_at)],
-      ["Lead", `${sim.lead_nome || "-"}  ${sim.lead_telefone || ""}`.trim()],
-      ["Segmento", normalizeSegment(sim.segmento)],
-      ["Grupo", sim.grupo || "-"],
-    ];
+    // bloco técnico comum
     autoTable(doc, {
       head: [["Campo", "Valor"]],
-      body: head,
+      body: [
+        ["Código", sim.code ?? "-"],
+        ["Criada em", new Date(sim.created_at || "").toLocaleString("pt-BR")],
+        ["Lead", `${sim.lead_nome || "—"}  ${sim.lead_telefone || ""}`.trim()],
+        ["Segmento", seg],
+        ["Grupo", sim.grupo || "—"],
+      ],
       startY: 28,
-      styles: { cellPadding: 3 },
       theme: "grid",
-      headStyles: { fillColor: [brand.r, brand.g, brand.b] },
     });
-
-    const startY = (doc as any).lastAutoTable.finalY + 8;
+    let y = (doc as any).lastAutoTable.finalY + 8;
 
     if (tpl === "direcionada") {
+      const taPct = (table as any)?.taxa_adm_pct ?? (sim as any).taxa_adm_pct;
+      const frPct = (table as any)?.fundo_reserva_pct ?? (sim as any).fundo_reserva_pct;
+      const adm = typeof taPct === "number" ? taPct : null;
+      const fr = typeof frPct === "number" ? frPct : null;
+      const encargos = adm != null && fr != null ? adm + fr : null;
+      const mensal =
+        encargos != null && sim.prazo_venda
+          ? (encargos / sim.prazo_venda) * 100
+          : null;
+
       autoTable(doc, {
-        head: [["Dado", "Valor"]],
+        head: [["Item", "Valor"]],
         body: [
+          ["Crédito total", brMoney(sim.credito)],
+          ["Prazo", `${sim.prazo_venda} meses`],
+          ["Parcela 1", brMoney(sim.parcela_ate_1_ou_2)],
+          ["Demais parcelas (até contemplação)", brMoney(sim.parcela_demais)],
+          ...(adm != null ? [["Taxa de Adm Total", (adm * 100).toFixed(2) + "%"]] : []),
+          ...(fr != null ? [["Fundo Reserva", (fr * 100).toFixed(2) + "%"]] : []),
+          ...(encargos != null
+            ? [["Total de Encargos", brMoney(sim.credito * encargos)]]
+            : []),
+          ["Taxa total mensalizada", mensal != null ? mensal.toFixed(2) + "%" : "—"],
+          ["Contemplação prevista", `${sim.parcela_contemplacao} meses`],
           ["Crédito líquido (após)", brMoney(sim.novo_credito)],
-          ["Parcela 1 (até a contemplação)", brMoney(sim.parcela_ate_1_ou_2)],
-          ["Parcela após contemplação", brMoney(sim.parcela_escolhida)],
-          ["Prazo restante (meses)", String(sim.novo_prazo)],
-          ["Lance próprio", brMoney(sim.lance_proprio_valor)],
-        ],
-        startY,
-        theme: "striped",
-        styles: { cellPadding: 3 },
-      });
-    } else if (tpl === "alav_fin") {
-      const fator =
-        sim.lance_proprio_valor > 0
-          ? sim.novo_credito / sim.lance_proprio_valor
-          : 0;
-      autoTable(doc, {
-        head: [["Métrica", "Valor"]],
-        body: [
-          ["Lance próprio", brMoney(sim.lance_proprio_valor)],
-          ["Crédito líquido (após)", brMoney(sim.novo_credito)],
-          ["Fator de alavancagem", fator ? fator.toFixed(2) + "x" : "—"],
           ["Parcela (após)", brMoney(sim.parcela_escolhida)],
           ["Prazo restante", `${sim.novo_prazo} meses`],
         ],
-        startY,
+        startY: y,
         theme: "striped",
-        styles: { cellPadding: 3 },
+      });
+    } else if (tpl === "alav_fin") {
+      const investimento = Math.max(0, sim.lance_proprio_valor || 0);
+      const ganho = sim.credito * (params.ganhoVendaPct || 0);
+      const lucro = ganho - investimento;
+      const roi = investimento > 0 ? lucro / investimento : 0;
+
+      autoTable(doc, {
+        head: [["Métrica", "Valor"]],
+        body: [
+          ["Investimento (lance próprio)", brMoney(investimento)],
+          [
+            `Ganho na venda (${((params.ganhoVendaPct || 0) * 100).toFixed(2)}%)`,
+            brMoney(ganho),
+          ],
+          ["Lucro líquido", brMoney(lucro)],
+          ["ROI", (roi * 100).toFixed(2) + "%"],
+          ["Parcela (após)", brMoney(sim.parcela_escolhida)],
+          ["Prazo restante", `${sim.novo_prazo} meses`],
+        ],
+        startY: y,
+        theme: "striped",
+      });
+
+      y = (doc as any).lastAutoTable.finalY + 8;
+      autoTable(doc, {
+        head: [["Indicador", "Valor / Alíquota"]],
+        body: [
+          ["Selic a.a.", (params.selicAA * 100).toFixed(2) + "%"],
+          ["CDI a.a.", (params.cdiAA * 100).toFixed(2) + "%"],
+          ["% do CDI", (params.cdiPct * 100).toFixed(2) + "%"],
+          ["IR (≤180d / ≤360d / ≤720d / >720d)", "22,5% / 20% / 17,5% / 15%"],
+        ],
+        startY: y,
+        theme: "grid",
       });
     } else if (tpl === "alav_patr") {
+      const aluguel =
+        tplParams.aluguelEstimado ??
+        (tplParams.yieldPct ? sim.novo_credito * (tplParams.yieldPct / 12) : 0);
+      const cobertura =
+        sim.parcela_escolhida > 0 ? aluguel / sim.parcela_escolhida : 0;
+
       autoTable(doc, {
         head: [["Item", "Valor"]],
         body: [
           ["Crédito líquido (após)", brMoney(sim.novo_credito)],
           ["Parcela (após)", brMoney(sim.parcela_escolhida)],
           ["Prazo restante", `${sim.novo_prazo} meses`],
-          ["Observação", "Adicionar aluguel estimado / yield do ativo."],
+          ["Aluguel estimado", aluguel ? brMoney(aluguel) : "—"],
+          ["Cobertura da parcela", aluguel ? (cobertura * 100).toFixed(1) + "%" : "—"],
         ],
-        startY,
+        startY: y,
         theme: "striped",
-        styles: { cellPadding: 3 },
       });
     } else if (tpl === "previdencia") {
+      const a = params.cdiAA * (params.cdiPct || 1);
+      const r = Math.pow(1 + a, 1 / 12) - 1;
+      const n = Math.max(1, sim.novo_prazo);
+      const p = Math.max(0, sim.parcela_escolhida);
+      const fv = r > 0 ? p * ((Math.pow(1 + r, n) - 1) / r) : p * n;
+
       autoTable(doc, {
-        head: [["Aporte / Prazo", "Valor"]],
+        head: [["Parâmetro", "Valor"]],
         body: [
-          ["Parcela até a contemplação", brMoney(sim.parcela_demais)],
-          ["Parcela após contemplação", brMoney(sim.parcela_escolhida)],
-          ["Horizonte", `${sim.novo_prazo} meses (restante)`],
-          ["Observação", "Simulação de patrimônio futuro opcional."],
+          ["Taxa mensal (estimada)", (r * 100).toFixed(2) + "%"],
+          ["Prazo (n)", `${n} meses`],
+          ["Parcela mensal (após)", brMoney(p)],
+          ["Valor futuro estimado", brMoney(fv)],
         ],
-        startY,
+        startY: y,
         theme: "striped",
-        styles: { cellPadding: 3 },
       });
     } else if (tpl === "correcao") {
+      const anos = [1, 2, 3];
+      const cred0 = sim.novo_credito;
+      const parc0 = sim.parcela_escolhida;
+      const rows = anos.map((k) => [
+        `${k}º ano`,
+        brMoney(cred0 * Math.pow(1 + params.ipcaAA, k)),
+        brMoney(parc0 * Math.pow(1 + params.inccAA, k)),
+      ]);
+
       autoTable(doc, {
-        head: [["Componente", "Valor"]],
-        body: [
-          ["Crédito líquido (após)", brMoney(sim.novo_credito)],
-          ["Parcela (após)", brMoney(sim.parcela_escolhida)],
-          ["Observação", "Aplicar índice de correção conforme a tabela."],
+        head: [["Período", "Crédito corrigido*", "Parcela corrigida**"]],
+        body: rows,
+        startY: y,
+        theme: "grid",
+        foot: [
+          [
+            "* IPCA esperado",
+            `(${(params.ipcaAA * 100).toFixed(2)}% a.a.)`,
+            "** INCC esperado " + (params.inccAA * 100).toFixed(2) + "% a.a.",
+          ],
         ],
-        startY,
-        theme: "striped",
-        styles: { cellPadding: 3 },
+        footStyles: { fontSize: 8, textColor: 80 },
       });
     } else if (tpl === "extrato") {
+      const meses = Math.min(12, sim.novo_prazo);
+      const body = [];
+      let saldo = sim.saldo_devedor_final;
+      for (let i = 1; i <= meses; i++) {
+        const parc = sim.parcela_escolhida;
+        saldo = Math.max(0, saldo - parc);
+        body.push([i, brMoney(parc), brMoney(saldo)]);
+      }
       autoTable(doc, {
-        head: [["Detalhe", "Valor"]],
-        body: [
-          ["Crédito contratado", brMoney(sim.credito)],
-          ["Parcela 1", brMoney(sim.parcela_ate_1_ou_2)],
-          ["Demais até contemplação", brMoney(sim.parcela_demais)],
-          ["Lance próprio", brMoney(sim.lance_proprio_valor)],
-          ["Crédito líquido (após)", brMoney(sim.novo_credito)],
-          ["Parcela escolhida (após)", brMoney(sim.parcela_escolhida)],
-          ["Novo prazo (meses)", String(sim.novo_prazo)],
-        ],
-        startY,
+        head: [["Mês", "Parcela", "Saldo aprox."]],
+        body,
+        startY: y,
         theme: "striped",
-        styles: { cellPadding: 3 },
       });
     }
 
@@ -567,44 +665,40 @@ Vantagens
   }
 
   async function gerarBundlePDF(template: TemplateKind, sims: SimRow[]) {
-    if (sims.length === 0) {
+    if (!sims.length) {
       alert("Selecione pelo menos 1 simulação.");
       return;
     }
     const doc = new jsPDF();
     const logo = await loadLogoDataURL();
 
-    // Capa
-    addWatermarkAndHeader(doc, logo, "Propostas de Investimento");
-    autoTable(doc, {
-      head: [["Modelo selecionado", "Quantidade"]],
-      body: [[
-        {
-          content:
-            template === "direcionada" ? "Proposta Direcionada" :
-            template === "alav_fin" ? "Alavancagem Financeira" :
-            template === "alav_patr" ? "Alavancagem Patrimonial" :
-            template === "previdencia" ? "Previdência Aplicada" :
-            template === "correcao" ? "Crédito com Correção" :
-            "Extrato da Proposta",
-        },
-        String(sims.length),
-      ]],
-      startY: 40,
-      styles: { cellPadding: 4 },
-      theme: "grid",
-    });
-    addFooter(doc, logo);
+    // CAPA
+    renderCover(doc, logo, sims);
 
-    // Demais páginas
-    sims.forEach((sim, idx) => {
-      if (idx > 0 || true) doc.addPage();
-      renderTemplatePage(doc, logo, template, sim);
+    // páginas
+    sims.forEach((sim) => {
+      doc.addPage();
+      const table = sim.table_id ? tablesMap[sim.table_id] : undefined;
+      renderTemplatePage(doc, logo, template, sim, tplParams, table);
     });
 
-    doc.save(
-      `propostas-${template}-${new Date().toISOString().slice(0, 10)}.pdf`
-    );
+    const fname = `propostas-${template}-${new Date()
+      .toISOString()
+      .slice(0, 10)}.pdf`;
+    doc.save(fname);
+  }
+
+  async function excluir(sim: SimRow) {
+    if (!confirm("Confirmar exclusão desta proposta?")) return;
+    const { error } = await supabase
+      .from("sim_simulations")
+      .delete()
+      .eq("id", sim.id);
+    if (error) {
+      alert("Erro ao excluir: " + error.message);
+      return;
+    }
+    setRows((prev) => prev.filter((r) => r.id !== sim.id));
   }
 
   /* ===== Modal: Adicionar simulações ===== */
@@ -716,7 +810,8 @@ Vantagens
                   {loading ? (
                     <tr>
                       <td colSpan={7} className="p-4">
-                        <Loader2 className="h-4 w-4 animate-spin inline" /> Carregando…
+                        <Loader2 className="h-4 w-4 animate-spin inline" />{" "}
+                        Carregando…
                       </td>
                     </tr>
                   ) : items.length === 0 ? (
@@ -740,12 +835,22 @@ Vantagens
                           </td>
                           <td className="p-2">{fmtDate(r.created_at)}</td>
                           <td className="p-2">
-                            <div className="font-medium">{r.lead_nome || "—"}</div>
-                            <div className="text-xs text-muted-foreground">{r.lead_telefone || ""}</div>
+                            <div className="font-medium">
+                              {r.lead_nome || "—"}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {r.lead_telefone || ""}
+                            </div>
                           </td>
-                          <td className="p-2">{normalizeSegment(r.segmento)}</td>
-                          <td className="p-2 text-right">{brMoney(r.novo_credito)}</td>
-                          <td className="p-2 text-right">{brMoney(r.parcela_escolhida)}</td>
+                          <td className="p-2">
+                            {normalizeSegment(r.segmento)}
+                          </td>
+                          <td className="p-2 text-right">
+                            {brMoney(r.novo_credito)}
+                          </td>
+                          <td className="p-2 text-right">
+                            {brMoney(r.parcela_escolhida)}
+                          </td>
                           <td className="p-2 text-right">{r.novo_prazo}x</td>
                         </tr>
                       );
@@ -763,11 +868,147 @@ Vantagens
                 <Button variant="secondary" onClick={onClose}>
                   Cancelar
                 </Button>
-                <Button onClick={salvar} disabled={Object.values(picked).filter(Boolean).length === 0}>
+                <Button
+                  onClick={salvar}
+                  disabled={
+                    Object.values(picked).filter(Boolean).length === 0
+                  }
+                >
                   Salvar na lista
                 </Button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ===== Modal: Parâmetros dos Templates ===== */
+  function TplParamsModal({
+    value,
+    onClose,
+    onSave,
+  }: {
+    value: TemplateParams;
+    onClose: () => void;
+    onSave: (v: TemplateParams) => void;
+  }) {
+    const [v, setV] = useState<TemplateParams>(value);
+    return (
+      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl w-full max-w-3xl shadow-lg">
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <div className="font-semibold">Parâmetros dos Modelos</div>
+            <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
+              ✕
+            </button>
+          </div>
+          <div className="p-4 grid md:grid-cols-3 gap-3 text-sm">
+            <div>
+              <Label>Selic a.a.</Label>
+              <Input
+                type="number"
+                step="0.0001"
+                value={v.selicAA}
+                onChange={(e) =>
+                  setV({ ...v, selicAA: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div>
+              <Label>CDI a.a.</Label>
+              <Input
+                type="number"
+                step="0.0001"
+                value={v.cdiAA}
+                onChange={(e) => setV({ ...v, cdiAA: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <Label>% do CDI</Label>
+              <Input
+                type="number"
+                step="0.0001"
+                value={v.cdiPct}
+                onChange={(e) => setV({ ...v, cdiPct: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <Label>IPCA a.a.</Label>
+              <Input
+                type="number"
+                step="0.0001"
+                value={v.ipcaAA}
+                onChange={(e) => setV({ ...v, ipcaAA: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <Label>INCC a.a.</Label>
+              <Input
+                type="number"
+                step="0.0001"
+                value={v.inccAA}
+                onChange={(e) =>
+                  setV({ ...v, inccAA: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div>
+              <Label>Ganho na venda (%)</Label>
+              <Input
+                type="number"
+                step="0.0001"
+                value={v.ganhoVendaPct}
+                onChange={(e) =>
+                  setV({ ...v, ganhoVendaPct: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div className="md:col-span-3">
+              <Label>Aluguel estimado (R$) ou Yield (%)</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="R$"
+                  value={v.aluguelEstimado ?? ""}
+                  onChange={(e) =>
+                    setV({
+                      ...v,
+                      aluguelEstimado:
+                        e.target.value === "" ? undefined : Number(e.target.value),
+                    })
+                  }
+                />
+                <Input
+                  type="number"
+                  step="0.0001"
+                  placeholder="0.01 = 1%"
+                  value={v.yieldPct ?? ""}
+                  onChange={(e) =>
+                    setV({
+                      ...v,
+                      yieldPct:
+                        e.target.value === "" ? undefined : Number(e.target.value),
+                    })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+          <div className="px-4 py-3 border-t flex justify-end gap-2">
+            <Button variant="secondary" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                onSave(v);
+                onClose();
+              }}
+            >
+              Salvar
+            </Button>
           </div>
         </div>
       </div>
@@ -819,11 +1060,19 @@ Vantagens
           </div>
           <div>
             <Label>De</Label>
-            <Input type="date" value={dStart} onChange={(e) => setDStart(e.target.value)} />
+            <Input
+              type="date"
+              value={dStart}
+              onChange={(e) => setDStart(e.target.value)}
+            />
           </div>
           <div>
             <Label>Até</Label>
-            <Input type="date" value={dEnd} onChange={(e) => setDEnd(e.target.value)} />
+            <Input
+              type="date"
+              value={dEnd}
+              onChange={(e) => setDEnd(e.target.value)}
+            />
           </div>
         </CardContent>
       </Card>
@@ -839,7 +1088,9 @@ Vantagens
               <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
             </div>
           ) : rows.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground">Sem resultados.</div>
+            <div className="p-4 text-sm text-muted-foreground">
+              Sem resultados.
+            </div>
           ) : (
             <table className="min-w-full text-sm">
               <thead className="bg-muted/40">
@@ -869,11 +1120,15 @@ Vantagens
                     <td className="p-2">{fmtDate(r.created_at)}</td>
                     <td className="p-2">
                       <div className="font-medium">{r.lead_nome || "—"}</div>
-                      <div className="text-xs text-muted-foreground">{r.lead_telefone || ""}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {r.lead_telefone || ""}
+                      </div>
                     </td>
                     <td className="p-2">{normalizeSegment(r.segmento)}</td>
                     <td className="p-2 text-right">{brMoney(r.novo_credito)}</td>
-                    <td className="p-2 text-right">{brMoney(r.parcela_escolhida)}</td>
+                    <td className="p-2 text-right">
+                      {brMoney(r.parcela_escolhida)}
+                    </td>
                     <td className="p-2 text-right">{r.novo_prazo}x</td>
                     <td className="p-2">
                       <div className="min-w-[320px] grid grid-cols-5 gap-2 justify-items-center">
@@ -936,9 +1191,14 @@ Vantagens
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Propostas de Investimento</CardTitle>
-          <Button onClick={() => setModalOpen(true)} className="rounded-2xl">
-            <Plus className="h-4 w-4 mr-1" /> Adicionar simulações
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setShowTplParams(true)}>
+              Parâmetros
+            </Button>
+            <Button onClick={() => setModalOpen(true)} className="rounded-2xl">
+              <Plus className="h-4 w-4 mr-1" /> Adicionar simulações
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           {/* Barra de ações */}
@@ -1029,18 +1289,21 @@ Vantagens
                         </div>
                       </td>
                       <td className="p-2">{normalizeSegment(r.segmento)}</td>
-                      <td className="p-2 text-right">{brMoney(r.novo_credito)}</td>
-                      <td className="p-2 text-right">{brMoney(r.parcela_escolhida)}</td>
+                      <td className="p-2 text-right">
+                        {brMoney(r.novo_credito)}
+                      </td>
+                      <td className="p-2 text-right">
+                        {brMoney(r.parcela_escolhida)}
+                      </td>
                       <td className="p-2 text-right">{r.novo_prazo}x</td>
                       <td className="p-2">
                         <div className="flex items-center justify-end gap-2">
                           <select
                             className="h-9 border rounded-md px-2"
                             onChange={(e) =>
-                              gerarBundlePDF(
-                                e.target.value as TemplateKind,
-                                [r]
-                              )
+                              gerarBundlePDF(e.target.value as TemplateKind, [
+                                r,
+                              ])
                             }
                             defaultValue=""
                             title="Gerar PDF desta linha"
@@ -1055,10 +1318,7 @@ Vantagens
                             <option value="correcao">Crédito c/ Correção</option>
                             <option value="extrato">Extrato</option>
                           </select>
-                          <button
-                            className="inline-flex items-center justify-center h-9 w-9 rounded-full border bg-background hover:bg-muted"
-                            title="Abrir opções"
-                          >
+                          <button className="inline-flex items-center justify-center h-9 w-9 rounded-full border bg-background hover:bg-muted">
                             <ChevronDown className="h-4 w-4" />
                           </button>
                         </div>
@@ -1076,7 +1336,7 @@ Vantagens
         <AddSimsModal
           onClose={() => setModalOpen(false)}
           onSave={(sims) => {
-            // evita duplicatas
+            // evita duplicatas e respeita limite 5
             const exists = new Set(piList.map((s) => s.id));
             const merged = [...piList];
             sims.forEach((s) => {
@@ -1085,6 +1345,14 @@ Vantagens
             setPiList(merged);
           }}
           alreadyIds={new Set(piList.map((s) => s.id))}
+        />
+      )}
+
+      {showTplParams && (
+        <TplParamsModal
+          value={tplParams}
+          onSave={setTplParams}
+          onClose={() => setShowTplParams(false)}
         />
       )}
     </div>

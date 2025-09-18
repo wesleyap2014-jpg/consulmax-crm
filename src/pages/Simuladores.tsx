@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
-import * as htmlToImage from "html-to-image";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -610,10 +609,12 @@ ${wa}`
     }
 
     try {
-      // Gera imagem em alta (2x) no formato 1080x1920 (9:16)
-      const dataUrl = await htmlToImage.toPng(statusRef.current, {
-        width: 1080,
-        height: 1920,
+      // Import dinâmico — só carrega no browser
+      const { toPng } = await import("html-to-image");
+
+      const dataUrl = await toPng(statusRef.current, {
+        width: 1080,   // 9:16
+        height: 1920,  // 9:16
         pixelRatio: 2,
         cacheBust: true,
         backgroundColor: "#F5F5F5",
@@ -649,8 +650,7 @@ ${wa}`
   const COLOR_GOLD = "#B5A573";
 
   // dados para a arte
-  const vendedorNome =
-    userName || leadInfo?.nome || "Consultor Consulmax";
+  const vendedorNome = userName || leadInfo?.nome || "Consultor Consulmax";
   const vendedorIniciais = getInitials(vendedorNome);
   const telLegivel = (userPhone || "").replace(/\s+/g, "");
 
@@ -701,7 +701,7 @@ ${wa}`
 
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador (menor) */}
+        {/* coluna esquerda: simulador + ações */}
         <div className="col-span-12 lg:col-span-8">
           <Card>
             <CardHeader>
@@ -770,7 +770,7 @@ ${wa}`
           </Card>
 
           {/* Ações extras */}
-          <div className="mt-4 flex items-center gap-3">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
               {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
@@ -1037,8 +1037,12 @@ ${wa}`
               }}
             >
               {userAvatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={userAvatarUrl} alt="Foto do consultor" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                <img
+                  src={userAvatarUrl}
+                  alt="Foto do consultor"
+                  crossOrigin="anonymous"
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
               ) : (
                 vendedorIniciais || "CC"
               )}
@@ -1055,7 +1059,6 @@ ${wa}`
 
           {/* Rodapé com logo e site */}
           <div style={{ marginTop: 24, display: "grid", placeItems: "center", gap: 8 }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/logo-consulmax.png"
               alt="Consulmax"
@@ -1871,10 +1874,8 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* Ações */}
-          <div className="flex items-center gap-3">
-            {/* Botões já estão na coluna esquerda, mantidos aqui para compatibilidade */}
-          </div>
+          {/* Ações (mantidas vazias aqui; botões estão na coluna esquerda) */}
+          <div className="flex items-center gap-3" />
         </>
       ) : (
         <div className="text-sm text-muted-foreground">

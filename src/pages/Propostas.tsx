@@ -1,3 +1,4 @@
+// src/pages/Propostas.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -111,7 +112,6 @@ export default function Propostas() {
     return d.toISOString().slice(0, 10);
   });
   const [dEnd, setDEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
-  const [assembleia, setAssembleia] = useState<string>("15/10");
 
   /** ====== dados ====== */
   const [loading, setLoading] = useState(true);
@@ -147,9 +147,7 @@ export default function Propostas() {
     // filtros
     if (q.trim()) {
       const like = `%${q.trim()}%`;
-      query = query.or(
-        `lead_nome.ilike.${like},lead_telefone.ilike.${like}`
-      );
+      query = query.or(`lead_nome.ilike.${like},lead_telefone.ilike.${like}`);
     }
     if (seg) query = query.ilike("segmento", `%${seg}%`);
     if (grupo.trim()) query = query.eq("grupo", grupo.trim());
@@ -185,10 +183,20 @@ export default function Propostas() {
     setLoading(false);
   }
 
+  // primeira carga
   useEffect(() => {
-    load(); // primeira carga
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // auto-aplicar filtros com debounce 300ms
+  useEffect(() => {
+    const h = setTimeout(() => {
+      load();
+    }, 300);
+    return () => clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, seg, grupo, dStart, dEnd]);
 
   const segmentosDisponiveis = useMemo(() => {
     const set = new Set<string>();
@@ -267,8 +275,6 @@ ${emoji} Crédito: ${brMoney(sim.novo_credito)}
 
 🚨 POUCAS VAGAS DISPONÍVEIS🚨
 
-Assembleia ${assembleia}
-
 📲 Garanta sua vaga agora!${whatsappLine}
 
 Vantagens
@@ -286,17 +292,42 @@ Vantagens
     }
   }
 
-  /** ====== PDF ====== */
-  function exportarPDF(sim: SimRow) {
-    const doc = new jsPDF();
-    const brand = "#1E293F"; // azul escuro da Consulmax
-    const accent = "#A11C27"; // vinho
+  /** ====== PDF (com logo) ====== */
+  async function loadLogoDataURL(): Promise<string | null> {
+    try {
+      const res = await fetch("/logo-consulmax.png");
+      const blob = await res.blob();
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  }
 
-    doc.setTextColor(30, 41, 63);
+  async function exportarPDF(sim: SimRow) {
+    const doc = new jsPDF();
+    const brand = { r: 30, g: 41, b: 63 }; // #1E293F
+    const accent = { r: 161, g: 28, b: 39 }; // #A11C27
+
+    // Logo
+    const logo = await loadLogoDataURL();
+    if (logo) {
+      // centraliza no topo
+      const w = 34; // mm
+      const x = 105 - w / 2;
+      doc.addImage(logo, "PNG", x, 8, w, w * 0.9);
+    }
+
+    // Título
+    doc.setTextColor(brand.r, brand.g, brand.b);
     doc.setFontSize(18);
     doc.text("Proposta Embracon - Consulmax", 14, 18);
 
-    doc.setDrawColor(161, 28, 39);
+    // Linha
+    doc.setDrawColor(accent.r, accent.g, accent.b);
     doc.setLineWidth(0.8);
     doc.line(14, 22, 196, 22);
 
@@ -310,10 +341,10 @@ Vantagens
     autoTable(doc, {
       head: [["Campo", "Valor"]],
       body: head,
-      startY: 28,
+      startY: logo ? 44 : 28,
       styles: { cellPadding: 3 },
       theme: "grid",
-      headStyles: { fillColor: [30, 41, 63] },
+      headStyles: { fillColor: [brand.r, brand.g, brand.b] },
     });
 
     const start2 = (doc as any).lastAutoTable.finalY + 8;
@@ -332,7 +363,7 @@ Vantagens
       startY: start2,
       styles: { cellPadding: 3 },
       theme: "striped",
-      headStyles: { fillColor: [161, 28, 39] },
+      headStyles: { fillColor: [accent.r, accent.g, accent.b] },
     });
 
     doc.save(`proposta-${sim.code || sim.id}.pdf`);
@@ -359,7 +390,7 @@ Vantagens
         </Button>
       </div>
 
-      {/* Filtros */}
+      {/* Filtros (auto-aplicação) */}
       <Card>
         <CardHeader>
           <CardTitle>Filtros</CardTitle>
@@ -399,29 +430,6 @@ Vantagens
           <div>
             <Label>Até</Label>
             <Input type="date" value={dEnd} onChange={(e) => setDEnd(e.target.value)} />
-          </div>
-
-          <div className="md:col-span-6 flex gap-2 justify-end">
-            <Button variant="secondary" onClick={() => { setQ(""); setSeg(""); setGrupo(""); }}>
-              Limpar
-            </Button>
-            <Button onClick={load}>Aplicar</Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Config e montagem do texto */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Configuração do Texto</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-3">
-          <div className="md:col-span-1">
-            <Label>Assembleia</Label>
-            <Input value={assembleia} onChange={(e) => setAssembleia(e.target.value)} />
-          </div>
-          <div className="md:col-span-2 text-sm text-muted-foreground flex items-end">
-            Telefone do usuário logado: <span className="ml-1 font-medium">{formatPhoneBR(userPhone) || "—"}</span>
           </div>
         </CardContent>
       </Card>
@@ -466,48 +474,52 @@ Vantagens
                     <td className="p-2 text-right">{brMoney(r.parcela_escolhida)}</td>
                     <td className="p-2 text-right">{r.novo_prazo}x</td>
                     <td className="p-2">
+                      {/* Toolbar de ações — compacta e responsiva */}
                       <div className="flex justify-end gap-2 flex-wrap">
                         <Button
                           size="sm"
-                          variant="secondary"
+                          className="h-8 rounded-xl px-3 bg-[#A11C27] text-white hover:bg-[#8f1822] min-w-[44px]"
                           onClick={() => copiar(textoOportunidade(r))}
-                          title="Copiar Oportunidade/Proposta"
-                          className="h-8 rounded-lg"
+                          title="Copiar Oportunidade"
                         >
-                          <Copy className="h-4 w-4 mr-1" /> Oportunidade
+                          <Copy className="h-4 w-4 mr-1" />
+                          <span className="hidden md:inline">Oportunidade</span>
                         </Button>
                         <Button
                           size="sm"
-                          variant="secondary"
+                          className="h-8 rounded-xl px-3 bg-[#1E293F] text-white hover:bg-[#162033] min-w-[44px]"
                           onClick={() => copiar(textoResumo(r))}
                           title="Copiar Resumo"
-                          className="h-8 rounded-lg"
                         >
-                          <Copy className="h-4 w-4 mr-1" /> Resumo
+                          <Copy className="h-4 w-4 mr-1" />
+                          <span className="hidden md:inline">Resumo</span>
                         </Button>
                         <Button
                           size="sm"
+                          className="h-8 rounded-xl px-3 bg-[#1E293F] text-white hover:bg-[#162033] min-w-[44px]"
                           onClick={() => exportarPDF(r)}
                           title="Exportar PDF"
-                          className="h-8 rounded-lg"
                         >
-                          <FileText className="h-4 w-4 mr-1" /> PDF
+                          <FileText className="h-4 w-4 mr-1" />
+                          <span className="hidden md:inline">PDF</span>
                         </Button>
                         <a
                           href="/simuladores"
-                          className="inline-flex items-center h-8 px-3 rounded-lg border bg-background hover:bg-muted text-sm"
+                          className="inline-flex items-center h-8 px-3 rounded-xl border bg-background hover:bg-muted text-sm min-w-[44px]"
                           title="Abrir no simulador"
                         >
-                          <ExternalLink className="h-4 w-4 mr-1" /> Abrir
+                          <ExternalLink className="h-4 w-4 mr-1" />
+                          <span className="hidden md:inline">Abrir</span>
                         </a>
                         <Button
                           size="sm"
                           variant="destructive"
                           onClick={() => excluir(r)}
                           title="Excluir"
-                          className="h-8 rounded-lg"
+                          className="h-8 rounded-xl px-3 min-w-[44px]"
                         >
-                          <Trash2 className="h-4 w-4 mr-1" /> Excluir
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          <span className="hidden md:inline">Excluir</span>
                         </Button>
                       </div>
                     </td>

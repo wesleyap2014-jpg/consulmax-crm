@@ -1,11 +1,12 @@
 // src/pages/Simuladores.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
+import * as htmlToImage from "html-to-image";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -320,8 +321,13 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // telefone do usuário logado (para o Resumo)
+  // dados do usuário logado para o "Para Status"
   const [userPhone, setUserPhone] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
+  const [userAvatarUrl, setUserAvatarUrl] = useState<string>("");
+
+  // ref da arte de status (offscreen)
+  const statusRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -340,18 +346,29 @@ export default function Simuladores() {
     })();
   }, []);
 
-  // pega telefone do usuário logado
+  // pega dados do usuário logado (telefone, nome, avatar)
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
       if (!uid) return;
-      const { data } = await supabase
+
+      // 1) telefone (tabela users como já usava)
+      const { data: phoneData } = await supabase
         .from("users")
         .select("phone")
         .eq("auth_user_id", uid)
         .maybeSingle();
-      setUserPhone((data?.phone || "").toString());
+      setUserPhone((phoneData?.phone || "").toString());
+
+      // 2) nome e avatar (tabela public_users)
+      const { data: pubUser } = await supabase
+        .from("public_users")
+        .select("name, avatar_url")
+        .eq("auth_user_id", uid)
+        .maybeSingle();
+      setUserName(pubUser?.name || "");
+      setUserAvatarUrl(pubUser?.avatar_url || "");
     })();
   }, []);
 
@@ -577,6 +594,44 @@ ${wa}`
     }
   }
 
+  // ========= Util: iniciais para fallback do avatar =========
+  function getInitials(name: string) {
+    const parts = (name || "").trim().split(/\s+/).slice(0, 2);
+    return parts.map(p => p[0]?.toUpperCase() || "").join("");
+  }
+
+  // ========= Geração da Imagem para Status (1080x1920) =========
+  const canGenerateStatus = !!calc && !!tabelaSelecionada && !!podeCalcular;
+
+  async function gerarImagemStatus() {
+    if (!statusRef.current || !canGenerateStatus) {
+      alert("Preencha a simulação antes de gerar a imagem.");
+      return;
+    }
+
+    try {
+      // Gera imagem em alta (2x) no formato 1080x1920 (9:16)
+      const dataUrl = await htmlToImage.toPng(statusRef.current, {
+        width: 1080,
+        height: 1920,
+        pixelRatio: 2,
+        cacheBust: true,
+        backgroundColor: "#F5F5F5",
+        style: { transform: "none" },
+      });
+
+      // Download
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      const code = simCode ? `sim-${simCode}` : Date.now().toString();
+      a.download = `consulmax-status-${code}.png`;
+      a.click();
+    } catch (err) {
+      console.error(err);
+      alert("Não foi possível gerar a imagem. Tente novamente.");
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2">
@@ -586,6 +641,18 @@ ${wa}`
   }
 
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
+
+  // Paleta Consulmax
+  const COLOR_NAVY = "#1E293F";
+  const COLOR_RED = "#A11C27";
+  const COLOR_OFFWHITE = "#F5F5F5";
+  const COLOR_GOLD = "#B5A573";
+
+  // dados para a arte
+  const vendedorNome =
+    userName || leadInfo?.nome || "Consultor Consulmax";
+  const vendedorIniciais = getInitials(vendedorNome);
+  const telLegivel = (userPhone || "").replace(/\s+/g, "");
 
   return (
     <div className="p-6 space-y-4">
@@ -701,6 +768,31 @@ ${wa}`
               )}
             </CardContent>
           </Card>
+
+          {/* Ações extras */}
+          <div className="mt-4 flex items-center gap-3">
+            <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
+              {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Salvar Simulação
+            </Button>
+
+            {/* NOVO: Botão de gerar imagem para Status */}
+            <Button
+              variant="secondary"
+              className="h-10 rounded-2xl px-4"
+              onClick={gerarImagemStatus}
+              disabled={!canGenerateStatus}
+              title={!canGenerateStatus ? "Preencha a simulação para habilitar" : "Gerar imagem"}
+            >
+              Gerar Imagem para Status
+            </Button>
+
+            {simCode && (
+              <span className="text-sm">
+                ✅ Salvo como <strong>Simulação #{simCode}</strong>
+              </span>
+            )}
+          </div>
         </div>
 
         {/* coluna direita: memória de cálculo + resumo */}
@@ -809,6 +901,198 @@ ${wa}`
           onDeleted={handleTableDeleted}
         />
       )}
+
+      {/* ================================================================== */}
+      {/*            ARTE OFF-SCREEN: "PARA STATUS" (1080x1920)              */}
+      {/* ================================================================== */}
+      <div
+        ref={statusRef}
+        // Mantemos renderizado fora da tela para capturar com html-to-image
+        style={{
+          position: "fixed",
+          left: "-99999px",
+          top: 0,
+          width: "1080px",   // 9:16
+          height: "1920px",  // 9:16
+          fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
+          background: COLOR_OFFWHITE,
+          color: "#0f172a",
+        }}
+      >
+        {/* Fundo com shapes elegantes */}
+        <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+          <div
+            style={{
+              position: "absolute",
+              width: 900,
+              height: 900,
+              top: -250,
+              right: -200,
+              borderRadius: "50%",
+              background: COLOR_NAVY,
+              opacity: 0.08,
+              filter: "blur(2px)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              width: 1100,
+              height: 1100,
+              bottom: -300,
+              left: -250,
+              borderRadius: "50%",
+              background: COLOR_RED,
+              opacity: 0.07,
+              filter: "blur(2px)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              width: 1400,
+              height: 140,
+              top: 700,
+              left: -160,
+              transform: "rotate(-8deg)",
+              background: `${COLOR_NAVY}20`,
+              borderTopLeftRadius: 9999,
+              borderTopRightRadius: 9999,
+            }}
+          />
+        </div>
+
+        {/* Conteúdo */}
+        <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", height: "100%", padding: "64px 72px" }}>
+          {/* Chips topo */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div
+              style={{
+                alignSelf: "flex-start",
+                padding: "10px 20px",
+                borderRadius: 9999,
+                background: COLOR_RED,
+                color: "white",
+                fontWeight: 700,
+                letterSpacing: "0.06em",
+                fontSize: 24,
+              }}
+            >
+              CARTA DE CRÉDITO
+            </div>
+            <div
+              style={{
+                alignSelf: "flex-start",
+                padding: "10px 20px",
+                borderRadius: 9999,
+                background: COLOR_NAVY,
+                color: "white",
+                fontWeight: 700,
+                letterSpacing: "0.06em",
+                fontSize: 22,
+              }}
+            >
+              {`CONSÓRCIO ${((segmento || tabelaSelecionada?.segmento || "IMÓVEL")+"").toUpperCase()}`}
+            </div>
+          </div>
+
+          {/* Centro: Valor e lista */}
+          <div style={{ marginTop: 56 }}>
+            <div style={{ color: COLOR_NAVY, fontSize: 42, fontWeight: 600, marginBottom: 10 }}>
+              Crédito disponível
+            </div>
+            <div style={{ fontSize: 96, fontWeight: 800, lineHeight: 1.05, color: COLOR_RED, textShadow: "0 6px 24px rgba(0,0,0,0.05)" }}>
+              {calc ? brMoney(calc.novoCredito) : "R$ —"}
+            </div>
+
+            {/* Lista de detalhes */}
+            <div style={{ marginTop: 36, display: "grid", rowGap: 14 }}>
+              {/* 2ª Parcela (condicional) */}
+              {calc?.segundaParcelaComAntecipacao != null && (
+                <LinhaInfo label="2ª Parcela" value={brMoney(calc.segundaParcelaComAntecipacao)} corA={COLOR_NAVY} corB={COLOR_GOLD} />
+              )}
+              <LinhaInfo label="Demais Parcelas" value={calc ? brMoney(calc.parcelaEscolhida) : "—"} corA={COLOR_NAVY} corB={COLOR_GOLD} />
+              <LinhaInfo label="Novo Prazo" value={calc ? `${calc.novoPrazo} meses` : "—"} corA={COLOR_NAVY} corB={COLOR_GOLD} />
+              <LinhaInfo label="Grupo" value={grupo || "—"} corA={COLOR_NAVY} corB={COLOR_GOLD} />
+              <LinhaInfo label="Lance Próprio" value={calc ? brMoney(calc.lanceProprioValor) : "—"} corA={COLOR_NAVY} corB={COLOR_GOLD} />
+            </div>
+          </div>
+
+          {/* Vendedor */}
+          <div style={{ marginTop: "auto", display: "flex", alignItems: "center", gap: 16 }}>
+            {/* Avatar circular com fallback */}
+            <div
+              style={{
+                width: 120,
+                height: 120,
+                borderRadius: "50%",
+                background: "#e2e8f0",
+                border: `4px solid ${COLOR_NAVY}`,
+                overflow: "hidden",
+                display: "grid",
+                placeItems: "center",
+                fontWeight: 800,
+                fontSize: 40,
+                color: COLOR_NAVY,
+              }}
+            >
+              {userAvatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={userAvatarUrl} alt="Foto do consultor" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                vendedorIniciais || "CC"
+              )}
+            </div>
+            <div style={{ display: "grid" }}>
+              <div style={{ fontSize: 28, color: COLOR_NAVY, fontWeight: 700, lineHeight: 1.15 }}>
+                {vendedorNome}
+              </div>
+              <div style={{ fontSize: 24, color: "#334155", marginTop: 6 }}>
+                {telLegivel || "—"}
+              </div>
+            </div>
+          </div>
+
+          {/* Rodapé com logo e site */}
+          <div style={{ marginTop: 24, display: "grid", placeItems: "center", gap: 8 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo-consulmax.png"
+              alt="Consulmax"
+              style={{ width: 240, height: "auto", objectFit: "contain", filter: "drop-shadow(0 2px 12px rgba(0,0,0,0.08))" }}
+            />
+            <div style={{ fontSize: 20, color: COLOR_NAVY, fontWeight: 600 }}>
+              https://consulmaxconsorcios.com.br/
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =============== Componente auxiliar para a arte =============== */
+function LinhaInfo({
+  label,
+  value,
+  corA = "#1E293F",
+  corB = "#B5A573",
+}: {
+  label: string;
+  value: string;
+  corA?: string;
+  corB?: string;
+}) {
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "1fr auto",
+      alignItems: "end",
+      borderBottom: `1px dashed ${corA}22`,
+      paddingBottom: 10,
+    }}>
+      <div style={{ fontSize: 28, color: corA, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 32, fontWeight: 800, color: corB }}>{value}</div>
     </div>
   );
 }
@@ -1589,15 +1873,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 
           {/* Ações */}
           <div className="flex items-center gap-3">
-            <Button disabled={!p.calc || p.salvando} onClick={p.salvar} className="h-10 rounded-2xl px-4">
-              {p.salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Salvar Simulação
-            </Button>
-            {p.simCode && (
-              <span className="text-sm">
-                ✅ Salvo como <strong>Simulação #{p.simCode}</strong>
-              </span>
-            )}
+            {/* Botões já estão na coluna esquerda, mantidos aqui para compatibilidade */}
           </div>
         </>
       ) : (

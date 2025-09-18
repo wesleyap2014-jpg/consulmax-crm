@@ -25,6 +25,7 @@
     "date-fns": "^3.6.0",
     "date-fns-tz": "^3.0.0",
     "decimal.js": "^10.4.3",
+    "html-to-image": "^1.11.11",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.2",
     "lucide-react": "^0.452.0",

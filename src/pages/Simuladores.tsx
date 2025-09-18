@@ -1,5 +1,5 @@
 // src/pages/Simuladores.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -97,9 +97,8 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-/** Regra alinhada com exemplos e:
- * - Serviços e Moto < 20k: não reduz parcela, só prazo
- * - tratamento “2ª parcela com antecipação”
+/** Regra alinhada com os exemplos do Excel + tratamento “2ª parcela com antecipação” e
+ * regra especial para Serviços e Moto < 20k: não reduz parcela, apenas o prazo.
  */
 function calcularSimulacao(i: CalcInput) {
   const {
@@ -184,10 +183,12 @@ function calcularSimulacao(i: CalcInput) {
   let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
 
   if (!manterParcela) {
+    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
     if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
       aplicouLimitador = true;
       parcelaEscolhida = parcelaLimitante;
     } else {
+      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
       parcelaEscolhida = novaParcelaSemLimite;
     }
   }
@@ -195,10 +196,12 @@ function calcularSimulacao(i: CalcInput) {
   // Caso especial: antecipação em 2x e contemplação na 1ª parcela
   const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada
+    ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
     : null;
 
-  // NOVO PRAZO
+  // NOVO PRAZO (regra unificada)
+  // - Se a parcela escolhida for igual à novaParcelaSemLimite e não há 2ª com antecipação, mantém prazoRestante.
+  // - Caso contrário, recalcula pelo saldo / parcelaEscolhida (considerando a 2ª com antecipação quando existir).
   const parcelasIguais =
     Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
 
@@ -210,6 +213,7 @@ function calcularSimulacao(i: CalcInput) {
     if (has2aAntecipDepois) {
       saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada));
     }
+    // arredonda para cima para não deixar fração de mês
     novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
   }
 
@@ -316,10 +320,8 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // dados do usuário logado (para Resumo/WhatsApp/Foto)
+  // telefone do usuário logado (para o Resumo)
   const [userPhone, setUserPhone] = useState<string>("");
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
-  const [userName, setUserName] = useState<string>("");
 
   useEffect(() => {
     (async () => {
@@ -338,7 +340,7 @@ export default function Simuladores() {
     })();
   }, []);
 
-  // pega dados do usuário logado
+  // pega telefone do usuário logado
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
@@ -346,13 +348,10 @@ export default function Simuladores() {
       if (!uid) return;
       const { data } = await supabase
         .from("users")
-        .select("phone, avatar_url, name, whatsapp")
+        .select("phone")
         .eq("auth_user_id", uid)
         .maybeSingle();
-      const phone = (data?.whatsapp || data?.phone || "").toString();
-      setUserPhone(phone);
-      setUserAvatar((data as any)?.avatar_url || null);
-      setUserName(((data as any)?.name || "").toString());
+      setUserPhone((data?.phone || "").toString());
     })();
   }, []);
 
@@ -553,7 +552,6 @@ export default function Simuladores() {
 💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
-
 🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
@@ -636,7 +634,7 @@ ${wa}`
 
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador */}
+        {/* coluna esquerda: simulador (menor) */}
         <div className="col-span-12 lg:col-span-8">
           <Card>
             <CardHeader>
@@ -705,7 +703,7 @@ ${wa}`
           </Card>
         </div>
 
-        {/* coluna direita: memória + resumo + arte */}
+        {/* coluna direita: memória de cálculo + resumo */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader>
@@ -798,25 +796,6 @@ ${wa}`
               </div>
             </CardContent>
           </Card>
-
-          {/* ======= Arte para Stories ======= */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Arte Para Stories (1080×1920)</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <StoriesArt
-                canRender={!!(calc && tabelaSelecionada)}
-                segmento={tabelaSelecionada?.segmento || segmento}
-                grupo={grupo}
-                calc={calc}
-                telefone={userPhone}
-                avatarUrl={userAvatar}
-                userName={userName}
-                credito={credito} // <— NOVO: mantém visual correto quando ainda não há novoCredito
-              />
-            </CardContent>
-          </Card>
         </div>
       </div>
 
@@ -891,6 +870,7 @@ function TableManagerModal({
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
+  // reset página quando muda a lista
   useEffect(() => setPage(1), [allTables.length]);
 
   const grouped = useMemo(() => {
@@ -1020,6 +1000,7 @@ function TableManagerModal({
           </table>
         </div>
 
+        {/* paginação */}
         <div className="flex items-center justify-between mt-3 text-sm">
           <div>
             {grouped.length > 0 && (
@@ -1108,6 +1089,7 @@ function TableFormOverlay({
 
   const [saving, setSaving] = useState(false);
 
+  // ESC para fechar
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -1625,401 +1607,4 @@ function EmbraconSimulator(p: EmbraconProps) {
       )}
     </div>
   );
-}
-
-/* ====================== Arte para Stories (Canvas) ====================== */
-
-type StoriesArtProps = {
-  canRender: boolean;
-  segmento: string;
-  grupo: string;
-  calc: ReturnType<typeof calcularSimulacao> | null;
-  telefone: string;
-  avatarUrl: string | null;
-  userName: string;
-  credito: number; // NOVO: para exibir crédito contratado quando ainda não há novoCredito
-};
-
-function StoriesArt(props: StoriesArtProps) {
-  const { canRender, segmento, grupo, calc, telefone, avatarUrl, userName, credito } = props;
-
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [seed, setSeed] = useState(Math.floor(Math.random() * 1e9));
-  const [downloading, setDownloading] = useState(false);
-
-  // Paleta (fixa)
-  const colors = {
-    white: "#FFFFFF",
-    gray: "#F3F4F6",
-    blue: "#172135",  // azul escuro
-    red: "#A11C27",   // vinho Consulmax
-    textMuted: "#6B7280"
-  };
-
-  /* ===== util ===== */
-  function rngFactory(s: number) {
-    let x = s || 1234567;
-    return () => {
-      x ^= x << 13; x ^= x >> 17; x ^= x << 5;
-      return (x >>> 0) / 4294967296;
-    };
-  }
-
-  function loadImage(src: string): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = src;
-    });
-  }
-
-  function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-    const rr = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + rr, y);
-    ctx.arcTo(x + w, y, x + w, y + h, rr);
-    ctx.arcTo(x + w, y + h, x, y + h, rr);
-    ctx.arcTo(x, y + h, x, y, rr);
-    ctx.arcTo(x, y, x + w, y, rr);
-    ctx.closePath();
-  }
-
-  function hexToRgba(hex: string, alpha: number) {
-    const h = hex.replace("#", "");
-    const bigint = parseInt(h, 16);
-    const r = (bigint >> 16) & 255;
-    const g = (bigint >> 8) & 255;
-    const b = bigint & 255;
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
-  function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, baseSize: number, minSize = 16) {
-    let size = baseSize;
-    do {
-      ctx.font = `600 ${size}px 'Inter', system-ui, -apple-system, Arial`;
-      if (ctx.measureText(text).width <= maxWidth) break;
-      size -= 1;
-    } while (size > minSize);
-    return size;
-  }
-
-  function drawLabelValueCard(
-    ctx: CanvasRenderingContext2D,
-    title: string,
-    value: string,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    style: { border?: string; fill?: string; titleColor?: string; valueColor?: string } = {}
-  ) {
-    ctx.save();
-    drawRoundedRect(ctx, x, y, w, h, 14);
-    ctx.fillStyle = style.fill || colors.white;
-    ctx.fill();
-    if (style.border) {
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = style.border;
-      ctx.stroke();
-    }
-
-    // título
-    ctx.fillStyle = style.titleColor || colors.textMuted;
-    ctx.font = `600 26px 'Inter', system-ui, -apple-system, Arial`;
-    ctx.textBaseline = "top";
-    ctx.fillText(title, x + 16, y + 12);
-
-    // valor
-    ctx.fillStyle = style.valueColor || colors.blue;
-    ctx.font = `800 34px 'Inter', system-ui, -apple-system, Arial`;
-    ctx.textBaseline = "alphabetic";
-    const display = value || "—";
-    ctx.fillText(display, x + 16, y + h - 16);
-    ctx.restore();
-  }
-
-  async function render() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const W = 1080, H = 1920;
-
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-
-    /* ===== background ===== */
-    ctx.fillStyle = colors.white;
-    ctx.fillRect(0, 0, W, H);
-
-    const rnd = rngFactory(seed);
-    const shapeCount = 5 + Math.floor(rnd() * 4);
-    for (let i = 0; i < shapeCount; i++) {
-      const isCircle = rnd() > 0.5;
-      const alpha = 0.07 + rnd() * 0.05;
-      const palette = [colors.gray, colors.blue, colors.red];
-      ctx.fillStyle = hexToRgba(palette[Math.floor(rnd() * palette.length)], alpha);
-      const cx = rnd() * W, cy = rnd() * H;
-
-      if (isCircle) {
-        const r = 120 + rnd() * 260;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        const ww = 260 + rnd() * 420;
-        const hh = 140 + rnd() * 280;
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate((rnd() - 0.5) * 0.7);
-        drawRoundedRect(ctx, -ww / 2, -hh / 2, ww, hh, 40);
-        ctx.fill();
-        ctx.restore();
-      }
-    }
-
-    /* ===== Header: pill + barra Consórcio [SEGMENTO] ===== */
-    // Pill "Cartas de Crédito"
-    const pillX = 80, pillY = 80;
-    const pillPadX = 28, pillPadY = 14;
-    const pillText = "Cartas de Crédito";
-    ctx.font = `700 34px 'Inter', system-ui, -apple-system, Arial`;
-    const pillW = ctx.measureText(pillText).width + pillPadX * 2;
-    const pillH = 46 + pillPadY;
-    drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 999);
-    ctx.fillStyle = colors.red;
-    ctx.fill();
-    ctx.fillStyle = colors.white;
-    ctx.textBaseline = "middle";
-    ctx.fillText(pillText, pillX + pillPadX, pillY + pillH / 2);
-
-    // Barra "Consórcio [SEGMENTO]"
-    const barX = 80, barY = pillY + pillH + 28, barW = W - 160, barH = 64;
-    drawRoundedRect(ctx, barX, barY, barW, barH, 18);
-    ctx.fillStyle = colors.blue;
-    ctx.fill();
-    ctx.fillStyle = colors.white;
-    ctx.font = `700 34px 'Inter', system-ui, -apple-system, Arial`;
-    const seg = (segmento || "").toUpperCase().split(" ")[0] || "—";
-    const label = `Consórcio ${seg}`;
-    const labelSize = fitText(ctx, label, barW - 32, 34, 22);
-    ctx.font = `700 ${labelSize}px 'Inter', system-ui, -apple-system, Arial`;
-    ctx.fillText(label, barX + 16, barY + barH / 2 + labelSize * 0.36);
-
-    /* ===== Cards ===== */
-    const gridX = 80;
-    let y = barY + barH + 40;
-
-    // CARD 1 (DESTACADO): Crédito
-    const creditW = W - gridX * 2;
-    const creditH = 110;
-    drawRoundedRect(ctx, gridX, y, creditW, creditH, 14);
-    ctx.fillStyle = colors.blue;
-    ctx.fill();
-    ctx.fillStyle = colors.white;
-    ctx.font = `600 24px 'Inter', system-ui, -apple-system, Arial`;
-    ctx.fillText("Crédito", gridX + 16, y + 12);
-
-    const creditoVal = calc ? (calc.novoCredito > 0 ? calc.novoCredito : credito) : credito;
-    ctx.font = `800 36px 'Inter', system-ui, -apple-system, Arial`;
-    ctx.fillText(brMoney(creditoVal || 0), gridX + 16, y + creditH - 16);
-    // borda vermelha
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = colors.red;
-    drawRoundedRect(ctx, gridX, y, creditW, creditH, 14);
-    ctx.stroke();
-
-    // grid 2 colunas x 2 linhas
-    y += creditH + 24;
-    const colW = (W - gridX * 2 - 24) / 2;
-    const rowH = 100;
-
-    // Primeira parcela
-    drawLabelValueCard(ctx, "Primeira Parcela", calc ? brMoney(calc.parcelaAte) : "", gridX, y, colW, rowH);
-
-    // Parcela 2 (se existir)
-    const showP2 = !!(calc?.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
-    drawLabelValueCard(
-      ctx,
-      showP2 ? "Parcela 2" : " ",
-      showP2 ? brMoney(calc!.segundaParcelaComAntecipacao as number) : "",
-      gridX + colW + 24, y, colW, rowH
-    );
-
-    // Demais parcelas
-    y += rowH + 16;
-    drawLabelValueCard(ctx, "Demais Parcelas", calc ? brMoney(calc.parcelaEscolhida) : "", gridX, y, colW, rowH);
-
-    // Lance próprio (destaque com fundo vermelho 6%)
-    drawLabelValueCard(
-      ctx,
-      "Lance Próprio",
-      calc ? brMoney(calc.lanceProprioValor) : "",
-      gridX + colW + 24, y, colW, rowH,
-      { fill: hexToRgba(colors.red, 0.06), titleColor: colors.textMuted, valueColor: colors.blue }
-    );
-
-    // Nova linha: Novo Prazo | Grupo
-    y += rowH + 16;
-    drawLabelValueCard(ctx, "Novo Prazo", calc ? `${calc.novoPrazo} meses` : "", gridX, y, colW, rowH);
-    drawLabelValueCard(ctx, "Grupo", grupo || "—", gridX + colW + 24, y, colW, rowH);
-
-    /* ===== Chip WhatsApp ===== */
-    const chipY = y + rowH + 24;
-    const chipH = 72;
-    const chipW = W - gridX * 2;
-    drawRoundedRect(ctx, gridX, chipY, chipW, chipH, 999);
-    ctx.fillStyle = colors.white;
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = hexToRgba(colors.blue, 0.12);
-    ctx.stroke();
-
-    // avatar
-    const avatarSize = 56;
-    const avatarCX = gridX + 16 + avatarSize / 2;
-    const avatarCY = chipY + chipH / 2;
-
-    if (avatarUrl) {
-      try {
-        const img = await loadImage(avatarUrl);
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(avatarCX, avatarCY, avatarSize / 2, 0, Math.PI * 2);
-        ctx.closePath();
-        ctx.clip();
-        ctx.drawImage(img, avatarCX - avatarSize / 2, avatarCY - avatarSize / 2, avatarSize, avatarSize);
-        ctx.restore();
-      } catch {
-        drawInitial(ctx, userName, avatarCX, avatarCY, avatarSize, colors.blue);
-      }
-    } else {
-      drawInitial(ctx, userName, avatarCX, avatarCY, avatarSize, colors.blue);
-    }
-
-    ctx.fillStyle = colors.blue;
-    ctx.font = `800 26px 'Inter', system-ui, -apple-system, Arial`;
-    const phoneTxt = `WhatsApp: ${formatPhone(telefone) || "—"}`;
-    ctx.textBaseline = "middle";
-    ctx.fillText(phoneTxt, gridX + 16 + avatarSize + 16, chipY + chipH / 2);
-
-    /* ===== Rodapé: logo e site ===== */
-    try {
-      const logo = await loadImage("/logo-consulmax.png");
-      const logoTargetW = 240;
-      const scale = logoTargetW / logo.width;
-      const logoTargetH = logo.height * scale;
-      ctx.drawImage(logo, (W - logoTargetW) / 2, H - 180, logoTargetW, logoTargetH);
-    } catch {
-      ctx.fillStyle = colors.blue;
-      ctx.font = `900 32px 'Inter', system-ui, -apple-system, Arial`;
-      const txt = "CONSULMAX";
-      ctx.fillText(txt, (W - ctx.measureText(txt).width) / 2, H - 160);
-    }
-
-    ctx.fillStyle = colors.textMuted;
-    ctx.font = `600 22px 'Inter', system-ui, -apple-system, Arial`;
-    const site = "consulmaxconsorcios.com.br";
-    ctx.fillText(site, (W - ctx.measureText(site).width) / 2, H - 48);
-  }
-
-  useEffect(() => {
-    if (canRender) render(); // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canRender, calc, segmento, grupo, telefone, avatarUrl, seed, credito]);
-
-  function onShuffle() {
-    setSeed(Math.floor(Math.random() * 1e9));
-  }
-
-  function onDownload() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    setDownloading(true);
-    try {
-      const link = document.createElement("a");
-      link.download = `consulmax-stories-${Date.now()}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } finally {
-      setDownloading(false);
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      {!canRender ? (
-        <div className="text-sm text-muted-foreground">
-          Preencha a simulação para liberar a prévia da arte.
-        </div>
-      ) : (
-        <>
-          <div className="rounded-xl border bg-white p-2">
-            {/* preview responsivo (canvas real 1080x1920) */}
-            <div className="w-full">
-              <div className="mx-auto" style={{ maxWidth: 320 }}>
-                <canvas
-                  ref={canvasRef}
-                  style={{
-                    width: "100%",
-                    height: "auto",
-                    display: "block",
-                    borderRadius: 16,
-                  }}
-                />
-              </div>
-              <div className="text-center text-xs text-muted-foreground mt-1">
-                Prévia escalada para caber (tamanho real 1080×1920).
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="secondary" onClick={onShuffle}>
-              Atualizar Prévia
-            </Button>
-            <Button onClick={onDownload} disabled={downloading}>
-              {downloading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Baixar PNG 1080×1920
-            </Button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ===== helpers visuais da arte ===== */
-function drawInitial(
-  ctx: CanvasRenderingContext2D,
-  name: string,
-  cx: number,
-  cy: number,
-  size: number,
-  color: string
-) {
-  ctx.fillStyle = `rgba(23, 33, 53, 0.08)`;
-  ctx.beginPath();
-  ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-  ctx.fill();
-  const initial = (name || "U").trim().charAt(0).toUpperCase();
-  ctx.fillStyle = color;
-  ctx.font = `800 ${Math.round(size * 0.48)}px 'Inter', system-ui, -apple-system, Arial`;
-  ctx.textBaseline = "middle";
-  const w = ctx.measureText(initial).width;
-  ctx.fillText(initial, cx - w / 2, cy);
-}
-
-function formatPhone(p: string) {
-  const d = (p || "").replace(/\D/g, "");
-  if (d.length === 13 && d.startsWith("55")) {
-    const dd = d.slice(2);
-    return `(${dd.slice(0,2)}) ${dd.slice(2,7)}-${dd.slice(7)}`;
-  }
-  if (d.length === 11) return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
-  if (d.length === 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
-  return d;
 }

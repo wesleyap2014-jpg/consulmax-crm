@@ -163,7 +163,7 @@ export default function Propostas() {
 
     setRows((data as any[]) as SimRow[]);
 
-    // carregar tabelas relacionadas para calcular possível "Parcela 2"
+    // tabelas relacionadas (para possível "Parcela 2")
     const ids = Array.from(
       new Set(((data as any[]) || []).map((r) => r.table_id).filter(Boolean))
     ) as string[];
@@ -245,11 +245,9 @@ ${wa}`;
     const segNorm = normalizeSegment(sim.segmento);
     const emoji = emojiBySegment(sim.segmento);
 
-    // tem 2 parcelas de antecipação E contemplação na 1ª?
     const has2a =
       !!table && table.antecip_parcelas >= 2 && sim.parcela_contemplacao === 1;
 
-    // calcula 2ª parcela: parcela escolhida + (crédito * antecip_pct / antecip_parcelas)
     const parc2 = has2a
       ? sim.parcela_escolhida +
         (sim.credito * (table?.antecip_pct || 0)) /
@@ -315,7 +313,6 @@ Vantagens
     // Logo
     const logo = await loadLogoDataURL();
     if (logo) {
-      // centraliza no topo
       const w = 34; // mm
       const x = 105 - w / 2;
       doc.addImage(logo, "PNG", x, 8, w, w * 0.9);
@@ -457,7 +454,16 @@ Vantagens
                   <th className="text-right p-2">Crédito (após)</th>
                   <th className="text-right p-2">Parcela (após)</th>
                   <th className="text-right p-2">Prazo</th>
-                  <th className="text-right p-2">Ações</th>
+                  <th className="text-right p-2">
+                    {/* Cabeçalho com rótulos dos ícones */}
+                    <div className="min-w-[320px] grid grid-cols-5 gap-2 justify-items-center text-xs font-medium text-muted-foreground">
+                      <span>Oportunidade</span>
+                      <span>Resumo</span>
+                      <span>PDF</span>
+                      <span>Abrir</span>
+                      <span>Excluir</span>
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -474,52 +480,56 @@ Vantagens
                     <td className="p-2 text-right">{brMoney(r.parcela_escolhida)}</td>
                     <td className="p-2 text-right">{r.novo_prazo}x</td>
                     <td className="p-2">
-                      {/* Toolbar de ações — compacta e responsiva */}
-                      <div className="flex justify-end gap-2 flex-wrap">
+                      {/* Só ícones, alinhados com os rótulos do header */}
+                      <div className="min-w-[320px] grid grid-cols-5 gap-2 justify-items-center">
                         <Button
                           size="sm"
-                          className="h-8 rounded-xl px-3 bg-[#A11C27] text-white hover:bg-[#8f1822] min-w-[44px]"
+                          className="h-9 w-9 p-0 rounded-full bg-[#A11C27] text-white hover:bg-[#8f1822]"
                           onClick={() => copiar(textoOportunidade(r))}
                           title="Copiar Oportunidade"
+                          aria-label="Copiar Oportunidade"
                         >
-                          <Copy className="h-4 w-4 mr-1" />
-                          <span className="hidden md:inline">Oportunidade</span>
+                          <Copy className="h-4 w-4" />
                         </Button>
+
                         <Button
                           size="sm"
-                          className="h-8 rounded-xl px-3 bg-[#1E293F] text-white hover:bg-[#162033] min-w-[44px]"
+                          className="h-9 w-9 p-0 rounded-full bg-[#1E293F] text-white hover:bg-[#162033]"
                           onClick={() => copiar(textoResumo(r))}
                           title="Copiar Resumo"
+                          aria-label="Copiar Resumo"
                         >
-                          <Copy className="h-4 w-4 mr-1" />
-                          <span className="hidden md:inline">Resumo</span>
+                          <Copy className="h-4 w-4" />
                         </Button>
+
                         <Button
                           size="sm"
-                          className="h-8 rounded-xl px-3 bg-[#1E293F] text-white hover:bg-[#162033] min-w-[44px]"
+                          className="h-9 w-9 p-0 rounded-full bg-[#1E293F] text-white hover:bg-[#162033]"
                           onClick={() => exportarPDF(r)}
                           title="Exportar PDF"
+                          aria-label="Exportar PDF"
                         >
-                          <FileText className="h-4 w-4 mr-1" />
-                          <span className="hidden md:inline">PDF</span>
+                          <FileText className="h-4 w-4" />
                         </Button>
+
                         <a
                           href="/simuladores"
-                          className="inline-flex items-center h-8 px-3 rounded-xl border bg-background hover:bg-muted text-sm min-w-[44px]"
+                          className="inline-flex items-center justify-center h-9 w-9 rounded-full border bg-background hover:bg-muted text-sm"
                           title="Abrir no simulador"
+                          aria-label="Abrir no simulador"
                         >
-                          <ExternalLink className="h-4 w-4 mr-1" />
-                          <span className="hidden md:inline">Abrir</span>
+                          <ExternalLink className="h-4 w-4" />
                         </a>
+
                         <Button
                           size="sm"
                           variant="destructive"
                           onClick={() => excluir(r)}
                           title="Excluir"
-                          className="h-8 rounded-xl px-3 min-w-[44px]"
+                          aria-label="Excluir"
+                          className="h-9 w-9 p-0 rounded-full"
                         >
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          <span className="hidden md:inline">Excluir</span>
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </td>

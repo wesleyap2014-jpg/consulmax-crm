@@ -1,3 +1,4 @@
+// src/components/layout/Sidebar.tsx
 import { NavLink, Link } from 'react-router-dom'
 
 const items = [
@@ -6,6 +7,7 @@ const items = [
   { to: '/oportunidades', label: 'Oportunidades' },
   { to: '/agenda', label: 'Agenda' },
   { to: '/simuladores', label: 'Simuladores' },
+  { to: '/propostas', label: 'Propostas' }, // 👈 nova guia
   { to: '/carteira', label: 'Carteira' },
   { to: '/usuarios', label: 'Usuários' },
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos' },
@@ -19,7 +21,6 @@ const FALLBACK_URL = '/favicon.ico?v=3'
 export default function Sidebar() {
   return (
     <aside className="w-64 bg-white shadow h-[calc(100vh-56px)] sticky top-14 p-3">
-
       {/* Cabeçalho com logo e slogan (clicável) */}
       <Link to="/leads" className="flex items-center gap-3 mb-6 px-2">
         <img

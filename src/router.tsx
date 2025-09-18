@@ -1,3 +1,4 @@
+// src/router.tsx
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 
 import App from './App'
@@ -15,8 +16,9 @@ import GestaoDeGrupos from './pages/GestaoDeGrupos'
 import Clientes from './pages/Clientes'
 import Agenda from './pages/Agenda'
 
-// ✅ simuladores
+// ✅ simuladores / propostas
 import Simuladores from './pages/Simuladores'
+import Propostas from './pages/Propostas' // 👈 novo
 
 // já existia
 import Parametros from './pages/Parametros'
@@ -35,10 +37,11 @@ export const router = createBrowserRouter([
 
           // 👇 rotas principais
           { path: 'leads', element: <Leads /> },
-          { path: 'clientes', element: <Clientes /> },          // novo
+          { path: 'clientes', element: <Clientes /> },
           { path: 'oportunidades', element: <Oportunidades /> },
-          { path: 'agenda', element: <Agenda /> },              // novo
-          { path: 'simuladores', element: <Simuladores /> },    // 👈 simuladores
+          { path: 'agenda', element: <Agenda /> },
+          { path: 'simuladores', element: <Simuladores /> },
+          { path: 'propostas', element: <Propostas /> }, // 👈 nova guia Propostas
 
           // 👇 demais guias existentes
           { path: 'carteira', element: <Carteira /> },

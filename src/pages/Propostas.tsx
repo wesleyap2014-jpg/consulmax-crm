@@ -9,7 +9,7 @@ import { Loader2, Trash2, Copy, FileText, ExternalLink } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-/** ================= Helpers ================= */
+/* ============== Helpers ============== */
 const brMoney = (v: number) =>
   (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -31,6 +31,7 @@ const normalizeSegment = (seg?: string) => {
   if (s.includes("pesad")) return "Pesados";
   return seg || "Automóvel";
 };
+
 const emojiBySegment = (seg?: string) => {
   const s = (seg || "").toLowerCase();
   if (s.includes("imó")) return "🏠";
@@ -39,6 +40,7 @@ const emojiBySegment = (seg?: string) => {
   if (s.includes("pesad")) return "🚚";
   return "🚗";
 };
+
 const formatPhoneBR = (s?: string) => {
   const d = (s || "").replace(/\D/g, "");
   if (!d) return "";
@@ -47,7 +49,7 @@ const formatPhoneBR = (s?: string) => {
   return s || "";
 };
 
-/** =============== Tipos de dados usados aqui =============== */
+/* ============== Tipos usados aqui ============== */
 type UUID = string;
 
 type SimRow = {
@@ -102,7 +104,7 @@ type SimTable = {
 };
 
 export default function Propostas() {
-  /** ====== filtros ====== */
+  /* ===== filtros ===== */
   const [q, setQ] = useState("");
   const [seg, setSeg] = useState<string>("");
   const [grupo, setGrupo] = useState<string>("");
@@ -113,7 +115,7 @@ export default function Propostas() {
   });
   const [dEnd, setDEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
-  /** ====== dados ====== */
+  /* ===== dados ===== */
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<SimRow[]>([]);
   const [tablesMap, setTablesMap] = useState<Record<string, SimTable>>({});
@@ -199,7 +201,7 @@ export default function Propostas() {
     return Array.from(set);
   }, [rows]);
 
-  /** ====== Textos (copiar) ====== */
+  /* ===== textos para copiar ===== */
   function textoResumo(sim: SimRow) {
     const segNorm = normalizeSegment(sim.segmento);
     const telDigits = (userPhone || "").replace(/\D/g, "");
@@ -285,7 +287,7 @@ Vantagens
     }
   }
 
-  /** ====== PDF (logo topo, marca d'água e rodapé com dados) ====== */
+  /* ===== PDF (marca d'água + rodapé / sem logo no topo) ===== */
   async function loadLogoDataURL(): Promise<string | null> {
     try {
       const res = await fetch("/logo-consulmax.png");
@@ -309,31 +311,24 @@ Vantagens
 
     const logo = await loadLogoDataURL();
 
-    /** ---- Marca d'água (fundo) ---- */
+    // Marca d'água (grande e suave)
     if (logo) {
       const anyDoc = doc as any;
       const supportsOpacity = !!(anyDoc.setGState && anyDoc.GState);
       if (supportsOpacity) {
         anyDoc.setGState(new anyDoc.GState({ opacity: 0.06 }));
       }
-      // grande e centralizada
       const w = pageW * 0.65;
       const h = w * 0.9;
       const x = (pageW - w) / 2;
       const y = (pageH - h) / 2 - 6;
       doc.addImage(logo, "PNG", x, y, w, h);
-      // restaura opacidade
       if (supportsOpacity) {
         anyDoc.setGState(new anyDoc.GState({ opacity: 1 }));
       }
     }
 
-    /** ---- Cabeçalho (logo pequena + título + linha) ---- */
-    if (logo) {
-      const w = 34; // mm
-      const x = 105 - w / 2;
-      doc.addImage(logo, "PNG", x, 8, w, w * 0.9);
-    }
+    // Cabeçalho sem logo (título + linha)
     doc.setTextColor(brand.r, brand.g, brand.b);
     doc.setFontSize(18);
     doc.text("Proposta Embracon - Consulmax", 14, 18);
@@ -341,7 +336,7 @@ Vantagens
     doc.setLineWidth(0.8);
     doc.line(14, 22, pageW - 14, 22);
 
-    /** ---- Tabelas ---- */
+    // Tabela 1
     const head = [
       ["Código", sim.code ?? "-"],
       ["Criada em", fmtDate(sim.created_at)],
@@ -352,12 +347,13 @@ Vantagens
     autoTable(doc, {
       head: [["Campo", "Valor"]],
       body: head,
-      startY: logo ? 44 : 28,
+      startY: 28, // começa mais alto pois não há logo no topo
       styles: { cellPadding: 3 },
       theme: "grid",
       headStyles: { fillColor: [brand.r, brand.g, brand.b] },
     });
 
+    // Tabela 2
     const start2 = (doc as any).lastAutoTable.finalY + 8;
     const body2 = [
       ["Crédito contratado", brMoney(sim.credito)],
@@ -377,19 +373,16 @@ Vantagens
       headStyles: { fillColor: [accent.r, accent.g, accent.b] },
     });
 
-    /** ---- Rodapé com logo à esquerda e dados à direita ---- */
+    // Rodapé: linha + logo à esquerda + bloco de texto à direita
     const footerTop = pageH - 36;
-    // linha separadora
     doc.setDrawColor(220, 220, 220);
     doc.setLineWidth(0.4);
     doc.line(14, footerTop, pageW - 14, footerTop);
 
-    // logo esquerda
     if (logo) {
       doc.addImage(logo, "PNG", 14, footerTop + 6, 22, 22 * 0.9);
     }
 
-    // bloco de texto à direita (justificado à direita)
     const lines = [
       "Consulmax Consórcios e Investimentos",
       "CNPJ: 57.942.043/0001-03",
@@ -408,7 +401,6 @@ Vantagens
     doc.save(`proposta-${sim.code || sim.id}.pdf`);
   }
 
-  /** ====== excluir ====== */
   async function excluir(sim: SimRow) {
     if (!confirm("Confirmar exclusão desta proposta?")) return;
     const { error } = await supabase.from("sim_simulations").delete().eq("id", sim.id);
@@ -419,7 +411,7 @@ Vantagens
     setRows((prev) => prev.filter((r) => r.id !== sim.id));
   }
 
-  /** ====== render ====== */
+  /* ===== render ===== */
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
@@ -429,7 +421,7 @@ Vantagens
         </Button>
       </div>
 
-      {/* Filtros (auto-aplicação) */}
+      {/* Filtros automáticos */}
       <Card>
         <CardHeader>
           <CardTitle>Filtros</CardTitle>

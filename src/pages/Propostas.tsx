@@ -137,14 +137,12 @@ export default function Propostas() {
   async function load() {
     setLoading(true);
 
-    // base query
     let query = supabase
       .from("sim_simulations")
       .select("*")
       .order("created_at", { ascending: false })
       .limit(300);
 
-    // filtros
     if (q.trim()) {
       const like = `%${q.trim()}%`;
       query = query.or(`lead_nome.ilike.${like},lead_telefone.ilike.${like}`);
@@ -163,7 +161,6 @@ export default function Propostas() {
 
     setRows((data as any[]) as SimRow[]);
 
-    // tabelas relacionadas (para possível "Parcela 2")
     const ids = Array.from(
       new Set(((data as any[]) || []).map((r) => r.table_id).filter(Boolean))
     ) as string[];
@@ -183,13 +180,11 @@ export default function Propostas() {
     setLoading(false);
   }
 
-  // primeira carga
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // auto-aplicar filtros com debounce 300ms
   useEffect(() => {
     const h = setTimeout(() => {
       load();
@@ -290,7 +285,7 @@ Vantagens
     }
   }
 
-  /** ====== PDF (com logo) ====== */
+  /** ====== PDF (logo topo, marca d'água e rodapé com dados) ====== */
   async function loadLogoDataURL(): Promise<string | null> {
     try {
       const res = await fetch("/logo-consulmax.png");
@@ -306,28 +301,47 @@ Vantagens
   }
 
   async function exportarPDF(sim: SimRow) {
-    const doc = new jsPDF();
+    const doc = new jsPDF(); // A4 retrato
     const brand = { r: 30, g: 41, b: 63 }; // #1E293F
     const accent = { r: 161, g: 28, b: 39 }; // #A11C27
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
 
-    // Logo
     const logo = await loadLogoDataURL();
+
+    /** ---- Marca d'água (fundo) ---- */
+    if (logo) {
+      const anyDoc = doc as any;
+      const supportsOpacity = !!(anyDoc.setGState && anyDoc.GState);
+      if (supportsOpacity) {
+        anyDoc.setGState(new anyDoc.GState({ opacity: 0.06 }));
+      }
+      // grande e centralizada
+      const w = pageW * 0.65;
+      const h = w * 0.9;
+      const x = (pageW - w) / 2;
+      const y = (pageH - h) / 2 - 6;
+      doc.addImage(logo, "PNG", x, y, w, h);
+      // restaura opacidade
+      if (supportsOpacity) {
+        anyDoc.setGState(new anyDoc.GState({ opacity: 1 }));
+      }
+    }
+
+    /** ---- Cabeçalho (logo pequena + título + linha) ---- */
     if (logo) {
       const w = 34; // mm
       const x = 105 - w / 2;
       doc.addImage(logo, "PNG", x, 8, w, w * 0.9);
     }
-
-    // Título
     doc.setTextColor(brand.r, brand.g, brand.b);
     doc.setFontSize(18);
     doc.text("Proposta Embracon - Consulmax", 14, 18);
-
-    // Linha
     doc.setDrawColor(accent.r, accent.g, accent.b);
     doc.setLineWidth(0.8);
-    doc.line(14, 22, 196, 22);
+    doc.line(14, 22, pageW - 14, 22);
 
+    /** ---- Tabelas ---- */
     const head = [
       ["Código", sim.code ?? "-"],
       ["Criada em", fmtDate(sim.created_at)],
@@ -362,6 +376,34 @@ Vantagens
       theme: "striped",
       headStyles: { fillColor: [accent.r, accent.g, accent.b] },
     });
+
+    /** ---- Rodapé com logo à esquerda e dados à direita ---- */
+    const footerTop = pageH - 36;
+    // linha separadora
+    doc.setDrawColor(220, 220, 220);
+    doc.setLineWidth(0.4);
+    doc.line(14, footerTop, pageW - 14, footerTop);
+
+    // logo esquerda
+    if (logo) {
+      doc.addImage(logo, "PNG", 14, footerTop + 6, 22, 22 * 0.9);
+    }
+
+    // bloco de texto à direita (justificado à direita)
+    const lines = [
+      "Consulmax Consórcios e Investimentos",
+      "CNPJ: 57.942.043/0001-03",
+      "Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO",
+      "Cel/Whats: (69) 9 9302-9380",
+      "consulmaxconsorcios.com.br",
+    ];
+    doc.setFontSize(9);
+    doc.setTextColor(80);
+    let y = footerTop + 9;
+    for (const line of lines) {
+      doc.text(line, pageW - 14, y, { align: "right" as any });
+      y += 5;
+    }
 
     doc.save(`proposta-${sim.code || sim.id}.pdf`);
   }
@@ -455,7 +497,6 @@ Vantagens
                   <th className="text-right p-2">Parcela (após)</th>
                   <th className="text-right p-2">Prazo</th>
                   <th className="text-right p-2">
-                    {/* Cabeçalho com rótulos dos ícones */}
                     <div className="min-w-[320px] grid grid-cols-5 gap-2 justify-items-center text-xs font-medium text-muted-foreground">
                       <span>Oportunidade</span>
                       <span>Resumo</span>
@@ -480,7 +521,6 @@ Vantagens
                     <td className="p-2 text-right">{brMoney(r.parcela_escolhida)}</td>
                     <td className="p-2 text-right">{r.novo_prazo}x</td>
                     <td className="p-2">
-                      {/* Só ícones, alinhados com os rótulos do header */}
                       <div className="min-w-[320px] grid grid-cols-5 gap-2 justify-items-center">
                         <Button
                           size="sm"
@@ -491,7 +531,6 @@ Vantagens
                         >
                           <Copy className="h-4 w-4" />
                         </Button>
-
                         <Button
                           size="sm"
                           className="h-9 w-9 p-0 rounded-full bg-[#1E293F] text-white hover:bg-[#162033]"
@@ -501,7 +540,6 @@ Vantagens
                         >
                           <Copy className="h-4 w-4" />
                         </Button>
-
                         <Button
                           size="sm"
                           className="h-9 w-9 p-0 rounded-full bg-[#1E293F] text-white hover:bg-[#162033]"
@@ -511,7 +549,6 @@ Vantagens
                         >
                           <FileText className="h-4 w-4" />
                         </Button>
-
                         <a
                           href="/simuladores"
                           className="inline-flex items-center justify-center h-9 w-9 rounded-full border bg-background hover:bg-muted text-sm"
@@ -520,7 +557,6 @@ Vantagens
                         >
                           <ExternalLink className="h-4 w-4" />
                         </a>
-
                         <Button
                           size="sm"
                           variant="destructive"

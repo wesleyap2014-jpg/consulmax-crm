@@ -6,401 +6,349 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Loader2,
-  Trash2,
-  Copy,
+  Calendar,
+  ClipboardCopy,
   FileText,
   ExternalLink,
-  Plus,
+  Trash2,
+  Megaphone,
   ChevronDown,
+  Plus,
+  Search,
+  X,
+  Loader2,
+  Check,
 } from "lucide-react";
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import "jspdf-autotable";
 
-/* ============== Helpers ============== */
-const brMoney = (v: number) =>
-  (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+/* ========================= Tipos ========================= */
+type UUID = string;
 
-const fmtDate = (iso?: string) =>
-  iso ? new Date(iso).toLocaleString("pt-BR") : "";
+type SimRow = {
+  code: number;
+  created_at: string;
 
-const endOfDayISO = (iso: string) => {
-  const d = new Date(iso);
-  d.setHours(23, 59, 59, 999);
-  return d.toISOString();
+  lead_nome: string | null;
+  lead_telefone: string | null;
+
+  segmento: string | null;
+  grupo: string | null;
+
+  // salvos em salvarSimulacao()
+  credito: number | null; // valor contratado original
+  parcela_contemplacao: number | null; // número da parcela da contemplação
+  novo_credito: number | null; // pós contemplação
+  parcela_escolhida: number | null; // pós
+  novo_prazo: number | null; // pós
+
+  parcela_ate_1_ou_2: number | null; // até a contemplação (1ª ou 1+2)
+  parcela_demais: number | null; // demais até a contemplação
+  lance_proprio_valor: number | null; // pós
+
+  // não usamos todos, mas mantemos para extensões
+  valor_categoria?: number | null;
+  lance_ofertado_valor?: number | null;
+  lance_embutido_valor?: number | null;
+  lance_percebido_pct?: number | null;
+  nova_parcela_sem_limite?: number | null;
+  parcela_limitante?: number | null;
+  saldo_devedor_final?: number | null;
 };
 
-const normalizeSegment = (seg?: string) => {
+type ModalItem = Pick<
+  SimRow,
+  | "code"
+  | "created_at"
+  | "lead_nome"
+  | "lead_telefone"
+  | "segmento"
+  | "novo_credito"
+  | "parcela_escolhida"
+  | "novo_prazo"
+>;
+
+/* ======================= Helpers ========================= */
+const brand = {
+  primary: "#1E293F", // azul marinho Consulmax
+  accent: "#A11C27", // vermelho Consulmax
+  grayRow: "#F3F4F6",
+};
+
+const brMoney = (v?: number | null) =>
+  (v ?? 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 2,
+  });
+
+function toDateInputValue(d: Date) {
+  const pad = (n: number) => `${n}`.padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// IMPORTANTÍSSIMO: cria o ISO no horário local (evita bug de UTC -1 dia)
+const startOfDayISO = (d: string) => new Date(`${d}T00:00:00.000`).toISOString();
+const endOfDayISO = (d: string) => new Date(`${d}T23:59:59.999`).toISOString();
+
+function normalizeSegment(seg?: string | null) {
   const s = (seg || "").toLowerCase();
   if (s.includes("imó")) return "Imóvel";
-  if (s.includes("auto")) return "Automóvel";
   if (s.includes("moto")) return "Motocicleta";
   if (s.includes("serv")) return "Serviços";
   if (s.includes("pesad")) return "Pesados";
+  if (s.includes("auto")) return "Automóvel";
   return seg || "Automóvel";
-};
-
-const emojiBySegment = (seg?: string) => {
+}
+function emojiBySegment(seg?: string | null) {
   const s = (seg || "").toLowerCase();
   if (s.includes("imó")) return "🏠";
   if (s.includes("moto")) return "🏍️";
   if (s.includes("serv")) return "✈️";
   if (s.includes("pesad")) return "🚚";
   return "🚗";
-};
+}
 
-const formatPhoneBR = (s?: string) => {
+function formatPhoneBR(s?: string | null) {
   const d = (s || "").replace(/\D/g, "");
   if (!d) return "";
   if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
   if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return s || "";
-};
+}
 
-/* ============== Tipos usados aqui ============== */
-type UUID = string;
+async function imgToDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
 
-type SimRow = {
-  id: UUID;
-  created_at?: string;
-  code?: number;
-
-  admin_id: UUID | null;
-  table_id: UUID | null;
-
-  lead_id: UUID | null;
-  lead_nome: string | null;
-  lead_telefone: string | null;
-
-  grupo: string | null;
-  segmento: string;
-  nome_tabela: string;
-
-  credito: number;
-  prazo_venda: number;
-  forma_contratacao: string;
-  seguro_prestamista: boolean;
-
-  lance_ofertado_pct: number;
-  lance_embutido_pct: number;
-  parcela_contemplacao: number;
-
-  valor_categoria: number;
-  parcela_ate_1_ou_2: number;
-  parcela_demais: number;
-
-  lance_ofertado_valor: number;
-  lance_embutido_valor: number;
-  lance_proprio_valor: number;
-  lance_percebido_pct: number;
-
-  novo_credito: number;
-  nova_parcela_sem_limite: number;
-  parcela_limitante: number;
-  parcela_escolhida: number;
-  saldo_devedor_final: number;
-  novo_prazo: number;
-};
-
-type SimTable = {
-  id: UUID;
-  segmento: string;
-  nome_tabela: string;
-  antecip_parcelas: number;
-  antecip_pct: number;
-  seguro_prest_pct: number;
-  // (pode existir no banco, usamos via any quando houver:)
-  // taxa_adm_pct?: number;
-  // fundo_reserva_pct?: number;
-};
-
-type TemplateKind =
-  | "capa"
-  | "direcionada"
-  | "alav_fin"
-  | "alav_patr"
-  | "previdencia"
-  | "correcao"
-  | "extrato";
-
-type TemplateParams = {
-  selicAA: number;
-  cdiAA: number;
-  cdiPct: number;
-  ipcaAA: number;
-  inccAA: number;
-  ganhoVendaPct: number;
-  aluguelEstimado?: number;
-  yieldPct?: number;
-};
-
-/* ============== Página ============== */
+/* ========================= Página ======================== */
 export default function Propostas() {
-  /* ===== filtros ===== */
+  /* ---------- Filtros / lista de resultados ---------- */
   const [q, setQ] = useState("");
-  const [seg, setSeg] = useState<string>("");
-  const [grupo, setGrupo] = useState<string>("");
-  const [dStart, setDStart] = useState<string>(() => {
+  const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
+    return toDateInputValue(d);
   });
-  const [dEnd, setDEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [dateTo, setDateTo] = useState(() => toDateInputValue(new Date()));
 
-  /* ===== dados ===== */
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<SimRow[]>([]);
-  const [tablesMap, setTablesMap] = useState<Record<string, SimTable>>({});
+
+  // telefone do usuário para colar no texto “📲 Garanta…”
   const [userPhone, setUserPhone] = useState<string>("");
-
-  // Propostas de Investimento (lista salva localmente)
-  const [piList, setPiList] = useState<SimRow[]>([]);
-  const [piSelected, setPiSelected] = useState<Record<string, boolean>>({});
-  const [piTemplate, setPiTemplate] = useState<TemplateKind>("direcionada");
-  const [modalOpen, setModalOpen] = useState(false);
-
-  // Parâmetros dos templates
-  const [tplParams, setTplParams] = useState<TemplateParams>({
-    selicAA: 0.15,
-    cdiAA: 0.149,
-    cdiPct: 0.97,
-    ipcaAA: 0.0535,
-    inccAA: 0.0743,
-    ganhoVendaPct: 0.2,
-    aluguelEstimado: undefined,
-    yieldPct: undefined,
-  });
-  const [showTplParams, setShowTplParams] = useState(false);
 
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
-      if (uid) {
-        const { data } = await supabase
-          .from("users")
-          .select("phone")
-          .eq("auth_user_id", uid)
-          .maybeSingle();
-        setUserPhone((data?.phone || "").toString());
-      }
+      if (!uid) return;
+      const { data } = await supabase.from("users").select("phone").eq("auth_user_id", uid).maybeSingle();
+      setUserPhone((data?.phone || "").toString());
     })();
   }, []);
 
   async function load() {
     setLoading(true);
-
     let query = supabase
       .from("sim_simulations")
-      .select("*")
+      .select(
+        [
+          "code",
+          "created_at",
+          "lead_nome",
+          "lead_telefone",
+          "segmento",
+          "grupo",
+          "credito",
+          "parcela_contemplacao",
+          "novo_credito",
+          "parcela_escolhida",
+          "novo_prazo",
+          "parcela_ate_1_ou_2",
+          "parcela_demais",
+          "lance_proprio_valor",
+        ].join(","),
+      )
       .order("created_at", { ascending: false })
       .limit(300);
 
+    if (dateFrom) query = query.gte("created_at", startOfDayISO(dateFrom));
+    if (dateTo) query = query.lte("created_at", endOfDayISO(dateTo));
+
+    // busca por nome/telefone
     if (q.trim()) {
       const like = `%${q.trim()}%`;
       query = query.or(`lead_nome.ilike.${like},lead_telefone.ilike.${like}`);
     }
-    if (seg) query = query.ilike("segmento", `%${seg}%`);
-    if (grupo.trim()) query = query.eq("grupo", grupo.trim());
-    if (dStart) query = query.gte("created_at", new Date(dStart).toISOString());
-    if (dEnd) query = query.lte("created_at", endOfDayISO(dEnd));
 
     const { data, error } = await query;
+    setLoading(false);
     if (error) {
-      setLoading(false);
-      alert("Erro ao buscar propostas: " + error.message);
+      alert("Erro ao carregar simulações: " + error.message);
       return;
     }
-
-    setRows((data as any[]) as SimRow[]);
-
-    const ids = Array.from(
-      new Set(((data as any[]) || []).map((r) => r.table_id).filter(Boolean))
-    ) as string[];
-
-    if (ids.length) {
-      const { data: tData } = await supabase
-        .from("sim_tables")
-        .select(
-          "id, segmento, nome_tabela, antecip_parcelas, antecip_pct, seguro_prest_pct"
-        )
-        .in("id", ids);
-      const map: Record<string, SimTable> = {};
-      (tData || []).forEach((t) => (map[t.id] = t as any));
-      setTablesMap(map);
-    } else {
-      setTablesMap({});
-    }
-
-    setLoading(false);
+    setRows((data || []) as SimRow[]);
   }
 
+  // primeira carga
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // busca reativa — debounce 350ms
   useEffect(() => {
-    const h = setTimeout(() => {
-      load();
-    }, 300);
-    return () => clearTimeout(h);
+    const t = setTimeout(() => load(), 350);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, seg, grupo, dStart, dEnd]);
+  }, [q, dateFrom, dateTo]);
 
-  const segmentosDisponiveis = useMemo(() => {
-    const set = new Set<string>();
-    rows.forEach((r) => set.add(normalizeSegment(r.segmento)));
-    return Array.from(set);
-  }, [rows]);
+  /* ---------- Handlers de ações na linha ---------- */
+  function copyOportunidadeText(r: SimRow) {
+    const segNorm = normalizeSegment(r.segmento);
+    const emoji = emojiBySegment(r.segmento);
+    const phone = formatPhoneBR(userPhone);
+    const wLine = phone ? `\n${phone}` : "";
 
-  /* ===== textos para copiar ===== */
-  function textoResumo(sim: SimRow) {
-    const segNorm = normalizeSegment(sim.segmento);
-    const telDigits = (userPhone || "").replace(/\D/g, "");
-    const wa = `https://wa.me/${telDigits || ""}`;
-
-    const primeiraParcelaLabel =
-      (tablesMap[sim.table_id || ""]?.antecip_parcelas ?? 0) === 2
-        ? "Parcelas 1 e 2"
-        : (tablesMap[sim.table_id || ""]?.antecip_parcelas ?? 0) === 1
-        ? "Parcela 1"
-        : "Parcela inicial";
-
-    return `🎯 Com a estratégia certa, você conquista seu ${segNorm.toLowerCase()} sem pagar juros, sem entrada e ainda economiza!
-
-📌 Confira essa simulação real:
-
-💰 Crédito contratado: ${brMoney(sim.credito)}
-
-💳 ${primeiraParcelaLabel}: ${brMoney(
-      sim.parcela_ate_1_ou_2
-    )} (Primeira parcela em até 3x sem juros no cartão)
-
-💵 Demais parcelas até a contemplação: ${brMoney(sim.parcela_demais)}
-
-📈 Após a contemplação (prevista em ${sim.parcela_contemplacao} meses):
-🏦 Lance próprio: ${brMoney(sim.lance_proprio_valor)}
-
-✅ Crédito líquido liberado: ${brMoney(sim.novo_credito)}
-
-📆 Parcelas restantes (valor): ${brMoney(sim.parcela_escolhida)}
-
-⏳ Prazo restante: ${sim.novo_prazo} meses
-
-👉 Me chama aqui para simular agora:
-${wa}`;
-  }
-
-  function textoOportunidade(sim: SimRow) {
-    const table = sim.table_id ? tablesMap[sim.table_id] : undefined;
-    const segNorm = normalizeSegment(sim.segmento);
-    const emoji = emojiBySegment(sim.segmento);
-
-    const has2a =
-      !!table && table.antecip_parcelas >= 2 && sim.parcela_contemplacao === 1;
-
-    const parc2 = has2a
-      ? sim.parcela_escolhida +
-        (sim.credito * (table?.antecip_pct || 0)) / (table?.antecip_parcelas || 1)
-      : null;
-
-    const whatsappFmt = formatPhoneBR(userPhone);
-    const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
-
-    return `🚨OPORTUNIDADE 🚨
+    const text = `🚨OPORTUNIDADE 🚨
 
 🔥 PROPOSTA EMBRACON🔥
 
 Proposta ${segNorm}
 
-${emoji} Crédito: ${brMoney(sim.novo_credito)}
-💰 Parcela 1: ${brMoney(sim.parcela_ate_1_ou_2)} (Em até 3x no cartão)${
-      parc2 != null ? `\n💰 Parcela 2: ${brMoney(parc2)} (com antecipação)` : ""
-    }
-📆 + ${sim.novo_prazo}x de ${brMoney(sim.parcela_escolhida)}
-💵 Lance Próprio: ${brMoney(sim.lance_proprio_valor)}
-📢 Grupo: ${sim.grupo || "—"}
+${emoji} Crédito: ${brMoney(r.novo_credito)}
+💰 Parcela 1: ${brMoney(r.parcela_ate_1_ou_2)} (Em até 3x no cartão)
+📆 + ${r.novo_prazo ?? 0}x de ${brMoney(r.parcela_escolhida)}
+💵 Lance Próprio: ${brMoney(r.lance_proprio_valor)}
+📢 Grupo: ${r.grupo || "—"}
 
 🚨 POUCAS VAGAS DISPONÍVEIS🚨
 
-📲 Garanta sua vaga agora!${whatsappLine}
+Assembleia 15/10
+
+📲 Garanta sua vaga agora!${wLine}
 
 Vantagens
 ✅ Primeira parcela em até 3x no cartão
 ✅ Parcelas acessíveis
 ✅ Alta taxa de contemplação`;
+
+    navigator.clipboard
+      .writeText(text)
+      .then(() => alert("Oportunidade copiada!"))
+      .catch(() => alert("Não foi possível copiar."));
   }
 
-  async function copiar(txt: string) {
-    try {
-      await navigator.clipboard.writeText(txt);
-      alert("Copiado!");
-    } catch {
-      alert("Não foi possível copiar.");
+  function copyResumoText(r: SimRow) {
+    const segNorm = normalizeSegment(r.segmento);
+    const text = `Resumo da Proposta — ${segNorm}
+
+Crédito contratado: ${brMoney(r.credito)}
+Parcela 1 (até contemplação): ${brMoney(r.parcela_ate_1_ou_2)}
+Demais até a contemplação: ${brMoney(r.parcela_demais)}
+— Após a contemplação —
+Crédito líquido: ${brMoney(r.novo_credito)}
+Parcela escolhida: ${brMoney(r.parcela_escolhida)}
+Prazo restante: ${r.novo_prazo ?? 0} meses
+Lance próprio: ${brMoney(r.lance_proprio_valor)}
+Grupo: ${r.grupo || "—"}`;
+
+    navigator.clipboard
+      .writeText(text)
+      .then(() => alert("Resumo copiado!"))
+      .catch(() => alert("Não foi possível copiar."));
+  }
+
+  async function handleDelete(code: number) {
+    if (!confirm(`Excluir a simulação #${code}?`)) return;
+    const { error } = await supabase.from("sim_simulations").delete().eq("code", code);
+    if (error) {
+      alert("Erro ao excluir: " + error.message);
+      return;
     }
+    setRows((prev) => prev.filter((x) => x.code !== code));
   }
 
-  /* ===== PDF infra (marca d'água + rodapé / sem logo no topo) ===== */
-  async function loadLogoDataURL(): Promise<string | null> {
-    try {
-      const res = await fetch("/logo-consulmax.png");
-      const blob = await res.blob();
-      return await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    } catch {
-      return null;
-    }
-  }
+  async function handlePDF(r: SimRow) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-  function addWatermarkAndHeader(doc: jsPDF, logo: string | null, title: string) {
-    const brand = { r: 30, g: 41, b: 63 };
-    const accent = { r: 161, g: 28, b: 39 };
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
+    // Título
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(0, 0, 0);
+    doc.text("Proposta Embracon - Consulmax", 40, 50);
+    doc.setDrawColor(161, 28, 39);
+    doc.setLineWidth(2);
+    doc.line(40, 60, 555, 60);
 
-    // Marca d'água
+    // Tabela principal
+    const headerColor = brand.primary;
+    const detailColor = brand.accent;
+
+    // Campo/Valor
+    (doc as any).autoTable({
+      startY: 80,
+      head: [["Campo", "Valor"]],
+      body: [
+        ["Código", String(r.code)],
+        ["Criada em", new Date(r.created_at).toLocaleString("pt-BR")],
+        ["Lead", `${r.lead_nome || "—"}  ${r.lead_telefone || ""}`.trim()],
+        ["Segmento", normalizeSegment(r.segmento)],
+        ["Grupo", r.grupo || "—"],
+      ],
+      styles: { font: "helvetica", fontSize: 10, halign: "left" },
+      headStyles: { fillColor: headerColor, textColor: "#FFFFFF" },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: 40, right: 40 },
+    });
+
+    const after1 = (doc as any).lastAutoTable?.finalY ?? 140;
+
+    // Detalhes
+    (doc as any).autoTable({
+      startY: after1 + 20,
+      head: [["Detalhe", "Valor"]],
+      body: [
+        ["Crédito contratado", brMoney(r.credito)],
+        ["Parcela 1", brMoney(r.parcela_ate_1_ou_2)],
+        ["Demais até contemplação", brMoney(r.parcela_demais)],
+        ["Lance próprio", brMoney(r.lance_proprio_valor)],
+        ["Crédito líquido (após)", brMoney(r.novo_credito)],
+        ["Parcela escolhida (após)", brMoney(r.parcela_escolhida)],
+        ["Novo prazo (meses)", String(r.novo_prazo ?? 0)],
+      ],
+      styles: { font: "helvetica", fontSize: 10, halign: "left" },
+      headStyles: { fillColor: detailColor, textColor: "#FFFFFF" },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: 40, right: 40 },
+    });
+
+    // Rodapé com logo + bloco de infos
+    const logo = (await imgToDataUrl("/logo-consulmax.png?v=3")) || null;
+    const footerY = 790;
+    doc.setDrawColor(200);
+    doc.line(40, footerY - 30, 555, footerY - 30);
     if (logo) {
-      const anyDoc = doc as any;
-      const supportsOpacity = !!(anyDoc.setGState && anyDoc.GState);
-      if (supportsOpacity) {
-        anyDoc.setGState(new anyDoc.GState({ opacity: 0.06 }));
-      }
-      const w = pageW * 0.65;
-      const h = w * 0.9;
-      const x = (pageW - w) / 2;
-      const y = (pageH - h) / 2 - 6;
-      doc.addImage(logo, "PNG", x, y, w, h);
-      if (supportsOpacity) {
-        anyDoc.setGState(new anyDoc.GState({ opacity: 1 }));
-      }
+      // ~70px de largura proporcional
+      doc.addImage(logo, "PNG", 40, footerY - 20, 70, 20);
     }
-
-    // Cabeçalho sem logo
-    doc.setTextColor(brand.r, brand.g, brand.b);
-    doc.setFontSize(18);
-    doc.text(title, 14, 18);
-    doc.setDrawColor(accent.r, accent.g, accent.b);
-    doc.setLineWidth(0.8);
-    doc.line(14, 22, pageW - 14, 22);
-  }
-
-  function addFooter(doc: jsPDF, logo: string | null) {
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const footerTop = pageH - 36;
-
-    doc.setDrawColor(220, 220, 220);
-    doc.setLineWidth(0.4);
-    doc.line(14, footerTop, pageW - 14, footerTop);
-
-    if (logo) {
-      doc.addImage(logo, "PNG", 14, footerTop + 6, 22, 22 * 0.9);
-    }
-
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(60, 60, 60);
+    const right = 555;
     const lines = [
       "Consulmax Consórcios e Investimentos",
       "CNPJ: 57.942.043/0001-03",
@@ -408,923 +356,369 @@ Vantagens
       "Cel/Whats: (69) 9 9302-9380",
       "consulmaxconsorcios.com.br",
     ];
-    doc.setFontSize(9);
-    doc.setTextColor(80);
-    let y = footerTop + 9;
-    for (const line of lines) {
-      doc.text(line, pageW - 14, y, { align: "right" as any });
-      y += 5;
-    }
+    lines.forEach((tx, i) => {
+      const w = doc.getTextWidth(tx);
+      doc.text(tx, right - w, footerY - 18 + i * 10);
+    });
+
+    doc.save(`Proposta_${r.code}.pdf`);
   }
 
-  /* ===== PDF individual da linha (mantido) ===== */
-  async function exportarPDF(sim: SimRow) {
-    const doc = new jsPDF();
-    const brand = { r: 30, g: 41, b: 63 };
-    const accent = { r: 161, g: 28, b: 39 };
+  /* ---------- Propostas de Investimento ---------- */
+  const [addOpen, setAddOpen] = useState(false);
+  const [modalQ, setModalQ] = useState("");
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalRows, setModalRows] = useState<ModalItem[]>([]);
+  const [modalSel, setModalSel] = useState<Set<number>>(new Set());
 
-    const logo = await loadLogoDataURL();
-    addWatermarkAndHeader(doc, logo, "Proposta Embracon - Consulmax");
+  // lista final (até 5)
+  const [invest, setInvest] = useState<SimRow[]>([]);
+  const [selectMap, setSelectMap] = useState<Record<number, boolean>>({}); // seleção na lista final
 
-    // Tabela 1
-    const head = [
-      ["Código", sim.code ?? "-"],
-      ["Criada em", fmtDate(sim.created_at)],
-      ["Lead", `${sim.lead_nome || "-"}  ${sim.lead_telefone || ""}`.trim()],
-      ["Segmento", normalizeSegment(sim.segmento)],
-      ["Grupo", sim.grupo || "-"],
-    ];
-    autoTable(doc, {
-      head: [["Campo", "Valor"]],
-      body: head,
-      startY: 28,
-      styles: { cellPadding: 3 },
-      theme: "grid",
-      headStyles: { fillColor: [brand.r, brand.g, brand.b] },
-    });
-
-    // Tabela 2
-    const start2 = (doc as any).lastAutoTable.finalY + 8;
-    autoTable(doc, {
-      head: [["Detalhe", "Valor"]],
-      body: [
-        ["Crédito contratado", brMoney(sim.credito)],
-        ["Parcela 1", brMoney(sim.parcela_ate_1_ou_2)],
-        ["Demais até contemplação", brMoney(sim.parcela_demais)],
-        ["Lance próprio", brMoney(sim.lance_proprio_valor)],
-        ["Crédito líquido (após)", brMoney(sim.novo_credito)],
-        ["Parcela escolhida (após)", brMoney(sim.parcela_escolhida)],
-        ["Novo prazo (meses)", String(sim.novo_prazo)],
-      ],
-      startY: start2,
-      styles: { cellPadding: 3 },
-      theme: "striped",
-      headStyles: { fillColor: [accent.r, accent.g, accent.b] },
-    });
-
-    addFooter(doc, logo);
-    doc.save(`proposta-${sim.code || sim.id}.pdf`);
+  function countSelected() {
+    return Object.values(selectMap).filter(Boolean).length;
   }
 
-  /* ======= Templates PDF (bundle) ======= */
-  function renderCover(doc: jsPDF, logo: string | null, sims: SimRow[]) {
-    addWatermarkAndHeader(doc, logo, "Projeto de Investimento");
-    const lead = sims[0]?.lead_nome || "Cliente";
-    doc.setFontSize(16);
-    doc.text(`Estudo Especial para ${lead}`, 14, 40);
-    autoTable(doc, {
-      head: [["Conteúdo", "Quantidade"]],
-      body: [["Modelos selecionados", String(sims.length)]],
-      startY: 50,
-      theme: "grid",
-    });
-    addFooter(doc, logo);
-  }
+  async function loadModal() {
+    setModalLoading(true);
+    let q = supabase
+      .from("sim_simulations")
+      .select("code,created_at,lead_nome,lead_telefone,segmento,novo_credito,parcela_escolhida,novo_prazo")
+      .order("created_at", { ascending: false })
+      .limit(200);
 
-  function renderTemplatePage(
-    doc: jsPDF,
-    logo: string | null,
-    tpl: TemplateKind,
-    sim: SimRow,
-    params: TemplateParams,
-    table?: SimTable
-  ) {
-    const seg = normalizeSegment(sim.segmento);
-    const titles: Record<TemplateKind, string> = {
-      capa: "Projeto de Investimento",
-      direcionada: "Proposta Direcionada",
-      alav_fin: "Alavancagem Financeira",
-      alav_patr: "Alavancagem Patrimonial",
-      previdencia: "Previdência Aplicada",
-      correcao: "Crédito com Correção",
-      extrato: "Extrato da Proposta",
-    };
-    addWatermarkAndHeader(doc, logo, titles[tpl]);
-
-    // bloco técnico comum
-    autoTable(doc, {
-      head: [["Campo", "Valor"]],
-      body: [
-        ["Código", sim.code ?? "-"],
-        ["Criada em", new Date(sim.created_at || "").toLocaleString("pt-BR")],
-        ["Lead", `${sim.lead_nome || "—"}  ${sim.lead_telefone || ""}`.trim()],
-        ["Segmento", seg],
-        ["Grupo", sim.grupo || "—"],
-      ],
-      startY: 28,
-      theme: "grid",
-    });
-    let y = (doc as any).lastAutoTable.finalY + 8;
-
-    if (tpl === "direcionada") {
-      const taPct = (table as any)?.taxa_adm_pct ?? (sim as any).taxa_adm_pct;
-      const frPct = (table as any)?.fundo_reserva_pct ?? (sim as any).fundo_reserva_pct;
-      const adm = typeof taPct === "number" ? taPct : null;
-      const fr = typeof frPct === "number" ? frPct : null;
-      const encargos = adm != null && fr != null ? adm + fr : null;
-      const mensal =
-        encargos != null && sim.prazo_venda
-          ? (encargos / sim.prazo_venda) * 100
-          : null;
-
-      autoTable(doc, {
-        head: [["Item", "Valor"]],
-        body: [
-          ["Crédito total", brMoney(sim.credito)],
-          ["Prazo", `${sim.prazo_venda} meses`],
-          ["Parcela 1", brMoney(sim.parcela_ate_1_ou_2)],
-          ["Demais parcelas (até contemplação)", brMoney(sim.parcela_demais)],
-          ...(adm != null ? [["Taxa de Adm Total", (adm * 100).toFixed(2) + "%"]] : []),
-          ...(fr != null ? [["Fundo Reserva", (fr * 100).toFixed(2) + "%"]] : []),
-          ...(encargos != null
-            ? [["Total de Encargos", brMoney(sim.credito * encargos)]]
-            : []),
-          ["Taxa total mensalizada", mensal != null ? mensal.toFixed(2) + "%" : "—"],
-          ["Contemplação prevista", `${sim.parcela_contemplacao} meses`],
-          ["Crédito líquido (após)", brMoney(sim.novo_credito)],
-          ["Parcela (após)", brMoney(sim.parcela_escolhida)],
-          ["Prazo restante", `${sim.novo_prazo} meses`],
-        ],
-        startY: y,
-        theme: "striped",
-      });
-    } else if (tpl === "alav_fin") {
-      const investimento = Math.max(0, sim.lance_proprio_valor || 0);
-      const ganho = sim.credito * (params.ganhoVendaPct || 0);
-      const lucro = ganho - investimento;
-      const roi = investimento > 0 ? lucro / investimento : 0;
-
-      autoTable(doc, {
-        head: [["Métrica", "Valor"]],
-        body: [
-          ["Investimento (lance próprio)", brMoney(investimento)],
-          [
-            `Ganho na venda (${((params.ganhoVendaPct || 0) * 100).toFixed(2)}%)`,
-            brMoney(ganho),
-          ],
-          ["Lucro líquido", brMoney(lucro)],
-          ["ROI", (roi * 100).toFixed(2) + "%"],
-          ["Parcela (após)", brMoney(sim.parcela_escolhida)],
-          ["Prazo restante", `${sim.novo_prazo} meses`],
-        ],
-        startY: y,
-        theme: "striped",
-      });
-
-      y = (doc as any).lastAutoTable.finalY + 8;
-      autoTable(doc, {
-        head: [["Indicador", "Valor / Alíquota"]],
-        body: [
-          ["Selic a.a.", (params.selicAA * 100).toFixed(2) + "%"],
-          ["CDI a.a.", (params.cdiAA * 100).toFixed(2) + "%"],
-          ["% do CDI", (params.cdiPct * 100).toFixed(2) + "%"],
-          ["IR (≤180d / ≤360d / ≤720d / >720d)", "22,5% / 20% / 17,5% / 15%"],
-        ],
-        startY: y,
-        theme: "grid",
-      });
-    } else if (tpl === "alav_patr") {
-      const aluguel =
-        tplParams.aluguelEstimado ??
-        (tplParams.yieldPct ? sim.novo_credito * (tplParams.yieldPct / 12) : 0);
-      const cobertura =
-        sim.parcela_escolhida > 0 ? aluguel / sim.parcela_escolhida : 0;
-
-      autoTable(doc, {
-        head: [["Item", "Valor"]],
-        body: [
-          ["Crédito líquido (após)", brMoney(sim.novo_credito)],
-          ["Parcela (após)", brMoney(sim.parcela_escolhida)],
-          ["Prazo restante", `${sim.novo_prazo} meses`],
-          ["Aluguel estimado", aluguel ? brMoney(aluguel) : "—"],
-          ["Cobertura da parcela", aluguel ? (cobertura * 100).toFixed(1) + "%" : "—"],
-        ],
-        startY: y,
-        theme: "striped",
-      });
-    } else if (tpl === "previdencia") {
-      const a = params.cdiAA * (params.cdiPct || 1);
-      const r = Math.pow(1 + a, 1 / 12) - 1;
-      const n = Math.max(1, sim.novo_prazo);
-      const p = Math.max(0, sim.parcela_escolhida);
-      const fv = r > 0 ? p * ((Math.pow(1 + r, n) - 1) / r) : p * n;
-
-      autoTable(doc, {
-        head: [["Parâmetro", "Valor"]],
-        body: [
-          ["Taxa mensal (estimada)", (r * 100).toFixed(2) + "%"],
-          ["Prazo (n)", `${n} meses`],
-          ["Parcela mensal (após)", brMoney(p)],
-          ["Valor futuro estimado", brMoney(fv)],
-        ],
-        startY: y,
-        theme: "striped",
-      });
-    } else if (tpl === "correcao") {
-      const anos = [1, 2, 3];
-      const cred0 = sim.novo_credito;
-      const parc0 = sim.parcela_escolhida;
-      const rows = anos.map((k) => [
-        `${k}º ano`,
-        brMoney(cred0 * Math.pow(1 + params.ipcaAA, k)),
-        brMoney(parc0 * Math.pow(1 + params.inccAA, k)),
-      ]);
-
-      autoTable(doc, {
-        head: [["Período", "Crédito corrigido*", "Parcela corrigida**"]],
-        body: rows,
-        startY: y,
-        theme: "grid",
-        foot: [
-          [
-            "* IPCA esperado",
-            `(${(params.ipcaAA * 100).toFixed(2)}% a.a.)`,
-            "** INCC esperado " + (params.inccAA * 100).toFixed(2) + "% a.a.",
-          ],
-        ],
-        footStyles: { fontSize: 8, textColor: 80 },
-      });
-    } else if (tpl === "extrato") {
-      const meses = Math.min(12, sim.novo_prazo);
-      const body = [];
-      let saldo = sim.saldo_devedor_final;
-      for (let i = 1; i <= meses; i++) {
-        const parc = sim.parcela_escolhida;
-        saldo = Math.max(0, saldo - parc);
-        body.push([i, brMoney(parc), brMoney(saldo)]);
-      }
-      autoTable(doc, {
-        head: [["Mês", "Parcela", "Saldo aprox."]],
-        body,
-        startY: y,
-        theme: "striped",
-      });
+    if (modalQ.trim()) {
+      const like = `%${modalQ.trim()}%`;
+      q = q.or(`lead_nome.ilike.${like},lead_telefone.ilike.${like}`);
     }
 
-    addFooter(doc, logo);
-  }
-
-  async function gerarBundlePDF(template: TemplateKind, sims: SimRow[]) {
-    if (!sims.length) {
-      alert("Selecione pelo menos 1 simulação.");
+    const { data, error } = await q;
+    setModalLoading(false);
+    if (error) {
+      alert("Erro ao buscar simulações: " + error.message);
       return;
     }
-    const doc = new jsPDF();
-    const logo = await loadLogoDataURL();
+    setModalRows((data || []) as ModalItem[]);
+  }
+
+  useEffect(() => {
+    if (!addOpen) return;
+    const t = setTimeout(() => loadModal(), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addOpen, modalQ]);
+
+  function toggleModalSel(code: number) {
+    setModalSel((prev) => {
+      const s = new Set(prev);
+      if (s.has(code)) s.delete(code);
+      else {
+        if (s.size >= 5) return s;
+        s.add(code);
+      }
+      return s;
+    });
+  }
+
+  async function saveFromModal() {
+    if (modalSel.size === 0) {
+      setAddOpen(false);
+      return;
+    }
+    const ids = Array.from(modalSel);
+    const { data, error } = await supabase
+      .from("sim_simulations")
+      .select(
+        "code,created_at,lead_nome,lead_telefone,segmento,grupo,credito,parcela_contemplacao,novo_credito,parcela_escolhida,novo_prazo,parcela_ate_1_ou_2,parcela_demais,lance_proprio_valor",
+      )
+      .in("code", ids);
+
+    if (error) {
+      alert("Erro ao carregar selecionadas: " + error.message);
+      return;
+    }
+    const incoming = (data || []) as SimRow[];
+    setInvest((prev) => {
+      const map = new Map(prev.map((x) => [x.code, x]));
+      incoming.forEach((x) => map.set(x.code, x));
+      return Array.from(map.values()).slice(0, 5);
+    });
+    setSelectMap({});
+    setAddOpen(false);
+    setModalSel(new Set());
+  }
+
+  function toggleSelect(code: number) {
+    setSelectMap((prev) => ({ ...prev, [code]: !prev[code] }));
+  }
+
+  type ModelKey =
+    | "direcionada"
+    | "alav_fin"
+    | "alav_patr"
+    | "previdencia"
+    | "credito_correcao"
+    | "extrato";
+
+  async function gerarPDFInvest(model: ModelKey, sims: SimRow[]) {
+    if (sims.length === 0) return;
+
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const logo = (await imgToDataUrl("/logo-consulmax.png?v=3")) || null;
 
     // CAPA
-    renderCover(doc, logo, sims);
+    doc.setFillColor(brand.primary);
+    doc.rect(0, 0, 595, 180, "F");
+    if (logo) {
+      doc.addImage(logo, "PNG", 40, 40, 90, 26);
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(24);
+    doc.setTextColor("#FFFFFF");
+    const title =
+      model === "direcionada" ? "Proposta Direcionada"
+      : model === "alav_fin" ? "Alavancagem Financeira"
+      : model === "alav_patr" ? "Alavancagem Patrimonial"
+      : model === "previdencia" ? "Previdência Aplicada"
+      : model === "credito_correcao" ? "Crédito com Correção"
+      : "Extrato da Proposta";
 
-    // páginas
-    sims.forEach((sim) => {
-      doc.addPage();
-      const table = sim.table_id ? tablesMap[sim.table_id] : undefined;
-      renderTemplatePage(doc, logo, template, sim, tplParams, table);
+    doc.text(title, 40, 120);
+
+    doc.setTextColor("#000000");
+    doc.setFontSize(14);
+    doc.text(`Itens selecionados: ${sims.length}`, 40, 210);
+
+    // páginas por sim
+    sims.forEach((r, idx) => {
+      if (idx > 0 || true) doc.addPage();
+
+      // Cabeçalho da página
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.setTextColor(0, 0, 0);
+      doc.text(`${title} — #${r.code}`, 40, 50);
+      doc.setDrawColor(161, 28, 39);
+      doc.setLineWidth(2);
+      doc.line(40, 60, 555, 60);
+
+      const segNorm = normalizeSegment(r.segmento);
+
+      // bloco de dados
+      (doc as any).autoTable({
+        startY: 85,
+        head: [["Campo", "Valor"]],
+        body: [
+          ["Lead", `${r.lead_nome || "—"}  ${r.lead_telefone || ""}`.trim()],
+          ["Segmento", segNorm],
+          ["Grupo", r.grupo || "—"],
+          ["Crédito líquido (após)", brMoney(r.novo_credito)],
+          ["Parcela 1 (até contemplação)", brMoney(r.parcela_ate_1_ou_2)],
+          ["Parcela escolhida (após)", brMoney(r.parcela_escolhida)],
+          ["Prazo restante (meses)", String(r.novo_prazo ?? 0)],
+          ["Lance próprio", brMoney(r.lance_proprio_valor)],
+        ],
+        styles: { font: "helvetica", fontSize: 10, halign: "left" },
+        headStyles: { fillColor: brand.primary, textColor: "#FFFFFF" },
+        alternateRowStyles: { fillColor: brand.grayRow },
+        theme: "grid",
+        margin: { left: 40, right: 40 },
+      });
+
+      const y = (doc as any).lastAutoTable?.finalY ?? 300;
+      // Observações conforme modelo (ilustrativo)
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.setTextColor(60, 60, 60);
+      const msg =
+        model === "direcionada"
+          ? "Proposta voltada à aquisição direta do bem desejado."
+          : model === "alav_fin"
+          ? "Estratégia para acelerar a conquista do bem com reforço de caixa."
+          : model === "alav_patr"
+          ? "Uso inteligente do consórcio para fortalecer o patrimônio."
+          : model === "previdencia"
+          ? "Planejamento de longo prazo com foco em formação de reserva."
+          : model === "credito_correcao"
+          ? "Simulação com hipótese de correção do crédito."
+          : "Resumo consolidado dos principais números desta proposta.";
+      doc.text(msg, 40, y + 24, { maxWidth: 515 });
     });
 
-    const fname = `propostas-${template}-${new Date()
-      .toISOString()
-      .slice(0, 10)}.pdf`;
-    doc.save(fname);
+    // rodapé (última página já está aberta)
+    const footerY = 790;
+    doc.setDrawColor(200);
+    doc.line(40, footerY - 30, 555, footerY - 30);
+    if (logo) doc.addImage(logo, "PNG", 40, footerY - 20, 70, 20);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(60, 60, 60);
+    const right = 555;
+    const lines = [
+      "Consulmax Consórcios e Investimentos",
+      "CNPJ: 57.942.043/0001-03",
+      "Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO",
+      "Cel/Whats: (69) 9 9302-9380",
+      "consulmaxconsorcios.com.br",
+    ];
+    lines.forEach((tx, i) => {
+      const w = doc.getTextWidth(tx);
+      doc.text(tx, right - w, footerY - 18 + i * 10);
+    });
+
+    doc.save(`${title.replace(/\s+/g, "_")}.pdf`);
   }
 
-  async function excluir(sim: SimRow) {
-    if (!confirm("Confirmar exclusão desta proposta?")) return;
-    const { error } = await supabase
-      .from("sim_simulations")
-      .delete()
-      .eq("id", sim.id);
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-      return;
-    }
-    setRows((prev) => prev.filter((r) => r.id !== sim.id));
-  }
+  const selectedInvest = useMemo(
+    () => invest.filter((x) => !!selectMap[x.code]),
+    [invest, selectMap],
+  );
 
-  /* ===== Modal: Adicionar simulações ===== */
-  function AddSimsModal({
-    onClose,
-    onSave,
-    alreadyIds,
-  }: {
-    onClose: () => void;
-    onSave: (sims: SimRow[]) => void;
-    alreadyIds: Set<string>;
-  }) {
-    const [q, setQ] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [items, setItems] = useState<SimRow[]>([]);
-    const [picked, setPicked] = useState<Record<string, boolean>>({});
-
-    const max = 5;
-
-    async function buscar() {
-      setLoading(true);
-      let query = supabase
-        .from("sim_simulations")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(100);
-
-      if (q.trim()) {
-        const like = `%${q.trim()}%`;
-        query = query.or(`lead_nome.ilike.${like},lead_telefone.ilike.${like}`);
-      }
-
-      const { data, error } = await query;
-      setLoading(false);
-      if (error) {
-        alert("Erro ao buscar: " + error.message);
-        return;
-      }
-      setItems((data as any[]) as SimRow[]);
-    }
-
-    useEffect(() => {
-      const h = setTimeout(buscar, 250);
-      return () => clearTimeout(h);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [q]);
-
-    const totalSelecionados =
-      Object.values(picked).filter(Boolean).length + alreadyIds.size;
-
-    function toggle(id: string) {
-      const next = { ...picked };
-      const willSelect = !next[id];
-      if (willSelect && totalSelecionados >= max) {
-        alert(`Limite de ${max} simulações.`);
-        return;
-      }
-      next[id] = willSelect;
-      setPicked(next);
-    }
-
-    function salvar() {
-      const chosen = items.filter((i) => picked[i.id]);
-      onSave(chosen);
-      onClose();
-    }
-
-    return (
-      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
-          <div className="flex items-center justify-between px-4 py-3 border-b">
-            <div className="font-semibold">Adicionar simulações (até 5)</div>
-            <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
-              ✕
-            </button>
-          </div>
-
-          <div className="p-4 space-y-3">
-            <div className="grid md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
-                <Label>Buscar por nome ou telefone</Label>
-                <Input
-                  placeholder="ex.: Maria / 11 9..."
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                />
-              </div>
-              <div className="flex items-end">
-                <Button onClick={buscar} className="w-full">
-                  Buscar
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded-lg border overflow-auto max-h-[50vh]">
-              <table className="min-w-full text-sm">
-                <thead className="bg-muted/40">
-                  <tr>
-                    <th className="p-2 text-left">Sel.</th>
-                    <th className="p-2 text-left">Criada</th>
-                    <th className="p-2 text-left">Lead</th>
-                    <th className="p-2 text-left">Segmento</th>
-                    <th className="p-2 text-right">Crédito (após)</th>
-                    <th className="p-2 text-right">Parcela (após)</th>
-                    <th className="p-2 text-right">Prazo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td colSpan={7} className="p-4">
-                        <Loader2 className="h-4 w-4 animate-spin inline" />{" "}
-                        Carregando…
-                      </td>
-                    </tr>
-                  ) : items.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-4 text-muted-foreground">
-                        Sem resultados.
-                      </td>
-                    </tr>
-                  ) : (
-                    items.map((r) => {
-                      const disabled = alreadyIds.has(r.id);
-                      return (
-                        <tr key={r.id} className="border-t">
-                          <td className="p-2">
-                            <input
-                              type="checkbox"
-                              disabled={disabled}
-                              checked={!!picked[r.id] || disabled}
-                              onChange={() => toggle(r.id)}
-                            />
-                          </td>
-                          <td className="p-2">{fmtDate(r.created_at)}</td>
-                          <td className="p-2">
-                            <div className="font-medium">
-                              {r.lead_nome || "—"}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {r.lead_telefone || ""}
-                            </div>
-                          </td>
-                          <td className="p-2">
-                            {normalizeSegment(r.segmento)}
-                          </td>
-                          <td className="p-2 text-right">
-                            {brMoney(r.novo_credito)}
-                          </td>
-                          <td className="p-2 text-right">
-                            {brMoney(r.parcela_escolhida)}
-                          </td>
-                          <td className="p-2 text-right">{r.novo_prazo}x</td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-muted-foreground">
-                Selecionados no total: <strong>{totalSelecionados}</strong> / 5
-              </div>
-              <div className="flex gap-2">
-                <Button variant="secondary" onClick={onClose}>
-                  Cancelar
-                </Button>
-                <Button
-                  onClick={salvar}
-                  disabled={
-                    Object.values(picked).filter(Boolean).length === 0
-                  }
-                >
-                  Salvar na lista
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  /* ===== Modal: Parâmetros dos Templates ===== */
-  function TplParamsModal({
-    value,
-    onClose,
-    onSave,
-  }: {
-    value: TemplateParams;
-    onClose: () => void;
-    onSave: (v: TemplateParams) => void;
-  }) {
-    const [v, setV] = useState<TemplateParams>(value);
-    return (
-      <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl w-full max-w-3xl shadow-lg">
-          <div className="flex items-center justify-between px-4 py-3 border-b">
-            <div className="font-semibold">Parâmetros dos Modelos</div>
-            <button className="p-1 rounded hover:bg-muted" onClick={onClose}>
-              ✕
-            </button>
-          </div>
-          <div className="p-4 grid md:grid-cols-3 gap-3 text-sm">
-            <div>
-              <Label>Selic a.a.</Label>
-              <Input
-                type="number"
-                step="0.0001"
-                value={v.selicAA}
-                onChange={(e) =>
-                  setV({ ...v, selicAA: Number(e.target.value) })
-                }
-              />
-            </div>
-            <div>
-              <Label>CDI a.a.</Label>
-              <Input
-                type="number"
-                step="0.0001"
-                value={v.cdiAA}
-                onChange={(e) => setV({ ...v, cdiAA: Number(e.target.value) })}
-              />
-            </div>
-            <div>
-              <Label>% do CDI</Label>
-              <Input
-                type="number"
-                step="0.0001"
-                value={v.cdiPct}
-                onChange={(e) => setV({ ...v, cdiPct: Number(e.target.value) })}
-              />
-            </div>
-            <div>
-              <Label>IPCA a.a.</Label>
-              <Input
-                type="number"
-                step="0.0001"
-                value={v.ipcaAA}
-                onChange={(e) => setV({ ...v, ipcaAA: Number(e.target.value) })}
-              />
-            </div>
-            <div>
-              <Label>INCC a.a.</Label>
-              <Input
-                type="number"
-                step="0.0001"
-                value={v.inccAA}
-                onChange={(e) =>
-                  setV({ ...v, inccAA: Number(e.target.value) })
-                }
-              />
-            </div>
-            <div>
-              <Label>Ganho na venda (%)</Label>
-              <Input
-                type="number"
-                step="0.0001"
-                value={v.ganhoVendaPct}
-                onChange={(e) =>
-                  setV({ ...v, ganhoVendaPct: Number(e.target.value) })
-                }
-              />
-            </div>
-            <div className="md:col-span-3">
-              <Label>Aluguel estimado (R$) ou Yield (%)</Label>
-              <div className="grid grid-cols-2 gap-3">
-                <Input
-                  type="number"
-                  step="0.01"
-                  placeholder="R$"
-                  value={v.aluguelEstimado ?? ""}
-                  onChange={(e) =>
-                    setV({
-                      ...v,
-                      aluguelEstimado:
-                        e.target.value === "" ? undefined : Number(e.target.value),
-                    })
-                  }
-                />
-                <Input
-                  type="number"
-                  step="0.0001"
-                  placeholder="0.01 = 1%"
-                  value={v.yieldPct ?? ""}
-                  onChange={(e) =>
-                    setV({
-                      ...v,
-                      yieldPct:
-                        e.target.value === "" ? undefined : Number(e.target.value),
-                    })
-                  }
-                />
-              </div>
-            </div>
-          </div>
-          <div className="px-4 py-3 border-t flex justify-end gap-2">
-            <Button variant="secondary" onClick={onClose}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => {
-                onSave(v);
-                onClose();
-              }}
-            >
-              Salvar
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  /* ===== render ===== */
+  /* ========================= UI ========================= */
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Propostas</h1>
-        <Button variant="secondary" onClick={load}>
-          Recarregar
-        </Button>
-      </div>
-
-      {/* Filtros automáticos */}
+      {/* Filtros */}
       <Card>
         <CardHeader>
-          <CardTitle>Filtros</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Search className="h-5 w-5" />
+            Filtros
+          </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-6">
+        <CardContent className="grid gap-3 md:grid-cols-4">
           <div className="md:col-span-2">
-            <Label>Buscar (nome ou telefone)</Label>
+            <Label>Buscar por nome ou telefone</Label>
             <Input
-              placeholder="ex.: Maria / 11 9...."
+              placeholder="ex.: Maria / 11 9..."
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
           <div>
-            <Label>Segmento</Label>
-            <select
-              className="w-full h-10 border rounded-md px-3"
-              value={seg}
-              onChange={(e) => setSeg(e.target.value)}
-            >
-              <option value="">Todos</option>
-              {segmentosDisponiveis.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label>Grupo</Label>
-            <Input value={grupo} onChange={(e) => setGrupo(e.target.value)} />
-          </div>
-          <div>
-            <Label>De</Label>
+            <Label className="flex items-center gap-2">
+              <Calendar className="h-4 w-4" /> De
+            </Label>
             <Input
               type="date"
-              value={dStart}
-              onChange={(e) => setDStart(e.target.value)}
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
             />
           </div>
           <div>
-            <Label>Até</Label>
+            <Label className="flex items-center gap-2">
+              <Calendar className="h-4 w-4" /> Até
+            </Label>
             <Input
               type="date"
-              value={dEnd}
-              onChange={(e) => setDEnd(e.target.value)}
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
             />
           </div>
         </CardContent>
       </Card>
 
-      {/* Lista principal */}
+      {/* Resultados */}
       <Card>
         <CardHeader>
-          <CardTitle>Resultados ({rows.length})</CardTitle>
+          <CardTitle>
+            Resultados{" "}
+            <span className="text-muted-foreground text-sm">
+              ({rows.length})
+            </span>
+          </CardTitle>
         </CardHeader>
-        <CardContent className="overflow-auto">
-          {loading ? (
-            <div className="p-4 flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground">
-              Sem resultados.
-            </div>
-          ) : (
-            <table className="min-w-full text-sm">
-              <thead className="bg-muted/40">
-                <tr>
-                  <th className="text-left p-2">#</th>
-                  <th className="text-left p-2">Criada</th>
-                  <th className="text-left p-2">Lead</th>
-                  <th className="text-left p-2">Segmento</th>
-                  <th className="text-right p-2">Crédito (após)</th>
-                  <th className="text-right p-2">Parcela (após)</th>
-                  <th className="text-right p-2">Prazo</th>
-                  <th className="text-right p-2">
-                    <div className="min-w-[320px] grid grid-cols-5 gap-2 justify-items-center text-xs font-medium text-muted-foreground">
-                      <span>Oportunidade</span>
-                      <span>Resumo</span>
-                      <span>PDF</span>
-                      <span>Abrir</span>
-                      <span>Excluir</span>
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-t">
-                    <td className="p-2">{r.code || "—"}</td>
-                    <td className="p-2">{fmtDate(r.created_at)}</td>
-                    <td className="p-2">
-                      <div className="font-medium">{r.lead_nome || "—"}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {r.lead_telefone || ""}
-                      </div>
-                    </td>
-                    <td className="p-2">{normalizeSegment(r.segmento)}</td>
-                    <td className="p-2 text-right">{brMoney(r.novo_credito)}</td>
-                    <td className="p-2 text-right">
-                      {brMoney(r.parcela_escolhida)}
-                    </td>
-                    <td className="p-2 text-right">{r.novo_prazo}x</td>
-                    <td className="p-2">
-                      <div className="min-w-[320px] grid grid-cols-5 gap-2 justify-items-center">
-                        <Button
-                          size="sm"
-                          className="h-9 w-9 p-0 rounded-full bg-[#A11C27] text-white hover:bg-[#8f1822]"
-                          onClick={() => copiar(textoOportunidade(r))}
-                          title="Copiar Oportunidade"
-                          aria-label="Copiar Oportunidade"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          className="h-9 w-9 p-0 rounded-full bg-[#1E293F] text-white hover:bg-[#162033]"
-                          onClick={() => copiar(textoResumo(r))}
-                          title="Copiar Resumo"
-                          aria-label="Copiar Resumo"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          className="h-9 w-9 p-0 rounded-full bg-[#1E293F] text-white hover:bg-[#162033]"
-                          onClick={() => exportarPDF(r)}
-                          title="Exportar PDF"
-                          aria-label="Exportar PDF"
-                        >
-                          <FileText className="h-4 w-4" />
-                        </Button>
-                        <a
-                          href="/simuladores"
-                          className="inline-flex items-center justify-center h-9 w-9 rounded-full border bg-background hover:bg-muted text-sm"
-                          title="Abrir no simulador"
-                          aria-label="Abrir no simulador"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                        </a>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => excluir(r)}
-                          title="Excluir"
-                          aria-label="Excluir"
-                          className="h-9 w-9 p-0 rounded-full"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ===== Propostas de Investimento ===== */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Propostas de Investimento</CardTitle>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={() => setShowTplParams(true)}>
-              Parâmetros
-            </Button>
-            <Button onClick={() => setModalOpen(true)} className="rounded-2xl">
-              <Plus className="h-4 w-4 mr-1" /> Adicionar simulações
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {/* Barra de ações */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Label className="text-sm">Modelo:</Label>
-            <select
-              className="h-10 border rounded-md px-3"
-              value={piTemplate}
-              onChange={(e) => setPiTemplate(e.target.value as TemplateKind)}
-            >
-              <option value="direcionada">Direcionada</option>
-              <option value="alav_fin">Alav. Financeira</option>
-              <option value="alav_patr">Alav. Patrimonial</option>
-              <option value="previdencia">Previdência</option>
-              <option value="correcao">Crédito c/ Correção</option>
-              <option value="extrato">Extrato</option>
-            </select>
-
-            <Button
-              className="rounded-2xl"
-              onClick={() =>
-                gerarBundlePDF(
-                  piTemplate,
-                  piList.filter((s) => piSelected[s.id])
-                )
-              }
-              disabled={Object.values(piSelected).filter(Boolean).length === 0}
-            >
-              Gerar PDF (selecionados)
-            </Button>
-          </div>
-
-          {/* Lista */}
+        <CardContent>
           <div className="overflow-auto rounded-lg border">
             <table className="min-w-full text-sm">
               <thead className="bg-muted/40">
                 <tr>
-                  <th className="text-left p-2">
-                    <input
-                      type="checkbox"
-                      checked={
-                        piList.length > 0 &&
-                        piList.every((s) => piSelected[s.id])
-                      }
-                      onChange={(e) => {
-                        const all = { ...piSelected };
-                        piList.forEach((s) => (all[s.id] = e.target.checked));
-                        setPiSelected(all);
-                      }}
-                    />
-                  </th>
+                  <th className="text-left p-2 w-10">#</th>
                   <th className="text-left p-2">Criada</th>
                   <th className="text-left p-2">Lead</th>
                   <th className="text-left p-2">Segmento</th>
-                  <th className="text-right p-2">Crédito (após)</th>
-                  <th className="text-right p-2">Parcela (após)</th>
-                  <th className="text-right p-2">Prazo</th>
-                  <th className="text-right p-2">Gerar…</th>
+                  <th className="text-left p-2">Crédito (após)</th>
+                  <th className="text-left p-2">Parcela (após)</th>
+                  <th className="text-left p-2">Prazo</th>
+                  {/* Cabeçalho das ações com rótulos (ficam alinhados aos ícones) */}
+                  <th className="text-center p-2">Oportunidade</th>
+                  <th className="text-center p-2">Resumo</th>
+                  <th className="text-center p-2">PDF</th>
+                  <th className="text-center p-2">Abrir</th>
+                  <th className="text-center p-2">Excluir</th>
                 </tr>
               </thead>
               <tbody>
-                {piList.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="p-4 text-muted-foreground">
-                      Ainda não há simulações adicionadas.
+                {rows.map((r) => (
+                  <tr key={r.code} className="border-t">
+                    <td className="p-2">{r.code}</td>
+                    <td className="p-2 whitespace-nowrap">
+                      {new Date(r.created_at).toLocaleString("pt-BR")}
+                    </td>
+                    <td className="p-2">
+                      <div className="font-medium">{r.lead_nome || "—"}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {r.lead_telefone || "—"}
+                      </div>
+                    </td>
+                    <td className="p-2">{normalizeSegment(r.segmento)}</td>
+                    <td className="p-2">{brMoney(r.novo_credito)}</td>
+                    <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
+                    <td className="p-2">{r.novo_prazo ?? 0}x</td>
+
+                    {/* ações — ícones somente */}
+                    <td className="p-2 text-center">
+                      <button
+                        className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                        title="Copiar Oportunidade"
+                        onClick={() => copyOportunidadeText(r)}
+                      >
+                        <Megaphone className="h-4 w-4" />
+                      </button>
+                    </td>
+                    <td className="p-2 text-center">
+                      <button
+                        className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                        title="Copiar Resumo"
+                        onClick={() => copyResumoText(r)}
+                      >
+                        <ClipboardCopy className="h-4 w-4" />
+                      </button>
+                    </td>
+                    <td className="p-2 text-center">
+                      <button
+                        className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                        title="Gerar PDF"
+                        onClick={() => handlePDF(r)}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </button>
+                    </td>
+                    <td className="p-2 text-center">
+                      <button
+                        className="h-9 w-9 rounded-full bg-muted inline-flex items-center justify-center text-foreground/70"
+                        title="Abrir (em breve)"
+                        onClick={() => window.alert("Em breve")}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </button>
+                    </td>
+                    <td className="p-2 text-center">
+                      <button
+                        className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                        title="Excluir"
+                        onClick={() => handleDelete(r.code)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </td>
                   </tr>
-                ) : (
-                  piList.map((r) => (
-                    <tr key={r.id} className="border-t">
-                      <td className="p-2">
-                        <input
-                          type="checkbox"
-                          checked={!!piSelected[r.id]}
-                          onChange={(e) =>
-                            setPiSelected((prev) => ({
-                              ...prev,
-                              [r.id]: e.target.checked,
-                            }))
-                          }
-                        />
-                      </td>
-                      <td className="p-2">{fmtDate(r.created_at)}</td>
-                      <td className="p-2">
-                        <div className="font-medium">{r.lead_nome || "—"}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {r.lead_telefone || ""}
-                        </div>
-                      </td>
-                      <td className="p-2">{normalizeSegment(r.segmento)}</td>
-                      <td className="p-2 text-right">
-                        {brMoney(r.novo_credito)}
-                      </td>
-                      <td className="p-2 text-right">
-                        {brMoney(r.parcela_escolhida)}
-                      </td>
-                      <td className="p-2 text-right">{r.novo_prazo}x</td>
-                      <td className="p-2">
-                        <div className="flex items-center justify-end gap-2">
-                          <select
-                            className="h-9 border rounded-md px-2"
-                            onChange={(e) =>
-                              gerarBundlePDF(e.target.value as TemplateKind, [
-                                r,
-                              ])
-                            }
-                            defaultValue=""
-                            title="Gerar PDF desta linha"
-                          >
-                            <option value="" disabled>
-                              Escolha o modelo
-                            </option>
-                            <option value="direcionada">Direcionada</option>
-                            <option value="alav_fin">Alav. Financeira</option>
-                            <option value="alav_patr">Alav. Patrimonial</option>
-                            <option value="previdencia">Previdência</option>
-                            <option value="correcao">Crédito c/ Correção</option>
-                            <option value="extrato">Extrato</option>
-                          </select>
-                          <button className="inline-flex items-center justify-center h-9 w-9 rounded-full border bg-background hover:bg-muted">
-                            <ChevronDown className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                ))}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={12} className="p-6 text-center text-muted-foreground">
+                      {loading ? "Carregando..." : "Nenhum resultado para os filtros."}
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -1332,28 +726,262 @@ Vantagens
         </CardContent>
       </Card>
 
-      {modalOpen && (
-        <AddSimsModal
-          onClose={() => setModalOpen(false)}
-          onSave={(sims) => {
-            // evita duplicatas e respeita limite 5
-            const exists = new Set(piList.map((s) => s.id));
-            const merged = [...piList];
-            sims.forEach((s) => {
-              if (!exists.has(s.id) && merged.length < 5) merged.push(s);
-            });
-            setPiList(merged);
-          }}
-          alreadyIds={new Set(piList.map((s) => s.id))}
-        />
-      )}
+      {/* Propostas de Investimento */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>Propostas de Investimento</CardTitle>
+          <div className="flex items-center gap-2">
+            {/* Gerar com as selecionadas */}
+            <div className="relative">
+              <details className="group">
+                <summary className="list-none">
+                  <Button className="rounded-2xl h-10 px-4" variant="secondary">
+                    Gerar... <ChevronDown className="h-4 w-4 ml-1" />
+                  </Button>
+                </summary>
+                <div className="absolute right-0 mt-2 w-56 bg-white border rounded-xl shadow z-10 p-1">
+                  {[
+                    { k: "direcionada", label: "Direcionada" },
+                    { k: "alav_fin", label: "Alav. Financeira" },
+                    { k: "alav_patr", label: "Alav. Patrimonial" },
+                    { k: "previdencia", label: "Previdência" },
+                    { k: "credito_correcao", label: "Crédito c/ Correção" },
+                    { k: "extrato", label: "Extrato" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.k}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        gerarPDFInvest(opt.k as ModelKey, selectedInvest);
+                      }}
+                      disabled={selectedInvest.length === 0}
+                    >
+                      {opt.label} {selectedInvest.length ? `(${selectedInvest.length})` : ""}
+                    </button>
+                  ))}
+                </div>
+              </details>
+            </div>
 
-      {showTplParams && (
-        <TplParamsModal
-          value={tplParams}
-          onSave={setTplParams}
-          onClose={() => setShowTplParams(false)}
-        />
+            <Button
+              className="rounded-2xl h-10 px-4"
+              onClick={() => setAddOpen(true)}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              Adicionar simulações
+            </Button>
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          <div className="text-sm text-muted-foreground mb-2">
+            Selecionadas: <strong>{countSelected()}</strong> / 5
+          </div>
+
+          <div className="overflow-auto rounded-lg border">
+            <table className="min-w-full text-sm">
+              <thead className="bg-muted/40">
+                <tr>
+                  <th className="p-2 w-10"></th>
+                  <th className="text-left p-2">Criada</th>
+                  <th className="text-left p-2">Lead</th>
+                  <th className="text-left p-2">Segmento</th>
+                  <th className="text-left p-2">Crédito (após)</th>
+                  <th className="text-left p-2">Parcela (após)</th>
+                  <th className="text-left p-2">Prazo</th>
+                  <th className="text-center p-2">Gerar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invest.map((r) => (
+                  <tr key={r.code} className="border-t">
+                    <td className="p-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={!!selectMap[r.code]}
+                        onChange={() => toggleSelect(r.code)}
+                      />
+                    </td>
+                    <td className="p-2 whitespace-nowrap">
+                      {new Date(r.created_at).toLocaleString("pt-BR")}
+                    </td>
+                    <td className="p-2">
+                      <div className="font-medium">{r.lead_nome || "—"}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {r.lead_telefone || "—"}
+                      </div>
+                    </td>
+                    <td className="p-2">{normalizeSegment(r.segmento)}</td>
+                    <td className="p-2">{brMoney(r.novo_credito)}</td>
+                    <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
+                    <td className="p-2">{r.novo_prazo ?? 0}x</td>
+                    <td className="p-2 text-center">
+                      <div className="relative">
+                        <details className="group inline-block">
+                          <summary className="list-none">
+                            <Button variant="secondary" size="sm" className="rounded-xl h-8">
+                              Gerar... <ChevronDown className="h-4 w-4 ml-1" />
+                            </Button>
+                          </summary>
+                          <div className="absolute right-0 mt-2 w-56 bg-white border rounded-xl shadow z-10 p-1">
+                            {[
+                              { k: "direcionada", label: "Direcionada" },
+                              { k: "alav_fin", label: "Alav. Financeira" },
+                              { k: "alav_patr", label: "Alav. Patrimonial" },
+                              { k: "previdencia", label: "Previdência" },
+                              { k: "credito_correcao", label: "Crédito c/ Correção" },
+                              { k: "extrato", label: "Extrato" },
+                            ].map((opt) => (
+                              <button
+                                key={opt.k}
+                                className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  gerarPDFInvest(opt.k as ModelKey, [r]);
+                                }}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </details>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {invest.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                      Nenhuma simulação adicionada.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* MODAL: adicionar simulações */}
+      {addOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <div className="font-semibold">Adicionar simulações (até 5)</div>
+              <button
+                className="p-1 rounded hover:bg-muted"
+                onClick={() => setAddOpen(false)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="md:col-span-3">
+                  <Label>Buscar por nome ou telefone</Label>
+                  <Input
+                    placeholder="ex.: Maria / 11 9..."
+                    value={modalQ}
+                    onChange={(e) => setModalQ(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    className="w-full h-10 rounded-2xl"
+                    variant="secondary"
+                    onClick={() => loadModal()}
+                  >
+                    {modalLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Search className="h-4 w-4 mr-1" /> Buscar
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="overflow-auto rounded-lg border" style={{ maxHeight: 420 }}>
+                <table className="min-w-full text-sm">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="p-2 w-10">Sel.</th>
+                      <th className="text-left p-2">Criada</th>
+                      <th className="text-left p-2">Lead</th>
+                      <th className="text-left p-2">Segmento</th>
+                      <th className="text-left p-2">Crédito (após)</th>
+                      <th className="text-left p-2">Parcela (após)</th>
+                      <th className="text-left p-2">Prazo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modalRows.map((r) => {
+                      const checked = modalSel.has(r.code);
+                      return (
+                        <tr key={r.code} className="border-t">
+                          <td className="p-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleModalSel(r.code)}
+                            />
+                          </td>
+                          <td className="p-2 whitespace-nowrap">
+                            {new Date(r.created_at).toLocaleString("pt-BR")}
+                          </td>
+                          <td className="p-2">
+                            <div className="font-medium">{r.lead_nome || "—"}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {r.lead_telefone || "—"}
+                            </div>
+                          </td>
+                          <td className="p-2">{normalizeSegment(r.segmento)}</td>
+                          <td className="p-2">{brMoney(r.novo_credito)}</td>
+                          <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
+                          <td className="p-2">{r.novo_prazo ?? 0}x</td>
+                        </tr>
+                      );
+                    })}
+                    {modalRows.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                          {modalLoading ? "Carregando..." : "Sem resultados."}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  Selecionados no total:{" "}
+                  <strong>{modalSel.size}</strong> / 5
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    className="rounded-2xl"
+                    onClick={() => setAddOpen(false)}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    className="rounded-2xl"
+                    onClick={saveFromModal}
+                    disabled={modalSel.size === 0}
+                  >
+                    <Check className="h-4 w-4 mr-1" />
+                    Salvar na lista
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

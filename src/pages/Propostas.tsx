@@ -35,18 +35,17 @@ type SimRow = {
   segmento: string | null;
   grupo: string | null;
 
-  // salvos em salvarSimulacao()
-  credito: number | null; // valor contratado original
-  parcela_contemplacao: number | null; // número da parcela da contemplação
-  novo_credito: number | null; // pós contemplação
-  parcela_escolhida: number | null; // pós
-  novo_prazo: number | null; // pós
+  credito: number | null;
+  parcela_contemplacao: number | null;
+  novo_credito: number | null;
+  parcela_escolhida: number | null;
+  novo_prazo: number | null;
 
-  parcela_ate_1_ou_2: number | null; // até a contemplação (1ª ou 1+2)
-  parcela_demais: number | null; // demais até a contemplação
-  lance_proprio_valor: number | null; // pós
+  parcela_ate_1_ou_2: number | null;
+  parcela_demais: number | null;
+  lance_proprio_valor: number | null;
 
-  // não usamos todos, mas mantemos para extensões
+  // extras (não usados agora)
   valor_categoria?: number | null;
   lance_ofertado_valor?: number | null;
   lance_embutido_valor?: number | null;
@@ -70,8 +69,8 @@ type ModalItem = Pick<
 
 /* ======================= Helpers ========================= */
 const brand = {
-  primary: "#1E293F", // azul marinho Consulmax
-  accent: "#A11C27", // vermelho Consulmax
+  primary: "#1E293F",
+  accent: "#A11C27",
   grayRow: "#F3F4F6",
 };
 
@@ -87,7 +86,7 @@ function toDateInputValue(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// IMPORTANTÍSSIMO: cria o ISO no horário local (evita bug de UTC -1 dia)
+// ISO respeitando o horário local (evita UTC quebrar o dia)
 const startOfDayISO = (d: string) => new Date(`${d}T00:00:00.000`).toISOString();
 const endOfDayISO = (d: string) => new Date(`${d}T23:59:59.999`).toISOString();
 
@@ -117,20 +116,6 @@ function formatPhoneBR(s?: string | null) {
   return s || "";
 }
 
-async function imgToDataUrl(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url);
-    const blob = await res.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
-
 /* ========================= Página ======================== */
 export default function Propostas() {
   /* ---------- Filtros / lista de resultados ---------- */
@@ -141,13 +126,21 @@ export default function Propostas() {
     return toDateInputValue(d);
   });
   const [dateTo, setDateTo] = useState(() => toDateInputValue(new Date()));
-
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<SimRow[]>([]);
 
-  // telefone do usuário para colar no texto “📲 Garanta…”
-  const [userPhone, setUserPhone] = useState<string>("");
+  // paginação
+  const pageSize = 15;
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const pagedRows = useMemo(
+    () => rows.slice((page - 1) * pageSize, page * pageSize),
+    [rows, page],
+  );
+  useEffect(() => setPage(1), [rows.length]); // reset ao recarregar
 
+  // telefone do usuário (para texto de oportunidade)
+  const [userPhone, setUserPhone] = useState<string>("");
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
@@ -186,7 +179,6 @@ export default function Propostas() {
     if (dateFrom) query = query.gte("created_at", startOfDayISO(dateFrom));
     if (dateTo) query = query.lte("created_at", endOfDayISO(dateTo));
 
-    // busca por nome/telefone
     if (q.trim()) {
       const like = `%${q.trim()}%`;
       query = query.or(`lead_nome.ilike.${like},lead_telefone.ilike.${like}`);
@@ -206,15 +198,14 @@ export default function Propostas() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // busca reativa — debounce 350ms
+  // busca reativa
   useEffect(() => {
     const t = setTimeout(() => load(), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, dateFrom, dateTo]);
 
-  /* ---------- Handlers de ações na linha ---------- */
+  /* ---------- Ações (Resultados) ---------- */
   function copyOportunidadeText(r: SimRow) {
     const segNorm = normalizeSegment(r.segmento);
     const emoji = emojiBySegment(r.segmento);
@@ -283,7 +274,7 @@ Grupo: ${r.grupo || "—"}`;
   async function handlePDF(r: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-    // Título
+    // Cabeçalho simples (sem logo / sem rodapé)
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
     doc.setTextColor(0, 0, 0);
@@ -292,11 +283,7 @@ Grupo: ${r.grupo || "—"}`;
     doc.setLineWidth(2);
     doc.line(40, 60, 555, 60);
 
-    // Tabela principal
-    const headerColor = brand.primary;
-    const detailColor = brand.accent;
-
-    // Campo/Valor
+    // Tabelas
     (doc as any).autoTable({
       startY: 80,
       head: [["Campo", "Valor"]],
@@ -308,15 +295,13 @@ Grupo: ${r.grupo || "—"}`;
         ["Grupo", r.grupo || "—"],
       ],
       styles: { font: "helvetica", fontSize: 10, halign: "left" },
-      headStyles: { fillColor: headerColor, textColor: "#FFFFFF" },
+      headStyles: { fillColor: brand.primary, textColor: "#FFFFFF" },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: 40, right: 40 },
     });
 
     const after1 = (doc as any).lastAutoTable?.finalY ?? 140;
-
-    // Detalhes
     (doc as any).autoTable({
       startY: after1 + 20,
       head: [["Detalhe", "Valor"]],
@@ -330,50 +315,24 @@ Grupo: ${r.grupo || "—"}`;
         ["Novo prazo (meses)", String(r.novo_prazo ?? 0)],
       ],
       styles: { font: "helvetica", fontSize: 10, halign: "left" },
-      headStyles: { fillColor: detailColor, textColor: "#FFFFFF" },
+      headStyles: { fillColor: brand.accent, textColor: "#FFFFFF" },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: 40, right: 40 },
     });
 
-    // Rodapé com logo + bloco de infos
-    const logo = (await imgToDataUrl("/logo-consulmax.png?v=3")) || null;
-    const footerY = 790;
-    doc.setDrawColor(200);
-    doc.line(40, footerY - 30, 555, footerY - 30);
-    if (logo) {
-      // ~70px de largura proporcional
-      doc.addImage(logo, "PNG", 40, footerY - 20, 70, 20);
-    }
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(60, 60, 60);
-    const right = 555;
-    const lines = [
-      "Consulmax Consórcios e Investimentos",
-      "CNPJ: 57.942.043/0001-03",
-      "Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO",
-      "Cel/Whats: (69) 9 9302-9380",
-      "consulmaxconsorcios.com.br",
-    ];
-    lines.forEach((tx, i) => {
-      const w = doc.getTextWidth(tx);
-      doc.text(tx, right - w, footerY - 18 + i * 10);
-    });
-
     doc.save(`Proposta_${r.code}.pdf`);
   }
 
-  /* ---------- Propostas de Investimento ---------- */
+  /* ---------- Propostas de Investimento (layout de antes) ---------- */
   const [addOpen, setAddOpen] = useState(false);
   const [modalQ, setModalQ] = useState("");
   const [modalLoading, setModalLoading] = useState(false);
   const [modalRows, setModalRows] = useState<ModalItem[]>([]);
   const [modalSel, setModalSel] = useState<Set<number>>(new Set());
 
-  // lista final (até 5)
   const [invest, setInvest] = useState<SimRow[]>([]);
-  const [selectMap, setSelectMap] = useState<Record<number, boolean>>({}); // seleção na lista final
+  const [selectMap, setSelectMap] = useState<Record<number, boolean>>({});
 
   function countSelected() {
     return Object.values(selectMap).filter(Boolean).length;
@@ -464,14 +423,10 @@ Grupo: ${r.grupo || "—"}`;
     if (sims.length === 0) return;
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const logo = (await imgToDataUrl("/logo-consulmax.png?v=3")) || null;
 
     // CAPA
     doc.setFillColor(brand.primary);
     doc.rect(0, 0, 595, 180, "F");
-    if (logo) {
-      doc.addImage(logo, "PNG", 40, 40, 90, 26);
-    }
     doc.setFont("helvetica", "bold");
     doc.setFontSize(24);
     doc.setTextColor("#FFFFFF");
@@ -482,18 +437,12 @@ Grupo: ${r.grupo || "—"}`;
       : model === "previdencia" ? "Previdência Aplicada"
       : model === "credito_correcao" ? "Crédito com Correção"
       : "Extrato da Proposta";
-
     doc.text(title, 40, 120);
 
-    doc.setTextColor("#000000");
-    doc.setFontSize(14);
-    doc.text(`Itens selecionados: ${sims.length}`, 40, 210);
-
-    // páginas por sim
+    // Conteúdo por simulação (sem rodapé / sem logos)
     sims.forEach((r, idx) => {
       if (idx > 0 || true) doc.addPage();
 
-      // Cabeçalho da página
       doc.setFont("helvetica", "bold");
       doc.setFontSize(16);
       doc.setTextColor(0, 0, 0);
@@ -504,7 +453,6 @@ Grupo: ${r.grupo || "—"}`;
 
       const segNorm = normalizeSegment(r.segmento);
 
-      // bloco de dados
       (doc as any).autoTable({
         startY: 85,
         head: [["Campo", "Valor"]],
@@ -526,7 +474,6 @@ Grupo: ${r.grupo || "—"}`;
       });
 
       const y = (doc as any).lastAutoTable?.finalY ?? 300;
-      // Observações conforme modelo (ilustrativo)
       doc.setFont("helvetica", "normal");
       doc.setFontSize(11);
       doc.setTextColor(60, 60, 60);
@@ -543,27 +490,6 @@ Grupo: ${r.grupo || "—"}`;
           ? "Simulação com hipótese de correção do crédito."
           : "Resumo consolidado dos principais números desta proposta.";
       doc.text(msg, 40, y + 24, { maxWidth: 515 });
-    });
-
-    // rodapé (última página já está aberta)
-    const footerY = 790;
-    doc.setDrawColor(200);
-    doc.line(40, footerY - 30, 555, footerY - 30);
-    if (logo) doc.addImage(logo, "PNG", 40, footerY - 20, 70, 20);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(60, 60, 60);
-    const right = 555;
-    const lines = [
-      "Consulmax Consórcios e Investimentos",
-      "CNPJ: 57.942.043/0001-03",
-      "Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO",
-      "Cel/Whats: (69) 9 9302-9380",
-      "consulmaxconsorcios.com.br",
-    ];
-    lines.forEach((tx, i) => {
-      const w = doc.getTextWidth(tx);
-      doc.text(tx, right - w, footerY - 18 + i * 10);
     });
 
     doc.save(`${title.replace(/\s+/g, "_")}.pdf`);
@@ -617,7 +543,7 @@ Grupo: ${r.grupo || "—"}`;
         </CardContent>
       </Card>
 
-      {/* Resultados */}
+      {/* Resultados (paginado) */}
       <Card>
         <CardHeader>
           <CardTitle>
@@ -627,7 +553,7 @@ Grupo: ${r.grupo || "—"}`;
             </span>
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
           <div className="overflow-auto rounded-lg border">
             <table className="min-w-full text-sm">
               <thead className="bg-muted/40">
@@ -639,7 +565,6 @@ Grupo: ${r.grupo || "—"}`;
                   <th className="text-left p-2">Crédito (após)</th>
                   <th className="text-left p-2">Parcela (após)</th>
                   <th className="text-left p-2">Prazo</th>
-                  {/* Cabeçalho das ações com rótulos (ficam alinhados aos ícones) */}
                   <th className="text-center p-2">Oportunidade</th>
                   <th className="text-center p-2">Resumo</th>
                   <th className="text-center p-2">PDF</th>
@@ -648,7 +573,7 @@ Grupo: ${r.grupo || "—"}`;
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {pagedRows.map((r) => (
                   <tr key={r.code} className="border-t">
                     <td className="p-2">{r.code}</td>
                     <td className="p-2 whitespace-nowrap">
@@ -665,7 +590,6 @@ Grupo: ${r.grupo || "—"}`;
                     <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
                     <td className="p-2">{r.novo_prazo ?? 0}x</td>
 
-                    {/* ações — ícones somente */}
                     <td className="p-2 text-center">
                       <button
                         className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
@@ -713,7 +637,7 @@ Grupo: ${r.grupo || "—"}`;
                     </td>
                   </tr>
                 ))}
-                {rows.length === 0 && (
+                {pagedRows.length === 0 && (
                   <tr>
                     <td colSpan={12} className="p-6 text-center text-muted-foreground">
                       {loading ? "Carregando..." : "Nenhum resultado para os filtros."}
@@ -723,15 +647,50 @@ Grupo: ${r.grupo || "—"}`;
               </tbody>
             </table>
           </div>
+
+          {/* Controles de paginação */}
+          <div className="flex items-center justify-between text-sm">
+            <div>
+              {rows.length > 0 && (
+                <>
+                  Mostrando{" "}
+                  <strong>
+                    {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)}
+                  </strong>{" "}
+                  de <strong>{rows.length}</strong>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                className="h-9 rounded-xl px-3"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+              >
+                Anterior
+              </Button>
+              <span>
+                Página {page} de {totalPages}
+              </span>
+              <Button
+                variant="secondary"
+                className="h-9 rounded-xl px-3"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+              >
+                Próxima
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
-      {/* Propostas de Investimento */}
+      {/* Propostas de Investimento (layout anterior) */}
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle>Propostas de Investimento</CardTitle>
           <div className="flex items-center gap-2">
-            {/* Gerar com as selecionadas */}
             <div className="relative">
               <details className="group">
                 <summary className="list-none">
@@ -753,7 +712,7 @@ Grupo: ${r.grupo || "—"}`;
                       className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
                       onClick={(e) => {
                         e.preventDefault();
-                        gerarPDFInvest(opt.k as ModelKey, selectedInvest);
+                        gerarPDFInvest(opt.k as any, selectedInvest);
                       }}
                       disabled={selectedInvest.length === 0}
                     >
@@ -764,10 +723,7 @@ Grupo: ${r.grupo || "—"}`;
               </details>
             </div>
 
-            <Button
-              className="rounded-2xl h-10 px-4"
-              onClick={() => setAddOpen(true)}
-            >
+            <Button className="rounded-2xl h-10 px-4" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4 mr-1" />
               Adicionar simulações
             </Button>
@@ -838,7 +794,7 @@ Grupo: ${r.grupo || "—"}`;
                                 className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
                                 onClick={(e) => {
                                   e.preventDefault();
-                                  gerarPDFInvest(opt.k as ModelKey, [r]);
+                                  gerarPDFInvest(opt.k as any, [r]);
                                 }}
                               >
                                 {opt.label}
@@ -904,7 +860,7 @@ Grupo: ${r.grupo || "—"}`;
                 </div>
               </div>
 
-              <div className="overflow-auto rounded-lg border" style={{ maxHeight: 420 }}>
+              <div className="overflow-auto rounded-lg border">
                 <table className="min-w-full text-sm">
                   <thead className="bg-muted/40">
                     <tr>
@@ -958,8 +914,7 @@ Grupo: ${r.grupo || "—"}`;
 
               <div className="flex items-center justify-between text-sm">
                 <div>
-                  Selecionados no total:{" "}
-                  <strong>{modalSel.size}</strong> / 5
+                  Selecionados no total: <strong>{modalSel.size}</strong> / 5
                 </div>
                 <div className="flex items-center gap-2">
                   <Button

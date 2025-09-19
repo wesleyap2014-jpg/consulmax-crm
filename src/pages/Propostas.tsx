@@ -24,7 +24,6 @@ import "jspdf-autotable";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
-
 type SimRow = {
   code: number;
   created_at: string;
@@ -44,15 +43,6 @@ type SimRow = {
   parcela_ate_1_ou_2: number | null;
   parcela_demais: number | null;
   lance_proprio_valor: number | null;
-
-  // extras (não usados agora)
-  valor_categoria?: number | null;
-  lance_ofertado_valor?: number | null;
-  lance_embutido_valor?: number | null;
-  lance_percebido_pct?: number | null;
-  nova_parcela_sem_limite?: number | null;
-  parcela_limitante?: number | null;
-  saldo_devedor_final?: number | null;
 };
 
 type ModalItem = Pick<
@@ -74,6 +64,8 @@ const brand = {
   grayRow: "#F3F4F6",
 };
 
+const LOGO_URL = "/logo-consulmax.png";
+
 const brMoney = (v?: number | null) =>
   (v ?? 0).toLocaleString("pt-BR", {
     style: "currency",
@@ -85,8 +77,6 @@ function toDateInputValue(d: Date) {
   const pad = (n: number) => `${n}`.padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-
-// ISO respeitando o horário local (evita UTC quebrar o dia)
 const startOfDayISO = (d: string) => new Date(`${d}T00:00:00.000`).toISOString();
 const endOfDayISO = (d: string) => new Date(`${d}T23:59:59.999`).toISOString();
 
@@ -107,13 +97,25 @@ function emojiBySegment(seg?: string | null) {
   if (s.includes("pesad")) return "🚚";
   return "🚗";
 }
-
 function formatPhoneBR(s?: string | null) {
   const d = (s || "").replace(/\D/g, "");
   if (!d) return "";
   if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
   if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return s || "";
+}
+async function fetchAsDataURL(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise<string>((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
 }
 
 /* ========================= Página ======================== */
@@ -135,9 +137,9 @@ export default function Propostas() {
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows = useMemo(
     () => rows.slice((page - 1) * pageSize, page * pageSize),
-    [rows, page],
+    [rows, page]
   );
-  useEffect(() => setPage(1), [rows.length]); // reset ao recarregar
+  useEffect(() => setPage(1), [rows.length]);
 
   // telefone do usuário (para texto de oportunidade)
   const [userPhone, setUserPhone] = useState<string>("");
@@ -146,9 +148,19 @@ export default function Propostas() {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
       if (!uid) return;
-      const { data } = await supabase.from("users").select("phone").eq("auth_user_id", uid).maybeSingle();
+      const { data } = await supabase
+        .from("users")
+        .select("phone")
+        .eq("auth_user_id", uid)
+        .maybeSingle();
       setUserPhone((data?.phone || "").toString());
     })();
+  }, []);
+
+  // logo para PDF (rodapé)
+  const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
+  useEffect(() => {
+    fetchAsDataURL(LOGO_URL).then(setLogoDataUrl);
   }, []);
 
   async function load() {
@@ -171,14 +183,13 @@ export default function Propostas() {
           "parcela_ate_1_ou_2",
           "parcela_demais",
           "lance_proprio_valor",
-        ].join(","),
+        ].join(",")
       )
       .order("created_at", { ascending: false })
       .limit(300);
 
     if (dateFrom) query = query.gte("created_at", startOfDayISO(dateFrom));
     if (dateTo) query = query.lte("created_at", endOfDayISO(dateTo));
-
     if (q.trim()) {
       const like = `%${q.trim()}%`;
       query = query.or(`lead_nome.ilike.${like},lead_telefone.ilike.${like}`);
@@ -193,12 +204,10 @@ export default function Propostas() {
     setRows((data || []) as SimRow[]);
   }
 
-  // primeira carga
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // busca reativa
   useEffect(() => {
     const t = setTimeout(() => load(), 350);
     return () => clearTimeout(t);
@@ -271,19 +280,58 @@ Grupo: ${r.grupo || "—"}`;
     setRows((prev) => prev.filter((x) => x.code !== code));
   }
 
-  async function handlePDF(r: SimRow) {
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-    // Cabeçalho simples (sem logo / sem rodapé)
+  /* ---------- PDF helpers ---------- */
+  function addHeaderSimple(doc: jsPDF) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
     doc.setTextColor(0, 0, 0);
     doc.text("Proposta Embracon - Consulmax", 40, 50);
     doc.setDrawColor(161, 28, 39);
     doc.setLineWidth(2);
-    doc.line(40, 60, 555, 60);
+    doc.line(40, 60, doc.internal.pageSize.getWidth() - 40, 60);
+  }
+  function addFooter(doc: jsPDF) {
+    const w = doc.internal.pageSize.getWidth();
+    const h = doc.internal.pageSize.getHeight();
+    const margin = 40;
+    const yLine = h - 120;
 
-    // Tabelas
+    // linha cinza
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(1);
+    doc.line(margin, yLine, w - margin, yLine);
+
+    // logo à esquerda
+    if (logoDataUrl) {
+      const imgW = 64;
+      const imgH = 26;
+      doc.addImage(logoDataUrl, "PNG", margin, yLine + 18, imgW, imgH);
+    }
+
+    // bloco à direita
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(110, 110, 110);
+    doc.setFontSize(10);
+
+    const lines = [
+      "Consulmax Consórcios e Investimentos",
+      "CNPJ: 57.942.043/0001-03",
+      "Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO",
+      "Cel/Whats: (69) 9 9302-9380",
+      "consulmaxconsorcios.com.br",
+    ];
+
+    let y = yLine + 18;
+    lines.forEach((t) => {
+      doc.text(t, w - margin, y, { align: "right" as any });
+      y += 14;
+    });
+  }
+
+  async function handlePDF(r: SimRow) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    addHeaderSimple(doc);
+
     (doc as any).autoTable({
       startY: 80,
       head: [["Campo", "Valor"]],
@@ -321,10 +369,11 @@ Grupo: ${r.grupo || "—"}`;
       margin: { left: 40, right: 40 },
     });
 
+    addFooter(doc);
     doc.save(`Proposta_${r.code}.pdf`);
   }
 
-  /* ---------- Propostas de Investimento (layout de antes) ---------- */
+  /* ---------- Propostas de Investimento ---------- */
   const [addOpen, setAddOpen] = useState(false);
   const [modalQ, setModalQ] = useState("");
   const [modalLoading, setModalLoading] = useState(false);
@@ -333,16 +382,32 @@ Grupo: ${r.grupo || "—"}`;
 
   const [invest, setInvest] = useState<SimRow[]>([]);
   const [selectMap, setSelectMap] = useState<Record<number, boolean>>({});
+  const selectedCount = useMemo(
+    () => Object.values(selectMap).filter(Boolean).length,
+    [selectMap]
+  );
+  const selectedInvest = useMemo(
+    () => invest.filter((x) => !!selectMap[x.code]),
+    [invest, selectMap]
+  );
 
-  function countSelected() {
-    return Object.values(selectMap).filter(Boolean).length;
-  }
+  // modelo para gerar
+  type ModelKey =
+    | "direcionada"
+    | "alav_fin"
+    | "alav_patr"
+    | "previdencia"
+    | "credito_correcao"
+    | "extrato";
+  const [model, setModel] = useState<ModelKey>("direcionada");
 
   async function loadModal() {
     setModalLoading(true);
     let q = supabase
       .from("sim_simulations")
-      .select("code,created_at,lead_nome,lead_telefone,segmento,novo_credito,parcela_escolhida,novo_prazo")
+      .select(
+        "code,created_at,lead_nome,lead_telefone,segmento,novo_credito,parcela_escolhida,novo_prazo"
+      )
       .order("created_at", { ascending: false })
       .limit(200);
 
@@ -388,7 +453,7 @@ Grupo: ${r.grupo || "—"}`;
     const { data, error } = await supabase
       .from("sim_simulations")
       .select(
-        "code,created_at,lead_nome,lead_telefone,segmento,grupo,credito,parcela_contemplacao,novo_credito,parcela_escolhida,novo_prazo,parcela_ate_1_ou_2,parcela_demais,lance_proprio_valor",
+        "code,created_at,lead_nome,lead_telefone,segmento,grupo,credito,parcela_contemplacao,novo_credito,parcela_escolhida,novo_prazo,parcela_ate_1_ou_2,parcela_demais,lance_proprio_valor"
       )
       .in("code", ids);
 
@@ -410,46 +475,42 @@ Grupo: ${r.grupo || "—"}`;
   function toggleSelect(code: number) {
     setSelectMap((prev) => ({ ...prev, [code]: !prev[code] }));
   }
+  function selectAllInvest(checked: boolean) {
+    const m: Record<number, boolean> = {};
+    invest.forEach((r) => (m[r.code] = checked));
+    setSelectMap(m);
+  }
 
-  type ModelKey =
-    | "direcionada"
-    | "alav_fin"
-    | "alav_patr"
-    | "previdencia"
-    | "credito_correcao"
-    | "extrato";
+  async function gerarPDFInvest(modelKey: ModelKey, sims: SimRow[]) {
+    if (sims.length === 0) {
+      alert("Selecione pelo menos uma simulação.");
+      return;
+    }
 
-  async function gerarPDFInvest(model: ModelKey, sims: SimRow[]) {
-    if (sims.length === 0) return;
+    const titleMap: Record<ModelKey, string> = {
+      direcionada: "Proposta Direcionada",
+      alav_fin: "Alavancagem Financeira",
+      alav_patr: "Alavancagem Patrimonial",
+      previdencia: "Previdência Aplicada",
+      credito_correcao: "Crédito com Correção",
+      extrato: "Extrato da Proposta",
+    };
+    const title = titleMap[modelKey];
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-    // CAPA
+    // CAPA simples com faixa
     doc.setFillColor(brand.primary);
-    doc.rect(0, 0, 595, 180, "F");
+    doc.rect(0, 0, doc.internal.pageSize.getWidth(), 180, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(24);
     doc.setTextColor("#FFFFFF");
-    const title =
-      model === "direcionada" ? "Proposta Direcionada"
-      : model === "alav_fin" ? "Alavancagem Financeira"
-      : model === "alav_patr" ? "Alavancagem Patrimonial"
-      : model === "previdencia" ? "Previdência Aplicada"
-      : model === "credito_correcao" ? "Crédito com Correção"
-      : "Extrato da Proposta";
     doc.text(title, 40, 120);
+    addFooter(doc);
 
-    // Conteúdo por simulação (sem rodapé / sem logos)
     sims.forEach((r, idx) => {
-      if (idx > 0 || true) doc.addPage();
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.setTextColor(0, 0, 0);
-      doc.text(`${title} — #${r.code}`, 40, 50);
-      doc.setDrawColor(161, 28, 39);
-      doc.setLineWidth(2);
-      doc.line(40, 60, 555, 60);
+      doc.addPage();
+      addHeaderSimple(doc);
 
       const segNorm = normalizeSegment(r.segmento);
 
@@ -478,27 +539,24 @@ Grupo: ${r.grupo || "—"}`;
       doc.setFontSize(11);
       doc.setTextColor(60, 60, 60);
       const msg =
-        model === "direcionada"
+        modelKey === "direcionada"
           ? "Proposta voltada à aquisição direta do bem desejado."
-          : model === "alav_fin"
+          : modelKey === "alav_fin"
           ? "Estratégia para acelerar a conquista do bem com reforço de caixa."
-          : model === "alav_patr"
+          : modelKey === "alav_patr"
           ? "Uso inteligente do consórcio para fortalecer o patrimônio."
-          : model === "previdencia"
-          ? "Planejamento de longo prazo com foco em formação de reserva."
-          : model === "credito_correcao"
+          : modelKey === "previdencia"
+          ? "Planejamento de longo prazo com foco em reserva."
+          : modelKey === "credito_correcao"
           ? "Simulação com hipótese de correção do crédito."
           : "Resumo consolidado dos principais números desta proposta.";
-      doc.text(msg, 40, y + 24, { maxWidth: 515 });
+      doc.text(msg, 40, y + 24, { maxWidth: doc.internal.pageSize.getWidth() - 80 });
+
+      addFooter(doc);
     });
 
     doc.save(`${title.replace(/\s+/g, "_")}.pdf`);
   }
-
-  const selectedInvest = useMemo(
-    () => invest.filter((x) => !!selectMap[x.code]),
-    [invest, selectMap],
-  );
 
   /* ========================= UI ========================= */
   return (
@@ -548,9 +606,7 @@ Grupo: ${r.grupo || "—"}`;
         <CardHeader>
           <CardTitle>
             Resultados{" "}
-            <span className="text-muted-foreground text-sm">
-              ({rows.length})
-            </span>
+            <span className="text-muted-foreground text-sm">({rows.length})</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -648,7 +704,7 @@ Grupo: ${r.grupo || "—"}`;
             </table>
           </div>
 
-          {/* Controles de paginação */}
+          {/* paginação */}
           <div className="flex items-center justify-between text-sm">
             <div>
               {rows.length > 0 && (
@@ -686,53 +742,45 @@ Grupo: ${r.grupo || "—"}`;
         </CardContent>
       </Card>
 
-      {/* Propostas de Investimento (layout anterior) */}
+      {/* Propostas de Investimento */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader className="flex items-center justify-between gap-4">
           <CardTitle>Propostas de Investimento</CardTitle>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <details className="group">
-                <summary className="list-none">
-                  <Button className="rounded-2xl h-10 px-4" variant="secondary">
-                    Gerar... <ChevronDown className="h-4 w-4 ml-1" />
-                  </Button>
-                </summary>
-                <div className="absolute right-0 mt-2 w-56 bg-white border rounded-xl shadow z-10 p-1">
-                  {[
-                    { k: "direcionada", label: "Direcionada" },
-                    { k: "alav_fin", label: "Alav. Financeira" },
-                    { k: "alav_patr", label: "Alav. Patrimonial" },
-                    { k: "previdencia", label: "Previdência" },
-                    { k: "credito_correcao", label: "Crédito c/ Correção" },
-                    { k: "extrato", label: "Extrato" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.k}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        gerarPDFInvest(opt.k as any, selectedInvest);
-                      }}
-                      disabled={selectedInvest.length === 0}
-                    >
-                      {opt.label} {selectedInvest.length ? `(${selectedInvest.length})` : ""}
-                    </button>
-                  ))}
-                </div>
-              </details>
-            </div>
 
+          <div className="ml-auto flex items-center gap-2">
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value as any)}
+              className="h-10 rounded-2xl border px-3"
+              title="Modelo"
+            >
+              <option value="direcionada">Direcionada</option>
+              <option value="alav_fin">Alav. Financeira</option>
+              <option value="alav_patr">Alav. Patrimonial</option>
+              <option value="previdencia">Previdência</option>
+              <option value="credito_correcao">Crédito c/ Correção</option>
+              <option value="extrato">Extrato</option>
+            </select>
+
+            <Button
+              className="rounded-2xl h-10 px-4"
+              variant="secondary"
+              onClick={() => gerarPDFInvest(model, selectedInvest)}
+              disabled={selectedInvest.length === 0}
+            >
+              Gerar ({selectedInvest.length})
+            </Button>
+
+            {/* chip totalmente à direita */}
             <Button className="rounded-2xl h-10 px-4" onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" />
-              Adicionar simulações
+              <Plus className="h-4 w-4 mr-1" /> Adicionar simulações
             </Button>
           </div>
         </CardHeader>
 
         <CardContent>
           <div className="text-sm text-muted-foreground mb-2">
-            Selecionadas: <strong>{countSelected()}</strong> / 5
+            Selecionadas: <strong>{selectedCount}</strong> / 5
           </div>
 
           <div className="overflow-auto rounded-lg border">
@@ -740,7 +788,20 @@ Grupo: ${r.grupo || "—"}`;
               <thead className="bg-muted/40">
                 <tr>
                   <th className="p-2 w-10"></th>
-                  <th className="text-left p-2">Criada</th>
+                  <th className="text-left p-2">
+                    <div className="flex items-center gap-2">
+                      Criada
+                      <input
+                        type="checkbox"
+                        title="Selecionar todas"
+                        onChange={(e) => selectAllInvest(e.currentTarget.checked)}
+                        checked={
+                          invest.length > 0 &&
+                          invest.every((r) => !!selectMap[r.code])
+                        }
+                      />
+                    </div>
+                  </th>
                   <th className="text-left p-2">Lead</th>
                   <th className="text-left p-2">Segmento</th>
                   <th className="text-left p-2">Crédito (após)</th>
@@ -773,6 +834,7 @@ Grupo: ${r.grupo || "—"}`;
                     <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
                     <td className="p-2">{r.novo_prazo ?? 0}x</td>
                     <td className="p-2 text-center">
+                      {/* menu por linha continua operacional */}
                       <div className="relative">
                         <details className="group inline-block">
                           <summary className="list-none">
@@ -822,18 +884,17 @@ Grupo: ${r.grupo || "—"}`;
       {/* MODAL: adicionar simulações */}
       {addOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
+          <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg overflow-hidden">
+            {/* header */}
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <div className="font-semibold">Adicionar simulações (até 5)</div>
-              <button
-                className="p-1 rounded hover:bg-muted"
-                onClick={() => setAddOpen(false)}
-              >
+              <button className="p-1 rounded hover:bg-muted" onClick={() => setAddOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="p-4 space-y-3">
+            {/* body com altura máxima e rolagem interna */}
+            <div className="p-4 space-y-3 max-h-[80vh] overflow-y-auto">
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="md:col-span-3">
                   <Label>Buscar por nome ou telefone</Label>
@@ -860,56 +921,58 @@ Grupo: ${r.grupo || "—"}`;
                 </div>
               </div>
 
-              <div className="overflow-auto rounded-lg border">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-muted/40">
-                    <tr>
-                      <th className="p-2 w-10">Sel.</th>
-                      <th className="text-left p-2">Criada</th>
-                      <th className="text-left p-2">Lead</th>
-                      <th className="text-left p-2">Segmento</th>
-                      <th className="text-left p-2">Crédito (após)</th>
-                      <th className="text-left p-2">Parcela (após)</th>
-                      <th className="text-left p-2">Prazo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {modalRows.map((r) => {
-                      const checked = modalSel.has(r.code);
-                      return (
-                        <tr key={r.code} className="border-t">
-                          <td className="p-2 text-center">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleModalSel(r.code)}
-                            />
-                          </td>
-                          <td className="p-2 whitespace-nowrap">
-                            {new Date(r.created_at).toLocaleString("pt-BR")}
-                          </td>
-                          <td className="p-2">
-                            <div className="font-medium">{r.lead_nome || "—"}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {r.lead_telefone || "—"}
-                            </div>
-                          </td>
-                          <td className="p-2">{normalizeSegment(r.segmento)}</td>
-                          <td className="p-2">{brMoney(r.novo_credito)}</td>
-                          <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
-                          <td className="p-2">{r.novo_prazo ?? 0}x</td>
-                        </tr>
-                      );
-                    })}
-                    {modalRows.length === 0 && (
+              <div className="rounded-lg border overflow-hidden">
+                <div className="max-h-[50vh] overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-muted/40 sticky top-0">
                       <tr>
-                        <td colSpan={7} className="p-6 text-center text-muted-foreground">
-                          {modalLoading ? "Carregando..." : "Sem resultados."}
-                        </td>
+                        <th className="p-2 w-10">Sel.</th>
+                        <th className="text-left p-2">Criada</th>
+                        <th className="text-left p-2">Lead</th>
+                        <th className="text-left p-2">Segmento</th>
+                        <th className="text-left p-2">Crédito (após)</th>
+                        <th className="text-left p-2">Parcela (após)</th>
+                        <th className="text-left p-2">Prazo</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {modalRows.map((r) => {
+                        const checked = modalSel.has(r.code);
+                        return (
+                          <tr key={r.code} className="border-t">
+                            <td className="p-2 text-center">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleModalSel(r.code)}
+                              />
+                            </td>
+                            <td className="p-2 whitespace-nowrap">
+                              {new Date(r.created_at).toLocaleString("pt-BR")}
+                            </td>
+                            <td className="p-2">
+                              <div className="font-medium">{r.lead_nome || "—"}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {r.lead_telefone || "—"}
+                              </div>
+                            </td>
+                            <td className="p-2">{normalizeSegment(r.segmento)}</td>
+                            <td className="p-2">{brMoney(r.novo_credito)}</td>
+                            <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
+                            <td className="p-2">{r.novo_prazo ?? 0}x</td>
+                          </tr>
+                        );
+                      })}
+                      {modalRows.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                            {modalLoading ? "Carregando..." : "Sem resultados."}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
               <div className="flex items-center justify-between text-sm">

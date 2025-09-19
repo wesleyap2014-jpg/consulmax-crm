@@ -13,17 +13,16 @@ import {
   Trash2,
   Megaphone,
   ChevronDown,
-  Plus,
   Search,
   X,
   Loader2,
   Check,
+  SlidersHorizontal,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 
 /* ========================= Tipos ========================= */
-type UUID = string;
 type SimRow = {
   code: number;
   created_at: string;
@@ -56,6 +55,14 @@ type ModalItem = Pick<
   | "parcela_escolhida"
   | "novo_prazo"
 >;
+
+type ModelKey =
+  | "direcionada"
+  | "alav_fin"
+  | "alav_patr"
+  | "previdencia"
+  | "credito_correcao"
+  | "extrato";
 
 /* ======================= Helpers ========================= */
 const brand = {
@@ -118,9 +125,27 @@ async function fetchAsDataURL(url: string): Promise<string | null> {
   }
 }
 
+/* ============ Percent helpers (humanizado) ============== */
+function parsePercentInput(raw: string): number {
+  // retorna fração: "7%" -> 0.07, "7" -> 0.07, "0,07" -> 0.07, "0.07" -> 0.07
+  const s = (raw || "").toString().trim().replace(/\s+/g, "");
+  if (!s) return 0;
+  const hasPercent = s.endsWith("%");
+  const cleaned = s.replace("%", "").replace(".", "").replace(",", ".");
+  const n = Number(cleaned);
+  if (isNaN(n)) return 0;
+  if (hasPercent) return n / 100;
+  // se o usuário digitou 7 queremos 7% (=0.07); se digitou 0.07 queremos 0.07
+  return n > 1 ? n / 100 : n;
+}
+function formatPercentFraction(frac: number, withSymbol = true): string {
+  const pct = (frac * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+  return withSymbol ? `${pct}%` : pct;
+}
+
 /* ========================= Página ======================== */
 export default function Propostas() {
-  /* ---------- Filtros / lista de resultados ---------- */
+  /* ---------- Filtros / resultados ---------- */
   const [q, setQ] = useState("");
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date();
@@ -141,7 +166,7 @@ export default function Propostas() {
   );
   useEffect(() => setPage(1), [rows.length]);
 
-  // telefone do usuário (para texto de oportunidade)
+  // telefone do usuário (oportunidade)
   const [userPhone, setUserPhone] = useState<string>("");
   useEffect(() => {
     (async () => {
@@ -157,7 +182,7 @@ export default function Propostas() {
     })();
   }, []);
 
-  // logo para PDF
+  // logo p/ PDF
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   useEffect(() => {
     fetchAsDataURL(LOGO_URL).then(setLogoDataUrl);
@@ -203,7 +228,6 @@ export default function Propostas() {
     }
     setRows((data || []) as SimRow[]);
   }
-
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -214,7 +238,7 @@ export default function Propostas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, dateFrom, dateTo]);
 
-  /* ---------- Ações (Resultados) ---------- */
+  /* ---------- Textos de ação ---------- */
   function copyOportunidadeText(r: SimRow) {
     const segNorm = normalizeSegment(r.segmento);
     const emoji = emojiBySegment(r.segmento);
@@ -249,7 +273,6 @@ Vantagens
       .then(() => alert("Oportunidade copiada!"))
       .catch(() => alert("Não foi possível copiar."));
   }
-
   function copyResumoText(r: SimRow) {
     const segNorm = normalizeSegment(r.segmento);
     const text = `Resumo da Proposta — ${segNorm}
@@ -269,7 +292,6 @@ Grupo: ${r.grupo || "—"}`;
       .then(() => alert("Resumo copiado!"))
       .catch(() => alert("Não foi possível copiar."));
   }
-
   async function handleDelete(code: number) {
     if (!confirm(`Excluir a simulação #${code}?`)) return;
     const { error } = await supabase.from("sim_simulations").delete().eq("code", code);
@@ -290,13 +312,10 @@ Grupo: ${r.grupo || "—"}`;
     doc.setLineWidth(2);
     doc.line(40, 60, doc.internal.pageSize.getWidth() - 40, 60);
   }
-
-  // ✔ marca d’água (logo grande e opacidade baixa, centralizada)
   function addWatermark(doc: jsPDF) {
     if (!logoDataUrl) return;
     const w = doc.internal.pageSize.getWidth();
     const h = doc.internal.pageSize.getHeight();
-
     const props = (doc as any).getImageProperties(logoDataUrl);
     const maxW = w * 0.6;
     const maxH = h * 0.35;
@@ -305,7 +324,6 @@ Grupo: ${r.grupo || "—"}`;
     const ih = props.height * ratio;
     const x = (w - iw) / 2;
     const y = (h - ih) / 2;
-
     const hasG = (doc as any).GState && (doc as any).setGState;
     if (hasG) {
       const gLow = new (doc as any).GState({ opacity: 0.07 });
@@ -314,27 +332,20 @@ Grupo: ${r.grupo || "—"}`;
       const gFull = new (doc as any).GState({ opacity: 1 });
       (doc as any).setGState(gFull);
     } else {
-      // fallback sem opacidade (ainda assim centralizada e grande)
       doc.addImage(logoDataUrl, "PNG", x, y, iw, ih);
     }
   }
-
-  // ✔ rodapé com logo à esquerda (maior) e dados à direita
   function addFooter(doc: jsPDF) {
     const w = doc.internal.pageSize.getWidth();
     const h = doc.internal.pageSize.getHeight();
     const margin = 40;
-
-    // área reservada para o rodapé
     const areaH = 90;
     const yTop = h - areaH - 40;
 
-    // linha separadora suave
     doc.setDrawColor(220, 220, 220);
     doc.setLineWidth(1);
     doc.line(margin, yTop, w - margin, yTop);
 
-    // logo maior, mantendo proporção e centralizada verticalmente no bloco
     if (logoDataUrl) {
       const props = (doc as any).getImageProperties(logoDataUrl);
       const maxW = 140;
@@ -346,11 +357,9 @@ Grupo: ${r.grupo || "—"}`;
       doc.addImage(logoDataUrl, "PNG", margin, ly, lw, lh);
     }
 
-    // bloco de texto à direita
     doc.setFont("helvetica", "normal");
     doc.setTextColor(110, 110, 110);
     doc.setFontSize(10);
-
     const lines = [
       "Consulmax Consórcios e Investimentos",
       "CNPJ: 57.942.043/0001-03",
@@ -358,7 +367,6 @@ Grupo: ${r.grupo || "—"}`;
       "Cel/Whats: (69) 9 9302-9380",
       "consulmaxconsorcios.com.br",
     ];
-
     let y = yTop + 26;
     lines.forEach((t) => {
       doc.text(t, w - margin, y, { align: "right" as any });
@@ -366,6 +374,37 @@ Grupo: ${r.grupo || "—"}`;
     });
   }
 
+  /* ---------- Parâmetros (humanizados) ---------- */
+  type InvestParams = {
+    percCorrecaoAnual: number; // Crédito c/ Correção
+    percRendimentoPrevidencia: number; // Previdência
+    percAlavancagemFinanceira: number; // Alav. Financeira
+    percAlavancagemPatrimonial: number; // Alav. Patrimonial
+  };
+  const DEFAULT_PARAMS: InvestParams = {
+    percCorrecaoAnual: 0.07,
+    percRendimentoPrevidencia: 0.1,
+    percAlavancagemFinanceira: 0.05,
+    percAlavancagemPatrimonial: 0.06,
+  };
+  const [params, setParams] = useState<InvestParams>(() => {
+    try {
+      const raw = localStorage.getItem("investParams");
+      if (raw) return { ...DEFAULT_PARAMS, ...JSON.parse(raw) };
+    } catch {}
+    return DEFAULT_PARAMS;
+  });
+  const [paramOpen, setParamOpen] = useState(false);
+
+  function saveParams(p: InvestParams) {
+    setParams(p);
+    try {
+      localStorage.setItem("investParams", JSON.stringify(p));
+    } catch {}
+    setParamOpen(false);
+  }
+
+  /* ---------- PDF (Resultados simples) ---------- */
   async function handlePDF(r: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     addHeaderSimple(doc);
@@ -430,14 +469,6 @@ Grupo: ${r.grupo || "—"}`;
     [invest, selectMap]
   );
 
-  // modelo para gerar
-  type ModelKey =
-    | "direcionada"
-    | "alav_fin"
-    | "alav_patr"
-    | "previdencia"
-    | "credito_correcao"
-    | "extrato";
   const [model, setModel] = useState<ModelKey>("direcionada");
 
   async function loadModal() {
@@ -463,7 +494,6 @@ Grupo: ${r.grupo || "—"}`;
     }
     setModalRows((data || []) as ModalItem[]);
   }
-
   useEffect(() => {
     if (!addOpen) return;
     const t = setTimeout(() => loadModal(), 300);
@@ -482,7 +512,6 @@ Grupo: ${r.grupo || "—"}`;
       return s;
     });
   }
-
   async function saveFromModal() {
     if (modalSel.size === 0) {
       setAddOpen(false);
@@ -510,7 +539,6 @@ Grupo: ${r.grupo || "—"}`;
     setAddOpen(false);
     setModalSel(new Set());
   }
-
   function toggleSelect(code: number) {
     setSelectMap((prev) => ({ ...prev, [code]: !prev[code] }));
   }
@@ -520,12 +548,12 @@ Grupo: ${r.grupo || "—"}`;
     setSelectMap(m);
   }
 
+  // Geração de PDF com parâmetros por modelo
   async function gerarPDFInvest(modelKey: ModelKey, sims: SimRow[]) {
     if (sims.length === 0) {
       alert("Selecione pelo menos uma simulação.");
       return;
     }
-
     const titleMap: Record<ModelKey, string> = {
       direcionada: "Proposta Direcionada",
       alav_fin: "Alavancagem Financeira",
@@ -538,7 +566,7 @@ Grupo: ${r.grupo || "—"}`;
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-    // CAPA simples com faixa + marca d'água
+    // CAPA com faixa + marca d'água
     doc.setFillColor(brand.primary);
     doc.rect(0, 0, doc.internal.pageSize.getWidth(), 180, "F");
     doc.setFont("helvetica", "bold");
@@ -555,6 +583,7 @@ Grupo: ${r.grupo || "—"}`;
 
       const segNorm = normalizeSegment(r.segmento);
 
+      // 1) Tabela base
       (doc as any).autoTable({
         startY: 85,
         head: [["Campo", "Valor"]],
@@ -575,7 +604,53 @@ Grupo: ${r.grupo || "—"}`;
         margin: { left: 40, right: 40 },
       });
 
-      const y = (doc as any).lastAutoTable?.finalY ?? 300;
+      // 2) Parâmetros do modelo
+      const yBase = (doc as any).lastAutoTable?.finalY ?? 300;
+      const paramRows: string[][] = [];
+      switch (modelKey) {
+        case "direcionada":
+          paramRows.push(["Parâmetros", "—"]);
+          break;
+        case "alav_fin":
+          paramRows.push([
+            "Reforço (alav. financeira)",
+            formatPercentFraction(params.percAlavancagemFinanceira),
+          ]);
+          break;
+        case "alav_patr":
+          paramRows.push([
+            "Crescimento patrimonial",
+            formatPercentFraction(params.percAlavancagemPatrimonial),
+          ]);
+          break;
+        case "previdencia":
+          paramRows.push([
+            "Rendimento anual (previdência)",
+            formatPercentFraction(params.percRendimentoPrevidencia),
+          ]);
+          break;
+        case "credito_correcao":
+          paramRows.push([
+            "Correção anual do crédito",
+            formatPercentFraction(params.percCorrecaoAnual),
+          ]);
+          break;
+        case "extrato":
+          paramRows.push(["Parâmetros", "—"]);
+          break;
+      }
+      (doc as any).autoTable({
+        startY: yBase + 18,
+        head: [["Configuração (parâmetros)", "Valor"]],
+        body: paramRows.length ? paramRows : [["—", "—"]],
+        styles: { font: "helvetica", fontSize: 10, halign: "left" },
+        headStyles: { fillColor: brand.accent, textColor: "#FFFFFF" },
+        theme: "grid",
+        margin: { left: 40, right: 40 },
+      });
+
+      // 3) Observação do modelo
+      const yObs = (doc as any).lastAutoTable?.finalY ?? yBase + 18;
       doc.setFont("helvetica", "normal");
       doc.setFontSize(11);
       doc.setTextColor(60, 60, 60);
@@ -583,15 +658,25 @@ Grupo: ${r.grupo || "—"}`;
         modelKey === "direcionada"
           ? "Proposta voltada à aquisição direta do bem desejado."
           : modelKey === "alav_fin"
-          ? "Estratégia para acelerar a conquista do bem com reforço de caixa."
+          ? `Estratégia para acelerar a conquista do bem com reforço de ${formatPercentFraction(
+              params.percAlavancagemFinanceira
+            )} aplicado nos cálculos.`
           : modelKey === "alav_patr"
-          ? "Uso inteligente do consórcio para fortalecer o patrimônio."
+          ? `Projeção de fortalecimento patrimonial com taxa de ${formatPercentFraction(
+              params.percAlavancagemPatrimonial
+            )}.`
           : modelKey === "previdencia"
-          ? "Planejamento de longo prazo com foco em reserva."
+          ? `Planejamento de longo prazo considerando rendimento anual de ${formatPercentFraction(
+              params.percRendimentoPrevidencia
+            )}.`
           : modelKey === "credito_correcao"
-          ? "Simulação com hipótese de correção do crédito."
+          ? `Hipótese de correção do crédito de ${formatPercentFraction(
+              params.percCorrecaoAnual
+            )} ao ano.`
           : "Resumo consolidado dos principais números desta proposta.";
-      doc.text(msg, 40, y + 24, { maxWidth: doc.internal.pageSize.getWidth() - 80 });
+      doc.text(msg, 40, yObs + 24, {
+        maxWidth: doc.internal.pageSize.getWidth() - 80,
+      });
 
       addFooter(doc);
     });
@@ -789,6 +874,17 @@ Grupo: ${r.grupo || "—"}`;
           <CardTitle>Propostas de Investimento</CardTitle>
 
           <div className="ml-auto flex items-center gap-2">
+            {/* Parâmetros (humanizado) */}
+            <Button
+              variant="secondary"
+              className="rounded-2xl h-10 px-4"
+              onClick={() => setParamOpen(true)}
+              title="Parâmetros"
+            >
+              <SlidersHorizontal className="h-4 w-4 mr-2" />
+              Parâmetros
+            </Button>
+
             <select
               value={model}
               onChange={(e) => setModel(e.target.value as any)}
@@ -812,8 +908,9 @@ Grupo: ${r.grupo || "—"}`;
               Gerar ({selectedInvest.length})
             </Button>
 
+            {/* Botão sem "+" para não cortar o texto */}
             <Button className="rounded-2xl h-10 px-4" onClick={() => setAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" /> Adicionar simulações
+              Adicionar simulações
             </Button>
           </div>
         </CardHeader>
@@ -894,7 +991,7 @@ Grupo: ${r.grupo || "—"}`;
                                 className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
                                 onClick={(e) => {
                                   e.preventDefault();
-                                  gerarPDFInvest(opt.k as any, [r]);
+                                  gerarPDFInvest(opt.k as ModelKey, [r]);
                                 }}
                               >
                                 {opt.label}
@@ -923,7 +1020,6 @@ Grupo: ${r.grupo || "—"}`;
       {addOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg overflow-hidden">
-            {/* header */}
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <div className="font-semibold">Adicionar simulações (até 5)</div>
               <button className="p-1 rounded hover:bg-muted" onClick={() => setAddOpen(false)}>
@@ -931,7 +1027,6 @@ Grupo: ${r.grupo || "—"}`;
               </button>
             </div>
 
-            {/* body */}
             <div className="p-4 space-y-3 max-h-[80vh] overflow-y-auto">
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="md:col-span-3">
@@ -1035,6 +1130,90 @@ Grupo: ${r.grupo || "—"}`;
                   </Button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Parâmetros (humanizado) */}
+      {paramOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-lg overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <div className="font-semibold">Parâmetros das propostas</div>
+              <button className="p-1 rounded hover:bg-muted" onClick={() => setParamOpen(false)}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-5 grid gap-4 md:grid-cols-2 text-sm">
+              <div>
+                <Label>Correção anual do crédito (Crédito c/ Correção)</Label>
+                <Input
+                  defaultValue={formatPercentFraction(params.percCorrecaoAnual)}
+                  placeholder="ex.: 7% ou 0,07"
+                  onBlur={(e) => {
+                    const v = parsePercentInput(e.target.value);
+                    e.currentTarget.value = formatPercentFraction(v);
+                    setParams((p) => ({ ...p, percCorrecaoAnual: v }));
+                  }}
+                />
+              </div>
+
+              <div>
+                <Label>Rendimento anual (Previdência)</Label>
+                <Input
+                  defaultValue={formatPercentFraction(params.percRendimentoPrevidencia)}
+                  placeholder="ex.: 10% ou 0,10"
+                  onBlur={(e) => {
+                    const v = parsePercentInput(e.target.value);
+                    e.currentTarget.value = formatPercentFraction(v);
+                    setParams((p) => ({ ...p, percRendimentoPrevidencia: v }));
+                  }}
+                />
+              </div>
+
+              <div>
+                <Label>Reforço (Alav. Financeira)</Label>
+                <Input
+                  defaultValue={formatPercentFraction(params.percAlavancagemFinanceira)}
+                  placeholder="ex.: 5% ou 0,05"
+                  onBlur={(e) => {
+                    const v = parsePercentInput(e.target.value);
+                    e.currentTarget.value = formatPercentFraction(v);
+                    setParams((p) => ({ ...p, percAlavancagemFinanceira: v }));
+                  }}
+                />
+              </div>
+
+              <div>
+                <Label>Crescimento patrimonial (Alav. Patrimonial)</Label>
+                <Input
+                  defaultValue={formatPercentFraction(params.percAlavancagemPatrimonial)}
+                  placeholder="ex.: 6% ou 0,06"
+                  onBlur={(e) => {
+                    const v = parsePercentInput(e.target.value);
+                    e.currentTarget.value = formatPercentFraction(v);
+                    setParams((p) => ({ ...p, percAlavancagemPatrimonial: v }));
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="px-5 pb-5 flex items-center justify-end gap-2">
+              <Button
+                variant="secondary"
+                className="rounded-2xl"
+                onClick={() => setParamOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="rounded-2xl"
+                onClick={() => saveParams(params)}
+              >
+                Salvar
+              </Button>
             </div>
           </div>
         </div>

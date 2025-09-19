@@ -157,7 +157,7 @@ export default function Propostas() {
   const [rows, setRows] = useState<SimRow[]>([]);
 
   // paginação
-  const pageSize = 15;
+  const pageSize = 10;
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pagedRows = useMemo(

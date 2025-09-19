@@ -157,7 +157,7 @@ export default function Propostas() {
     })();
   }, []);
 
-  // logo para PDF (rodapé)
+  // logo para PDF
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   useEffect(() => {
     fetchAsDataURL(LOGO_URL).then(setLogoDataUrl);
@@ -290,25 +290,63 @@ Grupo: ${r.grupo || "—"}`;
     doc.setLineWidth(2);
     doc.line(40, 60, doc.internal.pageSize.getWidth() - 40, 60);
   }
+
+  // ✔ marca d’água (logo grande e opacidade baixa, centralizada)
+  function addWatermark(doc: jsPDF) {
+    if (!logoDataUrl) return;
+    const w = doc.internal.pageSize.getWidth();
+    const h = doc.internal.pageSize.getHeight();
+
+    const props = (doc as any).getImageProperties(logoDataUrl);
+    const maxW = w * 0.6;
+    const maxH = h * 0.35;
+    const ratio = Math.min(maxW / props.width, maxH / props.height);
+    const iw = props.width * ratio;
+    const ih = props.height * ratio;
+    const x = (w - iw) / 2;
+    const y = (h - ih) / 2;
+
+    const hasG = (doc as any).GState && (doc as any).setGState;
+    if (hasG) {
+      const gLow = new (doc as any).GState({ opacity: 0.07 });
+      (doc as any).setGState(gLow);
+      doc.addImage(logoDataUrl, "PNG", x, y, iw, ih);
+      const gFull = new (doc as any).GState({ opacity: 1 });
+      (doc as any).setGState(gFull);
+    } else {
+      // fallback sem opacidade (ainda assim centralizada e grande)
+      doc.addImage(logoDataUrl, "PNG", x, y, iw, ih);
+    }
+  }
+
+  // ✔ rodapé com logo à esquerda (maior) e dados à direita
   function addFooter(doc: jsPDF) {
     const w = doc.internal.pageSize.getWidth();
     const h = doc.internal.pageSize.getHeight();
     const margin = 40;
-    const yLine = h - 120;
 
-    // linha cinza
-    doc.setDrawColor(200, 200, 200);
+    // área reservada para o rodapé
+    const areaH = 90;
+    const yTop = h - areaH - 40;
+
+    // linha separadora suave
+    doc.setDrawColor(220, 220, 220);
     doc.setLineWidth(1);
-    doc.line(margin, yLine, w - margin, yLine);
+    doc.line(margin, yTop, w - margin, yTop);
 
-    // logo à esquerda
+    // logo maior, mantendo proporção e centralizada verticalmente no bloco
     if (logoDataUrl) {
-      const imgW = 64;
-      const imgH = 26;
-      doc.addImage(logoDataUrl, "PNG", margin, yLine + 18, imgW, imgH);
+      const props = (doc as any).getImageProperties(logoDataUrl);
+      const maxW = 140;
+      const maxH = 40;
+      const ratio = Math.min(maxW / props.width, maxH / props.height);
+      const lw = props.width * ratio;
+      const lh = props.height * ratio;
+      const ly = yTop + (areaH - lh) / 2;
+      doc.addImage(logoDataUrl, "PNG", margin, ly, lw, lh);
     }
 
-    // bloco à direita
+    // bloco de texto à direita
     doc.setFont("helvetica", "normal");
     doc.setTextColor(110, 110, 110);
     doc.setFontSize(10);
@@ -321,7 +359,7 @@ Grupo: ${r.grupo || "—"}`;
       "consulmaxconsorcios.com.br",
     ];
 
-    let y = yLine + 18;
+    let y = yTop + 26;
     lines.forEach((t) => {
       doc.text(t, w - margin, y, { align: "right" as any });
       y += 14;
@@ -331,6 +369,7 @@ Grupo: ${r.grupo || "—"}`;
   async function handlePDF(r: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     addHeaderSimple(doc);
+    addWatermark(doc);
 
     (doc as any).autoTable({
       startY: 80,
@@ -499,18 +538,20 @@ Grupo: ${r.grupo || "—"}`;
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-    // CAPA simples com faixa
+    // CAPA simples com faixa + marca d'água
     doc.setFillColor(brand.primary);
     doc.rect(0, 0, doc.internal.pageSize.getWidth(), 180, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(24);
     doc.setTextColor("#FFFFFF");
     doc.text(title, 40, 120);
+    addWatermark(doc);
     addFooter(doc);
 
-    sims.forEach((r, idx) => {
+    sims.forEach((r) => {
       doc.addPage();
       addHeaderSimple(doc);
+      addWatermark(doc);
 
       const segNorm = normalizeSegment(r.segmento);
 
@@ -771,7 +812,6 @@ Grupo: ${r.grupo || "—"}`;
               Gerar ({selectedInvest.length})
             </Button>
 
-            {/* chip totalmente à direita */}
             <Button className="rounded-2xl h-10 px-4" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4 mr-1" /> Adicionar simulações
             </Button>
@@ -796,8 +836,7 @@ Grupo: ${r.grupo || "—"}`;
                         title="Selecionar todas"
                         onChange={(e) => selectAllInvest(e.currentTarget.checked)}
                         checked={
-                          invest.length > 0 &&
-                          invest.every((r) => !!selectMap[r.code])
+                          invest.length > 0 && invest.every((r) => !!selectMap[r.code])
                         }
                       />
                     </div>
@@ -834,7 +873,6 @@ Grupo: ${r.grupo || "—"}`;
                     <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
                     <td className="p-2">{r.novo_prazo ?? 0}x</td>
                     <td className="p-2 text-center">
-                      {/* menu por linha continua operacional */}
                       <div className="relative">
                         <details className="group inline-block">
                           <summary className="list-none">
@@ -893,7 +931,7 @@ Grupo: ${r.grupo || "—"}`;
               </button>
             </div>
 
-            {/* body com altura máxima e rolagem interna */}
+            {/* body */}
             <div className="p-4 space-y-3 max-h-[80vh] overflow-y-auto">
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="md:col-span-3">

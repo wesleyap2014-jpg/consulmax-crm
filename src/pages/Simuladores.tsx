@@ -88,6 +88,57 @@ function formatPhoneBR(s?: string) {
   return s || "";
 }
 
+/* ===== Índices de correção (para reajuste 12m) ===== */
+type IndexRow = { code: string; name: string };
+type IndexValueRow = { ref_month: string; value: number | string };
+
+// fallback local se o banco não tiver catálogo
+const DEFAULT_INDEXES: IndexRow[] = [
+  { code: "IPCA", name: "IPCA" },
+  { code: "INPC", name: "INPC" },
+  { code: "IGPM", name: "IGP-M" },
+  { code: "IGPDI", name: "IGP-DI" },
+  { code: "INCCM", name: "INCC-M" },
+];
+
+// normaliza “YYYY-MM-01” => “YYYY-MM”, aceita também “YYYY/MM”
+function normalizeYM(s: string): string {
+  const m = (s || "").toString().slice(0, 7).replace("/", "-");
+  if (/^\d{4}-\d{2}$/.test(m)) return m;
+  // tenta achar no meio da string
+  const hit = (s || "").toString().match(/(\d{4})[-\/](\d{2})/);
+  return hit ? `${hit[1]}-${hit[2]}` : "";
+}
+
+// detecta escala do valor do índice mensal
+// aceita: 0.0042 (0,42%), 0.42 (0,42%), 0.42% (string), 4.2 (4,2%) – converte tudo para decimal
+function asMonthlyDecimal(raw: number | string): number {
+  const v = typeof raw === "string" ? parseFloat(raw.replace("%", "").replace(",", ".")) : raw;
+  if (!isFinite(v)) return 0;
+  if (v === 0) return 0;
+  if (v > 1.5) return v / 100;       // ex.: 4.2  => 0.042
+  if (v > 0 && v <= 1.5) return v >= 0.2 ? v / 100 : v; // ex.: 0.42 ou 0.0042
+  if (v < 0 && v > -1.5) return v <= -0.2 ? v / 100 : v; // negativos (deflação)
+  return v;
+}
+
+// acumulado 12m: (1+a)*(1+b)*... - 1
+function accumulated12m(vals: IndexValueRow[]) {
+  if (!vals.length) return 0;
+  const norm = vals
+    .map(r => ({ ym: normalizeYM(r.ref_month), d: asMonthlyDecimal(r.value) }))
+    .filter(r => r.ym);
+
+  norm.sort((a, b) => a.ym.localeCompare(b.ym));
+  const last12 = norm.slice(-12);
+  if (!last12.length) return 0;
+
+  const factor = last12.reduce((acc, r) => acc * (1 + r.d), 1);
+  // proteção contra números estranhos
+  const res = Math.max(-0.9, Math.min(5, factor - 1));
+  return res;
+}
+
 /* ======================= Cálculo ========================= */
 type CalcInput = {
   credito: number;
@@ -107,6 +158,7 @@ type CalcInput = {
   indexPct: number;
 };
 
+
 function calcularSimulacao(i: CalcInput) {
   const {
     credito: C,
@@ -121,48 +173,65 @@ function calcularSimulacao(i: CalcInput) {
     lanceOfertPct,
     lanceEmbutPct,
     parcContemplacao,
+    indexPct,
   } = i;
 
   const prazo = Math.max(1, Math.floor(prazoVenda));
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
-  // Flags de categoria
   const segLower = (segmento || "").toLowerCase();
   const isServico = segLower.includes("serv");
   const isMoto = segLower.includes("moto");
 
-  // TA efetiva (parte que vai para as parcelas mensais)
+  // Taxa de administração efetiva (a parte nas parcelas mensais)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
 
-  // Valor de categoria (base para saldo + limitador + seguro)
-  const valorCategoria = C * (1 + taxaAdmFull + frPct);
-
-  // Fator do Fundo Comum conforme contratação
+  // Fator de Fundo Comum conforme forma de contratação
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-  // Parcela base (SEM seguro)
-  const baseMensalSemSeguro =
-    (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
+  // Componentes fixos antes da contemplação: TA efetiva + FR são calculados sobre o crédito original (regra)
+  const fixoAdmFR = C * (TA_efetiva + frPct);
 
-  // Seguro mensal (só soma na parcela, não abate saldo)
-  const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
+  // Seguro apenas compõe a parcela para exibição, não abate saldo
+  const seguroMensalBase = seguro ? (C * (1 + taxaAdmFull + frPct)) * i.seguroPrestPct : 0;
 
-  // Antecipação (somada nas primeiras 1 ou 2 parcelas)
+  // Antecipação distribuída nas primeiras 1 ou 2 parcelas
   const antecipAdicionalCada =
     antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
 
-  // Exibição até a contemplação
-  const parcelaAte =
-    (baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0)) +
-    seguroMensal;
-  const parcelaDemais = baseMensalSemSeguro + seguroMensal;
+  // === Pagamento até a contemplação com reajustes anuais ===
+  // Regra: a cada aniversário (meses 13,25,...) o crédito é reajustado por indexPct,
+  // TA e FR não são reajustados antes da contemplação.
+  // Em cada aniversário, a nova mensalidade (SEM seguro) é recalculada pelo saldo-base restante
+  // dividido pelo prazo remanescente.
+  let totalPagoBase = 0; // soma das parcelas base (sem seguro/antecipação)
+  let m = 1;
+  while (m <= parcelasPagas) {
+    const k = Math.floor((m - 1) / 12); // quantos reajustes já ocorreram
+    const Ck = C * Math.pow(1 + (indexPct || 0), k);
+    const baseTotalCorrigida = Ck * fundoComumFactor + fixoAdmFR;
 
-  // TOTAL PAGO ATÉ A CONTEMPLAÇÃO (SEM seguro)
-  const totalPagoSemSeguro =
-    baseMensalSemSeguro * parcelasPagas +
-    antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
+    // meses até próximo aniversário ou até a contemplação
+    const proxAniv = k * 12 + 13;
+    const fimFase = Math.min(parcelasPagas, proxAniv - 1);
+    const mesesFase = Math.max(1, fimFase - m + 1);
+
+    // mensalidade nesta fase (sem seguro/antecipação)
+    const mesesJaPagos = m - 1;
+    const mensalFase = (baseTotalCorrigida - totalPagoBase) / (prazo - mesesJaPagos);
+
+    totalPagoBase += mensalFase * mesesFase;
+    m += mesesFase;
+  }
+
+  // Parcela de exibição até a contemplação
+  const baseMensalInicial =
+    (C * fundoComumFactor + fixoAdmFR) / prazo;
+  const parcelaAte =
+    baseMensalInicial + (antecipParcelas > 0 ? antecipAdicionalCada : 0) + seguroMensalBase;
+  const parcelaDemais = baseMensalInicial + seguroMensalBase;
 
   // Lances
   const lanceOfertadoValor = C * lanceOfertPct;
@@ -170,32 +239,35 @@ function calcularSimulacao(i: CalcInput) {
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
-  // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
+  // Valor de categoria vigente na contemplação (após todos os reajustes que já ocorreram)
+  const kContempl = Math.floor((parcelasPagas - 1) / 12);
+  const Ccorr = C * Math.pow(1 + (indexPct || 0), Math.max(0, kContempl));
+  const valorCategoriaVigente = Ccorr * fundoComumFactor + fixoAdmFR;
+
+  // Saldo devedor na contemplação (SEM seguro/antecipação)
   const saldoDevedorFinal = Math.max(
     0,
-    valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
+    valorCategoriaVigente - totalPagoBase - lanceOfertadoValor
   );
 
-  // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
+  // Nova parcela (sem limite) após a contemplação
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
 
-  // LIMITADOR (sobre valor de categoria)
+  // Limitador (sobre o valor de categoria vigente)
   const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
-  const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
+  const parcelaLimitante = limitadorBase > 0 ? valorCategoriaVigente * limitadorBase : 0;
 
   // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
   const manterParcela = isServico || (isMoto && C < 20000);
 
   let aplicouLimitador = false;
-  let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
+  let parcelaEscolhida = baseMensalInicial; // valor base sem seguro
 
   if (!manterParcela) {
-    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
     if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
       aplicouLimitador = true;
       parcelaEscolhida = parcelaLimitante;
     } else {
-      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
       parcelaEscolhida = novaParcelaSemLimite;
     }
   }
@@ -203,13 +275,11 @@ function calcularSimulacao(i: CalcInput) {
   // Caso especial: antecipação em 2x e contemplação na 1ª parcela
   const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
+    ? parcelaEscolhida + antecipAdicionalCada
     : null;
 
-  // NOVO PRAZO
-  const parcelasIguais =
-    Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
-
+  // Prazo após contemplação
+  const parcelasIguais = Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
   let novoPrazo: number;
   if (parcelasIguais && !has2aAntecipDepois) {
     novoPrazo = prazoRestante;
@@ -222,7 +292,7 @@ function calcularSimulacao(i: CalcInput) {
   }
 
   return {
-    valorCategoria,
+    valorCategoria: valorCategoriaVigente,
     parcelaAte,
     parcelaDemais,
     lanceOfertadoValor,
@@ -230,9 +300,9 @@ function calcularSimulacao(i: CalcInput) {
     lanceProprioValor,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
-    novaParcelaSemLimite, // (SEM seguro)
-    parcelaLimitante,     // (SEM seguro)
-    parcelaEscolhida,     // (SEM seguro)
+    novaParcelaSemLimite,
+    parcelaLimitante,
+    parcelaEscolhida,
     saldoDevedorFinal,
     novoPrazo,
     TA_efetiva,
@@ -243,6 +313,7 @@ function calcularSimulacao(i: CalcInput) {
     aplicouLimitador,
   };
 }
+
 
 /* ========== Inputs com máscara (Money / Percent) ========== */
 function MoneyInput({
@@ -298,7 +369,7 @@ export default function Simuladores() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
 
-  const [mgrOpen, setMgrOpen] = useState(false); // overlay lista/edição
+  const [mgrOpen, setMgrOpen] = useState(false);
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -324,11 +395,21 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // telefone do usuário logado (para o Resumo / Proposta)
+  // telefone do usuário logado
   const [userPhone, setUserPhone] = useState<string>("");
 
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
+
+  // ===== Índice de Correção / Reajuste (12m) =====
+  const [indicesList, setIndicesList] = useState<IndexRow[]>([]);
+  const [indexCode, setIndexCode] = useState<string>("IPCA");
+  const [refMonth, setRefMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [indexValues, setIndexValues] = useState<IndexValueRow[]>([]);
+  const [acc12m, setAcc12m] = useState<number>(0);
 
   useEffect(() => {
     (async () => {
@@ -380,7 +461,7 @@ export default function Simuladores() {
     return Array.from(new Set(list));
   }, [adminTables, segmento]);
 
-  // variantes (linhas) do nome escolhido (prazo e taxas diferentes)
+  // variantes do nome escolhido
   const variantesDaTabela = useMemo(() => {
     return adminTables.filter(
       (t) => t.segmento === segmento && t.nome_tabela === nomeTabela
@@ -395,21 +476,15 @@ export default function Simuladores() {
   useEffect(() => {
     if (!tabelaSelecionada) return;
     setPrazoAte(tabelaSelecionada.prazo_limite);
-    setFaixa({
-      min: tabelaSelecionada.faixa_min,
-      max: tabelaSelecionada.faixa_max,
-    });
-    if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25)
-      setForma("Parcela Cheia");
-    if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50)
-      setForma("Parcela Cheia");
+    setFaixa({ min: tabelaSelecionada.faixa_min, max: tabelaSelecionada.faixa_max });
+    if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25) setForma("Parcela Cheia");
+    if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
   }, [tabelaSelecionada]); // eslint-disable-line
 
   // valida % embutido
   const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
   useEffect(() => {
-    if (lanceEmbutPct !== lanceEmbutPctValid)
-      setLanceEmbutPct(lanceEmbutPctValid);
+    if (lanceEmbutPct !== lanceEmbutPctValid) setLanceEmbutPct(lanceEmbutPctValid);
   }, [lanceEmbutPct]); // eslint-disable-line
 
   const prazoAviso =
@@ -444,19 +519,10 @@ export default function Simuladores() {
       lanceOfertPct,
       lanceEmbutPct: lanceEmbutPctValid,
       parcContemplacao,
-      indexPct: acc12m || 0,
-};
+      indexPct: acc12m,
+    };
     setCalc(calcularSimulacao(inp));
-  }, [
-    tabelaSelecionada,
-    credito,
-    prazoVenda,
-    forma,
-    seguroPrest,
-    lanceOfertPct,
-    lanceEmbutPctValid,
-    parcContemplacao,
-  ]); // eslint-disable-line
+  }, [tabelaSelecionada, credito, prazoVenda, forma, seguroPrest, lanceOfertPct, lanceEmbutPctValid, parcContemplacao]); // eslint-disable-line
 
   async function salvarSimulacao() {
     if (!tabelaSelecionada || !calc) return;
@@ -490,11 +556,11 @@ export default function Simuladores() {
       parcela_limitante: calc.parcelaLimitante,
       parcela_escolhida: calc.parcelaEscolhida,
       saldo_devedor_final: calc.saldoDevedorFinal,
-      novo_prazo: calc.novoPrazo,,
-      index_code: indexCode,
+      novo_prazo: calc.novoPrazo,
+          index_code: indexCode,
       index_ref_month: (refMonth ? refMonth + '-01' : null),
-      index_12m_value: acc12m || 0,
-    };
+      index_12m_value: acc12m,
+};
 
     const { data, error } = await supabase
       .from("sim_simulations")
@@ -543,9 +609,7 @@ export default function Simuladores() {
     const parcelaRestanteValor = brMoney(calc.parcelaEscolhida);
     const segundaParcExtra =
       calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao
-        ? ` (2ª parcela com antecipação: ${brMoney(
-            calc.segundaParcelaComAntecipacao
-          )})`
+        ? ` (2ª parcela com antecipação: ${brMoney(calc.segundaParcelaComAntecipacao)})`
         : "";
 
     const telDigits = (userPhone || "").replace(/\D/g, "");
@@ -588,7 +652,7 @@ ${wa}`
     }
   }
 
-  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
+  // ===== Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
   function normalizarSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
     if (s.includes("imó")) return "Imóvel";
@@ -596,7 +660,7 @@ ${wa}`
     if (s.includes("moto")) return "Motocicleta";
     if (s.includes("serv")) return "Serviços";
     if (s.includes("pesad")) return "Pesados";
-    return (seg || "Automóvel");
+    return seg || "Automóvel";
   }
   function emojiDoSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
@@ -660,6 +724,62 @@ Vantagens
     }
   }
 
+  /* ===== Índices: carregar lista e valores ===== */
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("sim_indices")
+        .select("code,name")
+        .order("name", { ascending: true });
+
+      if (!error && data && data.length) {
+        setIndicesList(data as IndexRow[]);
+        // mantém indexCode se existir na lista; se não, seta o primeiro
+        if (!data.find((r: any) => r.code === indexCode)) {
+          setIndexCode((data[0] as any).code);
+        }
+      } else {
+        // fallback local
+        setIndicesList(DEFAULT_INDEXES);
+        if (!DEFAULT_INDEXES.find(x => x.code === indexCode)) setIndexCode(DEFAULT_INDEXES[0].code);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      if (!indexCode || !refMonth) return;
+
+      // janela dos últimos 13 meses para garantir 12 cheios
+      const [yy, mm] = refMonth.split("-").map((x) => parseInt(x, 10));
+      const endYM = `${yy}-${String(mm).padStart(2, "0")}`;
+
+      const d = new Date(yy, mm - 1, 1);
+      d.setMonth(d.getMonth() - 13);
+      const startYM = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+
+      const { data, error } = await supabase
+        .from("sim_index_values")
+        .select("ref_month,value")
+        .eq("index_code", indexCode)
+        .gte("ref_month", startYM) // usa “YYYY-MM” puro
+        .lte("ref_month", endYM)
+        .order("ref_month", { ascending: true });
+
+      if (error) {
+        console.error(error);
+        setIndexValues([]);
+        setAcc12m(0);
+        return;
+      }
+
+      const rows = (data || []) as IndexValueRow[];
+      setIndexValues(rows);
+      setAcc12m(accumulated12m(rows));
+    })();
+  }, [indexCode, refMonth]);
+
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2">
@@ -703,9 +823,7 @@ Vantagens
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() =>
-                  alert("Em breve: adicionar administradora.")
-                }
+                onClick={() => alert("Em breve: adicionar administradora.")}
                 className="h-10 rounded-2xl px-4 whitespace-nowrap"
               >
                 <Plus className="h-4 w-4 mr-1" /> + Add Administradora
@@ -799,7 +917,7 @@ Vantagens
           </div>
         </div>
 
-        {/* coluna direita: memória + textos */}
+        {/* coluna direita: memória + índices + textos */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader>
@@ -814,66 +932,84 @@ Vantagens
                 <>
                   <div className="grid grid-cols-2 gap-2">
                     <div>Crédito</div>
-                    <div className="text-right font-medium">
-                      {brMoney(credito || 0)}
-                    </div>
+                    <div className="text-right font-medium">{brMoney(credito || 0)}</div>
                     <div>Prazo da Venda</div>
                     <div className="text-right">{prazoVenda || "-"}</div>
                     <div>Forma</div>
                     <div className="text-right">{forma}</div>
                     <div>Seguro / parcela</div>
                     <div className="text-right">
-                      {seguroPrest
-                        ? pctHuman(tabelaSelecionada.seguro_prest_pct)
-                        : "—"}
+                      {seguroPrest ? pctHuman(tabelaSelecionada.seguro_prest_pct) : "—"}
                     </div>
                   </div>
                   <hr className="my-2" />
                   <div className="grid grid-cols-2 gap-2">
                     <div>Fundo Comum (fator)</div>
                     <div className="text-right">
-                      {calc
-                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
-                        : "—"}
+                      {calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}
                     </div>
                     <div>Taxa Adm (total)</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.taxa_adm_pct)}
-                    </div>
+                    <div className="text-right">{pctHuman(tabelaSelecionada.taxa_adm_pct)}</div>
                     <div>TA efetiva</div>
-                    <div className="text-right">
-                      {calc ? pctHuman(calc.TA_efetiva) : "—"}
-                    </div>
+                    <div className="text-right">{calc ? pctHuman(calc.TA_efetiva) : "—"}</div>
                     <div>Fundo Reserva</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
-                    </div>
+                    <div className="text-right">{pctHuman(tabelaSelecionada.fundo_reserva_pct)}</div>
                     <div>Antecipação Adm</div>
                     <div className="text-right">
-                      {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
-                      {tabelaSelecionada.antecip_parcelas}x
+                      {pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x
                     </div>
                     <div>Limitador Parcela</div>
                     <div className="text-right">
-                      {pctHuman(
-                        resolveLimitadorPct(
-                          tabelaSelecionada.limitador_parcela_pct,
-                          tabelaSelecionada.segmento,
-                          credito || 0
-                        )
-                      )}
+                      {pctHuman(resolveLimitadorPct(tabelaSelecionada.limitador_parcela_pct, tabelaSelecionada.segmento, credito || 0))}
                     </div>
                     <div>Valor de Categoria</div>
-                    <div className="text-right">
-                      {calc ? brMoney(calc.valorCategoria) : "—"}
-                    </div>
+                    <div className="text-right">{calc ? brMoney(calc.valorCategoria) : "—"}</div>
                   </div>
                 </>
               )}
             </CardContent>
           </Card>
 
-          {/* Resumo antigo */}
+          {/* Índice de Correção / Reajuste (12m) */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Índice de Correção / Reajuste (12m)</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Índice</Label>
+                  <select
+                    className="w-full h-10 border rounded-md px-3"
+                    value={indexCode}
+                    onChange={(e) => setIndexCode(e.target.value)}
+                  >
+                    {indicesList.map((it) => (
+                      <option key={it.code} value={it.code}>
+                        {it.name || it.code}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label>Mês de referência</Label>
+                  <Input type="month" value={refMonth} onChange={(e) => setRefMonth(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="text-sm bg-muted/30 rounded-lg p-3 grid grid-cols-2 gap-2">
+                <div>Acumulado 12 meses</div>
+                <div className="text-right font-medium">{(acc12m * 100).toFixed(2)}%</div>
+                <div className="col-span-2 text-muted-foreground text-xs leading-relaxed">
+                  Pré-contemplação: reajuste anual incide sobre o <strong>crédito</strong> contratado.
+                  <br />
+                  Pós-contemplação: reajuste anual incide sobre o <strong>saldo devedor</strong>.
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Resumo */}
           <Card>
             <CardHeader>
               <CardTitle>Resumo da Proposta</CardTitle>
@@ -894,7 +1030,7 @@ Vantagens
             </CardContent>
           </Card>
 
-          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+          {/* OPORTUNIDADE / PROPOSTA EMBRACON */}
           <Card>
             <CardHeader>
               <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
@@ -903,11 +1039,7 @@ Vantagens
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <Label>Assembleia (ex.: 15/10)</Label>
-                  <Input
-                    value={assembleia}
-                    onChange={(e) => setAssembleia(e.target.value)}
-                    placeholder="dd/mm"
-                  />
+                  <Input value={assembleia} onChange={(e) => setAssembleia(e.target.value)} placeholder="dd/mm" />
                 </div>
               </div>
               <textarea
@@ -941,7 +1073,7 @@ Vantagens
   );
 }
 
-/* =============== Modal: base com ESC para fechar =============== */
+/* =============== Modal base =============== */
 function ModalBase({
   children,
   onClose,
@@ -964,11 +1096,7 @@ function ModalBase({
       <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{title}</div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-muted"
-            aria-label="Fechar"
-          >
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -978,7 +1106,7 @@ function ModalBase({
   );
 }
 
-/* ============== Modal: Gerenciar Tabelas (com paginação) ============== */
+/* ============== Gerenciar Tabelas ============== */
 function TableManagerModal({
   admin,
   allTables,
@@ -998,7 +1126,6 @@ function TableManagerModal({
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
-  // reset página quando muda a lista
   useEffect(() => setPage(1), [allTables.length]);
 
   const grouped = useMemo(() => {
@@ -1019,7 +1146,6 @@ function TableManagerModal({
     if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
     setBusyId(id);
 
-    // 1) Exclui simulações dependentes (evita erro de FK)
     const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
     if (delSims.error) {
       setBusyId(null);
@@ -1027,7 +1153,6 @@ function TableManagerModal({
       return;
     }
 
-    // 2) Exclui a tabela
     const { error } = await supabase.from("sim_tables").delete().eq("id", id);
     setBusyId(null);
     if (error) {
@@ -1103,11 +1228,7 @@ function TableManagerModal({
                         onClick={() => deletar(t.id)}
                         className="h-9 rounded-xl px-3"
                       >
-                        {busyId === t.id ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4 mr-1" />
-                        )}
+                        {busyId === t.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
                         Excluir
                       </Button>
                     </div>
@@ -1116,10 +1237,7 @@ function TableManagerModal({
               ))}
               {pageItems.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={10}
-                    className="p-4 text-center text-muted-foreground"
-                  >
+                  <td colSpan={10} className="p-4 text-center text-muted-foreground">
                     Sem tabelas para esta administradora.
                   </td>
                 </tr>
@@ -1133,32 +1251,17 @@ function TableManagerModal({
           <div>
             {grouped.length > 0 && (
               <>
-                Mostrando{" "}
-                <strong>
-                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}
-                </strong>{" "}
-                de <strong>{grouped.length}</strong>
+                Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}</strong> de{" "}
+                <strong>{grouped.length}</strong>
               </>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
+            <Button variant="secondary" className="h-9 rounded-xl px-3" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
               Anterior
             </Button>
-            <span>
-              Página {page} de {totalPages}
-            </span>
-            <Button
-              variant="secondary"
-              className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
+            <span> Página {page} de {totalPages} </span>
+            <Button variant="secondary" className="h-9 rounded-xl px-3" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
               Próxima
             </Button>
           </div>
@@ -1180,7 +1283,7 @@ function TableManagerModal({
   );
 }
 
-/* ===== Overlay de Formulário (Novo / Editar) de Tabela ==== */
+/* ===== Formulário de Tabela ==== */
 function TableFormOverlay({
   adminId,
   initial,
@@ -1217,7 +1320,6 @@ function TableFormOverlay({
 
   const [saving, setSaving] = useState(false);
 
-  // ESC para fechar
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -1242,7 +1344,8 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
-      permite_livre: perLivre as any, // compat
+      // compat + campo atual
+      permite_livre: perLivre as any,
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1369,17 +1472,9 @@ function EmbraconSimulator(p: EmbraconProps) {
           <div className="grid gap-4 md:grid-cols-3">
             <div>
               <Label>Selecionar Lead</Label>
-              <select
-                className="w-full h-10 border rounded-md px-3"
-                value={p.leadId}
-                onChange={(e) => p.setLeadId(e.target.value)}
-              >
+              <select className="w-full h-10 border rounded-md px-3" value={p.leadId} onChange={(e) => p.setLeadId(e.target.value)}>
                 <option value="">Escolha um lead</option>
-                {p.leads.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.nome}
-                  </option>
-                ))}
+                {p.leads.map((l) => (<option key={l.id} value={l.id}>{l.nome}</option>))}
               </select>
               {p.leadInfo && (
                 <p className="text-xs text-muted-foreground mt-1">
@@ -1389,11 +1484,7 @@ function EmbraconSimulator(p: EmbraconProps) {
             </div>
             <div>
               <Label>Nº do Grupo (opcional)</Label>
-              <Input
-                value={p.grupo}
-                onChange={(e) => p.setGrupo(e.target.value)}
-                placeholder="ex.: 9957"
-              />
+              <Input value={p.grupo} onChange={(e) => p.setGrupo(e.target.value)} placeholder="ex.: 9957" />
             </div>
           </div>
         </CardContent>
@@ -1407,56 +1498,27 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Segmento</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.segmento}
-                  onChange={(e) => p.setSegmento(e.target.value)}
-                >
+                <select className="w-full h-10 border rounded-md px-3" value={p.segmento} onChange={(e) => p.setSegmento(e.target.value)}>
                   <option value="">Selecione o segmento</option>
-                  {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map(
-                    (s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    )
-                  )}
+                  {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map((s) => (<option key={s} value={s}>{s}</option>))}
                 </select>
               </div>
 
               <div>
                 <Label>Tabela</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.nomeTabela}
-                  disabled={!p.segmento}
-                  onChange={(e) => p.setNomeTabela(e.target.value)}
-                >
-                  <option value="">
-                    {p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}
-                  </option>
-                  {p.nomesTabelaSegmento.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
+                <select className="w-full h-10 border rounded-md px-3" value={p.nomeTabela} disabled={!p.segmento} onChange={(e) => p.setNomeTabela(e.target.value)}>
+                  <option value="">{p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}</option>
+                  {p.nomesTabelaSegmento.map((n) => (<option key={n} value={n}>{n}</option>))}
                 </select>
               </div>
 
               <div>
                 <Label>Prazo Até</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.tabelaId}
-                  disabled={!p.nomeTabela}
-                  onChange={(e) => p.setTabelaId(e.target.value)}
-                >
-                  <option value="">
-                    {p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}
-                  </option>
+                <select className="w-full h-10 border rounded-md px-3" value={p.tabelaId} disabled={!p.nomeTabela} onChange={(e) => p.setTabelaId(e.target.value)}>
+                  <option value="">{p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}</option>
                   {p.variantesDaTabela.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR{" "}
-                      {pctHuman(t.fundo_reserva_pct)}
+                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR {pctHuman(t.fundo_reserva_pct)}
                     </option>
                   ))}
                 </select>
@@ -1464,10 +1526,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 
               <div>
                 <Label>Faixa de Crédito</Label>
-                <Input
-                  value={p.faixa ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}` : ""}
-                  readOnly
-                />
+                <Input value={p.faixa ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}` : ""} readOnly />
               </div>
             </CardContent>
           </Card>
@@ -1483,92 +1542,34 @@ function EmbraconSimulator(p: EmbraconProps) {
 
               <div>
                 <Label>Prazo da Venda (meses)</Label>
-                <Input
-                  type="number"
-                  value={p.prazoVenda || ""}
-                  onChange={(e) => p.setPrazoVenda(Number(e.target.value))}
-                />
-                {p.prazoAviso && (
-                  <p className="text-xs text-yellow-600 mt-1">{p.prazoAviso}</p>
-                )}
+                <Input type="number" value={p.prazoVenda || ""} onChange={(e) => p.setPrazoVenda(Number(e.target.value))} />
+                {p.prazoAviso && <p className="text-xs text-yellow-600 mt-1">{p.prazoAviso}</p>}
               </div>
 
               <div>
                 <Label>Forma de Contratação</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.forma}
-                  disabled={!p.tabelaSelecionada}
-                  onChange={(e) => p.setForma(e.target.value as any)}
-                >
+                <select className="w-full h-10 border rounded-md px-3" value={p.forma} disabled={!p.tabelaSelecionada} onChange={(e) => p.setForma(e.target.value as any)}>
                   <option value="">Selecione</option>
-                  {p.tabelaSelecionada?.contrata_parcela_cheia && (
-                    <option value="Parcela Cheia">Parcela Cheia</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_25 && (
-                    <option value="Reduzida 25%">Reduzida 25%</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_50 && (
-                    <option value="Reduzida 50%">Reduzida 50%</option>
-                  )}
+                  {p.tabelaSelecionada?.contrata_parcela_cheia && <option value="Parcela Cheia">Parcela Cheia</option>}
+                  {p.tabelaSelecionada?.contrata_reduzida_25 && <option value="Reduzida 25%">Reduzida 25%</option>}
+                  {p.tabelaSelecionada?.contrata_reduzida_50 && <option value="Reduzida 50%">Reduzida 50%</option>}
                 </select>
               </div>
 
               <div>
                 <Label>Seguro Prestamista</Label>
                 <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    className={
-                      p.seguroPrest
-                        ? "bg-red-600 text-white hover:bg-red-700"
-                        : "bg-muted text-foreground/60 hover:bg-muted"
-                    }
-                    onClick={() => p.setSeguroPrest(true)}
-                  >
-                    Sim
-                  </Button>
-                  <Button
-                    type="button"
-                    className={
-                      !p.seguroPrest
-                        ? "bg-red-600 text-white hover:bg-red-700"
-                        : "bg-muted text-foreground/60 hover:bg-muted"
-                    }
-                    onClick={() => p.setSeguroPrest(false)}
-                  >
-                    Não
-                  </Button>
+                  <Button type="button" className={p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"} onClick={() => p.setSeguroPrest(true)}>Sim</Button>
+                  <Button type="button" className={!p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"} onClick={() => p.setSeguroPrest(false)}>Não</Button>
                 </div>
               </div>
 
               {p.tabelaSelecionada && (
                 <div className="md:col-span-4 grid grid-cols-2 gap-3 text-sm bg-muted/30 rounded-lg p-3">
-                  <div>
-                    % Taxa de Adm:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong>
-                  </div>
-                  <div>
-                    % Fundo Reserva:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong>
-                  </div>
-                  <div>
-                    % Antecipação:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> •
-                    Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong>
-                  </div>
-                  <div>
-                    Limitador de Parcela:{" "}
-                    <strong>
-                      {pctHuman(
-                        resolveLimitadorPct(
-                          p.tabelaSelecionada.limitador_parcela_pct,
-                          p.tabelaSelecionada.segmento,
-                          p.credito || 0
-                        )
-                      )}
-                    </strong>
-                  </div>
+                  <div>% Taxa de Adm: <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong></div>
+                  <div>% Fundo Reserva: <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong></div>
+                  <div>% Antecipação: <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> • Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong></div>
+                  <div>Limitador de Parcela: <strong>{pctHuman(resolveLimitadorPct(p.tabelaSelecionada.limitador_parcela_pct, p.tabelaSelecionada.segmento, p.credito || 0))}</strong></div>
                 </div>
               )}
             </CardContent>
@@ -1576,17 +1577,11 @@ function EmbraconSimulator(p: EmbraconProps) {
 
           {/* Até a contemplação */}
           <Card>
-            <CardHeader>
-              <CardTitle>Plano de Pagamento até a Contemplação</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Plano de Pagamento até a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div>
                 <Label>
-                  {p.tabelaSelecionada?.antecip_parcelas === 2
-                    ? "Parcelas 1 e 2"
-                    : p.tabelaSelecionada?.antecip_parcelas === 1
-                    ? "Parcela 1"
-                    : "Parcela Inicial"}
+                  {p.tabelaSelecionada?.antecip_parcelas === 2 ? "Parcelas 1 e 2" : p.tabelaSelecionada?.antecip_parcelas === 1 ? "Parcela 1" : "Parcela Inicial"}
                 </Label>
                 <Input value={p.calc ? brMoney(p.calc.parcelaAte) : ""} readOnly />
               </div>
@@ -1597,18 +1592,13 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* === Configurações do Lance (RESTAURADO) === */}
+          {/* Lances */}
           <Card>
-            <CardHeader>
-              <CardTitle>Configurações do Lance</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Configurações do Lance</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div>
                 <Label>Lance Ofertado (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceOfertPct}
-                  onChangeDecimal={p.setLanceOfertPct}
-                />
+                <PercentInput valueDecimal={p.lanceOfertPct} onChangeDecimal={p.setLanceOfertPct} />
               </div>
               <div>
                 <Label>Lance Embutido (%)</Label>
@@ -1627,88 +1617,27 @@ function EmbraconSimulator(p: EmbraconProps) {
               </div>
               <div>
                 <Label>Parcela da Contemplação</Label>
-                <Input
-                  type="number"
-                  value={p.parcContemplacao}
-                  onChange={(e) =>
-                    p.setParcContemplacao(Math.max(1, Number(e.target.value)))
-                  }
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Deve ser menor que o Prazo da Venda.
-                </p>
+                <Input type="number" value={p.parcContemplacao} onChange={(e) => p.setParcContemplacao(Math.max(1, Number(e.target.value)))} />
+                <p className="text-xs text-muted-foreground mt-1">Deve ser menor que o Prazo da Venda.</p>
               </div>
             </CardContent>
           </Card>
 
           {/* Pós */}
           <Card>
-            <CardHeader>
-              <CardTitle>Plano de Pagamento após a Contemplação</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Plano de Pagamento após a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
-              <div>
-                <Label>Lance Ofertado</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Lance Embutido</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Lance Próprio</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""}
-                  readOnly
-                />
-              </div>
+              <div><Label>Lance Ofertado</Label><Input value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""} readOnly /></div>
+              <div><Label>Lance Embutido</Label><Input value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""} readOnly /></div>
+              <div><Label>Lance Próprio</Label><Input value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""} readOnly /></div>
 
-              <div>
-                <Label>Lance Percebido (%)</Label>
-                <Input
-                  value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Novo Crédito</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.novoCredito) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Nova Parcela (sem limite)</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""}
-                  readOnly
-                />
-              </div>
+              <div><Label>Lance Percebido (%)</Label><Input value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""} readOnly /></div>
+              <div><Label>Novo Crédito</Label><Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly /></div>
+              <div><Label>Nova Parcela (sem limite)</Label><Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly /></div>
 
-              <div>
-                <Label>Parcela Limitante</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Parcela Escolhida</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Novo Prazo (meses)</Label>
-                <Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly />
-              </div>
+              <div><Label>Parcela Limitante</Label><Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly /></div>
+              <div><Label>Parcela Escolhida</Label><Input value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""} readOnly /></div>
+              <div><Label>Novo Prazo (meses)</Label><Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly /></div>
 
               {p.calc?.has2aAntecipDepois && p.calc?.segundaParcelaComAntecipacao != null && (
                 <div className="md:col-span-3">
@@ -1720,9 +1649,7 @@ function EmbraconSimulator(p: EmbraconProps) {
           </Card>
         </>
       ) : (
-        <div className="text-sm text-muted-foreground">
-          Selecione um lead para abrir o simulador.
-        </div>
+        <div className="text-sm text-muted-foreground">Selecione um lead para abrir o simulador.</div>
       )}
     </div>
   );

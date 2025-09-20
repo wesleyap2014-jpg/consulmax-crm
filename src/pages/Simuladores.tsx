@@ -104,6 +104,7 @@ type CalcInput = {
   lanceOfertPct: number;
   lanceEmbutPct: number; // <= 0.25
   parcContemplacao: number;
+  indexPct: number;
 };
 
 function calcularSimulacao(i: CalcInput) {
@@ -443,7 +444,8 @@ export default function Simuladores() {
       lanceOfertPct,
       lanceEmbutPct: lanceEmbutPctValid,
       parcContemplacao,
-    };
+      indexPct: acc12m || 0,
+};
     setCalc(calcularSimulacao(inp));
   }, [
     tabelaSelecionada,
@@ -488,7 +490,10 @@ export default function Simuladores() {
       parcela_limitante: calc.parcelaLimitante,
       parcela_escolhida: calc.parcelaEscolhida,
       saldo_devedor_final: calc.saldoDevedorFinal,
-      novo_prazo: calc.novoPrazo,
+      novo_prazo: calc.novoPrazo,,
+      index_code: indexCode,
+      index_ref_month: (refMonth ? refMonth + '-01' : null),
+      index_12m_value: acc12m || 0,
     };
 
     const { data, error } = await supabase

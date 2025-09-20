@@ -39,28 +39,6 @@ type SimTable = {
 
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
-/* Índices (tabelas auxiliares) */
-type IndexRow = {
-  id?: string;
-  codigo?: string;
-  code?: string;
-  sigla?: string;
-  nome?: string;
-  name?: string;
-};
-type IndexOption = { code: string; name: string };
-
-type IndexValueRow = {
-  index_id?: string;
-  index_code?: string;
-  codigo?: string;
-  code?: string;
-  ref_month?: string; // 'YYYY-MM-01'
-  mes_ref?: string;
-  value_pct?: number; // 0.0123 = 1.23%
-  valor_pct?: number;
-};
-
 /* ======================= Helpers ========================= */
 const brMoney = (v: number) =>
   v.toLocaleString("pt-BR", {
@@ -108,6 +86,19 @@ function formatPhoneBR(s?: string) {
   if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
   if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return s || "";
+}
+
+/* ===== Índices de correção (para reajuste 12m) ===== */
+type IndexRow = { code: string; name: string };
+type IndexValueRow = { ref_month: string; value: number };
+
+// acumulado 12m: (1+a)*(1+b)*... - 1
+function accumulated12m(vals: IndexValueRow[]) {
+  if (!vals.length) return 0;
+  const sorted = [...vals].sort((a, b) => a.ref_month.localeCompare(b.ref_month));
+  const last12 = sorted.slice(-12);
+  const factor = last12.reduce((acc, r) => acc * (1 + (r.value || 0)), 1);
+  return factor - 1;
 }
 
 /* ======================= Cálculo ========================= */
@@ -188,13 +179,13 @@ function calcularSimulacao(i: CalcInput) {
   // Lances
   const lanceOfertadoValor = C * lanceOfertPct;
   const lanceEmbutidoValor = C * lanceEmbutPct;
+  const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
-  const lanceProprioValor = Math.max(0, (C * lanceOfertPct) - (C * Math.min(lanceEmbutPct, 0.25)));
 
   // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
   const saldoDevedorFinal = Math.max(
     0,
-    valorCategoria - totalPagoSemSeguro - (C * lanceOfertPct)
+    valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
   );
 
   // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
@@ -263,177 +254,6 @@ function calcularSimulacao(i: CalcInput) {
     has2aAntecipDepois,
     aplicouLimitador,
   };
-}
-
-/* ======= Projeção com reajustes (anual no aniversário) ======= */
-type SegmentoProjecao = { from: number; to: number; valor: number; label: string };
-
-function buildProjection(
-  args: {
-    credito: number;
-    prazoVenda: number;
-    antecipParcelas: 0 | 1 | 2;
-    antecipAdicionalCada: number; // sem seguro
-    baseMensalSemSeguro: number;
-    parcContemplacao: number;
-    taxaAdmFull: number;
-    frPct: number;
-    limitadorPct: number;
-    segmento: string;
-    annualFactor: number; // ex.: 0.05
-  }
-): SegmentoProjecao[] {
-  const {
-    credito: C,
-    prazoVenda,
-    antecipParcelas,
-    antecipAdicionalCada,
-    baseMensalSemSeguro,
-    parcContemplacao,
-    taxaAdmFull,
-    frPct,
-    limitadorPct,
-    segmento,
-    annualFactor,
-  } = args;
-
-  const prazo = Math.max(1, Math.floor(prazoVenda));
-  const annivMonths = (m: number) => (m > 1 && ((m - 1) % 12 === 0)); // 13,25,37,...
-
-  // Pré-contemplação
-  let month = 1;
-  let pagoSemSeg = 0;
-  let segs: SegmentoProjecao[] = [];
-
-  // valor de categoria “base” (pré) com crédito ORIGINAL
-  const valorCategoriaBase = C * (1 + taxaAdmFull + frPct);
-  let parcelaAtualPre = baseMensalSemSeguro; // sem seguro
-  let segOpen: SegmentoProjecao | null = { from: month, to: month, valor: parcelaAtualPre, label: "Pré" };
-
-  const applyPush = () => {
-    if (!segOpen) return;
-    const last = segs[segs.length - 1];
-    if (last && Math.abs(last.valor - segOpen.valor) < 0.0001 && last.label === segOpen.label && last.to + 1 === segOpen.from) {
-      last.to = segOpen.to;
-    } else {
-      segs.push({ ...segOpen });
-    }
-  };
-
-  // percorre até a contemplação
-  while (month <= Math.min(prazo, parcContemplacao)) {
-    const parcelaMes = parcelaAtualPre + (month <= antecipParcelas ? antecipAdicionalCada : 0);
-    pagoSemSeg += parcelaMes;
-
-    // se a próxima virada for por reajuste anual e ainda está antes da contemplação
-    const nextMonth = month + 1;
-
-    if (nextMonth <= parcContemplacao && annivMonths(nextMonth)) {
-      // aplicar reajuste anual sobre o CRÉDITO (TA e FR não reajustam)
-      const anosDecorridos = Math.floor((nextMonth - 1) / 12); // 1 para mês 13, 2 para 25...
-      const creditoCorr = C * Math.pow(1 + annualFactor, anosDecorridos);
-      const valorCategoriaAtual = (creditoCorr) + (C * taxaAdmFull) + (C * frPct);
-
-      // saldo a redividir
-      const mesesRestantes = prazo - (nextMonth - 1);
-      const saldoAjustado = Math.max(0, valorCategoriaAtual - pagoSemSeg);
-      parcelaAtualPre = saldoAjustado / Math.max(1, mesesRestantes);
-
-      // fecha segmento até o mês corrente
-      if (segOpen) {
-        segOpen.to = month;
-        applyPush();
-      }
-      // abre novo segmento com a nova parcela pré
-      segOpen = { from: nextMonth, to: nextMonth, valor: parcelaAtualPre, label: "Pré" };
-    } else {
-      // prolonga o segmento atual
-      if (segOpen) segOpen.to = month;
-    }
-
-    month = nextMonth;
-  }
-
-  if (segOpen && segOpen.to >= segOpen.from) applyPush();
-
-  // Pós-contemplação
-  if (parcContemplacao <= prazo) {
-    // saldo no instante da contemplação, considerando “valorCategoriaAtual” do último bloco (se houve reajuste)
-    // Para isso, precisamos descobrir qual “valor de categoria” estava valendo no mês da contemplação
-    const anosAteCont = Math.floor((parcContemplacao - 1) / 12); // 0..n
-    const creditoCont = C * Math.pow(1 + annualFactor, anosAteCont);
-    const valorCategoriaCont = (creditoCont) + (C * taxaAdmFull) + (C * frPct);
-
-    // saldo pago até a contemplação (pré)
-    // Recalcular pagoSemSeg de forma consistente com os blocos criados:
-    let pagoAteCont = 0;
-    segs.forEach(s => {
-      const from = s.from;
-      const to = Math.min(s.to, parcContemplacao);
-      if (to >= from) {
-        for (let m = from; m <= to; m++) {
-          const extra = m <= antecipParcelas ? antecipAdicionalCada : 0;
-          pagoAteCont += s.valor + extra;
-        }
-      }
-    });
-
-    // Aplica lance (ofertado) só na pós (saldo)
-    // OBS: aqui não sabemos o lance exato (virá do cálculo principal). A projeção usa limitador/saldo.
-    // Para manter a consistência com seus exemplos, o limitador é fixado a partir de valorCategoriaCont.
-    const limitadorValor = resolveLimitadorPct(limitadorPct, segmento, C) * valorCategoriaCont;
-
-    // saldo antes do lance: valorCategoriaCont - pagoAteCont
-    let saldo = Math.max(0, valorCategoriaCont - pagoAteCont);
-
-    // O “lance” efetivo da projeção é implícito no cálculo principal.
-    // Como a projeção não recebe o lance ofertado, assumimos que a parcela da pós começa pelo valor
-    // escolhido no cálculo principal (limitador ou saldo/meses). Para contorno, faremos:
-    //  - primeira parcela pós: max(limitador, saldo / (prazo - (parcContemplacao)))
-    //  - reajustes anuais seguintes: aplicam sobre o saldo remanescente e redividem
-    const mesesRestantesPos = Math.max(1, prazo - (parcContemplacao));
-    let parcelaPos = Math.max(limitadorValor, saldo / mesesRestantesPos);
-    let segPos: SegmentoProjecao | null = { from: parcContemplacao + 1, to: parcContemplacao + 1, valor: parcelaPos, label: "Pós" };
-
-    // percorre mês a mês até saldo zerar OU chegar num teto de 600 parcelas (segurança)
-    let m = parcContemplacao + 1;
-    let mesesUsados = 0;
-
-    const annivNext = (mm: number) => annivMonths(mm); // continua aniversário global
-
-    while (saldo > 0.0001 && mesesUsados < 600) {
-      // paga 1 parcela
-      saldo = Math.max(0, saldo - parcelaPos);
-
-      const prox = m + 1;
-      // se aniversário, reajusta saldo (sobre saldo devedor) e recalcula parcela para meses restantes
-      if (annivNext(prox)) {
-        saldo = saldo * (1 + annualFactor);
-
-        // meses restantes (não sabemos um prazo fixo; se usarmos saldo/parcelapos pode dar fração)
-        // Recalcular parcela como max(limitador, saldo / chute de meses restantes).
-        // Vamos usar o mesmo valor de parcela atual para tirar uma proxy de meses restantes:
-        const restoEstimado = Math.max(1, Math.ceil(saldo / parcelaPos));
-        parcelaPos = Math.max(limitadorValor, saldo / restoEstimado);
-
-        if (segPos) {
-          segPos.to = m;
-          applyPush();
-        }
-        segPos = { from: prox, to: prox, valor: parcelaPos, label: "Pós" };
-      } else {
-        if (segPos) segPos.to = m;
-      }
-
-      m = prox;
-      mesesUsados++;
-    }
-
-    if (segPos && segPos.to >= segPos.from) applyPush();
-  }
-
-  // compacta e arredonda valores para evitar “ruído”
-  return segs.map(s => ({ ...s, valor: Math.max(0, s.valor) }));
 }
 
 /* ========== Inputs com máscara (Money / Percent) ========== */
@@ -522,12 +342,15 @@ export default function Simuladores() {
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
 
-  // ===== Índices de correção (auto 12m) =====
-  const [allIndices, setAllIndices] = useState<IndexOption[]>([]);
-  const [idxCode, setIdxCode] = useState<string>("");
-  const [idxAnnualPct, setIdxAnnualPct] = useState<number>(0); // fator anual (12m) em decimal
-  const [idxAutoLoading, setIdxAutoLoading] = useState(false);
-  const [idxAutoInfo, setIdxAutoInfo] = useState<string>("");
+  // ===== Índice de Correção / Reajuste (12m) =====
+  const [indicesList, setIndicesList] = useState<IndexRow[]>([]);
+  const [indexCode, setIndexCode] = useState<string>("IPCA");
+  const [refMonth, setRefMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [indexValues, setIndexValues] = useState<IndexValueRow[]>([]);
+  const [acc12m, setAcc12m] = useState<number>(0);
 
   useEffect(() => {
     (async () => {
@@ -535,11 +358,7 @@ export default function Simuladores() {
       const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
         supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
         supabase.from("sim_tables").select("*"),
-        supabase
-          .from("leads")
-          .select("id, nome, telefone")
-          .limit(200)
-          .order("created_at", { ascending: false }),
+        supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
       setAdmins(a ?? []);
       setTables(t ?? []);
@@ -607,73 +426,6 @@ export default function Simuladores() {
     if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50)
       setForma("Parcela Cheia");
   }, [tabelaSelecionada]); // eslint-disable-line
-
-  // carrega lista de índices (opcional — se não existir a tabela, segue manual)
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data, error } = await supabase.from("sim_indices").select("*");
-        if (error || !data) {
-          setAllIndices([]);
-          return;
-        }
-        const opts = (data as IndexRow[]).map((r) => {
-          const code = r.codigo || r.code || r.sigla || r.name || r.nome || "IDX";
-          const name = r.nome || r.name || code;
-          return { code, name };
-        });
-        setAllIndices(opts);
-      } catch {
-        setAllIndices([]);
-      }
-    })();
-  }, []);
-
-  // define índice padrão conforme a tabela (primeiro da lista permitida), se houver
-  useEffect(() => {
-    if (!tabelaSelecionada) return;
-    const pref = tabelaSelecionada.indice_correcao?.[0];
-    if (pref) setIdxCode(pref);
-  }, [tabelaSelecionada]);
-
-  // busca automática do acumulado 12m do índice escolhido (se existir a tabela de valores)
-  useEffect(() => {
-    (async () => {
-      if (!idxCode) return;
-      setIdxAutoLoading(true);
-      setIdxAutoInfo("");
-      try {
-        // tenta pegar os últimos 12 valores mensais para esse índice
-        let q = supabase.from("sim_index_values").select("*").order("ref_month", { ascending: false }).limit(24);
-        // tenta cascas: index_code / codigo / code
-        q = q.or(`index_code.eq.${idxCode},codigo.eq.${idxCode},code.eq.${idxCode}`);
-        const { data, error } = await q;
-        if (error || !data || data.length === 0) {
-          setIdxAutoLoading(false);
-          setIdxAutoInfo("Fator anual manual");
-          return;
-        }
-        // filtra 12 mais recentes
-        const sorted = (data as IndexValueRow[])
-          .map((r) => ({
-            value:
-              (typeof r.value_pct === "number" ? r.value_pct :
-               (typeof r.valor_pct === "number" ? r.valor_pct : 0)) || 0,
-            ref: r.ref_month || r.mes_ref || "",
-          }))
-          .sort((a, b) => (a.ref > b.ref ? -1 : 1))
-          .slice(0, 12);
-
-        const fator = sorted.reduce((acc, m) => acc * (1 + m.value), 1) - 1;
-        setIdxAnnualPct(fator);
-        setIdxAutoInfo("Fator anual (12m) automático");
-      } catch {
-        setIdxAutoInfo("Fator anual manual");
-      } finally {
-        setIdxAutoLoading(false);
-      }
-    })();
-  }, [idxCode]);
 
   // valida % embutido
   const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
@@ -760,10 +512,6 @@ export default function Simuladores() {
       parcela_escolhida: calc.parcelaEscolhida,
       saldo_devedor_final: calc.saldoDevedorFinal,
       novo_prazo: calc.novoPrazo,
-
-      // guarda também as preferências de reajuste atuais
-      indice_codigo: idxCode || null,
-      fator_anual_12m_pct: idxAnnualPct,
     };
 
     const { data, error } = await supabase
@@ -843,7 +591,7 @@ export default function Simuladores() {
 
 💡 Um planejamento inteligente que cabe no seu bolso e acelera a realização do seu sonho!
 
-👉 Quer simular com o valor do seu bem dos sonhos?
+👉 Quer simular com o valor do seu ${bem} dos sonhos?
 Me chama aqui e eu te mostro o melhor caminho 👇
 ${wa}`
     );
@@ -852,12 +600,13 @@ ${wa}`
   async function copiarResumo() {
     try {
       await navigator.clipboard.writeText(resumoTexto);
+      alert("Resumo copiado!");
     } catch {
       alert("Não foi possível copiar o resumo.");
     }
   }
 
-  // ===== Texto OPORTUNIDADE / PROPOSTA =====
+  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
   function normalizarSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
     if (s.includes("imó")) return "Imóvel";
@@ -865,7 +614,7 @@ ${wa}`
     if (s.includes("moto")) return "Motocicleta";
     if (s.includes("serv")) return "Serviços";
     if (s.includes("pesad")) return "Pesados";
-    return seg || "Automóvel";
+    return (seg || "Automóvel");
   }
   function emojiDoSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
@@ -923,10 +672,52 @@ Vantagens
   async function copiarProposta() {
     try {
       await navigator.clipboard.writeText(propostaTexto);
+      alert("Texto copiado!");
     } catch {
       alert("Não foi possível copiar o texto.");
     }
   }
+
+  // ===== Índices: carregar lista e valores =====
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("sim_indices")
+        .select("code,name")
+        .order("name", { ascending: true });
+      if (!error && data) setIndicesList(data as IndexRow[]);
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      if (!indexCode || !refMonth) return;
+
+      // janela dos últimos 13 meses, para garantir 12 cheios
+      const end = `${refMonth}-01`;
+      const d = new Date(end);
+      d.setMonth(d.getMonth() - 13);
+      const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+
+      const { data, error } = await supabase
+        .from("sim_index_values")
+        .select("ref_month,value")
+        .eq("index_code", indexCode)
+        .gte("ref_month", start)
+        .lte("ref_month", end);
+
+      if (error) {
+        console.error(error);
+        setIndexValues([]);
+        setAcc12m(0);
+        return;
+      }
+
+      const rows = (data || []) as IndexValueRow[];
+      setIndexValues(rows);
+      setAcc12m(accumulated12m(rows));
+    })();
+  }, [indexCode, refMonth]);
 
   if (loading) {
     return (
@@ -937,34 +728,6 @@ Vantagens
   }
 
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
-
-  // ===== Projeção com reajustes (segments) =====
-  const projSegments: SegmentoProjecao[] = useMemo(() => {
-    if (!tabelaSelecionada || !calc || !podeCalcular) return [];
-    const baseMensalSemSeguro =
-      (credito * calc.fundoComumFactor + credito * calc.TA_efetiva + credito * tabelaSelecionada.fundo_reserva_pct) / prazoVenda;
-    try {
-      return buildProjection({
-        credito,
-        prazoVenda,
-        antecipParcelas: (tabelaSelecionada.antecip_parcelas as 0 | 1 | 2) ?? 0,
-        antecipAdicionalCada: calc.antecipAdicionalCada,
-        baseMensalSemSeguro,
-        parcContemplacao,
-        taxaAdmFull: tabelaSelecionada.taxa_adm_pct,
-        frPct: tabelaSelecionada.fundo_reserva_pct,
-        limitadorPct: resolveLimitadorPct(
-          tabelaSelecionada.limitador_parcela_pct,
-          tabelaSelecionada.segmento,
-          credito || 0
-        ),
-        segmento: tabelaSelecionada.segmento,
-        annualFactor: Math.max(0, idxAnnualPct || 0),
-      });
-    } catch {
-      return [];
-    }
-  }, [tabelaSelecionada, calc, podeCalcular, credito, prazoVenda, parcContemplacao, idxAnnualPct]);
 
   return (
     <div className="p-6 space-y-4">
@@ -1067,15 +830,6 @@ Vantagens
                     salvar={salvarSimulacao}
                     salvando={salvando}
                     simCode={simCode}
-
-                    // índices
-                    allIndices={allIndices}
-                    idxCode={idxCode}
-                    setIdxCode={setIdxCode}
-                    idxAnnualPct={idxAnnualPct}
-                    setIdxAnnualPct={setIdxAnnualPct}
-                    idxAutoLoading={idxAutoLoading}
-                    idxAutoInfo={idxAutoInfo}
                   />
                 ) : (
                   <div className="text-sm text-muted-foreground">
@@ -1104,7 +858,7 @@ Vantagens
           </div>
         </div>
 
-        {/* coluna direita: memória + textos + projeção */}
+        {/* coluna direita: memória + índices + textos */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader>
@@ -1178,6 +932,52 @@ Vantagens
             </CardContent>
           </Card>
 
+          {/* Índice de Correção / Reajuste (12m) */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Índice de Correção / Reajuste (12m)</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Índice</Label>
+                  <select
+                    className="w-full h-10 border rounded-md px-3"
+                    value={indexCode}
+                    onChange={(e) => setIndexCode(e.target.value)}
+                  >
+                    {indicesList.length === 0 && <option value="IPCA">IPCA</option>}
+                    {indicesList.map((it) => (
+                      <option key={it.code} value={it.code}>
+                        {it.name || it.code}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label>Mês de referência</Label>
+                  <Input
+                    type="month"
+                    value={refMonth}
+                    onChange={(e) => setRefMonth(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="text-sm bg-muted/30 rounded-lg p-3 grid grid-cols-2 gap-2">
+                <div>Acumulado 12 meses</div>
+                <div className="text-right font-medium">
+                  {(acc12m * 100).toFixed(2)}%
+                </div>
+                <div className="col-span-2 text-muted-foreground text-xs leading-relaxed">
+                  Pré-contemplação: reajuste anual incide sobre o <strong>crédito</strong> contratado.
+                  <br />
+                  Pós-contemplação: reajuste anual incide sobre o <strong>saldo devedor</strong>.
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Resumo antigo */}
           <Card>
             <CardHeader>
@@ -1199,7 +999,7 @@ Vantagens
             </CardContent>
           </Card>
 
-          {/* OPORTUNIDADE */}
+          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
           <Card>
             <CardHeader>
               <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
@@ -1227,100 +1027,6 @@ Vantagens
                   Copiar
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Projeção com Reajustes (beta) */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Projeção com Reajustes (beta)</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              {!tabelaSelecionada ? (
-                <div className="text-muted-foreground">Selecione a tabela.</div>
-              ) : (
-                <>
-                  <div className="grid gap-3">
-                    {/* Escolha do índice + fator anual */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Índice de correção</Label>
-                        <select
-                          className="w-full h-10 border rounded-md px-3"
-                          value={idxCode}
-                          onChange={(e) => setIdxCode(e.target.value)}
-                        >
-                          <option value="">(Manual)</option>
-                          {/* se a tabela tiver lista preferida, mostra primeiro */}
-                          {tabelaSelecionada.indice_correcao?.length
-                            ? tabelaSelecionada.indice_correcao.map((c) => (
-                                <option key={c} value={c}>{c}</option>
-                              ))
-                            : null}
-                          {/* demais índices disponíveis */}
-                          {allIndices
-                            .filter((o) => !tabelaSelecionada.indice_correcao?.includes?.(o.code))
-                            .map((o) => (
-                              <option key={o.code} value={o.code}>
-                                {o.code} — {o.name}
-                              </option>
-                            ))}
-                        </select>
-                        {idxAutoLoading ? (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Buscando acumulado 12m...
-                          </p>
-                        ) : (
-                          idxAutoInfo && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {idxAutoInfo}
-                            </p>
-                          )
-                        )}
-                      </div>
-                      <div>
-                        <Label>Fator anual (12m)</Label>
-                        <PercentInput
-                          valueDecimal={idxAnnualPct}
-                          onChangeDecimal={setIdxAnnualPct}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* lista de blocos */}
-                  {projSegments.length === 0 ? (
-                    <div className="text-muted-foreground">
-                      Preencha a simulação e o fator anual para ver a projeção.
-                    </div>
-                  ) : (
-                    <div className="rounded-md border overflow-hidden">
-                      <table className="min-w-full">
-                        <thead className="bg-muted/40">
-                          <tr>
-                            <th className="text-left p-2">Período</th>
-                            <th className="text-left p-2">Fase</th>
-                            <th className="text-right p-2">Parcela (sem seguro)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {projSegments.map((s, idx) => (
-                            <tr key={idx} className="border-t">
-                              <td className="p-2">{s.from}–{s.to}</td>
-                              <td className="p-2">{s.label}</td>
-                              <td className="p-2 text-right">{brMoney(s.valor)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Observações: pré-contemplação o reajuste anual incide sobre o crédito (TA/FR não reajustam). Pós-contemplação o reajuste anual incide sobre o saldo devedor.
-                    O limitador de parcela é avaliado na contemplação e mantido fixo na pós.
-                  </p>
-                </>
-              )}
             </CardContent>
           </Card>
         </div>
@@ -1756,13 +1462,6 @@ type EmbraconProps = {
   salvar: () => Promise<void>;
   salvando: boolean;
   simCode: number | null;
-
-  // índices / reajustes
-  allIndices: IndexOption[];
-  idxCode: string; setIdxCode: (v: string) => void;
-  idxAnnualPct: number; setIdxAnnualPct: (v: number) => void;
-  idxAutoLoading: boolean;
-  idxAutoInfo: string;
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
@@ -1861,8 +1560,8 @@ function EmbraconSimulator(p: EmbraconProps) {
                   </option>
                   {p.variantesDaTabela.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.prazo_limite} meses • Adm {(t.taxa_adm_pct*100).toFixed(2)}% • FR{" "}
-                      {(t.fundo_reserva_pct*100).toFixed(2)}%
+                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR{" "}
+                      {pctHuman(t.fundo_reserva_pct)}
                     </option>
                   ))}
                 </select>
@@ -1980,66 +1679,6 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* === Reajuste / Índice de correção === */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Reajuste / Índice de Correção</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              <div className="md:col-span-2">
-                <Label>Índice (opcional)</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.idxCode}
-                  onChange={(e) => p.setIdxCode(e.target.value)}
-                >
-                  <option value="">(Manual)</option>
-                  {p.tabelaSelecionada?.indice_correcao?.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                  {p.allIndices
-                    .filter((o) => !p.tabelaSelecionada?.indice_correcao?.includes?.(o.code))
-                    .map((o) => (
-                      <option key={o.code} value={o.code}>
-                        {o.code} — {o.name}
-                      </option>
-                    ))}
-                </select>
-                {p.idxAutoLoading ? (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Buscando acumulado 12m...
-                  </p>
-                ) : p.idxAutoInfo ? (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {p.idxAutoInfo}
-                  </p>
-                ) : null}
-              </div>
-              <div>
-                <Label>Fator anual (12m)</Label>
-                <PercentInput
-                  valueDecimal={p.idxAnnualPct}
-                  onChangeDecimal={p.setIdxAnnualPct}
-                />
-              </div>
-
-              <div className="md:col-span-3">
-                <Label>Parcela da Contemplação (mês)</Label>
-                <Input
-                  type="number"
-                  value={p.parcContemplacao}
-                  onChange={(e) =>
-                    p.setParcContemplacao(Math.max(1, Number(e.target.value)))
-                  }
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  O reajuste é anual no aniversário da cota (mês 13, 25, 37,...).
-                  Pré: incide sobre o crédito. Pós: incide sobre o saldo devedor.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Até a contemplação */}
           <Card>
             <CardHeader>
@@ -2063,7 +1702,7 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* === Configurações do Lance === */}
+          {/* === Configurações do Lance (RESTAURADO) === */}
           <Card>
             <CardHeader>
               <CardTitle>Configurações do Lance</CardTitle>

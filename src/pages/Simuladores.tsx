@@ -96,16 +96,15 @@ type IndexValueRow = { ref_month: string; value: number | string };
 const DEFAULT_INDEXES: IndexRow[] = [
   { code: "IPCA", name: "IPCA" },
   { code: "INPC", name: "INPC" },
-  { code: "IGPM", name: "IGP-M" },
-  { code: "IGPDI", name: "IGP-DI" },
-  { code: "INCCM", name: "INCC-M" },
+  { code: "IGP-M", name: "IGP-M (FGV)" },
+  { code: "IGP-DI", name: "IGP-DI" },
+  { code: "INCC", name: "INCC" },
 ];
 
 // normaliza “YYYY-MM-01” => “YYYY-MM”, aceita também “YYYY/MM”
 function normalizeYM(s: string): string {
   const m = (s || "").toString().slice(0, 7).replace("/", "-");
   if (/^\d{4}-\d{2}$/.test(m)) return m;
-  // tenta achar no meio da string
   const hit = (s || "").toString().match(/(\d{4})[-\/](\d{2})/);
   return hit ? `${hit[1]}-${hit[2]}` : "";
 }
@@ -134,7 +133,6 @@ function accumulated12m(vals: IndexValueRow[]) {
   if (!last12.length) return 0;
 
   const factor = last12.reduce((acc, r) => acc * (1 + r.d), 1);
-  // proteção contra números estranhos
   const res = Math.max(-0.9, Math.min(5, factor - 1));
   return res;
 }
@@ -155,13 +153,35 @@ type CalcInput = {
   lanceOfertPct: number;
   lanceEmbutPct: number; // <= 0.25
   parcContemplacao: number;
-  indexPct: number;
+  indexPct: number; // acumulado 12m (decimal) — novo
 };
 
+type CalcResult = {
+  valorCategoria: number;
+  parcelaAte: number;
+  parcelaDemais: number;
+  lanceOfertadoValor: number;
+  lanceEmbutidoValor: number;
+  lanceProprioValor: number;
+  lancePercebidoPct: number;
+  novoCredito: number;
+  novaParcelaSemLimite: number;
+  parcelaLimitante: number;
+  parcelaEscolhida: number;
+  saldoDevedorFinal: number;
+  novoPrazo: number;
+  TA_efetiva: number;
+  fundoComumFactor: number;
+  antecipAdicionalCada: number;
+  segundaParcelaComAntecipacao: number | null;
+  has2aAntecipDepois: boolean;
+  aplicouLimitador: boolean;
+};
 
-function calcularSimulacao(i: CalcInput) {
+// === motor de simulação com aniversários ===
+function calcularSimulacao(i: CalcInput): CalcResult {
   const {
-    credito: C,
+    credito: C0,
     prazoVenda,
     forma,
     seguro,
@@ -173,138 +193,196 @@ function calcularSimulacao(i: CalcInput) {
     lanceOfertPct,
     lanceEmbutPct,
     parcContemplacao,
-    indexPct,
+    indexPct, // acumulado 12m
   } = i;
 
   const prazo = Math.max(1, Math.floor(prazoVenda));
-  const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
-  const prazoRestante = Math.max(1, prazo - parcelasPagas);
-
+  const mCont = Math.max(1, Math.min(parcContemplacao, prazo)); // mês de contemplação
   const segLower = (segmento || "").toLowerCase();
   const isServico = segLower.includes("serv");
   const isMoto = segLower.includes("moto");
 
-  // Taxa de administração efetiva (a parte nas parcelas mensais)
+  // TA efetiva (parte que vai para as parcelas mensais)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
 
-  // Fator de Fundo Comum conforme forma de contratação
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-  // Componentes fixos antes da contemplação: TA efetiva + FR são calculados sobre o crédito original (regra)
-  const fixoAdmFR = C * (TA_efetiva + frPct);
+  // Adm/FR são sobre o crédito original e NÃO reajustam antes da contemplação
+  const admValor = C0 * taxaAdmFull;
+  const frValor = C0 * frPct;
 
-  // Seguro apenas compõe a parcela para exibição, não abate saldo
-  const seguroMensalBase = seguro ? (C * (1 + taxaAdmFull + frPct)) * i.seguroPrestPct : 0;
+  // Seguro mensal (entra na parcela mas não entra no saldo)
+  const valorCategoriaBase = C0 * (1 + taxaAdmFull + frPct);
+  const seguroMensal = seguro ? valorCategoriaBase * i.seguroPrestPct : 0;
 
-  // Antecipação distribuída nas primeiras 1 ou 2 parcelas
+  // antecipação (somada nas primeiras 1 ou 2 parcelas)
   const antecipAdicionalCada =
-    antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
+    antecipParcelas > 0 ? (C0 * antecipPct) / antecipParcelas : 0;
 
-  // === Pagamento até a contemplação com reajustes anuais ===
-  // Regra: a cada aniversário (meses 13,25,...) o crédito é reajustado por indexPct,
-  // TA e FR não são reajustados antes da contemplação.
-  // Em cada aniversário, a nova mensalidade (SEM seguro) é recalculada pelo saldo-base restante
-  // dividido pelo prazo remanescente.
-  let totalPagoBase = 0; // soma das parcelas base (sem seguro/antecipação)
-  let m = 1;
-  while (m <= parcelasPagas) {
-    const k = Math.floor((m - 1) / 12); // quantos reajustes já ocorreram
-    const Ck = C * Math.pow(1 + (indexPct || 0), k);
-    const baseTotalCorrigida = Ck * fundoComumFactor + fixoAdmFR;
+  // parcela base (sem seguro), antes de qualquer reajuste
+  const baseMensalSemSeguro = (C0 * fundoComumFactor + C0 * TA_efetiva + C0 * frPct) / prazo;
 
-    // meses até próximo aniversário ou até a contemplação
-    const proxAniv = k * 12 + 13;
-    const fimFase = Math.min(parcelasPagas, proxAniv - 1);
-    const mesesFase = Math.max(1, fimFase - m + 1);
+  // Exibição até a contemplação (mantém seu layout/UX)
+  const parcelaAte = baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0) + seguroMensal;
+  const parcelaDemais = baseMensalSemSeguro + seguroMensal;
 
-    // mensalidade nesta fase (sem seguro/antecipação)
-    const mesesJaPagos = m - 1;
-    const mensalFase = (baseTotalCorrigida - totalPagoBase) / (prazo - mesesJaPagos);
+  // =====================================================================
+  // PRÉ-CONTEMPLAÇÃO: simular mês a mês (reajuste do CRÉDITO nos aniversários).
+  // Parcelas da simulação para fins de saldo NUNCA incluem seguro.
+  // =====================================================================
+  let C_corr = C0; // crédito corrigido por aniversários
+  let totalPagoAteContemplacao = 0;
 
-    totalPagoBase += mensalFase * mesesFase;
-    m += mesesFase;
+  // parcela corrente (sem seguro) que vale até mudar no aniversário
+  let parcelaCorrenteSemSeguro = baseMensalSemSeguro;
+
+  // função para recomputar parcela (sem seguro) no ponto atual
+  function recomputeParcelaSemSeguro(mesAtual: number) {
+    // saldo teórico = (C_corr + Adm(original) + FR(original)) - pagos até aqui
+    const totalBase = C_corr + admValor + frValor;
+    const pagos = totalPagoAteContemplacao;
+    const rem = Math.max(1, prazo - (mesAtual - 1)); // meses restantes incluindo este
+    const nova = Math.max(0, (totalBase - pagos) / rem);
+    return nova;
   }
 
-  // Parcela de exibição até a contemplação
-  const baseMensalInicial =
-    (C * fundoComumFactor + fixoAdmFR) / prazo;
-  const parcelaAte =
-    baseMensalInicial + (antecipParcelas > 0 ? antecipAdicionalCada : 0) + seguroMensalBase;
-  const parcelaDemais = baseMensalInicial + seguroMensalBase;
+  for (let mes = 1; mes <= mCont; mes++) {
+    // aniversário ocorre no mês 13, 25, 37... (contados a partir do mês 1)
+    const isAniver = mes > 1 && ((mes - 1) % 12 === 0);
+    if (isAniver) {
+      // reajusta APENAS o crédito
+      C_corr = C_corr * (1 + indexPct);
+      // recalcula parcela (sem seguro) para o restante antes da contemplação
+      parcelaCorrenteSemSeguro = recomputeParcelaSemSeguro(mes);
+    }
 
-  // Lances
-  const lanceOfertadoValor = C * lanceOfertPct;
-  const lanceEmbutidoValor = C * lanceEmbutPct;
+    // parcela paga no mês "mes" até a contemplação
+    const comAntecip = mes <= antecipParcelas ? antecipAdicionalCada : 0;
+    const pagaSemSeguro = parcelaCorrenteSemSeguro + comAntecip; // sem seguro para abater saldo
+    totalPagoAteContemplacao += pagaSemSeguro;
+  }
+
+  // Lances no momento da contemplação
+  const lanceOfertadoValor = C0 * lanceOfertPct;
+  const lanceEmbutidoValor = C0 * lanceEmbutPct;
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
-  const novoCredito = Math.max(0, C - lanceEmbutidoValor);
+  const novoCredito = Math.max(0, C0 - lanceEmbutidoValor);
 
-  // Valor de categoria vigente na contemplação (após todos os reajustes que já ocorreram)
-  const kContempl = Math.floor((parcelasPagas - 1) / 12);
-  const Ccorr = C * Math.pow(1 + (indexPct || 0), Math.max(0, kContempl));
-  const valorCategoriaVigente = Ccorr * fundoComumFactor + fixoAdmFR;
+  // VALOR DE CATEGORIA para referência/UX (usa crédito original)
+  const valorCategoria = valorCategoriaBase;
 
-  // Saldo devedor na contemplação (SEM seguro/antecipação)
-  const saldoDevedorFinal = Math.max(
-    0,
-    valorCategoriaVigente - totalPagoBase - lanceOfertadoValor
-  );
+  // saldo antes do lance (com crédito corrigido e Adm/FR originais)
+  const saldoAntesLance = Math.max(0, (C_corr + admValor + frValor) - totalPagoAteContemplacao);
+  const saldoAposLance = Math.max(0, saldoAntesLance - lanceOfertadoValor);
 
-  // Nova parcela (sem limite) após a contemplação
-  const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
+  // =====================================================================
+  // PÓS-CONTEMPLAÇÃO:
+  // - Aniversários continuam a cada 12 meses desde a contratação (13, 25, 37, ...).
+  // - Agora o reajuste incide sobre o SALDO.
+  // - Regra do limitador/ exceções:
+  //   * Serviços OU Moto < 20k -> mantém parcela e recalcula apenas prazo
+  //   * Caso contrário, aplica limitador (mínimo).
+  // =====================================================================
 
-  // Limitador (sobre o valor de categoria vigente)
-  const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
-  const parcelaLimitante = limitadorBase > 0 ? valorCategoriaVigente * limitadorBase : 0;
+  // número de meses já decorridos até a contemplação
+  let mesesDecorridos = mCont;
 
-  // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
-  const manterParcela = isServico || (isMoto && C < 20000);
+  // monta lista de todos aniversários que ainda virão até o fim do prazo
+  const aniversariosFuturos: number[] = [];
+  for (let m = 13; m <= prazo; m += 12) {
+    if (m > mesesDecorridos) aniversariosFuturos.push(m);
+  }
 
+  // parcela inicial pós contemplacao (sem limite) = saldo / (prazo - mCont)
+  const prazoRestanteInicial = Math.max(1, prazo - mCont);
+  let saldo = saldoAposLance;
+  let parcelaPosSemLimite = saldo / prazoRestanteInicial;
+
+  const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C0);
+  const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
+
+  const manterParcela = isServico || (isMoto && C0 < 20000);
+
+  let parcelaEscolhidaSemSeguro: number;
   let aplicouLimitador = false;
-  let parcelaEscolhida = baseMensalInicial; // valor base sem seguro
 
   if (!manterParcela) {
-    if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
+    if (parcelaLimitante > parcelaPosSemLimite) {
+      parcelaEscolhidaSemSeguro = parcelaLimitante;
       aplicouLimitador = true;
-      parcelaEscolhida = parcelaLimitante;
     } else {
-      parcelaEscolhida = novaParcelaSemLimite;
+      parcelaEscolhidaSemSeguro = parcelaPosSemLimite;
     }
+  } else {
+    parcelaEscolhidaSemSeguro = parcelaPosSemLimite;
   }
 
-  // Caso especial: antecipação em 2x e contemplação na 1ª parcela
-  const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
+  // simula do mês (mCont+1) até o fim, aplicando reajustes anuais no SALDO
+  let mesAtual = mCont + 1;
+  let prazoRestante = Math.max(1, prazo - mCont);
+
+  while (mesAtual <= prazo && saldo > 0.01) {
+    // se este mês é aniversário -> reajusta saldo
+    const isAniverPos = (mesAtual > 1) && ((mesAtual - 1) % 12 === 0);
+    if (isAniverPos) {
+      saldo = saldo * (1 + indexPct);
+
+      // a cada aniversário, recalcula a parcela conforme regra/limitador
+      prazoRestante = Math.max(1, prazo - (mesAtual - 1));
+      const proposta = saldo / prazoRestante;
+      if (!manterParcela) {
+        if (parcelaLimitante > proposta) {
+          parcelaEscolhidaSemSeguro = parcelaLimitante;
+          aplicouLimitador = true;
+        } else {
+          parcelaEscolhidaSemSeguro = proposta;
+        }
+      } else {
+        // mantém a parcela e ajusta o PRAZO depois (feito no final)
+        // nada a fazer aqui
+      }
+    }
+
+    // abate pagamento do mês (sem seguro)
+    saldo = Math.max(0, saldo - parcelaEscolhidaSemSeguro);
+    mesAtual++;
+  }
+
+  // prazo final (se limitador elevou a parcela e quitou antes, etc.)
+  // Regras de prazo quando manterParcela = true:
+  //   - Se serviços ou moto<20k, mantém parcela e recalcula o prazo:
+  //     prazo = ceil(saldo_inicial / parcelaEscolhidaSemSeguro)
+  if (manterParcela) {
+    // recomputa prazo com a parcela inicial (sem limite)
+    const newPrazo = Math.max(1, Math.ceil(saldoAposLance / parcelaEscolhidaSemSeguro));
+    prazoRestante = newPrazo;
+  } else {
+    // caso padrão: considera o prazo ao dividir saldo / parcela
+    const newPrazo = Math.max(1, Math.ceil(saldoAposLance / parcelaEscolhidaSemSeguro));
+    prazoRestante = newPrazo;
+  }
+
+  // Caso especial: antecipação em 2x e contemplação na 1ª parcela (mantido)
+  const has2aAntecipDepois = antecipParcelas >= 2 && mCont === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada
+    ? parcelaEscolhidaSemSeguro + antecipAdicionalCada
     : null;
 
-  // Prazo após contemplação
-  const parcelasIguais = Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
-  let novoPrazo: number;
-  if (parcelasIguais && !has2aAntecipDepois) {
-    novoPrazo = prazoRestante;
-  } else {
-    let saldoParaPrazo = saldoDevedorFinal;
-    if (has2aAntecipDepois) {
-      saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada));
-    }
-    novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
-  }
-
   return {
-    valorCategoria: valorCategoriaVigente,
-    parcelaAte,
-    parcelaDemais,
+    valorCategoria,
+    parcelaAte,                          // com seguro e antecip nas 1-2 (apenas exibição, como antes)
+    parcelaDemais,                       // com seguro (exibição)
     lanceOfertadoValor,
     lanceEmbutidoValor,
     lanceProprioValor,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
-    novaParcelaSemLimite,
+    novaParcelaSemLimite: saldoAposLance / Math.max(1, prazo - mCont), // apenas referência
     parcelaLimitante,
-    parcelaEscolhida,
-    saldoDevedorFinal,
-    novoPrazo,
+    parcelaEscolhida: parcelaEscolhidaSemSeguro, // sempre sem seguro (como já era)
+    saldoDevedorFinal: saldoAposLance,
+    novoPrazo: prazoRestante,
     TA_efetiva,
     fundoComumFactor,
     antecipAdicionalCada,
@@ -313,7 +391,6 @@ function calcularSimulacao(i: CalcInput) {
     aplicouLimitador,
   };
 }
-
 
 /* ========== Inputs com máscara (Money / Percent) ========== */
 function MoneyInput({
@@ -499,6 +576,74 @@ export default function Simuladores() {
     parcContemplacao > 0 &&
     parcContemplacao < prazoVenda;
 
+  /* ===== Índices: carregar lista e valores ===== */
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("sim_indices")
+        .select("code,name")
+        .order("name", { ascending: true });
+
+      if (!error && data && data.length) {
+        setIndicesList(data as IndexRow[]);
+        if (!data.find((r: any) => r.code === indexCode)) {
+          setIndexCode((data[0] as any).code);
+        }
+      } else {
+        // fallback local
+        setIndicesList(DEFAULT_INDEXES);
+        if (!DEFAULT_INDEXES.find(x => x.code === indexCode)) setIndexCode(DEFAULT_INDEXES[0].code);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      if (!indexCode || !refMonth) return;
+
+      // tenta RPC primeiro
+      const tryRpc = await supabase.rpc("sim_index_12m", {
+        _code: indexCode,
+        _ref_month: refMonth + "-01",
+      });
+
+      if (!tryRpc.error && typeof tryRpc.data === "number") {
+        setAcc12m(Number(tryRpc.data) || 0);
+        setIndexValues([]);
+        return;
+      }
+
+      // fallback: janela dos últimos 13 meses em sim_indices_values
+      const [yy, mm] = refMonth.split("-").map((x) => parseInt(x, 10));
+      const endDate = `${yy}-${String(mm).padStart(2, "0")}-01`;
+
+      const d = new Date(yy, mm - 1, 1);
+      d.setMonth(d.getMonth() - 13);
+      const startDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+
+      const { data, error } = await supabase
+        .from("sim_indices_values")
+        .select("ref_month,value")
+        .eq("index_code", indexCode)
+        .gte("ref_month", startDate)
+        .lte("ref_month", endDate)
+        .order("ref_month", { ascending: true });
+
+      if (error) {
+        console.error(error);
+        setIndexValues([]);
+        setAcc12m(0);
+        return;
+      }
+
+      const rows = (data || []) as IndexValueRow[];
+      setIndexValues(rows);
+      setAcc12m(accumulated12m(rows));
+    })();
+  }, [indexCode, refMonth]);
+
+  // ===== Cálculo principal (com reajustes) =====
   useEffect(() => {
     if (!tabelaSelecionada || !podeCalcular) {
       setCalc(null);
@@ -519,16 +664,26 @@ export default function Simuladores() {
       lanceOfertPct,
       lanceEmbutPct: lanceEmbutPctValid,
       parcContemplacao,
-      indexPct: acc12m,
+      indexPct: acc12m || 0,
     };
     setCalc(calcularSimulacao(inp));
-  }, [tabelaSelecionada, credito, prazoVenda, forma, seguroPrest, lanceOfertPct, lanceEmbutPctValid, parcContemplacao]); // eslint-disable-line
+  }, [
+    tabelaSelecionada,
+    credito,
+    prazoVenda,
+    forma,
+    seguroPrest,
+    lanceOfertPct,
+    lanceEmbutPctValid,
+    parcContemplacao,
+    acc12m,
+  ]); // eslint-disable-line
 
   async function salvarSimulacao() {
     if (!tabelaSelecionada || !calc) return;
     setSalvando(true);
 
-    const payload = {
+    const payload: any = {
       admin_id: activeAdminId,
       table_id: tabelaSelecionada.id,
       lead_id: leadId || null,
@@ -557,10 +712,12 @@ export default function Simuladores() {
       parcela_escolhida: calc.parcelaEscolhida,
       saldo_devedor_final: calc.saldoDevedorFinal,
       novo_prazo: calc.novoPrazo,
-          index_code: indexCode,
-      index_ref_month: (refMonth ? refMonth + '-01' : null),
-      index_12m_value: acc12m,
-};
+
+      // NOVOS CAMPOS: persistência do índice usado
+      index_code: indexCode,
+      index_ref_month: refMonth ? refMonth + "-01" : null,
+      index_12m_value: acc12m ?? 0,
+    };
 
     const { data, error } = await supabase
       .from("sim_simulations")
@@ -724,62 +881,6 @@ Vantagens
     }
   }
 
-  /* ===== Índices: carregar lista e valores ===== */
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase
-        .from("sim_indices")
-        .select("code,name")
-        .order("name", { ascending: true });
-
-      if (!error && data && data.length) {
-        setIndicesList(data as IndexRow[]);
-        // mantém indexCode se existir na lista; se não, seta o primeiro
-        if (!data.find((r: any) => r.code === indexCode)) {
-          setIndexCode((data[0] as any).code);
-        }
-      } else {
-        // fallback local
-        setIndicesList(DEFAULT_INDEXES);
-        if (!DEFAULT_INDEXES.find(x => x.code === indexCode)) setIndexCode(DEFAULT_INDEXES[0].code);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      if (!indexCode || !refMonth) return;
-
-      // janela dos últimos 13 meses para garantir 12 cheios
-      const [yy, mm] = refMonth.split("-").map((x) => parseInt(x, 10));
-      const endYM = `${yy}-${String(mm).padStart(2, "0")}`;
-
-      const d = new Date(yy, mm - 1, 1);
-      d.setMonth(d.getMonth() - 13);
-      const startYM = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-
-      const { data, error } = await supabase
-        .from("sim_index_values")
-        .select("ref_month,value")
-        .eq("index_code", indexCode)
-        .gte("ref_month", startYM) // usa “YYYY-MM” puro
-        .lte("ref_month", endYM)
-        .order("ref_month", { ascending: true });
-
-      if (error) {
-        console.error(error);
-        setIndexValues([]);
-        setAcc12m(0);
-        return;
-      }
-
-      const rows = (data || []) as IndexValueRow[];
-      setIndexValues(rows);
-      setAcc12m(accumulated12m(rows));
-    })();
-  }, [indexCode, refMonth]);
-
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2">
@@ -826,7 +927,7 @@ Vantagens
                 onClick={() => alert("Em breve: adicionar administradora.")}
                 className="h-10 rounded-2xl px-4 whitespace-nowrap"
               >
-                <Plus className="h-4 w-4 mr-1" /> + Add Administradora
+                <Plus className="h-4 w-4 mr-1" /> Add Administradora
               </Button>
             </>
           )}

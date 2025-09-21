@@ -199,13 +199,13 @@ function calcularSimulacao(i: CalcInput): CalcResult {
   // Lances no momento da contemplação
   const lanceEmbutidoValor = C_corr * lanceEmbutPct;      // abate do CRÉDITO atualizado
   const novoCredito = Math.max(0, C_corr - lanceEmbutidoValor);
-  const lanceOfertadoValor = C_corr * lanceOfertPct;      // abate do SALDO: ofertado sobre crédito atualizado
+  const lanceOfertadoValor = C_corr * lanceOfertPct;      // ofertado sobre crédito atualizado
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   saldo = Math.max(0, saldo - lanceOfertadoValor);
 
-  // Linha informativa do abate do lance (sem avançar parcela)
+  // Linha informativa do abate do lance
   extrato.push({
-    parcelaN: mCont, // mantém agrupado no mesmo ponto da contemplação
+    parcelaN: mCont,
     creditoMes: novoCredito,
     valorParcela: 0,
     reajusteAplicado: 0,
@@ -302,6 +302,150 @@ function PercentInput({ valueDecimal, onChangeDecimal, maxDecimal, ...rest }: { 
     <div className="flex items-center gap-2">
       <Input {...rest} inputMode="decimal" value={display} onChange={(e) => { let d = parsePctInputToDecimal(e.target.value); if (typeof maxDecimal === "number") d = clamp(d, 0, maxDecimal); onChangeDecimal(d); }} className={`text-right ${rest.className || ""}`} />
       <span className="text-sm text-muted-foreground">%</span>
+    </div>
+  );
+}
+
+/* ================== EmbraconSimulator (fix) ================== */
+type EmbraconSimulatorProps = {
+  leads: Lead[];
+  adminTables: SimTable[];
+  nomesTabelaSegmento: string[];
+  variantesDaTabela: SimTable[];
+  tabelaSelecionada: SimTable | null;
+  prazoAte: number;
+  faixa: { min: number; max: number } | null;
+  leadId: string; setLeadId: (v: string) => void; leadInfo: { nome: string; telefone?: string | null } | null;
+  grupo: string; setGrupo: (v: string) => void;
+  segmento: string; setSegmento: (v: string) => void;
+  nomeTabela: string; setNomeTabela: (v: string) => void;
+  tabelaId: string; setTabelaId: (v: string) => void;
+  credito: number; setCredito: (n: number) => void;
+  prazoVenda: number; setPrazoVenda: (n: number) => void;
+  forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
+  seguroPrest: boolean; setSeguroPrest: (v: boolean) => void;
+  lanceOfertPct: number; setLanceOfertPct: (d: number) => void;
+  lanceEmbutPct: number; setLanceEmbutPct: (d: number) => void;
+  parcContemplacao: number; setParcContemplacao: (n: number) => void;
+  prazoAviso: string | null;
+  calc: CalcResult | null;
+  salvar: () => void; salvando: boolean; simCode: number | null;
+  onGerarExtrato: () => void;
+};
+function EmbraconSimulator(props: EmbraconSimulatorProps) {
+  const t = props.tabelaSelecionada;
+  const limitadorVisivel = resolveLimitadorPct(t?.limitador_parcela_pct || 0, t?.segmento || "", props.credito || 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div>
+          <Label>Lead</Label>
+          <select className="w-full h-10 border rounded-md px-3"
+            value={props.leadId} onChange={(e)=>props.setLeadId(e.target.value)}>
+            <option value="">— Selecionar —</option>
+            {props.leads.map(l => (<option key={l.id} value={l.id}>{l.nome}</option>))}
+          </select>
+          {props.leadInfo && <div className="text-xs text-muted-foreground mt-1">Fone: {props.leadInfo.telefone || "—"}</div>}
+        </div>
+        <div>
+          <Label>Grupo (opcional)</Label>
+          <Input value={props.grupo} onChange={(e)=>props.setGrupo(e.target.value)} placeholder="ex.: 7261" />
+        </div>
+        <div>
+          <Label>Segmento</Label>
+          <select className="w-full h-10 border rounded-md px-3"
+            value={props.segmento} onChange={(e)=>props.setSegmento(e.target.value)}>
+            <option value="">— selecione —</option>
+            {[...new Set(props.adminTables.map(t=>t.segmento))].map(seg => (<option key={seg} value={seg}>{seg}</option>))}
+          </select>
+        </div>
+        <div>
+          <Label>Tabela</Label>
+          <select className="w-full h-10 border rounded-md px-3"
+            value={props.nomeTabela} onChange={(e)=>props.setNomeTabela(e.target.value)} disabled={!props.segmento}>
+            <option value="">— selecione —</option>
+            {props.nomesTabelaSegmento.map(n => (<option key={n} value={n}>{n}</option>))}
+          </select>
+        </div>
+        <div>
+          <Label>Variante</Label>
+          <select className="w-full h-10 border rounded-md px-3"
+            value={props.tabelaId} onChange={(e)=>props.setTabelaId(e.target.value)} disabled={!props.nomeTabela}>
+            <option value="">— selecione —</option>
+            {props.variantesDaTabela.map(v => (
+              <option key={v.id} value={v.id}>{v.nome_tabela} • Até {v.prazo_limite}m</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label>Crédito</Label>
+          <MoneyInput value={props.credito} onChange={props.setCredito} />
+          {props.faixa && props.credito>0 && (props.credito < props.faixa.min || props.credito>props.faixa.max) && (
+            <div className="text-xs text-red-600 mt-1">Fora da faixa permitida ({brMoney(props.faixa.min)}–{brMoney(props.faixa.max)}).</div>
+          )}
+        </div>
+        <div>
+          <Label>Prazo da venda (meses)</Label>
+          <Input type="number" value={props.prazoVenda || ""} onChange={(e)=>props.setPrazoVenda(Number(e.target.value)||0)} />
+          {props.prazoAviso && <div className="text-xs text-amber-600 mt-1">{props.prazoAviso}</div>}
+        </div>
+        <div>
+          <Label>Forma</Label>
+          <select className="w-full h-10 border rounded-md px-3"
+            value={props.forma} onChange={(e)=>props.setForma(e.target.value as any)}>
+            {t?.contrata_parcela_cheia && <option>Parcela Cheia</option>}
+            {t?.contrata_reduzida_25 && <option>Reduzida 25%</option>}
+            {t?.contrata_reduzida_50 && <option>Reduzida 50%</option>}
+          </select>
+        </div>
+        <div>
+          <Label>Seguro Prestamista</Label>
+          <select className="w-full h-10 border rounded-md px-3"
+            value={String(props.seguroPrest)} onChange={(e)=>props.setSeguroPrest(e.target.value==="true")}>
+            <option value="false">Sem seguro</option>
+            <option value="true">Com seguro</option>
+          </select>
+        </div>
+        <div>
+          <Label>Lance ofertado (%)</Label>
+          <PercentInput valueDecimal={props.lanceOfertPct} onChangeDecimal={props.setLanceOfertPct} maxDecimal={1} />
+        </div>
+        <div>
+          <Label>Lance embutido (%)</Label>
+          <PercentInput valueDecimal={props.lanceEmbutPct} onChangeDecimal={props.setLanceEmbutPct} maxDecimal={0.25} />
+        </div>
+        <div>
+          <Label>Parcela de contemplação (mês)</Label>
+          <Input type="number" value={props.parcContemplacao || ""} onChange={(e)=>props.setParcContemplacao(Number(e.target.value)||0)} />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={props.salvar} disabled={!props.calc || props.salvando} className="h-10 rounded-2xl px-4">
+          {props.salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          Salvar Simulação
+        </Button>
+        <Button variant="secondary" onClick={props.onGerarExtrato} disabled={!props.calc} className="h-10 rounded-2xl px-4">
+          Gerar Extrato
+        </Button>
+        {props.simCode && <span className="text-sm self-center">✅ Salvo como <strong>#{props.simCode}</strong></span>}
+      </div>
+
+      {props.calc && (
+        <div className="rounded-lg border p-3 text-sm grid md:grid-cols-2 gap-2">
+          <div>Valor de categoria</div><div className="text-right">{brMoney(props.calc.valorCategoria)}</div>
+          <div>Parcela 1/2 (até contemplação)</div><div className="text-right">{brMoney(props.calc.parcelaAte)}</div>
+          <div>Demais até contemplação</div><div className="text-right">{brMoney(props.calc.parcelaDemais)}</div>
+          <div>Lance ofertado</div><div className="text-right">{brMoney(props.calc.lanceOfertadoValor)}</div>
+          <div>Lance embutido</div><div className="text-right">{brMoney(props.calc.lanceEmbutidoValor)}</div>
+          <div>Lance próprio</div><div className="text-right">{brMoney(props.calc.lanceProprioValor)}</div>
+          <div>Novo crédito</div><div className="text-right">{brMoney(props.calc.novoCredito)}</div>
+          <div>Parcela limitante ({pctHuman(limitadorVisivel)})</div><div className="text-right">{brMoney(props.calc.parcelaLimitante)}</div>
+          <div>Parcela pós-contemplação</div><div className="text-right">{brMoney(props.calc.parcelaEscolhida)}</div>
+          <div>Prazo restante</div><div className="text-right">{props.calc.novoPrazo} meses</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1129,3 +1273,4 @@ function TableFormOverlay({
     </div>
   );
 }
+

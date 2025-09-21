@@ -75,7 +75,7 @@ function clamp(n: number, min: number, max: number) {
 
 /** Exceção do limitador: Motocicleta >= 20k => 1% */
 function resolveLimitadorPct(baseLimitadorPct: number, segmento: string, credito: number): number {
-  if ((segmento || "").toLowerCase().includes("motocicleta") && credito >= 20000) return 0.01;
+  if (segmento?.toLowerCase().includes("motocicleta") && credito >= 20000) return 0.01;
   return baseLimitadorPct;
 }
 
@@ -114,13 +114,13 @@ function asMonthlyDecimal(raw: number | string): number {
   const v = typeof raw === "string" ? parseFloat(raw.replace("%", "").replace(",", ".")) : raw;
   if (!isFinite(v)) return 0;
   if (v === 0) return 0;
-  if (v > 1.5) return v / 100;       // 4.2 => 0.042
-  if (v > 0 && v <= 1.5) return v >= 0.2 ? v / 100 : v; // 0.42 ou 0.0042
-  if (v < 0 && v > -1.5) return v <= -0.2 ? v / 100 : v; // negativos
+  if (v > 1.5) return v / 100;       // ex.: 4.2  => 0.042
+  if (v > 0 && v <= 1.5) return v >= 0.2 ? v / 100 : v; // ex.: 0.42 ou 0.0042
+  if (v < 0 && v > -1.5) return v <= -0.2 ? v / 100 : v; // negativos (deflação)
   return v;
 }
 
-// acumulado 12m: (1+a)*(1+b)*... - 1
+// acumulado 12m
 function accumulated12m(vals: IndexValueRow[]) {
   if (!vals.length) return 0;
   const norm = vals
@@ -137,12 +137,11 @@ function accumulated12m(vals: IndexValueRow[]) {
 }
 
 /* ======================= Cálculo ========================= */
-type ExtratoRow = {
-  mes: number;
-  parcela: number;          // valor pago no mês (sem seguro)
-  reajuste: number;         // valor acrescido por reajuste (no mês, se houver)
-  saldo_apos: number;       // saldo após pagamento/reajuste
-  marcador?: string;        // "ANIVERSARIO", "CONTEMPLACAO", etc (apenas informativo)
+type ExtratoItem = {
+  parcelaN: number;
+  valorParcela: number;
+  reajusteAplicado: number; // valor do reajuste no mês (se aniversário), caso contrário 0
+  saldoAposPagamento: number;
 };
 
 type CalcInput = {
@@ -157,36 +156,36 @@ type CalcInput = {
   antecipParcelas: 0 | 1 | 2;
   limitadorPct: number;
   seguroPrestPct: number;
-  lanceOfertPct: number;     // total ofertado (pode incluir embutido)
-  lanceEmbutPct: number;     // parte do lance que é embutida (ex.: 0.25)
+  lanceOfertPct: number; // porcentagem ofertada (abate SALDO)
+  lanceEmbutPct: number; // <= 0.25 (abate CRÉDITO)
   parcContemplacao: number;
-  indexPct: number;          // acumulado 12m (decimal)
+  indexPct: number; // acumulado 12m (decimal)
 };
 
 type CalcResult = {
-  valorCategoria: number;              // C0*(1+adm+fr)
-  parcelaAte: number;                  // só exibição (com antecip na 1ª/2ª)
-  parcelaDemais: number;               // só exibição (sem antecip)
+  valorCategoria: number;
+  parcelaAte: number;
+  parcelaDemais: number;
   lanceOfertadoValor: number;
   lanceEmbutidoValor: number;
   lanceProprioValor: number;
   lancePercebidoPct: number;
-  novoCredito: number;                 // crédito líquido após embutido
-  novaParcelaSemLimite: number;        // proposta saldo/prazo pós-contempla
-  parcelaLimitante: number;            // limitador baseado na base vigente
-  parcelaEscolhida: number;            // parcela final (sem seguro)
-  saldoDevedorFinal: number;           // saldo pré-pagamento pós-contempla (referência)
-  novoPrazo: number;                   // prazo restante em meses
+  novoCredito: number; // crédito líquido vigente após embutido (no momento da contemplação)
+  novaParcelaSemLimite: number;
+  parcelaLimitante: number;
+  parcelaEscolhida: number;
+  saldoDevedorFinal: number;
+  novoPrazo: number;
   TA_efetiva: number;
   fundoComumFactor: number;
   antecipAdicionalCada: number;
   segundaParcelaComAntecipacao: number | null;
   has2aAntecipDepois: boolean;
   aplicouLimitador: boolean;
-  extrato: ExtratoRow[];               // memória detalhada mês a mês
+  extrato: ExtratoItem[];
 };
 
-// === motor de simulação fiel à planilha ===
+// === motor conforme planilha (aniversários 13,25,37...) ===
 function calcularSimulacao(i: CalcInput): CalcResult {
   const {
     credito: C0,
@@ -201,218 +200,171 @@ function calcularSimulacao(i: CalcInput): CalcResult {
     lanceOfertPct,
     lanceEmbutPct,
     parcContemplacao,
-    indexPct, // acumulado 12m
+    indexPct,
   } = i;
 
   const prazo = Math.max(1, Math.floor(prazoVenda));
-  const mCont = Math.max(1, Math.min(parcContemplacao, prazo)); // mês da contemplação
-
+  const mCont = Math.max(1, Math.min(parcContemplacao, prazo));
   const segLower = (segmento || "").toLowerCase();
   const isServico = segLower.includes("serv");
   const isMoto = segLower.includes("moto");
 
-  // TA efetiva (parte da taxa de adm diluída nas parcelas)
+  // TA efetiva (adm total - antecipada)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
 
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-  // Valores “fixos” sobre o crédito de referência original
-  const admValor = C0 * taxaAdmFull;
-  const frValor  = C0 * frPct;
+  const admValor = C0 * taxaAdmFull; // fixos sobre crédito original (como na planilha)
+  const frValor = C0 * frPct;
 
-  // Valor categoria (apenas display / textos)
-  const valorCategoria = C0 * (1 + taxaAdmFull + frPct);
+  const valorCategoriaBase = C0 * (1 + taxaAdmFull + frPct);
+  const seguroMensal = seguro ? valorCategoriaBase * i.seguroPrestPct : 0;
 
-  // Seguro mensal (exibição; não afeta saldo)
-  const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
+  const antecipAdicionalCada = antecipParcelas > 0 ? (C0 * antecipPct) / antecipParcelas : 0;
 
-  // Antecipação da taxa (como você usa): cobrada nas 1 ou 2 primeiras
-  const antecipAdicionalCada =
-    antecipParcelas > 0 ? (C0 * antecipPct) / antecipParcelas : 0;
-
-  // Parcela base (sem seguro) usando TA_efetiva
   const baseMensalSemSeguro =
     (C0 * fundoComumFactor + C0 * TA_efetiva + C0 * frPct) / prazo;
 
-  // Para exibição “até a contemplação”
-  const parcelaAte =
-    baseMensalSemSeguro +
-    (antecipParcelas > 0 ? antecipAdicionalCada : 0) +
-    seguroMensal;
+  // Para exibição até contemplação
+  const parcelaAte = baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0) + seguroMensal;
   const parcelaDemais = baseMensalSemSeguro + seguroMensal;
 
-  // =====================================================================
-  // PRÉ-CONTEMPLAÇÃO (planilha)
-  // - saldo parte de (C_corr + adm + fr)
-  // - nos aniversários: reajuste incide sobre o CRÉDITO vigente (C_corr)
-  //   * saldo += C_corr * indexPct
-  //   * C_corr *= (1 + indexPct)
-  // - parcela do mês (sem seguro) abate o saldo
-  // =====================================================================
-  let C_corr = C0;                               // crédito corrigido vigente
-  let saldo  = C_corr + admValor + frValor;      // saldo teórico inicial
-  const extrato: ExtratoRow[] = [];
+  // =================== SIMULAÇÃO MÊS A MÊS (EXTRATO) ====================
+  const extrato: ExtratoItem[] = [];
+  let C_corr = C0;                          // crédito corrigido pelos aniversários (pré-cont)
+  let saldo = C0 + admValor + frValor;      // saldo devedor inicial
+  let parcelaCorrenteSemSeguro = baseMensalSemSeguro;
 
-  // parcela corrente sem seguro até o próximo “evento”
-  let parcelaCorrente = baseMensalSemSeguro;
-
-  function recomputeParcelaPre(mes: number) {
-    const pagosAteAqui = extrato.reduce((s, r) => s + r.parcela, 0);
+  // função que recomputa parcela "macro" p/ pré-cont (sem seguro)
+  const recomputeParcelaSemSeguroPre = (mesAtual: number) => {
+    const pagos = extrato
+      .filter(e => e.parcelaN <= mesAtual - 1)
+      .reduce((acc, e) => acc + e.valorParcela, 0);
     const totalBase = C_corr + admValor + frValor;
-    const rem = Math.max(1, prazo - (mes - 1));
-    const nova = Math.max(0, (totalBase - pagosAteAqui) / rem);
+    const rem = Math.max(1, prazo - (mesAtual - 1));
+    const nova = Math.max(0, (totalBase - pagos) / rem);
     return nova;
-  }
+  };
 
+  // Meses 1..mCont (antes da contemplação)
   for (let mes = 1; mes <= mCont; mes++) {
-    // aniversário antes do pagamento (mês 13, 25, 37, ...)
     const isAniver = mes > 1 && ((mes - 1) % 12 === 0);
-    let reajusteMes = 0;
-
+    // aniversário: reajusta o CRÉDITO e adiciona o reajuste no SALDO (como planilha: saldo += C_corr*index)
     if (isAniver) {
-      // saldo recebe o reajuste calculado sobre o crédito vigente
-      reajusteMes = C_corr * indexPct;
-      saldo += reajusteMes;
+      const acrescimo = C_corr * indexPct;
       C_corr = C_corr * (1 + indexPct);
-
-      // Recalcula a parcela para o restante do prazo (sem seguro)
-      parcelaCorrente = recomputeParcelaPre(mes);
-      extrato.push({
-        mes: mes,
-        parcela: 0,
-        reajuste: Number(reajusteMes.toFixed(2)),
-        saldo_apos: Number(saldo.toFixed(2)),
-        marcador: "ANIVERSARIO_PRE",
-      });
+      saldo += acrescimo;
+      parcelaCorrenteSemSeguro = recomputeParcelaSemSeguroPre(mes);
     }
 
-    // parcela do mês (sem seguro)
-    const adicional = mes <= antecipParcelas ? antecipAdicionalCada : 0;
-    const paga = parcelaCorrente + adicional;
-    saldo = Math.max(0, saldo - paga);
+    const comAntecip = mes <= antecipParcelas ? antecipAdicionalCada : 0;
+    const valorParcelaSemSeguro = parcelaCorrenteSemSeguro + comAntecip;
+    saldo = Math.max(0, saldo - valorParcelaSemSeguro); // abate parcela (sem seguro) do saldo
+
     extrato.push({
-      mes,
-      parcela: Number(paga.toFixed(2)),
-      reajuste: 0,
-      saldo_apos: Number(saldo.toFixed(2)),
+      parcelaN: mes,
+      valorParcela: valorParcelaSemSeguro + seguroMensal, // exibimos com seguro
+      reajusteAplicado: isAniver ? C_corr * 0 - 0 /* já somado no saldo acima (apenas marcação) */ : 0,
+      saldoAposPagamento: saldo,
     });
   }
 
-  // =====================================================================
-  // CONTEMPLAÇÃO (mês mCont)
-  // - Ponto de lance
-  // - “25%” informado como embutido: calculado sobre C_corr vigente
-  // - Novo Crédito = C_corr - lanceEmbutido
-  // - Lance ofertado (total) abate o SALDO
-  // - Base do limitador deve usar (C_corr + adm + fr) do momento
-  // =====================================================================
-  const lanceEmbutidoValor = C_corr * lanceEmbutPct;     // embutido sobre crédito vigente
-  const lanceOfertadoValor = C_corr * lanceOfertPct;     // total ofertado sobre crédito vigente
-  const lanceProprioValor  = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
-
+  // No mês da contemplação:
+  // 1) Aplica lance EMBUTIDO sobre o crédito CORRIGIDO (gerando novo crédito líquido)
+  // 2) Aplica lance OFERTADO (valor total ofertado) abatendo o SALDO (após pagamentos do mês)
+  const lanceEmbutidoValor = C_corr * lanceEmbutPct;          // até 25%
   const novoCredito = Math.max(0, C_corr - lanceEmbutidoValor);
+  const lanceOfertadoValor = C0 * lanceOfertPct;               // sua base é o crédito contratado (padrão)
+  const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
 
-  // abate lance ofertado do saldo (como na planilha)
+  // OBS: sua planilha usa o lance ofertado total para abater SALDO (após pagar 25..27, por ex.)
   saldo = Math.max(0, saldo - lanceOfertadoValor);
-  extrato.push({
-    mes: mCont,
-    parcela: 0,
-    reajuste: 0,
-    saldo_apos: Number(saldo.toFixed(2)),
-    marcador: "CONTEMPLACAO",
-  });
 
-  // =====================================================================
-  // PÓS-CONTEMPLAÇÃO
-  // - Parcelas definidas por saldo / prazo restante
-  // - Limitador: usa valor cadastrado na tabela, aplicado sobre
-  //   base_limite = C_corr_vigente_no_evento + adm + fr
-  // - Aniversário após contemplação: reajuste incide sobre o SALDO
-  // =====================================================================
-  const prazoRestanteInicial = Math.max(1, prazo - mCont);
-  let parcelaPosSemLimite = saldo / prazoRestanteInicial;
-
-  // limitador “vigente” no evento de contemplação
-  const limitadorBasePct = resolveLimitadorPct(i.limitadorPct, segmento, C0);
-  const baseParaLimitador = C_corr + admValor + frValor; // usa crédito vigente após correções prévias
-  const parcelaLimitante = limitadorBasePct > 0 ? baseParaLimitador * limitadorBasePct : 0;
+  // =================== PÓS-CONTEMPLAÇÃO ====================
+  const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C0);
+  const parcelaLimitante = limitadorBase > 0 ? (novoCredito + admValor + frValor) * limitadorBase : 0;
 
   const manterParcela = isServico || (isMoto && C0 < 20000);
-  let parcelaEscolhida = parcelaPosSemLimite;
-  let aplicouLimitador = false;
 
-  if (!manterParcela) {
-    if (parcelaLimitante > parcelaPosSemLimite) {
-      parcelaEscolhida = parcelaLimitante;
-      aplicouLimitador = true;
-    }
-  }
-
-  // Simula do mês mCont+1 até o fim
+  // prazo restante considera meses já pagos
   let mesAtual = mCont + 1;
-  while (mesAtual <= prazo && saldo > 0.005) {
-    // aniversário pós (13, 25, 37, ...) sempre conta desde o mês 1
-    const isAniverPos = (mesAtual > 1) && ((mesAtual - 1) % 12 === 0);
-    let reajusteMes = 0;
+  let prazoRestante = Math.max(1, prazo - mCont);
 
-    if (isAniverPos) {
-      // após a contemplação: o reajuste incide sobre o SALDO
-      reajusteMes = saldo * indexPct;
-      saldo += reajusteMes;
+  // parcela proposta inicial
+  let proposta = saldo / prazoRestante;
+  let parcelaEscolhidaSemSeguro = manterParcela
+    ? proposta
+    : Math.max(proposta, parcelaLimitante);
+  let aplicouLimitador = !manterParcela && parcelaEscolhidaSemSeguro > proposta;
 
-      // Recalcula proposta de parcela (se não for “manterParcela”)
-      const mesesRestantes = Math.max(1, prazo - (mesAtual - 1));
-      const proposta = saldo / mesesRestantes;
+  // salva referência para UI
+  const novaParcelaSemLimite = saldo / prazoRestante;
+
+  // segue simulando até o fim (aniversários agora reajustam SALDO)
+  while (mesAtual <= prazo && saldo > 0.01) {
+    const isAniver = mesAtual > 1 && ((mesAtual - 1) % 12 === 0);
+
+    if (isAniver) {
+      // reajuste ANUAL sobre o SALDO
+      const acresc = saldo * indexPct;
+      saldo += acresc;
+
+      // recomputa parcela para o novo prazo restante
+      prazoRestante = Math.max(1, prazo - (mesAtual - 1));
+      proposta = saldo / prazoRestante;
 
       if (!manterParcela) {
-        parcelaEscolhida = Math.max(proposta, parcelaLimitante);
+        parcelaEscolhidaSemSeguro = Math.max(proposta, parcelaLimitante);
+        aplicouLimitador = aplicouLimitador || parcelaEscolhidaSemSeguro > proposta;
+      } else {
+        // mantém parcela inicial e ajusta prazo naturalmente
       }
+
+      // registra linha de "reajuste" no extrato (0 de pagamento, apenas info de reajuste)
       extrato.push({
-        mes: mesAtual,
-        parcela: 0,
-        reajuste: Number(reajusteMes.toFixed(2)),
-        saldo_apos: Number(saldo.toFixed(2)),
-        marcador: "ANIVERSARIO_POS",
+        parcelaN: mesAtual - 1, // anotação entre meses
+        valorParcela: 0,
+        reajusteAplicado: acresc,
+        saldoAposPagamento: saldo,
       });
     }
 
-    // paga a parcela do mês (sem seguro)
-    saldo = Math.max(0, saldo - parcelaEscolhida);
+    // paga parcela (sem seguro no saldo)
+    saldo = Math.max(0, saldo - parcelaEscolhidaSemSeguro);
+
     extrato.push({
-      mes: mesAtual,
-      parcela: Number(parcelaEscolhida.toFixed(2)),
-      reajuste: 0,
-      saldo_apos: Number(saldo.toFixed(2)),
+      parcelaN: mesAtual,
+      valorParcela: parcelaEscolhidaSemSeguro + seguroMensal,
+      reajusteAplicado: 0,
+      saldoAposPagamento: saldo,
     });
 
     mesAtual++;
   }
 
-  // Novo prazo efetivo (quantidade de parcelas pós-contemplação usadas)
-  const parcelasPosCon = extrato.filter(r => r.mes > mCont && r.parcela > 0).length;
-  const novoPrazo = Math.max(1, parcelasPosCon);
-
   // Caso especial: antecipação em 2x e contemplação na 1ª parcela
   const has2aAntecipDepois = antecipParcelas >= 2 && mCont === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada
+    ? parcelaEscolhidaSemSeguro + antecipAdicionalCada
     : null;
 
+  const novoPrazo = Math.max(1, Math.ceil((extrato.length > 0 ? extrato[extrato.length - 1].parcelaN : prazo) - mCont));
+
   return {
-    valorCategoria,
-    parcelaAte,                          // com seguro e antecip nas 1-2 (exibição)
-    parcelaDemais,                       // com seguro (exibição)
+    valorCategoria: valorCategoriaBase,
+    parcelaAte,
+    parcelaDemais,
     lanceOfertadoValor,
     lanceEmbutidoValor,
     lanceProprioValor,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
-    novaParcelaSemLimite: parcelaPosSemLimite,
+    novaParcelaSemLimite,
     parcelaLimitante,
-    parcelaEscolhida,
+    parcelaEscolhida: parcelaEscolhidaSemSeguro,
     saldoDevedorFinal: saldo,
-    novoPrazo,
+    novoPrazo: Math.max(1, prazo - mCont), // para UI (referência)
     TA_efetiva,
     fundoComumFactor,
     antecipAdicionalCada,
@@ -519,7 +471,6 @@ export default function Simuladores() {
   const [indexValues, setIndexValues] = useState<IndexValueRow[]>([]);
   const [acc12m, setAcc12m] = useState<number>(0);
 
-  // ===== Extrato modal =====
   const [extratoOpen, setExtratoOpen] = useState(false);
 
   useEffect(() => {
@@ -747,7 +698,7 @@ export default function Simuladores() {
       saldo_devedor_final: calc.saldoDevedorFinal,
       novo_prazo: calc.novoPrazo,
 
-      // NOVOS CAMPOS: persistência do índice usado
+      // Índice usado
       index_code: indexCode,
       index_ref_month: refMonth ? refMonth + "-01" : null,
       index_12m_value: acc12m ?? 0,
@@ -915,23 +866,6 @@ Vantagens
     }
   }
 
-  // ===== Extrato: gerar CSV =====
-  function baixarExtratoCSV() {
-    if (!calc) return;
-    const header = "Mes;Parcela;Reajuste;Saldo apos;Marcador\n";
-    const rows = calc.extrato.map(r =>
-      [r.mes, r.parcela.toFixed(2).replace(".", ","), r.reajuste.toFixed(2).replace(".", ","), r.saldo_apos.toFixed(2).replace(".", ","), r.marcador || ""].join(";")
-    );
-    const csv = header + rows.join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `extrato_simulacao_${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   if (loading) {
     return (
       <div className="p-6 flex items-center gap-2">
@@ -1062,12 +996,25 @@ Vantagens
               {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
             </Button>
+            {calc && (
+              <Button variant="secondary" onClick={() => setExtratoOpen(true)} className="h-10 rounded-2xl px-4">
+                Gerar Extrato
+              </Button>
+            )}
             {simCode && (
               <span className="text-sm">
                 ✅ Salvo como <strong>Simulação #{simCode}</strong>
               </span>
             )}
           </div>
+
+          {/* Modal de Extrato */}
+          {extratoOpen && calc && (
+            <ExtratoModal
+              onClose={() => setExtratoOpen(false)}
+              extrato={calc.extrato}
+            />
+          )}
         </div>
 
         {/* coluna direita: memória + índices + textos */}
@@ -1154,7 +1101,7 @@ Vantagens
                 <div>Acumulado 12 meses</div>
                 <div className="text-right font-medium">{(acc12m * 100).toFixed(2)}%</div>
                 <div className="col-span-2 text-muted-foreground text-xs leading-relaxed">
-                  Pré-contemplação: reajuste anual incide sobre o <strong>crédito</strong> contratado.
+                  Pré-contemplação: reajuste anual incide sobre o <strong>crédito</strong> contratado (e é somado ao saldo).
                   <br />
                   Pós-contemplação: reajuste anual incide sobre o <strong>saldo devedor</strong>.
                 </div>
@@ -1202,13 +1149,9 @@ Vantagens
                 value={propostaTexto}
                 placeholder="Preencha a simulação para gerar o texto."
               />
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-end gap-2">
                 <Button onClick={copiarProposta} disabled={!propostaTexto}>
                   Copiar
-                </Button>
-                {/* Botão gerar extrato */}
-                <Button variant="secondary" onClick={() => setExtratoOpen(true)} disabled={!calc}>
-                  Gerar Extrato
                 </Button>
               </div>
             </CardContent>
@@ -1225,52 +1168,6 @@ Vantagens
           onCreatedOrUpdated={handleTableCreatedOrUpdated}
           onDeleted={handleTableDeleted}
         />
-      )}
-
-      {/* Modal Extrato */}
-      {extratoOpen && calc && (
-        <ModalBase onClose={() => setExtratoOpen(false)} title="Extrato detalhado da simulação">
-          <div className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-sm text-muted-foreground">
-                Linhas do mês 1 até o encerramento.
-              </div>
-              <Button onClick={baixarExtratoCSV} className="h-9 rounded-xl px-3">
-                Baixar CSV
-              </Button>
-            </div>
-            <div className="overflow-auto rounded-lg border max-h-[70vh]">
-              <table className="min-w-full text-sm">
-                <thead className="bg-muted/40">
-                  <tr>
-                    <th className="text-left p-2">Parcela</th>
-                    <th className="text-right p-2">Valor pago</th>
-                    <th className="text-right p-2">Reajuste</th>
-                    <th className="text-right p-2">Saldo após</th>
-                    <th className="text-left p-2">Obs.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {calc.extrato.map((r) => (
-                    <tr key={r.mes + "-" + (r.marcador || "")} className="border-t">
-                      <td className="p-2">{r.mes}</td>
-                      <td className="p-2 text-right">{brMoney(r.parcela)}</td>
-                      <td className="p-2 text-right">{r.reajuste ? brMoney(r.reajuste) : "—"}</td>
-                      <td className="p-2 text-right">{brMoney(r.saldo_apos)}</td>
-                      <td className="p-2">{r.marcador || ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex justify-end mt-3">
-              <Button variant="secondary" onClick={() => setExtratoOpen(false)} className="h-9 rounded-xl px-3">
-                Fechar
-              </Button>
-            </div>
-          </div>
-        </ModalBase>
       )}
     </div>
   );
@@ -1306,6 +1203,59 @@ function ModalBase({
         {children}
       </div>
     </div>
+  );
+}
+
+/* ============== Gerar Extrato (Modal) ============== */
+function ExtratoModal({
+  onClose,
+  extrato,
+}: {
+  onClose: () => void;
+  extrato: ExtratoItem[];
+}) {
+  return (
+    <ModalBase onClose={onClose} title="Extrato detalhado da simulação">
+      <div className="p-4">
+        <div className="overflow-auto rounded-lg border max-h-[70vh]">
+          <table className="min-w-full text-sm">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="text-left p-2">Parcela</th>
+                <th className="text-right p-2">Valor pago</th>
+                <th className="text-right p-2">Reajuste aplicado</th>
+                <th className="text-right p-2">Saldo devedor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {extrato.map((r, idx) => (
+                <tr key={idx} className="border-t">
+                  <td className="p-2">{r.parcelaN}</td>
+                  <td className="p-2 text-right">{brMoney(r.valorParcela)}</td>
+                  <td className="p-2 text-right">
+                    {r.reajusteAplicado !== 0 ? brMoney(r.reajusteAplicado) : "—"}
+                  </td>
+                  <td className="p-2 text-right">{brMoney(r.saldoAposPagamento)}</td>
+                </tr>
+              ))}
+              {extrato.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-4 text-center text-muted-foreground">
+                    Nenhum item para exibir.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-3 flex justify-end">
+          <Button variant="secondary" onClick={onClose} className="h-10 rounded-2xl px-4">
+            Fechar
+          </Button>
+        </div>
+      </div>
+    </ModalBase>
   );
 }
 
@@ -1547,8 +1497,6 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
-      // compat + campo atual
-      permite_livre: perLivre as any,
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1836,5 +1784,47 @@ function EmbraconSimulator(p: EmbraconProps) {
               <div><Label>Lance Embutido</Label><Input value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""} readOnly /></div>
               <div><Label>Lance Próprio</Label><Input value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""} readOnly /></div>
 
-              <div><Label>Lance Percebido (%)</Label><Input value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""} readOnly /></div>
-              <div><Label>Novo Crédito</Label><Input value={p.calc ? brMoney
+              <div>
+                <Label>Lance Percebido (%)</Label>
+                <Input value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""} readOnly />
+              </div>
+              <div>
+                <Label>Novo Crédito</Label>
+                <Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly />
+              </div>
+              <div>
+                <Label>Nova Parcela (sem limite)</Label>
+                <Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly />
+              </div>
+
+              <div><Label>Parcela Limitante</Label><Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly /></div>
+              <div><Label>Parcela Escolhida</Label><Input value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""} readOnly /></div>
+              <div><Label>Novo Prazo (meses)</Label><Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly /></div>
+
+              {p.calc?.has2aAntecipDepois && p.calc?.segundaParcelaComAntecipacao != null && (
+                <div className="md:col-span-3">
+                  <Label>2ª parcela (com antecipação)</Label>
+                  <Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Botões de ação do simulador */}
+          <div className="flex items-center gap-3">
+            <Button onClick={p.salvar} disabled={!p.calc || p.salvando} className="h-10 rounded-2xl px-4">
+              {p.salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Salvar Simulação
+            </Button>
+            <Button variant="secondary" disabled={!p.calc} onClick={p.onGerarExtrato} className="h-10 rounded-2xl px-4">
+              Gerar Extrato
+            </Button>
+            {p.simCode && <span className="text-sm">✅ Salvo como <strong>Simulação #{p.simCode}</strong></span>}
+          </div>
+        </>
+      ) : (
+        <div className="text-sm text-muted-foreground">Selecione um lead para abrir o simulador.</div>
+      )}
+    </div>
+  );
+}

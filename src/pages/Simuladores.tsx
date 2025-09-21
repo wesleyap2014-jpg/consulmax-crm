@@ -309,9 +309,9 @@ function PercentInput({ valueDecimal, onChangeDecimal, maxDecimal, ...rest }: { 
 /* ========================= Página ======================== */
 export default function Simuladores() {
   const [loading, setLoading] = useState(true);
-  const [admins, setAdmins]] = useState<Admin[]>([]);
-  const [tables, setTables] = useState<SimTable[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [admins, setAdmins] = useState<Array<Admin>>([]);
+  const [tables, setTables] = useState<Array<SimTable>>([]);
+  const [leads, setLeads] = useState<Array<Lead>>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
   const [mgrOpen, setMgrOpen] = useState(false);
 

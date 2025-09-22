@@ -155,11 +155,10 @@ function calcularSimulacaoComExtrato(i: CalcInput) {
   // TA efetiva (adm mensal que vai na parcela)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
 
-  // Parcela pré (SEM seguro) — INICIAL (usando C0)
-  const parcelaPreSemSeguroBase =
+  // Parcela pré (SEM seguro) — sobre o contrato
+  const parcelaPreSemSeguro =
     (C0 * fatorForma + C0 * TA_efetiva + C0 * frPct) / prazo;
 
-  // antecipação por parcela
   const antecada = antecipParcelas > 0 ? (C0 * antecipPct) / antecipParcelas : 0;
 
   // Controle de crédito corrigido (para linha "Crédito do mês" no extrato)
@@ -168,9 +167,6 @@ function calcularSimulacaoComExtrato(i: CalcInput) {
   let investimentoAc = 0;
 
   // ======= Pré-contemplação: meses 1..mCont
-  // manteremos uma parcelaPreSemSeguroCorrente que é recalculada quando houver reajuste
-  let parcelaPreSemSeguroCorrente = parcelaPreSemSeguroBase;
-
   for (let m = 1; m <= mCont; m++) {
     // Reajuste anual pré (sobre o CRÉDITO) nos aniversários 13,25,37...
     let reajuste = 0;
@@ -180,19 +176,14 @@ function calcularSimulacaoComExtrato(i: CalcInput) {
       // O acréscimo é somado ao saldo devedor (regra do enunciado)
       saldo += acresc;
       reajuste = acresc;
-
-      // *** RECALCULA PARCELA PRÉ (sem seguro) ***:
-      // (crédito corrigido * fator) + (componentes fixos de adm/fr calculados sobre C0)
-      parcelaPreSemSeguroCorrente =
-        (creditoCorrigido * fatorForma + C0 * TA_efetiva + C0 * frPct) / prazo;
     }
 
-    // Parcela do mês (com antecipação quando houver) — exibida com seguro
+    // Parcela do mês (com antecipação quando houver) — mas o que abate saldo é SEM seguro
     const temAntecip = m <= antecipParcelas && antecada > 0;
-    const parcelaMesExibida = parcelaPreSemSeguroCorrente + (temAntecip ? antecada : 0) + seguroMensal;
+    const parcelaMesExibida = parcelaPreSemSeguro + (temAntecip ? antecada : 0) + seguroMensal;
 
-    // Abatimento do saldo: apenas componente "sem seguro" + antecipação
-    const abateSaldo = parcelaPreSemSeguroCorrente + (temAntecip ? antecada : 0);
+    // Abatimento do saldo: apenas componente "sem seguro" (parcelaPreSemSeguro) + antecipação (se houver)
+    const abateSaldo = parcelaPreSemSeguro + (temAntecip ? antecada : 0);
     saldo = Math.max(0, saldo - abateSaldo);
 
     investimentoAc += parcelaMesExibida;
@@ -215,7 +206,6 @@ function calcularSimulacaoComExtrato(i: CalcInput) {
 
   // Lance ofertado incide sobre saldo (após pagar a parcela do mês)
   const lanceOfertado = creditoCorrigido * clamp(lanceOfertPct, 0, 1); // sobre CRÉDITO corrigido do mês da contemplação
-  const lanceProprio = Math.max(0, lanceOfertado - lanceEmbutido);
   saldo = Math.max(0, saldo - lanceOfertado);
 
   // Registrar evento de lance
@@ -234,44 +224,22 @@ function calcularSimulacaoComExtrato(i: CalcInput) {
     }
   }
 
-  // Pós: regra especial (Serviços e Moto <= 19.999,99) — mantém parcela e ajusta somente prazo
-  const segLower = (segmento || "").toLowerCase();
-  const isServico = segLower.includes("serv");
-  const isMotoEspecial = segLower.includes("moto") && C0 <= 19999.99;
-  const manterParcelaApos = isServico || isMotoEspecial;
-
-  // pós: reajuste anual incide sobre SALDO; parcela escolhida (sem seguro)
-  // Se manterParcelaApos: parcela escolhida = parcela pré vigente no mês da contemplação (sem seguro)
-  const parcelaPreVigenteNaCont = parcelaPreSemSeguroCorrente; // sem seguro, no mCont
+  // A partir daqui, reduções acabam. Volta a considerar o crédito original corrigido (ou novoCredito)
+  // Pós: reajuste anual incide sobre o SALDO (não mais sobre crédito)
   const parcelasPagas = mCont;
-  const prazoRestanteBase = Math.max(1, prazo - parcelasPagas);
+  const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
   // Nova parcela (sem limite) — SEM seguro
-  const novaParcelaSemLimite = manterParcelaApos ? parcelaPreVigenteNaCont : (saldo / prazoRestanteBase);
+  const novaParcelaSemLimite = saldo / prazoRestante;
 
-  // Parcela limitante (usa novoCredito + adm + fr; adm/fr de C0)
-  const parcelaLimitante = manterParcelaApos
-    ? parcelaPreVigenteNaCont
-    : resolveLimitadorPct(limitadorPct, segmento, C0) * (novoCredito + admValor + frValor);
+  // Parcela limitante (usa novoCredito + adm + fr, lembrando: adm e fr são do C0, regra pedida)
+  const parcelaLimitante = resolveLimitadorPct(limitadorPct, segmento, C0) * (novoCredito + admValor + frValor);
 
-  // Parcela escolhida (SEM seguro)
-  const parcelaEscolhidaSemSeguro = manterParcelaApos
-    ? parcelaPreVigenteNaCont
-    : Math.max(novaParcelaSemLimite, parcelaLimitante);
-
+  // Parcela escolhida (SEM seguro) = MAIOR entre as duas
+  const parcelaEscolhidaSemSeguro = Math.max(novaParcelaSemLimite, parcelaLimitante);
   const parcelaEscolhidaComSeguro = parcelaEscolhidaSemSeguro + seguroMensal;
 
-  // Prazo restante
-  let prazoRestante: number;
-  if (manterParcelaApos) {
-    prazoRestante = Math.max(1, Math.ceil(saldo / parcelaEscolhidaSemSeguro));
-  } else {
-    // regra normal
-    const iguais = Math.abs(parcelaEscolhidaSemSeguro - novaParcelaSemLimite) < 0.005;
-    prazoRestante = iguais ? prazoRestanteBase : Math.max(1, Math.ceil(saldo / parcelaEscolhidaSemSeguro));
-  }
-
-  // ======= Pós-contemplação: meses mCont+1 .. prazo (ou até acabar saldo)
+  // ======= Pós-contemplação: meses mCont+1 .. prazo
   for (let m = mCont + 1; m <= prazo; m++) {
     // Reajuste anual pós (sobre o SALDO) nos aniversários 13,25,37...
     let reajuste = 0;
@@ -295,8 +263,6 @@ function calcularSimulacaoComExtrato(i: CalcInput) {
       investimento: investimentoAc,
       evento: reajuste > 0 ? "Reajuste pós-contemplação" : undefined,
     });
-
-    if (saldo <= 0) break;
   }
 
   return {
@@ -306,9 +272,8 @@ function calcularSimulacaoComExtrato(i: CalcInput) {
     novoCredito,
     lanceEmbutido,
     lanceOfertado,
-    lanceProprio,
     TA_efetiva,
-    parcelaPreSemSeguro: parcelaPreSemSeguroCorrente, // última (vigente) no mCont
+    parcelaPreSemSeguro,
     antecada,
     seguroMensal,
     novaParcelaSemLimite,
@@ -399,16 +364,13 @@ export default function Simuladores() {
   // ÍNDICES (chips + overlay manual)
   const [indiceSel, setIndiceSel] = useState<"IPCA" | "INCC" | "IGP-M">("IPCA");
   const [overlayIndices, setOverlayIndices] = useState(false);
-  const [ipca12, setIpca12] = useState<number>(0.039); // fallback
+  const [ipca12, setIpca12] = useState<number>(0.039); // padrão 3,90%
   const [incc12, setIncc12] = useState<number>(0.039);
   const [igpm12, setIgpm12] = useState<number>(0.039);
 
   // usuário logado (public.users)
   const [userName, setUserName] = useState<string>("");
   const [userPhone, setUserPhone] = useState<string>("");
-
-  // chip do extrato
-  const [extratoOpen, setExtratoOpen] = useState<boolean>(false);
 
   const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacaoComExtrato> | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -447,26 +409,6 @@ export default function Simuladores() {
         .maybeSingle();
       setUserName((data?.name || "").toString());
       setUserPhone((data?.phone || "").toString());
-    })();
-  }, []);
-
-  // carrega índices “estáticos” do banco via RPC (ficam até você alterar no SQL)
-  useEffect(() => {
-    (async () => {
-      try {
-        const ref = new Date();
-        const refISO = new Date(ref.getFullYear(), ref.getMonth(), 1).toISOString().slice(0, 10);
-        const [ip, incc, igp] = await Promise.all([
-          supabase.rpc("sim_index_12m_value", { _code: "IPCA", _ref_month: refISO }),
-          supabase.rpc("sim_index_12m_value", { _code: "INCC", _ref_month: refISO }),
-          supabase.rpc("sim_index_12m_value", { _code: "IGP-M", _ref_month: refISO }),
-        ]);
-        if (typeof ip.data === "number") setIpca12(ip.data);
-        if (typeof incc.data === "number") setIncc12(incc.data);
-        if (typeof igp.data === "number") setIgpm12(igp.data);
-      } catch {
-        // mantém fallbacks
-      }
     })();
   }, []);
 
@@ -667,7 +609,7 @@ export default function Simuladores() {
 💵 Demais parcelas até a contemplação: ${brMoney(parcelaDemaisExib)}
 
 📈 Contemplação prevista: mês ${parcContemplacao}
-🏦 Lance próprio: ${brMoney(Math.max(0, calc.lanceProprio))}
+🏦 Lance próprio: ${brMoney(Math.max(0, calc.lanceOfertado - calc.lanceEmbutido))}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
 
@@ -733,7 +675,7 @@ Proposta ${seg}
 ${emoji} Crédito: ${brMoney(calc.novoCredito)}
 💰 Parcela 1: ${brMoney(parcela1Exib)} (Em até 3x no cartão)${linhaParc2}
 📆 + ${calc.prazoRestante}x de ${brMoney(calc.parcelaEscolhidaSemSeguro + calc.seguroMensal)}
-💵 Lance Próprio: ${brMoney(Math.max(0, calc.lanceProprio))}
+💵 Lance Próprio: ${brMoney(Math.max(0, calc.lanceOfertado - calc.lanceEmbutido))}
 📢 Grupo: ${grupo || "—"}
 
 Índice: ${indiceSel} (${(indice12m*100).toFixed(2)}% 12m)
@@ -868,8 +810,6 @@ Vantagens
                     setOverlayIndices={setOverlayIndices}
                     userName={userName}
                     userPhone={userPhone}
-                    extratoOpen={extratoOpen}
-                    setExtratoOpen={setExtratoOpen}
                   />
                 ) : (
                   <div className="text-sm text-muted-foreground">
@@ -1047,10 +987,6 @@ type EmbraconProps = {
   // cabeçalho de extrato
   userName: string;
   userPhone: string;
-
-  // chip extrato
-  extratoOpen: boolean;
-  setExtratoOpen: (b: boolean) => void;
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
@@ -1252,16 +1188,6 @@ function EmbraconSimulator(p: EmbraconProps) {
                 <Button variant="secondary" size="sm" onClick={() => p.setOverlayIndices(true)}>
                   Editar índices
                 </Button>
-
-                {/* Chip Expandir/Ocultar Extrato */}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => p.setExtratoOpen(!p.extratoOpen)}
-                  className="ml-auto"
-                >
-                  {p.extratoOpen ? "Ocultar extrato" : "Expandir extrato"}
-                </Button>
               </div>
               {p.overlayIndices && (
                 <ModalBase title="Editar Índices (12 meses)" onClose={() => p.setOverlayIndices(false)}>
@@ -1289,7 +1215,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 
           {/* Até a contemplação */}
           <Card>
-            <CardHeader><CardTitle>Plano de Pagamento até a Contemplação</CardHeader><CardHeader></CardHeader>
+            <CardHeader><CardTitle>Plano de Pagamento até a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div>
                 <Label>
@@ -1359,8 +1285,6 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div><Label>Lance Ofertado</Label><Input value={p.calc ? brMoney(p.calc.lanceOfertado) : ""} readOnly /></div>
               <div><Label>Lance Embutido</Label><Input value={p.calc ? brMoney(p.calc.lanceEmbutido) : ""} readOnly /></div>
-              <div><Label>Lance Próprio</Label><Input value={p.calc ? brMoney(p.calc.lanceProprio) : ""} readOnly /></div>
-
               <div><Label>Novo Crédito</Label><Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly /></div>
 
               <div><Label>Nova Parcela (sem limite)</Label><Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly /></div>
@@ -1372,24 +1296,22 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* Extrato em tela + PDF (com chip) */}
-          {p.extratoOpen && (
-            <ExtratoBox
-              extrato={p.calc?.extrato || []}
-              indiceSel={p.indiceSel}
-              indice12m={p.indiceSel === "IPCA" ? p.ipca12 : p.indiceSel === "INCC" ? p.incc12 : p.igpm12}
-              segmento={p.tabelaSelecionada?.segmento || ""}
-              tabelaNome={p.tabelaSelecionada?.nome_tabela || ""}
-              credito={p.credito}
-              forma={p.forma}
-              prazoVenda={p.prazoVenda}
-              parcContemplacao={p.parcContemplacao}
-              userName={p.userName}
-              userPhone={p.userPhone}
-              leadNome={p.leadInfo?.nome || ""}
-              leadTel={p.leadInfo?.telefone || ""}
-            />
-          )}
+          {/* Extrato em tela + PDF */}
+          <ExtratoBox
+            extrato={p.calc?.extrato || []}
+            indiceSel={p.indiceSel}
+            indice12m={p.indiceSel === "IPCA" ? p.ipca12 : p.indiceSel === "INCC" ? p.incc12 : p.igpm12}
+            segmento={p.tabelaSelecionada?.segmento || ""}
+            tabelaNome={p.tabelaSelecionada?.nome_tabela || ""}
+            credito={p.credito}
+            forma={p.forma}
+            prazoVenda={p.prazoVenda}
+            parcContemplacao={p.parcContemplacao}
+            userName={p.userName}
+            userPhone={p.userPhone}
+            leadNome={p.leadInfo?.nome || ""}
+            leadTel={p.leadInfo?.telefone || ""}
+          />
         </>
       ) : (
         <div className="text-sm text-muted-foreground">Selecione um lead para abrir o simulador.</div>
@@ -1434,8 +1356,16 @@ function ExtratoBox({
   function gerarPDF() {
     const doc = new jsPDF({ unit: "pt", format: "a4" }); // um doc por chamada
 
-    // Título
+    // Logo topo (proporção correta)
     const pageWidth = doc.internal.pageSize.getWidth();
+    try {
+      // Se o projeto servir a imagem em /public/logo-consulmax.png
+      // Algumas instalações do jsPDF precisam de base64; aqui vamos tentar com HTML image
+      // Para garantir, desenhamos um título mesmo sem imagem.
+      // (Caso queira converter para base64, basta carregar e usar addImage(base64, "PNG", ...))
+      // Usaremos apenas o título centralizado para robustez
+    } catch {}
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
     doc.text("EXTRATO DE SIMULAÇÃO", pageWidth / 2, 40, { align: "center" });
@@ -1453,7 +1383,7 @@ function ExtratoBox({
     linha("-------------- DADOS DA CORRETORA ---------------------");
     doc.setFont("helvetica", "normal");
     currentY += 14;
-    linha(`Corretora: Consulmax Consórcios e Investimento | CNPJ: 57.942.043/0001-03 | Telefone: (69) 9 9302-9380`);
+    linha(`Corretora: Consulmax | CNPJ | Telefone: (11) 0000-0000 | Administradora: Embracon`);
     currentY += 14;
     linha(`Usuário: ${userName || "-"} | Telefone/Whats: ${formatPhoneBR(userPhone) || "-"}`);
 
@@ -1507,45 +1437,28 @@ function ExtratoBox({
       <CardContent className="space-y-3">
         {/* Cabeçalho centralizado (tela) */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <img src="/logo-consulmax.png" alt="Consulmax" className="h-9 object-contain" />
-            <div className="text-xl font-semibold">Extrato de Simulação</div>
-            <div className="w-24" />
-          </div>
-
           <CenteredHeader>-------------- DADOS DA CORRETORA ---------------------</CenteredHeader>
           <div className="text-center text-sm">
-            Consulmax Consórcios e Investimento • CNPJ 57.942.043/0001-03 • Tel. (69) 9 9302-9380
+            Corretora: Consulmax | CNPJ | Telefone: (11) 0000-0000 | Administradora: Embracon
+          </div>
+          <div className="text-center text-sm">
+            Usuário: {userName || "-"} | Telefone/Whats: {formatPhoneBR(userPhone) || "-"}
           </div>
 
-          <div className="grid md:grid-cols-3 gap-2 text-sm border rounded-lg p-3">
-            <div className="text-center">
-              <div className="font-semibold">CORRETORA</div>
-              <div>Consulmax Consórcios e Investimento</div>
-              <div>CNPJ: 57.942.043/0001-03</div>
-              <div>Telefone: (69) 9 9302-9380</div>
-            </div>
-            <div className="text-center">
-              <div className="font-semibold">VENDEDOR</div>
-              <div>Nome: {userName || "—"}</div>
-              <div>Telefone: {formatPhoneBR(userPhone) || "—"}</div>
-            </div>
-            <div className="text-center">
-              <div className="font-semibold">CLIENTE</div>
-              <div>Nome: {leadNome || "—"}</div>
-              <div>Telefone: {leadTel ? formatPhoneBR(leadTel) : "—"}</div>
-            </div>
+          <CenteredHeader>-------------- DADOS DO CLIENTE ---------------------</CenteredHeader>
+          <div className="text-center text-sm">
+            Nome: {leadNome || "-"} | Telefone: {leadTel ? formatPhoneBR(leadTel) : "-"}
           </div>
 
-          <div className="text-center font-semibold">DADOS DA SIMULAÇÃO</div>
-          <div className="grid md:grid-cols-3 gap-2 text-sm border rounded-lg p-3">
-            <div>Segmento: <strong>{segmento || "—"}</strong></div>
-            <div>Tabela: <strong>{tabelaNome || "—"}</strong></div>
-            <div>Forma: <strong>{forma}</strong></div>
-            <div>Crédito: <strong>{brMoney(credito)}</strong></div>
-            <div>Prazo: <strong>{String(prazoVenda)} meses</strong></div>
-            <div>Contemplação: <strong>{String(parcContemplacao)}º mês</strong></div>
-            <div className="md:col-span-3">Índice: <strong>{indiceSel}</strong> (<strong>{(indice12m*100).toFixed(2)}% 12m</strong>)</div>
+          <CenteredHeader>-------------- DADOS DA SIMULAÇÃO ---------------------</CenteredHeader>
+          <div className="text-center text-sm">
+            Segmento: {segmento || "-"} | Tabela: {tabelaNome || "-"}
+          </div>
+          <div className="text-center text-sm">
+            Crédito: {brMoney(credito)} | Forma: {forma} | Prazo: {prazoVenda} meses | Contemplação: {parcContemplacao}
+          </div>
+          <div className="text-center text-sm">
+            Índice: {indiceSel} ({(indice12m * 100).toFixed(2)}% 12m)
           </div>
         </div>
 

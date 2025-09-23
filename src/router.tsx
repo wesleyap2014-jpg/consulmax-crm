@@ -18,10 +18,10 @@ import Agenda from './pages/Agenda'
 
 // ✅ simuladores / propostas
 import Simuladores from './pages/Simuladores'
-import Propostas from './pages/Propostas' // 👈 novo
+import Propostas from './pages/Propostas'
 
-// já existia
-import Parametros from './pages/Parametros'
+// ✅ comissões
+import Comissoes from './pages/Comissoes' // 👈 NOVO
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -41,7 +41,10 @@ export const router = createBrowserRouter([
           { path: 'oportunidades', element: <Oportunidades /> },
           { path: 'agenda', element: <Agenda /> },
           { path: 'simuladores', element: <Simuladores /> },
-          { path: 'propostas', element: <Propostas /> }, // 👈 nova guia Propostas
+          { path: 'propostas', element: <Propostas /> },
+
+          // 👇 nova guia Comissões
+          { path: 'comissoes', element: <Comissoes /> }, // 👈 NOVO
 
           // 👇 demais guias existentes
           { path: 'carteira', element: <Carteira /> },
@@ -59,3 +62,6 @@ export const router = createBrowserRouter([
   // fallback global
   { path: '*', element: <Navigate to="/login" replace /> },
 ])
+
+// nota: Parametros é importado abaixo para manter a ordem original
+import Parametros from './pages/Parametros'

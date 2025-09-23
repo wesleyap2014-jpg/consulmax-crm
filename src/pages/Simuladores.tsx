@@ -333,6 +333,87 @@ function PercentInput({
 }
 /* ========================= Página ======================== */
 export default function Simuladores() {
+// --- ADD (Consulmax): estados/efeitos auxiliares globais ---
+const [userName, setUserName] = useState<string>("");
+const [userPhone, setUserPhone] = useState<string>("");
+const [indexAccumPct, setIndexAccumPct] = useState<number>(0);
+const [extratoOpen, setExtratoOpen] = useState<boolean>(false);
+const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+useEffect(() => {
+  (async () => {
+    const { data: userRes } = await supabase.auth.getUser();
+    const uid = userRes?.user?.id;
+    if (!uid) return;
+    const { data } = await supabase
+      .from("public.users")
+      .select("name, phone")
+      .eq("auth_user_id", uid)
+      .maybeSingle();
+    setUserName((data?.name || "").toString());
+    setUserPhone((data?.phone || "").toString());
+  })();
+}, []);
+
+useEffect(() => {
+  (async () => {
+    try {
+      const path = (import.meta as any)?.env?.BASE_URL
+        ? `${(import.meta as any).env.BASE_URL}logo-consulmax.png`
+        : "/logo-consulmax.png";
+      const resp = await fetch(path);
+      const blob = await resp.blob();
+      const fr = new FileReader();
+      fr.onload = () => setLogoUrl(fr.result as string);
+      fr.readAsDataURL(blob);
+    } catch {
+      setLogoUrl(null);
+    }
+  })();
+}, []);
+
+useEffect(() => {
+  (async () => {
+    const code =
+      (tabelaSelecionada?.indice_correcao?.[0] as any) ||
+      (tabelaSelecionada?.indice_correcao as any) ||
+      null;
+    if (!code) {
+      setIndexAccumPct(0);
+      return;
+    }
+    try {
+      const ref = new Date();
+      const refISO = new Date(ref.getFullYear(), ref.getMonth(), 1).toISOString().slice(0, 10);
+      const { data, error } = await supabase.rpc("sim_index_12m_value", {
+        _code: String(code),
+        _ref_month: refISO,
+      });
+      if (!error && typeof data === "number") {
+        setIndexAccumPct(data);
+        if (indiceSel === "IPCA" && typeof setIpca12 === 'function') setIpca12(data);
+        if (indiceSel === "INCC" && typeof setIncc12 === 'function') setIncc12(data);
+        if (indiceSel === "IGP-M" && typeof setIgpm12 === 'function') setIgpm12(data);
+      }
+    } catch {}
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [tabelaSelecionada?.id, tabelaSelecionada?.indice_correcao, indiceSel]);
+
+const ExtratoChip = (
+  <div className="flex items-center gap-2">
+    <Button
+      variant="secondary"
+      size="sm"
+      className="rounded-full px-3"
+      onClick={() => setExtratoOpen((v) => !v)}
+    >
+      {extratoOpen ? "Ocultar extrato" : "Expandir extrato"}
+    </Button>
+  </div>
+);
+
+
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
@@ -827,6 +908,24 @@ Vantagens
             <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
               {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
+{/* Chip de extrato ao vivo */}
+<div className="mt-4">{ExtratoChip}</div>
+
+{extratoOpen && (
+  <Card className="mt-3">
+    <CardHeader>
+      <CardTitle>Extrato detalhado (visualização rápida)</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <div
+        className="prose max-w-none"
+        dangerouslySetInnerHTML={{ __html: ExtratoHTML() }}
+      />
+    </CardContent>
+  </Card>
+)}
+
+
             </Button>
             {simCode && <span className="text-sm">✅ Salvo como <strong>Simulação #{simCode}</strong></span>}
           </div>
@@ -1285,6 +1384,12 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div><Label>Lance Ofertado</Label><Input value={p.calc ? brMoney(p.calc.lanceOfertado) : ""} readOnly /></div>
               <div><Label>Lance Embutido</Label><Input value={p.calc ? brMoney(p.calc.lanceEmbutido) : ""} readOnly /></div>
+<div>
+  <Label>Lance Próprio</Label>
+  <Input value={p.calc ? brMoney(Math.max(0, p.calc.lanceOfertado - p.calc.lanceEmbutido)) : ""} readOnly />
+</div>
+
+
               <div><Label>Novo Crédito</Label><Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly /></div>
 
               <div><Label>Nova Parcela (sem limite)</Label><Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly /></div>
@@ -1814,4 +1919,155 @@ function TableFormOverlay({
       </div>
     </div>
   );
+}
+
+
+function ExtratoHTML() {
+  try {
+    // @ts-ignore
+    if (!tabelaSelecionada || !calc || !podeCalcular) return "<div style='padding:24px;font:14px sans-serif'>Sem dados.</div>";
+    // @ts-ignore
+    const adminNome = admins?.find?.(a => a.id === activeAdminId)?.name || "—";
+    // @ts-ignore
+    const seg = tabelaSelecionada.segmento || segmento || "—";
+    // @ts-ignore
+    const tabelaNome = tabelaSelecionada.nome_tabela || "—";
+    // @ts-ignore
+    const formaTxt = forma || "—";
+    // @ts-ignore
+    const indiceTxt = (tabelaSelecionada.indice_correcao?.[0] || tabelaSelecionada.indice_correcao || "—").toString();
+    const indiceHuman = (indexAccumPct || 0) ? `${((indexAccumPct || 0) * 100).toFixed(2)}%` : "0,00%";
+    // @ts-ignore
+    const creditoHuman = (typeof brMoney === 'function') ? brMoney(credito || 0) : String(credito || 0);
+    const headerLogo = logoUrl ? `<img src="${logoUrl}" alt="Consulmax" style="height:38px;object-fit:contain" />`
+                               : `<div style="height:38px"></div>`;
+    return `
+      <div style="font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:13px;color:#1f2937;padding:24px;line-height:1.4;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+          <div>${headerLogo}</div>
+          <div style="font-size:18px;font-weight:600;">Extrato de Simulação</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;border:1px solid #e5e7eb;border-radius:12px;padding:14px;">
+          <div>
+            <div style="text-align:center;font-weight:700;margin-bottom:6px;">CORRETORA</div>
+            <div>Consulmax Consórcios e Investimento</div>
+            <div>CNPJ: 57.942.043/0001-03</div>
+            <div>Telefone: (69) 9 9302-9380</div>
+            <div>Administradora: ${adminNome}</div>
+          </div>
+          <div>
+            <div style="text-align:center;font-weight:700;margin-bottom:6px;">VENDEDOR</div>
+            <div>Nome: ${userName || "—"}</div>
+            <div>Telefone: ${(typeof formatPhoneBR === 'function') ? formatPhoneBR(userPhone) : (userPhone || "—")}</div>
+          </div>
+          <div>
+            <div style="text-align:center;font-weight:700;margin-bottom:6px;">CLIENTE</div>
+            <div>Nome: ${leadInfo?.nome || "—"}</div>
+            <div>Telefone: ${(typeof formatPhoneBR === 'function') ? formatPhoneBR(leadInfo?.telefone || "") : (leadInfo?.telefone || "—")}</div>
+          </div>
+        </div>
+        <div style="text-align:center;font-weight:700;margin:14px 0 8px;">DADOS DA SIMULAÇÃO</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;border:1px solid #e5e7eb;border-radius:12px;padding:14px;">
+          <div>Segmento: <strong>${seg}</strong></div>
+          <div>Tabela: <strong>${tabelaNome}</strong></div>
+          <div>Forma: <strong>${formaTxt}</strong></div>
+          <div>Crédito: <strong>${creditoHuman}</strong></div>
+          <div>Prazo: <strong>${String(prazoVenda)} meses</strong></div>
+          <div>Contemplação: <strong>${String(parcContemplacao)}º mês</strong></div>
+          <div style="grid-column:1/-1;">Índice: <strong>${indiceTxt}</strong> (<strong>${indiceHuman} 12m</strong>)</div>
+        </div>
+        ${ExtratoTabelaHTML()}
+      </div>
+    `;
+  } catch {
+    return "<div style='padding:24px;font:14px sans-serif'>Erro ao montar extrato.</div>";
+  }
+}
+
+
+function ExtratoTabelaHTML() {
+  try {
+    // @ts-ignore
+    if (!calc || !tabelaSelecionada) return "";
+    const acc12m = indexAccumPct || 0;
+    // @ts-ignore
+    const P1 = calc.parcelaPreSemSeguro + (tabelaSelecionada.antecip_parcelas > 0 ? calc.antecada : 0) + calc.seguroMensal;
+    // @ts-ignore
+    const Pdemais = calc.parcelaPreSemSeguro + calc.seguroMensal;
+    // @ts-ignore
+    const contMes = Math.max(1, parcContemplacao);
+    // @ts-ignore
+    const MAX_ROWS = Math.min(60, prazoVenda);
+    // @ts-ignore
+    let creditoVig = credito;
+    // @ts-ignore
+    let saldoPos = calc.saldoFinal;
+    let pos = false;
+    const linhas = [];
+    for (let m = 1; m <= MAX_ROWS; m++) {
+      if (!pos) {
+        let evento = "-";
+        let reaj = 0;
+        const valorParc = (m === 1 ? P1 : Pdemais);
+        if (m > 1 && (m - 1) % 12 === 0) {
+          const antes = creditoVig;
+          creditoVig = +(creditoVig * (1 + acc12m)).toFixed(2);
+          reaj = +(antes * acc12m).toFixed(2);
+          evento = "Reajuste pré-contemplação";
+        }
+        if (m === contMes) {
+          linhas.push({ mes: m, credito: creditoVig, valorParcela: valorParc, reajuste: reaj, saldo: calc.saldoFinal, invest: valorParc, evento });
+          pos = true;
+          continue;
+        }
+        linhas.push({ mes: m, credito: creditoVig, valorParcela: valorParc, reajuste: reaj, saldo: 0, invest: valorParc, evento });
+      } else {
+        let evento = "-";
+        let reaj = 0;
+        if ((m - 1) % 12 === 0) {
+          const antes = saldoPos;
+          saldoPos = +(saldoPos * (1 + acc12m)).toFixed(2);
+          reaj = +(antes * acc12m).toFixed(2);
+          evento = "Reajuste pós-contemplação";
+        }
+        const valorParc = calc.parcelaEscolhidaSemSeguro + calc.seguroMensal;
+        const amort = calc.parcelaEscolhidaSemSeguro;
+        saldoPos = +(Math.max(0, saldoPos - amort)).toFixed(2);
+        linhas.push({ mes: m, credito: 0, valorParcela: valorParc, reajuste: reaj, saldo: saldoPos, invest: valorParc, evento });
+        if (saldoPos <= 0) break;
+      }
+    }
+    const rows = linhas.map(r => `
+      <tr>
+        <td style="padding:6px 8px">${r.mes}</td>
+        <td style="padding:6px 8px">${r.credito ? brMoney(r.credito) : "-"}</td>
+        <td style="padding:6px 8px">${brMoney(r.valorParcela)}</td>
+        <td style="padding:6px 8px">${r.reajuste ? brMoney(r.reajuste) : "-"}</td>
+        <td style="padding:6px 8px">${r.saldo ? brMoney(r.saldo) : "-"}</td>
+        <td style="padding:6px 8px">${r.invest ? brMoney(r.invest) : "-"}</td>
+        <td style="padding:6px 8px">${r.evento}</td>
+      </tr>
+    `).join("");
+    return `
+      <div style="margin-top:16px">
+        <div style="text-align:center;font-weight:700;margin-bottom:8px;">Cronograma (valores reajustados visíveis)</div>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-size:12px">
+          <thead>
+            <tr style="background:#f9fafb">
+              <th style="text-align:left;padding:6px 8px">Parcela</th>
+              <th style="text-align:left;padding:6px 8px">Crédito</th>
+              <th style="text-align:left;padding:6px 8px">Valor Pago</th>
+              <th style="text-align:left;padding:6px 8px">Reajuste</th>
+              <th style="text-align:left;padding:6px 8px">Saldo Devedor</th>
+              <th style="text-align:left;padding:6px 8px">Investimento</th>
+              <th style="text-align:left;padding:6px 8px">Evento</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  } catch {
+    return "";
+  }
 }

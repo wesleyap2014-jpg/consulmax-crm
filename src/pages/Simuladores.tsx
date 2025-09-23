@@ -7,10 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
 
-// ===== PDF =====
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-
 /* ========================= Tipos ========================= */
 type UUID = string;
 
@@ -45,7 +41,11 @@ type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
 /* ======================= Helpers ========================= */
 const brMoney = (v: number) =>
-  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
+  v.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 2,
+  });
 
 const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
 
@@ -75,7 +75,7 @@ function clamp(n: number, min: number, max: number) {
 
 /** Exceção do limitador: Motocicleta >= 20k => 1% */
 function resolveLimitadorPct(baseLimitadorPct: number, segmento: string, credito: number): number {
-  if ((segmento || "").toLowerCase().includes("motocicleta") && credito >= 20000) return 0.01;
+  if (segmento?.toLowerCase().includes("motocicleta") && credito >= 20000) return 0.01;
   return baseLimitadorPct;
 }
 
@@ -95,33 +95,20 @@ type CalcInput = {
   forma: FormaContratacao;
   seguro: boolean;
   segmento: string;
-
   taxaAdmFull: number;
   frPct: number;
   antecipPct: number;
   antecipParcelas: 0 | 1 | 2;
   limitadorPct: number;
   seguroPrestPct: number;
-
-  parcContemplacao: number;
-  indice12m: number; // IPCA/INCC/IGPM manual (decimal), aplicado conforme regras
   lanceOfertPct: number;
   lanceEmbutPct: number; // <= 0.25
+  parcContemplacao: number;
 };
 
-export type ExtratoLinha = {
-  parcela: number;
-  creditoMes: number;
-  valorPago: number;
-  reajuste: number;
-  saldoDevedor: number;
-  investimento: number;
-  evento?: string;
-};
-
-function calcularSimulacaoComExtrato(i: CalcInput) {
+function calcularSimulacao(i: CalcInput) {
   const {
-    credito: C0,
+    credito: C,
     prazoVenda,
     forma,
     seguro,
@@ -130,159 +117,129 @@ function calcularSimulacaoComExtrato(i: CalcInput) {
     frPct,
     antecipPct,
     antecipParcelas,
-    limitadorPct,
-    seguroPrestPct,
-    parcContemplacao, // mCont
-    indice12m,
     lanceOfertPct,
     lanceEmbutPct,
+    parcContemplacao,
   } = i;
 
   const prazo = Math.max(1, Math.floor(prazoVenda));
-  const mCont = clamp(Math.floor(parcContemplacao), 1, prazo); // contemplação em [1..prazo]
-
-  // Partes fixas do contrato (sobre crédito original)
-  const admValor = C0 * taxaAdmFull;
-  const frValor = C0 * frPct;
-  let saldo = C0 + admValor + frValor; // saldo do contrato
-
-  // Seguro mensal (apenas soma na parcela exibida; não abate saldo)
-  const seguroMensal = seguro ? (C0 + admValor + frValor) * seguroPrestPct : 0;
-
-  // Fator de forma (pré-contemplação apenas)
-  const fatorForma = forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
-
-  // TA efetiva (adm mensal que vai na parcela)
-  const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
-
-  // Parcela pré (SEM seguro) — sobre o contrato
-  const parcelaPreSemSeguro =
-    (C0 * fatorForma + C0 * TA_efetiva + C0 * frPct) / prazo;
-
-  const antecada = antecipParcelas > 0 ? (C0 * antecipPct) / antecipParcelas : 0;
-
-  // Controle de crédito corrigido (para linha "Crédito do mês" no extrato)
-  let creditoCorrigido = C0;
-  const eventos: ExtratoLinha[] = [];
-  let investimentoAc = 0;
-
-  // ======= Pré-contemplação: meses 1..mCont
-  for (let m = 1; m <= mCont; m++) {
-    // Reajuste anual pré (sobre o CRÉDITO) nos aniversários 13,25,37...
-    let reajuste = 0;
-    if (m > 1 && (m - 1) % 12 === 0) {
-      const acresc = creditoCorrigido * indice12m;
-      creditoCorrigido += acresc;
-      // O acréscimo é somado ao saldo devedor (regra do enunciado)
-      saldo += acresc;
-      reajuste = acresc;
-    }
-
-    // Parcela do mês (com antecipação quando houver) — mas o que abate saldo é SEM seguro
-    const temAntecip = m <= antecipParcelas && antecada > 0;
-    const parcelaMesExibida = parcelaPreSemSeguro + (temAntecip ? antecada : 0) + seguroMensal;
-
-    // Abatimento do saldo: apenas componente "sem seguro" (parcelaPreSemSeguro) + antecipação (se houver)
-    const abateSaldo = parcelaPreSemSeguro + (temAntecip ? antecada : 0);
-    saldo = Math.max(0, saldo - abateSaldo);
-
-    investimentoAc += parcelaMesExibida;
-
-    eventos.push({
-      parcela: m,
-      creditoMes: creditoCorrigido,
-      valorPago: parcelaMesExibida,
-      reajuste,
-      saldoDevedor: saldo,
-      investimento: investimentoAc,
-      evento: reajuste > 0 ? "Reajuste pré-contemplação" : undefined,
-    });
-  }
-
-  // ======= Contemplação no mês mCont
-  // Paga-se a parcela do mês normalmente (já acima). Agora aplicam-se lances:
-  const lanceEmbutido = creditoCorrigido * clamp(lanceEmbutPct, 0, 0.25); // reduz crédito
-  const novoCredito = Math.max(0, creditoCorrigido - lanceEmbutido);
-
-  // Lance ofertado incide sobre saldo (após pagar a parcela do mês)
-  const lanceOfertado = creditoCorrigido * clamp(lanceOfertPct, 0, 1); // sobre CRÉDITO corrigido do mês da contemplação
-  saldo = Math.max(0, saldo - lanceOfertado);
-
-  // Registrar evento de lance
-  if (eventos.length) {
-    const idx = eventos.findIndex((l) => l.parcela === mCont);
-    if (idx >= 0) {
-      const e = eventos[idx];
-      eventos[idx] = {
-        ...e,
-        evento:
-          (e.evento ? e.evento + " • " : "") +
-          (lanceEmbutido > 0 ? "Lance embutido" : "") +
-          (lanceEmbutido > 0 && lanceOfertado > 0 ? " + " : "") +
-          (lanceOfertado > 0 ? "Lance ofertado" : ""),
-      };
-    }
-  }
-
-  // A partir daqui, reduções acabam. Volta a considerar o crédito original corrigido (ou novoCredito)
-  // Pós: reajuste anual incide sobre o SALDO (não mais sobre crédito)
-  const parcelasPagas = mCont;
+  const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
-  // Nova parcela (sem limite) — SEM seguro
-  const novaParcelaSemLimite = saldo / prazoRestante;
+  // Flags de categoria
+  const segLower = (segmento || "").toLowerCase();
+  const isServico = segLower.includes("serv");
+  const isMoto = segLower.includes("moto");
 
-  // Parcela limitante (usa novoCredito + adm + fr, lembrando: adm e fr são do C0, regra pedida)
-  const parcelaLimitante = resolveLimitadorPct(limitadorPct, segmento, C0) * (novoCredito + admValor + frValor);
+  // TA efetiva (parte que vai para as parcelas mensais)
+  const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
 
-  // Parcela escolhida (SEM seguro) = MAIOR entre as duas
-  const parcelaEscolhidaSemSeguro = Math.max(novaParcelaSemLimite, parcelaLimitante);
-  const parcelaEscolhidaComSeguro = parcelaEscolhidaSemSeguro + seguroMensal;
+  // Valor de categoria (base para saldo + limitador + seguro)
+  const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
-  // ======= Pós-contemplação: meses mCont+1 .. prazo
-  for (let m = mCont + 1; m <= prazo; m++) {
-    // Reajuste anual pós (sobre o SALDO) nos aniversários 13,25,37...
-    let reajuste = 0;
-    if (m > 1 && (m - 1) % 12 === 0) {
-      const acresc = saldo * indice12m;
-      saldo += acresc;
-      reajuste = acresc;
+  // Fator do Fundo Comum conforme contratação
+  const fundoComumFactor =
+    forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
+
+  // Parcela base (SEM seguro)
+  const baseMensalSemSeguro =
+    (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
+
+  // Seguro mensal (só soma na parcela, não abate saldo)
+  const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
+
+  // Antecipação (somada nas primeiras 1 ou 2 parcelas)
+  const antecipAdicionalCada =
+    antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
+
+  // Exibição até a contemplação
+  const parcelaAte =
+    (baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0)) +
+    seguroMensal;
+  const parcelaDemais = baseMensalSemSeguro + seguroMensal;
+
+  // TOTAL PAGO ATÉ A CONTEMPLAÇÃO (SEM seguro)
+  const totalPagoSemSeguro =
+    baseMensalSemSeguro * parcelasPagas +
+    antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
+
+  // Lances
+  const lanceOfertadoValor = C * lanceOfertPct;
+  const lanceEmbutidoValor = C * lanceEmbutPct;
+  const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
+  const novoCredito = Math.max(0, C - lanceEmbutidoValor);
+
+  // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
+  const saldoDevedorFinal = Math.max(
+    0,
+    valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
+  );
+
+  // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
+  const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
+
+  // LIMITADOR (sobre valor de categoria)
+  const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
+  const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
+
+  // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
+  const manterParcela = isServico || (isMoto && C < 20000);
+
+  let aplicouLimitador = false;
+  let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
+
+  if (!manterParcela) {
+    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
+    if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
+      aplicouLimitador = true;
+      parcelaEscolhida = parcelaLimitante;
+    } else {
+      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
+      parcelaEscolhida = novaParcelaSemLimite;
     }
+  }
 
-    const parcelaExibida = parcelaEscolhidaComSeguro;
-    const abateSaldo = parcelaEscolhidaSemSeguro;
-    saldo = Math.max(0, saldo - abateSaldo);
-    investimentoAc += parcelaExibida;
+  // Caso especial: antecipação em 2x e contemplação na 1ª parcela
+  const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
+  const segundaParcelaComAntecipacao = has2aAntecipDepois
+    ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
+    : null;
 
-    eventos.push({
-      parcela: m,
-      creditoMes: novoCredito, // após embutido, o "crédito do mês" exposto é o novo crédito base
-      valorPago: parcelaExibida,
-      reajuste,
-      saldoDevedor: saldo,
-      investimento: investimentoAc,
-      evento: reajuste > 0 ? "Reajuste pós-contemplação" : undefined,
-    });
+  // NOVO PRAZO
+  const parcelasIguais =
+    Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
+
+  let novoPrazo: number;
+  if (parcelasIguais && !has2aAntecipDepois) {
+    novoPrazo = prazoRestante;
+  } else {
+    let saldoParaPrazo = saldoDevedorFinal;
+    if (has2aAntecipDepois) {
+      saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada));
+    }
+    novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
   }
 
   return {
-    admValor,
-    frValor,
-    creditoCorrigidoFinal: creditoCorrigido,
+    valorCategoria,
+    parcelaAte,
+    parcelaDemais,
+    lanceOfertadoValor,
+    lanceEmbutidoValor,
+    lanceProprioValor,
+    lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
-    lanceEmbutido,
-    lanceOfertado,
+    novaParcelaSemLimite, // (SEM seguro)
+    parcelaLimitante,     // (SEM seguro)
+    parcelaEscolhida,     // (SEM seguro)
+    saldoDevedorFinal,
+    novoPrazo,
     TA_efetiva,
-    parcelaPreSemSeguro,
-    antecada,
-    seguroMensal,
-    novaParcelaSemLimite,
-    parcelaLimitante,
-    parcelaEscolhidaSemSeguro,
-    parcelaEscolhidaComSeguro,
-    prazoRestante,
-    saldoFinal: saldo,
-    extrato: eventos,
+    fundoComumFactor,
+    antecipAdicionalCada,
+    segundaParcelaComAntecipacao,
+    has2aAntecipDepois,
+    aplicouLimitador,
   };
 }
 
@@ -331,98 +288,18 @@ function PercentInput({
     </div>
   );
 }
+
 /* ========================= Página ======================== */
 export default function Simuladores() {
-// --- ADD (Consulmax): estados/efeitos auxiliares globais ---
-const [userName, setUserName] = useState<string>("");
-const [userPhone, setUserPhone] = useState<string>("");
-const [indexAccumPct, setIndexAccumPct] = useState<number>(0);
-const [extratoOpen, setExtratoOpen] = useState<boolean>(false);
-const [logoUrl, setLogoUrl] = useState<string | null>(null);
-
-useEffect(() => {
-  (async () => {
-    const { data: userRes } = await supabase.auth.getUser();
-    const uid = userRes?.user?.id;
-    if (!uid) return;
-    const { data } = await supabase
-      .from("public.users")
-      .select("name, phone")
-      .eq("auth_user_id", uid)
-      .maybeSingle();
-    setUserName((data?.name || "").toString());
-    setUserPhone((data?.phone || "").toString());
-  })();
-}, []);
-
-useEffect(() => {
-  (async () => {
-    try {
-      const path = (import.meta as any)?.env?.BASE_URL
-        ? `${(import.meta as any).env.BASE_URL}logo-consulmax.png`
-        : "/logo-consulmax.png";
-      const resp = await fetch(path);
-      const blob = await resp.blob();
-      const fr = new FileReader();
-      fr.onload = () => setLogoUrl(fr.result as string);
-      fr.readAsDataURL(blob);
-    } catch {
-      setLogoUrl(null);
-    }
-  })();
-}, []);
-
-useEffect(() => {
-  (async () => {
-    const code =
-      (tabelaSelecionada?.indice_correcao?.[0] as any) ||
-      (tabelaSelecionada?.indice_correcao as any) ||
-      null;
-    if (!code) {
-      setIndexAccumPct(0);
-      return;
-    }
-    try {
-      const ref = new Date();
-      const refISO = new Date(ref.getFullYear(), ref.getMonth(), 1).toISOString().slice(0, 10);
-      const { data, error } = await supabase.rpc("sim_index_12m_value", {
-        _code: String(code),
-        _ref_month: refISO,
-      });
-      if (!error && typeof data === "number") {
-        setIndexAccumPct(data);
-        if (indiceSel === "IPCA" && typeof setIpca12 === 'function') setIpca12(data);
-        if (indiceSel === "INCC" && typeof setIncc12 === 'function') setIncc12(data);
-        if (indiceSel === "IGP-M" && typeof setIgpm12 === 'function') setIgpm12(data);
-      }
-    } catch {}
-  })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [tabelaSelecionada?.id, tabelaSelecionada?.indice_correcao, indiceSel]);
-
-const ExtratoChip = (
-  <div className="flex items-center gap-2">
-    <Button
-      variant="secondary"
-      size="sm"
-      className="rounded-full px-3"
-      onClick={() => setExtratoOpen((v) => !v)}
-    >
-      {extratoOpen ? "Ocultar extrato" : "Expandir extrato"}
-    </Button>
-  </div>
-);
-
-
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
 
-  const [mgrOpen, setMgrOpen] = useState(false);
+  const [mgrOpen, setMgrOpen] = useState(false); // overlay lista/edição
 
-  // seleção
+  // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
   const [grupo, setGrupo] = useState<string>("");
@@ -442,20 +319,12 @@ const ExtratoChip = (
   const [lanceEmbutPct, setLanceEmbutPct] = useState<number>(0);
   const [parcContemplacao, setParcContemplacao] = useState<number>(1);
 
-  // ÍNDICES (chips + overlay manual)
-  const [indiceSel, setIndiceSel] = useState<"IPCA" | "INCC" | "IGP-M">("IPCA");
-  const [overlayIndices, setOverlayIndices] = useState(false);
-  const [ipca12, setIpca12] = useState<number>(0.039); // padrão 3,90%
-  const [incc12, setIncc12] = useState<number>(0.039);
-  const [igpm12, setIgpm12] = useState<number>(0.039);
-
-  // usuário logado (public.users)
-  const [userName, setUserName] = useState<string>("");
-  const [userPhone, setUserPhone] = useState<string>("");
-
-  const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacaoComExtrato> | null>(null);
+  const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacao> | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
+
+  // telefone do usuário logado (para o Resumo / Proposta)
+  const [userPhone, setUserPhone] = useState<string>("");
 
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
@@ -477,18 +346,17 @@ const ExtratoChip = (
     })();
   }, []);
 
-  // pega usuário logado em public.users
+  // pega telefone do usuário logado
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
       if (!uid) return;
       const { data } = await supabase
-        .from("public.users")
-        .select("name, phone")
+        .from("users")
+        .select("phone")
         .eq("auth_user_id", uid)
         .maybeSingle();
-      setUserName((data?.name || "").toString());
       setUserPhone((data?.phone || "").toString());
     })();
   }, []);
@@ -526,15 +394,21 @@ const ExtratoChip = (
   useEffect(() => {
     if (!tabelaSelecionada) return;
     setPrazoAte(tabelaSelecionada.prazo_limite);
-    setFaixa({ min: tabelaSelecionada.faixa_min, max: tabelaSelecionada.faixa_max });
-    if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25) setForma("Parcela Cheia");
-    if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
+    setFaixa({
+      min: tabelaSelecionada.faixa_min,
+      max: tabelaSelecionada.faixa_max,
+    });
+    if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25)
+      setForma("Parcela Cheia");
+    if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50)
+      setForma("Parcela Cheia");
   }, [tabelaSelecionada]); // eslint-disable-line
 
   // valida % embutido
   const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
   useEffect(() => {
-    if (lanceEmbutPct !== lanceEmbutPctValid) setLanceEmbutPct(lanceEmbutPctValid);
+    if (lanceEmbutPct !== lanceEmbutPctValid)
+      setLanceEmbutPct(lanceEmbutPctValid);
   }, [lanceEmbutPct]); // eslint-disable-line
 
   const prazoAviso =
@@ -548,13 +422,6 @@ const ExtratoChip = (
     prazoVenda > 0 &&
     parcContemplacao > 0 &&
     parcContemplacao < prazoVenda;
-
-  // índice selecionado efetivo
-  const indice12m = useMemo(() => {
-    if (indiceSel === "IPCA") return ipca12;
-    if (indiceSel === "INCC") return incc12;
-    return igpm12;
-  }, [indiceSel, ipca12, incc12, igpm12]);
 
   useEffect(() => {
     if (!tabelaSelecionada || !podeCalcular) {
@@ -573,12 +440,11 @@ const ExtratoChip = (
       antecipParcelas: (tabelaSelecionada.antecip_parcelas as 0 | 1 | 2) ?? 0,
       limitadorPct: tabelaSelecionada.limitador_parcela_pct,
       seguroPrestPct: tabelaSelecionada.seguro_prest_pct,
-      parcContemplacao,
-      indice12m,
       lanceOfertPct,
       lanceEmbutPct: lanceEmbutPctValid,
+      parcContemplacao,
     };
-    setCalc(calcularSimulacaoComExtrato(inp));
+    setCalc(calcularSimulacao(inp));
   }, [
     tabelaSelecionada,
     credito,
@@ -588,7 +454,6 @@ const ExtratoChip = (
     lanceOfertPct,
     lanceEmbutPctValid,
     parcContemplacao,
-    indice12m,
   ]); // eslint-disable-line
 
   async function salvarSimulacao() {
@@ -611,19 +476,19 @@ const ExtratoChip = (
       lance_ofertado_pct: lanceOfertPct,
       lance_embutido_pct: lanceEmbutPctValid,
       parcela_contemplacao: parcContemplacao,
-      valor_categoria: C0Categoria(credito, tabelaSelecionada.taxa_adm_pct, tabelaSelecionada.fundo_reserva_pct),
-      parcela_ate_1_ou_2: calc.parcelaPreSemSeguro + (tabelaSelecionada.antecip_parcelas > 0 ? calc.antecada : 0) + calc.seguroMensal,
-      parcela_demais: calc.parcelaPreSemSeguro + calc.seguroMensal,
-      lance_ofertado_valor: calc.lanceOfertado,
-      lance_embutido_valor: calc.lanceEmbutido,
+      valor_categoria: calc.valorCategoria,
+      parcela_ate_1_ou_2: calc.parcelaAte,
+      parcela_demais: calc.parcelaDemais,
+      lance_ofertado_valor: calc.lanceOfertadoValor,
+      lance_embutido_valor: calc.lanceEmbutidoValor,
+      lance_proprio_valor: calc.lanceProprioValor,
+      lance_percebido_pct: calc.lancePercebidoPct,
       novo_credito: calc.novoCredito,
       nova_parcela_sem_limite: calc.novaParcelaSemLimite,
       parcela_limitante: calc.parcelaLimitante,
-      parcela_escolhida: calc.parcelaEscolhidaSemSeguro,
-      saldo_devedor_final: calc.saldoFinal,
-      novo_prazo: calc.prazoRestante,
-      indice_tipo: indiceSel,
-      indice_valor12m: indice12m,
+      parcela_escolhida: calc.parcelaEscolhida,
+      saldo_devedor_final: calc.saldoDevedorFinal,
+      novo_prazo: calc.novoPrazo,
     };
 
     const { data, error } = await supabase
@@ -639,10 +504,6 @@ const ExtratoChip = (
     setSimCode(data?.code ?? null);
   }
 
-  function C0Categoria(C0: number, adm: number, fr: number) {
-    return C0 * (1 + adm + fr);
-  }
-
   function handleTableCreatedOrUpdated(newTable: SimTable) {
     setTables((prev) => {
       const exists = prev.find((t) => t.id === newTable.id);
@@ -650,6 +511,7 @@ const ExtratoChip = (
       return [newTable, ...prev];
     });
   }
+
   function handleTableDeleted(id: string) {
     setTables((prev) => prev.filter((t) => t.id !== id));
   }
@@ -673,37 +535,44 @@ const ExtratoChip = (
         ? "Parcela 1"
         : "Parcela inicial";
 
+    const parcelaRestanteValor = brMoney(calc.parcelaEscolhida);
+    const segundaParcExtra =
+      calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao
+        ? ` (2ª parcela com antecipação: ${brMoney(
+            calc.segundaParcelaComAntecipacao
+          )})`
+        : "";
+
     const telDigits = (userPhone || "").replace(/\D/g, "");
     const wa = `https://wa.me/${telDigits || ""}`;
-
-    const parcelaInicialExib = calc.parcelaPreSemSeguro + (tabelaSelecionada.antecip_parcelas > 0 ? calc.antecada : 0) + calc.seguroMensal;
-    const parcelaDemaisExib = calc.parcelaPreSemSeguro + calc.seguroMensal;
 
     return (
 `🎯 Com a estratégia certa, você conquista seu ${bem} sem pagar juros, sem entrada e ainda economiza!
 
-📌 Simulação:
+📌 Confira essa simulação real:
 
 💰 Crédito contratado: ${brMoney(credito)}
 
-💳 ${primeiraParcelaLabel}: ${brMoney(parcelaInicialExib)} (Primeira parcela em até 3x no cartão)
-💵 Demais parcelas até a contemplação: ${brMoney(parcelaDemaisExib)}
+💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (Primeira parcela em até 3x sem juros no cartão)
 
-📈 Contemplação prevista: mês ${parcContemplacao}
-🏦 Lance próprio: ${brMoney(Math.max(0, calc.lanceOfertado - calc.lanceEmbutido))}
+💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
+
+📈 Após a contemplação (prevista em ${parcContemplacao} meses):
+🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
 
-📆 Parcelas restantes (valor): ${brMoney(calc.parcelaEscolhidaSemSeguro + calc.seguroMensal)}
-⏳ Prazo restante: ${calc.prazoRestante} meses
+📆 Parcelas restantes (valor): ${parcelaRestanteValor}${segundaParcExtra}
 
-Índice: ${indiceSel} (${(indice12m*100).toFixed(2)}% 12m)
+⏳ Prazo restante: ${calc.novoPrazo} meses
+
+💡 Um planejamento inteligente que cabe no seu bolso e acelera a realização do seu sonho!
 
 👉 Quer simular com o valor do seu ${bem} dos sonhos?
-Me chama aqui 👇
+Me chama aqui e eu te mostro o melhor caminho 👇
 ${wa}`
     );
-  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone, indiceSel, indice12m]);
+  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone]);
 
   async function copiarResumo() {
     try {
@@ -714,7 +583,7 @@ ${wa}`
     }
   }
 
-  // ===== Texto OPORTUNIDADE / PROPOSTA EMBRACON =====
+  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
   function normalizarSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
     if (s.includes("imó")) return "Imóvel";
@@ -735,13 +604,18 @@ ${wa}`
 
   const propostaTexto = useMemo(() => {
     if (!calc || !podeCalcular) return "";
+
     const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
     const seg = normalizarSegmento(segBase);
     const emoji = emojiDoSegmento(segBase);
 
-    const parcela1Exib = calc.parcelaPreSemSeguro + (tabelaSelecionada?.antecip_parcelas ? calc.antecada : 0) + calc.seguroMensal;
-    const mostraParc2 = tabelaSelecionada?.antecip_parcelas === 2;
-    const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.parcelaPreSemSeguro + calc.antecada + calc.seguroMensal)} (com antecipação)` : "";
+    const parcela1 = brMoney(calc.parcelaAte);
+    const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
+    const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
+
+    const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
+
+    const grupoTxt = grupo || "—";
 
     const whatsappFmt = formatPhoneBR(userPhone);
     const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
@@ -754,14 +628,15 @@ ${wa}`
 Proposta ${seg}
 
 ${emoji} Crédito: ${brMoney(calc.novoCredito)}
-💰 Parcela 1: ${brMoney(parcela1Exib)} (Em até 3x no cartão)${linhaParc2}
-📆 + ${calc.prazoRestante}x de ${brMoney(calc.parcelaEscolhidaSemSeguro + calc.seguroMensal)}
-💵 Lance Próprio: ${brMoney(Math.max(0, calc.lanceOfertado - calc.lanceEmbutido))}
-📢 Grupo: ${grupo || "—"}
+💰 Parcela 1: ${parcela1} (Em até 3x no cartão)${linhaParc2}
+${linhaPrazo}
+💵 Lance Próprio: ${brMoney(calc.lanceProprioValor)}
+📢 Grupo: ${grupoTxt}
 
-Índice: ${indiceSel} (${(indice12m*100).toFixed(2)}% 12m)
+🚨 POUCAS VAGAS DISPONÍVEIS🚨
 
 Assembleia ${assembleia}
+
 📲 Garanta sua vaga agora!${whatsappLine}
 
 Vantagens
@@ -769,7 +644,7 @@ Vantagens
 ✅ Parcelas acessíveis
 ✅ Alta taxa de contemplação`
     );
-  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone, indiceSel, indice12m]);
+  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone]);
 
   async function copiarProposta() {
     try {
@@ -823,7 +698,9 @@ Vantagens
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => alert("Em breve: adicionar administradora.")}
+                onClick={() =>
+                  alert("Em breve: adicionar administradora.")
+                }
                 className="h-10 rounded-2xl px-4 whitespace-nowrap"
               >
                 <Plus className="h-4 w-4 mr-1" /> + Add Administradora
@@ -858,9 +735,16 @@ Vantagens
                     grupo={grupo}
                     setGrupo={setGrupo}
                     segmento={segmento}
-                    setSegmento={(v) => { setSegmento(v); setNomeTabela(""); setTabelaId(""); }}
+                    setSegmento={(v) => {
+                      setSegmento(v);
+                      setNomeTabela("");
+                      setTabelaId("");
+                    }}
                     nomeTabela={nomeTabela}
-                    setNomeTabela={(v) => { setNomeTabela(v); setTabelaId(""); }}
+                    setNomeTabela={(v) => {
+                      setNomeTabela(v);
+                      setTabelaId("");
+                    }}
                     tabelaId={tabelaId}
                     setTabelaId={setTabelaId}
                     credito={credito}
@@ -882,15 +766,6 @@ Vantagens
                     salvar={salvarSimulacao}
                     salvando={salvando}
                     simCode={simCode}
-                    indiceSel={indiceSel}
-                    setIndiceSel={setIndiceSel}
-                    ipca12={ipca12} setIpca12={setIpca12}
-                    incc12={incc12} setIncc12={setIncc12}
-                    igpm12={igpm12} setIgpm12={setIgpm12}
-                    overlayIndices={overlayIndices}
-                    setOverlayIndices={setOverlayIndices}
-                    userName={userName}
-                    userPhone={userPhone}
                   />
                 ) : (
                   <div className="text-sm text-muted-foreground">
@@ -898,7 +773,9 @@ Vantagens
                   </div>
                 )
               ) : (
-                <div className="text-sm text-muted-foreground">Nenhuma administradora encontrada.</div>
+                <div className="text-sm text-muted-foreground">
+                  Nenhuma administradora encontrada.
+                </div>
               )}
             </CardContent>
           </Card>
@@ -908,26 +785,12 @@ Vantagens
             <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
               {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
-{/* Chip de extrato ao vivo */}
-<div className="mt-4">{ExtratoChip}</div>
-
-{extratoOpen && (
-  <Card className="mt-3">
-    <CardHeader>
-      <CardTitle>Extrato detalhado (visualização rápida)</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <div
-        className="prose max-w-none"
-        dangerouslySetInnerHTML={{ __html: ExtratoHTML() }}
-      />
-    </CardContent>
-  </Card>
-)}
-
-
             </Button>
-            {simCode && <span className="text-sm">✅ Salvo como <strong>Simulação #{simCode}</strong></span>}
+            {simCode && (
+              <span className="text-sm">
+                ✅ Salvo como <strong>Simulação #{simCode}</strong>
+              </span>
+            )}
           </div>
         </div>
 
@@ -939,32 +802,51 @@ Vantagens
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               {!tabelaSelecionada ? (
-                <div className="text-muted-foreground">Selecione uma tabela para ver os detalhes.</div>
+                <div className="text-muted-foreground">
+                  Selecione uma tabela para ver os detalhes.
+                </div>
               ) : (
                 <>
                   <div className="grid grid-cols-2 gap-2">
                     <div>Crédito</div>
-                    <div className="text-right font-medium">{brMoney(credito || 0)}</div>
+                    <div className="text-right font-medium">
+                      {brMoney(credito || 0)}
+                    </div>
                     <div>Prazo da Venda</div>
                     <div className="text-right">{prazoVenda || "-"}</div>
                     <div>Forma</div>
                     <div className="text-right">{forma}</div>
                     <div>Seguro / parcela</div>
                     <div className="text-right">
-                      {seguroPrest ? pctHuman(tabelaSelecionada.seguro_prest_pct) : "—"}
+                      {seguroPrest
+                        ? pctHuman(tabelaSelecionada.seguro_prest_pct)
+                        : "—"}
                     </div>
                   </div>
                   <hr className="my-2" />
                   <div className="grid grid-cols-2 gap-2">
+                    <div>Fundo Comum (fator)</div>
+                    <div className="text-right">
+                      {calc
+                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
+                        : "—"}
+                    </div>
                     <div>Taxa Adm (total)</div>
-                    <div className="text-right">{pctHuman(tabelaSelecionada.taxa_adm_pct)}</div>
+                    <div className="text-right">
+                      {pctHuman(tabelaSelecionada.taxa_adm_pct)}
+                    </div>
                     <div>TA efetiva</div>
-                    <div className="text-right">{calc ? pctHuman(calc.TA_efetiva) : "—"}</div>
+                    <div className="text-right">
+                      {calc ? pctHuman(calc.TA_efetiva) : "—"}
+                    </div>
                     <div>Fundo Reserva</div>
-                    <div className="text-right">{pctHuman(tabelaSelecionada.fundo_reserva_pct)}</div>
+                    <div className="text-right">
+                      {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
+                    </div>
                     <div>Antecipação Adm</div>
                     <div className="text-right">
-                      {pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x
+                      {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
+                      {tabelaSelecionada.antecip_parcelas}x
                     </div>
                     <div>Limitador Parcela</div>
                     <div className="text-right">
@@ -976,9 +858,9 @@ Vantagens
                         )
                       )}
                     </div>
-                    <div>Índice (12m)</div>
+                    <div>Valor de Categoria</div>
                     <div className="text-right">
-                      {indiceSel} • {(indice12m * 100).toFixed(2)}%
+                      {calc ? brMoney(calc.valorCategoria) : "—"}
                     </div>
                   </div>
                 </>
@@ -986,9 +868,11 @@ Vantagens
             </CardContent>
           </Card>
 
-          {/* Resumo */}
+          {/* Resumo antigo */}
           <Card>
-            <CardHeader><CardTitle>Resumo da Proposta</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Resumo da Proposta</CardTitle>
+            </CardHeader>
             <CardContent className="space-y-2">
               <textarea
                 className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
@@ -998,19 +882,27 @@ Vantagens
                 placeholder="Preencha os campos da simulação para gerar o resumo."
               />
               <div className="flex items-center justify-end gap-2">
-                <Button onClick={copiarResumo} disabled={!resumoTexto}>Copiar</Button>
+                <Button onClick={copiarResumo} disabled={!resumoTexto}>
+                  Copiar
+                </Button>
               </div>
             </CardContent>
           </Card>
 
-          {/* OPORTUNIDADE */}
+          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
           <Card>
-            <CardHeader><CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
+            </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <Label>Assembleia (ex.: 15/10)</Label>
-                  <Input value={assembleia} onChange={(e) => setAssembleia(e.target.value)} placeholder="dd/mm" />
+                  <Input
+                    value={assembleia}
+                    onChange={(e) => setAssembleia(e.target.value)}
+                    placeholder="dd/mm"
+                  />
                 </div>
               </div>
               <textarea
@@ -1021,7 +913,9 @@ Vantagens
                 placeholder="Preencha a simulação para gerar o texto."
               />
               <div className="flex items-center justify-end gap-2">
-                <Button onClick={copiarProposta} disabled={!propostaTexto}>Copiar</Button>
+                <Button onClick={copiarProposta} disabled={!propostaTexto}>
+                  Copiar
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -1039,574 +933,6 @@ Vantagens
         />
       )}
     </div>
-  );
-}
-
-/* ====================== Embracon UI ====================== */
-type EmbraconProps = {
-  leads: Lead[];
-  adminTables: SimTable[];
-  nomesTabelaSegmento: string[];
-  variantesDaTabela: SimTable[];
-  tabelaSelecionada: SimTable | null;
-  prazoAte: number;
-  faixa: { min: number; max: number } | null;
-  leadId: string; setLeadId: (v: string) => void;
-  leadInfo: { nome: string; telefone?: string | null } | null;
-  grupo: string; setGrupo: (v: string) => void;
-
-  segmento: string; setSegmento: (v: string) => void;
-  nomeTabela: string; setNomeTabela: (v: string) => void;
-  tabelaId: string; setTabelaId: (v: string) => void;
-
-  credito: number; setCredito: (v: number) => void;
-  prazoVenda: number; setPrazoVenda: (v: number) => void;
-  forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
-  seguroPrest: boolean; setSeguroPrest: (v: boolean) => void;
-
-  lanceOfertPct: number; setLanceOfertPct: (v: number) => void;
-  lanceEmbutPct: number; setLanceEmbutPct: (v: number) => void;
-  parcContemplacao: number; setParcContemplacao: (v: number) => void;
-
-  prazoAviso: string | null;
-  calc: ReturnType<typeof calcularSimulacaoComExtrato> | null;
-
-  salvar: () => Promise<void>;
-  salvando: boolean;
-  simCode: number | null;
-
-  // Índices
-  indiceSel: "IPCA" | "INCC" | "IGP-M";
-  setIndiceSel: (v: "IPCA" | "INCC" | "IGP-M") => void;
-  ipca12: number; setIpca12: (d: number) => void;
-  incc12: number; setIncc12: (d: number) => void;
-  igpm12: number; setIgpm12: (d: number) => void;
-  overlayIndices: boolean; setOverlayIndices: (b: boolean) => void;
-
-  // cabeçalho de extrato
-  userName: string;
-  userPhone: string;
-};
-
-function EmbraconSimulator(p: EmbraconProps) {
-  // Botões/Chips de Índice + overlay
-  const Chip = ({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) => (
-    <button
-      onClick={onClick}
-      className={`px-3 h-8 rounded-full text-sm border ${
-        active ? "bg-black text-white border-black" : "bg-white hover:bg-muted"
-      }`}
-    >
-      {label}
-    </button>
-  );
-
-  return (
-    <div className="space-y-6">
-      {/* Lead */}
-      <Card>
-        <CardHeader><CardTitle>Embracon</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
-            <div>
-              <Label>Selecionar Lead</Label>
-              <select
-                className="w-full h-10 border rounded-md px-3"
-                value={p.leadId}
-                onChange={(e) => p.setLeadId(e.target.value)}
-              >
-                <option value="">Escolha um lead</option>
-                {p.leads.map((l) => (
-                  <option key={l.id} value={l.id}>{l.nome}</option>
-                ))}
-              </select>
-              {p.leadInfo && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-                </p>
-              )}
-            </div>
-            <div>
-              <Label>Nº do Grupo (opcional)</Label>
-              <Input value={p.grupo} onChange={(e) => p.setGrupo(e.target.value)} placeholder="ex.: 9957" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Plano */}
-      {p.leadId ? (
-        <>
-          <Card>
-            <CardHeader><CardTitle>Configurações do Plano</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-4">
-              <div>
-                <Label>Segmento</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.segmento}
-                  onChange={(e) => p.setSegmento(e.target.value)}
-                >
-                  <option value="">Selecione o segmento</option>
-                  {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <Label>Tabela</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.nomeTabela}
-                  disabled={!p.segmento}
-                  onChange={(e) => p.setNomeTabela(e.target.value)}
-                >
-                  <option value="">
-                    {p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}
-                  </option>
-                  {p.nomesTabelaSegmento.map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <Label>Prazo Até</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.tabelaId}
-                  disabled={!p.nomeTabela}
-                  onChange={(e) => p.setTabelaId(e.target.value)}
-                >
-                  <option value="">
-                    {p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}
-                  </option>
-                  {p.variantesDaTabela.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR {pctHuman(t.fundo_reserva_pct)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <Label>Faixa de Crédito</Label>
-                <Input value={p.faixa ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}` : ""} readOnly />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Venda */}
-          <Card>
-            <CardHeader><CardTitle>Configurações da Venda</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-4">
-              <div>
-                <Label>Valor do Crédito</Label>
-                <MoneyInput value={p.credito || 0} onChange={p.setCredito} />
-              </div>
-
-              <div>
-                <Label>Prazo da Venda (meses)</Label>
-                <Input type="number" value={p.prazoVenda || ""} onChange={(e) => p.setPrazoVenda(Number(e.target.value))} />
-                {p.prazoAviso && <p className="text-xs text-yellow-600 mt-1">{p.prazoAviso}</p>}
-              </div>
-
-              <div>
-                <Label>Forma de Contratação</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.forma}
-                  disabled={!p.tabelaSelecionada}
-                  onChange={(e) => p.setForma(e.target.value as any)}
-                >
-                  <option value="">Selecione</option>
-                  {p.tabelaSelecionada?.contrata_parcela_cheia && (
-                    <option value="Parcela Cheia">Parcela Cheia</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_25 && (
-                    <option value="Reduzida 25%">Reduzida 25%</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_50 && (
-                    <option value="Reduzida 50%">Reduzida 50%</option>
-                  )}
-                </select>
-              </div>
-
-              <div>
-                <Label>Seguro Prestamista</Label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    className={p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"}
-                    onClick={() => p.setSeguroPrest(true)}
-                  >
-                    Sim
-                  </Button>
-                  <Button
-                    type="button"
-                    className={!p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"}
-                    onClick={() => p.setSeguroPrest(false)}
-                  >
-                    Não
-                  </Button>
-                </div>
-              </div>
-
-              {p.tabelaSelecionada && (
-                <div className="md:col-span-4 grid grid-cols-2 gap-3 text-sm bg-muted/30 rounded-lg p-3">
-                  <div>% Taxa de Adm: <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong></div>
-                  <div>% Fundo Reserva: <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong></div>
-                  <div>% Antecipação: <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> • Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong></div>
-                  <div>Limitador de Parcela: <strong>{pctHuman(resolveLimitadorPct(p.tabelaSelecionada.limitador_parcela_pct, p.tabelaSelecionada.segmento, p.credito || 0))}</strong></div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* ÍNDICES (chips + overlay de edição manual) */}
-          <Card>
-            <CardHeader><CardTitle>Índice (12m) — Manual</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Chip
-                  active={p.indiceSel === "IPCA"}
-                  label={`IPCA • ${(p.ipca12 * 100).toFixed(2)}%`}
-                  onClick={() => p.setIndiceSel("IPCA")}
-                />
-                <Chip
-                  active={p.indiceSel === "INCC"}
-                  label={`INCC • ${(p.incc12 * 100).toFixed(2)}%`}
-                  onClick={() => p.setIndiceSel("INCC")}
-                />
-                <Chip
-                  active={p.indiceSel === "IGP-M"}
-                  label={`IGP-M • ${(p.igpm12 * 100).toFixed(2)}%`}
-                  onClick={() => p.setIndiceSel("IGP-M")}
-                />
-                <Button variant="secondary" size="sm" onClick={() => p.setOverlayIndices(true)}>
-                  Editar índices
-                </Button>
-              </div>
-              {p.overlayIndices && (
-                <ModalBase title="Editar Índices (12 meses)" onClose={() => p.setOverlayIndices(false)}>
-                  <div className="p-4 grid gap-3 md:grid-cols-3">
-                    <div>
-                      <Label>IPCA (12m)</Label>
-                      <PercentInput valueDecimal={p.ipca12} onChangeDecimal={p.setIpca12} />
-                    </div>
-                    <div>
-                      <Label>INCC (12m)</Label>
-                      <PercentInput valueDecimal={p.incc12} onChangeDecimal={p.setIncc12} />
-                    </div>
-                    <div>
-                      <Label>IGP-M (12m)</Label>
-                      <PercentInput valueDecimal={p.igpm12} onChangeDecimal={p.setIgpm12} />
-                    </div>
-                    <div className="md:col-span-3 flex justify-end gap-2">
-                      <Button onClick={() => p.setOverlayIndices(false)}>Fechar</Button>
-                    </div>
-                  </div>
-                </ModalBase>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Até a contemplação */}
-          <Card>
-            <CardHeader><CardTitle>Plano de Pagamento até a Contemplação</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              <div>
-                <Label>
-                  {p.tabelaSelecionada?.antecip_parcelas === 2
-                    ? "Parcelas 1 e 2"
-                    : p.tabelaSelecionada?.antecip_parcelas === 1
-                    ? "Parcela 1"
-                    : "Parcela Inicial"}
-                </Label>
-                <Input
-                  value={
-                    p.calc
-                      ? brMoney(p.calc.parcelaPreSemSeguro + (p.tabelaSelecionada?.antecip_parcelas ? p.calc.antecada : 0) + p.calc.seguroMensal)
-                      : ""
-                  }
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Demais Parcelas</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.parcelaPreSemSeguro + p.calc.seguroMensal) : ""}
-                  readOnly
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Lances */}
-          <Card>
-            <CardHeader><CardTitle>Configurações do Lance</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              <div>
-                <Label>Lance Ofertado (%)</Label>
-                <PercentInput valueDecimal={p.lanceOfertPct} onChangeDecimal={p.setLanceOfertPct} />
-              </div>
-              <div>
-                <Label>Lance Embutido (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceEmbutPct}
-                  onChangeDecimal={(d) => {
-                    if (d > 0.25) {
-                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
-                      p.setLanceEmbutPct(0.25);
-                    } else {
-                      p.setLanceEmbutPct(d);
-                    }
-                  }}
-                  maxDecimal={0.25}
-                />
-              </div>
-              <div>
-                <Label>Parcela da Contemplação</Label>
-                <Input
-                  type="number"
-                  value={p.parcContemplacao}
-                  onChange={(e) => p.setParcContemplacao(Math.max(1, Number(e.target.value)))}
-                />
-                <p className="text-xs text-muted-foreground mt-1">Deve ser menor que o Prazo da Venda.</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Pós */}
-          <Card>
-            <CardHeader><CardTitle>Plano de Pagamento após a Contemplação</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              <div><Label>Lance Ofertado</Label><Input value={p.calc ? brMoney(p.calc.lanceOfertado) : ""} readOnly /></div>
-              <div><Label>Lance Embutido</Label><Input value={p.calc ? brMoney(p.calc.lanceEmbutido) : ""} readOnly /></div>
-<div>
-  <Label>Lance Próprio</Label>
-  <Input value={p.calc ? brMoney(Math.max(0, p.calc.lanceOfertado - p.calc.lanceEmbutido)) : ""} readOnly />
-</div>
-
-
-              <div><Label>Novo Crédito</Label><Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly /></div>
-
-              <div><Label>Nova Parcela (sem limite)</Label><Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly /></div>
-              <div><Label>Parcela Limitante</Label><Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly /></div>
-              <div><Label>Parcela Escolhida</Label><Input value={p.calc ? brMoney(p.calc.parcelaEscolhidaSemSeguro) : ""} readOnly /></div>
-
-              <div><Label>Parcela Escolhida (c/ seguro)</Label><Input value={p.calc ? brMoney(p.calc.parcelaEscolhidaComSeguro) : ""} readOnly /></div>
-              <div><Label>Prazo Restante (meses)</Label><Input value={p.calc ? String(p.calc.prazoRestante) : ""} readOnly /></div>
-            </CardContent>
-          </Card>
-
-          {/* Extrato em tela + PDF */}
-          <ExtratoBox
-            extrato={p.calc?.extrato || []}
-            indiceSel={p.indiceSel}
-            indice12m={p.indiceSel === "IPCA" ? p.ipca12 : p.indiceSel === "INCC" ? p.incc12 : p.igpm12}
-            segmento={p.tabelaSelecionada?.segmento || ""}
-            tabelaNome={p.tabelaSelecionada?.nome_tabela || ""}
-            credito={p.credito}
-            forma={p.forma}
-            prazoVenda={p.prazoVenda}
-            parcContemplacao={p.parcContemplacao}
-            userName={p.userName}
-            userPhone={p.userPhone}
-            leadNome={p.leadInfo?.nome || ""}
-            leadTel={p.leadInfo?.telefone || ""}
-          />
-        </>
-      ) : (
-        <div className="text-sm text-muted-foreground">Selecione um lead para abrir o simulador.</div>
-      )}
-    </div>
-  );
-}
-/* =============== Extrato (tela + PDF) ================= */
-function CenteredHeader({ children }: { children: React.ReactNode }) {
-  return <div className="text-center font-semibold tracking-wide">{children}</div>;
-}
-
-function ExtratoBox({
-  extrato,
-  indiceSel,
-  indice12m,
-  segmento,
-  tabelaNome,
-  credito,
-  forma,
-  prazoVenda,
-  parcContemplacao,
-  userName,
-  userPhone,
-  leadNome,
-  leadTel,
-}: {
-  extrato: ExtratoLinha[];
-  indiceSel: "IPCA" | "INCC" | "IGP-M";
-  indice12m: number;
-  segmento: string;
-  tabelaNome: string;
-  credito: number;
-  forma: FormaContratacao;
-  prazoVenda: number;
-  parcContemplacao: number;
-  userName: string;
-  userPhone: string;
-  leadNome: string;
-  leadTel: string | null | undefined;
-}) {
-  function gerarPDF() {
-    const doc = new jsPDF({ unit: "pt", format: "a4" }); // um doc por chamada
-
-    // Logo topo (proporção correta)
-    const pageWidth = doc.internal.pageSize.getWidth();
-    try {
-      // Se o projeto servir a imagem em /public/logo-consulmax.png
-      // Algumas instalações do jsPDF precisam de base64; aqui vamos tentar com HTML image
-      // Para garantir, desenhamos um título mesmo sem imagem.
-      // (Caso queira converter para base64, basta carregar e usar addImage(base64, "PNG", ...))
-      // Usaremos apenas o título centralizado para robustez
-    } catch {}
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("EXTRATO DE SIMULAÇÃO", pageWidth / 2, 40, { align: "center" });
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-
-    // Cabeçalhos (centralizados)
-    const headerYStart = 70;
-
-    const linha = (label: string) => doc.text(label, pageWidth / 2, currentY, { align: "center" });
-    let currentY = headerYStart;
-
-    doc.setFont("helvetica", "bold");
-    linha("-------------- DADOS DA CORRETORA ---------------------");
-    doc.setFont("helvetica", "normal");
-    currentY += 14;
-    linha(`Corretora: Consulmax | CNPJ | Telefone: (11) 0000-0000 | Administradora: Embracon`);
-    currentY += 14;
-    linha(`Usuário: ${userName || "-"} | Telefone/Whats: ${formatPhoneBR(userPhone) || "-"}`);
-
-    currentY += 20;
-    doc.setFont("helvetica", "bold");
-    linha("-------------- DADOS DO CLIENTE ---------------------");
-    doc.setFont("helvetica", "normal");
-    currentY += 14;
-    linha(`Nome: ${leadNome || "-"} | Telefone: ${leadTel ? formatPhoneBR(leadTel) : "-"}`);
-
-    currentY += 20;
-    doc.setFont("helvetica", "bold");
-    linha("-------------- DADOS DA SIMULAÇÃO ---------------------");
-    doc.setFont("helvetica", "normal");
-    currentY += 14;
-    linha(`Segmento: ${segmento || "-"} | Tabela: ${tabelaNome || "-"}`);
-    currentY += 14;
-    linha(`Crédito: ${brMoney(credito)} | Forma: ${forma} | Prazo: ${prazoVenda} meses | Contemplação: ${parcContemplacao}`);
-    currentY += 14;
-    linha(`Índice: ${indiceSel} (${(indice12m * 100).toFixed(2)}% em 12m)`);
-
-    currentY += 16;
-
-    // Tabela
-    autoTable(doc, {
-      startY: currentY,
-      headStyles: { fillColor: [240, 240, 240] },
-      head: [["Parcela", "Crédito", "Valor Pago", "Reajuste", "Saldo Devedor", "Investimento", "Evento"]],
-      body: extrato.map((l) => [
-        String(l.parcela),
-        brMoney(l.creditoMes),
-        brMoney(l.valorPago),
-        l.reajuste ? brMoney(l.reajuste) : "-",
-        brMoney(l.saldoDevedor),
-        brMoney(l.investimento),
-        l.evento || "-",
-      ]),
-      styles: { font: "helvetica", fontSize: 9 },
-      theme: "grid",
-      margin: { left: 32, right: 32 },
-    });
-
-    doc.save("extrato-simulacao.pdf");
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Extrato (tela + PDF)</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Cabeçalho centralizado (tela) */}
-        <div className="space-y-2">
-          <CenteredHeader>-------------- DADOS DA CORRETORA ---------------------</CenteredHeader>
-          <div className="text-center text-sm">
-            Corretora: Consulmax | CNPJ | Telefone: (11) 0000-0000 | Administradora: Embracon
-          </div>
-          <div className="text-center text-sm">
-            Usuário: {userName || "-"} | Telefone/Whats: {formatPhoneBR(userPhone) || "-"}
-          </div>
-
-          <CenteredHeader>-------------- DADOS DO CLIENTE ---------------------</CenteredHeader>
-          <div className="text-center text-sm">
-            Nome: {leadNome || "-"} | Telefone: {leadTel ? formatPhoneBR(leadTel) : "-"}
-          </div>
-
-          <CenteredHeader>-------------- DADOS DA SIMULAÇÃO ---------------------</CenteredHeader>
-          <div className="text-center text-sm">
-            Segmento: {segmento || "-"} | Tabela: {tabelaNome || "-"}
-          </div>
-          <div className="text-center text-sm">
-            Crédito: {brMoney(credito)} | Forma: {forma} | Prazo: {prazoVenda} meses | Contemplação: {parcContemplacao}
-          </div>
-          <div className="text-center text-sm">
-            Índice: {indiceSel} ({(indice12m * 100).toFixed(2)}% 12m)
-          </div>
-        </div>
-
-        {/* Tabela simples em tela */}
-        <div className="overflow-auto rounded-lg border">
-          <table className="min-w-full text-sm">
-            <thead className="bg-muted/40">
-              <tr>
-                <th className="p-2 text-left">Parcela</th>
-                <th className="p-2 text-left">Crédito</th>
-                <th className="p-2 text-left">Valor Pago</th>
-                <th className="p-2 text-left">Reajuste</th>
-                <th className="p-2 text-left">Saldo Devedor</th>
-                <th className="p-2 text-left">Investimento</th>
-                <th className="p-2 text-left">Evento</th>
-              </tr>
-            </thead>
-            <tbody>
-              {extrato.map((l) => (
-                <tr key={l.parcela} className="border-t">
-                  <td className="p-2">{l.parcela}</td>
-                  <td className="p-2">{brMoney(l.creditoMes)}</td>
-                  <td className="p-2">{brMoney(l.valorPago)}</td>
-                  <td className="p-2">{l.reajuste ? brMoney(l.reajuste) : "-"}</td>
-                  <td className="p-2">{brMoney(l.saldoDevedor)}</td>
-                  <td className="p-2">{brMoney(l.investimento)}</td>
-                  <td className="p-2">{l.evento || "-"}</td>
-                </tr>
-              ))}
-              {extrato.length === 0 && (
-                <tr><td className="p-3 text-center text-muted-foreground" colSpan={7}>Preencha os campos e calcule para ver o extrato.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="flex items-center justify-end">
-          <Button onClick={gerarPDF} disabled={extrato.length === 0}>
-            Gerar Extrato / PDF
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -1633,7 +959,11 @@ function ModalBase({
       <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{title}</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-muted"
+            aria-label="Fechar"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -1643,7 +973,7 @@ function ModalBase({
   );
 }
 
-/* ============== Modal: Gerenciar Tabelas (igual ao seu, mantido) ============== */
+/* ============== Modal: Gerenciar Tabelas (com paginação) ============== */
 function TableManagerModal({
   admin,
   allTables,
@@ -1663,6 +993,7 @@ function TableManagerModal({
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
+  // reset página quando muda a lista
   useEffect(() => setPage(1), [allTables.length]);
 
   const grouped = useMemo(() => {
@@ -1674,12 +1005,16 @@ function TableManagerModal({
   }, [allTables]);
 
   const totalPages = Math.max(1, Math.ceil(grouped.length / pageSize));
-  const pageItems = useMemo(() => grouped.slice((page - 1) * pageSize, page * pageSize), [grouped, page]);
+  const pageItems = useMemo(
+    () => grouped.slice((page - 1) * pageSize, page * pageSize),
+    [grouped, page]
+  );
 
   async function deletar(id: string) {
     if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
     setBusyId(id);
 
+    // 1) Exclui simulações dependentes (evita erro de FK)
     const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
     if (delSims.error) {
       setBusyId(null);
@@ -1687,6 +1022,7 @@ function TableManagerModal({
       return;
     }
 
+    // 2) Exclui a tabela
     const { error } = await supabase.from("sim_tables").delete().eq("id", id);
     setBusyId(null);
     if (error) {
@@ -1700,8 +1036,16 @@ function TableManagerModal({
     <ModalBase onClose={onClose} title="Gerenciador de Tabelas">
       <div className="p-4">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-sm text-muted-foreground">Admin ativa: <strong>{admin.name}</strong></div>
-          <Button onClick={() => { setEditing(null); setShowForm(true); }} className="h-10 rounded-2xl px-4">
+          <div className="text-sm text-muted-foreground">
+            Admin ativa: <strong>{admin.name}</strong>
+          </div>
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setShowForm(true);
+            }}
+            className="h-10 rounded-2xl px-4"
+          >
             <Plus className="h-4 w-4 mr-1" /> Nova Tabela
           </Button>
         </div>
@@ -1736,11 +1080,29 @@ function TableManagerModal({
                   <td className="p-2">{pctHuman(t.seguro_prest_pct)}</td>
                   <td className="p-2">
                     <div className="flex justify-end gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => { setEditing(t); setShowForm(true); }} className="h-9 rounded-xl px-3">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setEditing(t);
+                          setShowForm(true);
+                        }}
+                        className="h-9 rounded-xl px-3"
+                      >
                         <Pencil className="h-4 w-4 mr-1" /> Editar
                       </Button>
-                      <Button variant="destructive" size="sm" disabled={busyId === t.id} onClick={() => deletar(t.id)} className="h-9 rounded-xl px-3">
-                        {busyId === t.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={busyId === t.id}
+                        onClick={() => deletar(t.id)}
+                        className="h-9 rounded-xl px-3"
+                      >
+                        {busyId === t.id ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4 mr-1" />
+                        )}
                         Excluir
                       </Button>
                     </div>
@@ -1749,25 +1111,51 @@ function TableManagerModal({
               ))}
               {pageItems.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="p-4 text-center text-muted-foreground">Sem tabelas para esta administradora.</td>
+                  <td
+                    colSpan={10}
+                    className="p-4 text-center text-muted-foreground"
+                  >
+                    Sem tabelas para esta administradora.
+                  </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
 
+        {/* paginação */}
         <div className="flex items-center justify-between mt-3 text-sm">
           <div>
             {grouped.length > 0 && (
               <>
-                Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}</strong> de <strong>{grouped.length}</strong>
+                Mostrando{" "}
+                <strong>
+                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}
+                </strong>{" "}
+                de <strong>{grouped.length}</strong>
               </>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" className="h-9 rounded-xl px-3" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
-            <span>Página {page} de {totalPages}</span>
-            <Button variant="secondary" className="h-9 rounded-xl px-3" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Próxima</Button>
+            <Button
+              variant="secondary"
+              className="h-9 rounded-xl px-3"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+            >
+              Anterior
+            </Button>
+            <span>
+              Página {page} de {totalPages}
+            </span>
+            <Button
+              variant="secondary"
+              className="h-9 rounded-xl px-3"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+            >
+              Próxima
+            </Button>
           </div>
         </div>
       </div>
@@ -1777,7 +1165,10 @@ function TableManagerModal({
           adminId={admin.id}
           initial={editing || undefined}
           onClose={() => setShowForm(false)}
-          onSaved={(t) => { onCreatedOrUpdated(t); setShowForm(false); }}
+          onSaved={(t) => {
+            onCreatedOrUpdated(t);
+            setShowForm(false);
+          }}
         />
       )}
     </ModalBase>
@@ -1821,6 +1212,13 @@ function TableFormOverlay({
 
   const [saving, setSaving] = useState(false);
 
+  // ESC para fechar
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   async function salvar() {
     setSaving(true);
     const payload: Omit<SimTable, "id"> = {
@@ -1839,6 +1237,7 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
+      permite_livre: perLivre as any, // compat
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1921,153 +1320,405 @@ function TableFormOverlay({
   );
 }
 
+/* ====================== Embracon UI ====================== */
+type EmbraconProps = {
+  leads: Lead[];
+  adminTables: SimTable[];
+  nomesTabelaSegmento: string[];
+  variantesDaTabela: SimTable[];
+  tabelaSelecionada: SimTable | null;
+  prazoAte: number;
+  faixa: { min: number; max: number } | null;
+  leadId: string; setLeadId: (v: string) => void;
+  leadInfo: { nome: string; telefone?: string | null } | null;
+  grupo: string; setGrupo: (v: string) => void;
 
-function ExtratoHTML() {
-  try {
-    // @ts-ignore
-    if (!tabelaSelecionada || !calc || !podeCalcular) return "<div style='padding:24px;font:14px sans-serif'>Sem dados.</div>";
-    // @ts-ignore
-    const adminNome = admins?.find?.(a => a.id === activeAdminId)?.name || "—";
-    // @ts-ignore
-    const seg = tabelaSelecionada.segmento || segmento || "—";
-    // @ts-ignore
-    const tabelaNome = tabelaSelecionada.nome_tabela || "—";
-    // @ts-ignore
-    const formaTxt = forma || "—";
-    // @ts-ignore
-    const indiceTxt = (tabelaSelecionada.indice_correcao?.[0] || tabelaSelecionada.indice_correcao || "—").toString();
-    const indiceHuman = (indexAccumPct || 0) ? `${((indexAccumPct || 0) * 100).toFixed(2)}%` : "0,00%";
-    // @ts-ignore
-    const creditoHuman = (typeof brMoney === 'function') ? brMoney(credito || 0) : String(credito || 0);
-    const headerLogo = logoUrl ? `<img src="${logoUrl}" alt="Consulmax" style="height:38px;object-fit:contain" />`
-                               : `<div style="height:38px"></div>`;
-    return `
-      <div style="font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:13px;color:#1f2937;padding:24px;line-height:1.4;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-          <div>${headerLogo}</div>
-          <div style="font-size:18px;font-weight:600;">Extrato de Simulação</div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;border:1px solid #e5e7eb;border-radius:12px;padding:14px;">
-          <div>
-            <div style="text-align:center;font-weight:700;margin-bottom:6px;">CORRETORA</div>
-            <div>Consulmax Consórcios e Investimento</div>
-            <div>CNPJ: 57.942.043/0001-03</div>
-            <div>Telefone: (69) 9 9302-9380</div>
-            <div>Administradora: ${adminNome}</div>
-          </div>
-          <div>
-            <div style="text-align:center;font-weight:700;margin-bottom:6px;">VENDEDOR</div>
-            <div>Nome: ${userName || "—"}</div>
-            <div>Telefone: ${(typeof formatPhoneBR === 'function') ? formatPhoneBR(userPhone) : (userPhone || "—")}</div>
-          </div>
-          <div>
-            <div style="text-align:center;font-weight:700;margin-bottom:6px;">CLIENTE</div>
-            <div>Nome: ${leadInfo?.nome || "—"}</div>
-            <div>Telefone: ${(typeof formatPhoneBR === 'function') ? formatPhoneBR(leadInfo?.telefone || "") : (leadInfo?.telefone || "—")}</div>
-          </div>
-        </div>
-        <div style="text-align:center;font-weight:700;margin:14px 0 8px;">DADOS DA SIMULAÇÃO</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;border:1px solid #e5e7eb;border-radius:12px;padding:14px;">
-          <div>Segmento: <strong>${seg}</strong></div>
-          <div>Tabela: <strong>${tabelaNome}</strong></div>
-          <div>Forma: <strong>${formaTxt}</strong></div>
-          <div>Crédito: <strong>${creditoHuman}</strong></div>
-          <div>Prazo: <strong>${String(prazoVenda)} meses</strong></div>
-          <div>Contemplação: <strong>${String(parcContemplacao)}º mês</strong></div>
-          <div style="grid-column:1/-1;">Índice: <strong>${indiceTxt}</strong> (<strong>${indiceHuman} 12m</strong>)</div>
-        </div>
-        ${ExtratoTabelaHTML()}
-      </div>
-    `;
-  } catch {
-    return "<div style='padding:24px;font:14px sans-serif'>Erro ao montar extrato.</div>";
-  }
-}
+  segmento: string; setSegmento: (v: string) => void;
+  nomeTabela: string; setNomeTabela: (v: string) => void;
+  tabelaId: string; setTabelaId: (v: string) => void;
 
+  credito: number; setCredito: (v: number) => void;
+  prazoVenda: number; setPrazoVenda: (v: number) => void;
+  forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
+  seguroPrest: boolean; setSeguroPrest: (v: boolean) => void;
 
-function ExtratoTabelaHTML() {
-  try {
-    // @ts-ignore
-    if (!calc || !tabelaSelecionada) return "";
-    const acc12m = indexAccumPct || 0;
-    // @ts-ignore
-    const P1 = calc.parcelaPreSemSeguro + (tabelaSelecionada.antecip_parcelas > 0 ? calc.antecada : 0) + calc.seguroMensal;
-    // @ts-ignore
-    const Pdemais = calc.parcelaPreSemSeguro + calc.seguroMensal;
-    // @ts-ignore
-    const contMes = Math.max(1, parcContemplacao);
-    // @ts-ignore
-    const MAX_ROWS = Math.min(60, prazoVenda);
-    // @ts-ignore
-    let creditoVig = credito;
-    // @ts-ignore
-    let saldoPos = calc.saldoFinal;
-    let pos = false;
-    const linhas = [];
-    for (let m = 1; m <= MAX_ROWS; m++) {
-      if (!pos) {
-        let evento = "-";
-        let reaj = 0;
-        const valorParc = (m === 1 ? P1 : Pdemais);
-        if (m > 1 && (m - 1) % 12 === 0) {
-          const antes = creditoVig;
-          creditoVig = +(creditoVig * (1 + acc12m)).toFixed(2);
-          reaj = +(antes * acc12m).toFixed(2);
-          evento = "Reajuste pré-contemplação";
-        }
-        if (m === contMes) {
-          linhas.push({ mes: m, credito: creditoVig, valorParcela: valorParc, reajuste: reaj, saldo: calc.saldoFinal, invest: valorParc, evento });
-          pos = true;
-          continue;
-        }
-        linhas.push({ mes: m, credito: creditoVig, valorParcela: valorParc, reajuste: reaj, saldo: 0, invest: valorParc, evento });
-      } else {
-        let evento = "-";
-        let reaj = 0;
-        if ((m - 1) % 12 === 0) {
-          const antes = saldoPos;
-          saldoPos = +(saldoPos * (1 + acc12m)).toFixed(2);
-          reaj = +(antes * acc12m).toFixed(2);
-          evento = "Reajuste pós-contemplação";
-        }
-        const valorParc = calc.parcelaEscolhidaSemSeguro + calc.seguroMensal;
-        const amort = calc.parcelaEscolhidaSemSeguro;
-        saldoPos = +(Math.max(0, saldoPos - amort)).toFixed(2);
-        linhas.push({ mes: m, credito: 0, valorParcela: valorParc, reajuste: reaj, saldo: saldoPos, invest: valorParc, evento });
-        if (saldoPos <= 0) break;
-      }
-    }
-    const rows = linhas.map(r => `
-      <tr>
-        <td style="padding:6px 8px">${r.mes}</td>
-        <td style="padding:6px 8px">${r.credito ? brMoney(r.credito) : "-"}</td>
-        <td style="padding:6px 8px">${brMoney(r.valorParcela)}</td>
-        <td style="padding:6px 8px">${r.reajuste ? brMoney(r.reajuste) : "-"}</td>
-        <td style="padding:6px 8px">${r.saldo ? brMoney(r.saldo) : "-"}</td>
-        <td style="padding:6px 8px">${r.invest ? brMoney(r.invest) : "-"}</td>
-        <td style="padding:6px 8px">${r.evento}</td>
-      </tr>
-    `).join("");
-    return `
-      <div style="margin-top:16px">
-        <div style="text-align:center;font-weight:700;margin-bottom:8px;">Cronograma (valores reajustados visíveis)</div>
-        <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-size:12px">
-          <thead>
-            <tr style="background:#f9fafb">
-              <th style="text-align:left;padding:6px 8px">Parcela</th>
-              <th style="text-align:left;padding:6px 8px">Crédito</th>
-              <th style="text-align:left;padding:6px 8px">Valor Pago</th>
-              <th style="text-align:left;padding:6px 8px">Reajuste</th>
-              <th style="text-align:left;padding:6px 8px">Saldo Devedor</th>
-              <th style="text-align:left;padding:6px 8px">Investimento</th>
-              <th style="text-align:left;padding:6px 8px">Evento</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    `;
-  } catch {
-    return "";
-  }
+  lanceOfertPct: number; setLanceOfertPct: (v: number) => void;
+  lanceEmbutPct: number; setLanceEmbutPct: (v: number) => void;
+  parcContemplacao: number; setParcContemplacao: (v: number) => void;
+
+  prazoAviso: string | null;
+  calc: ReturnType<typeof calcularSimulacao> | null;
+
+  salvar: () => Promise<void>;
+  salvando: boolean;
+  simCode: number | null;
+};
+
+function EmbraconSimulator(p: EmbraconProps) {
+  return (
+    <div className="space-y-6">
+      {/* Lead */}
+      <Card>
+        <CardHeader><CardTitle>Embracon</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div>
+              <Label>Selecionar Lead</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={p.leadId}
+                onChange={(e) => p.setLeadId(e.target.value)}
+              >
+                <option value="">Escolha um lead</option>
+                {p.leads.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.nome}
+                  </option>
+                ))}
+              </select>
+              {p.leadInfo && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+                </p>
+              )}
+            </div>
+            <div>
+              <Label>Nº do Grupo (opcional)</Label>
+              <Input
+                value={p.grupo}
+                onChange={(e) => p.setGrupo(e.target.value)}
+                placeholder="ex.: 9957"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Plano */}
+      {p.leadId ? (
+        <>
+          <Card>
+            <CardHeader><CardTitle>Configurações do Plano</CardTitle></CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-4">
+              <div>
+                <Label>Segmento</Label>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.segmento}
+                  onChange={(e) => p.setSegmento(e.target.value)}
+                >
+                  <option value="">Selecione o segmento</option>
+                  {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map(
+                    (s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    )
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <Label>Tabela</Label>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.nomeTabela}
+                  disabled={!p.segmento}
+                  onChange={(e) => p.setNomeTabela(e.target.value)}
+                >
+                  <option value="">
+                    {p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}
+                  </option>
+                  {p.nomesTabelaSegmento.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <Label>Prazo Até</Label>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.tabelaId}
+                  disabled={!p.nomeTabela}
+                  onChange={(e) => p.setTabelaId(e.target.value)}
+                >
+                  <option value="">
+                    {p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}
+                  </option>
+                  {p.variantesDaTabela.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR{" "}
+                      {pctHuman(t.fundo_reserva_pct)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <Label>Faixa de Crédito</Label>
+                <Input
+                  value={p.faixa ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}` : ""}
+                  readOnly
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Venda */}
+          <Card>
+            <CardHeader><CardTitle>Configurações da Venda</CardTitle></CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-4">
+              <div>
+                <Label>Valor do Crédito</Label>
+                <MoneyInput value={p.credito || 0} onChange={p.setCredito} />
+              </div>
+
+              <div>
+                <Label>Prazo da Venda (meses)</Label>
+                <Input
+                  type="number"
+                  value={p.prazoVenda || ""}
+                  onChange={(e) => p.setPrazoVenda(Number(e.target.value))}
+                />
+                {p.prazoAviso && (
+                  <p className="text-xs text-yellow-600 mt-1">{p.prazoAviso}</p>
+                )}
+              </div>
+
+              <div>
+                <Label>Forma de Contratação</Label>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.forma}
+                  disabled={!p.tabelaSelecionada}
+                  onChange={(e) => p.setForma(e.target.value as any)}
+                >
+                  <option value="">Selecione</option>
+                  {p.tabelaSelecionada?.contrata_parcela_cheia && (
+                    <option value="Parcela Cheia">Parcela Cheia</option>
+                  )}
+                  {p.tabelaSelecionada?.contrata_reduzida_25 && (
+                    <option value="Reduzida 25%">Reduzida 25%</option>
+                  )}
+                  {p.tabelaSelecionada?.contrata_reduzida_50 && (
+                    <option value="Reduzida 50%">Reduzida 50%</option>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <Label>Seguro Prestamista</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    className={
+                      p.seguroPrest
+                        ? "bg-red-600 text-white hover:bg-red-700"
+                        : "bg-muted text-foreground/60 hover:bg-muted"
+                    }
+                    onClick={() => p.setSeguroPrest(true)}
+                  >
+                    Sim
+                  </Button>
+                  <Button
+                    type="button"
+                    className={
+                      !p.seguroPrest
+                        ? "bg-red-600 text-white hover:bg-red-700"
+                        : "bg-muted text-foreground/60 hover:bg-muted"
+                    }
+                    onClick={() => p.setSeguroPrest(false)}
+                  >
+                    Não
+                  </Button>
+                </div>
+              </div>
+
+              {p.tabelaSelecionada && (
+                <div className="md:col-span-4 grid grid-cols-2 gap-3 text-sm bg-muted/30 rounded-lg p-3">
+                  <div>
+                    % Taxa de Adm:{" "}
+                    <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong>
+                  </div>
+                  <div>
+                    % Fundo Reserva:{" "}
+                    <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong>
+                  </div>
+                  <div>
+                    % Antecipação:{" "}
+                    <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> •
+                    Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong>
+                  </div>
+                  <div>
+                    Limitador de Parcela:{" "}
+                    <strong>
+                      {pctHuman(
+                        resolveLimitadorPct(
+                          p.tabelaSelecionada.limitador_parcela_pct,
+                          p.tabelaSelecionada.segmento,
+                          p.credito || 0
+                        )
+                      )}
+                    </strong>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Até a contemplação */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Plano de Pagamento até a Contemplação</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label>
+                  {p.tabelaSelecionada?.antecip_parcelas === 2
+                    ? "Parcelas 1 e 2"
+                    : p.tabelaSelecionada?.antecip_parcelas === 1
+                    ? "Parcela 1"
+                    : "Parcela Inicial"}
+                </Label>
+                <Input value={p.calc ? brMoney(p.calc.parcelaAte) : ""} readOnly />
+              </div>
+              <div>
+                <Label>Demais Parcelas</Label>
+                <Input value={p.calc ? brMoney(p.calc.parcelaDemais) : ""} readOnly />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* === Configurações do Lance (RESTAURADO) === */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Configurações do Lance</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-3">
+              <div>
+                <Label>Lance Ofertado (%)</Label>
+                <PercentInput
+                  valueDecimal={p.lanceOfertPct}
+                  onChangeDecimal={p.setLanceOfertPct}
+                />
+              </div>
+              <div>
+                <Label>Lance Embutido (%)</Label>
+                <PercentInput
+                  valueDecimal={p.lanceEmbutPct}
+                  onChangeDecimal={(d) => {
+                    if (d > 0.25) {
+                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
+                      p.setLanceEmbutPct(0.25);
+                    } else {
+                      p.setLanceEmbutPct(d);
+                    }
+                  }}
+                  maxDecimal={0.25}
+                />
+              </div>
+              <div>
+                <Label>Parcela da Contemplação</Label>
+                <Input
+                  type="number"
+                  value={p.parcContemplacao}
+                  onChange={(e) =>
+                    p.setParcContemplacao(Math.max(1, Number(e.target.value)))
+                  }
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Deve ser menor que o Prazo da Venda.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Pós */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Plano de Pagamento após a Contemplação</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-3">
+              <div>
+                <Label>Lance Ofertado</Label>
+                <Input
+                  value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""}
+                  readOnly
+                />
+              </div>
+              <div>
+                <Label>Lance Embutido</Label>
+                <Input
+                  value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""}
+                  readOnly
+                />
+              </div>
+              <div>
+                <Label>Lance Próprio</Label>
+                <Input
+                  value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""}
+                  readOnly
+                />
+              </div>
+
+              <div>
+                <Label>Lance Percebido (%)</Label>
+                <Input
+                  value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""}
+                  readOnly
+                />
+              </div>
+              <div>
+                <Label>Novo Crédito</Label>
+                <Input
+                  value={p.calc ? brMoney(p.calc.novoCredito) : ""}
+                  readOnly
+                />
+              </div>
+              <div>
+                <Label>Nova Parcela (sem limite)</Label>
+                <Input
+                  value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""}
+                  readOnly
+                />
+              </div>
+
+              <div>
+                <Label>Parcela Limitante</Label>
+                <Input
+                  value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""}
+                  readOnly
+                />
+              </div>
+              <div>
+                <Label>Parcela Escolhida</Label>
+                <Input
+                  value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""}
+                  readOnly
+                />
+              </div>
+              <div>
+                <Label>Novo Prazo (meses)</Label>
+                <Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly />
+              </div>
+
+              {p.calc?.has2aAntecipDepois && p.calc?.segundaParcelaComAntecipacao != null && (
+                <div className="md:col-span-3">
+                  <Label>2ª parcela (com antecipação)</Label>
+                  <Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      ) : (
+        <div className="text-sm text-muted-foreground">
+          Selecione um lead para abrir o simulador.
+        </div>
+      )}
+    </div>
+  );
 }

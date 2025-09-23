@@ -7,7 +7,8 @@ const items = [
   { to: '/oportunidades', label: 'Oportunidades' },
   { to: '/agenda', label: 'Agenda' },
   { to: '/simuladores', label: 'Simuladores' },
-  { to: '/propostas', label: 'Propostas' }, // 👈 nova guia
+  { to: '/propostas', label: 'Propostas' },
+  { to: '/comissoes', label: 'Comissões' }, // 👈 NOVO
   { to: '/carteira', label: 'Carteira' },
   { to: '/usuarios', label: 'Usuários' },
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos' },

@@ -27,12 +27,11 @@ import autoTable from "jspdf-autotable";
 type UUID = string;
 
 type User = { id: UUID; nome: string | null; email: string | null };
-type Client = { id: UUID; nome: string | null };
 type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 
 type Venda = {
   id: UUID;
-  data_venda: string;          // date
+  data_venda: string;          // 'YYYY-MM-DD' (date)
   vendedor_id: UUID;
   segmento: string | null;
   tabela: string | null;
@@ -40,6 +39,11 @@ type Venda = {
   valor_venda: number | null;
   numero_proposta?: string | null;
   cliente_lead_id?: string | null;
+};
+
+type VendaRow = Venda & {
+  vendedor_nome: string;
+  cliente_nome: string;
 };
 
 type Commission = {
@@ -76,20 +80,23 @@ type CommissionFlow = {
 };
 
 /* ========================= Helpers ========================= */
-const num = (v: any) => (typeof v === "number" && isFinite(v) ? v : 0);
-
 const BRL = (v?: number | null) =>
-  num(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  (typeof v === "number" ? v : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 const pct100 = (v?: number | null) =>
-  `${(num(v) * 100).toFixed(2).replace(".", ",")}%`;
+  `${(((typeof v === "number" ? v : 0) * 100)).toFixed(2).replace(".", ",")}%`;
 
 const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
 const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
 
-// evita deslocamento de fuso ao exibir DATE
-const fmtDate = (yyyy_mm_dd?: string | null) =>
-  yyyy_mm_dd ? new Date(`${yyyy_mm_dd}T00:00:00`).toLocaleDateString("pt-BR") : "—";
+// Formata 'YYYY-MM-DD' com segurança (sem timezone shift)
+function fmtDate(s?: string | null) {
+  if (!s) return "—";
+  const only = s.split("T")[0] || s;
+  const [y, m, d] = only.split("-");
+  if (!y || !m || !d) return "—";
+  return `${d}/${m}/${y}`;
+}
 
 /* ========================= Relógio radial ========================= */
 function RadialClock({ value, label }: { value: number; label: string }) {
@@ -145,15 +152,12 @@ export default function ComissoesPage() {
     return (u?.nome?.trim() || u?.email?.trim() || id);
   };
 
-  const [clientsMap, setClientsMap] = useState<Record<string, string>>({});
-  const clientLabel = (id?: string | null) => (id ? (clientsMap[id] || "—") : "—");
-
   const [simTables, setSimTables] = useState<SimTable[]>([]);
 
   /* ---------- Comissões / Vendas ---------- */
   const [loading, setLoading] = useState<boolean>(false);
   const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
-  const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
+  const [vendasSemCom, setVendasSemCom] = useState<VendaRow[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
 
   /* ---------- Modais ---------- */
@@ -241,24 +245,27 @@ export default function ComissoesPage() {
         (segmento === "all" || v.segmento === segmento) &&
         (tabela === "all" || (v.tabela || "") === tabela)
       );
-      setVendasSemCom(vendasFiltered2 as Venda[]);
 
-      // mapear nomes de clientes para as vendas listadas
-      const clientIds = Array.from(new Set((vendasFiltered2 || [])
-        .map(v => v.cliente_lead_id)
-        .filter(Boolean))) as string[];
-
-      if (clientIds.length) {
-        const { data: cli } = await supabase
+      // === NOVO: puxar nomes dos clientes das vendas ===
+      const clienteIds = Array.from(
+        new Set(vendasFiltered2.map(v => v.cliente_lead_id).filter(Boolean) as string[])
+      );
+      let clientesById: Record<string, { id: string; nome: string }> = {};
+      if (clienteIds.length) {
+        const { data: clientes } = await supabase
           .from("clientes")
           .select("id, nome")
-          .in("id", clientIds);
-        const cmap: Record<string, string> = {};
-        (cli || []).forEach((c: any) => { cmap[c.id] = c.nome || c.id; });
-        setClientsMap(cmap);
-      } else {
-        setClientsMap({});
+          .in("id", clienteIds);
+        (clientes || []).forEach(c => { clientesById[c.id] = { id: c.id, nome: c.nome as string }; });
       }
+
+      const vendasDecoradas: VendaRow[] = (vendasFiltered2 as Venda[]).map(v => ({
+        ...v,
+        vendedor_nome: userLabel(v.vendedor_id),
+        cliente_nome: v.cliente_lead_id ? (clientesById[v.cliente_lead_id]?.nome || "—") : "—",
+      }));
+
+      setVendasSemCom(vendasDecoradas);
     } finally {
       setLoading(false);
     }
@@ -289,7 +296,7 @@ export default function ComissoesPage() {
 
   function isBetween(d?: string | null, start?: Date, end?: Date) {
     if (!d) return false;
-    const x = new Date(`${d}T00:00:00`).getTime();
+    const x = new Date(d).getTime();
     return x >= (start?.getTime() || 0) && x <= (end?.getTime() || now.getTime());
   }
 
@@ -322,6 +329,7 @@ export default function ComissoesPage() {
   async function saveRule() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
 
+    // valida soma do fluxo (em %)
     const padraoPct = parseFloat((rulePercent || "0").replace(",", "."));
     const somaFluxoPct = fluxoSomaPct;
     const eps = 1e-6;
@@ -393,6 +401,7 @@ export default function ComissoesPage() {
     const { error } = await supabase.from("commission_flow").upsert(updates);
     if (error) return alert(error.message);
 
+    // Atualiza status da comissão se todas pagas
     const { data: updated } = await supabase
       .from("commission_flow")
       .select("*")
@@ -425,16 +434,40 @@ export default function ComissoesPage() {
         simTableId = st?.[0]?.id ?? null;
       }
 
-      // INSERT mínimo — triggers preenchem o resto (evita “record v is not assigned yet”)
-      const { error } = await supabase.from("commissions").insert({
+      // pega percent padrão da regra (se existir)
+      let percent_aplicado: number | null = null;
+      if (simTableId) {
+        const { data: rule } = await supabase
+          .from("commission_rules")
+          .select("percent_padrao")
+          .eq("vendedor_id", venda.vendedor_id)
+          .eq("sim_table_id", simTableId)
+          .limit(1);
+        percent_aplicado = rule?.[0]?.percent_padrao ?? null;
+      }
+
+      const insert = {
         venda_id: venda.id,
         vendedor_id: venda.vendedor_id,
         sim_table_id: simTableId,
-      } as any);
+        data_venda: venda.data_venda,
+        segmento: venda.segmento,
+        tabela: venda.tabela,
+        administradora: venda.administradora,
+        valor_venda: venda.valor_venda,
+        base_calculo: venda.valor_venda,
+        percent_aplicado,
+        valor_total:
+          percent_aplicado && venda.valor_venda
+            ? Math.round(venda.valor_venda * percent_aplicado * 100) / 100
+            : null,
+        status: "a_pagar" as const,
+      };
 
+      const { error } = await supabase.from("commissions").insert(insert as any);
       if (error) {
         if (String(error.code) === "23503") {
-          alert("Não foi possível criar: verifique se o vendedor existe na tabela 'users' e/ou se a tabela (SimTable) está correta.");
+          alert("Não foi possível criar: verifique se o vendedor existe na tabela 'users' e/ou se a SimTable está correta.");
         } else {
           alert("Erro ao criar a comissão: " + error.message);
         }
@@ -448,22 +481,22 @@ export default function ComissoesPage() {
   }
 
   /* ========================= CSV Export ========================= */
-  function exportCSVCommis() {
+  function exportCSV() {
     const header = [
       "data_venda","vendedor","segmento","tabela","administradora",
       "valor_venda","percent_aplicado","valor_total","status","data_pagamento"
     ];
     const lines = rows.map(r => ([
-      r.data_venda || "",
+      r.data_venda,
       userLabel(r.vendedor_id),
-      (r.segmento||"").replace(/,/g," "),
-      (r.tabela||"").replace(/,/g," "),
-      (r.administradora||"").replace(/,/g," "),
-      String(r.valor_venda ?? r.base_calculo ?? 0).replace(".", ","),
-      String(r.percent_aplicado ?? 0).replace(".", ","),
-      String(r.valor_total ?? 0).replace(".", ","),
+      JSON.stringify(r.segmento||""),
+      JSON.stringify(r.tabela||""),
+      JSON.stringify(r.administradora||""),
+      (r.valor_venda ?? r.base_calculo ?? 0),
+      (r.percent_aplicado ?? 0),
+      (r.valor_total ?? 0),
       r.status,
-      r.data_pagamento || ""
+      r.data_pagamento ?? ""
     ].join(",")));
     const csv = [header.join(","), ...lines].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -471,31 +504,6 @@ export default function ComissoesPage() {
     const a = document.createElement("a");
     a.href = url;
     a.download = `comissoes_${dtIni}_${dtFim}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function exportCSVVendasSemCom() {
-    const header = [
-      "data_venda","vendedor","cliente","numero_proposta","administradora",
-      "segmento","tabela","valor_venda"
-    ];
-    const lines = vendasSemCom.map(v => ([
-      v.data_venda,
-      userLabel(v.vendedor_id),
-      clientLabel(v.cliente_lead_id),
-      v.numero_proposta || "",
-      (v.administradora || "").replace(/,/g," "),
-      (v.segmento || "").replace(/,/g," "),
-      (v.tabela || "").replace(/,/g," "),
-      String(v.valor_venda ?? 0).replace(".", ","),
-    ].join(",")));
-    const csv = [header.join(","), ...lines].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `vendas_sem_comissao_${dtIni}_${dtFim}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -549,7 +557,7 @@ export default function ComissoesPage() {
 
     doc.setFont("helvetica", "normal");
     doc.text(`Forma de pagamento: PIX`, 40, endY + 28);
-    doc.text(`Data do pagamento: ${today.toLocaleDateString("pt-BR")}`, 40, endY + 44);
+    doc.text(`Data do pagamento: ${fmtDate(toDateInput(today))}`, 40, endY + 44);
 
     const signY = endY + 110;
     doc.line(40, signY, 260, signY);
@@ -682,7 +690,7 @@ export default function ComissoesPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
             <span>Vendas sem comissão (período & filtros)</span>
-            <Button variant="outline" onClick={exportCSVVendasSemCom}>
+            <Button variant="outline" onClick={exportCSV}>
               <Download className="w-4 h-4 mr-1" /> Exportar CSV
             </Button>
           </CardTitle>
@@ -709,8 +717,8 @@ export default function ComissoesPage() {
               {vendasSemCom.map(v => (
                 <tr key={v.id} className="border-b">
                   <td className="p-2">{fmtDate(v.data_venda)}</td>
-                  <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                  <td className="p-2">{clientLabel(v.cliente_lead_id)}</td>
+                  <td className="p-2">{v.vendedor_nome}</td>
+                  <td className="p-2">{v.cliente_nome}</td>
                   <td className="p-2">{v.numero_proposta || "—"}</td>
                   <td className="p-2">{v.administradora || "—"}</td>
                   <td className="p-2">{v.segmento || "—"}</td>
@@ -743,7 +751,7 @@ export default function ComissoesPage() {
           <CardTitle className="flex items-center justify-between">
             <span>Detalhamento de Comissões</span>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={exportCSVCommis}>
+              <Button variant="outline" onClick={exportCSV}>
                 <Download className="w-4 h-4 mr-1" /> Exportar CSV
               </Button>
             </div>
@@ -930,9 +938,7 @@ export default function ComissoesPage() {
                         <td className="p-2 text-right">{BRL(f.valor_previsto)}</td>
                         <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
                         <td className="p-2">
-                          {f.data_pagamento_vendedor
-                            ? fmtDate(f.data_pagamento_vendedor)
-                            : "—"}
+                          {f.data_pagamento_vendedor ? fmtDate(f.data_pagamento_vendedor) : "—"}
                         </td>
                       </tr>
                     ))}

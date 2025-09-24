@@ -6,11 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle, Pencil } from "lucide-react";
+import { Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle } from "lucide-react";
 
+// PDF
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -21,24 +23,29 @@ type User = { id: UUID; nome: string | null };
 type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 type Venda = {
   id: UUID;
-  data_venda: string;
+  data_venda: string; // date
   vendedor_id: UUID;
   segmento: string | null;
   tabela: string | null;
   administradora: string | null;
+  numero_proposta?: string | null;   // novo
   valor_venda: number | null;
   grupo?: string | null;
   cota?: string | null;
-  cliente_nome?: string | null;
+  cliente_nome?: string | null;      // novo (se existir na tabela)
 };
 
 type CommissionRule = {
   id: UUID;
   vendedor_id: UUID;
   sim_table_id: UUID;
-  percent_padrao: number | null;      // fração no banco (0.02 = 2%)
+  percent_padrao: number | null;
+  faixa_min: number | null;
+  faixa_max: number | null;
+  etapa_entrada_pct: number | null;
+  etapa_final_pct: number | null;
   fluxo_meses: number;
-  fluxo_percentuais: number[];        // frações que somam 1.0
+  fluxo_percentuais: number[];
   obs: string | null;
 };
 
@@ -85,18 +92,7 @@ const pct100 = (v?: number | null) =>
 const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
 const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
 
-// percentuais humanizados
-function parseHumanPct(input?: string): number {
-  if (!input) return 0;
-  const cleaned = String(input).replace('%','').replace(/\s+/g,'').replace(/\./g,'').replace(',', '.');
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
-}
-function fmtHumanPct(n: number): string {
-  return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-/* ========================= Relógio radial ========================= */
+/* ========================= Relógio radial (SVG) ========================= */
 function RadialClock({ value, label }: { value: number; label: string }) {
   const pct = Math.max(0, Math.min(100, value));
   const radius = 44;
@@ -107,8 +103,13 @@ function RadialClock({ value, label }: { value: number; label: string }) {
     <div className="flex items-center gap-3 p-3 border rounded-xl">
       <svg width="120" height="120" className="-rotate-90">
         <circle cx="60" cy="60" r={radius} stroke="#e5e7eb" strokeWidth="10" fill="none" />
-        <circle cx="60" cy="60" r={radius} stroke="#111827" strokeWidth="10" fill="none"
-          strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" />
+        <circle
+          cx="60" cy="60" r={radius}
+          stroke="#111827" strokeWidth="10" fill="none"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+        />
         <text x="60" y="65" textAnchor="middle" fontSize="18" fill="#111827" className="rotate-90">
           {pct.toFixed(0)}%
         </text>
@@ -123,7 +124,7 @@ function RadialClock({ value, label }: { value: number; label: string }) {
 
 /* ========================= Página ========================= */
 export default function ComissoesPage() {
-  // filtros
+  /* ---------- Filtros ---------- */
   const [dtIni, setDtIni] = useState<string>(() => { const d = new Date(); d.setDate(1); return toDateInput(d); });
   const [dtFim, setDtFim] = useState<string>(() => toDateInput(new Date()));
   const [vendedorId, setVendedorId] = useState<string>("all");
@@ -131,35 +132,32 @@ export default function ComissoesPage() {
   const [segmento, setSegmento] = useState<string>("all");
   const [tabela, setTabela] = useState<string>("all");
 
-  // bases
+  /* ---------- Bases ---------- */
   const [users, setUsers] = useState<User[]>([]);
   const [simTables, setSimTables] = useState<SimTable[]>([]);
-  const [rules, setRules] = useState<CommissionRule[]>([]);
 
-  // dados
+  /* ---------- Comissões / Vendas ---------- */
   const [loading, setLoading] = useState<boolean>(false);
   const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
   const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
 
-  // modais
+  /* ---------- Modais ---------- */
   const [openRules, setOpenRules] = useState<boolean>(false);
   const [openPay, setOpenPay] = useState<boolean>(false);
 
-  // estado Regras (humanizado)
-  const [ruleId, setRuleId] = useState<UUID | null>(null);
+  /* ---------- Estado Regras ---------- */
   const [ruleVendorId, setRuleVendorId] = useState<string>("");
   const [ruleSimTableId, setRuleSimTableId] = useState<string>("");
-  const [rulePercent, setRulePercent] = useState<string>("2,00"); // p.p.
-  const [ruleMeses, setRuleMeses] = useState<number>(4);
-  const [ruleFluxo, setRuleFluxo] = useState<string[]>(["0,75", "0,50", "0,50", "0,25"]); // p.p.
+  const [rulePercent, setRulePercent] = useState<string>("0.0120");
+  const [ruleMeses, setRuleMeses] = useState<number>(1);
+  const [ruleFluxo, setRuleFluxo] = useState<string[]>(["1.0000"]);
   const [ruleObs, setRuleObs] = useState<string>("");
 
-  // estado Pagamento
+  /* ---------- Estado Pagamento ---------- */
   const [payCommissionId, setPayCommissionId] = useState<string>("");
   const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
 
-  // carregar bases
   useEffect(() => {
     (async () => {
       const [{ data: u }, { data: st }] = await Promise.all([
@@ -171,21 +169,16 @@ export default function ComissoesPage() {
     })();
   }, []);
 
-  async function fetchRulesForVendor(vendorId: string) {
-    if (!vendorId) { setRules([]); return; }
-    const { data } = await supabase
-      .from("commission_rules")
-      .select("id, vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
-      .eq("vendedor_id", vendorId);
-    setRules((data || []) as CommissionRule[]);
-  }
-  useEffect(() => { if (openRules && ruleVendorId) fetchRulesForVendor(ruleVendorId); }, [openRules, ruleVendorId]);
-
   /* ========================= Fetch principal ========================= */
   async function fetchData() {
     setLoading(true);
     try {
-      let qb = supabase.from("commissions").select("*").gte("data_venda", dtIni).lte("data_venda", dtFim);
+      // commissions
+      let qb = supabase
+        .from("commissions")
+        .select("*")
+        .gte("data_venda", dtIni)
+        .lte("data_venda", dtFim);
       if (status !== "all") qb = qb.eq("status", status);
       if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
       if (segmento !== "all") qb = qb.eq("segmento", segmento);
@@ -194,6 +187,7 @@ export default function ComissoesPage() {
       const { data: comms, error } = await qb.order("data_venda", { ascending: false });
       if (error) throw error;
 
+      // flows
       const commissionIds = (comms || []).map((c) => c.id);
       const { data: flows } = await supabase
         .from("commission_flow")
@@ -201,17 +195,38 @@ export default function ComissoesPage() {
         .in("commission_id", commissionIds.length ? commissionIds : ["00000000-0000-0000-0000-000000000000"])
         .order("mes", { ascending: true });
 
-      const byId: Record<string, CommissionFlow[]> = {};
-      (flows || []).forEach((f) => { (byId[f.commission_id] ||= []).push(f as CommissionFlow); });
-      setRows((comms || []).map((c) => ({ ...(c as Commission), flow: byId[c.id] || [] })));
+      const flowByCommission: Record<string, CommissionFlow[]> = {};
+      (flows || []).forEach((f) => {
+        if (!flowByCommission[f.commission_id]) flowByCommission[f.commission_id] = [];
+        flowByCommission[f.commission_id].push(f as CommissionFlow);
+      });
 
-      const { data: vendasPeriodo } = await supabase
-        .from("vendas")
-        .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, grupo, cota")
-        .gte("data_venda", dtIni)
-        .lte("data_venda", dtFim)
-        .order("data_venda", { ascending: false });
+      setRows((comms || []).map((c) => ({ ...(c as Commission), flow: flowByCommission[c.id] || [] })));
 
+      // --- vendas sem comissão (com fallback p/ cliente_nome) ---
+      let vendasPeriodo: any[] | null = null;
+      {
+        const { data, error: err1 } = await supabase
+          .from("vendas")
+          .select("id, data_venda, vendedor_id, segmento, tabela, administradora, numero_proposta, cliente_nome, valor_venda, grupo, cota")
+          .gte("data_venda", dtIni)
+          .lte("data_venda", dtFim)
+          .order("data_venda", { ascending: false });
+
+        if (err1) {
+          const r2 = await supabase
+            .from("vendas")
+            .select("id, data_venda, vendedor_id, segmento, tabela, administradora, numero_proposta, valor_venda, grupo, cota")
+            .gte("data_venda", dtIni)
+            .lte("data_venda", dtFim)
+            .order("data_venda", { ascending: false });
+          vendasPeriodo = r2.data || [];
+        } else {
+          vendasPeriodo = data || [];
+        }
+      }
+
+      // ids de vendas já com comissão
       const { data: commVendaIds } = await supabase
         .from("commissions")
         .select("venda_id")
@@ -226,30 +241,37 @@ export default function ComissoesPage() {
         (tabela === "all" || (v.tabela || "") === tabela)
       );
       setVendasSemCom(vendasFiltered2 as Venda[]);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }
+
   useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [dtIni, dtFim, vendedorId, status, segmento, tabela]);
 
-  /* ========================= KPIs & Dashboards ========================= */
+  /* ========================= KPIs ========================= */
   const kpi = useMemo(() => {
     const vendasTotal = sum(rows.map((r) => r.valor_venda ?? r.base_calculo));
     const comBruta = sum(rows.map((r) => r.valor_total));
     const comPaga = sum(rows.filter((r) => r.status === "pago").map((r) => r.valor_total));
     const comPendente = comBruta - comPaga;
-    const comLiquida = comBruta;
+    const comLiquida = comBruta; // ajuste se houver impostos/taxas
     return { vendasTotal, comBruta, comLiquida, comPaga, comPendente };
   }, [rows]);
 
+  /* ========================= Dashboards (relógio/barras) ========================= */
   const vendedorAtual = useMemo(() => users.find((u) => u.id === vendedorId)?.nome || "Todos", [users, vendedorId]);
+
   const now = new Date();
   const yStart = new Date(now.getFullYear(), 0, 1);
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), 1);
+
   function isBetween(d?: string | null, start?: Date, end?: Date) {
     if (!d) return false;
     const x = new Date(d).getTime();
     return x >= (start?.getTime() || 0) && x <= (end?.getTime() || now.getTime());
   }
+
   function totalsInRange(start: Date, end: Date) {
     const sel = rows.filter((r) => isBetween(r.data_venda, start, end));
     const tot = sum(sel.map((r) => r.valor_total));
@@ -258,6 +280,7 @@ export default function ComissoesPage() {
     const pct = tot > 0 ? (pago / tot) * 100 : 0;
     return { tot, pago, pend, pct };
   }
+
   const range5y = totalsInRange(fiveYearsAgo, now);
   const rangeY  = totalsInRange(yStart, now);
   const rangeM  = totalsInRange(mStart, now);
@@ -266,70 +289,32 @@ export default function ComissoesPage() {
   function onChangeMeses(n: number) {
     setRuleMeses(n);
     const arr = [...ruleFluxo];
-    if (n > arr.length) while (arr.length < n) arr.push("");
+    if (n > arr.length) while (arr.length < n) arr.push("0.0000");
     else arr.length = n;
     setRuleFluxo(arr);
   }
-
-  // soma digitada (pontos percentuais)
-  const fluxoSomaPct = useMemo(() => ruleFluxo.reduce((acc, cur) => acc + parseHumanPct(cur), 0), [ruleFluxo]);
-  const percentPadraoPct = useMemo(() => parseHumanPct(rulePercent), [rulePercent]);
+  const fluxoSoma = useMemo(() => ruleFluxo.reduce((a, b) => a + parseFloat(b || "0"), 0), [ruleFluxo]);
 
   async function saveRule() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
-    if (percentPadraoPct <= 0) return alert("Informe um % padrão maior que zero.");
-    // valida: soma digitada (p.p.) deve bater com % padrão (p.p.)
-    if (Math.abs(fluxoSomaPct - percentPadraoPct) > 0.0001) {
-      return alert(`A soma do fluxo (${fmtHumanPct(fluxoSomaPct)}%) deve ser igual ao % padrão (${fmtHumanPct(percentPadraoPct)}%).`);
+
+    // regra: soma do fluxo (em fração) precisa ser 1.0 (100%)
+    if (Math.abs(fluxoSoma - 1.0) > 0.00001) {
+      return alert(`Soma de fluxo_percentuais (%) deve ser 1.0; soma atual = ${fluxoSoma.toFixed(4)}`);
     }
 
-    // envia para o DB NORMALIZADO (frações que somam 1.0)
-    const fluxoFractions = ruleFluxo.map(v => (parseHumanPct(v) / percentPadraoPct)); // sum === 1.0
-    const payload = {
-      id: ruleId || undefined,
+    const { error } = await supabase.from("commission_rules").upsert({
       vendedor_id: ruleVendorId,
       sim_table_id: ruleSimTableId,
-      percent_padrao: percentPadraoPct / 100,      // fração
+      percent_padrao: parseFloat(rulePercent || "0") || null,
       fluxo_meses: ruleMeses,
-      fluxo_percentuais: fluxoFractions,           // frações somando 1.0
+      fluxo_percentuais: ruleFluxo.map((x) => parseFloat(x || "0")),
       obs: ruleObs || null,
-    };
+    }, { onConflict: "vendedor_id,sim_table_id" });
 
-    const { error } = await supabase.from("commission_rules").upsert(payload as any, { onConflict: "id" });
     if (error) return alert(error.message);
-    await fetchRulesForVendor(ruleVendorId);
-    setRuleId(null);
+    setOpenRules(false);
   }
-
-  function startCreateRule() {
-    setRuleId(null);
-    setRuleSimTableId("");
-    setRulePercent("2,00");
-    setRuleMeses(4);
-    setRuleFluxo(["0,75", "0,50", "0,50", "0,25"]);
-    setRuleObs("");
-    setOpenRules(true);
-  }
-
-  // carrega para edição convertendo as frações salvas -> p.p. com base no % padrão
-  function loadRuleToEdit(r: CommissionRule) {
-    const ppct = ((r.percent_padrao || 0) * 100); // p.p.
-    setRuleId(r.id);
-    setRuleVendorId(r.vendedor_id);
-    setRuleSimTableId(r.sim_table_id);
-    setRulePercent(fmtHumanPct(ppct));
-    setRuleMeses(r.fluxo_meses);
-    setRuleFluxo((r.fluxo_percentuais || []).map(frac => fmtHumanPct(frac * ppct)));
-    setRuleObs(r.obs || "");
-    setOpenRules(true);
-  }
-
-  // SimTables disponíveis (oculta as já configuradas p/ vendedor)
-  const configuredSimTableIds = useMemo(() => new Set(rules.map((r) => r.sim_table_id)), [rules]);
-  const availableSimTables = useMemo(
-    () => simTables.filter((t) => !configuredSimTableIds.has(t.id) || t.id === ruleSimTableId),
-    [simTables, configuredSimTableIds, ruleSimTableId]
-  );
 
   /* ========================= Pagamento ========================= */
   async function openPaymentFor(commission: Commission) {
@@ -375,6 +360,7 @@ export default function ComissoesPage() {
     const { error } = await supabase.from("commission_flow").upsert(updates);
     if (error) return alert(error.message);
 
+    // Atualiza status da comissão se todas pagas
     const { data: updated } = await supabase.from("commission_flow").select("*").eq("commission_id", payCommissionId);
     const allPaid = (updated || []).every((f: any) => (f.valor_pago_vendedor ?? 0) > 0);
     if (allPaid) {
@@ -387,11 +373,21 @@ export default function ComissoesPage() {
 
   /* ========================= Gerar Comissão a partir da Venda ========================= */
   async function gerarComissaoDeVenda(venda: Venda) {
+    // 0) garante que a venda existe (evita "record 'v' is not assigned yet" no trigger)
+    const check = await supabase.from("vendas").select("id").eq("id", venda.id).maybeSingle();
+    if (check.error || !check.data?.id) {
+      alert("Não foi possível localizar a venda no banco (ID inválido). Atualize a página e tente novamente.");
+      return;
+    }
+
+    // 1) tenta resolver sim_table_id pela tabela
     let simTableId: string | null = null;
     if (venda.tabela) {
       const { data: st } = await supabase.from("sim_tables").select("id").eq("nome_tabela", venda.tabela).limit(1);
       simTableId = st?.[0]?.id ?? null;
     }
+
+    // 2) tenta pegar percent da regra (se existir)
     let percent_aplicado: number | null = null;
     if (simTableId) {
       const { data: rule } = await supabase
@@ -403,6 +399,7 @@ export default function ComissoesPage() {
       percent_aplicado = rule?.[0]?.percent_padrao ?? null;
     }
 
+    // 3) monta o insert
     const insert = {
       venda_id: venda.id,
       vendedor_id: venda.vendedor_id,
@@ -414,21 +411,34 @@ export default function ComissoesPage() {
       valor_venda: venda.valor_venda,
       base_calculo: venda.valor_venda,
       percent_aplicado,
-      valor_total: percent_aplicado && venda.valor_venda ? Math.round(venda.valor_venda * percent_aplicado * 100) / 100 : null,
+      valor_total:
+        percent_aplicado && venda.valor_venda
+          ? Math.round(venda.valor_venda * percent_aplicado * 100) / 100
+          : null,
       status: "a_pagar" as const,
     };
 
     const { error } = await supabase.from("commissions").insert(insert as any);
-    if (error) return alert(error.message);
+    if (error) {
+      if (String(error.message).toLowerCase().includes(`record "v" is not assigned yet`)) {
+        alert("O banco não conseguiu ler a venda ao criar a comissão. Verifique se a venda existe e se o ID está correto.");
+      } else {
+        alert(error.message);
+      }
+      return;
+    }
     fetchData();
   }
 
-  /* ========================= CSV & PDF ========================= */
+  /* ========================= CSV Export ========================= */
   function exportCSV() {
-    const header = ["data_venda","vendedor","segmento","tabela","administradora","valor_venda","percent_aplicado","valor_total","status","data_pagamento"];
+    const header = [
+      "data_venda","vendedor_id","segmento","tabela","administradora",
+      "valor_venda","percent_aplicado","valor_total","status","data_pagamento"
+    ];
     const lines = rows.map(r => ([
       r.data_venda,
-      (users.find(u => u.id === r.vendedor_id)?.nome || r.vendedor_id).replace(/,/g, " "),
+      r.vendedor_id,
       JSON.stringify(r.segmento||""),
       JSON.stringify(r.tabela||""),
       JSON.stringify(r.administradora||""),
@@ -448,6 +458,7 @@ export default function ComissoesPage() {
     URL.revokeObjectURL(url);
   }
 
+  /* ========================= PDF Recibo ========================= */
   async function downloadReceiptPDF(comm: Commission, itens: CommissionFlow[]) {
     const vendedor = users.find((u) => u.id === comm.vendedor_id)?.nome || "Vendedor";
     const today = new Date();
@@ -566,7 +577,7 @@ export default function ComissoesPage() {
             </Select>
           </div>
           <div className="md:col-span-6 flex gap-2 justify-end">
-            <Button variant="secondary" onClick={startCreateRule}>
+            <Button variant="secondary" onClick={() => setOpenRules(true)}>
               <Settings className="w-4 h-4 mr-1" /> Regras de Comissão
             </Button>
             <Button onClick={fetchData}><Loader2 className="w-4 h-4 mr-1" /> Atualizar</Button>
@@ -611,7 +622,7 @@ export default function ComissoesPage() {
         </Card>
       </div>
 
-      {/* Resumo período */}
+      {/* Cards de Resumo gerais (período filtrado) */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
         <Card><CardHeader className="pb-1"><CardTitle>💰 Vendas no Período</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent></Card>
         <Card><CardHeader className="pb-1"><CardTitle>🧾 Comissão Bruta</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent></Card>
@@ -620,7 +631,7 @@ export default function ComissoesPage() {
         <Card><CardHeader className="pb-1"><CardTitle>⏳ Comissão Pendente</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
       </div>
 
-      {/* Vendas sem comissão */}
+      {/* Tabela: Vendas sem comissão (Gerar Comissão) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
@@ -631,11 +642,14 @@ export default function ComissoesPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          <table className="min-w-[1000px] w-full text-sm">
+          <table className="min-w-[1200px] w-full text-sm">
             <thead>
               <tr className="bg-gray-50">
                 <th className="p-2 text-left">Data</th>
                 <th className="p-2 text-left">Vendedor</th>
+                <th className="p-2 text-left">Cliente</th>
+                <th className="p-2 text-left">Nº Proposta</th>
+                <th className="p-2 text-left">Administradora</th>
                 <th className="p-2 text-left">Segmento</th>
                 <th className="p-2 text-left">Tabela</th>
                 <th className="p-2 text-right">Crédito</th>
@@ -643,11 +657,16 @@ export default function ComissoesPage() {
               </tr>
             </thead>
             <tbody>
-              {vendasSemCom.length === 0 && <tr><td colSpan={6} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>}
+              {vendasSemCom.length === 0 && (
+                <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>
+              )}
               {vendasSemCom.map(v => (
                 <tr key={v.id} className="border-b">
                   <td className="p-2">{new Date(v.data_venda).toLocaleDateString("pt-BR")}</td>
                   <td className="p-2">{users.find(u => u.id === v.vendedor_id)?.nome || v.vendedor_id}</td>
+                  <td className="p-2">{v.cliente_nome || "—"}</td>
+                  <td className="p-2">{v.numero_proposta || "—"}</td>
+                  <td className="p-2">{v.administradora || "—"}</td>
                   <td className="p-2">{v.segmento || "—"}</td>
                   <td className="p-2">{v.tabela || "—"}</td>
                   <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
@@ -663,7 +682,7 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Detalhamento de comissões */}
+      {/* Tabela Detalhada de Comissões */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
@@ -725,109 +744,47 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Dialog: Regras de Comissão */}
-      <Dialog open={openRules} onOpenChange={setOpenRules}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{ruleId ? "Editar Regra de Comissão" : "Nova Regra de Comissão"}</DialogTitle>
-          </DialogHeader>
-
-          <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Formulário */}
-            <div className="space-y-3">
-              <div>
-                <Label>Vendedor</Label>
-                <Select value={ruleVendorId} onValueChange={(v) => { setRuleVendorId(v); fetchRulesForVendor(v); }}>
-                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.nome || u.id}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>Tabela (SimTables)</Label>
-                <Select value={ruleSimTableId} onValueChange={setRuleSimTableId} disabled={!ruleVendorId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {availableSimTables.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>{t.segmento} — {t.nome_tabela}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {ruleVendorId && rules.length > 0 && (
-                  <div className="mt-2 text-xs text-gray-600">
-                    Tabelas já configuradas para o vendedor não aparecem aqui. Use a lista ao lado para editar.
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <Label>% Padrão (ex.: 2,00 = 2%)</Label>
-                <Input value={rulePercent} onChange={(e) => setRulePercent(e.target.value)} />
-              </div>
-
-              <div>
-                <Label>Nº de meses do fluxo</Label>
-                <Input type="number" min={1} max={36} value={ruleMeses} onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))} />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Fluxo do pagamento — percentuais por mês (ex.: 0,75 / 0,50 / ...)</Label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                  {Array.from({ length: ruleMeses }).map((_, i) => (
-                    <Input key={i} value={ruleFluxo[i] || ""} onChange={(e) => {
-                      const arr = [...ruleFluxo]; arr[i] = e.target.value; setRuleFluxo(arr);
-                    }} placeholder={`M${i + 1}`} />
-                  ))}
-                </div>
-                <div className={`text-sm ${Math.abs(fluxoSomaPct - percentPadraoPct) < 0.0001 ? "text-green-700" : "text-red-600"}`}>
-                  Soma do fluxo: {fmtHumanPct(fluxoSomaPct)}% (deve = {fmtHumanPct(percentPadraoPct)}%)
-                </div>
-              </div>
-
-              <div>
-                <Label>Observações</Label>
-                <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} />
-              </div>
-
-              <DialogFooter className="pt-2">
-                <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> {ruleId ? "Salvar Alterações" : "Salvar Regra"}</Button>
-                <Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button>
-              </DialogFooter>
-            </div>
-
-            {/* Lateral: regras do vendedor */}
+      {/* Sheet: Regras de Comissão */}
+      <Sheet open={openRules} onOpenChange={setOpenRules}>
+        <SheetContent side="right" className="w-[520px]">
+          <SheetHeader><SheetTitle>Regras de Comissão</SheetTitle></SheetHeader>
+          <div className="mt-4 space-y-3">
             <div>
-              <div className="text-sm font-semibold mb-2">Regras já configuradas</div>
-              <div className="space-y-2">
-                {(!ruleVendorId || rules.length === 0) && (
-                  <div className="text-xs text-gray-500">
-                    {ruleVendorId ? "Nenhuma regra configurada para este vendedor." : "Selecione um vendedor para ver as regras configuradas."}
-                  </div>
-                )}
-                {rules.map((r) => {
-                  const st = simTables.find((t) => t.id === r.sim_table_id);
-                  const nomeTabela = st ? `${st.segmento} — ${st.nome_tabela}` : r.sim_table_id;
-                  const pctPadraoPP = (r.percent_padrao || 0) * 100; // p.p.
-                  const somaFluxoPP = (r.fluxo_percentuais || []).reduce((a, b) => a + (b || 0), 0) * pctPadraoPP;
-                  return (
-                    <div key={r.id} className="p-2 border rounded-md flex items-center justify-between">
-                      <div className="text-xs">
-                        <div className="font-medium">{nomeTabela}</div>
-                        <div>% Padrão: {fmtHumanPct(pctPadraoPP)}% • Fluxo: {fmtHumanPct(somaFluxoPP)}%</div>
-                      </div>
-                      <Button size="sm" variant="outline" onClick={() => loadRuleToEdit(r)}>
-                        <Pencil className="w-4 h-4 mr-1" /> Editar
-                      </Button>
-                    </div>
-                  );
-                })}
+              <Label>Vendedor</Label>
+              <Select value={ruleVendorId} onValueChange={setRuleVendorId}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>{users.map((u) => <SelectItem key={u.id} value={u.id}>{u.nome || u.id}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Tabela (SimTables)</Label>
+              <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {simTables.map((t) => <SelectItem key={t.id} value={t.id}>{t.segmento} — {t.nome_tabela}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div><Label>% Padrão (ex.: 0.0120 = 1,20%)</Label><Input value={rulePercent} onChange={(e) => setRulePercent(e.target.value)} /></div>
+            <div><Label>Nº de meses do fluxo</Label><Input type="number" min={1} max={36} value={ruleMeses} onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))} /></div>
+            <div className="space-y-2">
+              <Label>Fluxo (% somando 1.0000)</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {Array.from({ length: ruleMeses }).map((_, i) => (
+                  <Input key={i} value={ruleFluxo[i] || "0.0000"} onChange={(e) => {
+                    const arr = [...ruleFluxo]; arr[i] = e.target.value; setRuleFluxo(arr);
+                  }} placeholder={`M${i + 1} (ex.: 0.3000)`} />
+                ))}
+              </div>
+              <div className={`text-sm ${Math.abs(fluxoSoma - 1.0) < 0.00001 ? "text-green-700" : "text-red-600"}`}>
+                Soma atual: {fluxoSoma.toFixed(4)}
               </div>
             </div>
+            <div><Label>Observações</Label><Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} /></div>
           </div>
-        </DialogContent>
-      </Dialog>
+          <SheetFooter className="mt-4"><Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button></SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       {/* Dialog: Registrar Pagamento */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
@@ -906,7 +863,7 @@ function UploadArea({
     <div className="space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} /></div>
-        <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
+        <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
         <div className="flex items-end">
           <Button onClick={() => onConfirm({
             data_pagamento_vendedor: dataPg,

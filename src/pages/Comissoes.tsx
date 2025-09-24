@@ -9,14 +9,16 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter,
+} from "@/components/ui/sheet";
+import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, FileText, PlusCircle, Pencil,
+  Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle,
 } from "lucide-react";
-
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -24,19 +26,19 @@ import autoTable from "jspdf-autotable";
 type UUID = string;
 
 type User = { id: UUID; nome: string | null; email: string | null };
-type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 type Cliente = { id: UUID; nome: string | null };
+type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 
 type Venda = {
   id: UUID;
-  data_venda: string;          // ISO date
+  data_venda: string;          // DATE (YYYY-MM-DD)
   vendedor_id: UUID;
   segmento: string | null;
   tabela: string | null;
   administradora: string | null;
   valor_venda: number | null;
   numero_proposta?: string | null;
-  cliente_lead_id?: string | null; // FK para clientes.id
+  cliente_lead_id?: string | null;
 };
 
 type Commission = {
@@ -44,16 +46,16 @@ type Commission = {
   venda_id: UUID;
   vendedor_id: UUID;
   sim_table_id: UUID | null;
-  data_venda: string | null;
+  data_venda: string | null;             // DATE
   segmento: string | null;
   tabela: string | null;
   administradora: string | null;
   valor_venda: number | null;
   base_calculo: number | null;
-  percent_aplicado: number | null; // fração (0.012 = 1,2%)
+  percent_aplicado: number | null;       // fração (ex.: 0.012)
   valor_total: number | null;
   status: "a_pagar" | "pago" | "estorno";
-  data_pagamento: string | null;
+  data_pagamento: string | null;         // DATE
   recibo_url: string | null;
   comprovante_url: string | null;
 };
@@ -62,50 +64,35 @@ type CommissionFlow = {
   id: UUID;
   commission_id: UUID;
   mes: number;
-  percentual: number; // fração
+  percentual: number;                    // fração (ex.: 0.75% = 0.0075)
   valor_previsto: number | null;
   valor_recebido_admin: number | null;
-  data_recebimento_admin: string | null;
+  data_recebimento_admin: string | null; // DATE
   valor_pago_vendedor: number | null;
-  data_pagamento_vendedor: string | null;
+  data_pagamento_vendedor: string | null; // DATE
   recibo_vendedor_url: string | null;
   comprovante_pagto_url: string | null;
-};
-
-type RuleRow = {
-  vendedor_id: UUID;
-  sim_table_id: UUID;
-  percent_padrao: number;          // fração
-  fluxo_meses: number;
-  fluxo_percentuais: number[];     // frações
-  obs: string | null;
-  sim_segmento?: string;
-  sim_nome_tabela?: string;
 };
 
 /* ========================= Helpers ========================= */
 const BRL = (v?: number | null) =>
   (typeof v === "number" ? v : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+// Mostra percentuais guardados como fração (0.012 -> 1,20%)
 const pct100 = (v?: number | null) =>
   `${(((typeof v === "number" ? v : 0) * 100)).toFixed(2).replace(".", ",")}%`;
+
+// NÃO crie Date() para campo DATE do Postgres (evita “andar” 1 dia)
+const fmtDate = (s?: string | null) => {
+  if (!s) return "—";
+  const [y, m, d] = s.split("-");
+  return `${d}/${m}/${y}`;
+};
 
 const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
 const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
 
-const parsePctHuman = (s: string) => (parseFloat((s || "0").replace("%", "").replace(",", ".")) || 0) / 100;
-const toPctHuman = (f: number) => (f * 100).toFixed(2).replace(".", ",");
-
-/* ========================= UI utilitários ========================= */
-function Metric({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="p-3 rounded-xl border bg-white">
-      <div className="text-xs text-gray-500">{title}</div>
-      <div className="text-xl font-bold">{value}</div>
-    </div>
-  );
-}
-
+/* ========================= Relógio radial ========================= */
 function RadialClock({ value, label }: { value: number; label: string }) {
   const pct = Math.max(0, Math.min(100, value));
   const radius = 44;
@@ -135,45 +122,6 @@ function RadialClock({ value, label }: { value: number; label: string }) {
   );
 }
 
-/* ========================= Upload arquivos ========================= */
-function UploadArea({
-  onConfirm,
-}: {
-  onConfirm: (payload: {
-    data_pagamento_vendedor?: string;
-    valor_pago_vendedor?: number;
-    recibo_file?: File | null;
-    comprovante_file?: File | null;
-  }) => Promise<void>;
-}) {
-  const [dataPg, setDataPg] = useState<string>(() => new Date().toISOString().slice(0, 10));
-  const [valorPg, setValorPg] = useState<string>("");
-  const [fileRecibo, setFileRecibo] = useState<File | null>(null);
-  const [fileComp, setFileComp] = useState<File | null>(null);
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} /></div>
-        <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
-        <div className="flex items-end">
-          <Button onClick={() => onConfirm({
-            data_pagamento_vendedor: dataPg,
-            valor_pago_vendedor: valorPg ? parseFloat(valorPg.replace(/\./g, "").replace(",", ".")) : undefined,
-            recibo_file: fileRecibo,
-            comprovante_file: fileComp,
-          })}><Save className="w-4 h-4 mr-1" /> Confirmar pagamento</Button>
-        </div>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div><Label>Recibo assinado (PDF)</Label><Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} /></div>
-        <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
-      </div>
-      <div className="text-xs text-gray-500">Arquivos vão para o bucket <code>comissoes</code>.</div>
-    </div>
-  );
-}
-
 /* ========================= Página ========================= */
 export default function ComissoesPage() {
   /* ---------- Filtros ---------- */
@@ -184,27 +132,36 @@ export default function ComissoesPage() {
   const [segmento, setSegmento] = useState<string>("all");
   const [tabela, setTabela] = useState<string>("all");
 
-  /* ---------- Bases (cache) ---------- */
+  /* ---------- Bases ---------- */
   const [users, setUsers] = useState<User[]>([]);
   const usersById = useMemo(() => {
     const m: Record<string, User> = {};
     users.forEach(u => { m[u.id] = u; });
     return m;
   }, [users]);
+
+  // nunca mostrar UUID — se não tiver nome/email pela RLS, retorna “—”
   const userLabel = (id: string | null | undefined) => {
     if (!id) return "—";
     const u = usersById[id];
-    return (u?.nome?.trim() || u?.email?.trim() || id);
+    if (u?.nome?.trim()) return u.nome.trim();
+    if (u?.email?.trim()) return u.email.trim();
+    return "—";
   };
 
-  const [simTables, setSimTables] = useState<SimTable[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
-  const clientesById = useMemo(() => {
+  const clienteById = useMemo(() => {
     const m: Record<string, Cliente> = {};
     clientes.forEach(c => { m[c.id] = c; });
     return m;
   }, [clientes]);
-  const clienteLabel = (id?: string | null) => (id ? (clientesById[id]?.nome?.trim() || "—") : "—");
+  const clienteLabel = (id?: string | null) => {
+    if (!id) return "—";
+    const c = clienteById[id];
+    return (c?.nome?.trim() || "—");
+  };
+
+  const [simTables, setSimTables] = useState<SimTable[]>([]);
 
   /* ---------- Comissões / Vendas ---------- */
   const [loading, setLoading] = useState<boolean>(false);
@@ -212,18 +169,19 @@ export default function ComissoesPage() {
   const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
 
-  /* ---------- Regras ---------- */
+  /* ---------- Modais ---------- */
   const [openRules, setOpenRules] = useState<boolean>(false);
+  const [openPay, setOpenPay] = useState<boolean>(false);
+
+  /* ---------- Estado Regras ---------- */
   const [ruleVendorId, setRuleVendorId] = useState<string>("");
   const [ruleSimTableId, setRuleSimTableId] = useState<string>("");
-  const [rulePercentHuman, setRulePercentHuman] = useState<string>("1,20");
+  const [rulePercent, setRulePercent] = useState<string>("1,20"); // humanizado (%)
   const [ruleMeses, setRuleMeses] = useState<number>(1);
-  const [ruleFluxoPctHuman, setRuleFluxoPctHuman] = useState<string[]>(["100,00"]);
+  const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]); // em %
   const [ruleObs, setRuleObs] = useState<string>("");
-  const [rulesDoVendedor, setRulesDoVendedor] = useState<RuleRow[]>([]);
 
-  /* ---------- Pagamentos ---------- */
-  const [openPay, setOpenPay] = useState<boolean>(false);
+  /* ---------- Estado Pagamento ---------- */
   const [payCommissionId, setPayCommissionId] = useState<string>("");
   const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
@@ -234,7 +192,7 @@ export default function ComissoesPage() {
       const [{ data: u }, { data: st }, { data: cl }] = await Promise.all([
         supabase.from("users").select("id, nome, email").order("nome", { ascending: true }),
         supabase.from("sim_tables").select("id, segmento, nome_tabela").order("segmento", { ascending: true }),
-        supabase.from("clientes").select("id, nome").order("nome", { ascending: true }),
+        supabase.from("clientes").select("id, nome").limit(1000), // cache mínimo para label
       ]);
       setUsers((u || []) as User[]);
       setSimTables((st || []) as SimTable[]);
@@ -242,29 +200,11 @@ export default function ComissoesPage() {
     })();
   }, []);
 
-  /* ---------- Carrega regras do vendedor (para ocultar já configuradas) ---------- */
-  useEffect(() => {
-    (async () => {
-      if (!ruleVendorId) { setRulesDoVendedor([]); return; }
-      const { data, error } = await supabase
-        .from("commission_rules")
-        .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
-        .eq("vendedor_id", ruleVendorId);
-      if (error) return;
-      const list = (data || []).map((r: any) => ({
-        ...r,
-        sim_segmento: simTables.find(st => st.id === r.sim_table_id)?.segmento,
-        sim_nome_tabela: simTables.find(st => st.id === r.sim_table_id)?.nome_tabela,
-      })) as RuleRow[];
-      setRulesDoVendedor(list);
-    })();
-  }, [ruleVendorId, simTables]);
-
   /* ========================= Fetch principal ========================= */
   async function fetchData() {
     setLoading(true);
     try {
-      // commissions (SEM embed)
+      // commissions
       let qb = supabase
         .from("commissions")
         .select("*")
@@ -275,17 +215,16 @@ export default function ComissoesPage() {
       if (segmento !== "all") qb = qb.eq("segmento", segmento);
       if (tabela !== "all") qb = qb.eq("tabela", tabela);
 
-      const { data: comms, error: errComms } = await qb.order("data_venda", { ascending: false });
-      if (errComms) throw errComms;
+      const { data: comms, error } = await qb.order("data_venda", { ascending: false });
+      if (error) throw error;
 
       // flows
       const commissionIds = (comms || []).map((c) => c.id);
-      const { data: flows, error: errFlows } = await supabase
+      const { data: flows } = await supabase
         .from("commission_flow")
         .select("*")
         .in("commission_id", commissionIds.length ? commissionIds : ["00000000-0000-0000-0000-000000000000"])
         .order("mes", { ascending: true });
-      if (errFlows) throw errFlows;
 
       const flowByCommission: Record<string, CommissionFlow[]> = {};
       (flows || []).forEach((f) => {
@@ -295,21 +234,19 @@ export default function ComissoesPage() {
 
       setRows((comms || []).map((c) => ({ ...(c as Commission), flow: flowByCommission[c.id] || [] })));
 
-      // vendas sem commission (SEM embed)
-      const { data: vendasPeriodo, error: errVendas } = await supabase
+      // vendas sem commission (NOT EXISTS)
+      const { data: vendasPeriodo } = await supabase
         .from("vendas")
         .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id")
         .gte("data_venda", dtIni)
         .lte("data_venda", dtFim)
         .order("data_venda", { ascending: false });
-      if (errVendas) throw errVendas;
 
-      const { data: commVendaIds, error: errCommIds } = await supabase
+      const { data: commVendaIds } = await supabase
         .from("commissions")
         .select("venda_id")
         .gte("data_venda", dtIni)
         .lte("data_venda", dtFim);
-      if (errCommIds) throw errCommIds;
 
       const hasComm = new Set((commVendaIds || []).map((r: any) => r.venda_id));
       const vendasFiltered = (vendasPeriodo || []).filter((v) => !hasComm.has(v.id));
@@ -319,8 +256,6 @@ export default function ComissoesPage() {
         (tabela === "all" || (v.tabela || "") === tabela)
       );
       setVendasSemCom(vendasFiltered2 as Venda[]);
-    } catch (e) {
-      console.error("[fetchData] erro:", e);
     } finally {
       setLoading(false);
     }
@@ -351,7 +286,7 @@ export default function ComissoesPage() {
 
   function isBetween(d?: string | null, start?: Date, end?: Date) {
     if (!d) return false;
-    const x = new Date(d).getTime();
+    const x = new Date(d + "T00:00:00").getTime(); // força meia-noite local
     return x >= (start?.getTime() || 0) && x <= (end?.getTime() || now.getTime());
   }
 
@@ -371,61 +306,41 @@ export default function ComissoesPage() {
   /* ========================= Regras ========================= */
   function onChangeMeses(n: number) {
     setRuleMeses(n);
-    const arr = [...ruleFluxoPctHuman];
+    const arr = [...ruleFluxoPct];
     if (n > arr.length) while (arr.length < n) arr.push("0,00");
     else arr.length = n;
-    setRuleFluxoPctHuman(arr);
+    setRuleFluxoPct(arr);
   }
-  const fluxoSomaPctHuman = useMemo(
-    () => ruleFluxoPctHuman.reduce((a, b) => a + (parseFloat((b || "0").replace(",", ".")) || 0), 0),
-    [ruleFluxoPctHuman]
+  const fluxoSomaPct = useMemo(
+    () => ruleFluxoPct.reduce((a, b) => a + (parseFloat((b || "0").replace(",", ".")) || 0), 0),
+    [ruleFluxoPct]
   );
-  const availableSimTables = useMemo(() => {
-    if (!ruleVendorId) return simTables;
-    const used = new Set(rulesDoVendedor.map(r => r.sim_table_id));
-    return simTables.filter(st => !used.has(st.id));
-  }, [ruleVendorId, rulesDoVendedor, simTables]);
-
-  function editarRegraExistente(r: RuleRow) {
-    setRuleSimTableId(r.sim_table_id);
-    setRulePercentHuman(toPctHuman(r.percent_padrao));
-    setRuleMeses(r.fluxo_meses);
-    setRuleFluxoPctHuman(r.fluxo_percentuais.map(toPctHuman));
-    setRuleObs(r.obs || "");
-    setOpenRules(true);
-  }
 
   async function saveRule() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
-    const percent_padrao = parsePctHuman(rulePercentHuman); // fração
-    const fluxo_percentuais = ruleFluxoPctHuman.map((x) => parsePctHuman(x));
-    const somaFluxo = fluxo_percentuais.reduce((a, b) => a + b, 0);
+
+    // valida soma (ambos em % “humanizados”)
+    const padraoPct = parseFloat((rulePercent || "0").replace(",", ".")); // ex.: "1,20" => 1.2
+    const somaFluxoPct = fluxoSomaPct;
     const eps = 1e-6;
-    if (Math.abs(somaFluxo - percent_padrao) > eps) {
-      return alert(`Soma do fluxo: ${toPctHuman(somaFluxo)}% (deve = ${toPctHuman(percent_padrao)}%)`);
+    if (Math.abs(somaFluxoPct - padraoPct) > eps) {
+      return alert(`Soma do fluxo: ${somaFluxoPct.toFixed(2)}% (deve = ${padraoPct.toFixed(2)}%)`);
     }
-    const payload = {
+
+    // grava em fração
+    const percent_padrao_frac = padraoPct / 100;
+    const fluxo_percentuais_frac = ruleFluxoPct.map((x) => (parseFloat((x || "0").replace(",", ".")) || 0) / 100);
+
+    const { error } = await supabase.from("commission_rules").upsert({
       vendedor_id: ruleVendorId,
       sim_table_id: ruleSimTableId,
-      percent_padrao,
+      percent_padrao: percent_padrao_frac,
       fluxo_meses: ruleMeses,
-      fluxo_percentuais,
+      fluxo_percentuais: fluxo_percentuais_frac,
       obs: ruleObs || null,
-    };
-    console.debug("[commission_rules.upsert] payload:", payload);
-    const { error } = await supabase.from("commission_rules").upsert(payload, { onConflict: "vendedor_id,sim_table_id" });
+    }, { onConflict: "vendedor_id,sim_table_id" });
+
     if (error) return alert(error.message);
-
-    const { data: refill } = await supabase
-      .from("commission_rules")
-      .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
-      .eq("vendedor_id", ruleVendorId);
-
-    setRulesDoVendedor((refill || []).map((r: any) => ({
-      ...r,
-      sim_segmento: simTables.find(st => st.id === r.sim_table_id)?.segmento,
-      sim_nome_tabela: simTables.find(st => st.id === r.sim_table_id)?.nome_tabela,
-    })));
     setOpenRules(false);
   }
 
@@ -477,7 +392,7 @@ export default function ComissoesPage() {
     const { error } = await supabase.from("commission_flow").upsert(updates);
     if (error) return alert(error.message);
 
-    // Atualiza status se todas pagas
+    // Atualiza status da comissão se todas pagas
     const { data: updated } = await supabase
       .from("commission_flow")
       .select("*")
@@ -499,20 +414,6 @@ export default function ComissoesPage() {
     try {
       setGenBusy(venda.id);
 
-      // evita duplicidade
-      const { data: already } = await supabase
-        .from("commissions")
-        .select("id")
-        .eq("venda_id", venda.id)
-        .limit(1);
-      if (already && already.length) {
-        alert("Já existe uma comissão para esta venda.");
-        return;
-      }
-
-      if (!venda.vendedor_id) { alert("Venda sem vendedor vinculado."); return; }
-      if (!venda.valor_venda || venda.valor_venda <= 0) { alert("Venda sem valor de crédito válido."); return; }
-
       // tenta descobrir sim_table_id pela tabela (se existir)
       let simTableId: string | null = null;
       if (venda.tabela) {
@@ -524,7 +425,7 @@ export default function ComissoesPage() {
         simTableId = st?.[0]?.id ?? null;
       }
 
-      // pega percent padrão da regra (se existir)
+      // pega percent padrão da regra (fração) — opcional
       let percent_aplicado: number | null = null;
       if (simTableId) {
         const { data: rule } = await supabase
@@ -536,59 +437,44 @@ export default function ComissoesPage() {
         percent_aplicado = rule?.[0]?.percent_padrao ?? null;
       }
 
+      // payload ENXUTO — trigger faz o snapshot corretamente
       const insert = {
         venda_id: venda.id,
-        vendedor_id: venda.vendedor_id,
+        vendedor_id: venda.vendedor_id, // ok manter; trigger sobrepõe se precisar
         sim_table_id: simTableId,
-        data_venda: venda.data_venda,
-        segmento: venda.segmento,
-        tabela: venda.tabela,
-        administradora: venda.administradora,
-        valor_venda: venda.valor_venda,
-        base_calculo: venda.valor_venda,
-        percent_aplicado,
-        valor_total:
-          percent_aplicado && venda.valor_venda
-            ? Math.round(venda.valor_venda * percent_aplicado * 100) / 100
-            : null,
+        percent_aplicado,               // fração (ou null)
         status: "a_pagar" as const,
       };
 
-      console.debug("[commissions.insert] insert:", insert);
       const { error } = await supabase.from("commissions").insert(insert as any);
       if (error) {
-        if (String((error as any).code) === "23503") {
-          alert("FK inválida: verifique se o vendedor existe em 'users' e/ou se a Tabela (SimTable) está correta.");
-        } else {
-          alert("Erro ao criar a comissão: " + error.message);
-        }
+        alert("Erro ao criar a comissão: " + error.message);
         return;
       }
-
       await fetchData();
     } finally {
       setGenBusy(null);
     }
   }
 
-  /* ========================= CSV Export (humanizado) ========================= */
+  /* ========================= CSV Export ========================= */
   function exportCSV() {
     const header = [
       "data_venda","vendedor","segmento","tabela","administradora",
-      "credito_brl","percent_aplicado_pct","valor_comissao_brl","status","data_pagamento"
+      "valor_venda","percent_aplicado","valor_total","status","data_pagamento"
     ];
     const lines = rows.map(r => ([
       r.data_venda,
       userLabel(r.vendedor_id),
-      (r.segmento||""),
-      (r.tabela||""),
-      (r.administradora||""),
-      BRL(r.valor_venda ?? r.base_calculo ?? 0),
-      pct100(r.percent_aplicado ?? 0),
-      BRL(r.valor_total ?? 0),
+      JSON.stringify(r.segmento||""),
+      JSON.stringify(r.tabela||""),
+      JSON.stringify(r.administradora||""),
+      (r.valor_venda ?? r.base_calculo ?? 0),
+      (r.percent_aplicado ?? 0),
+      (r.valor_total ?? 0),
       r.status,
       r.data_pagamento ?? ""
-    ].map(v => typeof v === "string" ? `"${v}"` : v).join(",")));
+    ].join(",")));
     const csv = [header.join(","), ...lines].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -624,16 +510,18 @@ export default function ComissoesPage() {
     recebedor.forEach((l, i) => doc.text(l, 40, baseY + i * 14));
 
     const tableStartY = baseY + recebedor.length * 14 + 20;
+    const body = itens.map((it) => [
+      comm.tabela || "—",
+      it.mes,
+      pct100(it.percentual),
+      BRL(it.valor_previsto),
+      it.data_pagamento_vendedor ? fmtDate(it.data_pagamento_vendedor) : "—",
+    ]);
+
     autoTable(doc, {
       startY: tableStartY,
-      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]],
-      body: itens.map((it) => [
-        comm.tabela || "—",
-        it.mes,
-        pct100(it.percentual),
-        BRL(it.valor_previsto),
-        it.data_pagamento_vendedor ? new Date(it.data_pagamento_vendedor).toLocaleDateString("pt-BR") : "—",
-      ]),
+      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]], 
+      body,
       styles: { font: "helvetica", fontSize: 10 },
       headStyles: { fillColor: [30, 41, 63] },
     });
@@ -646,7 +534,7 @@ export default function ComissoesPage() {
 
     doc.setFont("helvetica", "normal");
     doc.text(`Forma de pagamento: PIX`, 40, endY + 28);
-    doc.text(`Data do pagamento: ${today.toLocaleDateString("pt-BR")}`, 40, endY + 44);
+    doc.text(`Data do pagamento: ${fmtDate(toDateInput(today))}`, 40, endY + 44);
 
     const signY = endY + 110;
     doc.line(40, signY, 260, signY);
@@ -679,7 +567,7 @@ export default function ComissoesPage() {
                 <SelectItem value="all">Todos</SelectItem>
                 {users.map((u) => (
                   <SelectItem key={u.id} value={u.id}>
-                    {u.nome?.trim() || u.email?.trim() || u.id}
+                    {(u.nome?.trim() || u.email?.trim() || "—")}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -805,7 +693,7 @@ export default function ComissoesPage() {
               )}
               {vendasSemCom.map(v => (
                 <tr key={v.id} className="border-b">
-                  <td className="p-2">{new Date(v.data_venda).toLocaleDateString("pt-BR")}</td>
+                  <td className="p-2">{fmtDate(v.data_venda)}</td>
                   <td className="p-2">{userLabel(v.vendedor_id)}</td>
                   <td className="p-2">{clienteLabel(v.cliente_lead_id)}</td>
                   <td className="p-2">{v.numero_proposta || "—"}</td>
@@ -873,7 +761,7 @@ export default function ComissoesPage() {
               )}
               {!loading && rows.map((r) => (
                 <tr key={r.id} className="border-b hover:bg-gray-50">
-                  <td className="p-2">{r.data_venda ? new Date(r.data_venda).toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="p-2">{fmtDate(r.data_venda)}</td>
                   <td className="p-2">{userLabel(r.vendedor_id)}</td>
                   <td className="p-2">{r.segmento || "—"}</td>
                   <td className="p-2">{r.tabela || "—"}</td>
@@ -881,7 +769,7 @@ export default function ComissoesPage() {
                   <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
                   <td className="p-2 text-right">{BRL(r.valor_total)}</td>
                   <td className="p-2">{r.status}</td>
-                  <td className="p-2">{r.data_pagamento ? new Date(r.data_pagamento).toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="p-2">{r.data_pagamento ? fmtDate(r.data_pagamento) : "—"}</td>
                   <td className="p-2">
                     <div className="flex gap-2">
                       <Button size="sm" variant="secondary" onClick={() => openPaymentFor(r)}>
@@ -906,127 +794,94 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Dialog: Regras de Comissão (central, com scroll) */}
-      <Dialog open={openRules} onOpenChange={setOpenRules}>
-        <DialogContent className="max-w-xl p-0 overflow-hidden">
-          <div className="max-h-[80vh] overflow-y-auto p-6">
-            <DialogHeader className="mb-2">
-              <DialogTitle>Regras de Comissão</DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div>
-                <Label>Vendedor</Label>
-                <Select value={ruleVendorId} onValueChange={setRuleVendorId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {users.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.nome?.trim() || u.email?.trim() || u.id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>Tabela (SimTables) — apenas disponíveis</Label>
-                <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {availableSimTables.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {t.segmento} — {t.nome_tabela}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
-                <Input
-                  value={rulePercentHuman}
-                  onChange={(e) => setRulePercentHuman(e.target.value)}
-                  placeholder="1,20"
-                />
-              </div>
-
-              <div>
-                <Label>Nº de meses do fluxo</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={36}
-                  value={ruleMeses}
-                  onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Fluxo do pagamento — informe os percentuais (M1..Mn)</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  {Array.from({ length: ruleMeses }).map((_, i) => (
-                    <Input
-                      key={i}
-                      value={ruleFluxoPctHuman[i] || "0,00"}
-                      onChange={(e) => {
-                        const arr = [...ruleFluxoPctHuman];
-                        arr[i] = e.target.value;
-                        setRuleFluxoPctHuman(arr);
-                      }}
-                      placeholder={`Ex.: 0,75`}
-                    />
+      {/* Sheet: Regras de Comissão */}
+      <Sheet open={openRules} onOpenChange={setOpenRules}>
+        <SheetContent side="right" className="w-[520px]">
+          <SheetHeader><SheetTitle>Regras de Comissão</SheetTitle></SheetHeader>
+          <div className="mt-4 space-y-3">
+            <div>
+              <Label>Vendedor</Label>
+              <Select value={ruleVendorId} onValueChange={setRuleVendorId}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {(u.nome?.trim() || u.email?.trim() || "—")}
+                    </SelectItem>
                   ))}
-                </div>
-                <div className="text-xs text-gray-600">
-                  Soma do fluxo: <b>{fluxoSomaPctHuman.toFixed(2)}%</b> (deve = {parseFloat((rulePercentHuman || "0").replace(",", "."))?.toFixed(2)}%)
-                </div>
-              </div>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Tabela (SimTables)</Label>
+              <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {simTables.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.segmento} — {t.nome_tabela}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-              <div>
-                <Label>Observações</Label>
-                <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
-              </div>
+            <div>
+              <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
+              <Input
+                value={rulePercent}
+                onChange={(e) => setRulePercent(e.target.value)}
+                placeholder="1,20"
+              />
+            </div>
 
-              {/* Regras existentes para este vendedor */}
-              {!!ruleVendorId && (
-                <div className="mt-2">
-                  <div className="text-sm font-semibold mb-2">Regras existentes</div>
-                  {rulesDoVendedor.length === 0 ? (
-                    <div className="text-xs text-gray-500">Nenhuma regra cadastrada.</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {rulesDoVendedor.map((r) => (
-                        <div key={r.sim_table_id} className="flex items-center justify-between p-2 border rounded-md">
-                          <div className="text-sm">
-                            <div className="font-medium">{r.sim_segmento} — {r.sim_nome_tabela}</div>
-                            <div className="text-xs text-gray-600">
-                              % padrão: {toPctHuman(r.percent_padrao)}% • Meses: {r.fluxo_meses}
-                            </div>
-                          </div>
-                          <Button size="sm" variant="outline" onClick={() => editarRegraExistente(r)}>
-                            <Pencil className="w-4 h-4 mr-1" /> Editar
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+            <div>
+              <Label>Nº de meses do fluxo</Label>
+              <Input
+                type="number"
+                min={1}
+                max={36}
+                value={ruleMeses}
+                onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Fluxo do pagamento — informe os percentuais (M1..Mn)</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {Array.from({ length: ruleMeses }).map((_, i) => (
+                  <Input
+                    key={i}
+                    value={ruleFluxoPct[i] || "0,00"}
+                    onChange={(e) => {
+                      const arr = [...ruleFluxoPct];
+                      arr[i] = e.target.value;
+                      setRuleFluxoPct(arr);
+                    }}
+                    placeholder={`Ex.: 0,75`}
+                  />
+                ))}
+              </div>
+              <div className="text-xs text-gray-600">
+                Soma do fluxo: <b>{fluxoSomaPct.toFixed(2)}%</b> (deve = {parseFloat((rulePercent || "0").replace(",", "."))?.toFixed(2)}%)
+              </div>
+            </div>
+
+            <div>
+              <Label>Observações</Label>
+              <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
             </div>
           </div>
-
-          <DialogFooter className="px-6 pb-4">
+          <SheetFooter className="mt-4">
             <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       {/* Dialog: Registrar Pagamento */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
         <DialogContent className="max-w-3xl">
-          <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogHeader></DialogHeader>
           <Tabs defaultValue="selecionar">
             <TabsList className="mb-3">
               <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>
@@ -1060,9 +915,7 @@ export default function ComissoesPage() {
                         <td className="p-2 text-right">{BRL(f.valor_previsto)}</td>
                         <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
                         <td className="p-2">
-                          {f.data_pagamento_vendedor
-                            ? new Date(f.data_pagamento_vendedor).toLocaleDateString("pt-BR")
-                            : "—"}
+                          {f.data_pagamento_vendedor ? fmtDate(f.data_pagamento_vendedor) : "—"}
                         </td>
                       </tr>
                     ))}
@@ -1076,6 +929,54 @@ export default function ComissoesPage() {
           <DialogFooter><Button onClick={() => setOpenPay(false)} variant="secondary">Fechar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/* ========================= Subcomponentes ========================= */
+function Metric({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="p-3 rounded-xl border bg-white">
+      <div className="text-xs text-gray-500">{title}</div>
+      <div className="text-xl font-bold">{value}</div>
+    </div>
+  );
+}
+
+function UploadArea({
+  onConfirm,
+}: {
+  onConfirm: (payload: {
+    data_pagamento_vendedor?: string;
+    valor_pago_vendedor?: number;
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
+  }) => Promise<void>;
+}) {
+  const [dataPg, setDataPg] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [valorPg, setValorPg] = useState<string>("");
+  const [fileRecibo, setFileRecibo] = useState<File | null>(null);
+  const [fileComp, setFileComp] = useState<File | null>(null);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} /></div>
+        <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
+        <div className="flex items-end">
+          <Button onClick={() => onConfirm({
+            data_pagamento_vendedor: dataPg,
+            valor_pago_vendedor: valorPg ? parseFloat(valorPg.replace(/\./g, "").replace(",", ".")) : undefined,
+            recibo_file: fileRecibo,
+            comprovante_file: fileComp,
+          })}><Save className="w-4 h-4 mr-1" /> Confirmar pagamento</Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><Label>Recibo assinado (PDF)</Label><Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} /></div>
+        <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
+      </div>
+      <div className="text-xs text-gray-500">Arquivos vão para o bucket <code>comissoes</code>.</div>
     </div>
   );
 }

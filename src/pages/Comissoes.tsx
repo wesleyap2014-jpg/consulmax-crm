@@ -1,14 +1,3 @@
-Segue o **`src/pages/Comissoes.tsx` completo (bloco único)** já ajustado para:
-
-* **Sem embeds** no `select()` (evita sumir tudo por RLS/FK).
-* **Vendedor sempre com nome** (ou e-mail) usando cache `usersById`.
-* **Cliente aparece** usando cache `clientesById` (via `cliente_lead_id`).
-* Mantidas as melhorias: percentuais humanizados, validação do fluxo, overlay com scroll, CSV humanizado, geração/recibo/pagamento, etc.
-* Sem imports inúteis, sem tipos duplicados.
-
-> Dica: garanta que `users.nome` (ou `email`) e `clientes.nome` estejam preenchidos. Se `cliente_lead_id` tiver outro nome na sua tabela, ajuste o campo no `select` de vendas e no uso abaixo.
-
-```tsx
 // src/pages/Comissoes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -1090,4 +1079,3 @@ export default function ComissoesPage() {
     </div>
   );
 }
-```

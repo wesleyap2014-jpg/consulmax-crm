@@ -27,6 +27,7 @@ import autoTable from "jspdf-autotable";
 type UUID = string;
 
 type User = { id: UUID; nome: string | null; email: string | null };
+type Client = { id: UUID; nome: string | null };
 type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 
 type Venda = {
@@ -38,7 +39,7 @@ type Venda = {
   administradora: string | null;
   valor_venda: number | null;
   numero_proposta?: string | null;
-  cliente_lead_id?: string | null; // lugar onde vamos buscar o nome do cliente no futuro
+  cliente_lead_id?: string | null;
 };
 
 type Commission = {
@@ -75,14 +76,20 @@ type CommissionFlow = {
 };
 
 /* ========================= Helpers ========================= */
+const num = (v: any) => (typeof v === "number" && isFinite(v) ? v : 0);
+
 const BRL = (v?: number | null) =>
-  (typeof v === "number" ? v : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  num(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 const pct100 = (v?: number | null) =>
-  `${(((typeof v === "number" ? v : 0) * 100)).toFixed(2).replace(".", ",")}%`;
+  `${(num(v) * 100).toFixed(2).replace(".", ",")}%`;
 
 const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
 const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
+
+// evita deslocamento de fuso ao exibir DATE
+const fmtDate = (yyyy_mm_dd?: string | null) =>
+  yyyy_mm_dd ? new Date(`${yyyy_mm_dd}T00:00:00`).toLocaleDateString("pt-BR") : "—";
 
 /* ========================= Relógio radial ========================= */
 function RadialClock({ value, label }: { value: number; label: string }) {
@@ -138,6 +145,9 @@ export default function ComissoesPage() {
     return (u?.nome?.trim() || u?.email?.trim() || id);
   };
 
+  const [clientsMap, setClientsMap] = useState<Record<string, string>>({});
+  const clientLabel = (id?: string | null) => (id ? (clientsMap[id] || "—") : "—");
+
   const [simTables, setSimTables] = useState<SimTable[]>([]);
 
   /* ---------- Comissões / Vendas ---------- */
@@ -156,7 +166,6 @@ export default function ComissoesPage() {
   const [rulePercent, setRulePercent] = useState<string>("1,20"); // humanizado
   const [ruleMeses, setRuleMeses] = useState<number>(1);
   const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]); // em %
-
   const [ruleObs, setRuleObs] = useState<string>("");
 
   /* ---------- Estado Pagamento ---------- */
@@ -233,6 +242,23 @@ export default function ComissoesPage() {
         (tabela === "all" || (v.tabela || "") === tabela)
       );
       setVendasSemCom(vendasFiltered2 as Venda[]);
+
+      // mapear nomes de clientes para as vendas listadas
+      const clientIds = Array.from(new Set((vendasFiltered2 || [])
+        .map(v => v.cliente_lead_id)
+        .filter(Boolean))) as string[];
+
+      if (clientIds.length) {
+        const { data: cli } = await supabase
+          .from("clientes")
+          .select("id, nome")
+          .in("id", clientIds);
+        const cmap: Record<string, string> = {};
+        (cli || []).forEach((c: any) => { cmap[c.id] = c.nome || c.id; });
+        setClientsMap(cmap);
+      } else {
+        setClientsMap({});
+      }
     } finally {
       setLoading(false);
     }
@@ -263,7 +289,7 @@ export default function ComissoesPage() {
 
   function isBetween(d?: string | null, start?: Date, end?: Date) {
     if (!d) return false;
-    const x = new Date(d).getTime();
+    const x = new Date(`${d}T00:00:00`).getTime();
     return x >= (start?.getTime() || 0) && x <= (end?.getTime() || now.getTime());
   }
 
@@ -296,16 +322,14 @@ export default function ComissoesPage() {
   async function saveRule() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
 
-    // valida: soma dos percentuais do fluxo (em %) tem que bater com % padrão (em %)
-    const padraoPct = parseFloat((rulePercent || "0").replace(",", ".")); // ex.: "1,20" => 1.2
-    const somaFluxoPct = fluxoSomaPct;                                    // soma em percentuais (ex.: 0.75 + 0.5 + 0.5 + 0.25 = 2.0)
+    const padraoPct = parseFloat((rulePercent || "0").replace(",", "."));
+    const somaFluxoPct = fluxoSomaPct;
     const eps = 1e-6;
     if (Math.abs(somaFluxoPct - padraoPct) > eps) {
       return alert(`Soma do fluxo: ${somaFluxoPct.toFixed(2)}% (deve = ${padraoPct.toFixed(2)}%)`);
     }
 
-    // grava no formato numérico (fração)
-    const percent_padrao_frac = padraoPct / 100; // 1.2% -> 0.012
+    const percent_padrao_frac = padraoPct / 100;
     const fluxo_percentuais_frac = ruleFluxoPct.map((x) => (parseFloat((x || "0").replace(",", ".")) || 0) / 100);
 
     const { error } = await supabase.from("commission_rules").upsert({
@@ -369,7 +393,6 @@ export default function ComissoesPage() {
     const { error } = await supabase.from("commission_flow").upsert(updates);
     if (error) return alert(error.message);
 
-    // Atualiza status da comissão se todas pagas
     const { data: updated } = await supabase
       .from("commission_flow")
       .select("*")
@@ -402,39 +425,13 @@ export default function ComissoesPage() {
         simTableId = st?.[0]?.id ?? null;
       }
 
-      // pega percent padrão da regra (se existir) — trigger no banco também calcula,
-      // mas enviamos para exibir valor_total imediato
-      let percent_aplicado: number | null = null;
-      if (simTableId) {
-        const { data: rule } = await supabase
-          .from("commission_rules")
-          .select("percent_padrao")
-          .eq("vendedor_id", venda.vendedor_id)
-          .eq("sim_table_id", simTableId)
-          .limit(1);
-        percent_aplicado = rule?.[0]?.percent_padrao ?? null;
-      }
-
-      // monta o registro (snapshot preenchido por trigger)
-      const insert = {
+      // INSERT mínimo — triggers preenchem o resto (evita “record v is not assigned yet”)
+      const { error } = await supabase.from("commissions").insert({
         venda_id: venda.id,
         vendedor_id: venda.vendedor_id,
         sim_table_id: simTableId,
-        data_venda: venda.data_venda,
-        segmento: venda.segmento,
-        tabela: venda.tabela,
-        administradora: venda.administradora,
-        valor_venda: venda.valor_venda,
-        base_calculo: venda.valor_venda,
-        percent_aplicado,
-        valor_total:
-          percent_aplicado && venda.valor_venda
-            ? Math.round(venda.valor_venda * percent_aplicado * 100) / 100
-            : null,
-        status: "a_pagar" as const,
-      };
+      } as any);
 
-      const { error } = await supabase.from("commissions").insert(insert as any);
       if (error) {
         if (String(error.code) === "23503") {
           alert("Não foi possível criar: verifique se o vendedor existe na tabela 'users' e/ou se a tabela (SimTable) está correta.");
@@ -451,22 +448,22 @@ export default function ComissoesPage() {
   }
 
   /* ========================= CSV Export ========================= */
-  function exportCSV() {
+  function exportCSVCommis() {
     const header = [
       "data_venda","vendedor","segmento","tabela","administradora",
       "valor_venda","percent_aplicado","valor_total","status","data_pagamento"
     ];
     const lines = rows.map(r => ([
-      r.data_venda,
+      r.data_venda || "",
       userLabel(r.vendedor_id),
-      JSON.stringify(r.segmento||""),
-      JSON.stringify(r.tabela||""),
-      JSON.stringify(r.administradora||""),
-      (r.valor_venda ?? r.base_calculo ?? 0),
-      (r.percent_aplicado ?? 0),
-      (r.valor_total ?? 0),
+      (r.segmento||"").replace(/,/g," "),
+      (r.tabela||"").replace(/,/g," "),
+      (r.administradora||"").replace(/,/g," "),
+      String(r.valor_venda ?? r.base_calculo ?? 0).replace(".", ","),
+      String(r.percent_aplicado ?? 0).replace(".", ","),
+      String(r.valor_total ?? 0).replace(".", ","),
       r.status,
-      r.data_pagamento ?? ""
+      r.data_pagamento || ""
     ].join(",")));
     const csv = [header.join(","), ...lines].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -474,6 +471,31 @@ export default function ComissoesPage() {
     const a = document.createElement("a");
     a.href = url;
     a.download = `comissoes_${dtIni}_${dtFim}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportCSVVendasSemCom() {
+    const header = [
+      "data_venda","vendedor","cliente","numero_proposta","administradora",
+      "segmento","tabela","valor_venda"
+    ];
+    const lines = vendasSemCom.map(v => ([
+      v.data_venda,
+      userLabel(v.vendedor_id),
+      clientLabel(v.cliente_lead_id),
+      v.numero_proposta || "",
+      (v.administradora || "").replace(/,/g," "),
+      (v.segmento || "").replace(/,/g," "),
+      (v.tabela || "").replace(/,/g," "),
+      String(v.valor_venda ?? 0).replace(".", ","),
+    ].join(",")));
+    const csv = [header.join(","), ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vendas_sem_comissao_${dtIni}_${dtFim}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -508,7 +530,7 @@ export default function ComissoesPage() {
       it.mes,
       pct100(it.percentual),
       BRL(it.valor_previsto),
-      it.data_pagamento_vendedor ? new Date(it.data_pagamento_vendedor).toLocaleDateString("pt-BR") : "—",
+      it.data_pagamento_vendedor ? fmtDate(it.data_pagamento_vendedor) : "—",
     ]);
 
     autoTable(doc, {
@@ -660,7 +682,7 @@ export default function ComissoesPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
             <span>Vendas sem comissão (período & filtros)</span>
-            <Button variant="outline" onClick={exportCSV}>
+            <Button variant="outline" onClick={exportCSVVendasSemCom}>
               <Download className="w-4 h-4 mr-1" /> Exportar CSV
             </Button>
           </CardTitle>
@@ -686,9 +708,9 @@ export default function ComissoesPage() {
               )}
               {vendasSemCom.map(v => (
                 <tr key={v.id} className="border-b">
-                  <td className="p-2">{new Date(v.data_venda).toLocaleDateString("pt-BR")}</td>
+                  <td className="p-2">{fmtDate(v.data_venda)}</td>
                   <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                  <td className="p-2">—{/* quando tivermos a fonte do nome do cliente, plugo aqui */}</td>
+                  <td className="p-2">{clientLabel(v.cliente_lead_id)}</td>
                   <td className="p-2">{v.numero_proposta || "—"}</td>
                   <td className="p-2">{v.administradora || "—"}</td>
                   <td className="p-2">{v.segmento || "—"}</td>
@@ -721,7 +743,7 @@ export default function ComissoesPage() {
           <CardTitle className="flex items-center justify-between">
             <span>Detalhamento de Comissões</span>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={exportCSV}>
+              <Button variant="outline" onClick={exportCSVCommis}>
                 <Download className="w-4 h-4 mr-1" /> Exportar CSV
               </Button>
             </div>
@@ -754,7 +776,7 @@ export default function ComissoesPage() {
               )}
               {!loading && rows.map((r) => (
                 <tr key={r.id} className="border-b hover:bg-gray-50">
-                  <td className="p-2">{r.data_venda ? new Date(r.data_venda).toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="p-2">{fmtDate(r.data_venda)}</td>
                   <td className="p-2">{userLabel(r.vendedor_id)}</td>
                   <td className="p-2">{r.segmento || "—"}</td>
                   <td className="p-2">{r.tabela || "—"}</td>
@@ -762,7 +784,7 @@ export default function ComissoesPage() {
                   <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
                   <td className="p-2 text-right">{BRL(r.valor_total)}</td>
                   <td className="p-2">{r.status}</td>
-                  <td className="p-2">{r.data_pagamento ? new Date(r.data_pagamento).toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="p-2">{fmtDate(r.data_pagamento)}</td>
                   <td className="p-2">
                     <div className="flex gap-2">
                       <Button size="sm" variant="secondary" onClick={() => openPaymentFor(r)}>
@@ -909,7 +931,7 @@ export default function ComissoesPage() {
                         <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
                         <td className="p-2">
                           {f.data_pagamento_vendedor
-                            ? new Date(f.data_pagamento_vendedor).toLocaleDateString("pt-BR")
+                            ? fmtDate(f.data_pagamento_vendedor)
                             : "—"}
                         </td>
                       </tr>

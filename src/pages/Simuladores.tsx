@@ -1,1724 +1,1081 @@
-// src/pages/Simuladores.tsx
+// src/pages/Comissoes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, FileText, PlusCircle, Pencil,
+} from "lucide-react";
+
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
 
-type Lead = { id: UUID; nome: string; telefone?: string | null };
-type Admin = { id: UUID; name: string };
+type User = { id: UUID; nome: string | null; email: string | null };
+type SimTable = { id: UUID; segmento: string; nome_tabela: string };
+type Cliente = { id: UUID; nome: string | null };
 
-type SimTable = {
+type Venda = {
   id: UUID;
-  admin_id: UUID;
-  segmento: string;
-  nome_tabela: string;
-  faixa_min: number;
-  faixa_max: number;
-  prazo_limite: number;
-  taxa_adm_pct: number;
-  fundo_reserva_pct: number;
-  antecip_pct: number;
-  antecip_parcelas: number; // 0|1|2
-  limitador_parcela_pct: number;
-  seguro_prest_pct: number;
-  permite_lance_embutido: boolean;
-  permite_lance_fixo_25: boolean;
-  permite_lance_fixo_50: boolean;
-  permite_lance_livre: boolean;
-  contrata_parcela_cheia: boolean;
-  contrata_reduzida_25: boolean;
-  contrata_reduzida_50: boolean;
-  indice_correcao: string[];
+  data_venda: string;          // ISO date
+  vendedor_id: UUID;
+  segmento: string | null;
+  tabela: string | null;
+  administradora: string | null;
+  valor_venda: number | null;
+  numero_proposta?: string | null;
+  cliente_lead_id?: string | null; // FK para clientes.id
 };
 
-type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
-
-/* ======================= Helpers ========================= */
-const brMoney = (v: number) =>
-  v.toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    maximumFractionDigits: 2,
-  });
-
-const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
-
-/** BRL mask */
-function formatBRLInputFromNumber(n: number): string {
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-function parseBRLInputToNumber(s: string): number {
-  const digits = (s || "").replace(/\D/g, "");
-  const cents = digits.length ? parseInt(digits, 10) : 0;
-  return cents / 100;
-}
-
-/** Percent “25,0000” <-> 0.25 (decimal) */
-function formatPctInputFromDecimal(d: number): string {
-  return (d * 100).toFixed(4).replace(".", ",");
-}
-function parsePctInputToDecimal(s: string): number {
-  const clean = (s || "").replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
-  const val = parseFloat(clean);
-  return isNaN(val) ? 0 : val / 100;
-}
-
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
-/** Exceção do limitador: Motocicleta >= 20k => 1% */
-function resolveLimitadorPct(baseLimitadorPct: number, segmento: string, credito: number): number {
-  if (segmento?.toLowerCase().includes("motocicleta") && credito >= 20000) return 0.01;
-  return baseLimitadorPct;
-}
-
-/** Formata telefone BR para exibição */
-function formatPhoneBR(s?: string) {
-  const d = (s || "").replace(/\D/g, "");
-  if (!d) return "";
-  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return s || "";
-}
-
-/* ======================= Cálculo ========================= */
-type CalcInput = {
-  credito: number;
-  prazoVenda: number;
-  forma: FormaContratacao;
-  seguro: boolean;
-  segmento: string;
-  taxaAdmFull: number;
-  frPct: number;
-  antecipPct: number;
-  antecipParcelas: 0 | 1 | 2;
-  limitadorPct: number;
-  seguroPrestPct: number;
-  lanceOfertPct: number;
-  lanceEmbutPct: number; // <= 0.25
-  parcContemplacao: number;
+type Commission = {
+  id: UUID;
+  venda_id: UUID;
+  vendedor_id: UUID;
+  sim_table_id: UUID | null;
+  data_venda: string | null;
+  segmento: string | null;
+  tabela: string | null;
+  administradora: string | null;
+  valor_venda: number | null;
+  base_calculo: number | null;
+  percent_aplicado: number | null; // fração (0.012 = 1,2%)
+  valor_total: number | null;
+  status: "a_pagar" | "pago" | "estorno";
+  data_pagamento: string | null;
+  recibo_url: string | null;
+  comprovante_url: string | null;
 };
 
-function calcularSimulacao(i: CalcInput) {
-  const {
-    credito: C,
-    prazoVenda,
-    forma,
-    seguro,
-    segmento,
-    taxaAdmFull,
-    frPct,
-    antecipPct,
-    antecipParcelas,
-    lanceOfertPct,
-    lanceEmbutPct,
-    parcContemplacao,
-  } = i;
+type CommissionFlow = {
+  id: UUID;
+  commission_id: UUID;
+  mes: number;
+  percentual: number; // fração
+  valor_previsto: number | null;
+  valor_recebido_admin: number | null;
+  data_recebimento_admin: string | null;
+  valor_pago_vendedor: number | null;
+  data_pagamento_vendedor: string | null;
+  recibo_vendedor_url: string | null;
+  comprovante_pagto_url: string | null;
+};
 
-  const prazo = Math.max(1, Math.floor(prazoVenda));
-  const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
-  const prazoRestante = Math.max(1, prazo - parcelasPagas);
+type RuleRow = {
+  vendedor_id: UUID;
+  sim_table_id: UUID;
+  percent_padrao: number;          // fração
+  fluxo_meses: number;
+  fluxo_percentuais: number[];     // frações
+  obs: string | null;
+  sim_segmento?: string;
+  sim_nome_tabela?: string;
+};
 
-  // Flags de categoria
-  const segLower = (segmento || "").toLowerCase();
-  const isServico = segLower.includes("serv");
-  const isMoto = segLower.includes("moto");
+/* ========================= Helpers ========================= */
+const BRL = (v?: number | null) =>
+  (typeof v === "number" ? v : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-  // TA efetiva (parte que vai para as parcelas mensais)
-  const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
+const pct100 = (v?: number | null) =>
+  `${(((typeof v === "number" ? v : 0) * 100)).toFixed(2).replace(".", ",")}%`;
 
-  // Valor de categoria (base para saldo + limitador + seguro)
-  const valorCategoria = C * (1 + taxaAdmFull + frPct);
+const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
+const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
 
-  // Fator do Fundo Comum conforme contratação
-  const fundoComumFactor =
-    forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
+const parsePctHuman = (s: string) => (parseFloat((s || "0").replace("%", "").replace(",", ".")) || 0) / 100;
+const toPctHuman = (f: number) => (f * 100).toFixed(2).replace(".", ",");
 
-  // Parcela base (SEM seguro)
-  const baseMensalSemSeguro =
-    (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
-
-  // Seguro mensal (só soma na parcela, não abate saldo)
-  const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
-
-  // Antecipação (somada nas primeiras 1 ou 2 parcelas)
-  const antecipAdicionalCada =
-    antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
-
-  // Exibição até a contemplação
-  const parcelaAte =
-    (baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0)) +
-    seguroMensal;
-  const parcelaDemais = baseMensalSemSeguro + seguroMensal;
-
-  // TOTAL PAGO ATÉ A CONTEMPLAÇÃO (SEM seguro)
-  const totalPagoSemSeguro =
-    baseMensalSemSeguro * parcelasPagas +
-    antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
-
-  // Lances
-  const lanceOfertadoValor = C * lanceOfertPct;
-  const lanceEmbutidoValor = C * lanceEmbutPct;
-  const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
-  const novoCredito = Math.max(0, C - lanceEmbutidoValor);
-
-  // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
-  const saldoDevedorFinal = Math.max(
-    0,
-    valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
-  );
-
-  // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
-  const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
-
-  // LIMITADOR (sobre valor de categoria)
-  const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
-  const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
-
-  // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
-  const manterParcela = isServico || (isMoto && C < 20000);
-
-  let aplicouLimitador = false;
-  let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
-
-  if (!manterParcela) {
-    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
-    if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
-      aplicouLimitador = true;
-      parcelaEscolhida = parcelaLimitante;
-    } else {
-      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
-      parcelaEscolhida = novaParcelaSemLimite;
-    }
-  }
-
-  // Caso especial: antecipação em 2x e contemplação na 1ª parcela
-  const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
-  const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
-    : null;
-
-  // NOVO PRAZO
-  const parcelasIguais =
-    Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
-
-  let novoPrazo: number;
-  if (parcelasIguais && !has2aAntecipDepois) {
-    novoPrazo = prazoRestante;
-  } else {
-    let saldoParaPrazo = saldoDevedorFinal;
-    if (has2aAntecipDepois) {
-      saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipAdicionalCada));
-    }
-    novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
-  }
-
-  return {
-    valorCategoria,
-    parcelaAte,
-    parcelaDemais,
-    lanceOfertadoValor,
-    lanceEmbutidoValor,
-    lanceProprioValor,
-    lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
-    novoCredito,
-    novaParcelaSemLimite, // (SEM seguro)
-    parcelaLimitante,     // (SEM seguro)
-    parcelaEscolhida,     // (SEM seguro)
-    saldoDevedorFinal,
-    novoPrazo,
-    TA_efetiva,
-    fundoComumFactor,
-    antecipAdicionalCada,
-    segundaParcelaComAntecipacao,
-    has2aAntecipDepois,
-    aplicouLimitador,
-  };
-}
-
-/* ========== Inputs com máscara (Money / Percent) ========== */
-function MoneyInput({
-  value,
-  onChange,
-  ...rest
-}: { value: number; onChange: (n: number) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
+/* ========================= UI utilitários ========================= */
+function Metric({ title, value }: { title: string; value: string }) {
   return (
-    <Input
-      {...rest}
-      inputMode="numeric"
-      value={formatBRLInputFromNumber(value || 0)}
-      onChange={(e) => onChange(parseBRLInputToNumber(e.target.value))}
-      className={`text-right ${rest.className || ""}`}
-    />
-  );
-}
-
-function PercentInput({
-  valueDecimal,
-  onChangeDecimal,
-  maxDecimal,
-  ...rest
-}: {
-  valueDecimal: number;
-  onChangeDecimal: (d: number) => void;
-  maxDecimal?: number;
-} & React.InputHTMLAttributes<HTMLInputElement>) {
-  const display = formatPctInputFromDecimal(valueDecimal || 0);
-  return (
-    <div className="flex items-center gap-2">
-      <Input
-        {...rest}
-        inputMode="decimal"
-        value={display}
-        onChange={(e) => {
-          let d = parsePctInputToDecimal(e.target.value);
-          if (typeof maxDecimal === "number") d = clamp(d, 0, maxDecimal);
-          onChangeDecimal(d);
-        }}
-        className={`text-right ${rest.className || ""}`}
-      />
-      <span className="text-sm text-muted-foreground">%</span>
+    <div className="p-3 rounded-xl border bg-white">
+      <div className="text-xs text-gray-500">{title}</div>
+      <div className="text-xl font-bold">{value}</div>
     </div>
   );
 }
 
-/* ========================= Página ======================== */
-export default function Simuladores() {
-  const [loading, setLoading] = useState(true);
-  const [admins, setAdmins] = useState<Admin[]>([]);
-  const [tables, setTables] = useState<SimTable[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
-
-  const [mgrOpen, setMgrOpen] = useState(false); // overlay lista/edição
-
-  // seleção Embracon
-  const [leadId, setLeadId] = useState<string>("");
-  const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
-  const [grupo, setGrupo] = useState<string>("");
-
-  const [segmento, setSegmento] = useState<string>("");
-  const [nomeTabela, setNomeTabela] = useState<string>("");
-  const [tabelaId, setTabelaId] = useState<string>("");
-  const [prazoAte, setPrazoAte] = useState<number>(0);
-  const [faixa, setFaixa] = useState<{ min: number; max: number } | null>(null);
-
-  const [credito, setCredito] = useState<number>(0);
-  const [prazoVenda, setPrazoVenda] = useState<number>(0);
-  const [forma, setForma] = useState<FormaContratacao>("Parcela Cheia");
-  const [seguroPrest, setSeguroPrest] = useState<boolean>(false);
-
-  const [lanceOfertPct, setLanceOfertPct] = useState<number>(0);
-  const [lanceEmbutPct, setLanceEmbutPct] = useState<number>(0);
-  const [parcContemplacao, setParcContemplacao] = useState<number>(1);
-
-  const [calc, setCalc] = useState<ReturnType<typeof calcularSimulacao> | null>(null);
-  const [salvando, setSalvando] = useState(false);
-  const [simCode, setSimCode] = useState<number | null>(null);
-
-  // telefone do usuário logado (para o Resumo / Proposta)
-  const [userPhone, setUserPhone] = useState<string>("");
-
-  // Texto livre para “Assembleia”
-  const [assembleia, setAssembleia] = useState<string>("15/10");
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
-        supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-        supabase.from("sim_tables").select("*"),
-        supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
-      ]);
-      setAdmins(a ?? []);
-      setTables(t ?? []);
-      setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
-      const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-      setActiveAdminId(embr?.id ?? (a?.[0]?.id ?? null));
-      setLoading(false);
-    })();
-  }, []);
-
-  // pega telefone do usuário logado
-  useEffect(() => {
-    (async () => {
-      const { data: userRes } = await supabase.auth.getUser();
-      const uid = userRes?.user?.id;
-      if (!uid) return;
-      const { data } = await supabase
-        .from("users")
-        .select("phone")
-        .eq("auth_user_id", uid)
-        .maybeSingle();
-      setUserPhone((data?.phone || "").toString());
-    })();
-  }, []);
-
-  useEffect(() => {
-    const found = leads.find((x) => x.id === leadId);
-    setLeadInfo(found ? { nome: found.nome, telefone: found.telefone } : null);
-  }, [leadId, leads]);
-
-  const adminTables = useMemo(
-    () => tables.filter((t) => t.admin_id === activeAdminId),
-    [tables, activeAdminId]
-  );
-
-  // nomes de tabela distintos por segmento
-  const nomesTabelaSegmento = useMemo(() => {
-    const list = adminTables
-      .filter((t) => (segmento ? t.segmento === segmento : true))
-      .map((t) => t.nome_tabela);
-    return Array.from(new Set(list));
-  }, [adminTables, segmento]);
-
-  // variantes (linhas) do nome escolhido (prazo e taxas diferentes)
-  const variantesDaTabela = useMemo(() => {
-    return adminTables.filter(
-      (t) => t.segmento === segmento && t.nome_tabela === nomeTabela
-    );
-  }, [adminTables, segmento, nomeTabela]);
-
-  const tabelaSelecionada = useMemo(
-    () => tables.find((t) => t.id === tabelaId) || null,
-    [tables, tabelaId]
-  );
-
-  useEffect(() => {
-    if (!tabelaSelecionada) return;
-    setPrazoAte(tabelaSelecionada.prazo_limite);
-    setFaixa({
-      min: tabelaSelecionada.faixa_min,
-      max: tabelaSelecionada.faixa_max,
-    });
-    if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25)
-      setForma("Parcela Cheia");
-    if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50)
-      setForma("Parcela Cheia");
-  }, [tabelaSelecionada]); // eslint-disable-line
-
-  // valida % embutido
-  const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
-  useEffect(() => {
-    if (lanceEmbutPct !== lanceEmbutPctValid)
-      setLanceEmbutPct(lanceEmbutPctValid);
-  }, [lanceEmbutPct]); // eslint-disable-line
-
-  const prazoAviso =
-    prazoVenda > 0 && prazoAte > 0 && prazoVenda > prazoAte
-      ? "⚠️ Prazo da venda ultrapassa o Prazo Até da tabela selecionada."
-      : null;
-
-  const podeCalcular =
-    !!tabelaSelecionada &&
-    credito > 0 &&
-    prazoVenda > 0 &&
-    parcContemplacao > 0 &&
-    parcContemplacao < prazoVenda;
-
-  useEffect(() => {
-    if (!tabelaSelecionada || !podeCalcular) {
-      setCalc(null);
-      return;
-    }
-    const inp: CalcInput = {
-      credito,
-      prazoVenda,
-      forma,
-      seguro: seguroPrest,
-      segmento: tabelaSelecionada.segmento,
-      taxaAdmFull: tabelaSelecionada.taxa_adm_pct,
-      frPct: tabelaSelecionada.fundo_reserva_pct,
-      antecipPct: tabelaSelecionada.antecip_pct,
-      antecipParcelas: (tabelaSelecionada.antecip_parcelas as 0 | 1 | 2) ?? 0,
-      limitadorPct: tabelaSelecionada.limitador_parcela_pct,
-      seguroPrestPct: tabelaSelecionada.seguro_prest_pct,
-      lanceOfertPct,
-      lanceEmbutPct: lanceEmbutPctValid,
-      parcContemplacao,
-    };
-    setCalc(calcularSimulacao(inp));
-  }, [
-    tabelaSelecionada,
-    credito,
-    prazoVenda,
-    forma,
-    seguroPrest,
-    lanceOfertPct,
-    lanceEmbutPctValid,
-    parcContemplacao,
-  ]); // eslint-disable-line
-
-  async function salvarSimulacao() {
-    if (!tabelaSelecionada || !calc) return;
-    setSalvando(true);
-
-    const payload = {
-      admin_id: activeAdminId,
-      table_id: tabelaSelecionada.id,
-      lead_id: leadId || null,
-      lead_nome: leadInfo?.nome || null,
-      lead_telefone: leadInfo?.telefone || null,
-      grupo: grupo || null,
-      segmento: tabelaSelecionada.segmento,
-      nome_tabela: tabelaSelecionada.nome_tabela,
-      credito,
-      prazo_venda: prazoVenda,
-      forma_contratacao: forma,
-      seguro_prestamista: seguroPrest,
-      lance_ofertado_pct: lanceOfertPct,
-      lance_embutido_pct: lanceEmbutPctValid,
-      parcela_contemplacao: parcContemplacao,
-      valor_categoria: calc.valorCategoria,
-      parcela_ate_1_ou_2: calc.parcelaAte,
-      parcela_demais: calc.parcelaDemais,
-      lance_ofertado_valor: calc.lanceOfertadoValor,
-      lance_embutido_valor: calc.lanceEmbutidoValor,
-      lance_proprio_valor: calc.lanceProprioValor,
-      lance_percebido_pct: calc.lancePercebidoPct,
-      novo_credito: calc.novoCredito,
-      nova_parcela_sem_limite: calc.novaParcelaSemLimite,
-      parcela_limitante: calc.parcelaLimitante,
-      parcela_escolhida: calc.parcelaEscolhida,
-      saldo_devedor_final: calc.saldoDevedorFinal,
-      novo_prazo: calc.novoPrazo,
-    };
-
-    const { data, error } = await supabase
-      .from("sim_simulations")
-      .insert(payload)
-      .select("code")
-      .single();
-    setSalvando(false);
-    if (error) {
-      alert("Erro ao salvar simulação: " + error.message);
-      return;
-    }
-    setSimCode(data?.code ?? null);
-  }
-
-  function handleTableCreatedOrUpdated(newTable: SimTable) {
-    setTables((prev) => {
-      const exists = prev.find((t) => t.id === newTable.id);
-      if (exists) return prev.map((t) => (t.id === newTable.id ? newTable : t));
-      return [newTable, ...prev];
-    });
-  }
-
-  function handleTableDeleted(id: string) {
-    setTables((prev) => prev.filter((t) => t.id !== id));
-  }
-
-  // ===== Resumo da Proposta (texto copiável) =====
-  const resumoTexto = useMemo(() => {
-    if (!tabelaSelecionada || !calc || !podeCalcular) return "";
-
-    const bem = (() => {
-      const seg = (segmento || tabelaSelecionada.segmento || "").toLowerCase();
-      if (seg.includes("imó")) return "imóvel";
-      if (seg.includes("serv")) return "serviço";
-      if (seg.includes("moto")) return "motocicleta";
-      return "veículo";
-    })();
-
-    const primeiraParcelaLabel =
-      tabelaSelecionada.antecip_parcelas === 2
-        ? "Parcelas 1 e 2"
-        : tabelaSelecionada.antecip_parcelas === 1
-        ? "Parcela 1"
-        : "Parcela inicial";
-
-    const parcelaRestanteValor = brMoney(calc.parcelaEscolhida);
-    const segundaParcExtra =
-      calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao
-        ? ` (2ª parcela com antecipação: ${brMoney(
-            calc.segundaParcelaComAntecipacao
-          )})`
-        : "";
-
-    const telDigits = (userPhone || "").replace(/\D/g, "");
-    const wa = `https://wa.me/${telDigits || ""}`;
-
-    return (
-`🎯 Com a estratégia certa, você conquista seu ${bem} sem pagar juros, sem entrada e ainda economiza!
-
-📌 Confira essa simulação real:
-
-💰 Crédito contratado: ${brMoney(credito)}
-
-💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (Primeira parcela em até 3x sem juros no cartão)
-
-💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
-
-📈 Após a contemplação (prevista em ${parcContemplacao} meses):
-🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
-
-✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
-
-📆 Parcelas restantes (valor): ${parcelaRestanteValor}${segundaParcExtra}
-
-⏳ Prazo restante: ${calc.novoPrazo} meses
-
-💡 Um planejamento inteligente que cabe no seu bolso e acelera a realização do seu sonho!
-
-👉 Quer simular com o valor do seu ${bem} dos sonhos?
-Me chama aqui e eu te mostro o melhor caminho 👇
-${wa}`
-    );
-  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone]);
-
-  async function copiarResumo() {
-    try {
-      await navigator.clipboard.writeText(resumoTexto);
-      alert("Resumo copiado!");
-    } catch {
-      alert("Não foi possível copiar o resumo.");
-    }
-  }
-
-  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
-  function normalizarSegmento(seg?: string) {
-    const s = (seg || "").toLowerCase();
-    if (s.includes("imó")) return "Imóvel";
-    if (s.includes("auto")) return "Automóvel";
-    if (s.includes("moto")) return "Motocicleta";
-    if (s.includes("serv")) return "Serviços";
-    if (s.includes("pesad")) return "Pesados";
-    return (seg || "Automóvel");
-  }
-  function emojiDoSegmento(seg?: string) {
-    const s = (seg || "").toLowerCase();
-    if (s.includes("imó")) return "🏠";
-    if (s.includes("moto")) return "🏍️";
-    if (s.includes("serv")) return "✈️";
-    if (s.includes("pesad")) return "🚚";
-    return "🚗";
-  }
-
-  const propostaTexto = useMemo(() => {
-    if (!calc || !podeCalcular) return "";
-
-    const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
-    const seg = normalizarSegmento(segBase);
-    const emoji = emojiDoSegmento(segBase);
-
-    const parcela1 = brMoney(calc.parcelaAte);
-    const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
-    const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
-
-    const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
-
-    const grupoTxt = grupo || "—";
-
-    const whatsappFmt = formatPhoneBR(userPhone);
-    const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
-
-    return (
-`🚨OPORTUNIDADE 🚨
-
-🔥 PROPOSTA EMBRACON🔥
-
-Proposta ${seg}
-
-${emoji} Crédito: ${brMoney(calc.novoCredito)}
-💰 Parcela 1: ${parcela1} (Em até 3x no cartão)${linhaParc2}
-${linhaPrazo}
-💵 Lance Próprio: ${brMoney(calc.lanceProprioValor)}
-📢 Grupo: ${grupoTxt}
-
-🚨 POUCAS VAGAS DISPONÍVEIS🚨
-
-Assembleia ${assembleia}
-
-📲 Garanta sua vaga agora!${whatsappLine}
-
-Vantagens
-✅ Primeira parcela em até 3x no cartão
-✅ Parcelas acessíveis
-✅ Alta taxa de contemplação`
-    );
-  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone]);
-
-  async function copiarProposta() {
-    try {
-      await navigator.clipboard.writeText(propostaTexto);
-      alert("Texto copiado!");
-    } catch {
-      alert("Não foi possível copiar o texto.");
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="p-6 flex items-center gap-2">
-        <Loader2 className="h-5 w-5 animate-spin" /> Carregando simuladores...
-      </div>
-    );
-  }
-
-  const activeAdmin = admins.find((a) => a.id === activeAdminId);
+function RadialClock({ value, label }: { value: number; label: string }) {
+  const pct = Math.max(0, Math.min(100, value));
+  const radius = 44;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (pct / 100) * circumference;
 
   return (
-    <div className="p-6 space-y-4">
-      {/* topo: admins + botões */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-2">
-          {admins.map((a) => (
-            <Button
-              key={a.id}
-              variant={activeAdminId === a.id ? "default" : "secondary"}
-              onClick={() => {
-                setActiveAdminId(a.id);
-              }}
-              className="h-10 rounded-2xl px-4"
-            >
-              {a.name}
-            </Button>
-          ))}
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          {activeAdmin && (
-            <>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setMgrOpen(true)}
-                className="h-10 rounded-2xl px-4"
-              >
-                Gerenciar Tabelas
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() =>
-                  alert("Em breve: adicionar administradora.")
-                }
-                className="h-10 rounded-2xl px-4 whitespace-nowrap"
-              >
-                <Plus className="h-4 w-4 mr-1" /> + Add Administradora
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* layout em duas colunas */}
-      <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador */}
-        <div className="col-span-12 lg:col-span-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>Simuladores</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {activeAdmin ? (
-                activeAdmin.name === "Embracon" ? (
-                  <EmbraconSimulator
-                    leads={leads}
-                    adminTables={adminTables}
-                    nomesTabelaSegmento={nomesTabelaSegmento}
-                    variantesDaTabela={variantesDaTabela}
-                    tabelaSelecionada={tabelaSelecionada}
-                    prazoAte={prazoAte}
-                    faixa={faixa}
-                    leadId={leadId}
-                    setLeadId={setLeadId}
-                    leadInfo={leadInfo}
-                    grupo={grupo}
-                    setGrupo={setGrupo}
-                    segmento={segmento}
-                    setSegmento={(v) => {
-                      setSegmento(v);
-                      setNomeTabela("");
-                      setTabelaId("");
-                    }}
-                    nomeTabela={nomeTabela}
-                    setNomeTabela={(v) => {
-                      setNomeTabela(v);
-                      setTabelaId("");
-                    }}
-                    tabelaId={tabelaId}
-                    setTabelaId={setTabelaId}
-                    credito={credito}
-                    setCredito={setCredito}
-                    prazoVenda={prazoVenda}
-                    setPrazoVenda={setPrazoVenda}
-                    forma={forma}
-                    setForma={setForma}
-                    seguroPrest={seguroPrest}
-                    setSeguroPrest={setSeguroPrest}
-                    lanceOfertPct={lanceOfertPct}
-                    setLanceOfertPct={setLanceOfertPct}
-                    lanceEmbutPct={lanceEmbutPct}
-                    setLanceEmbutPct={setLanceEmbutPct}
-                    parcContemplacao={parcContemplacao}
-                    setParcContemplacao={setParcContemplacao}
-                    prazoAviso={prazoAviso}
-                    calc={calc}
-                    salvar={salvarSimulacao}
-                    salvando={salvando}
-                    simCode={simCode}
-                  />
-                ) : (
-                  <div className="text-sm text-muted-foreground">
-                    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
-                  </div>
-                )
-              ) : (
-                <div className="text-sm text-muted-foreground">
-                  Nenhuma administradora encontrada.
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Ações principais */}
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
-              {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Salvar Simulação
-            </Button>
-            {simCode && (
-              <span className="text-sm">
-                ✅ Salvo como <strong>Simulação #{simCode}</strong>
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* coluna direita: memória + textos */}
-        <div className="col-span-12 lg:col-span-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Memória de Cálculo</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {!tabelaSelecionada ? (
-                <div className="text-muted-foreground">
-                  Selecione uma tabela para ver os detalhes.
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>Crédito</div>
-                    <div className="text-right font-medium">
-                      {brMoney(credito || 0)}
-                    </div>
-                    <div>Prazo da Venda</div>
-                    <div className="text-right">{prazoVenda || "-"}</div>
-                    <div>Forma</div>
-                    <div className="text-right">{forma}</div>
-                    <div>Seguro / parcela</div>
-                    <div className="text-right">
-                      {seguroPrest
-                        ? pctHuman(tabelaSelecionada.seguro_prest_pct)
-                        : "—"}
-                    </div>
-                  </div>
-                  <hr className="my-2" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>Fundo Comum (fator)</div>
-                    <div className="text-right">
-                      {calc
-                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
-                        : "—"}
-                    </div>
-                    <div>Taxa Adm (total)</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.taxa_adm_pct)}
-                    </div>
-                    <div>TA efetiva</div>
-                    <div className="text-right">
-                      {calc ? pctHuman(calc.TA_efetiva) : "—"}
-                    </div>
-                    <div>Fundo Reserva</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
-                    </div>
-                    <div>Antecipação Adm</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
-                      {tabelaSelecionada.antecip_parcelas}x
-                    </div>
-                    <div>Limitador Parcela</div>
-                    <div className="text-right">
-                      {pctHuman(
-                        resolveLimitadorPct(
-                          tabelaSelecionada.limitador_parcela_pct,
-                          tabelaSelecionada.segmento,
-                          credito || 0
-                        )
-                      )}
-                    </div>
-                    <div>Valor de Categoria</div>
-                    <div className="text-right">
-                      {calc ? brMoney(calc.valorCategoria) : "—"}
-                    </div>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Resumo antigo */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Resumo da Proposta</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <textarea
-                className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
-                style={{ lineHeight: "1.6" }}
-                readOnly
-                value={resumoTexto}
-                placeholder="Preencha os campos da simulação para gerar o resumo."
-              />
-              <div className="flex items-center justify-end gap-2">
-                <Button onClick={copiarResumo} disabled={!resumoTexto}>
-                  Copiar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <Label>Assembleia (ex.: 15/10)</Label>
-                  <Input
-                    value={assembleia}
-                    onChange={(e) => setAssembleia(e.target.value)}
-                    placeholder="dd/mm"
-                  />
-                </div>
-              </div>
-              <textarea
-                className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
-                style={{ lineHeight: "1.6" }}
-                readOnly
-                value={propostaTexto}
-                placeholder="Preencha a simulação para gerar o texto."
-              />
-              <div className="flex items-center justify-end gap-2">
-                <Button onClick={copiarProposta} disabled={!propostaTexto}>
-                  Copiar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Overlay de gerenciamento de tabelas */}
-      {mgrOpen && activeAdmin && (
-        <TableManagerModal
-          admin={activeAdmin}
-          allTables={adminTables}
-          onClose={() => setMgrOpen(false)}
-          onCreatedOrUpdated={handleTableCreatedOrUpdated}
-          onDeleted={handleTableDeleted}
+    <div className="flex items-center gap-3 p-3 border rounded-xl">
+      <svg width="120" height="120" className="-rotate-90">
+        <circle cx="60" cy="60" r={radius} stroke="#e5e7eb" strokeWidth="10" fill="none" />
+        <circle
+          cx="60" cy="60" r={radius}
+          stroke="#111827" strokeWidth="10" fill="none"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
         />
-      )}
-    </div>
-  );
-}
-
-/* =============== Modal: base com ESC para fechar =============== */
-function ModalBase({
-  children,
-  onClose,
-  title,
-}: {
-  children: React.ReactNode;
-  onClose: () => void;
-  title: string;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="font-semibold">{title}</div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-muted"
-            aria-label="Fechar"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        {children}
+        <text x="60" y="65" textAnchor="middle" fontSize="18" fill="#111827" className="rotate-90">
+          {pct.toFixed(0)}%
+        </text>
+      </svg>
+      <div>
+        <div className="text-sm text-gray-500">{label}</div>
+        <div className="font-semibold">Progresso</div>
       </div>
     </div>
   );
 }
 
-/* ============== Modal: Gerenciar Tabelas (com paginação) ============== */
-function TableManagerModal({
-  admin,
-  allTables,
-  onClose,
-  onCreatedOrUpdated,
-  onDeleted,
+/* ========================= Upload arquivos ========================= */
+function UploadArea({
+  onConfirm,
 }: {
-  admin: Admin;
-  allTables: SimTable[];
-  onClose: () => void;
-  onCreatedOrUpdated: (t: SimTable) => void;
-  onDeleted: (id: string) => void;
+  onConfirm: (payload: {
+    data_pagamento_vendedor?: string;
+    valor_pago_vendedor?: number;
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
+  }) => Promise<void>;
 }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<SimTable | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
-
-  // reset página quando muda a lista
-  useEffect(() => setPage(1), [allTables.length]);
-
-  const grouped = useMemo(() => {
-    return [...allTables].sort((a, b) => {
-      const sa = (a.segmento + a.nome_tabela + String(a.prazo_limite)).toLowerCase();
-      const sb = (b.segmento + b.nome_tabela + String(b.prazo_limite)).toLowerCase();
-      return sa.localeCompare(sb);
-    });
-  }, [allTables]);
-
-  const totalPages = Math.max(1, Math.ceil(grouped.length / pageSize));
-  const pageItems = useMemo(
-    () => grouped.slice((page - 1) * pageSize, page * pageSize),
-    [grouped, page]
-  );
-
-  async function deletar(id: string) {
-    if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
-    setBusyId(id);
-
-    // 1) Exclui simulações dependentes (evita erro de FK)
-    const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
-    if (delSims.error) {
-      setBusyId(null);
-      alert("Erro ao excluir simulações vinculadas: " + delSims.error.message);
-      return;
-    }
-
-    // 2) Exclui a tabela
-    const { error } = await supabase.from("sim_tables").delete().eq("id", id);
-    setBusyId(null);
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-      return;
-    }
-    onDeleted(id);
-  }
+  const [dataPg, setDataPg] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [valorPg, setValorPg] = useState<string>("");
+  const [fileRecibo, setFileRecibo] = useState<File | null>(null);
+  const [fileComp, setFileComp] = useState<File | null>(null);
 
   return (
-    <ModalBase onClose={onClose} title="Gerenciador de Tabelas">
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm text-muted-foreground">
-            Admin ativa: <strong>{admin.name}</strong>
-          </div>
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setShowForm(true);
-            }}
-            className="h-10 rounded-2xl px-4"
-          >
-            <Plus className="h-4 w-4 mr-1" /> Nova Tabela
-          </Button>
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} /></div>
+        <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
+        <div className="flex items-end">
+          <Button onClick={() => onConfirm({
+            data_pagamento_vendedor: dataPg,
+            valor_pago_vendedor: valorPg ? parseFloat(valorPg.replace(/\./g, "").replace(",", ".")) : undefined,
+            recibo_file: fileRecibo,
+            comprovante_file: fileComp,
+          })}><Save className="w-4 h-4 mr-1" /> Confirmar pagamento</Button>
         </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><Label>Recibo assinado (PDF)</Label><Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} /></div>
+        <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
+      </div>
+      <div className="text-xs text-gray-500">Arquivos vão para o bucket <code>comissoes</code>.</div>
+    </div>
+  );
+}
 
-        <div className="overflow-auto rounded-lg border">
-          <table className="min-w-full text-sm">
-            <thead className="bg-muted/40">
-              <tr>
-                <th className="text-left p-2">Segmento</th>
-                <th className="text-left p-2">Tabela</th>
-                <th className="text-left p-2">Prazo</th>
-                <th className="text-left p-2">% Adm</th>
-                <th className="text-left p-2">% FR</th>
-                <th className="text-left p-2">% Antecip</th>
-                <th className="text-left p-2">Parc Ant.</th>
-                <th className="text-left p-2">% Limite</th>
-                <th className="text-left p-2">% Seguro</th>
-                <th className="text-right p-2">Ações</th>
+/* ========================= Página ========================= */
+export default function ComissoesPage() {
+  /* ---------- Filtros ---------- */
+  const [dtIni, setDtIni] = useState<string>(() => { const d = new Date(); d.setDate(1); return toDateInput(d); });
+  const [dtFim, setDtFim] = useState<string>(() => toDateInput(new Date()));
+  const [vendedorId, setVendedorId] = useState<string>("all");
+  const [status, setStatus] = useState<"all" | "a_pagar" | "pago" | "estorno">("all");
+  const [segmento, setSegmento] = useState<string>("all");
+  const [tabela, setTabela] = useState<string>("all");
+
+  /* ---------- Bases (cache) ---------- */
+  const [users, setUsers] = useState<User[]>([]);
+  const usersById = useMemo(() => {
+    const m: Record<string, User> = {};
+    users.forEach(u => { m[u.id] = u; });
+    return m;
+  }, [users]);
+  const userLabel = (id: string | null | undefined) => {
+    if (!id) return "—";
+    const u = usersById[id];
+    return (u?.nome?.trim() || u?.email?.trim() || id);
+  };
+
+  const [simTables, setSimTables] = useState<SimTable[]>([]);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const clientesById = useMemo(() => {
+    const m: Record<string, Cliente> = {};
+    clientes.forEach(c => { m[c.id] = c; });
+    return m;
+  }, [clientes]);
+  const clienteLabel = (id?: string | null) => (id ? (clientesById[id]?.nome?.trim() || "—") : "—");
+
+  /* ---------- Comissões / Vendas ---------- */
+  const [loading, setLoading] = useState<boolean>(false);
+  const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
+  const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
+  const [genBusy, setGenBusy] = useState<string | null>(null);
+
+  /* ---------- Regras ---------- */
+  const [openRules, setOpenRules] = useState<boolean>(false);
+  const [ruleVendorId, setRuleVendorId] = useState<string>("");
+  const [ruleSimTableId, setRuleSimTableId] = useState<string>("");
+  const [rulePercentHuman, setRulePercentHuman] = useState<string>("1,20");
+  const [ruleMeses, setRuleMeses] = useState<number>(1);
+  const [ruleFluxoPctHuman, setRuleFluxoPctHuman] = useState<string[]>(["100,00"]);
+  const [ruleObs, setRuleObs] = useState<string>("");
+  const [rulesDoVendedor, setRulesDoVendedor] = useState<RuleRow[]>([]);
+
+  /* ---------- Pagamentos ---------- */
+  const [openPay, setOpenPay] = useState<boolean>(false);
+  const [payCommissionId, setPayCommissionId] = useState<string>("");
+  const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
+  const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
+
+  /* ---------- Load bases ---------- */
+  useEffect(() => {
+    (async () => {
+      const [{ data: u }, { data: st }, { data: cl }] = await Promise.all([
+        supabase.from("users").select("id, nome, email").order("nome", { ascending: true }),
+        supabase.from("sim_tables").select("id, segmento, nome_tabela").order("segmento", { ascending: true }),
+        supabase.from("clientes").select("id, nome").order("nome", { ascending: true }),
+      ]);
+      setUsers((u || []) as User[]);
+      setSimTables((st || []) as SimTable[]);
+      setClientes((cl || []) as Cliente[]);
+    })();
+  }, []);
+
+  /* ---------- Carrega regras do vendedor (para ocultar já configuradas) ---------- */
+  useEffect(() => {
+    (async () => {
+      if (!ruleVendorId) { setRulesDoVendedor([]); return; }
+      const { data, error } = await supabase
+        .from("commission_rules")
+        .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
+        .eq("vendedor_id", ruleVendorId);
+      if (error) return;
+      const list = (data || []).map((r: any) => ({
+        ...r,
+        sim_segmento: simTables.find(st => st.id === r.sim_table_id)?.segmento,
+        sim_nome_tabela: simTables.find(st => st.id === r.sim_table_id)?.nome_tabela,
+      })) as RuleRow[];
+      setRulesDoVendedor(list);
+    })();
+  }, [ruleVendorId, simTables]);
+
+  /* ========================= Fetch principal ========================= */
+  async function fetchData() {
+    setLoading(true);
+    try {
+      // commissions (SEM embed)
+      let qb = supabase
+        .from("commissions")
+        .select("*")
+        .gte("data_venda", dtIni)
+        .lte("data_venda", dtFim);
+      if (status !== "all") qb = qb.eq("status", status);
+      if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
+      if (segmento !== "all") qb = qb.eq("segmento", segmento);
+      if (tabela !== "all") qb = qb.eq("tabela", tabela);
+
+      const { data: comms, error: errComms } = await qb.order("data_venda", { ascending: false });
+      if (errComms) throw errComms;
+
+      // flows
+      const commissionIds = (comms || []).map((c) => c.id);
+      const { data: flows, error: errFlows } = await supabase
+        .from("commission_flow")
+        .select("*")
+        .in("commission_id", commissionIds.length ? commissionIds : ["00000000-0000-0000-0000-000000000000"])
+        .order("mes", { ascending: true });
+      if (errFlows) throw errFlows;
+
+      const flowByCommission: Record<string, CommissionFlow[]> = {};
+      (flows || []).forEach((f) => {
+        if (!flowByCommission[f.commission_id]) flowByCommission[f.commission_id] = [];
+        flowByCommission[f.commission_id].push(f as CommissionFlow);
+      });
+
+      setRows((comms || []).map((c) => ({ ...(c as Commission), flow: flowByCommission[c.id] || [] })));
+
+      // vendas sem commission (SEM embed)
+      const { data: vendasPeriodo, error: errVendas } = await supabase
+        .from("vendas")
+        .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id")
+        .gte("data_venda", dtIni)
+        .lte("data_venda", dtFim)
+        .order("data_venda", { ascending: false });
+      if (errVendas) throw errVendas;
+
+      const { data: commVendaIds, error: errCommIds } = await supabase
+        .from("commissions")
+        .select("venda_id")
+        .gte("data_venda", dtIni)
+        .lte("data_venda", dtFim);
+      if (errCommIds) throw errCommIds;
+
+      const hasComm = new Set((commVendaIds || []).map((r: any) => r.venda_id));
+      const vendasFiltered = (vendasPeriodo || []).filter((v) => !hasComm.has(v.id));
+      const vendasFiltered2 = vendasFiltered.filter((v) =>
+        (vendedorId === "all" || v.vendedor_id === vendedorId) &&
+        (segmento === "all" || v.segmento === segmento) &&
+        (tabela === "all" || (v.tabela || "") === tabela)
+      );
+      setVendasSemCom(vendasFiltered2 as Venda[]);
+    } catch (e) {
+      console.error("[fetchData] erro:", e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [dtIni, dtFim, vendedorId, status, segmento, tabela]);
+
+  /* ========================= KPIs ========================= */
+  const kpi = useMemo(() => {
+    const vendasTotal = sum(rows.map((r) => r.valor_venda ?? r.base_calculo));
+    const comBruta = sum(rows.map((r) => r.valor_total));
+    const comPaga = sum(rows.filter((r) => r.status === "pago").map((r) => r.valor_total));
+    const comPendente = comBruta - comPaga;
+    const comLiquida = comBruta;
+    return { vendasTotal, comBruta, comLiquida, comPaga, comPendente };
+  }, [rows]);
+
+  /* ========================= Dashboards ========================= */
+  const vendedorAtual = useMemo(
+    () => userLabel(vendedorId === "all" ? null : vendedorId),
+    [usersById, vendedorId]
+  );
+
+  const now = new Date();
+  const yStart = new Date(now.getFullYear(), 0, 1);
+  const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), 1);
+
+  function isBetween(d?: string | null, start?: Date, end?: Date) {
+    if (!d) return false;
+    const x = new Date(d).getTime();
+    return x >= (start?.getTime() || 0) && x <= (end?.getTime() || now.getTime());
+  }
+
+  function totalsInRange(start: Date, end: Date) {
+    const sel = rows.filter((r) => isBetween(r.data_venda, start, end));
+    const tot = sum(sel.map((r) => r.valor_total));
+    const pago = sum(sel.filter((r) => r.status === "pago").map((r) => r.valor_total));
+    const pend = tot - pago;
+    const pct = tot > 0 ? (pago / tot) * 100 : 0;
+    return { tot, pago, pend, pct };
+  }
+
+  const range5y = totalsInRange(fiveYearsAgo, now);
+  const rangeY = totalsInRange(yStart, now);
+  const rangeM = totalsInRange(mStart, now);
+
+  /* ========================= Regras ========================= */
+  function onChangeMeses(n: number) {
+    setRuleMeses(n);
+    const arr = [...ruleFluxoPctHuman];
+    if (n > arr.length) while (arr.length < n) arr.push("0,00");
+    else arr.length = n;
+    setRuleFluxoPctHuman(arr);
+  }
+  const fluxoSomaPctHuman = useMemo(
+    () => ruleFluxoPctHuman.reduce((a, b) => a + (parseFloat((b || "0").replace(",", ".")) || 0), 0),
+    [ruleFluxoPctHuman]
+  );
+  const availableSimTables = useMemo(() => {
+    if (!ruleVendorId) return simTables;
+    const used = new Set(rulesDoVendedor.map(r => r.sim_table_id));
+    return simTables.filter(st => !used.has(st.id));
+  }, [ruleVendorId, rulesDoVendedor, simTables]);
+
+  function editarRegraExistente(r: RuleRow) {
+    setRuleSimTableId(r.sim_table_id);
+    setRulePercentHuman(toPctHuman(r.percent_padrao));
+    setRuleMeses(r.fluxo_meses);
+    setRuleFluxoPctHuman(r.fluxo_percentuais.map(toPctHuman));
+    setRuleObs(r.obs || "");
+    setOpenRules(true);
+  }
+
+  async function saveRule() {
+    if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
+    const percent_padrao = parsePctHuman(rulePercentHuman); // fração
+    const fluxo_percentuais = ruleFluxoPctHuman.map((x) => parsePctHuman(x));
+    const somaFluxo = fluxo_percentuais.reduce((a, b) => a + b, 0);
+    const eps = 1e-6;
+    if (Math.abs(somaFluxo - percent_padrao) > eps) {
+      return alert(`Soma do fluxo: ${toPctHuman(somaFluxo)}% (deve = ${toPctHuman(percent_padrao)}%)`);
+    }
+    const payload = {
+      vendedor_id: ruleVendorId,
+      sim_table_id: ruleSimTableId,
+      percent_padrao,
+      fluxo_meses: ruleMeses,
+      fluxo_percentuais,
+      obs: ruleObs || null,
+    };
+    console.debug("[commission_rules.upsert] payload:", payload);
+    const { error } = await supabase.from("commission_rules").upsert(payload, { onConflict: "vendedor_id,sim_table_id" });
+    if (error) return alert(error.message);
+
+    const { data: refill } = await supabase
+      .from("commission_rules")
+      .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
+      .eq("vendedor_id", ruleVendorId);
+
+    setRulesDoVendedor((refill || []).map((r: any) => ({
+      ...r,
+      sim_segmento: simTables.find(st => st.id === r.sim_table_id)?.segmento,
+      sim_nome_tabela: simTables.find(st => st.id === r.sim_table_id)?.nome_tabela,
+    })));
+    setOpenRules(false);
+  }
+
+  /* ========================= Pagamento ========================= */
+  async function openPaymentFor(commission: Commission) {
+    setPayCommissionId(commission.id);
+    const { data } = await supabase
+      .from("commission_flow")
+      .select("*")
+      .eq("commission_id", commission.id)
+      .order("mes", { ascending: true });
+    setPayFlow((data || []) as CommissionFlow[]);
+    setPaySelected({});
+    setOpenPay(true);
+  }
+
+  async function uploadToBucket(file: File): Promise<string | null> {
+    const path = `${payCommissionId}/${Date.now()}-${file.name}`;
+    const { data, error } = await supabase.storage.from("comissoes").upload(path, file, { upsert: false });
+    if (error) { alert("Falha ao enviar arquivo: " + error.message); return null; }
+    return data?.path || null;
+  }
+
+  async function paySelectedParcels(payload: {
+    data_pagamento_vendedor?: string;
+    valor_pago_vendedor?: number;
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
+  }) {
+    const updates: Partial<CommissionFlow>[] = [];
+    let reciboPath: string | null = null;
+    let compPath: string | null = null;
+    if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file);
+    if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file);
+
+    payFlow.forEach((f) => {
+      if (paySelected[f.id]) {
+        updates.push({
+          id: f.id,
+          data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
+          valor_pago_vendedor: payload.valor_pago_vendedor ?? f.valor_previsto ?? 0,
+          recibo_vendedor_url: reciboPath || f.recibo_vendedor_url,
+          comprovante_pagto_url: compPath || f.comprovante_pagto_url,
+        } as any);
+      }
+    });
+
+    if (!updates.length) return alert("Selecione pelo menos uma parcela.");
+    const { error } = await supabase.from("commission_flow").upsert(updates);
+    if (error) return alert(error.message);
+
+    // Atualiza status se todas pagas
+    const { data: updated } = await supabase
+      .from("commission_flow")
+      .select("*")
+      .eq("commission_id", payCommissionId);
+    const allPaid = (updated || []).every((f: any) => (f.valor_pago_vendedor ?? 0) > 0);
+    if (allPaid) {
+      await supabase
+        .from("commissions")
+        .update({ status: "pago", data_pagamento: toDateInput(new Date()) })
+        .eq("id", payCommissionId);
+    }
+
+    setOpenPay(false);
+    fetchData();
+  }
+
+  /* ========================= Gerar Comissão a partir da Venda ========================= */
+  async function gerarComissaoDeVenda(venda: Venda) {
+    try {
+      setGenBusy(venda.id);
+
+      // evita duplicidade
+      const { data: already } = await supabase
+        .from("commissions")
+        .select("id")
+        .eq("venda_id", venda.id)
+        .limit(1);
+      if (already && already.length) {
+        alert("Já existe uma comissão para esta venda.");
+        return;
+      }
+
+      if (!venda.vendedor_id) { alert("Venda sem vendedor vinculado."); return; }
+      if (!venda.valor_venda || venda.valor_venda <= 0) { alert("Venda sem valor de crédito válido."); return; }
+
+      // tenta descobrir sim_table_id pela tabela (se existir)
+      let simTableId: string | null = null;
+      if (venda.tabela) {
+        const { data: st } = await supabase
+          .from("sim_tables")
+          .select("id")
+          .eq("nome_tabela", venda.tabela)
+          .limit(1);
+        simTableId = st?.[0]?.id ?? null;
+      }
+
+      // pega percent padrão da regra (se existir)
+      let percent_aplicado: number | null = null;
+      if (simTableId) {
+        const { data: rule } = await supabase
+          .from("commission_rules")
+          .select("percent_padrao")
+          .eq("vendedor_id", venda.vendedor_id)
+          .eq("sim_table_id", simTableId)
+          .limit(1);
+        percent_aplicado = rule?.[0]?.percent_padrao ?? null;
+      }
+
+      const insert = {
+        venda_id: venda.id,
+        vendedor_id: venda.vendedor_id,
+        sim_table_id: simTableId,
+        data_venda: venda.data_venda,
+        segmento: venda.segmento,
+        tabela: venda.tabela,
+        administradora: venda.administradora,
+        valor_venda: venda.valor_venda,
+        base_calculo: venda.valor_venda,
+        percent_aplicado,
+        valor_total:
+          percent_aplicado && venda.valor_venda
+            ? Math.round(venda.valor_venda * percent_aplicado * 100) / 100
+            : null,
+        status: "a_pagar" as const,
+      };
+
+      console.debug("[commissions.insert] insert:", insert);
+      const { error } = await supabase.from("commissions").insert(insert as any);
+      if (error) {
+        if (String((error as any).code) === "23503") {
+          alert("FK inválida: verifique se o vendedor existe em 'users' e/ou se a Tabela (SimTable) está correta.");
+        } else {
+          alert("Erro ao criar a comissão: " + error.message);
+        }
+        return;
+      }
+
+      await fetchData();
+    } finally {
+      setGenBusy(null);
+    }
+  }
+
+  /* ========================= CSV Export (humanizado) ========================= */
+  function exportCSV() {
+    const header = [
+      "data_venda","vendedor","segmento","tabela","administradora",
+      "credito_brl","percent_aplicado_pct","valor_comissao_brl","status","data_pagamento"
+    ];
+    const lines = rows.map(r => ([
+      r.data_venda,
+      userLabel(r.vendedor_id),
+      (r.segmento||""),
+      (r.tabela||""),
+      (r.administradora||""),
+      BRL(r.valor_venda ?? r.base_calculo ?? 0),
+      pct100(r.percent_aplicado ?? 0),
+      BRL(r.valor_total ?? 0),
+      r.status,
+      r.data_pagamento ?? ""
+    ].map(v => typeof v === "string" ? `"${v}"` : v).join(",")));
+    const csv = [header.join(","), ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `comissoes_${dtIni}_${dtFim}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /* ========================= PDF Recibo ========================= */
+  async function downloadReceiptPDF(comm: Commission, itens: CommissionFlow[]) {
+    const vendedor = userLabel(comm.vendedor_id);
+    const today = new Date();
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+    doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+    doc.text("RECIBO DE COMISSÃO", 40, 40);
+    doc.setFontSize(10); doc.setFont("helvetica", "normal");
+
+    const pagador = [
+      "Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA.",
+      "CNPJ: 57.942.043/0001-03",
+      "Endereço: Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO. CEP: 76907-532",
+    ];
+    const recebedor = [
+      `Nome do Recebedor: ${vendedor}`,
+      "CPF/CNPJ: —",
+      "Endereço: —",
+    ];
+    const y1 = 65; pagador.forEach((l, i) => doc.text(l, 40, y1 + i * 14));
+    const baseY = y1 + pagador.length * 14 + 10;
+    recebedor.forEach((l, i) => doc.text(l, 40, baseY + i * 14));
+
+    const tableStartY = baseY + recebedor.length * 14 + 20;
+    autoTable(doc, {
+      startY: tableStartY,
+      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]],
+      body: itens.map((it) => [
+        comm.tabela || "—",
+        it.mes,
+        pct100(it.percentual),
+        BRL(it.valor_previsto),
+        it.data_pagamento_vendedor ? new Date(it.data_pagamento_vendedor).toLocaleDateString("pt-BR") : "—",
+      ]),
+      styles: { font: "helvetica", fontSize: 10 },
+      headStyles: { fillColor: [30, 41, 63] },
+    });
+
+    const total = sum(itens.map((i) => i.valor_pago_vendedor ?? i.valor_previsto ?? 0));
+    const endY = (doc as any).lastAutoTable.finalY + 10;
+
+    doc.setFont("helvetica", "bold");
+    doc.text(`Valor líquido da comissão: ${BRL(total)}`, 40, endY + 12);
+
+    doc.setFont("helvetica", "normal");
+    doc.text(`Forma de pagamento: PIX`, 40, endY + 28);
+    doc.text(`Data do pagamento: ${today.toLocaleDateString("pt-BR")}`, 40, endY + 44);
+
+    const signY = endY + 110;
+    doc.line(40, signY, 260, signY);
+    doc.text(`${vendedor}`, 40, signY + 14);
+
+    doc.setFontSize(9);
+    doc.text("Consulmax Consórcios • consulmaxconsorcios.com.br", 40, 812);
+    doc.save(`recibo_comissao_${vendedor}_${toDateInput(today)}.pdf`);
+  }
+
+  /* ========================= Render ========================= */
+  return (
+    <div className="p-4 space-y-4">
+      {/* Filtros */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2">
+            <FilterIcon className="w-5 h-5" />
+            Filtros
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-3">
+          <div><Label>De</Label><Input type="date" value={dtIni} onChange={(e) => setDtIni(e.target.value)} /></div>
+          <div><Label>Até</Label><Input type="date" value={dtFim} onChange={(e) => setDtFim(e.target.value)} /></div>
+          <div>
+            <Label>Vendedor</Label>
+            <Select value={vendedorId} onValueChange={setVendedorId}>
+              <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                {users.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.nome?.trim() || u.email?.trim() || u.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Segmento</Label>
+            <Select value={segmento} onValueChange={setSegmento}>
+              <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                {Array.from(new Set(simTables.map((t) => t.segmento))).filter(Boolean).map((seg) =>
+                  <SelectItem key={seg} value={seg}>{seg}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Tabela</Label>
+            <Select value={tabela} onValueChange={setTabela}>
+              <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas</SelectItem>
+                {Array.from(new Set(simTables.map((t) => t.nome_tabela))).filter(Boolean).map((tab) =>
+                  <SelectItem key={tab} value={tab}>{tab}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Status</Label>
+            <Select value={status} onValueChange={(v) => setStatus(v as any)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="a_pagar">A pagar</SelectItem>
+                <SelectItem value="pago">Pago</SelectItem>
+                <SelectItem value="estorno">Estorno</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="md:col-span-6 flex gap-2 justify-end">
+            <Button variant="secondary" onClick={() => setOpenRules(true)}>
+              <Settings className="w-4 h-4 mr-1" /> Regras de Comissão
+            </Button>
+            <Button onClick={fetchData}><Loader2 className="w-4 h-4 mr-1" /> Atualizar</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Dashboards por recorte */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <Card>
+          <CardHeader className="pb-1"><CardTitle>Nos últimos 5 anos — {vendedorAtual}</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <Metric title="Total" value={BRL(range5y.tot)} />
+              <Metric title="Recebido" value={BRL(range5y.pago)} />
+              <Metric title="A receber" value={BRL(range5y.pend)} />
+            </div>
+            <RadialClock value={range5y.pct} label="Recebido / Total (5 anos)" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-1"><CardTitle>No ano — {vendedorAtual}</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <Metric title="Total" value={BRL(rangeY.tot)} />
+              <Metric title="Recebido" value={BRL(rangeY.pago)} />
+              <Metric title="A receber" value={BRL(rangeY.pend)} />
+            </div>
+            <RadialClock value={rangeY.pct} label="Recebido / Total (ano)" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-1"><CardTitle>No mês — {vendedorAtual}</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <Metric title="Total" value={BRL(rangeM.tot)} />
+              <Metric title="Recebido" value={BRL(rangeM.pago)} />
+              <Metric title="A receber" value={BRL(rangeM.pend)} />
+            </div>
+            <RadialClock value={rangeM.pct} label="Recebido / Total (mês)" />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Cards de Resumo gerais */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <Card><CardHeader className="pb-1"><CardTitle>💰 Vendas no Período</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>🧾 Comissão Bruta</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>✅ Comissão Líquida</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comLiquida)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>📤 Comissão Paga</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPaga)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>⏳ Comissão Pendente</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
+      </div>
+
+      {/* Tabela: Vendas sem comissão */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center justify-between">
+            <span>Vendas sem comissão (período & filtros)</span>
+            <Button variant="outline" onClick={exportCSV}>
+              <Download className="w-4 h-4 mr-1" /> Exportar CSV
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <table className="min-w-[1100px] w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="p-2 text-left">Data</th>
+                <th className="p-2 text-left">Vendedor</th>
+                <th className="p-2 text-left">Cliente</th>
+                <th className="p-2 text-left">Nº Proposta</th>
+                <th className="p-2 text-left">Administradora</th>
+                <th className="p-2 text-left">Segmento</th>
+                <th className="p-2 text-left">Tabela</th>
+                <th className="p-2 text-right">Crédito</th>
+                <th className="p-2 text-left">Ação</th>
               </tr>
             </thead>
             <tbody>
-              {pageItems.map((t) => (
-                <tr key={t.id} className="border-t">
-                  <td className="p-2">{t.segmento}</td>
-                  <td className="p-2">{t.nome_tabela}</td>
-                  <td className="p-2">{t.prazo_limite}</td>
-                  <td className="p-2">{pctHuman(t.taxa_adm_pct)}</td>
-                  <td className="p-2">{pctHuman(t.fundo_reserva_pct)}</td>
-                  <td className="p-2">{pctHuman(t.antecip_pct)}</td>
-                  <td className="p-2">{t.antecip_parcelas}</td>
-                  <td className="p-2">{pctHuman(t.limitador_parcela_pct)}</td>
-                  <td className="p-2">{pctHuman(t.seguro_prest_pct)}</td>
+              {vendasSemCom.length === 0 && (
+                <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>
+              )}
+              {vendasSemCom.map(v => (
+                <tr key={v.id} className="border-b">
+                  <td className="p-2">{new Date(v.data_venda).toLocaleDateString("pt-BR")}</td>
+                  <td className="p-2">{userLabel(v.vendedor_id)}</td>
+                  <td className="p-2">{clienteLabel(v.cliente_lead_id)}</td>
+                  <td className="p-2">{v.numero_proposta || "—"}</td>
+                  <td className="p-2">{v.administradora || "—"}</td>
+                  <td className="p-2">{v.segmento || "—"}</td>
+                  <td className="p-2">{v.tabela || "—"}</td>
+                  <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
                   <td className="p-2">
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => {
-                          setEditing(t);
-                          setShowForm(true);
-                        }}
-                        className="h-9 rounded-xl px-3"
-                      >
-                        <Pencil className="h-4 w-4 mr-1" /> Editar
+                    <Button
+                      size="sm"
+                      onClick={() => gerarComissaoDeVenda(v)}
+                      disabled={genBusy === v.id}
+                    >
+                      {genBusy === v.id ? (
+                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      ) : (
+                        <PlusCircle className="w-4 h-4 mr-1" />
+                      )}
+                      Gerar Comissão
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      {/* Tabela Detalhada de Comissões */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center justify-between">
+            <span>Detalhamento de Comissões</span>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={exportCSV}>
+                <Download className="w-4 h-4 mr-1" /> Exportar CSV
+              </Button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <table className="min-w-[1100px] w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="p-2 text-left">Data</th>
+                <th className="p-2 text-left">Vendedor</th>
+                <th className="p-2 text-left">Segmento</th>
+                <th className="p-2 text-left">Tabela</th>
+                <th className="p-2 text-right">Crédito</th>
+                <th className="p-2 text-right">% Comissão</th>
+                <th className="p-2 text-right">Valor Comissão</th>
+                <th className="p-2 text-left">Status</th>
+                <th className="p-2 text-left">Pagamento</th>
+                <th className="p-2 text-left">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={10} className="p-4">
+                  <Loader2 className="animate-spin inline mr-2" /> Carregando...
+                </td></tr>
+              )}
+              {!loading && rows.length === 0 && (
+                <tr><td colSpan={10} className="p-4 text-gray-500">Sem registros.</td></tr>
+              )}
+              {!loading && rows.map((r) => (
+                <tr key={r.id} className="border-b hover:bg-gray-50">
+                  <td className="p-2">{r.data_venda ? new Date(r.data_venda).toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                  <td className="p-2">{r.segmento || "—"}</td>
+                  <td className="p-2">{r.tabela || "—"}</td>
+                  <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
+                  <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
+                  <td className="p-2 text-right">{BRL(r.valor_total)}</td>
+                  <td className="p-2">{r.status}</td>
+                  <td className="p-2">{r.data_pagamento ? new Date(r.data_pagamento).toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="p-2">
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => openPaymentFor(r)}>
+                        <DollarSign className="w-4 h-4 mr-1" /> Registrar pagamento
                       </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={busyId === t.id}
-                        onClick={() => deletar(t.id)}
-                        className="h-9 rounded-xl px-3"
-                      >
-                        {busyId === t.id ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4 mr-1" />
-                        )}
-                        Excluir
+                      <Button size="sm" variant="outline" onClick={async () => {
+                        const { data } = await supabase
+                          .from("commission_flow")
+                          .select("*")
+                          .eq("commission_id", r.id)
+                          .order("mes", { ascending: true });
+                        await downloadReceiptPDF(r, (data || []) as CommissionFlow[]);
+                      }}>
+                        <FileText className="w-4 h-4 mr-1" /> Recibo (PDF)
                       </Button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {pageItems.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={10}
-                    className="p-4 text-center text-muted-foreground"
-                  >
-                    Sem tabelas para esta administradora.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
-        </div>
-
-        {/* paginação */}
-        <div className="flex items-center justify-between mt-3 text-sm">
-          <div>
-            {grouped.length > 0 && (
-              <>
-                Mostrando{" "}
-                <strong>
-                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}
-                </strong>{" "}
-                de <strong>{grouped.length}</strong>
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
-              Anterior
-            </Button>
-            <span>
-              Página {page} de {totalPages}
-            </span>
-            <Button
-              variant="secondary"
-              className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
-              Próxima
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {showForm && (
-        <TableFormOverlay
-          adminId={admin.id}
-          initial={editing || undefined}
-          onClose={() => setShowForm(false)}
-          onSaved={(t) => {
-            onCreatedOrUpdated(t);
-            setShowForm(false);
-          }}
-        />
-      )}
-    </ModalBase>
-  );
-}
-
-/* ===== Overlay de Formulário (Novo / Editar) de Tabela ==== */
-function TableFormOverlay({
-  adminId,
-  initial,
-  onSaved,
-  onClose,
-}: {
-  adminId: string;
-  initial?: SimTable;
-  onSaved: (t: SimTable) => void;
-  onClose: () => void;
-}) {
-  const [segmento, setSegmento] = useState(initial?.segmento || "Imóvel Estendido");
-  const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
-  const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
-  const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
-  const [prazoLimite, setPrazoLimite] = useState(initial?.prazo_limite ?? 240);
-
-  const [taxaAdmHuman, setTaxaAdmHuman] = useState(formatPctInputFromDecimal(initial?.taxa_adm_pct ?? 0.22));
-  const [frHuman, setFrHuman] = useState(formatPctInputFromDecimal(initial?.fundo_reserva_pct ?? 0.02));
-  const [antecipHuman, setAntecipHuman] = useState(formatPctInputFromDecimal(initial?.antecip_pct ?? 0.02));
-  const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
-  const [limHuman, setLimHuman] = useState(formatPctInputFromDecimal(initial?.limitador_parcela_pct ?? 0.002565));
-  const [seguroHuman, setSeguroHuman] = useState(formatPctInputFromDecimal(initial?.seguro_prest_pct ?? 0.00061));
-
-  const [perEmbutido, setPerEmbutido] = useState(initial?.permite_lance_embutido ?? true);
-  const [perFixo25, setPerFixo25] = useState(initial?.permite_lance_fixo_25 ?? true);
-  const [perFixo50, setPerFixo50] = useState(initial?.permite_lance_fixo_50 ?? true);
-  const [perLivre, setPerLivre] = useState(initial?.permite_lance_livre ?? true);
-
-  const [cParcelaCheia, setCParcelaCheia] = useState(initial?.contrata_parcela_cheia ?? true);
-  const [cRed25, setCRed25] = useState(initial?.contrata_reduzida_25 ?? true);
-  const [cRed50, setCRed50] = useState(initial?.contrata_reduzida_50 ?? true);
-  const [indices, setIndices] = useState((initial?.indice_correcao || ["IPCA"]).join(", "));
-
-  const [saving, setSaving] = useState(false);
-
-  // ESC para fechar
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  async function salvar() {
-    setSaving(true);
-    const payload: Omit<SimTable, "id"> = {
-      admin_id: adminId,
-      segmento,
-      nome_tabela: nome,
-      faixa_min: Number(faixaMin) || 0,
-      faixa_max: Number(faixaMax) || 0,
-      prazo_limite: Number(prazoLimite) || 0,
-      taxa_adm_pct: parsePctInputToDecimal(taxaAdmHuman),
-      fundo_reserva_pct: parsePctInputToDecimal(frHuman),
-      antecip_pct: parsePctInputToDecimal(antecipHuman),
-      antecip_parcelas: Number(antecipParcelas) || 0,
-      limitador_parcela_pct: parsePctInputToDecimal(limHuman),
-      seguro_prest_pct: parsePctInputToDecimal(seguroHuman),
-      permite_lance_embutido: perEmbutido,
-      permite_lance_fixo_25: perFixo25,
-      permite_lance_fixo_50: perFixo50,
-      permite_livre: perLivre as any, // compat
-      permite_lance_livre: perLivre,
-      contrata_parcela_cheia: cParcelaCheia,
-      contrata_reduzida_25: cRed25,
-      contrata_reduzida_50: cRed50,
-      indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
-    };
-
-    let res;
-    if (initial) {
-      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
-    } else {
-      res = await supabase.from("sim_tables").insert(payload).select("*").single();
-    }
-    setSaving(false);
-    if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
-    onSaved(res.data as SimTable);
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="font-semibold">{initial ? "Editar Tabela" : "Nova Tabela"}</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="p-4 grid gap-3 md:grid-cols-4">
-          <div><Label>Segmento</Label><Input value={segmento} onChange={(e) => setSegmento(e.target.value)} /></div>
-          <div><Label>Nome da Tabela</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
-          <div><Label>Faixa (mín)</Label><Input type="number" value={faixaMin} onChange={(e) => setFaixaMin(Number(e.target.value))} /></div>
-          <div><Label>Faixa (máx)</Label><Input type="number" value={faixaMax} onChange={(e) => setFaixaMax(Number(e.target.value))} /></div>
-          <div><Label>Prazo Limite (meses)</Label><Input type="number" value={prazoLimite} onChange={(e) => setPrazoLimite(Number(e.target.value))} /></div>
-
-          <div><Label>% Taxa Adm</Label><Input value={taxaAdmHuman} onChange={(e) => setTaxaAdmHuman(e.target.value)} /></div>
-          <div><Label>% Fundo Reserva</Label><Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} /></div>
-          <div><Label>% Antecipação da Adm</Label><Input value={antecipHuman} onChange={(e) => setAntecipHuman(e.target.value)} /></div>
-          <div><Label>Parcelas da Antecipação</Label><Input type="number" value={antecipParcelas} onChange={(e) => setAntecipParcelas(Number(e.target.value))} /></div>
-
-          <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
-          <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
-
-          <div className="col-span-2">
-            <Label>Lances Permitidos</Label>
-            <div className="flex gap-4 mt-1 text-sm">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perEmbutido} onChange={(e) => setPerEmbutido(e.target.checked)} />Embutido</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo25} onChange={(e) => setPerFixo25(e.target.checked)} />Fixo 25%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo50} onChange={(e) => setPerFixo50(e.target.checked)} />Fixo 50%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perLivre} onChange={(e) => setPerLivre(e.target.checked)} />Livre</label>
-            </div>
-          </div>
-
-          <div className="col-span-2">
-            <Label>Formas de Contratação</Label>
-            <div className="flex gap-4 mt-1 text-sm">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={cParcelaCheia} onChange={(e) => setCParcelaCheia(e.target.checked)} />Parcela Cheia</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={cRed25} onChange={(e) => setCRed25(e.target.checked)} />Reduzida 25%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={cRed50} onChange={(e) => setCRed50(e.target.checked)} />Reduzida 50%</label>
-            </div>
-          </div>
-
-          <div className="md:col-span-4">
-            <Label>Índice de Correção (separar por vírgula)</Label>
-            <Input value={indices} onChange={(e) => setIndices(e.target.value)} placeholder="IPCA, INCC, IGP-M" />
-          </div>
-
-          <div className="md:col-span-4 flex gap-2">
-            <Button onClick={salvar} disabled={saving} className="h-10 rounded-2xl px-4">
-              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {initial ? "Salvar alterações" : "Salvar Tabela"}
-            </Button>
-            <Button variant="secondary" onClick={onClose} disabled={saving} className="h-10 rounded-2xl px-4">
-              Cancelar
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ====================== Embracon UI ====================== */
-type EmbraconProps = {
-  leads: Lead[];
-  adminTables: SimTable[];
-  nomesTabelaSegmento: string[];
-  variantesDaTabela: SimTable[];
-  tabelaSelecionada: SimTable | null;
-  prazoAte: number;
-  faixa: { min: number; max: number } | null;
-  leadId: string; setLeadId: (v: string) => void;
-  leadInfo: { nome: string; telefone?: string | null } | null;
-  grupo: string; setGrupo: (v: string) => void;
-
-  segmento: string; setSegmento: (v: string) => void;
-  nomeTabela: string; setNomeTabela: (v: string) => void;
-  tabelaId: string; setTabelaId: (v: string) => void;
-
-  credito: number; setCredito: (v: number) => void;
-  prazoVenda: number; setPrazoVenda: (v: number) => void;
-  forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
-  seguroPrest: boolean; setSeguroPrest: (v: boolean) => void;
-
-  lanceOfertPct: number; setLanceOfertPct: (v: number) => void;
-  lanceEmbutPct: number; setLanceEmbutPct: (v: number) => void;
-  parcContemplacao: number; setParcContemplacao: (v: number) => void;
-
-  prazoAviso: string | null;
-  calc: ReturnType<typeof calcularSimulacao> | null;
-
-  salvar: () => Promise<void>;
-  salvando: boolean;
-  simCode: number | null;
-};
-
-function EmbraconSimulator(p: EmbraconProps) {
-  return (
-    <div className="space-y-6">
-      {/* Lead */}
-      <Card>
-        <CardHeader><CardTitle>Embracon</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
-            <div>
-              <Label>Selecionar Lead</Label>
-              <select
-                className="w-full h-10 border rounded-md px-3"
-                value={p.leadId}
-                onChange={(e) => p.setLeadId(e.target.value)}
-              >
-                <option value="">Escolha um lead</option>
-                {p.leads.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.nome}
-                  </option>
-                ))}
-              </select>
-              {p.leadInfo && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-                </p>
-              )}
-            </div>
-            <div>
-              <Label>Nº do Grupo (opcional)</Label>
-              <Input
-                value={p.grupo}
-                onChange={(e) => p.setGrupo(e.target.value)}
-                placeholder="ex.: 9957"
-              />
-            </div>
-          </div>
         </CardContent>
       </Card>
 
-      {/* Plano */}
-      {p.leadId ? (
-        <>
-          <Card>
-            <CardHeader><CardTitle>Configurações do Plano</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-4">
+      {/* Dialog: Regras de Comissão (central, com scroll) */}
+      <Dialog open={openRules} onOpenChange={setOpenRules}>
+        <DialogContent className="max-w-xl p-0 overflow-hidden">
+          <div className="max-h-[80vh] overflow-y-auto p-6">
+            <DialogHeader className="mb-2">
+              <DialogTitle>Regras de Comissão</DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4">
               <div>
-                <Label>Segmento</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.segmento}
-                  onChange={(e) => p.setSegmento(e.target.value)}
-                >
-                  <option value="">Selecione o segmento</option>
-                  {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map(
-                    (s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    )
-                  )}
-                </select>
+                <Label>Vendedor</Label>
+                <Select value={ruleVendorId} onValueChange={setRuleVendorId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.nome?.trim() || u.email?.trim() || u.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>
-                <Label>Tabela</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.nomeTabela}
-                  disabled={!p.segmento}
-                  onChange={(e) => p.setNomeTabela(e.target.value)}
-                >
-                  <option value="">
-                    {p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}
-                  </option>
-                  {p.nomesTabelaSegmento.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
+                <Label>Tabela (SimTables) — apenas disponíveis</Label>
+                <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {availableSimTables.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.segmento} — {t.nome_tabela}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>
-                <Label>Prazo Até</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.tabelaId}
-                  disabled={!p.nomeTabela}
-                  onChange={(e) => p.setTabelaId(e.target.value)}
-                >
-                  <option value="">
-                    {p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}
-                  </option>
-                  {p.variantesDaTabela.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR{" "}
-                      {pctHuman(t.fundo_reserva_pct)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <Label>Faixa de Crédito</Label>
+                <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
                 <Input
-                  value={p.faixa ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}` : ""}
-                  readOnly
+                  value={rulePercentHuman}
+                  onChange={(e) => setRulePercentHuman(e.target.value)}
+                  placeholder="1,20"
                 />
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Venda */}
-          <Card>
-            <CardHeader><CardTitle>Configurações da Venda</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-4">
-              <div>
-                <Label>Valor do Crédito</Label>
-                <MoneyInput value={p.credito || 0} onChange={p.setCredito} />
-              </div>
 
               <div>
-                <Label>Prazo da Venda (meses)</Label>
+                <Label>Nº de meses do fluxo</Label>
                 <Input
                   type="number"
-                  value={p.prazoVenda || ""}
-                  onChange={(e) => p.setPrazoVenda(Number(e.target.value))}
+                  min={1}
+                  max={36}
+                  value={ruleMeses}
+                  onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
                 />
-                {p.prazoAviso && (
-                  <p className="text-xs text-yellow-600 mt-1">{p.prazoAviso}</p>
-                )}
               </div>
 
-              <div>
-                <Label>Forma de Contratação</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.forma}
-                  disabled={!p.tabelaSelecionada}
-                  onChange={(e) => p.setForma(e.target.value as any)}
-                >
-                  <option value="">Selecione</option>
-                  {p.tabelaSelecionada?.contrata_parcela_cheia && (
-                    <option value="Parcela Cheia">Parcela Cheia</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_25 && (
-                    <option value="Reduzida 25%">Reduzida 25%</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_50 && (
-                    <option value="Reduzida 50%">Reduzida 50%</option>
-                  )}
-                </select>
-              </div>
-
-              <div>
-                <Label>Seguro Prestamista</Label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    className={
-                      p.seguroPrest
-                        ? "bg-red-600 text-white hover:bg-red-700"
-                        : "bg-muted text-foreground/60 hover:bg-muted"
-                    }
-                    onClick={() => p.setSeguroPrest(true)}
-                  >
-                    Sim
-                  </Button>
-                  <Button
-                    type="button"
-                    className={
-                      !p.seguroPrest
-                        ? "bg-red-600 text-white hover:bg-red-700"
-                        : "bg-muted text-foreground/60 hover:bg-muted"
-                    }
-                    onClick={() => p.setSeguroPrest(false)}
-                  >
-                    Não
-                  </Button>
+              <div className="space-y-2">
+                <Label>Fluxo do pagamento — informe os percentuais (M1..Mn)</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {Array.from({ length: ruleMeses }).map((_, i) => (
+                    <Input
+                      key={i}
+                      value={ruleFluxoPctHuman[i] || "0,00"}
+                      onChange={(e) => {
+                        const arr = [...ruleFluxoPctHuman];
+                        arr[i] = e.target.value;
+                        setRuleFluxoPctHuman(arr);
+                      }}
+                      placeholder={`Ex.: 0,75`}
+                    />
+                  ))}
+                </div>
+                <div className="text-xs text-gray-600">
+                  Soma do fluxo: <b>{fluxoSomaPctHuman.toFixed(2)}%</b> (deve = {parseFloat((rulePercentHuman || "0").replace(",", "."))?.toFixed(2)}%)
                 </div>
               </div>
 
-              {p.tabelaSelecionada && (
-                <div className="md:col-span-4 grid grid-cols-2 gap-3 text-sm bg-muted/30 rounded-lg p-3">
-                  <div>
-                    % Taxa de Adm:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong>
-                  </div>
-                  <div>
-                    % Fundo Reserva:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong>
-                  </div>
-                  <div>
-                    % Antecipação:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> •
-                    Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong>
-                  </div>
-                  <div>
-                    Limitador de Parcela:{" "}
-                    <strong>
-                      {pctHuman(
-                        resolveLimitadorPct(
-                          p.tabelaSelecionada.limitador_parcela_pct,
-                          p.tabelaSelecionada.segmento,
-                          p.credito || 0
-                        )
-                      )}
-                    </strong>
-                  </div>
+              <div>
+                <Label>Observações</Label>
+                <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
+              </div>
+
+              {/* Regras existentes para este vendedor */}
+              {!!ruleVendorId && (
+                <div className="mt-2">
+                  <div className="text-sm font-semibold mb-2">Regras existentes</div>
+                  {rulesDoVendedor.length === 0 ? (
+                    <div className="text-xs text-gray-500">Nenhuma regra cadastrada.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {rulesDoVendedor.map((r) => (
+                        <div key={r.sim_table_id} className="flex items-center justify-between p-2 border rounded-md">
+                          <div className="text-sm">
+                            <div className="font-medium">{r.sim_segmento} — {r.sim_nome_tabela}</div>
+                            <div className="text-xs text-gray-600">
+                              % padrão: {toPctHuman(r.percent_padrao)}% • Meses: {r.fluxo_meses}
+                            </div>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={() => editarRegraExistente(r)}>
+                            <Pencil className="w-4 h-4 mr-1" /> Editar
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
-          {/* Até a contemplação */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Plano de Pagamento até a Contemplação</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              <div>
-                <Label>
-                  {p.tabelaSelecionada?.antecip_parcelas === 2
-                    ? "Parcelas 1 e 2"
-                    : p.tabelaSelecionada?.antecip_parcelas === 1
-                    ? "Parcela 1"
-                    : "Parcela Inicial"}
-                </Label>
-                <Input value={p.calc ? brMoney(p.calc.parcelaAte) : ""} readOnly />
-              </div>
-              <div>
-                <Label>Demais Parcelas</Label>
-                <Input value={p.calc ? brMoney(p.calc.parcelaDemais) : ""} readOnly />
-              </div>
-            </CardContent>
-          </Card>
+          <DialogFooter className="px-6 pb-4">
+            <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-          {/* === Configurações do Lance (RESTAURADO) === */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Configurações do Lance</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              <div>
-                <Label>Lance Ofertado (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceOfertPct}
-                  onChangeDecimal={p.setLanceOfertPct}
-                />
-              </div>
-              <div>
-                <Label>Lance Embutido (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceEmbutPct}
-                  onChangeDecimal={(d) => {
-                    if (d > 0.25) {
-                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
-                      p.setLanceEmbutPct(0.25);
-                    } else {
-                      p.setLanceEmbutPct(d);
-                    }
-                  }}
-                  maxDecimal={0.25}
-                />
-              </div>
-              <div>
-                <Label>Parcela da Contemplação</Label>
-                <Input
-                  type="number"
-                  value={p.parcContemplacao}
-                  onChange={(e) =>
-                    p.setParcContemplacao(Math.max(1, Number(e.target.value)))
-                  }
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Deve ser menor que o Prazo da Venda.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+      {/* Dialog: Registrar Pagamento */}
+      <Dialog open={openPay} onOpenChange={setOpenPay}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
+          <Tabs defaultValue="selecionar">
+            <TabsList className="mb-3">
+              <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>
+              <TabsTrigger value="arquivos">Arquivos</TabsTrigger>
+            </TabsList>
 
-          {/* Pós */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Plano de Pagamento após a Contemplação</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              <div>
-                <Label>Lance Ofertado</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""}
-                  readOnly
-                />
+            <TabsContent value="selecionar" className="space-y-3">
+              <div className="overflow-x-auto">
+                <table className="min-w-[800px] w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="p-2 text-left">Sel.</th>
+                      <th className="p-2 text-left">Mês</th>
+                      <th className="p-2 text-left">% Parcela</th>
+                      <th className="p-2 text-right">Valor Previsto</th>
+                      <th className="p-2 text-right">Valor Pago</th>
+                      <th className="p-2 text-left">Data Pagto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payFlow.map((f) => (
+                      <tr key={f.id} className="border-b">
+                        <td className="p-2">
+                          <Checkbox
+                            checked={!!paySelected[f.id]}
+                            onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))}
+                          />
+                        </td>
+                        <td className="p-2">M{f.mes}</td>
+                        <td className="p-2">{pct100(f.percentual)}</td>
+                        <td className="p-2 text-right">{BRL(f.valor_previsto)}</td>
+                        <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+                        <td className="p-2">
+                          {f.data_pagamento_vendedor
+                            ? new Date(f.data_pagamento_vendedor).toLocaleDateString("pt-BR")
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <div>
-                <Label>Lance Embutido</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Lance Próprio</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""}
-                  readOnly
-                />
-              </div>
+            </TabsContent>
 
-              <div>
-                <Label>Lance Percebido (%)</Label>
-                <Input
-                  value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Novo Crédito</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.novoCredito) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Nova Parcela (sem limite)</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""}
-                  readOnly
-                />
-              </div>
-
-              <div>
-                <Label>Parcela Limitante</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Parcela Escolhida</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Novo Prazo (meses)</Label>
-                <Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly />
-              </div>
-
-              {p.calc?.has2aAntecipDepois && p.calc?.segundaParcelaComAntecipacao != null && (
-                <div className="md:col-span-3">
-                  <Label>2ª parcela (com antecipação)</Label>
-                  <Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </>
-      ) : (
-        <div className="text-sm text-muted-foreground">
-          Selecione um lead para abrir o simulador.
-        </div>
-      )}
+            <TabsContent value="arquivos"><UploadArea onConfirm={paySelectedParcels} /></TabsContent>
+          </Tabs>
+          <DialogFooter><Button onClick={() => setOpenPay(false)} variant="secondary">Fechar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

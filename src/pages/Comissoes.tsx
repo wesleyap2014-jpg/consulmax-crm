@@ -28,6 +28,7 @@ type UUID = string;
 
 type User = { id: UUID; nome: string | null; email: string | null };
 type SimTable = { id: UUID; segmento: string; nome_tabela: string };
+type Cliente = { id: UUID; nome: string | null };
 
 type Venda = {
   id: UUID;
@@ -38,7 +39,7 @@ type Venda = {
   administradora: string | null;
   valor_venda: number | null;
   numero_proposta?: string | null;
-  cliente_lead_id?: string | null; // lugar onde vamos buscar o nome do cliente no futuro
+  cliente_lead_id?: string | null; // origem: public.clientes.id
 };
 
 type Commission = {
@@ -140,6 +141,20 @@ export default function ComissoesPage() {
 
   const [simTables, setSimTables] = useState<SimTable[]>([]);
 
+  // NOVO: clientes (public.clientes.nome)
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const clientesById = useMemo(() => {
+    const m: Record<string, Cliente> = {};
+    clientes.forEach(c => { m[c.id] = c; });
+    return m;
+  }, [clientes]);
+
+  const clienteLabel = (id?: string | null) => {
+    if (!id) return "—";
+    const c = clientesById[id];
+    return c?.nome?.trim() || "—";
+  };
+
   /* ---------- Comissões / Vendas ---------- */
   const [loading, setLoading] = useState<boolean>(false);
   const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
@@ -167,12 +182,14 @@ export default function ComissoesPage() {
   /* ---------- Load bases ---------- */
   useEffect(() => {
     (async () => {
-      const [{ data: u }, { data: st }] = await Promise.all([
+      const [{ data: u }, { data: st }, { data: cl }] = await Promise.all([
         supabase.from("users").select("id, nome, email").order("nome", { ascending: true }),
         supabase.from("sim_tables").select("id, segmento, nome_tabela").order("segmento", { ascending: true }),
+        supabase.from("clientes").select("id, nome").order("nome", { ascending: true }), // public.clientes
       ]);
       setUsers((u || []) as User[]);
       setSimTables((st || []) as SimTable[]);
+      setClientes((cl || []) as Cliente[]);
     })();
   }, []);
 
@@ -297,8 +314,8 @@ export default function ComissoesPage() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
 
     // valida: soma dos percentuais do fluxo (em %) tem que bater com % padrão (em %)
-    const padraoPct = parseFloat((rulePercent || "0").replace(",", ".")); // ex.: "1,20" => 1.2
-    const somaFluxoPct = fluxoSomaPct;                                    // soma em percentuais (ex.: 0.75 + 0.5 + 0.5 + 0.25 = 2.0)
+    const padraoPct = parseFloat((rulePercent || "0").replace(",", "."));
+    const somaFluxoPct = fluxoSomaPct;
     const eps = 1e-6;
     if (Math.abs(somaFluxoPct - padraoPct) > eps) {
       return alert(`Soma do fluxo: ${somaFluxoPct.toFixed(2)}% (deve = ${padraoPct.toFixed(2)}%)`);
@@ -391,7 +408,28 @@ export default function ComissoesPage() {
     try {
       setGenBusy(venda.id);
 
-      // tenta descobrir sim_table_id pela tabela (se existir)
+      // 0) checagem de duplicidade
+      const { data: already } = await supabase
+        .from("commissions")
+        .select("id")
+        .eq("venda_id", venda.id)
+        .limit(1);
+      if (already && already.length) {
+        alert("Já existe uma comissão para esta venda.");
+        return;
+      }
+
+      // 1) sanity checks
+      if (!venda.vendedor_id) {
+        alert("Venda sem vendedor vinculado. Verifique o cadastro da venda.");
+        return;
+      }
+      if (!venda.valor_venda || venda.valor_venda <= 0) {
+        alert("Venda sem valor de crédito válido. Informe o valor antes de gerar a comissão.");
+        return;
+      }
+
+      // 2) tenta descobrir sim_table_id pela tabela (se existir)
       let simTableId: string | null = null;
       if (venda.tabela) {
         const { data: st } = await supabase
@@ -402,8 +440,7 @@ export default function ComissoesPage() {
         simTableId = st?.[0]?.id ?? null;
       }
 
-      // pega percent padrão da regra (se existir) — trigger no banco também calcula,
-      // mas enviamos para exibir valor_total imediato
+      // 3) pega percent padrão da regra (se existir)
       let percent_aplicado: number | null = null;
       if (simTableId) {
         const { data: rule } = await supabase
@@ -412,10 +449,10 @@ export default function ComissoesPage() {
           .eq("vendedor_id", venda.vendedor_id)
           .eq("sim_table_id", simTableId)
           .limit(1);
-        percent_aplicado = rule?.[0]?.percent_padrao ?? null;
+        percent_aplicado = rule?.[0]?.percent_padrao ?? null; // fração (ex.: 0.012)
       }
 
-      // monta o registro (snapshot preenchido por trigger)
+      // 4) monta o registro (snapshot; triggers no banco podem complementar)
       const insert = {
         venda_id: venda.id,
         vendedor_id: venda.vendedor_id,
@@ -436,8 +473,8 @@ export default function ComissoesPage() {
 
       const { error } = await supabase.from("commissions").insert(insert as any);
       if (error) {
-        if (String(error.code) === "23503") {
-          alert("Não foi possível criar: verifique se o vendedor existe na tabela 'users' e/ou se a tabela (SimTable) está correta.");
+        if (String((error as any).code) === "23503") {
+          alert("Não foi possível criar: verifique se o vendedor existe em 'users' e/ou se a Tabela (SimTable) está correta.");
         } else {
           alert("Erro ao criar a comissão: " + error.message);
         }
@@ -513,9 +550,7 @@ export default function ComissoesPage() {
 
     autoTable(doc, {
       startY: tableStartY,
-      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]],
-      body,
-      styles: { font: "helvetica", fontSize: 10 },
+      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]],      styles: { font: "helvetica", fontSize: 10 },
       headStyles: { fillColor: [30, 41, 63] },
     });
 
@@ -688,7 +723,7 @@ export default function ComissoesPage() {
                 <tr key={v.id} className="border-b">
                   <td className="p-2">{new Date(v.data_venda).toLocaleDateString("pt-BR")}</td>
                   <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                  <td className="p-2">—{/* quando tivermos a fonte do nome do cliente, plugo aqui */}</td>
+                  <td className="p-2">{clienteLabel(v.cliente_lead_id)}</td>
                   <td className="p-2">{v.numero_proposta || "—"}</td>
                   <td className="p-2">{v.administradora || "—"}</td>
                   <td className="p-2">{v.segmento || "—"}</td>

@@ -14,7 +14,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle, Pencil,
+  Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, FileText, PlusCircle, Pencil,
 } from "lucide-react";
 
 import jsPDF from "jspdf";
@@ -24,19 +24,23 @@ import autoTable from "jspdf-autotable";
 type UUID = string;
 
 type User = { id: UUID; nome: string | null; email: string | null };
-type SimTable = { id: UUID; segmento: string; nome_tabela: string; id: UUID };
+type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 type Cliente = { id: UUID; nome: string | null };
 
 type Venda = {
   id: UUID;
-  data_venda: string;          // date
+  data_venda: string;          // date (ISO)
   vendedor_id: UUID;
   segmento: string | null;
   tabela: string | null;
   administradora: string | null;
   valor_venda: number | null;
   numero_proposta?: string | null;
-  cliente_lead_id?: string | null; // FK para public.clientes.id
+  cliente_lead_id?: string | null;
+};
+type VendaJoined = Venda & {
+  vendedor?: User | null;      // join users
+  cliente?: Cliente | null;    // join clientes
 };
 
 type Commission = {
@@ -50,13 +54,14 @@ type Commission = {
   administradora: string | null;
   valor_venda: number | null;
   base_calculo: number | null;
-  percent_aplicado: number | null; // fração (ex.: 0.012)
+  percent_aplicado: number | null; // fração (0.012 = 1,2%)
   valor_total: number | null;
   status: "a_pagar" | "pago" | "estorno";
   data_pagamento: string | null;
   recibo_url: string | null;
   comprovante_url: string | null;
 };
+type CommissionJoined = Commission & { vendedor?: User | null };
 
 type CommissionFlow = {
   id: UUID;
@@ -135,7 +140,6 @@ function RadialClock({ value, label }: { value: number; label: string }) {
   );
 }
 
-/* ========================= Upload Area ========================= */
 function UploadArea({
   onConfirm,
 }: {
@@ -192,7 +196,10 @@ export default function ComissoesPage() {
     return m;
   }, [users]);
 
-  const userLabel = (id: string | null | undefined) => {
+  const userLabel = (id: string | null | undefined, inlineUser?: User | null) => {
+    // prioriza join inline; depois cache; por fim id
+    if (inlineUser?.nome?.trim()) return inlineUser.nome.trim();
+    if (inlineUser?.email?.trim()) return inlineUser.email.trim();
     if (!id) return "—";
     const u = usersById[id];
     return (u?.nome?.trim() || u?.email?.trim() || id);
@@ -205,30 +212,26 @@ export default function ComissoesPage() {
     clientes.forEach(c => { m[c.id] = c; });
     return m;
   }, [clientes]);
-  const clienteLabel = (id?: string | null) => (id ? (clientesById[id]?.nome?.trim() || "—") : "—");
+  const clienteLabel = (id?: string | null, inlineCli?: Cliente | null) =>
+    inlineCli?.nome?.trim() || (id ? (clientesById[id]?.nome?.trim() || "—") : "—");
 
   /* ---------- Comissões / Vendas ---------- */
   const [loading, setLoading] = useState<boolean>(false);
-  const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
-  const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
+  const [rows, setRows] = useState<(CommissionJoined & { flow?: CommissionFlow[] })[]>([]);
+  const [vendasSemCom, setVendasSemCom] = useState<VendaJoined[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
 
   /* ---------- Regras ---------- */
-  // Editor central (Dialog)
   const [openRules, setOpenRules] = useState<boolean>(false);
-
-  // Estado do formulário de regra
   const [ruleVendorId, setRuleVendorId] = useState<string>("");
   const [ruleSimTableId, setRuleSimTableId] = useState<string>("");
-  const [rulePercentHuman, setRulePercentHuman] = useState<string>("1,20"); // em %
+  const [rulePercentHuman, setRulePercentHuman] = useState<string>("1,20");
   const [ruleMeses, setRuleMeses] = useState<number>(1);
-  const [ruleFluxoPctHuman, setRuleFluxoPctHuman] = useState<string[]>(["100,00"]); // em %
+  const [ruleFluxoPctHuman, setRuleFluxoPctHuman] = useState<string[]>(["100,00"]);
   const [ruleObs, setRuleObs] = useState<string>("");
-
-  // Listas para “disponíveis” e “existentes”
   const [rulesDoVendedor, setRulesDoVendedor] = useState<RuleRow[]>([]);
 
-  // Pagamentos
+  /* ---------- Pagamentos ---------- */
   const [openPay, setOpenPay] = useState<boolean>(false);
   const [payCommissionId, setPayCommissionId] = useState<string>("");
   const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
@@ -248,23 +251,21 @@ export default function ComissoesPage() {
     })();
   }, []);
 
-  /* ---------- Carrega regras do vendedor selecionado no editor ---------- */
+  /* ---------- Carrega regras do vendedor (para ocultar já configuradas) ---------- */
   useEffect(() => {
     (async () => {
       if (!ruleVendorId) { setRulesDoVendedor([]); return; }
       const { data, error } = await supabase
         .from("commission_rules")
-        .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs");
+        .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
+        .eq("vendedor_id", ruleVendorId);
       if (error) return;
-
-      // Join com simTables em memória (para exibir nomes)
       const list = (data || []).map((r: any) => ({
         ...r,
         sim_segmento: simTables.find(st => st.id === r.sim_table_id)?.segmento,
         sim_nome_tabela: simTables.find(st => st.id === r.sim_table_id)?.nome_tabela,
       })) as RuleRow[];
-
-      setRulesDoVendedor(list.filter(rr => rr.vendedor_id === ruleVendorId));
+      setRulesDoVendedor(list);
     })();
   }, [ruleVendorId, simTables]);
 
@@ -272,10 +273,10 @@ export default function ComissoesPage() {
   async function fetchData() {
     setLoading(true);
     try {
-      // commissions
+      // commissions + join vendedor
       let qb = supabase
         .from("commissions")
-        .select("*")
+        .select("*, vendedor:users(id, nome, email)")
         .gte("data_venda", dtIni)
         .lte("data_venda", dtFim);
       if (status !== "all") qb = qb.eq("status", status);
@@ -287,7 +288,7 @@ export default function ComissoesPage() {
       if (error) throw error;
 
       // flows
-      const commissionIds = (comms || []).map((c) => c.id);
+      const commissionIds = (comms || []).map((c: any) => c.id);
       const { data: flows } = await supabase
         .from("commission_flow")
         .select("*")
@@ -300,12 +301,16 @@ export default function ComissoesPage() {
         flowByCommission[f.commission_id].push(f as CommissionFlow);
       });
 
-      setRows((comms || []).map((c) => ({ ...(c as Commission), flow: flowByCommission[c.id] || [] })));
+      setRows(((comms || []) as CommissionJoined[]).map((c) => ({ ...c, flow: flowByCommission[c.id] || [] })));
 
-      // vendas sem commission
+      // vendas sem commission — join vendedor & cliente
       const { data: vendasPeriodo } = await supabase
         .from("vendas")
-        .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id")
+        .select(`
+          id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id,
+          vendedor:users ( id, nome, email ),
+          cliente:clientes ( id, nome )
+        `)
         .gte("data_venda", dtIni)
         .lte("data_venda", dtFim)
         .order("data_venda", { ascending: false });
@@ -317,14 +322,13 @@ export default function ComissoesPage() {
         .lte("data_venda", dtFim);
 
       const hasComm = new Set((commVendaIds || []).map((r: any) => r.venda_id));
-      const vendasFiltered = (vendasPeriodo || []).filter((v) => !hasComm.has(v.id));
-      // filtros opcionais
+      const vendasFiltered = ((vendasPeriodo || []) as VendaJoined[]).filter((v) => !hasComm.has(v.id));
       const vendasFiltered2 = vendasFiltered.filter((v) =>
         (vendedorId === "all" || v.vendedor_id === vendedorId) &&
         (segmento === "all" || v.segmento === segmento) &&
         (tabela === "all" || (v.tabela || "") === tabela)
       );
-      setVendasSemCom(vendasFiltered2 as Venda[]);
+      setVendasSemCom(vendasFiltered2);
     } finally {
       setLoading(false);
     }
@@ -380,7 +384,6 @@ export default function ComissoesPage() {
     else arr.length = n;
     setRuleFluxoPctHuman(arr);
   }
-
   const fluxoSomaPctHuman = useMemo(
     () => ruleFluxoPctHuman.reduce((a, b) => a + (parseFloat((b || "0").replace(",", ".")) || 0), 0),
     [ruleFluxoPctHuman]
@@ -404,7 +407,6 @@ export default function ComissoesPage() {
   async function saveRule() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
 
-    // validação: percentuais em fração
     const percent_padrao = parsePctHuman(rulePercentHuman); // fração
     const fluxo_percentuais = ruleFluxoPctHuman.map((x) => parsePctHuman(x));
     const somaFluxo = fluxo_percentuais.reduce((a, b) => a + b, 0);
@@ -423,13 +425,9 @@ export default function ComissoesPage() {
     };
     console.debug("[commission_rules.upsert] payload:", payload);
 
-    const { error } = await supabase.from("commission_rules").upsert(
-      payload,
-      { onConflict: "vendedor_id,sim_table_id" }
-    );
+    const { error } = await supabase.from("commission_rules").upsert(payload, { onConflict: "vendedor_id,sim_table_id" });
     if (error) return alert(error.message);
 
-    // refresh da lista
     const { data: refill } = await supabase
       .from("commission_rules")
       .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
@@ -492,7 +490,6 @@ export default function ComissoesPage() {
     const { error } = await supabase.from("commission_flow").upsert(updates);
     if (error) return alert(error.message);
 
-    // Atualiza status da comissão se todas pagas
     const { data: updated } = await supabase
       .from("commission_flow")
       .select("*")
@@ -514,7 +511,6 @@ export default function ComissoesPage() {
     try {
       setGenBusy(venda.id);
 
-      // checagem de duplicidade
       const { data: already } = await supabase
         .from("commissions")
         .select("id")
@@ -528,7 +524,6 @@ export default function ComissoesPage() {
       if (!venda.vendedor_id) { alert("Venda sem vendedor vinculado."); return; }
       if (!venda.valor_venda || venda.valor_venda <= 0) { alert("Venda sem valor de crédito válido."); return; }
 
-      // tenta descobrir sim_table_id pela tabela (se existir)
       let simTableId: string | null = null;
       if (venda.tabela) {
         const { data: st } = await supabase
@@ -539,7 +534,6 @@ export default function ComissoesPage() {
         simTableId = st?.[0]?.id ?? null;
       }
 
-      // pega percent padrão da regra (se existir)
       let percent_aplicado: number | null = null;
       if (simTableId) {
         const { data: rule } = await supabase
@@ -594,7 +588,7 @@ export default function ComissoesPage() {
     ];
     const lines = rows.map(r => ([
       r.data_venda,
-      userLabel(r.vendedor_id),
+      userLabel(r.vendedor_id, r.vendedor || null),
       (r.segmento||""),
       (r.tabela||""),
       (r.administradora||""),
@@ -616,7 +610,7 @@ export default function ComissoesPage() {
 
   /* ========================= PDF Recibo ========================= */
   async function downloadReceiptPDF(comm: Commission, itens: CommissionFlow[]) {
-    const vendedor = userLabel(comm.vendedor_id);
+    const vendedor = userLabel(comm.vendedor_id, (rows.find(r => r.id === comm.id)?.vendedor) || null);
     const today = new Date();
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
@@ -822,8 +816,8 @@ export default function ComissoesPage() {
               {vendasSemCom.map(v => (
                 <tr key={v.id} className="border-b">
                   <td className="p-2">{new Date(v.data_venda).toLocaleDateString("pt-BR")}</td>
-                  <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                  <td className="p-2">{clienteLabel(v.cliente_lead_id)}</td>
+                  <td className="p-2">{userLabel(v.vendedor_id, v.vendedor || null)}</td>
+                  <td className="p-2">{clienteLabel(v.cliente_lead_id, v.cliente || null)}</td>
                   <td className="p-2">{v.numero_proposta || "—"}</td>
                   <td className="p-2">{v.administradora || "—"}</td>
                   <td className="p-2">{v.segmento || "—"}</td>
@@ -890,7 +884,7 @@ export default function ComissoesPage() {
               {!loading && rows.map((r) => (
                 <tr key={r.id} className="border-b hover:bg-gray-50">
                   <td className="p-2">{r.data_venda ? new Date(r.data_venda).toLocaleDateString("pt-BR") : "—"}</td>
-                  <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                  <td className="p-2">{userLabel(r.vendedor_id, r.vendedor || null)}</td>
                   <td className="p-2">{r.segmento || "—"}</td>
                   <td className="p-2">{r.tabela || "—"}</td>
                   <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>

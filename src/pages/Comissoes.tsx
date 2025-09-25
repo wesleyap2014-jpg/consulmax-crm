@@ -59,7 +59,7 @@ type Commission = {
   administradora: string | null;
   valor_venda: number | null;
   base_calculo: number | null;
-  percent_aplicado: number | null;
+  percent_aplicado: number | null; // fração
   valor_total: number | null;
   status: "a_pagar" | "pago" | "estorno";
   data_pagamento: string | null;
@@ -192,7 +192,7 @@ export default function ComissoesPage() {
 
   /* ---------- Estado Pagamento ---------- */
   const [payCommissionId, setPayCommissionId] = useState<string>("");
-  const [payCommission, setPayCommission] = useState<Commission | null>(null); // NOVO: para resumo
+  const [payCommission, setPayCommission] = useState<Commission | null>(null); // para resumo
   const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
 
@@ -593,7 +593,7 @@ export default function ComissoesPage() {
 
     autoTable(doc, {
       startY: tableStartY,
-      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]]],
+      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]],
       body,
       styles: { font: "helvetica", fontSize: 10 },
       headStyles: { fillColor: [30, 41, 63] },

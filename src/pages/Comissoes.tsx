@@ -9,8 +9,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter,
-} from "@/components/ui/sheet";
+  Dialog as Overlay, DialogContent as OverlayContent, DialogHeader as OverlayHeader, DialogTitle as OverlayTitle, DialogFooter as OverlayFooter,
+} from "@/components/ui/dialog";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -37,8 +37,8 @@ type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 
 type Venda = {
   id: UUID;
-  data_venda: string;
-  vendedor_id: UUID;
+  data_venda: string;          // YYYY-MM-DD
+  vendedor_id: UUID;           // pode ser users.id ou users.auth_user_id
   segmento: string | null;
   tabela: string | null;
   administradora: string | null;
@@ -91,6 +91,7 @@ type PayRowAgg = {
   data_pagamento_vendedor: string | null;
   parts: Array<{
     id: string;
+    mes: number;
     percentual: number;
     valor_previsto: number;
     valor_pago_vendedor: number;
@@ -220,7 +221,7 @@ export default function ComissoesPage() {
 
   /* ---------- Recibo por data & Imposto ---------- */
   const [receiptDateAll, setReceiptDateAll] = useState<string>("");
-  const [taxPct, setTaxPct] = useState<string>("6,00"); // editável pelo usuário
+  const [taxPct, setTaxPct] = useState<string>("6,00"); // editável
 
   /* ---------- Load bases ---------- */
   useEffect(() => {
@@ -266,7 +267,7 @@ export default function ComissoesPage() {
         flowByCommission[f.commission_id].push(f as CommissionFlow);
       });
 
-      // vendas relacionadas às comissões (para cliente e nº proposta)
+      // vendas relacionadas (para cliente e nº proposta)
       const vendaIds = Array.from(new Set((comms || []).map((c) => c.venda_id).filter(Boolean)));
       let vendaById: Record<string, Venda> = {};
       let nomeClientePorChave: Record<string, string> = {};
@@ -480,6 +481,7 @@ export default function ComissoesPage() {
           data_pagamento_vendedor: f.data_pagamento_vendedor || null,
           parts: [{
             id: f.id,
+            mes: f.mes,
             percentual: partPct,
             valor_previsto: previstoCalc,
             valor_pago_vendedor: f.valor_pago_vendedor || 0,
@@ -497,6 +499,7 @@ export default function ComissoesPage() {
             : null;
         row.parts.push({
           id: f.id,
+          mes: f.mes,
           percentual: partPct,
           valor_previsto: previstoCalc,
           valor_pago_vendedor: f.valor_pago_vendedor || 0,
@@ -571,7 +574,9 @@ export default function ComissoesPage() {
       row.parts.forEach(p => {
         updates.push({
           id: p.id,
-          commission_id: payCommissionId, // <-- importante para evitar tentativa de INSERT sem commission_id
+          commission_id: payCommissionId, // garante update; caso vire insert, preenche chaves NOT NULL
+          mes: p.mes,
+          percentual: p.percentual,
           data_pagamento_vendedor: dateToApply,
           valor_pago_vendedor: typeof sameValue === "number" ? sameValue : p.valor_previsto,
           recibo_vendedor_url: reciboPath || undefined,
@@ -580,7 +585,6 @@ export default function ComissoesPage() {
       });
     });
 
-    // usa onConflict pela PK id (update garantido)
     const { error } = await supabase.from("commission_flow").upsert(updates, { onConflict: "id" });
     if (error) return alert(error.message);
 
@@ -1129,11 +1133,11 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Sheet: Regras de Comissão */}
-      <Sheet open={openRules} onOpenChange={setOpenRules}>
-        <SheetContent side="right" className="w-[520px]">
-          <SheetHeader><SheetTitle>Regras de Comissão</SheetTitle></SheetHeader>
-          <div className="mt-4 space-y-3">
+      {/* Overlay: Regras de Comissão */}
+      <Overlay open={openRules} onOpenChange={setOpenRules}>
+        <OverlayContent className="max-w-xl">
+          <OverlayHeader><OverlayTitle>Regras de Comissão</OverlayTitle></OverlayHeader>
+          <div className="mt-2 space-y-3">
             <div>
               <Label>Vendedor</Label>
               <Select value={ruleVendorId} onValueChange={setRuleVendorId}>
@@ -1166,13 +1170,18 @@ export default function ComissoesPage() {
               <Input value={rulePercent} onChange={(e) => setRulePercent(e.target.value)} placeholder="1,20" />
             </div>
 
-            <div>
-              <Label>Nº de meses do fluxo</Label>
-              <Input
-                type="number" min={1} max={36}
-                value={ruleMeses}
-                onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Nº de meses do fluxo</Label>
+                <Input
+                  type="number" min={1} max={36}
+                  value={ruleMeses}
+                  onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
+                />
+              </div>
+              <div className="self-end text-xs text-gray-600">
+                Soma do fluxo: <b>{fluxoSomaPct.toFixed(2)}%</b> (deve = {parseFloat((rulePercent || "0").replace(",", "."))?.toFixed(2)}%)
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -1191,9 +1200,6 @@ export default function ComissoesPage() {
                   />
                 ))}
               </div>
-              <div className="text-xs text-gray-600">
-                Soma do fluxo: <b>{fluxoSomaPct.toFixed(2)}%</b> (deve = {parseFloat((rulePercent || "0").replace(",", "."))?.toFixed(2)}%)
-              </div>
             </div>
 
             <div>
@@ -1201,11 +1207,11 @@ export default function ComissoesPage() {
               <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
             </div>
           </div>
-          <SheetFooter className="mt-4">
+          <OverlayFooter className="mt-4">
             <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+          </OverlayFooter>
+        </OverlayContent>
+      </Overlay>
 
       {/* Dialog: Registrar Pagamento */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>

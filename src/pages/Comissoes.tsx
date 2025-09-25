@@ -37,14 +37,15 @@ type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 
 type Venda = {
   id: UUID;
-  data_venda: string;          // date (YYYY-MM-DD)
+  data_venda: string;          // YYYY-MM-DD
   vendedor_id: UUID;           // pode ser users.id ou users.auth_user_id
   segmento: string | null;
   tabela: string | null;
   administradora: string | null;
   valor_venda: number | null;
   numero_proposta?: string | null;
-  cliente_lead_id?: string | null;
+  cliente_lead_id?: string | null; // pode vir preenchido
+  lead_id?: string | null;         // também pode existir — usamos coalesce
 };
 
 type Commission = {
@@ -140,7 +141,10 @@ export default function ComissoesPage() {
 
   /* ---------- Bases ---------- */
   const [users, setUsers] = useState<User[]>([]);
+  const [simTables, setSimTables] = useState<SimTable[]>([]);
+  const [clientesMap, setClientesMap] = useState<Record<string, string>>({});
 
+  // mapeia vendedor por users.id E por users.auth_user_id (para casos em que vendas usam auth_user_id)
   const usersById = useMemo(() => {
     const m: Record<string, User> = {};
     users.forEach((u) => (m[u.id] = u));
@@ -160,9 +164,6 @@ export default function ComissoesPage() {
     const u = usersById[maybeId] || usersByAuth[maybeId];
     return u?.nome?.trim() || u?.email?.trim() || maybeId;
   };
-
-  const [simTables, setSimTables] = useState<SimTable[]>([]);
-  const [clientesMap, setClientesMap] = useState<Record<string, string>>({});
 
   /* ---------- Comissões / Vendas ---------- */
   const [loading, setLoading] = useState<boolean>(false);
@@ -239,10 +240,10 @@ export default function ComissoesPage() {
 
       setRows((comms || []).map((c) => ({ ...(c as Commission), flow: flowByCommission[c.id] || [] })));
 
-      // vendas sem commission
+      // vendas no período (sem comissão)
       const { data: vendasPeriodo } = await supabase
         .from("vendas")
-        .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id")
+        .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id")
         .gte("data_venda", dtIni)
         .lte("data_venda", dtFim)
         .order("data_venda", { ascending: false });
@@ -255,7 +256,6 @@ export default function ComissoesPage() {
 
       const hasComm = new Set((commVendaIds || []).map((r: any) => r.venda_id));
       const vendasFiltered = (vendasPeriodo || []).filter((v) => !hasComm.has(v.id));
-      // filtros opcionais
       const vendasFiltered2 = vendasFiltered.filter((v) =>
         (vendedorId === "all" || v.vendedor_id === vendedorId) &&
         (segmento === "all" || v.segmento === segmento) &&
@@ -263,11 +263,11 @@ export default function ComissoesPage() {
       );
       setVendasSemCom(vendasFiltered2 as Venda[]);
 
-      // nomes de cliente
+      // ==== nomes de cliente (usando COALESCE(lead_id, cliente_lead_id)) ====
       const clientIds = Array.from(
         new Set(
           (vendasFiltered2 || [])
-            .map((v) => v.cliente_lead_id)
+            .map((v) => v.lead_id || v.cliente_lead_id)
             .filter((x): x is string => !!x)
         )
       );
@@ -312,6 +312,7 @@ export default function ComissoesPage() {
 
   function isBetween(d?: string | null, start?: Date, end?: Date) {
     if (!d) return false;
+    // aqui fica ok usar Date pois nos comissionamentos a coluna é DATE string (yyyy-mm-dd)
     const x = new Date(d).getTime();
     return x >= (start?.getTime() || 0) && x <= (end?.getTime() || now.getTime());
   }
@@ -461,7 +462,7 @@ export default function ComissoesPage() {
         percent_aplicado = rule?.[0]?.percent_padrao ?? null;
       }
 
-      // monta o registro (snapshot preenchido por trigger)
+      // monta o registro (snapshot preenchido por trigger no banco)
       const insert = {
         venda_id: venda.id,
         vendedor_id: venda.vendedor_id,
@@ -483,9 +484,9 @@ export default function ComissoesPage() {
       const { error } = await supabase.from("commissions").insert(insert as any);
       if (error) {
         if (String(error.code) === "23503") {
-          alert("Não foi possível criar: verifique se o vendedor existe na tabela 'users' e/ou se a SimTable está correta.");
+          alert("Não foi possível criar: verifique se o vendedor existe em 'users' e/ou se a SimTable está correta.");
         } else if (String(error.message || "").includes("row-level security")) {
-          alert("RLS bloqueou o INSERT. Aplique as policies SQL indicadas para a tabela 'commissions' e 'commission_flow'.");
+          alert("RLS bloqueou o INSERT. Garanta as policies de 'commissions' e 'commission_flow'.");
         } else {
           alert("Erro ao criar a comissão: " + error.message);
         }
@@ -657,7 +658,7 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Dashboards por recorte */}
+      {/* Dashboards por recorte (voltaram) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         <Card>
           <CardHeader className="pb-1"><CardTitle>Nos últimos 5 anos — {vendedorAtual}</CardTitle></CardHeader>
@@ -703,7 +704,7 @@ export default function ComissoesPage() {
         <Card><CardHeader className="pb-1"><CardTitle>⏳ Comissão Pendente</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
       </div>
 
-      {/* Tabela: Vendas sem comissão */}
+      {/* Tabela: Vendas sem comissão (cliente corrigido) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
@@ -732,38 +733,41 @@ export default function ComissoesPage() {
               {vendasSemCom.length === 0 && (
                 <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>
               )}
-              {vendasSemCom.map(v => (
-                <tr key={v.id} className="border-b">
-                  <td className="p-2">{formatISODateBR(v.data_venda)}</td>
-                  <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                  <td className="p-2">{clientesMap[v.cliente_lead_id || ""]?.trim() || "—"}</td>
-                  <td className="p-2">{v.numero_proposta || "—"}</td>
-                  <td className="p-2">{v.administradora || "—"}</td>
-                  <td className="p-2">{v.segmento || "—"}</td>
-                  <td className="p-2">{v.tabela || "—"}</td>
-                  <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
-                  <td className="p-2">
-                    <Button
-                      size="sm"
-                      onClick={() => gerarComissaoDeVenda(v)}
-                      disabled={genBusy === v.id}
-                    >
-                      {genBusy === v.id ? (
-                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                      ) : (
-                        <PlusCircle className="w-4 h-4 mr-1" />
-                      )}
-                      Gerar Comissão
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+              {vendasSemCom.map(v => {
+                const clienteId = v.lead_id || v.cliente_lead_id || "";
+                return (
+                  <tr key={v.id} className="border-b">
+                    <td className="p-2">{formatISODateBR(v.data_venda)}</td>
+                    <td className="p-2">{userLabel(v.vendedor_id)}</td>
+                    <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim())) || "—"}</td>
+                    <td className="p-2">{v.numero_proposta || "—"}</td>
+                    <td className="p-2">{v.administradora || "—"}</td>
+                    <td className="p-2">{v.segmento || "—"}</td>
+                    <td className="p-2">{v.tabela || "—"}</td>
+                    <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
+                    <td className="p-2">
+                      <Button
+                        size="sm"
+                        onClick={() => gerarComissaoDeVenda(v)}
+                        disabled={genBusy === v.id}
+                      >
+                        {genBusy === v.id ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <PlusCircle className="w-4 h-4 mr-1" />
+                        )}
+                        Gerar Comissão
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </CardContent>
       </Card>
 
-      {/* Tabela Detalhada de Comissões */}
+      {/* Tabela Detalhada de Comissões (de volta) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">

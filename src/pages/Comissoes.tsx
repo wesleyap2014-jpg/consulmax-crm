@@ -37,8 +37,8 @@ type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 
 type Venda = {
   id: UUID;
-  data_venda: string;          // YYYY-MM-DD ou TIMESTAMP
-  vendedor_id: UUID;           // pode ser users.id ou users.auth_user_id
+  data_venda: string;
+  vendedor_id: UUID;
   segmento: string | null;
   tabela: string | null;
   administradora: string | null;
@@ -85,10 +85,10 @@ type CommissionFlow = {
 type PayRowAgg = {
   key: string;                // `${commission_id}::${mes}`
   mes: number;
-  percentual: number;         // soma frações
-  valor_previsto: number;     // soma
-  valor_pago_vendedor: number; // soma
-  data_pagamento_vendedor: string | null; // se todas iguais; senão null
+  percentual: number;         // fração
+  valor_previsto: number;     // R$
+  valor_pago_vendedor: number; // R$
+  data_pagamento_vendedor: string | null;
   parts: Array<{
     id: string;
     percentual: number;
@@ -105,9 +105,7 @@ type CommissionRow = Commission & {
   numero_proposta?: string | null;
 };
 
-/* ========================= Helpers & Constantes ========================= */
-const TAX_PCT = 0.06; // % de impostos usado no recibo por data (ajuste se necessário)
-
+/* ========================= Helpers ========================= */
 const BRL = (v?: number | null) =>
   (typeof v === "number" ? v : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -175,9 +173,8 @@ export default function ComissoesPage() {
   /* ---------- Bases ---------- */
   const [users, setUsers] = useState<User[]>([]);
   const [simTables, setSimTables] = useState<SimTable[]>([]);
-  const [clientesMap, setClientesMap] = useState<Record<string, string>>({}); // nome por id OU lead_id (usado na grade "sem comissão")
+  const [clientesMap, setClientesMap] = useState<Record<string, string>>({}); // nomes para "vendas sem comissão"
 
-  // mapeia vendedor por users.id E por users.auth_user_id
   const usersById = useMemo(() => {
     const m: Record<string, User> = {};
     users.forEach((u) => (m[u.id] = u));
@@ -221,8 +218,9 @@ export default function ComissoesPage() {
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
   const [payDate, setPayDate] = useState<string>(() => toDateInput(new Date()));
 
-  /* ---------- Recibo por data ---------- */
+  /* ---------- Recibo por data & Imposto ---------- */
   const [receiptDateAll, setReceiptDateAll] = useState<string>("");
+  const [taxPct, setTaxPct] = useState<string>("6,00"); // editável pelo usuário
 
   /* ---------- Load bases ---------- */
   useEffect(() => {
@@ -294,7 +292,6 @@ export default function ComissoesPage() {
         }
       }
 
-      // monta rows com extras
       const rowsWithExtras: CommissionRow[] = (comms || []).map((c: any) => {
         const venda = vendaById[c.venda_id];
         const clienteNome =
@@ -333,13 +330,10 @@ export default function ComissoesPage() {
       setVendasSemCom(vendasFiltered2 as Venda[]);
 
       // nomes de cliente para a grade "sem comissão"
-      const ids = Array.from(
-        new Set(
-          (vendasFiltered2 || [])
-            .map((v) => v.lead_id || v.cliente_lead_id)
-            .filter((x): x is string => !!x)
-        )
-      );
+      const ids = Array.from(new Set((vendasFiltered2 || [])
+        .map((v) => v.lead_id || v.cliente_lead_id)
+        .filter((x): x is string => !!x)
+      ));
       if (ids.length) {
         const [cliById2, cliByLead2] = await Promise.all([
           supabase.from("clientes").select("id, nome").in("id", ids),
@@ -463,47 +457,70 @@ export default function ComissoesPage() {
   }
 
   /* ========================= Pagamento ========================= */
-  function aggregateFlowsForUI(commissionId: string, flows: CommissionFlow[], commissionTotal: number): PayRowAgg[] {
+  function aggregateFlowsForUI(
+    commission: Commission,
+    flows: CommissionFlow[]
+  ): PayRowAgg[] {
+    const base = commission.base_calculo || 0;
+    const pctComissao = commission.percent_aplicado || 0;
+
     const byMes: Record<number, PayRowAgg> = {};
     flows.forEach(f => {
-      const key = `${commissionId}::${f.mes}`;
-      const previsto = (f.valor_previsto ?? commissionTotal * (f.percentual || 0)) || 0;
-      const pago = f.valor_pago_vendedor || 0;
+      const key = `${commission.id}::${f.mes}`;
+      const partPct = f.percentual || 0; // fração
+      const previstoCalc = base * pctComissao * partPct;
+
       if (!byMes[f.mes]) {
         byMes[f.mes] = {
           key,
           mes: f.mes,
-          percentual: f.percentual || 0,
-          valor_previsto: previsto,
-          valor_pago_vendedor: pago,
+          percentual: partPct,
+          valor_previsto: previstoCalc,
+          valor_pago_vendedor: f.valor_pago_vendedor || 0,
           data_pagamento_vendedor: f.data_pagamento_vendedor || null,
           parts: [{
             id: f.id,
-            percentual: f.percentual || 0,
-            valor_previsto: previsto,
-            valor_pago_vendedor: pago,
+            percentual: partPct,
+            valor_previsto: previstoCalc,
+            valor_pago_vendedor: f.valor_pago_vendedor || 0,
             data_pagamento_vendedor: f.data_pagamento_vendedor || null,
           }],
         };
       } else {
         const row = byMes[f.mes];
-        row.percentual += (f.percentual || 0);
-        row.valor_previsto += previsto;
-        row.valor_pago_vendedor += pago;
+        row.percentual += partPct;
+        row.valor_previsto += previstoCalc;
+        row.valor_pago_vendedor += (f.valor_pago_vendedor || 0);
         row.data_pagamento_vendedor =
           row.data_pagamento_vendedor === (f.data_pagamento_vendedor || null)
             ? row.data_pagamento_vendedor
             : null;
         row.parts.push({
           id: f.id,
-          percentual: f.percentual || 0,
-          valor_previsto: previsto,
-          valor_pago_vendedor: pago,
+          percentual: partPct,
+          valor_previsto: previstoCalc,
+          valor_pago_vendedor: f.valor_pago_vendedor || 0,
           data_pagamento_vendedor: f.data_pagamento_vendedor || null,
         });
       }
     });
-    return Object.values(byMes).sort((a, b) => a.mes - b.mes);
+
+    const arr = Object.values(byMes).sort((a, b) => a.mes - b.mes);
+
+    // Normaliza se a soma dos percentuais vier duplicada (ex.: 200%)
+    const totalPct = arr.reduce((acc, r) => acc + r.percentual, 0);
+    if (totalPct > 1.01) {
+      const fator = Math.round(totalPct / 1); // 2, 3, ...
+      if (Math.abs(totalPct - fator) < 0.15 && fator > 1) {
+        arr.forEach(r => {
+          r.percentual = r.percentual / fator;
+          r.valor_previsto = r.valor_previsto / fator;
+          r.valor_pago_vendedor = r.valor_pago_vendedor / fator;
+        });
+      }
+    }
+
+    return arr;
   }
 
   async function openPaymentFor(commission: Commission) {
@@ -517,7 +534,7 @@ export default function ComissoesPage() {
       .order("mes", { ascending: true });
 
     const flows = (data || []) as CommissionFlow[];
-    const agg = aggregateFlowsForUI(commission.id, flows, commission.valor_total || 0);
+    const agg = aggregateFlowsForUI(commission, flows);
     setPayRowsAgg(agg);
     setPaySelected({});
     setOpenPay(true);
@@ -565,7 +582,6 @@ export default function ComissoesPage() {
     const { error } = await supabase.from("commission_flow").upsert(updates);
     if (error) return alert(error.message);
 
-    // Atualiza status da comissão se todas pagas
     const { data: updated } = await supabase
       .from("commission_flow")
       .select("*")
@@ -587,7 +603,6 @@ export default function ComissoesPage() {
     try {
       setGenBusy(venda.id);
 
-      // resolve vendedor -> users.id (id ou auth_user_id)
       const vendedorResolved =
         (usersById as any)[venda.vendedor_id]?.id ||
         (usersByAuth as any)[venda.vendedor_id]?.id ||
@@ -654,12 +669,14 @@ export default function ComissoesPage() {
   /* ========================= CSV Export ========================= */
   function exportCSV() {
     const header = [
-      "data_venda","vendedor","segmento","tabela","administradora",
+      "data_venda","vendedor","cliente","numero_proposta","segmento","tabela","administradora",
       "valor_venda","percent_aplicado","valor_total","status","data_pagamento"
     ];
     const lines = rows.map(r => ([
       r.data_venda ?? "",
       userLabel(r.vendedor_id),
+      JSON.stringify(r.cliente_nome||""),
+      JSON.stringify(r.numero_proposta||""),
       JSON.stringify(r.segmento||""),
       JSON.stringify(r.tabela||""),
       JSON.stringify(r.administradora||""),
@@ -704,11 +721,13 @@ export default function ComissoesPage() {
     recebedor.forEach((l, i) => doc.text(l, 40, baseY + i * 14));
 
     const tableStartY = baseY + recebedor.length * 14 + 20;
+    const base = comm.base_calculo || 0;
+    const pctComissao = comm.percent_aplicado || 0;
     const body = itens.map((it) => [
       comm.tabela || "—",
       it.mes,
       pct100(it.percentual),
-      BRL(it.valor_previsto ?? (comm.valor_total || 0) * (it.percentual || 0)),
+      BRL((it.valor_previsto ?? base * pctComissao * (it.percentual || 0))),
       it.data_pagamento_vendedor ? formatISODateBR(it.data_pagamento_vendedor) : "—",
     ]);
 
@@ -721,7 +740,7 @@ export default function ComissoesPage() {
     });
 
     const total = sum(itens.map((i) =>
-      (i.valor_pago_vendedor != null ? i.valor_pago_vendedor : (comm.valor_total || 0) * (i.percentual || 0))
+      (i.valor_pago_vendedor != null ? i.valor_pago_vendedor : base * pctComissao * (i.percentual || 0))
     ));
     const endY = (doc as any).lastAutoTable.finalY + 10;
 
@@ -741,7 +760,7 @@ export default function ComissoesPage() {
     doc.save(`recibo_comissao_${vendedor}_${toDateInput(today)}.pdf`);
   }
 
-  // Recibo consolidado por data
+  // Recibo consolidado por data (usa imposto editável)
   async function downloadReceiptByDate(selectedDate: string) {
     if (!selectedDate) return alert("Informe a data do recibo.");
     const commIds = rows.map(r => r.id);
@@ -793,6 +812,8 @@ export default function ComissoesPage() {
       totalMeses[f.commission_id] = Math.max(totalMeses[f.commission_id] || 0, f.mes || 0);
     });
 
+    const tax = (parseFloat(taxPct.replace(",", ".")) || 0) / 100;
+
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     doc.setFont("helvetica", "bold"); doc.setFontSize(14);
     doc.text("RECIBO DE COMISSÃO — PAGAMENTOS NA DATA", 40, 40);
@@ -810,11 +831,12 @@ export default function ComissoesPage() {
         (venda?.lead_id && nomeClientePorChave[venda.lead_id]) ||
         (venda?.cliente_lead_id && nomeClientePorChave[venda.cliente_lead_id]) || "—";
 
-      const total = comm.valor_total || 0;
+      const base = comm.base_calculo || 0;
+      const pctCom = comm.percent_aplicado || 0;
       const bruto = typeof p.valor_pago_vendedor === "number"
         ? p.valor_pago_vendedor
-        : total * (p.percentual || 0);
-      const impostos = bruto * TAX_PCT;
+        : base * pctCom * (p.percentual || 0);
+      const impostos = bruto * tax;
       const liquido = bruto - impostos;
       totalLiquido += liquido;
 
@@ -1024,6 +1046,13 @@ export default function ComissoesPage() {
               <div className="flex items-center gap-2">
                 <Label className="text-xs">Data do Recibo</Label>
                 <Input type="date" value={receiptDateAll} onChange={(e) => setReceiptDateAll(e.target.value)} className="h-8 w-[160px]" />
+                <Label className="text-xs">Imposto (%)</Label>
+                <Input
+                  className="h-8 w-[90px]"
+                  value={taxPct}
+                  onChange={(e) => setTaxPct(e.target.value)}
+                  placeholder="6,00"
+                />
                 <Button variant="outline" size="sm" onClick={() => downloadReceiptByDate(receiptDateAll)}>
                   <FileText className="w-4 h-4 mr-1" /> Recibo (PDF) por data
                 </Button>

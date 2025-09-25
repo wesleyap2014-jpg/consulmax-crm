@@ -561,7 +561,7 @@ export default function ComissoesPage() {
     if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file);
     if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file);
 
-    const updates: Partial<CommissionFlow>[] = [];
+    const updates: Partial<CommissionFlow & { id: string }> [] = [];
     const dateToApply = payload.data_pagamento_vendedor || toDateInput(new Date());
     const sameValue = payload.valor_pago_vendedor;
 
@@ -571,6 +571,7 @@ export default function ComissoesPage() {
       row.parts.forEach(p => {
         updates.push({
           id: p.id,
+          commission_id: payCommissionId, // <-- importante para evitar tentativa de INSERT sem commission_id
           data_pagamento_vendedor: dateToApply,
           valor_pago_vendedor: typeof sameValue === "number" ? sameValue : p.valor_previsto,
           recibo_vendedor_url: reciboPath || undefined,
@@ -579,7 +580,8 @@ export default function ComissoesPage() {
       });
     });
 
-    const { error } = await supabase.from("commission_flow").upsert(updates);
+    // usa onConflict pela PK id (update garantido)
+    const { error } = await supabase.from("commission_flow").upsert(updates, { onConflict: "id" });
     if (error) return alert(error.message);
 
     const { data: updated } = await supabase

@@ -81,6 +81,24 @@ type CommissionFlow = {
   comprovante_pagto_url: string | null;
 };
 
+/** Linha agregada por mês (UI do pagamento) */
+type PayRowAgg = {
+  key: string;                // `${commission_id}::${mes}`
+  mes: number;
+  percentual: number;         // soma frações
+  valor_previsto: number;     // soma
+  valor_pago_vendedor: number; // soma
+  data_pagamento_vendedor: string | null; // se todas iguais; senão null
+  /** linhas reais do DB que compõem o mês */
+  parts: Array<{
+    id: string;
+    percentual: number;
+    valor_previsto: number;
+    valor_pago_vendedor: number;
+    data_pagamento_vendedor: string | null;
+  }>;
+};
+
 /* ========================= Helpers & Constantes ========================= */
 const TAX_PCT = 0.06; // 6% de impostos no recibo (ajuste se necessário)
 
@@ -192,10 +210,10 @@ export default function ComissoesPage() {
 
   /* ---------- Estado Pagamento ---------- */
   const [payCommissionId, setPayCommissionId] = useState<string>("");
-  const [payCommission, setPayCommission] = useState<Commission | null>(null); // para resumo
-  const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
+  const [payCommission, setPayCommission] = useState<Commission | null>(null);
+  const [payRowsAgg, setPayRowsAgg] = useState<PayRowAgg[]>([]);
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
-  const [payDate, setPayDate] = useState<string>(() => toDateInput(new Date())); // data global do diálogo
+  const [payDate, setPayDate] = useState<string>(() => toDateInput(new Date()));
 
   /* ---------- Recibo por data (tabela Detalhamento) ---------- */
   const [receiptDateAll, setReceiptDateAll] = useState<string>("");
@@ -325,6 +343,7 @@ export default function ComissoesPage() {
 
   function totalsInRange(start: Date, end: Date) {
     const sel = rows.filter((r) => isBetween(r.data_venda, start, end));
+    the:
     const tot = sum(sel.map((r) => r.valor_total));
     const pago = sum(sel.filter((r) => r.status === "pago").map((r) => r.valor_total));
     const pend = tot - pago;
@@ -400,17 +419,65 @@ export default function ComissoesPage() {
   }
 
   /* ========================= Pagamento ========================= */
+  function aggregateFlowsForUI(commissionId: string, flows: CommissionFlow[], commissionTotal: number): PayRowAgg[] {
+    const byMes: Record<number, PayRowAgg> = {};
+    flows.forEach(f => {
+      const key = `${commissionId}::${f.mes}`;
+      const previsto = (f.valor_previsto ?? commissionTotal * (f.percentual || 0)) || 0;
+      const pago = f.valor_pago_vendedor || 0;
+      if (!byMes[f.mes]) {
+        byMes[f.mes] = {
+          key,
+          mes: f.mes,
+          percentual: f.percentual || 0,
+          valor_previsto: previsto,
+          valor_pago_vendedor: pago,
+          data_pagamento_vendedor: f.data_pagamento_vendedor || null,
+          parts: [{
+            id: f.id,
+            percentual: f.percentual || 0,
+            valor_previsto: previsto,
+            valor_pago_vendedor: pago,
+            data_pagamento_vendedor: f.data_pagamento_vendedor || null,
+          }],
+        };
+      } else {
+        const row = byMes[f.mes];
+        row.percentual += (f.percentual || 0);
+        row.valor_previsto += previsto;
+        row.valor_pago_vendedor += pago;
+        // se datas diferentes, zera para mostrar "—"
+        row.data_pagamento_vendedor =
+          row.data_pagamento_vendedor === (f.data_pagamento_vendedor || null)
+            ? row.data_pagamento_vendedor
+            : null;
+        row.parts.push({
+          id: f.id,
+          percentual: f.percentual || 0,
+          valor_previsto: previsto,
+          valor_pago_vendedor: pago,
+          data_pagamento_vendedor: f.data_pagamento_vendedor || null,
+        });
+      }
+    });
+    // ordena por mes
+    return Object.values(byMes).sort((a, b) => a.mes - b.mes);
+  }
+
   async function openPaymentFor(commission: Commission) {
     setPayCommissionId(commission.id);
-    setPayCommission(commission); // guarda p/ resumo & cálculo
+    setPayCommission(commission);
+    setPayDate(toDateInput(new Date()));
     const { data } = await supabase
       .from("commission_flow")
       .select("*")
       .eq("commission_id", commission.id)
       .order("mes", { ascending: true });
-    setPayFlow((data || []) as CommissionFlow[]);
+
+    const flows = (data || []) as CommissionFlow[];
+    const agg = aggregateFlowsForUI(commission.id, flows, commission.valor_total || 0);
+    setPayRowsAgg(agg);
     setPaySelected({});
-    setPayDate(toDateInput(new Date()));
     setOpenPay(true);
   }
 
@@ -421,41 +488,38 @@ export default function ComissoesPage() {
     return data?.path || null;
   }
 
-  // Valor Previsto de UI = comissão_total × percentual (corrige prints confusos)
-  const valorPrevistoUI = (f: CommissionFlow) => {
-    const total = payCommission?.valor_total ?? 0;
-    const calc = total * (f.percentual || 0);
-    const previsto = f.valor_previsto ?? calc;
-    return previsto > total ? calc : previsto;
-  };
-
   async function paySelectedParcels(payload: {
     data_pagamento_vendedor?: string;
-    valor_pago_vendedor?: number;
+    valor_pago_vendedor?: number;     // se vier, aplica o mesmo valor a cada parcela (pouco comum)
     recibo_file?: File | null;
     comprovante_file?: File | null;
   }) {
-    const updates: Partial<CommissionFlow>[] = [];
+    const selectedKeys = Object.entries(paySelected).filter(([, v]) => v).map(([k]) => k);
+    if (!selectedKeys.length) return alert("Selecione pelo menos uma parcela (mês).");
+
     let reciboPath: string | null = null;
     let compPath: string | null = null;
     if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file);
     if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file);
 
-    const vGlobal = payload.valor_pago_vendedor;
+    const updates: Partial<CommissionFlow>[] = [];
+    const dateToApply = payload.data_pagamento_vendedor || toDateInput(new Date());
+    const sameValue = payload.valor_pago_vendedor;
 
-    payFlow.forEach((f) => {
-      if (paySelected[f.id]) {
+    selectedKeys.forEach(k => {
+      const row = payRowsAgg.find(r => r.key === k);
+      if (!row) return;
+      row.parts.forEach(p => {
         updates.push({
-          id: f.id,
-          data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
-          valor_pago_vendedor: typeof vGlobal === "number" ? vGlobal : valorPrevistoUI(f),
-          recibo_vendedor_url: reciboPath || f.recibo_vendedor_url,
-          comprovante_pagto_url: compPath || f.comprovante_pagto_url,
+          id: p.id,
+          data_pagamento_vendedor: dateToApply,
+          valor_pago_vendedor: typeof sameValue === "number" ? sameValue : p.valor_previsto,
+          recibo_vendedor_url: reciboPath || undefined,
+          comprovante_pagto_url: compPath || undefined,
         } as any);
-      }
+      });
     });
 
-    if (!updates.length) return alert("Selecione pelo menos uma parcela.");
     const { error } = await supabase.from("commission_flow").upsert(updates);
     if (error) return alert(error.message);
 
@@ -1107,13 +1171,13 @@ export default function ComissoesPage() {
                   <div className="p-2 rounded border">
                     <div className="text-gray-500 text-xs">Total previsto (fluxo)</div>
                     <div className="font-semibold">
-                      {BRL(sum(payFlow.map((f) => valorPrevistoUI(f))))}
+                      {BRL(sum(payRowsAgg.map(r => r.valor_previsto)))}
                     </div>
                   </div>
                   <div className="p-2 rounded border">
                     <div className="text-gray-500 text-xs">Já pago</div>
                     <div className="font-semibold">
-                      {BRL(sum(payFlow.map((f) => f.valor_pago_vendedor || 0)))}
+                      {BRL(sum(payRowsAgg.map(r => r.valor_pago_vendedor)))}
                     </div>
                   </div>
                 </div>
@@ -1125,29 +1189,17 @@ export default function ComissoesPage() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    setPaySelected(Object.fromEntries(payFlow
+                    setPaySelected(Object.fromEntries(payRowsAgg
                       .filter(f => !f.valor_pago_vendedor)
-                      .map(f => [f.id, true])
+                      .map(f => [f.key, true])
                     ))
                   }
                 >
                   Selecionar tudo pendente
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setPayFlow(curr => curr.map(f => ({
-                      ...f,
-                      valor_pago_vendedor: f.valor_pago_vendedor || valorPrevistoUI(f)
-                    })));
-                  }}
-                >
-                  Preencher Valor Pago = Valor Previsto
-                </Button>
               </div>
 
-              {/* Tabela de parcelas */}
+              {/* Tabela de parcelas (agregada por mês) */}
               <div className="overflow-x-auto">
                 <table className="min-w-[800px] w-full text-sm">
                   <thead>
@@ -1161,17 +1213,17 @@ export default function ComissoesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {payFlow.map((f) => (
-                      <tr key={f.id} className="border-b">
+                    {payRowsAgg.map((f) => (
+                      <tr key={f.key} className="border-b">
                         <td className="p-2">
                           <Checkbox
-                            checked={!!paySelected[f.id]}
-                            onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))}
+                            checked={!!paySelected[f.key]}
+                            onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.key]: !!v }))}
                           />
                         </td>
                         <td className="p-2">M{f.mes}</td>
                         <td className="p-2">{pct100(f.percentual)}</td>
-                        <td className="p-2 text-right">{BRL(valorPrevistoUI(f))}</td>
+                        <td className="p-2 text-right">{BRL(f.valor_previsto)}</td>
                         <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
                         <td className="p-2">
                           {f.data_pagamento_vendedor ? formatISODateBR(f.data_pagamento_vendedor) : "—"}

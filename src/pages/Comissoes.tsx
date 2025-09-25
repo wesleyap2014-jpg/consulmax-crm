@@ -37,7 +37,7 @@ type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 
 type Venda = {
   id: UUID;
-  data_venda: string;          // YYYY-MM-DD
+  data_venda: string;          // YYYY-MM-DD ou TIMESTAMP
   vendedor_id: UUID;           // pode ser users.id ou users.auth_user_id
   segmento: string | null;
   tabela: string | null;
@@ -71,7 +71,7 @@ type CommissionFlow = {
   id: UUID;
   commission_id: UUID;
   mes: number;
-  percentual: number;
+  percentual: number; // fração
   valor_previsto: number | null;
   valor_recebido_admin: number | null;
   data_recebimento_admin: string | null;
@@ -91,12 +91,19 @@ const pct100 = (v?: number | null) =>
 const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
 const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
 
-// mostra DATE (YYYY-MM-DD) sem usar new Date() para não sofrer UTC->local
-const formatISODateBR = (isoDate?: string | null) => {
-  if (!isoDate) return "—";
-  const [y, m, d] = isoDate.split("-");
-  if (!y || !m || !d) return isoDate;
-  return `${d}/${m}/${y}`;
+// DATE (YYYY-MM-DD) e TIMESTAMP (com T/Z/timezone) sem deslocar fuso
+const formatISODateBR = (iso?: string | null) => {
+  if (!iso) return "—";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+  }
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yy = d.getUTCFullYear();
+  return `${dd}/${mm}/${yy}`;
 };
 
 /* ========================= Relógio radial ========================= */
@@ -185,6 +192,7 @@ export default function ComissoesPage() {
 
   /* ---------- Estado Pagamento ---------- */
   const [payCommissionId, setPayCommissionId] = useState<string>("");
+  const [payCommission, setPayCommission] = useState<Commission | null>(null); // NOVO: para resumo
   const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
 
@@ -312,7 +320,6 @@ export default function ComissoesPage() {
 
   function isBetween(d?: string | null, start?: Date, end?: Date) {
     if (!d) return false;
-    // aqui fica ok usar Date pois nos comissionamentos a coluna é DATE string (yyyy-mm-dd)
     const x = new Date(d).getTime();
     return x >= (start?.getTime() || 0) && x <= (end?.getTime() || now.getTime());
   }
@@ -372,6 +379,7 @@ export default function ComissoesPage() {
   /* ========================= Pagamento ========================= */
   async function openPaymentFor(commission: Commission) {
     setPayCommissionId(commission.id);
+    setPayCommission(commission); // guarda p/ resumo & cálculo
     const { data } = await supabase
       .from("commission_flow")
       .select("*")
@@ -389,6 +397,14 @@ export default function ComissoesPage() {
     return data?.path || null;
   }
 
+  // Valor Previsto de UI = comissão_total × percentual (corrige prints confusos)
+  const valorPrevistoUI = (f: CommissionFlow) => {
+    const total = payCommission?.valor_total ?? 0;
+    const calc = total * (f.percentual || 0);
+    const previsto = f.valor_previsto ?? calc;
+    return previsto > total ? calc : previsto;
+  };
+
   async function paySelectedParcels(payload: {
     data_pagamento_vendedor?: string;
     valor_pago_vendedor?: number;
@@ -401,12 +417,14 @@ export default function ComissoesPage() {
     if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file);
     if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file);
 
+    const vGlobal = payload.valor_pago_vendedor;
+
     payFlow.forEach((f) => {
       if (paySelected[f.id]) {
         updates.push({
           id: f.id,
           data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
-          valor_pago_vendedor: payload.valor_pago_vendedor ?? f.valor_previsto ?? 0,
+          valor_pago_vendedor: typeof vGlobal === "number" ? vGlobal : valorPrevistoUI(f),
           recibo_vendedor_url: reciboPath || f.recibo_vendedor_url,
           comprovante_pagto_url: compPath || f.comprovante_pagto_url,
         } as any);
@@ -439,45 +457,58 @@ export default function ComissoesPage() {
     try {
       setGenBusy(venda.id);
 
-      // tenta descobrir sim_table_id pela tabela (se existir)
+      // 1) Resolve vendedor para users.id (cobre id OU auth_user_id)
+      const vendedorResolved =
+        (usersById as any)[venda.vendedor_id]?.id ||
+        (usersByAuth as any)[venda.vendedor_id]?.id ||
+        null;
+
+      if (!vendedorResolved) {
+        alert("Não foi possível mapear o vendedor: verifique se o ID na venda corresponde a users.id ou users.auth_user_id.");
+        return;
+      }
+
+      // 2) Resolve sim_table_id pela tabela (se existir)
       let simTableId: string | null = null;
       if (venda.tabela) {
-        const { data: st } = await supabase
+        const { data: st, error: stErr } = await supabase
           .from("sim_tables")
           .select("id")
           .eq("nome_tabela", venda.tabela)
           .limit(1);
+        if (stErr) {
+          alert("Erro ao buscar SimTable: " + stErr.message);
+          return;
+        }
         simTableId = st?.[0]?.id ?? null;
       }
 
-      // pega percent padrão da regra (se existir)
+      // 3) Busca regra padrão (se houver) usando vendedorResolved + sim_table_id
       let percent_aplicado: number | null = null;
       if (simTableId) {
         const { data: rule } = await supabase
           .from("commission_rules")
           .select("percent_padrao")
-          .eq("vendedor_id", venda.vendedor_id)
+          .eq("vendedor_id", vendedorResolved)
           .eq("sim_table_id", simTableId)
           .limit(1);
-        percent_aplicado = rule?.[0]?.percent_padrao ?? null;
+        percent_aplicado = rule?.[0]?.percent_padrao ?? null; // fração
       }
 
-      // monta o registro (snapshot preenchido por trigger no banco)
+      // 4) Monta insert (FKs corretas)
+      const base = venda.valor_venda ?? 0;
       const insert = {
         venda_id: venda.id,
-        vendedor_id: venda.vendedor_id,
+        vendedor_id: vendedorResolved,
         sim_table_id: simTableId,
         data_venda: venda.data_venda,
         segmento: venda.segmento,
         tabela: venda.tabela,
         administradora: venda.administradora,
         valor_venda: venda.valor_venda,
-        base_calculo: venda.valor_venda,
+        base_calculo: base,
         percent_aplicado,
-        valor_total:
-          percent_aplicado && venda.valor_venda
-            ? Math.round(venda.valor_venda * percent_aplicado * 100) / 100
-            : null,
+        valor_total: percent_aplicado ? Math.round(base * percent_aplicado * 100) / 100 : null,
         status: "a_pagar" as const,
       };
 
@@ -485,7 +516,7 @@ export default function ComissoesPage() {
       if (error) {
         if (String(error.code) === "23503") {
           alert("Não foi possível criar: verifique se o vendedor existe em 'users' e/ou se a SimTable está correta.");
-        } else if (String(error.message || "").includes("row-level security")) {
+        } else if (String(error.message || "").toLowerCase().includes("row-level security")) {
           alert("RLS bloqueou o INSERT. Garanta as policies de 'commissions' e 'commission_flow'.");
         } else {
           alert("Erro ao criar a comissão: " + error.message);
@@ -556,19 +587,21 @@ export default function ComissoesPage() {
       comm.tabela || "—",
       it.mes,
       pct100(it.percentual),
-      BRL(it.valor_previsto),
+      BRL(it.valor_previsto ?? (comm.valor_total || 0) * (it.percentual || 0)),
       it.data_pagamento_vendedor ? formatISODateBR(it.data_pagamento_vendedor) : "—",
     ]);
 
     autoTable(doc, {
       startY: tableStartY,
-      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]],
+      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]]],
       body,
       styles: { font: "helvetica", fontSize: 10 },
       headStyles: { fillColor: [30, 41, 63] },
     });
 
-    const total = sum(itens.map((i) => i.valor_pago_vendedor ?? i.valor_previsto ?? 0));
+    const total = sum(itens.map((i) =>
+      (i.valor_pago_vendedor != null ? i.valor_pago_vendedor : (comm.valor_total || 0) * (i.percentual || 0))
+    ));
     const endY = (doc as any).lastAutoTable.finalY + 10;
 
     doc.setFont("helvetica", "bold");
@@ -934,6 +967,60 @@ export default function ComissoesPage() {
             </TabsList>
 
             <TabsContent value="selecionar" className="space-y-3">
+              {/* Resumo do pagamento */}
+              {payCommission && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="p-2 rounded border">
+                    <div className="text-gray-500 text-xs">Comissão total</div>
+                    <div className="font-semibold">{BRL(payCommission.valor_total)}</div>
+                  </div>
+                  <div className="p-2 rounded border">
+                    <div className="text-gray-500 text-xs">% padrão</div>
+                    <div className="font-semibold">{pct100(payCommission.percent_aplicado)}</div>
+                  </div>
+                  <div className="p-2 rounded border">
+                    <div className="text-gray-500 text-xs">Total previsto (fluxo)</div>
+                    <div className="font-semibold">
+                      {BRL(sum(payFlow.map((f) => valorPrevistoUI(f))))}
+                    </div>
+                  </div>
+                  <div className="p-2 rounded border">
+                    <div className="text-gray-500 text-xs">Já pago</div>
+                    <div className="font-semibold">
+                      {BRL(sum(payFlow.map((f) => f.valor_pago_vendedor || 0)))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Ações rápidas */}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setPaySelected(Object.fromEntries(payFlow
+                      .filter(f => !f.valor_pago_vendedor)
+                      .map(f => [f.id, true])
+                    ))
+                  }
+                >
+                  Selecionar tudo pendente
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPayFlow(curr => curr.map(f => ({
+                      ...f,
+                      valor_pago_vendedor: f.valor_pago_vendedor || valorPrevistoUI(f)
+                    })));
+                  }}
+                >
+                  Preencher Valor Pago = Valor Previsto
+                </Button>
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="min-w-[800px] w-full text-sm">
                   <thead>
@@ -957,7 +1044,7 @@ export default function ComissoesPage() {
                         </td>
                         <td className="p-2">M{f.mes}</td>
                         <td className="p-2">{pct100(f.percentual)}</td>
-                        <td className="p-2 text-right">{BRL(f.valor_previsto)}</td>
+                        <td className="p-2 text-right">{BRL(valorPrevistoUI(f))}</td>
                         <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
                         <td className="p-2">
                           {f.data_pagamento_vendedor

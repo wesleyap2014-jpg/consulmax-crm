@@ -89,7 +89,6 @@ type PayRowAgg = {
   valor_previsto: number;     // soma
   valor_pago_vendedor: number; // soma
   data_pagamento_vendedor: string | null; // se todas iguais; senão null
-  /** linhas reais do DB que compõem o mês */
   parts: Array<{
     id: string;
     percentual: number;
@@ -99,8 +98,15 @@ type PayRowAgg = {
   }>;
 };
 
+/** Extensão para exibição na tabela de Detalhamento */
+type CommissionRow = Commission & {
+  flow?: CommissionFlow[];
+  cliente_nome?: string | null;
+  numero_proposta?: string | null;
+};
+
 /* ========================= Helpers & Constantes ========================= */
-const TAX_PCT = 0.06; // 6% de impostos no recibo (ajuste se necessário)
+const TAX_PCT = 0.06; // % de impostos usado no recibo por data (ajuste se necessário)
 
 const BRL = (v?: number | null) =>
   (typeof v === "number" ? v : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -111,7 +117,7 @@ const pct100 = (v?: number | null) =>
 const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
 const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
 
-// DATE (YYYY-MM-DD) e TIMESTAMP (com T/Z/timezone) sem deslocar fuso
+// DATE (YYYY-MM-DD) e TIMESTAMP sem deslocar fuso
 const formatISODateBR = (iso?: string | null) => {
   if (!iso) return "—";
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
@@ -169,9 +175,9 @@ export default function ComissoesPage() {
   /* ---------- Bases ---------- */
   const [users, setUsers] = useState<User[]>([]);
   const [simTables, setSimTables] = useState<SimTable[]>([]);
-  const [clientesMap, setClientesMap] = useState<Record<string, string>>({}); // chave pode ser id OU lead_id
+  const [clientesMap, setClientesMap] = useState<Record<string, string>>({}); // nome por id OU lead_id (usado na grade "sem comissão")
 
-  // mapeia vendedor por users.id E por users.auth_user_id (para casos em que vendas usam auth_user_id)
+  // mapeia vendedor por users.id E por users.auth_user_id
   const usersById = useMemo(() => {
     const m: Record<string, User> = {};
     users.forEach((u) => (m[u.id] = u));
@@ -192,7 +198,7 @@ export default function ComissoesPage() {
 
   /* ---------- Comissões / Vendas ---------- */
   const [loading, setLoading] = useState<boolean>(false);
-  const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
+  const [rows, setRows] = useState<CommissionRow[]>([]);
   const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
 
@@ -215,7 +221,7 @@ export default function ComissoesPage() {
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
   const [payDate, setPayDate] = useState<string>(() => toDateInput(new Date()));
 
-  /* ---------- Recibo por data (tabela Detalhamento) ---------- */
+  /* ---------- Recibo por data ---------- */
   const [receiptDateAll, setReceiptDateAll] = useState<string>("");
 
   /* ---------- Load bases ---------- */
@@ -262,7 +268,46 @@ export default function ComissoesPage() {
         flowByCommission[f.commission_id].push(f as CommissionFlow);
       });
 
-      setRows((comms || []).map((c) => ({ ...(c as Commission), flow: flowByCommission[c.id] || [] })));
+      // vendas relacionadas às comissões (para cliente e nº proposta)
+      const vendaIds = Array.from(new Set((comms || []).map((c) => c.venda_id).filter(Boolean)));
+      let vendaById: Record<string, Venda> = {};
+      let nomeClientePorChave: Record<string, string> = {};
+      if (vendaIds.length) {
+        const { data: vendasData } = await supabase
+          .from("vendas")
+          .select("id, valor_venda, lead_id, cliente_lead_id, numero_proposta")
+          .in("id", vendaIds);
+
+        vendaById = Object.fromEntries((vendasData || []).map((v: any) => [v.id, v as Venda]));
+
+        const leadKeys = Array.from(new Set(
+          (vendasData || []).flatMap(v => [v.lead_id, v.cliente_lead_id]).filter(Boolean) as string[]
+        ));
+
+        if (leadKeys.length) {
+          const [cliById, cliByLead] = await Promise.all([
+            supabase.from("clientes").select("id, nome").in("id", leadKeys),
+            supabase.from("clientes").select("lead_id, nome").in("lead_id", leadKeys),
+          ]);
+          (cliById.data || []).forEach((c: any) => { nomeClientePorChave[c.id] = c.nome || ""; });
+          (cliByLead.data || []).forEach((c: any) => { if (c.lead_id) nomeClientePorChave[c.lead_id] = c.nome || ""; });
+        }
+      }
+
+      // monta rows com extras
+      const rowsWithExtras: CommissionRow[] = (comms || []).map((c: any) => {
+        const venda = vendaById[c.venda_id];
+        const clienteNome =
+          (venda?.lead_id && nomeClientePorChave[venda.lead_id]) ||
+          (venda?.cliente_lead_id && nomeClientePorChave[venda.cliente_lead_id]) || null;
+        return {
+          ...(c as Commission),
+          flow: flowByCommission[c.id] || [],
+          cliente_nome: clienteNome,
+          numero_proposta: venda?.numero_proposta || null,
+        };
+      });
+      setRows(rowsWithExtras);
 
       // vendas no período (sem comissão)
       const { data: vendasPeriodo } = await supabase
@@ -287,7 +332,7 @@ export default function ComissoesPage() {
       );
       setVendasSemCom(vendasFiltered2 as Venda[]);
 
-      // ==== nomes de cliente (COALESCE lead_id, cliente_lead_id) contra clientes.id OU clientes.lead_id ====
+      // nomes de cliente para a grade "sem comissão"
       const ids = Array.from(
         new Set(
           (vendasFiltered2 || [])
@@ -296,13 +341,13 @@ export default function ComissoesPage() {
         )
       );
       if (ids.length) {
-        const [cliById, cliByLead] = await Promise.all([
+        const [cliById2, cliByLead2] = await Promise.all([
           supabase.from("clientes").select("id, nome").in("id", ids),
           supabase.from("clientes").select("lead_id, nome").in("lead_id", ids),
         ]);
         const map: Record<string, string> = {};
-        (cliById.data || []).forEach((c: any) => { map[c.id] = c.nome || ""; });
-        (cliByLead.data || []).forEach((c: any) => { if (c.lead_id) map[c.lead_id] = c.nome || ""; });
+        (cliById2.data || []).forEach((c: any) => { map[c.id] = c.nome || ""; });
+        (cliByLead2.data || []).forEach((c: any) => { if (c.lead_id) map[c.lead_id] = c.nome || ""; });
         setClientesMap(map);
       } else {
         setClientesMap({});
@@ -343,7 +388,6 @@ export default function ComissoesPage() {
 
   function totalsInRange(start: Date, end: Date) {
     const sel = rows.filter((r) => isBetween(r.data_venda, start, end));
-    the:
     const tot = sum(sel.map((r) => r.valor_total));
     const pago = sum(sel.filter((r) => r.status === "pago").map((r) => r.valor_total));
     const pend = tot - pago;
@@ -446,7 +490,6 @@ export default function ComissoesPage() {
         row.percentual += (f.percentual || 0);
         row.valor_previsto += previsto;
         row.valor_pago_vendedor += pago;
-        // se datas diferentes, zera para mostrar "—"
         row.data_pagamento_vendedor =
           row.data_pagamento_vendedor === (f.data_pagamento_vendedor || null)
             ? row.data_pagamento_vendedor
@@ -460,7 +503,6 @@ export default function ComissoesPage() {
         });
       }
     });
-    // ordena por mes
     return Object.values(byMes).sort((a, b) => a.mes - b.mes);
   }
 
@@ -490,7 +532,7 @@ export default function ComissoesPage() {
 
   async function paySelectedParcels(payload: {
     data_pagamento_vendedor?: string;
-    valor_pago_vendedor?: number;     // se vier, aplica o mesmo valor a cada parcela (pouco comum)
+    valor_pago_vendedor?: number;
     recibo_file?: File | null;
     comprovante_file?: File | null;
   }) {
@@ -699,13 +741,12 @@ export default function ComissoesPage() {
     doc.save(`recibo_comissao_${vendedor}_${toDateInput(today)}.pdf`);
   }
 
-  // Recibo consolidado por data (todas as comissões/parcelas com pagamento na data)
+  // Recibo consolidado por data
   async function downloadReceiptByDate(selectedDate: string) {
     if (!selectedDate) return alert("Informe a data do recibo.");
     const commIds = rows.map(r => r.id);
     if (!commIds.length) return alert("Não há comissões no filtro atual.");
 
-    // parcelas pagas nessa data, entre as comissões filtradas
     const { data: parcels } = await supabase
       .from("commission_flow")
       .select("*")
@@ -719,7 +760,6 @@ export default function ComissoesPage() {
       return;
     }
 
-    // precisamos: venda (valor_venda), cliente, total de meses do fluxo (para X/Y)
     const commById = new Map(rows.map(r => [r.id, r]));
     const vendaIds = Array.from(new Set(
       parcels.map(p => commById.get(p.commission_id)?.venda_id).filter(Boolean) as string[]
@@ -743,7 +783,6 @@ export default function ComissoesPage() {
     (cliById.data || []).forEach((c: any) => { nomeClientePorChave[c.id] = c.nome || ""; });
     (cliByLead.data || []).forEach((c: any) => { if (c.lead_id) nomeClientePorChave[c.lead_id] = c.nome || ""; });
 
-    // total de meses por comissão
     const { data: allFlows } = await supabase
       .from("commission_flow")
       .select("commission_id, mes")
@@ -754,7 +793,6 @@ export default function ComissoesPage() {
       totalMeses[f.commission_id] = Math.max(totalMeses[f.commission_id] || 0, f.mes || 0);
     });
 
-    // montar PDF
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     doc.setFont("helvetica", "bold"); doc.setFontSize(14);
     doc.text("RECIBO DE COMISSÃO — PAGAMENTOS NA DATA", 40, 40);
@@ -997,11 +1035,13 @@ export default function ComissoesPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          <table className="min-w-[1100px] w-full text-sm">
+          <table className="min-w-[1200px] w-full text-sm">
             <thead>
               <tr className="bg-gray-50">
                 <th className="p-2 text-left">Data</th>
                 <th className="p-2 text-left">Vendedor</th>
+                <th className="p-2 text-left">Cliente</th>
+                <th className="p-2 text-left">Nº Proposta</th>
                 <th className="p-2 text-left">Segmento</th>
                 <th className="p-2 text-left">Tabela</th>
                 <th className="p-2 text-right">Crédito</th>
@@ -1014,17 +1054,19 @@ export default function ComissoesPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={10} className="p-4">
+                <tr><td colSpan={12} className="p-4">
                   <Loader2 className="animate-spin inline mr-2" /> Carregando...
                 </td></tr>
               )}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={10} className="p-4 text-gray-500">Sem registros.</td></tr>
+                <tr><td colSpan={12} className="p-4 text-gray-500">Sem registros.</td></tr>
               )}
               {!loading && rows.map((r) => (
                 <tr key={r.id} className="border-b hover:bg-gray-50">
                   <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
                   <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                  <td className="p-2">{r.cliente_nome || "—"}</td>
+                  <td className="p-2">{r.numero_proposta || "—"}</td>
                   <td className="p-2">{r.segmento || "—"}</td>
                   <td className="p-2">{r.tabela || "—"}</td>
                   <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
@@ -1056,7 +1098,7 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Sheet: Regras de Comissão (overlay lateral) */}
+      {/* Sheet: Regras de Comissão */}
       <Sheet open={openRules} onOpenChange={setOpenRules}>
         <SheetContent side="right" className="w-[520px]">
           <SheetHeader><SheetTitle>Regras de Comissão</SheetTitle></SheetHeader>
@@ -1144,9 +1186,7 @@ export default function ComissoesPage() {
               <TabsTrigger value="arquivos">Arquivos</TabsTrigger>
             </TabsList>
 
-            {/* Selecionar & salvar por data */}
             <TabsContent value="selecionar" className="space-y-3">
-              {/* Data + Salvar */}
               <div className="flex items-end gap-3">
                 <div>
                   <Label>Data do pagamento</Label>
@@ -1157,7 +1197,6 @@ export default function ComissoesPage() {
                 </Button>
               </div>
 
-              {/* Resumo */}
               {payCommission && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="p-2 rounded border">
@@ -1183,7 +1222,6 @@ export default function ComissoesPage() {
                 </div>
               )}
 
-              {/* Ações rápidas */}
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
@@ -1199,7 +1237,6 @@ export default function ComissoesPage() {
                 </Button>
               </div>
 
-              {/* Tabela de parcelas (agregada por mês) */}
               <div className="overflow-x-auto">
                 <table className="min-w-[800px] w-full text-sm">
                   <thead>
@@ -1235,7 +1272,6 @@ export default function ComissoesPage() {
               </div>
             </TabsContent>
 
-            {/* Uploads opcionais */}
             <TabsContent value="arquivos">
               <UploadArea onConfirm={(payload) => paySelectedParcels({
                 ...payload,

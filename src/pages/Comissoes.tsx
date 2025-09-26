@@ -17,7 +17,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle,
+  Loader2, Download, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle, Pencil,
 } from "lucide-react";
 
 import jsPDF from "jspdf";
@@ -31,6 +31,9 @@ type User = {
   auth_user_id?: UUID | null;
   nome: string | null;
   email: string | null;
+  cpf_cnpj?: string | null;  // assumido
+  endereco?: string | null;  // assumido
+  pix_chave?: string | null; // assumido
 };
 
 type SimTable = { id: UUID; segmento: string; nome_tabela: string };
@@ -81,13 +84,12 @@ type CommissionFlow = {
   comprovante_pagto_url: string | null;
 };
 
-/** Linha agregada por mês (UI do pagamento) */
 type PayRowAgg = {
-  key: string;                // `${commission_id}::${mes}`
+  key: string;
   mes: number;
-  percentual: number;         // fração
-  valor_previsto: number;     // R$
-  valor_pago_vendedor: number; // R$
+  percentual: number;
+  valor_previsto: number;
+  valor_pago_vendedor: number;
   data_pagamento_vendedor: string | null;
   parts: Array<{
     id: string;
@@ -99,7 +101,6 @@ type PayRowAgg = {
   }>;
 };
 
-/** Extensão para exibição na tabela de Detalhamento */
 type CommissionRow = Commission & {
   flow?: CommissionFlow[];
   cliente_nome?: string | null;
@@ -116,7 +117,6 @@ const pct100 = (v?: number | null) =>
 const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
 const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
 
-// DATE (YYYY-MM-DD) e TIMESTAMP sem deslocar fuso
 const formatISODateBR = (iso?: string | null) => {
   if (!iso) return "—";
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
@@ -130,6 +130,15 @@ const formatISODateBR = (iso?: string | null) => {
   const yy = d.getUTCFullYear();
   return `${dd}/${mm}/${yy}`;
 };
+
+// por extenso simples (BRL)
+function valorPorExtenso(valor: number) {
+  // Simplificado: apenas mostra em BRL com centavos separados por "e"
+  // (podemos trocar por uma lib depois se quiser algo mais formal)
+  const inteiro = Math.floor(valor);
+  const centavos = Math.round((valor - inteiro) * 100);
+  return `${BRL(inteiro)}${centavos ? ` e ${centavos} centavos` : ""}`;
+}
 
 /* ========================= Relógio radial ========================= */
 function RadialClock({ value, label }: { value: number; label: string }) {
@@ -174,7 +183,7 @@ export default function ComissoesPage() {
   /* ---------- Bases ---------- */
   const [users, setUsers] = useState<User[]>([]);
   const [simTables, setSimTables] = useState<SimTable[]>([]);
-  const [clientesMap, setClientesMap] = useState<Record<string, string>>({}); // nomes para "vendas sem comissão"
+  const [clientesMap, setClientesMap] = useState<Record<string, string>>({});
 
   const usersById = useMemo(() => {
     const m: Record<string, User> = {};
@@ -221,13 +230,20 @@ export default function ComissoesPage() {
 
   /* ---------- Recibo por data & Imposto ---------- */
   const [receiptDateAll, setReceiptDateAll] = useState<string>("");
-  const [taxPct, setTaxPct] = useState<string>("6,00"); // editável
+  const [taxPct, setTaxPct] = useState<string>("6,00");
+
+  /* ---------- Editar comissão ---------- */
+  const [openEdit, setOpenEdit] = useState<boolean>(false);
+  const [editRow, setEditRow] = useState<CommissionRow | null>(null);
+  const [editVendedor, setEditVendedor] = useState<string>("");
+  const [editPercent, setEditPercent] = useState<string>("0,00"); // em %
+  const [editSimTable, setEditSimTable] = useState<string>("");
 
   /* ---------- Load bases ---------- */
   useEffect(() => {
     (async () => {
       const [{ data: u }, { data: st }] = await Promise.all([
-        supabase.from("users").select("id, auth_user_id, nome, email").order("nome", { ascending: true }),
+        supabase.from("users").select("id, auth_user_id, nome, email, cpf_cnpj, endereco, pix_chave").order("nome", { ascending: true }),
         supabase.from("sim_tables").select("id, segmento, nome_tabela").order("segmento", { ascending: true }),
       ]);
       setUsers((u || []) as User[]);
@@ -330,7 +346,7 @@ export default function ComissoesPage() {
       );
       setVendasSemCom(vendasFiltered2 as Venda[]);
 
-      // nomes de cliente para a grade "sem comissão"
+      // nomes de cliente (id e lead_id) para “sem comissão”
       const ids = Array.from(new Set((vendasFiltered2 || [])
         .map((v) => v.lead_id || v.cliente_lead_id)
         .filter((x): x is string => !!x)
@@ -458,17 +474,14 @@ export default function ComissoesPage() {
   }
 
   /* ========================= Pagamento ========================= */
-  function aggregateFlowsForUI(
-    commission: Commission,
-    flows: CommissionFlow[]
-  ): PayRowAgg[] {
+  function aggregateFlowsForUI(commission: Commission, flows: CommissionFlow[]): PayRowAgg[] {
     const base = commission.base_calculo || 0;
     const pctComissao = commission.percent_aplicado || 0;
 
     const byMes: Record<number, PayRowAgg> = {};
     flows.forEach(f => {
       const key = `${commission.id}::${f.mes}`;
-      const partPct = f.percentual || 0; // fração
+      const partPct = f.percentual || 0;
       const previstoCalc = base * pctComissao * partPct;
 
       if (!byMes[f.mes]) {
@@ -510,10 +523,10 @@ export default function ComissoesPage() {
 
     const arr = Object.values(byMes).sort((a, b) => a.mes - b.mes);
 
-    // Normaliza se a soma dos percentuais vier duplicada (ex.: 200%)
+    // Normaliza se duplicou percentuais (raro, mas vimos dados duplicados)
     const totalPct = arr.reduce((acc, r) => acc + r.percentual, 0);
     if (totalPct > 1.01) {
-      const fator = Math.round(totalPct / 1); // 2, 3, ...
+      const fator = Math.round(totalPct / 1);
       if (Math.abs(totalPct - fator) < 0.15 && fator > 1) {
         arr.forEach(r => {
           r.percentual = r.percentual / fator;
@@ -574,7 +587,7 @@ export default function ComissoesPage() {
       row.parts.forEach(p => {
         updates.push({
           id: p.id,
-          commission_id: payCommissionId, // garante update; caso vire insert, preenche chaves NOT NULL
+          commission_id: payCommissionId,
           mes: p.mes,
           percentual: p.percentual,
           data_pagamento_vendedor: dateToApply,
@@ -702,71 +715,21 @@ export default function ComissoesPage() {
     URL.revokeObjectURL(url);
   }
 
-  /* ========================= PDF Recibo (por comissão OU por data) ========================= */
-  async function downloadReceiptPDF(comm: Commission, itens: CommissionFlow[]) {
-    const vendedor = userLabel(comm.vendedor_id);
-    const today = new Date();
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-    doc.setFont("helvetica", "bold"); doc.setFontSize(14);
-    doc.text("RECIBO DE COMISSÃO", 40, 40);
-    doc.setFontSize(10); doc.setFont("helvetica", "normal");
-
-    const pagador = [
-      "Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA.",
-      "CNPJ: 57.942.043/0001-03",
-      "Endereço: Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO. CEP: 76907-532",
-    ];
-    const recebedor = [
-      `Nome do Recebedor: ${vendedor}`,
-      "CPF/CNPJ: —",
-      "Endereço: —",
-    ];
-    const y1 = 65; pagador.forEach((l, i) => doc.text(l, 40, y1 + i * 14));
-    const baseY = y1 + pagador.length * 14 + 10;
-    recebedor.forEach((l, i) => doc.text(l, 40, baseY + i * 14));
-
-    const tableStartY = baseY + recebedor.length * 14 + 20;
-    const base = comm.base_calculo || 0;
-    const pctComissao = comm.percent_aplicado || 0;
-    const body = itens.map((it) => [
-      comm.tabela || "—",
-      it.mes,
-      pct100(it.percentual),
-      BRL((it.valor_previsto ?? base * pctComissao * (it.percentual || 0))),
-      it.data_pagamento_vendedor ? formatISODateBR(it.data_pagamento_vendedor) : "—",
-    ]);
-
-    autoTable(doc, {
-      startY: tableStartY,
-      head: [["TABELA", "MÊS", "% PARC.", "VALOR", "DATA PAGAMENTO"]],
-      body,
-      styles: { font: "helvetica", fontSize: 10 },
-      headStyles: { fillColor: [30, 41, 63] },
-    });
-
-    const total = sum(itens.map((i) =>
-      (i.valor_pago_vendedor != null ? i.valor_pago_vendedor : base * pctComissao * (i.percentual || 0))
-    ));
-    const endY = (doc as any).lastAutoTable.finalY + 10;
-
-    doc.setFont("helvetica", "bold");
-    doc.text(`Valor líquido da comissão: ${BRL(total)}`, 40, endY + 12);
-
-    doc.setFont("helvetica", "normal");
-    doc.text(`Forma de pagamento: PIX`, 40, endY + 28);
-    doc.text(`Data do pagamento: ${today.toLocaleDateString("pt-BR")}`, 40, endY + 44);
-
-    const signY = endY + 110;
-    doc.line(40, signY, 260, signY);
-    doc.text(`${vendedor}`, 40, signY + 14);
-
-    doc.setFontSize(9);
-    doc.text("Consulmax Consórcios • consulmaxconsorcios.com.br", 40, 812);
-    doc.save(`recibo_comissao_${vendedor}_${toDateInput(today)}.pdf`);
+  /* ========================= RECIBO: por data (1 PDF por vendedor) ========================= */
+  async function getNextReceiptNumber(ano: number): Promise<string> {
+    try {
+      const { data, error } = await supabase.rpc("next_receipt_number", { p_year: ano });
+      if (error) throw error;
+      const seq = (data as number) || 1;
+      const seqStr = String(seq).padStart(3, "0");
+      return `${seqStr}/${ano}`;
+    } catch {
+      // fallback se RPC não existir
+      const seqStr = String(Math.floor(Date.now() % 1000)).padStart(3, "0");
+      return `${seqStr}/${ano}`;
+    }
   }
 
-  // Recibo consolidado por data (usa imposto editável)
   async function downloadReceiptByDate(selectedDate: string) {
     if (!selectedDate) return alert("Informe a data do recibo.");
     const commIds = rows.map(r => r.id);
@@ -780,16 +743,20 @@ export default function ComissoesPage() {
       .order("commission_id", { ascending: true })
       .order("mes", { ascending: true });
 
-    if (!parcels || parcels.length === 0) {
-      alert("Não há parcelas com pagamento nessa data.");
-      return;
-    }
+    if (!parcels || parcels.length === 0) { alert("Não há parcelas com pagamento nessa data."); return; }
 
+    // mapa comissão e vendedor
     const commById = new Map(rows.map(r => [r.id, r]));
+    const vendedoresEnv: Record<string, CommissionRow[]> = {};
+    rows.forEach(r => {
+      if (!vendedoresEnv[r.vendedor_id]) vendedoresEnv[r.vendedor_id] = [];
+      vendedoresEnv[r.vendedor_id].push(r);
+    });
+
+    // dados das vendas p/ cliente & proposta
     const vendaIds = Array.from(new Set(
       parcels.map(p => commById.get(p.commission_id)?.venda_id).filter(Boolean) as string[]
     ));
-
     const { data: vendasData } = await supabase
       .from("vendas")
       .select("id, valor_venda, lead_id, cliente_lead_id, numero_proposta")
@@ -798,21 +765,19 @@ export default function ComissoesPage() {
     const leadKeys = Array.from(new Set(
       (vendasData || []).flatMap(v => [v.lead_id, v.cliente_lead_id]).filter(Boolean) as string[]
     ));
-
     const [cliById, cliByLead] = await Promise.all([
       supabase.from("clientes").select("id, nome").in("id", leadKeys),
       supabase.from("clientes").select("lead_id, nome").in("lead_id", leadKeys),
     ]);
-
     const nomeClientePorChave: Record<string, string> = {};
     (cliById.data || []).forEach((c: any) => { nomeClientePorChave[c.id] = c.nome || ""; });
     (cliByLead.data || []).forEach((c: any) => { if (c.lead_id) nomeClientePorChave[c.lead_id] = c.nome || ""; });
 
+    // total de meses por comissão
     const { data: allFlows } = await supabase
       .from("commission_flow")
       .select("commission_id, mes")
       .in("commission_id", Array.from(new Set(parcels.map(p => p.commission_id))));
-
     const totalMeses: Record<string, number> = {};
     (allFlows || []).forEach(f => {
       totalMeses[f.commission_id] = Math.max(totalMeses[f.commission_id] || 0, f.mes || 0);
@@ -820,55 +785,171 @@ export default function ComissoesPage() {
 
     const tax = (parseFloat(taxPct.replace(",", ".")) || 0) / 100;
 
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-    doc.setFont("helvetica", "bold"); doc.setFontSize(14);
-    doc.text("RECIBO DE COMISSÃO — PAGAMENTOS NA DATA", 40, 40);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(10);
-    doc.text(`Data selecionada: ${formatISODateBR(selectedDate)}`, 40, 58);
-
-    const head = [["CLIENTE", "PARCELA", "R$ VENDA", "COMISSÃO BRUTA", "IMPOSTOS", "COMISSÃO LÍQUIDA"]];
-    const body: any[] = [];
-    let totalLiquido = 0;
-
-    (parcels || []).forEach(p => {
-      const comm = commById.get(p.commission_id)!;
-      const venda = (vendasData || []).find(v => v.id === comm.venda_id);
-      const clienteNome =
-        (venda?.lead_id && nomeClientePorChave[venda.lead_id]) ||
-        (venda?.cliente_lead_id && nomeClientePorChave[venda.cliente_lead_id]) || "—";
-
-      const base = comm.base_calculo || 0;
-      const pctCom = comm.percent_aplicado || 0;
-      const bruto = typeof p.valor_pago_vendedor === "number"
-        ? p.valor_pago_vendedor
-        : base * pctCom * (p.percentual || 0);
-      const impostos = bruto * tax;
-      const liquido = bruto - impostos;
-      totalLiquido += liquido;
-
-      body.push([
-        clienteNome,
-        `${p.mes}/${totalMeses[p.commission_id] || p.mes}`,
-        BRL(venda?.valor_venda || 0),
-        BRL(bruto),
-        BRL(impostos),
-        BRL(liquido),
-      ]);
+    // Agrupar por vendedor
+    const parcelsByVend: Record<string, CommissionFlow[]> = {};
+    parcels.forEach(p => {
+      const vend = commById.get(p.commission_id)?.vendedor_id;
+      if (!vend) return;
+      if (!parcelsByVend[vend]) parcelsByVend[vend] = [];
+      parcelsByVend[vend].push(p);
     });
 
-    autoTable(doc, {
-      startY: 80,
-      head,
-      body,
-      styles: { font: "helvetica", fontSize: 10 },
-      headStyles: { fillColor: [30, 41, 63] },
-    });
+    // gerar 1 PDF por vendedor
+    for (const vendId of Object.keys(parcelsByVend)) {
+      const vendedor = usersById[vendId] || usersByAuth[vendId] || { nome: "—" };
+      const seqNum = await getNextReceiptNumber(new Date(selectedDate).getFullYear());
 
-    const endY = (doc as any).lastAutoTable.finalY + 14;
-    doc.setFont("helvetica", "bold");
-    doc.text(`Comissão Total Líquida: ${BRL(totalLiquido)}`, 40, endY);
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      const marginX = 40;
+      let cursorY = 50;
 
-    doc.save(`recibo_pagamentos_${selectedDate}.pdf`);
+      // Cabeçalho
+      doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+      doc.text("RECIBO DE COMISSÃO", 297, cursorY, { align: "center" }); // centralizado
+      cursorY += 18;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+      doc.text(`Recibo Nº: ${seqNum}`, marginX, cursorY);
+      doc.text(`Data: ${formatISODateBR(selectedDate)}`, 450, cursorY);
+      cursorY += 16;
+
+      doc.text("Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA. CNPJ: 57.942.043/0001-03", marginX, cursorY);
+      cursorY += 14;
+      doc.text("Endereço: Av. Menezes Filho, 3171, Casa Preta, Ji-Paraná/RO. CEP: 76907-532", marginX, cursorY);
+      cursorY += 18;
+
+      // linha
+      doc.setDrawColor(180); doc.line(marginX, cursorY, 555, cursorY);
+      cursorY += 14;
+
+      // Recebedor
+      doc.text(`Nome do Recebedor: ${vendedor.nome || "—"}`, marginX, cursorY); cursorY += 14;
+      doc.text(`CPF/CNPJ: ${vendedor.cpf_cnpj || "—"}`, marginX, cursorY); cursorY += 14;
+      doc.text(`Endereço: ${vendedor.endereco || "—"}`, marginX, cursorY); cursorY += 18;
+
+      // linha
+      doc.setDrawColor(180); doc.line(marginX, cursorY, 555, cursorY);
+      cursorY += 14;
+
+      doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", marginX, cursorY);
+      cursorY += 8;
+      doc.text("Cliente / Proposta / Parcela / Valor da Venda / Comissão Bruta / Impostos / Comissão Líquida", marginX, cursorY);
+      cursorY += 8;
+
+      // Tabela
+      const body: any[] = [];
+      let totalLiquido = 0;
+
+      parcelsByVend[vendId].forEach(p => {
+        const comm = commById.get(p.commission_id)!;
+        const venda = (vendasData || []).find(v => v.id === comm.venda_id);
+        const clienteNome =
+          (venda?.lead_id && nomeClientePorChave[venda.lead_id]) ||
+          (venda?.cliente_lead_id && nomeClientePorChave[venda.cliente_lead_id]) || "—";
+        const proposta = venda?.numero_proposta || "—";
+
+        const base = comm.base_calculo || 0;
+        const pctCom = comm.percent_aplicado || 0;
+        const bruto = typeof p.valor_pago_vendedor === "number"
+          ? p.valor_pago_vendedor
+          : base * pctCom * (p.percentual || 0);
+        const impostos = bruto * tax;
+        const liquido = bruto - impostos;
+        totalLiquido += liquido;
+
+        body.push([
+          clienteNome,
+          proposta,
+          `${p.mes}/${totalMeses[p.commission_id] || p.mes}`,
+          BRL(venda?.valor_venda || 0),
+          BRL(bruto),
+          BRL(impostos),
+          BRL(liquido),
+        ]);
+      });
+
+      autoTable(doc, {
+        startY: cursorY,
+        head: [["CLIENTE", "PROPOSTA", "PARCELA", "R$ VENDA", "COMISSÃO BRUTA", "IMPOSTOS", "COMISSÃO LÍQUIDA"]],
+        body,
+        styles: { font: "helvetica", fontSize: 10 },
+        headStyles: { fillColor: [30, 41, 63] },
+        theme: "striped",
+        margin: { left: marginX, right: marginX },
+      });
+
+      const endY = (doc as any).lastAutoTable.finalY + 12;
+
+      doc.setFont("helvetica", "bold");
+      doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, marginX, endY);
+
+      // Forma de pagamento
+      const fy = endY + 26;
+      doc.setFont("helvetica", "normal");
+      doc.text("Forma de Pagamento: PIX", marginX, fy);
+      doc.text(`Chave PIX do pagamento: ${usersById[vendId]?.pix_chave || "—"}`, marginX, fy + 14);
+
+      // Declaração
+      const decl =
+        "Declaro, para os devidos fins, que recebi de Consulmax Serviços de Planejamento Estruturado e Proteção LTDA a quantia acima descrita, referente à comissão acordada. Estou ciente de que este valor representa a totalidade da comissão devida sobre a negociação mencionada e dou plena quitação, nada mais tendo a reclamar a este título.";
+      doc.text(doc.splitTextToSize(decl, 515), marginX, fy + 36);
+
+      // Assinatura
+      const signY = fy + 120;
+      doc.line(marginX, signY, marginX + 220, signY);
+      doc.text(vendedor.nome || "—", marginX, signY + 14);
+      doc.text(usersById[vendId]?.cpf_cnpj || "—", marginX, signY + 28);
+
+      // Rodapé
+      doc.setFontSize(9);
+      doc.text("Rua Menezes Filho, 3174, Casa Preta", marginX, 812 - 28);
+      doc.text("Ji-Paraná/RO, 76907-532", marginX, 812 - 16);
+      doc.text("consulmaxconsorcios.com.br", marginX, 812);
+
+      // Logo (opcional)
+      try {
+        const img = new Image();
+        img.src = "/logo-consulmax.png";
+        await new Promise((res, rej) => {
+          img.onload = () => res(true);
+          img.onerror = rej;
+        });
+        doc.addImage(img, "PNG", 470, 760, 100, 36);
+      } catch {
+        // ignora se não achar o arquivo
+      }
+
+      const nomeArquivo = `recibo_${(usersById[vendId]?.nome || "vendedor").replace(/\s+/g, "_")}_${selectedDate}.pdf`;
+      doc.save(nomeArquivo);
+    }
+  }
+
+  /* ========================= Editar comissão ========================= */
+  function openEditCommission(row: CommissionRow) {
+    setEditRow(row);
+    setEditVendedor(row.vendedor_id);
+    setEditPercent(((row.percent_aplicado || 0) * 100).toFixed(2).replace(".", ","));
+    setEditSimTable(row.sim_table_id || "");
+    setOpenEdit(true);
+  }
+
+  async function saveEditCommission() {
+    if (!editRow) return;
+    const p = parseFloat((editPercent || "0").replace(",", ".")) / 100;
+    const base = editRow.base_calculo || editRow.valor_venda || 0;
+    const novoValor = Math.round(base * p * 100) / 100;
+
+    const update = {
+      vendedor_id: editVendedor,
+      sim_table_id: editSimTable || null,
+      percent_aplicado: p,
+      valor_total: novoValor,
+    };
+
+    const { error } = await supabase.from("commissions").update(update).eq("id", editRow.id);
+    if (error) return alert(error.message);
+
+    setOpenEdit(false);
+    fetchData();
   }
 
   /* ========================= Render ========================= */
@@ -942,7 +1023,7 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Dashboards por recorte */}
+      {/* Dashboards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         <Card>
           <CardHeader className="pb-1"><CardTitle>Nos últimos 5 anos — {vendedorAtual}</CardTitle></CardHeader>
@@ -979,7 +1060,7 @@ export default function ComissoesPage() {
         </Card>
       </div>
 
-      {/* Cards de Resumo gerais */}
+      {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
         <Card><CardHeader className="pb-1"><CardTitle>💰 Vendas no Período</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent></Card>
         <Card><CardHeader className="pb-1"><CardTitle>🧾 Comissão Bruta</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent></Card>
@@ -988,7 +1069,7 @@ export default function ComissoesPage() {
         <Card><CardHeader className="pb-1"><CardTitle>⏳ Comissão Pendente</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
       </div>
 
-      {/* Tabela: Vendas sem comissão */}
+      {/* Vendas sem comissão */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
@@ -1043,7 +1124,7 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Tabela Detalhada de Comissões */}
+      {/* Detalhamento */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
@@ -1053,12 +1134,7 @@ export default function ComissoesPage() {
                 <Label className="text-xs">Data do Recibo</Label>
                 <Input type="date" value={receiptDateAll} onChange={(e) => setReceiptDateAll(e.target.value)} className="h-8 w-[160px]" />
                 <Label className="text-xs">Imposto (%)</Label>
-                <Input
-                  className="h-8 w-[90px]"
-                  value={taxPct}
-                  onChange={(e) => setTaxPct(e.target.value)}
-                  placeholder="6,00"
-                />
+                <Input className="h-8 w-[90px]" value={taxPct} onChange={(e) => setTaxPct(e.target.value)} placeholder="6,00" />
                 <Button variant="outline" size="sm" onClick={() => downloadReceiptByDate(receiptDateAll)}>
                   <FileText className="w-4 h-4 mr-1" /> Recibo (PDF) por data
                 </Button>
@@ -1070,7 +1146,7 @@ export default function ComissoesPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          <table className="min-w-[1200px] w-full text-sm">
+          <table className="min-w-[1300px] w-full text-sm">
             <thead>
               <tr className="bg-gray-50">
                 <th className="p-2 text-left">Data</th>
@@ -1120,9 +1196,12 @@ export default function ComissoesPage() {
                           .select("*")
                           .eq("commission_id", r.id)
                           .order("mes", { ascending: true });
-                        await downloadReceiptPDF(r, (data || []) as CommissionFlow[]);
+                        await downloadReceiptByDate(receiptDateAll || toDateInput(new Date())); // atalho (não substitui o de cima)
                       }}>
                         <FileText className="w-4 h-4 mr-1" /> Recibo (PDF)
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => openEditCommission(r)}>
+                        <Pencil className="w-4 h-4 mr-1" /> Editar
                       </Button>
                     </div>
                   </td>
@@ -1173,11 +1252,7 @@ export default function ComissoesPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Nº de meses do fluxo</Label>
-                <Input
-                  type="number" min={1} max={36}
-                  value={ruleMeses}
-                  onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
-                />
+                <Input type="number" min={1} max={36} value={ruleMeses} onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))} />
               </div>
               <div className="self-end text-xs text-gray-600">
                 Soma do fluxo: <b>{fluxoSomaPct.toFixed(2)}%</b> (deve = {parseFloat((rulePercent || "0").replace(",", "."))?.toFixed(2)}%)
@@ -1317,6 +1392,49 @@ export default function ComissoesPage() {
             </TabsContent>
           </Tabs>
           <DialogFooter><Button onClick={() => setOpenPay(false)} variant="secondary">Fechar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Editar comissão */}
+      <Dialog open={openEdit} onOpenChange={setOpenEdit}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Editar Comissão</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Vendedor</Label>
+              <Select value={editVendedor} onValueChange={setEditVendedor}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.nome?.trim() || u.email?.trim() || u.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>% Comissão</Label>
+              <Input value={editPercent} onChange={(e) => setEditPercent(e.target.value)} placeholder="2,00" />
+            </div>
+            <div>
+              <Label>Tabela (SimTables)</Label>
+              <Select value={editSimTable} onValueChange={setEditSimTable}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">—</SelectItem>
+                  {simTables.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.segmento} — {t.nome_tabela}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter className="mt-4">
+            <Button onClick={saveEditCommission}><Save className="w-4 h-4 mr-1" /> Salvar alterações</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

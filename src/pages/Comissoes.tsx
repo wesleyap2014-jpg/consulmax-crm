@@ -217,6 +217,14 @@ export default function ComissoesPage() {
     return u?.nome?.trim() || u?.email?.trim() || maybeId;
   };
 
+  // Converte auth_user_id -> users.id (ou mantém se já for id)
+  const canonUserId = (maybeId?: string | null) => {
+    if (!maybeId) return null;
+    if (usersById[maybeId]) return usersById[maybeId].id;       // já é users.id
+    if (usersByAuth[maybeId]) return usersByAuth[maybeId].id;   // veio como auth_user_id
+    return null; // não encontrado
+  };
+
   /* ---------- Comissões / Vendas ---------- */
   const [loading, setLoading] = useState<boolean>(false);
   const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
@@ -224,7 +232,7 @@ export default function ComissoesPage() {
   const [genBusy, setGenBusy] = useState<string | null>(null);
 
   /* ---------- Modais ---------- */
-  const [openRules, setOpenRules] = useState<boolean>(false); // agora Dialog central
+  const [openRules, setOpenRules] = useState<boolean>(false); // Dialog central
   const [openPay, setOpenPay] = useState<boolean>(false);
 
   /* ---------- Estado Regras ---------- */
@@ -332,11 +340,14 @@ export default function ComissoesPage() {
 
       const hasComm = new Set((commVendaIds || []).map((r: any) => r.venda_id));
       const vendasFiltered = (vendasPeriodo || []).filter((v) => !hasComm.has(v.id));
-      const vendasFiltered2 = vendasFiltered.filter((v) =>
-        (vendedorId === "all" || v.vendedor_id === vendedorId) &&
-        (segmento === "all" || v.segmento === segmento) &&
-        (tabela === "all" || (v.tabela || "") === tabela)
-      );
+      const vendasFiltered2 = vendasFiltered.filter((v) => {
+        const vendCanon = canonUserId(v.vendedor_id) || v.vendedor_id;
+        return (
+          (vendedorId === "all" || vendCanon === vendedorId) &&
+          (segmento === "all" || v.segmento === segmento) &&
+          (tabela === "all" || (v.tabela || "") === tabela)
+        );
+      });
       setVendasSemCom(vendasFiltered2 as Venda[]);
 
       // nomes (leads)
@@ -530,29 +541,56 @@ export default function ComissoesPage() {
     try {
       setGenBusy(venda.id);
 
-      let simTableId: string | null = null;
-      if (venda.tabela) {
-        const { data: st } = await supabase.from("sim_tables").select("id").eq("nome_tabela", venda.tabela).limit(1);
-        simTableId = st?.[0]?.id ?? null;
+      // 1) Normaliza vendedor para users.id
+      const vendedorIdCanon = canonUserId(venda.vendedor_id);
+      if (!vendedorIdCanon) {
+        alert("Vendedor desta venda não está cadastrado em 'users' (vínculo por auth_user_id). Corrija antes de gerar a comissão.");
+        return;
       }
 
+      // 2) Descobre sim_table_id (tolerante)
+      let simTableId: string | null = null;
+      if (venda.tabela) {
+        // exato
+        const { data: st1 } = await supabase
+          .from("sim_tables")
+          .select("id")
+          .eq("nome_tabela", venda.tabela)
+          .limit(1);
+        simTableId = st1?.[0]?.id ?? null;
+
+        // ILIKE + segmento (fallback)
+        if (!simTableId) {
+          let qb2 = supabase
+            .from("sim_tables")
+            .select("id")
+            .ilike("nome_tabela", `%${venda.tabela}%`)
+            .limit(1);
+          if (venda.segmento) qb2 = qb2.eq("segmento", venda.segmento);
+          const { data: st2 } = await qb2;
+          simTableId = st2?.[0]?.id ?? null;
+        }
+      }
+
+      // 3) % padrão por regra (se houver)
       let percent_aplicado: number | null = null;
       if (simTableId) {
         const { data: rule } = await supabase
           .from("commission_rules")
           .select("percent_padrao")
-          .eq("vendedor_id", venda.vendedor_id)
+          .eq("vendedor_id", vendedorIdCanon)
           .eq("sim_table_id", simTableId)
           .limit(1);
-        percent_aplicado = rule?.[0]?.percent_padrao ?? null;
+        percent_aplicado = rule?.[0]?.percent_padrao ?? null; // fração (ex.: 0.012)
       }
 
       const base = venda.valor_venda ?? null;
-      const valor_total = percent_aplicado && base ? Math.round(base * percent_aplicado * 100) / 100 : null;
+      const valor_total =
+        percent_aplicado && base ? Math.round(base * percent_aplicado * 100) / 100 : null;
 
       const insert = {
         venda_id: venda.id,
-        vendedor_id: venda.vendedor_id,
+        vendedor_id: vendedorIdCanon, // sempre users.id
         sim_table_id: simTableId,
         data_venda: venda.data_venda,
         segmento: venda.segmento,
@@ -567,10 +605,10 @@ export default function ComissoesPage() {
 
       const { error } = await supabase.from("commissions").insert(insert as any);
       if (error) {
-        if (String(error.code) === "23503") {
-          alert("Não foi possível criar: verifique se o vendedor existe em 'users' e/ou se a SimTable está correta.");
-        } else if (String(error.message || "").includes("row-level security")) {
+        if (String(error.message || "").includes("row-level security")) {
           alert("RLS bloqueou o INSERT. Garanta as policies de 'commissions' e 'commission_flow'.");
+        } else if (String(error.code) === "23503") {
+          alert("Não foi possível criar: verifique se o vendedor existe em 'users' e/ou se a SimTable está correta.");
         } else {
           alert("Erro ao criar a comissão: " + error.message);
         }

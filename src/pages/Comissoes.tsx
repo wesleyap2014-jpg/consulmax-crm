@@ -297,7 +297,10 @@ export default function ComissoesPage() {
       const flowByCommission: Record<string, CommissionFlow[]> = {};
       (flows || []).forEach((f) => {
         if (!flowByCommission[f.commission_id]) flowByCommission[f.commission_id] = [];
-        flowByCommission[f.commission_id].push(f as CommissionFlow);
+        // de-dup por mês (evita duplicados de recibo também)
+        if (!flowByCommission[f.commission_id].some((x) => x.mes === f.mes)) {
+          flowByCommission[f.commission_id].push(f as CommissionFlow);
+        }
       });
 
       // enriquecer com cliente e proposta
@@ -311,7 +314,8 @@ export default function ComissoesPage() {
           new Set((vendas || []).map(v => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
         let nomes: Record<string, string> = {};
         if (cliIds.length) {
-          const { data: cli } = await supabase.from("clientes").select("id, nome").in("id", cliIds);
+          // >>>>>>>>>>>>>>>>>>>>>>>> ALTERADO: buscar no public.leads <<<<<<<<<<<<<<<<<<<<<<
+          const { data: cli } = await supabase.from("leads").select("id, nome").in("id", cliIds);
           (cli || []).forEach((c: any) => { nomes[c.id] = c.nome || ""; });
         }
         (vendas || []).forEach((v) => {
@@ -350,7 +354,7 @@ export default function ComissoesPage() {
       );
       setVendasSemCom(vendasFiltered2 as Venda[]);
 
-      // ==== nomes de cliente (usando COALESCE(lead_id, cliente_lead_id)) ====
+      // ==== nomes de cliente (usando COALESCE(lead_id, cliente_lead_id) em public.leads) ====
       const clientIds = Array.from(
         new Set(
           (vendasFiltered2 || [])
@@ -359,8 +363,9 @@ export default function ComissoesPage() {
         )
       );
       if (clientIds.length) {
+        // >>>>>>>>>>>>>>>>>>>>>>>> ALTERADO: buscar no public.leads <<<<<<<<<<<<<<<<<<<<<<
         const { data: cli } = await supabase
-          .from("clientes")
+          .from("leads")
           .select("id, nome")
           .in("id", clientIds);
         const map: Record<string, string> = {};
@@ -596,10 +601,28 @@ export default function ComissoesPage() {
   async function retornarComissao(c: Commission) {
     if (!confirm("Confirmar retorno desta comissão para 'Vendas sem comissão'?")) return;
     try {
-      const { error: e1 } = await supabase.from("commission_flow").delete().eq("commission_id", c.id);
+      // 1) Deleta parcelas e confirma quantas linhas foram afetadas
+      const { data: delFlow, error: e1 } = await supabase
+        .from("commission_flow")
+        .delete()
+        .eq("commission_id", c.id)
+        .select("id");
       if (e1) throw e1;
-      const { error: e2 } = await supabase.from("commissions").delete().eq("id", c.id);
+
+      // 2) Deleta a comissão e garante que 1 linha saiu
+      const { data: delComm, error: e2 } = await supabase
+        .from("commissions")
+        .delete()
+        .eq("id", c.id)
+        .select("id")
+        .single();
       if (e2) throw e2;
+      if (!delComm?.id) throw new Error("Nenhuma linha removida de 'commissions' (RLS pode ter bloqueado).");
+
+      // 3) Otimista: some imediatamente da grade
+      setRows((prev) => prev.filter((r) => r.id !== c.id));
+
+      // 4) Recarrega listas para reaparecer em “Vendas sem comissão”
       await fetchData();
     } catch (err: any) {
       if (String(err?.message || "").includes("row-level security")) {
@@ -644,7 +667,7 @@ export default function ComissoesPage() {
     const dataRecibo = reciboDate;
     const vendedorSel = reciboVendor === "all" ? null : reciboVendor;
 
-    // pegar todas as parcelas pagas na data
+    // pegar todas as parcelas pagas NA DATA
     const { data: flows } = await supabase
       .from("commission_flow")
       .select("*")
@@ -652,11 +675,13 @@ export default function ComissoesPage() {
 
     if (!flows || flows.length === 0) return alert("Não há parcelas pagas na data selecionada.");
 
-    // agrupar por comissão e filtrar por vendedor (se selecionado)
+    // agrupar por comissão e de-duplicar por (mes)
     const byCommission: Record<string, CommissionFlow[]> = {};
     flows.forEach((f: any) => {
       if (!byCommission[f.commission_id]) byCommission[f.commission_id] = [];
-      byCommission[f.commission_id].push(f);
+      if (!byCommission[f.commission_id].some(x => x.mes === f.mes)) {
+        byCommission[f.commission_id].push(f);
+      }
     });
 
     const commIds = Object.keys(byCommission);
@@ -681,19 +706,28 @@ export default function ComissoesPage() {
     if (commsFiltradas.length === 0)
       return alert("Sem parcelas para o vendedor selecionado nessa data.");
 
-    // nome do cliente
+    // nomes em public.leads
     const clienteIds = Array.from(new Set(
       (vendas || []).map(v => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]
     ));
     const nomesCli: Record<string, string> = {};
     if (clienteIds.length) {
-      const { data: cli } = await supabase.from("clientes").select("id, nome").in("id", clienteIds);
+      const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clienteIds);
       (cli || []).forEach((c: any) => { nomesCli[c.id] = c.nome || ""; });
     }
 
     // Vendedor (recibo é por vendedor)
     const vendedorUsado = vendedorSel ?? commsFiltradas[0].vendedor_id;
-    const vendInfo = secureById[vendedorUsado] || {} as any;
+    const vendInfo = secureById[vendedorUsado] || ({} as any);
+
+    // ===== número sequencial por dia (YYYYMMDD-XXX) =====
+    // XXX = quantidade de linhas únicas do recibo (determinístico por dia/seleção).
+    // Para sequência global absoluta, sugerido criar uma tabela `receipt_sequence`.
+    const totalLinhasRecibo = commsFiltradas.reduce((acc, c: any) => {
+      const arr = (byCommission[c.id] || []);
+      return acc + new Map(arr.map(p => [p.mes, p])).size;
+    }, 0);
+    const numeroRecibo = `${dataRecibo.replace(/-/g, "")}-${String(totalLinhasRecibo).padStart(3, "0")}`;
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
@@ -701,10 +735,7 @@ export default function ComissoesPage() {
     doc.text("RECIBO DE COMISSÃO", 297, 40, { align: "center" });
     doc.setFontSize(10); doc.setFont("helvetica", "normal");
 
-    const hoje = new Date();
-    const numeroExemplo = `${String(hoje.getMonth()+1).padStart(2,"0")}${String(hoje.getDate()).padStart(2,"0")}/${hoje.getFullYear()}`;
-
-    doc.text(`Recibo Nº: ${numeroExemplo}`, 40, 60);
+    doc.text(`Recibo Nº: ${numeroRecibo}`, 40, 60);
     doc.text(`Data: ${formatISODateBR(dataRecibo)}`, 40, 74);
 
     // Pagador
@@ -740,7 +771,10 @@ export default function ComissoesPage() {
       const clienteNome = clienteId ? (nomesCli[clienteId] || "—") : "—";
       const vendaValor = v?.valor_venda || 0;
 
-      const parcelas = byCommission[c.id] || [];
+      // usa apenas parcelas únicas por (mes)
+      const parcelasAll = byCommission[c.id] || [];
+      const parcelas = Array.from(new Map(parcelasAll.map(p => [p.mes, p])).values());
+
       parcelas.forEach((p) => {
         const comBruta = (c.percent_aplicado || 0) * (p.percentual || 0) * vendaValor;
         const impostos = comBruta * impostoPct;
@@ -750,7 +784,7 @@ export default function ComissoesPage() {
         body.push([
           clienteNome,
           v?.numero_proposta || "—",
-          `${p.mes}/${(byCommission[c.id]?.length) || "?"}`,
+          `${p.mes}/${parcelas.length}`,
           BRL(vendaValor),
           BRL(comBruta),
           BRL(impostos),
@@ -780,7 +814,7 @@ export default function ComissoesPage() {
     doc.text(`${userLabel(vendedorUsado)}`, 40, signY + 14);
     doc.text(`${secureById[vendedorUsado]?.cpf || "—"}`, 40, signY + 28);
 
-    // rodapé
+    // rodapé + logo proporcional (sem achatar)
     const rodapeY = 812 - 40;
     doc.setFontSize(9);
     doc.text("Rua Menezes Filho, 3174, Casa Preta", 40, rodapeY - 20);
@@ -788,16 +822,22 @@ export default function ComissoesPage() {
     doc.text("consulmaxconsorcios.com.br", 40, rodapeY + 4);
 
     try {
-      // imagem proporcional
       const img = new Image();
       img.src = "/logo-consulmax.png";
-      // desenha quando disponível (best effort)
-      // @ts-ignore
-      await new Promise((res) => { img.onload = res; img.onerror = res; });
-      doc.addImage(img, "PNG", 420, rodapeY - 30, 140, 35);
+      await new Promise((res) => { img.onload = res as any; img.onerror = res as any; });
+
+      // calcula tamanho mantendo proporção dentro de uma "caixa" 160x40
+      const maxW = 160, maxH = 40;
+      const iw = (img as any).width || 160;
+      const ih = (img as any).height || 40;
+      const ratio = Math.min(maxW / iw, maxH / ih);
+      const w = iw * ratio;
+      const h = ih * ratio;
+
+      doc.addImage(img, "PNG", 420, rodapeY - h + 8, w, h);
     } catch {}
 
-    doc.save(`recibo_${formatISODateBR(dataRecibo)}_${userLabel(vendedorUsado)}.pdf`);
+    doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
   }
 
   /* ========================= Render ========================= */

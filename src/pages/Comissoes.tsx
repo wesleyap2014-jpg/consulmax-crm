@@ -49,7 +49,7 @@ type UserSecure = {
   cidade: string | null;
   uf: string | null;
   pix_key: string | null;
-  cpf: string | null; // claro
+  cpf: string | null;
   cpf_mascarado: string | null;
 };
 
@@ -57,8 +57,8 @@ type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 
 type Venda = {
   id: UUID;
-  data_venda: string;          // YYYY-MM-DD
-  vendedor_id: UUID;           // pode ser users.id ou users.auth_user_id
+  data_venda: string;
+  vendedor_id: UUID;           // pode ser users.id OU users.auth_user_id
   segmento: string | null;
   tabela: string | null;
   administradora: string | null;
@@ -94,7 +94,7 @@ type CommissionFlow = {
   id: UUID;
   commission_id: UUID;
   mes: number;
-  percentual: number; // fração do fluxo (ex.: 0.25) — deve somar 1.0
+  percentual: number; // fração do fluxo (ex.: 0.33)
   valor_previsto: number | null;
   valor_recebido_admin: number | null;
   data_recebimento_admin: string | null;
@@ -122,29 +122,28 @@ const pct100 = (v?: number | null) =>
 
 const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
 const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
+const formatISODateBR = (iso?: string | null) => !iso ? "—" : iso.split("-").reverse().join("/");
 
-const formatISODateBR = (isoDate?: string | null) => {
-  if (!isoDate) return "—";
-  const [y, m, d] = isoDate.split("-");
-  if (!y || !m || !d) return isoDate;
-  return `${d}/${m}/${y}`;
-};
+// normalizador seguro para comparar nomes de tabelas
+const normalize = (s?: string | null) =>
+  (s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 
 function valorPorExtenso(n: number) {
   const unidades = ["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
   const dezenas = ["","","vinte","trinta","quarenta","cinquenta","sessenta","setenta","oitenta","noventa"];
   const centenas = ["","cento","duzentos","trezentos","quatrocentos","quinhentos","seiscentos","setecentos","oitocentos","novecentos"];
-  function extenso(n0: number): string {
-    if (n0 < 20) return unidades[n0];
-    if (n0 < 100) return dezenas[Math.floor(n0/10)] + (n0%10 ? " e " + unidades[n0%10] : "");
-    if (n0 === 100) return "cem";
-    return centenas[Math.floor(n0/100)] + (n0%100 ? " e " + extenso(n0%100) : "");
-  }
+  const extenso = (n0: number): string =>
+    n0 < 20 ? unidades[n0]
+      : n0 < 100 ? dezenas[Math.floor(n0/10)] + (n0%10 ? " e " + unidades[n0%10] : "")
+      : n0 === 100 ? "cem"
+      : centenas[Math.floor(n0/100)] + (n0%100 ? " e " + extenso(n0%100) : "");
   const inteiro = Math.floor(n);
   const cent = Math.round((n - inteiro) * 100);
-  const reais = inteiro === 1 ? "real" : "reais";
-  const centavos = cent === 1 ? "centavo" : "centavos";
-  return `${extenso(inteiro)} ${reais}` + (cent ? ` e ${extenso(cent)} ${centavos}` : "");
+  return `${extenso(inteiro)} ${inteiro === 1 ? "real" : "reais"}${cent ? ` e ${extenso(cent)} ${cent === 1 ? "centavo" : "centavos"}` : ""}`;
 }
 
 /* ========================= Radial ========================= */
@@ -193,23 +192,13 @@ export default function ComissoesPage() {
   const [simTables, setSimTables] = useState<SimTable[]>([]);
   const [clientesMap, setClientesMap] = useState<Record<string, string>>({});
 
-  const usersById = useMemo(() => {
-    const m: Record<string, User> = {};
-    users.forEach((u) => (m[u.id] = u));
-    return m;
-  }, [users]);
-
+  const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users]);
   const usersByAuth = useMemo(() => {
     const m: Record<string, User> = {};
     users.forEach((u) => { if (u.auth_user_id) m[u.auth_user_id] = u; });
     return m;
   }, [users]);
-
-  const secureById = useMemo(() => {
-    const m: Record<string, UserSecure> = {};
-    usersSecure.forEach((u) => (m[u.id] = u));
-    return m;
-  }, [usersSecure]);
+  const secureById = useMemo(() => Object.fromEntries(usersSecure.map(u => [u.id, u])), [usersSecure]);
 
   const userLabel = (maybeId: string | null | undefined) => {
     if (!maybeId) return "—";
@@ -217,35 +206,34 @@ export default function ComissoesPage() {
     return u?.nome?.trim() || u?.email?.trim() || maybeId;
   };
 
-  // Converte auth_user_id -> users.id (ou mantém se já for id)
+  // auth_user_id -> users.id
   const canonUserId = (maybeId?: string | null) => {
     if (!maybeId) return null;
-    if (usersById[maybeId]) return usersById[maybeId].id;       // já é users.id
-    if (usersByAuth[maybeId]) return usersByAuth[maybeId].id;   // veio como auth_user_id
-    return null; // não encontrado
+    if (usersById[maybeId]) return usersById[maybeId].id;
+    if (usersByAuth[maybeId]) return usersByAuth[maybeId].id;
+    return null;
   };
 
-  /* ---------- Comissões / Vendas ---------- */
+  /* ---------- Data ---------- */
   const [loading, setLoading] = useState<boolean>(false);
   const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
   const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
 
   /* ---------- Modais ---------- */
-  const [openRules, setOpenRules] = useState<boolean>(false); // Dialog central
+  const [openRules, setOpenRules] = useState<boolean>(false);
   const [openPay, setOpenPay] = useState<boolean>(false);
 
-  /* ---------- Estado Regras ---------- */
+  /* ---------- Regras ---------- */
   const [ruleVendorId, setRuleVendorId] = useState<string>("");
   const [ruleSimTableId, setRuleSimTableId] = useState<string>("");
-  const [rulePercent, setRulePercent] = useState<string>("1,20"); // % padrão (humanizado)
+  const [rulePercent, setRulePercent] = useState<string>("1,20");
   const [ruleMeses, setRuleMeses] = useState<number>(1);
-  const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]); // em %
+  const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]);
   const [ruleObs, setRuleObs] = useState<string>("");
-
   const [ruleRows, setRuleRows] = useState<(CommissionRule & { segmento: string; nome_tabela: string })[]>([]);
 
-  /* ---------- Estado Pagamento ---------- */
+  /* ---------- Pagamento ---------- */
   const [payCommissionId, setPayCommissionId] = useState<string>("");
   const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
@@ -308,6 +296,7 @@ export default function ComissoesPage() {
           .from("vendas")
           .select("id, numero_proposta, cliente_lead_id, lead_id")
           .in("id", comms.map((c: any) => c.venda_id));
+
         const cliIds = Array.from(new Set((vendas || []).map(v => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
         let nomes: Record<string, string> = {};
         if (cliIds.length) {
@@ -370,8 +359,7 @@ export default function ComissoesPage() {
     const comBruta = sum(rows.map((r) => r.valor_total));
     const comPaga = sum(rows.filter((r) => r.status === "pago").map((r) => r.valor_total));
     const comPendente = comBruta - comPaga;
-    const comLiquida = comBruta;
-    return { vendasTotal, comBruta, comLiquida, comPaga, comPendente };
+    return { vendasTotal, comBruta, comLiquida: comBruta, comPaga, comPendente };
   }, [rows]);
 
   /* ========================= Dashboards ========================= */
@@ -380,20 +368,15 @@ export default function ComissoesPage() {
   const yStart = new Date(now.getFullYear(), 0, 1);
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), 1);
-
-  function isBetween(d?: string | null, start?: Date, end?: Date) {
-    if (!d) return false;
-    const x = new Date(d + "T00:00:00").getTime();
-    return x >= (start?.getTime() || 0) && x <= (end?.getTime() || now.getTime());
-  }
-  function totalsInRange(start: Date, end: Date) {
-    const sel = rows.filter((r) => isBetween(r.data_venda || undefined, start, end));
-    const tot = sum(sel.map((r) => r.valor_total));
-    const pago = sum(sel.filter((r) => r.status === "pago").map((r) => r.valor_total));
+  const isBetween = (d?: string | null, start?: Date, end?: Date) => d ? (new Date(d+"T00:00:00").getTime() >= (start?.getTime()||0) && new Date(d+"T00:00:00").getTime() <= (end?.getTime()||now.getTime())) : false;
+  const totalsInRange = (start: Date, end: Date) => {
+    const sel = rows.filter(r => isBetween(r.data_venda || undefined, start, end));
+    const tot = sum(sel.map(r => r.valor_total));
+    const pago = sum(sel.filter(r => r.status === "pago").map(r => r.valor_total));
     const pend = tot - pago;
-    const pct = tot > 0 ? (pago / tot) * 100 : 0;
+    const pct = tot > 0 ? (pago/tot)*100 : 0;
     return { tot, pago, pend, pct };
-  }
+  };
   const range5y = totalsInRange(fiveYearsAgo, now);
   const rangeY = totalsInRange(yStart, now);
   const rangeM = totalsInRange(mStart, now);
@@ -435,17 +418,16 @@ export default function ComissoesPage() {
   async function saveRule() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
 
-    const padraoPctPercent = parseFloat((rulePercent || "0").replace(",", ".")); // ex.: 1,20
-    // Fluxo representa distribuição de 100% da comissão ⇒ soma deve ser 1.00
-    const somaFluxo = fluxoSomaPct; // ex.: 0.33 + 0.33 + 0.34 = 1.00
-    const eps = 1e-6;
-    if (Math.abs(somaFluxo - 1.0) > eps) {
-      return alert(`Soma de fluxo (M1..Mn) deve ser 1,00 (100%). Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
+    // % padrão digitado (ex.: 1,20 → 1.20)
+    const padraoPctPercent = parseFloat((rulePercent || "0").replace(",", ".")); // 1.20
+    // Fluxo representa 100% da comissão: soma deve = 1.00
+    const somaFluxo = fluxoSomaPct; // ex.: 0.33+0.33+0.34 = 1
+    if (Math.abs(somaFluxo - 1.0) > 1e-6) {
+      return alert(`Soma do fluxo (M1..Mn) deve ser 1,00 (100%). Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
     }
 
-    const percent_padrao_frac = padraoPctPercent / 100; // 1,20% ⇒ 0,012
-    // Importante: gravar as parcelas como frações que somam 1.0 (NÃO dividir por 100 aqui)
-    const fluxo_percentuais_frac = ruleFluxoPct.map((x) => (parseFloat((x || "0").replace(",", ".")) || 0));
+    const percent_padrao_frac = padraoPctPercent / 100; // 1,20% → 0,012
+    const fluxo_percentuais_frac = ruleFluxoPct.map((x) => (parseFloat((x || "0").replace(",", ".")) || 0)); // já somando 1.0
 
     const { error } = await supabase.from("commission_rules").upsert({
       vendedor_id: ruleVendorId,
@@ -460,20 +442,18 @@ export default function ComissoesPage() {
     await fetchRulesForVendor(ruleVendorId);
     alert("Regra salva.");
   }
-
   async function deleteRule(vendedor_id: string, sim_table_id: string) {
     if (!confirm("Excluir esta regra?")) return;
     const { error } = await supabase.from("commission_rules").delete().eq("vendedor_id", vendedor_id).eq("sim_table_id", sim_table_id);
     if (error) return alert(error.message);
     await fetchRulesForVendor(vendedor_id);
   }
-
   function loadRuleToForm(r: CommissionRule & { segmento: string; nome_tabela: string }) {
     setRuleVendorId(r.vendedor_id);
     setRuleSimTableId(r.sim_table_id);
     setRulePercent(((r.percent_padrao || 0) * 100).toFixed(2).replace(".", ",")); // volta humanizado
     setRuleMeses(r.fluxo_meses);
-    setRuleFluxoPct(r.fluxo_percentuais.map(p => p.toFixed(2).replace(".", ","))); // já são frações 0.xx
+    setRuleFluxoPct(r.fluxo_percentuais.map(p => p.toFixed(2).replace(".", ",")));
     setRuleObs(r.obs || "");
   }
 
@@ -483,21 +463,18 @@ export default function ComissoesPage() {
     const { data } = await supabase.from("commission_flow").select("*").eq("commission_id", commission.id).order("mes", { ascending: true });
     const unique = new Map<number, CommissionFlow>();
     (data || []).forEach((f: any) => unique.set(f.mes, f));
-    const arr = Array.from(unique.values());
-    setPayFlow(arr as CommissionFlow[]);
+    setPayFlow(Array.from(unique.values()) as CommissionFlow[]);
     setPaySelected({});
     setPayDate(toDateInput(new Date()));
     setPayValue("");
     setOpenPay(true);
   }
-
   async function uploadToBucket(file: File, commissionId: string): Promise<string | null> {
     const path = `${commissionId}/${Date.now()}-${file.name}`;
     const { data, error } = await supabase.storage.from("comissoes").upload(path, file, { upsert: false });
     if (error) { alert("Falha ao enviar arquivo: " + error.message); return null; }
     return data?.path || null;
   }
-
   async function paySelectedParcels(payload: {
     data_pagamento_vendedor?: string;
     valor_pago_vendedor?: number;
@@ -548,28 +525,21 @@ export default function ComissoesPage() {
         return;
       }
 
-      // 2) Descobre sim_table_id (tolerante)
+      // 2) Descobre sim_table_id com match local (robusto)
       let simTableId: string | null = null;
-      if (venda.tabela) {
-        // exato
-        const { data: st1 } = await supabase
-          .from("sim_tables")
-          .select("id")
-          .eq("nome_tabela", venda.tabela)
-          .limit(1);
-        simTableId = st1?.[0]?.id ?? null;
+      const vendaTabNorm = normalize(venda.tabela);
+      const vendaSegNorm = normalize(venda.segmento);
+      const matchLocal = simTables.find(
+        (s) => normalize(s.nome_tabela) === vendaTabNorm && (!venda.segmento || normalize(s.segmento) === vendaSegNorm)
+      ) || simTables.find((s) => normalize(s.nome_tabela) === vendaTabNorm) || null;
+      simTableId = matchLocal?.id || null;
 
-        // ILIKE + segmento (fallback)
-        if (!simTableId) {
-          let qb2 = supabase
-            .from("sim_tables")
-            .select("id")
-            .ilike("nome_tabela", `%${venda.tabela}%`)
-            .limit(1);
-          if (venda.segmento) qb2 = qb2.eq("segmento", venda.segmento);
-          const { data: st2 } = await qb2;
-          simTableId = st2?.[0]?.id ?? null;
-        }
+      // fallback no servidor (ILIKE + segmento) caso não ache localmente
+      if (!simTableId && venda.tabela) {
+        let qb2 = supabase.from("sim_tables").select("id, segmento, nome_tabela").ilike("nome_tabela", `%${venda.tabela}%`).limit(1);
+        if (venda.segmento) qb2 = qb2.eq("segmento", venda.segmento);
+        const { data: st2 } = await qb2;
+        simTableId = st2?.[0]?.id ?? null;
       }
 
       // 3) % padrão por regra (se houver)
@@ -585,12 +555,11 @@ export default function ComissoesPage() {
       }
 
       const base = venda.valor_venda ?? null;
-      const valor_total =
-        percent_aplicado && base ? Math.round(base * percent_aplicado * 100) / 100 : null;
+      const valor_total = percent_aplicado && base ? Math.round(base * percent_aplicado * 100) / 100 : null;
 
       const insert = {
         venda_id: venda.id,
-        vendedor_id: vendedorIdCanon, // sempre users.id
+        vendedor_id: vendedorIdCanon,
         sim_table_id: simTableId,
         data_venda: venda.data_venda,
         segmento: venda.segmento,
@@ -625,11 +594,14 @@ export default function ComissoesPage() {
   async function retornarComissao(c: Commission) {
     if (!confirm("Confirmar retorno desta comissão para 'Vendas sem comissão'?")) return;
     try {
-      const { error: e1 } = await supabase.from("commission_flow").delete().eq("commission_id", c.id);
-      if (e1) throw e1;
-      const { error: e2 } = await supabase.from("commissions").delete().eq("id", c.id);
-      if (e2) throw e2;
+      // força retorno de linhas para evitar "Cannot coerce…" em alguns ambientes
+      const delFlow = await supabase.from("commission_flow").delete().eq("commission_id", c.id).select("id");
+      if (delFlow.error) throw delFlow.error;
 
+      const delComm = await supabase.from("commissions").delete().eq("id", c.id).select("id");
+      if (delComm.error) throw delComm.error;
+
+      // otimista
       setRows((prev) => prev.filter((r) => r.id !== c.id));
       await fetchData();
     } catch (err: any) {
@@ -706,11 +678,9 @@ export default function ComissoesPage() {
     const vendedorUsado = vendedorSel ?? commsFiltradas[0].vendedor_id;
     const vendInfo = secureById[vendedorUsado] || ({} as any);
 
-    const totalLinhasRecibo = commsFiltradas.reduce((acc, c: any) => {
-      const arr = (byCommission[c.id] || []);
-      return acc + new Map(arr.map(p => [p.mes, p])).size;
-    }, 0);
-    const numeroRecibo = `${dataRecibo.replace(/-/g, "")}-${String(totalLinhasRecibo).padStart(3, "0")}`;
+    // nº recibo simples: data + quantidade de linhas
+    const totalLinhas = commsFiltradas.reduce((acc, c: any) => acc + new Map((byCommission[c.id]||[]).map(p => [p.mes,p])).size, 0);
+    const numeroRecibo = `${dataRecibo.replace(/-/g, "")}-${String(totalLinhas).padStart(3,"0")}`;
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
@@ -725,22 +695,18 @@ export default function ComissoesPage() {
       "Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA. CNPJ: 57.942.043/0001-03",
       "Endereço: Av. Menezes Filho, 3171, Casa Preta, Ji-Paraná/RO. CEP: 76907-532",
     ];
-    let y = 92;
-    pagador.forEach((l) => { doc.text(l, 40, y); y += 14; });
+    let y = 92; pagador.forEach((l) => { doc.text(l, 40, y); y += 14; });
 
     const recebedor = [
       `Nome do Recebedor: ${userLabel(vendedorUsado)}`,
       `CPF/CNPJ: ${vendInfo?.cpf || "—"}`,
       `Endereço: ${[vendInfo?.logradouro, vendInfo?.numero, vendInfo?.bairro, vendInfo?.cidade && `${vendInfo.cidade}/${vendInfo.uf}`].filter(Boolean).join(", ") || "—"}`,
     ];
-    y += 10;
-    recebedor.forEach((l) => { doc.text(l, 40, y); y += 14; });
+    y += 10; recebedor.forEach((l) => { doc.text(l, 40, y); y += 14; });
 
-    y += 6;
-    doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", 40, y);
-    y += 16;
+    y += 6; doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", 40, y); y += 16;
 
-    const head = [["CLIENTE", "PROPOSTA", "PARCELA", "R$ VENDA", "COM. BRUTA", "IMPOSTOS", "COM. LÍQUIDA"]];
+    const head = [["CLIENTE","PROPOSTA","PARCELA","R$ VENDA","COM. BRUTA","IMPOSTOS","COM. LÍQUIDA"]];
     const body: any[] = [];
     let totalLiquido = 0;
 
@@ -749,29 +715,19 @@ export default function ComissoesPage() {
       const clienteId = v?.lead_id || v?.cliente_lead_id || "";
       const clienteNome = clienteId ? (nomesCli[clienteId] || "—") : "—";
       const vendaValor = v?.valor_venda || 0;
-      const parcelasAll = byCommission[c.id] || [];
-      const parcelas = Array.from(new Map(parcelasAll.map(p => [p.mes, p])).values());
 
+      const parcelas = Array.from(new Map((byCommission[c.id]||[]).map(p => [p.mes, p])).values());
       parcelas.forEach((p) => {
         const comBruta = (c.percent_aplicado || 0) * (p.percentual || 0) * vendaValor;
-        const impostos = comBruta * (impostoPct);
+        const impostos = comBruta * impostoPct;
         const liquida = comBruta - impostos;
         totalLiquido += liquida;
 
-        body.push([
-          clienteNome,
-          v?.numero_proposta || "—",
-          `${p.mes}/${parcelas.length}`,
-          BRL(vendaValor),
-          BRL(comBruta),
-          BRL(impostos),
-          BRL(liquida),
-        ]);
+        body.push([ clienteNome, v?.numero_proposta || "—", `${p.mes}/${parcelas.length}`, BRL(vendaValor), BRL(comBruta), BRL(impostos), BRL(liquida) ]);
       });
     });
 
-    autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30, 41, 63] }});
-
+    autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30,41,63] }});
     const endY = (doc as any).lastAutoTable.finalY + 12;
     doc.setFont("helvetica", "bold");
     doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
@@ -792,16 +748,11 @@ export default function ComissoesPage() {
     doc.text("consulmaxconsorcios.com.br", 40, rodapeY + 4);
 
     try {
-      const img = new Image();
-      img.src = "/logo-consulmax.png";
+      const img = new Image(); img.src = "/logo-consulmax.png";
       await new Promise((res) => { img.onload = () => res(null); img.onerror = () => res(null); });
-      const maxW = 160, maxH = 40;
-      const iw = (img as any).width || 160;
-      const ih = (img as any).height || 40;
-      const ratio = Math.min(maxW / iw, maxH / ih);
-      const w = iw * ratio;
-      const h = ih * ratio;
-      doc.addImage(img, "PNG", 420, rodapeY - h + 8, w, h);
+      const iw = (img as any).width || 160, ih = (img as any).height || 40;
+      const ratio = Math.min(160 / iw, 40 / ih);
+      doc.addImage(img, "PNG", 420, rodapeY - ih*ratio + 8, iw*ratio, ih*ratio);
     } catch {}
 
     doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
@@ -985,7 +936,6 @@ export default function ComissoesPage() {
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span>Detalhamento de Comissões</span>
-              {/* seletor vendedor recibo */}
               <div className="flex items-center gap-2">
                 <Label className="text-xs text-gray-500">Vendedor (recibo)</Label>
                 <Select value={reciboVendor} onValueChange={setReciboVendor}>
@@ -1071,14 +1021,13 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Dialog central: Regras de Comissão */}
+      {/* Regras de Comissão (overlay central com scroll) */}
       <Dialog open={openRules} onOpenChange={setOpenRules}>
         <DialogContent className="max-w-5xl">
           <DialogHeader><DialogTitle>Regras de Comissão</DialogTitle></DialogHeader>
 
-          {/* Campo superior */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
-            <div className="lg:col-span-1">
+            <div>
               <Label>Vendedor</Label>
               <Select value={ruleVendorId} onValueChange={(v) => { setRuleVendorId(v); }}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
@@ -1091,7 +1040,7 @@ export default function ComissoesPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="lg:col-span-1">
+            <div>
               <Label>Tabela (SimTables)</Label>
               <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
@@ -1116,7 +1065,6 @@ export default function ComissoesPage() {
 
           <hr className="my-3" />
 
-          {/* Fluxo */}
           <div>
             <Label>Fluxo do pagamento (M1..Mn)</Label>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 p-2 border rounded-md max-h-[200px] overflow-y-auto">
@@ -1140,7 +1088,6 @@ export default function ComissoesPage() {
 
           <hr className="my-3" />
 
-          {/* Observações + ações */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end">
             <div className="lg:col-span-2">
               <Label>Observações</Label>
@@ -1156,7 +1103,6 @@ export default function ComissoesPage() {
 
           <hr className="my-4" />
 
-          {/* Lista por vendedor */}
           <div className="border rounded-md max-h-[45vh] overflow-y-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 sticky top-0">

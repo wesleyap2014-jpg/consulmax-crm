@@ -17,7 +17,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Loader2, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle, RotateCcw,
+  Loader2, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle, RotateCcw, Pencil, Trash2,
 } from "lucide-react";
 
 import jsPDF from "jspdf";
@@ -105,6 +105,15 @@ type CommissionFlow = {
   data_pagamento_vendedor: string | null;
   recibo_vendedor_url: string | null;
   comprovante_pagto_url: string | null;
+};
+
+type CommissionRule = {
+  vendedor_id: string;
+  sim_table_id: string;
+  percent_padrao: number; // fração
+  fluxo_meses: number;
+  fluxo_percentuais: number[]; // frações
+  obs: string | null;
 };
 
 /* ========================= Helpers ========================= */
@@ -234,6 +243,9 @@ export default function ComissoesPage() {
   const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]);
   const [ruleObs, setRuleObs] = useState<string>("");
 
+  // listagem/edição
+  const [ruleRows, setRuleRows] = useState<(CommissionRule & { segmento: string; nome_tabela: string })[]>([]);
+
   /* ---------- Estado Pagamento ---------- */
   const [payCommissionId, setPayCommissionId] = useState<string>("");
   const [payFlow, setPayFlow] = useState<CommissionFlow[]>([]);
@@ -297,7 +309,7 @@ export default function ComissoesPage() {
       const flowByCommission: Record<string, CommissionFlow[]> = {};
       (flows || []).forEach((f) => {
         if (!flowByCommission[f.commission_id]) flowByCommission[f.commission_id] = [];
-        // de-dup por mês (evita duplicados de recibo também)
+        // de-dup por mês
         if (!flowByCommission[f.commission_id].some((x) => x.mes === f.mes)) {
           flowByCommission[f.commission_id].push(f as CommissionFlow);
         }
@@ -314,7 +326,7 @@ export default function ComissoesPage() {
           new Set((vendas || []).map(v => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
         let nomes: Record<string, string> = {};
         if (cliIds.length) {
-          // >>>>>>>>>>>>>>>>>>>>>>>> ALTERADO: buscar no public.leads <<<<<<<<<<<<<<<<<<<<<<
+          // buscar no public.leads
           const { data: cli } = await supabase.from("leads").select("id, nome").in("id", cliIds);
           (cli || []).forEach((c: any) => { nomes[c.id] = c.nome || ""; });
         }
@@ -354,7 +366,7 @@ export default function ComissoesPage() {
       );
       setVendasSemCom(vendasFiltered2 as Venda[]);
 
-      // ==== nomes de cliente (usando COALESCE(lead_id, cliente_lead_id) em public.leads) ====
+      // nomes de cliente em public.leads
       const clientIds = Array.from(
         new Set(
           (vendasFiltered2 || [])
@@ -363,7 +375,6 @@ export default function ComissoesPage() {
         )
       );
       if (clientIds.length) {
-        // >>>>>>>>>>>>>>>>>>>>>>>> ALTERADO: buscar no public.leads <<<<<<<<<<<<<<<<<<<<<<
         const { data: cli } = await supabase
           .from("leads")
           .select("id, nome")
@@ -434,16 +445,42 @@ export default function ComissoesPage() {
     [ruleFluxoPct]
   );
 
+  async function fetchRulesForVendor(vId: string) {
+    if (!vId) { setRuleRows([]); return; }
+    const { data: rules } = await supabase
+      .from("commission_rules")
+      .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
+      .eq("vendedor_id", vId);
+    if (!rules || !rules.length) { setRuleRows([]); return; }
+    const stIds = Array.from(new Set(rules.map(r => r.sim_table_id)));
+    const { data: st } = await supabase
+      .from("sim_tables")
+      .select("id, segmento, nome_tabela")
+      .in("id", stIds);
+    const bySt: Record<string, SimTable> = {};
+    (st || []).forEach(s => { bySt[s.id] = s as SimTable; });
+    setRuleRows(
+      rules.map(r => ({
+        ...(r as CommissionRule),
+        segmento: bySt[r.sim_table_id]?.segmento || "-",
+        nome_tabela: bySt[r.sim_table_id]?.nome_tabela || "-",
+      }))
+    );
+  }
+
+  useEffect(() => {
+    if (openRules) fetchRulesForVendor(ruleVendorId);
+    // eslint-disable-next-line
+  }, [openRules, ruleVendorId]);
+
   async function saveRule() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
-
     const padraoPct = parseFloat((rulePercent || "0").replace(",", "."));
     const somaFluxoPct = fluxoSomaPct;
     const eps = 1e-6;
     if (Math.abs(somaFluxoPct - padraoPct) > eps) {
       return alert(`Soma do fluxo: ${somaFluxoPct.toFixed(2)}% (deve = ${padraoPct.toFixed(2)}%)`);
     }
-
     const percent_padrao_frac = padraoPct / 100;
     const fluxo_percentuais_frac = ruleFluxoPct.map((x) => (parseFloat((x || "0").replace(",", ".")) || 0) / 100);
 
@@ -457,7 +494,28 @@ export default function ComissoesPage() {
     }, { onConflict: "vendedor_id,sim_table_id" });
 
     if (error) return alert(error.message);
-    setOpenRules(false);
+    await fetchRulesForVendor(ruleVendorId);
+    alert("Regra salva.");
+  }
+
+  async function deleteRule(vendedor_id: string, sim_table_id: string) {
+    if (!confirm("Excluir esta regra?")) return;
+    const { error } = await supabase
+      .from("commission_rules")
+      .delete()
+      .eq("vendedor_id", vendedor_id)
+      .eq("sim_table_id", sim_table_id);
+    if (error) return alert(error.message);
+    await fetchRulesForVendor(vendedor_id);
+  }
+
+  function loadRuleToForm(r: CommissionRule & { segmento: string; nome_tabela: string }) {
+    setRuleVendorId(r.vendedor_id);
+    setRuleSimTableId(r.sim_table_id);
+    setRulePercent(((r.percent_padrao || 0) * 100).toFixed(2).replace(".", ","));
+    setRuleMeses(r.fluxo_meses);
+    setRuleFluxoPct(r.fluxo_percentuais.map(p => (p*100).toFixed(2).replace(".", ",")));
+    setRuleObs(r.obs || "");
   }
 
   /* ========================= Pagamento ========================= */
@@ -601,28 +659,24 @@ export default function ComissoesPage() {
   async function retornarComissao(c: Commission) {
     if (!confirm("Confirmar retorno desta comissão para 'Vendas sem comissão'?")) return;
     try {
-      // 1) Deleta parcelas e confirma quantas linhas foram afetadas
-      const { data: delFlow, error: e1 } = await supabase
+      // 1) Deleta parcelas (pode retornar várias linhas)
+      const { error: e1 } = await supabase
         .from("commission_flow")
         .delete()
-        .eq("commission_id", c.id)
-        .select("id");
+        .eq("commission_id", c.id);
       if (e1) throw e1;
 
-      // 2) Deleta a comissão e garante que 1 linha saiu
-      const { data: delComm, error: e2 } = await supabase
+      // 2) Deleta a comissão (1 linha) — sem .single() para evitar o erro do PostgREST
+      const { error: e2 } = await supabase
         .from("commissions")
         .delete()
-        .eq("id", c.id)
-        .select("id")
-        .single();
+        .eq("id", c.id);
       if (e2) throw e2;
-      if (!delComm?.id) throw new Error("Nenhuma linha removida de 'commissions' (RLS pode ter bloqueado).");
 
-      // 3) Otimista: some imediatamente da grade
+      // 3) Some imediatamente da grid
       setRows((prev) => prev.filter((r) => r.id !== c.id));
 
-      // 4) Recarrega listas para reaparecer em “Vendas sem comissão”
+      // 4) Recarrega para reaparecer em “Vendas sem comissão”
       await fetchData();
     } catch (err: any) {
       if (String(err?.message || "").includes("row-level security")) {
@@ -690,7 +744,7 @@ export default function ComissoesPage() {
       .select("*")
       .in("id", commIds);
 
-    // vendas e clientes para montar o nome/proposta/valor
+    // vendas e clientes
     const vendaIds = Array.from(new Set((comms || []).map((c: any) => c.venda_id)));
     const { data: vendas } = await supabase
       .from("vendas")
@@ -720,9 +774,7 @@ export default function ComissoesPage() {
     const vendedorUsado = vendedorSel ?? commsFiltradas[0].vendedor_id;
     const vendInfo = secureById[vendedorUsado] || ({} as any);
 
-    // ===== número sequencial por dia (YYYYMMDD-XXX) =====
-    // XXX = quantidade de linhas únicas do recibo (determinístico por dia/seleção).
-    // Para sequência global absoluta, sugerido criar uma tabela `receipt_sequence`.
+    // número sequencial por data (determinístico pelo total de linhas únicas)
     const totalLinhasRecibo = commsFiltradas.reduce((acc, c: any) => {
       const arr = (byCommission[c.id] || []);
       return acc + new Map(arr.map(p => [p.mes, p])).size;
@@ -771,7 +823,7 @@ export default function ComissoesPage() {
       const clienteNome = clienteId ? (nomesCli[clienteId] || "—") : "—";
       const vendaValor = v?.valor_venda || 0;
 
-      // usa apenas parcelas únicas por (mes)
+      // parcelas únicas por (mes)
       const parcelasAll = byCommission[c.id] || [];
       const parcelas = Array.from(new Map(parcelasAll.map(p => [p.mes, p])).values());
 
@@ -824,9 +876,9 @@ export default function ComissoesPage() {
     try {
       const img = new Image();
       img.src = "/logo-consulmax.png";
-      await new Promise((res) => { img.onload = res as any; img.onerror = res as any; });
+      await new Promise((res) => { (img.onload || (res as any)) && res(null); img.onload = () => res(null); img.onerror = () => res(null); });
 
-      // calcula tamanho mantendo proporção dentro de uma "caixa" 160x40
+      // calcula tamanho mantendo proporção dentro de 160x40
       const maxW = 160, maxH = 40;
       const iw = (img as any).width || 160;
       const ih = (img as any).height || 40;
@@ -1116,86 +1168,148 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Sheet: Regras de Comissão (overlay) */}
+      {/* Sheet: Regras de Comissão (overlay com scroll e lista/edição) */}
       <Sheet open={openRules} onOpenChange={setOpenRules}>
-        <SheetContent side="right" className="w-[520px]">
+        <SheetContent side="right" className="w-[820px]">
           <SheetHeader><SheetTitle>Regras de Comissão</SheetTitle></SheetHeader>
-          <div className="mt-4 space-y-3">
-            <div>
-              <Label>Vendedor</Label>
-              <Select value={ruleVendorId} onValueChange={setRuleVendorId}>
-                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.nome?.trim() || u.email?.trim() || u.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Tabela (SimTables)</Label>
-              <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
-                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  {simTables.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.segmento} — {t.nome_tabela}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
 
-            <div>
-              <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
-              <Input
-                value={rulePercent}
-                onChange={(e) => setRulePercent(e.target.value)}
-                placeholder="1,20"
-              />
-            </div>
-
-            <div>
-              <Label>Nº de meses do fluxo</Label>
-              <Input
-                type="number"
-                min={1}
-                max={36}
-                value={ruleMeses}
-                onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Fluxo do pagamento — informe os percentuais (M1..Mn)</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {Array.from({ length: ruleMeses }).map((_, i) => (
-                  <Input
-                    key={i}
-                    value={ruleFluxoPct[i] || "0,00"}
-                    onChange={(e) => {
-                      const arr = [...ruleFluxoPct];
-                      arr[i] = e.target.value;
-                      setRuleFluxoPct(arr);
-                    }}
-                    placeholder={`Ex.: 0,75`}
-                  />
-                ))}
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Coluna 1 - Formulário */}
+            <div className="space-y-3">
+              <div>
+                <Label>Vendedor</Label>
+                <Select value={ruleVendorId} onValueChange={(v) => { setRuleVendorId(v); }}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.nome?.trim() || u.email?.trim() || u.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <div className="text-xs text-gray-600">
-                Soma do fluxo: <b>{fluxoSomaPct.toFixed(2)}%</b> (deve = {parseFloat((rulePercent || "0").replace(",", "."))?.toFixed(2)}%)
+
+              <div>
+                <Label>Tabela (SimTables)</Label>
+                <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {simTables.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.segmento} — {t.nome_tabela}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
+                <Input
+                  value={rulePercent}
+                  onChange={(e) => setRulePercent(e.target.value)}
+                  placeholder="1,20"
+                />
+              </div>
+
+              <div>
+                <Label>Nº de meses do fluxo</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={36}
+                  value={ruleMeses}
+                  onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Fluxo do pagamento — (M1..Mn)</Label>
+                <div className="grid grid-cols-3 gap-2 max-h-[200px] overflow-y-auto p-1 border rounded-md">
+                  {Array.from({ length: ruleMeses }).map((_, i) => (
+                    <Input
+                      key={i}
+                      value={ruleFluxoPct[i] || "0,00"}
+                      onChange={(e) => {
+                        const arr = [...ruleFluxoPct];
+                        arr[i] = e.target.value;
+                        setRuleFluxoPct(arr);
+                      }}
+                      placeholder={`0,75`}
+                    />
+                  ))}
+                </div>
+                <div className="text-xs text-gray-600">
+                  Soma do fluxo: <b>{fluxoSomaPct.toFixed(2)}%</b> (deve = {parseFloat((rulePercent || "0").replace(",", "."))?.toFixed(2)}%)
+                </div>
+              </div>
+
+              <div>
+                <Label>Observações</Label>
+                <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button>
+                <Button variant="outline" onClick={() => {
+                  setRuleSimTableId(""); setRulePercent("1,20"); setRuleMeses(1); setRuleFluxoPct(["100,00"]); setRuleObs("");
+                }}>Limpar</Button>
+              </div>
+              <div className="text-xs text-gray-500">
+                Observação: editar regras **não altera** comissões já criadas/pagas — novas comissões usam o valor vigente no momento da geração.
               </div>
             </div>
 
+            {/* Coluna 2 - Lista rolável */}
             <div>
-              <Label>Observações</Label>
-              <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-medium">Regras cadastradas</div>
+                <div className="text-xs text-gray-500">Vendedor: {userLabel(ruleVendorId) || "—"}</div>
+              </div>
+              <div className="border rounded-md max-h-[70vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="p-2 text-left">Segmento</th>
+                      <th className="p-2 text-left">Tabela</th>
+                      <th className="p-2 text-right">% Padrão</th>
+                      <th className="p-2 text-left">Fluxo</th>
+                      <th className="p-2 text-left">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(!ruleRows || ruleRows.length === 0) && (
+                      <tr><td colSpan={5} className="p-3 text-gray-500">Nenhuma regra encontrada para o vendedor selecionado.</td></tr>
+                    )}
+                    {ruleRows.map((r) => (
+                      <tr key={`${r.vendedor_id}-${r.sim_table_id}`} className="border-t">
+                        <td className="p-2">{r.segmento}</td>
+                        <td className="p-2">{r.nome_tabela}</td>
+                        <td className="p-2 text-right">{pct100(r.percent_padrao)}</td>
+                        <td className="p-2">
+                          {r.fluxo_percentuais.map((p, i) => `${(p*100).toFixed(2)}%`).join(" / ")}
+                        </td>
+                        <td className="p-2">
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="secondary" onClick={() => loadRuleToForm(r)}>
+                              <Pencil className="w-4 h-4 mr-1" /> Editar
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => deleteRule(r.vendedor_id, r.sim_table_id)}>
+                              <Trash2 className="w-4 h-4 mr-1" /> Excluir
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
+
           <SheetFooter className="mt-4">
-            <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button>
+            <Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button>
           </SheetFooter>
         </SheetContent>
       </Sheet>

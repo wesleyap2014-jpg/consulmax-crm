@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle, RotateCcw, Pencil, Trash2, Download } from "lucide-react";
+import { Loader2, Filter as FilterIcon, Settings, Save, DollarSign, FileText, PlusCircle, RotateCcw, Pencil, Trash2, Download } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -111,7 +111,7 @@ export default function ComissoesPage() {
   const [payDate, setPayDate] = useState<string>(() => toDateInput(new Date()));
   const [payValue, setPayValue] = useState<string>("");
 
-  /* Recibo */
+  /* Recibo/KPIs */
   const [reciboDate, setReciboDate] = useState<string>(() => toDateInput(new Date()));
   const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00");
   const [reciboVendor, setReciboVendor] = useState<string>("all");
@@ -119,7 +119,7 @@ export default function ComissoesPage() {
   /* Comissões pagas (accordion) */
   const [showPaid, setShowPaid] = useState(false);
 
-  /* Bases */
+  /* Bases iniciais */
   useEffect(() => {
     (async () => {
       const [{ data: u }, { data: st }, { data: us }] = await Promise.all([
@@ -133,7 +133,6 @@ export default function ComissoesPage() {
     })();
   }, []);
 
-  /* Fetch principal */
   async function fetchData() {
     setLoading(true);
     try {
@@ -155,7 +154,7 @@ export default function ComissoesPage() {
       const flowBy:Record<string,CommissionFlow[]> = {};
       (flows||[]).forEach(f => { if(!flowBy[f.commission_id]) flowBy[f.commission_id]=[]; if(!flowBy[f.commission_id].some(x=>x.mes===f.mes)) flowBy[f.commission_id].push(f as CommissionFlow); });
 
-      // clientes
+      // clientes (nome + proposta)
       let vendasExtras: Record<string, { clienteId?: string, numero_proposta?: string | null, cliente_nome?: string | null }> = {};
       if (comms && comms.length) {
         const { data: vendas } = await supabase.from("vendas").select("id, numero_proposta, cliente_lead_id, lead_id").in("id", comms.map((c:any)=>c.venda_id));
@@ -178,7 +177,7 @@ export default function ComissoesPage() {
         numero_proposta: vendasExtras[c.venda_id]?.numero_proposta || null,
       })));
 
-      // vendas sem comissão
+      // vendas sem comissão (todos os registros + filtros — sem período)
       const { data: vendasPeriodo } = await supabase.from("vendas").select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id").order("data_venda", { ascending: false });
       const { data: commVendaIds } = await supabase.from("commissions").select("venda_id");
       const hasComm = new Set((commVendaIds||[]).map((r:any)=>r.venda_id));
@@ -199,7 +198,7 @@ export default function ComissoesPage() {
   }
   useEffect(() => { fetchData(); /* eslint-disable-next-line */}, [vendedorId, status, segmento, tabela]);
 
-  /* Totais/KPIs (líquido e com relógio interativo) */
+  /* Totais/KPIs (líquido com imposto) + Relógios */
   const now = new Date(); const yStart = new Date(now.getFullYear(),0,1); const mStart = new Date(now.getFullYear(), now.getMonth(),1); const fiveYearsAgo = new Date(now.getFullYear()-5, now.getMonth(),1);
   const isBetween = (iso?:string|null,s?:Date,e?:Date)=> iso? (new Date(iso+"T00:00:00").getTime() >= (s?.getTime()||0) && new Date(iso+"T00:00:00").getTime() <= (e?.getTime()||now.getTime())) : false;
   const impostoFrac = useMemo(()=> (parseFloat(reciboImpostoPct.replace(",", ".")) || 0)/100, [reciboImpostoPct]);
@@ -223,7 +222,7 @@ export default function ComissoesPage() {
   const range5y = totalsInRange2(fiveYearsAgo, now); const rangeY = totalsInRange2(yStart, now); const rangeM = totalsInRange2(mStart, now);
   const vendedorAtual = useMemo(() => userLabel(vendedorId === "all" ? null : vendedorId), [usersById, usersByAuth, vendedorId]);
 
-  /* Regras — igual sua versão (omiti comentários por brevidade) */
+  /* Regras */
   function onChangeMeses(n:number){ setRuleMeses(n); const arr=[...ruleFluxoPct]; if(n>arr.length){while(arr.length<n) arr.push("0,00");} else arr.length=n; setRuleFluxoPct(arr); }
   const fluxoSomaPct = useMemo(()=> ruleFluxoPct.reduce((a,b)=> a + (parseFloat((b||"0").replace(",", ".")) || 0), 0),[ruleFluxoPct]);
   async function fetchRulesForVendor(vId:string){
@@ -241,9 +240,7 @@ export default function ComissoesPage() {
     const padraoPctPercent = parseFloat((rulePercent||"0").replace(",", ".")); const somaFluxo = fluxoSomaPct;
     if (Math.abs(somaFluxo - 1.0) > 1e-6) return alert(`Soma do fluxo (M1..Mn) deve ser 1,00 (100%). Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
     const percent_padrao_frac = padraoPctPercent / 100; const fluxo_percentuais_frac = ruleFluxoPct.map(x => (parseFloat((x||"0").replace(",", ".")) || 0));
-    const { error } = await supabase.from("commission_rules").upsert({
-      vendedor_id: ruleVendorId, sim_table_id: ruleSimTableId, percent_padrao: percent_padrao_frac, fluxo_meses: ruleMeses, fluxo_percentuais: fluxo_percentuais_frac, obs: ruleObs || null,
-    }, { onConflict: "vendedor_id,sim_table_id" });
+    const { error } = await supabase.from("commission_rules").upsert({ vendedor_id: ruleVendorId, sim_table_id: ruleSimTableId, percent_padrao: percent_padrao_frac, fluxo_meses: ruleMeses, fluxo_percentuais: fluxo_percentuais_frac, obs: ruleObs || null }, { onConflict: "vendedor_id,sim_table_id" });
     if(error) return alert(error.message);
     await fetchRulesForVendor(ruleVendorId); alert("Regra salva.");
   }
@@ -259,7 +256,7 @@ export default function ComissoesPage() {
     setRuleFluxoPct(r.fluxo_percentuais.map(p=>p.toFixed(2).replace(".", ","))); setRuleObs(r.obs||"");
   }
 
-  /* Pagamento */
+  /* Pagamento (abrir overlay) */
   async function openPaymentFor(c: Commission){
     setPayCommissionId(c.id);
     const { data } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
@@ -269,6 +266,7 @@ export default function ComissoesPage() {
   async function uploadToBucket(file: File, commissionId: string){ const path = `${commissionId}/${Date.now()}-${file.name}`; const { data, error } = await supabase.storage.from("comissoes").upload(path, file, { upsert: false }); if(error){ alert("Falha ao enviar arquivo: "+error.message); return null; } return data?.path || null; }
   async function getSignedUrl(path: string | null | undefined){ if(!path) return null; const { data, error } = await supabase.storage.from("comissoes").createSignedUrl(path, 60*10); if(error){ console.warn("Signed URL error:", error.message); return null; } return (data as any)?.signedUrl || null; }
 
+  /* Registrar pagamento (regras críticas preservadas) */
   async function paySelectedParcels(payload:{ data_pagamento_vendedor?: string; valor_pago_vendedor?: number; recibo_file?: File | null; comprovante_file?: File | null; }){
     // uploads
     let reciboPath: string | null = null, compPath: string | null = null;
@@ -278,11 +276,11 @@ export default function ComissoesPage() {
     // seleção explícita…
     let selected = payFlow.filter(f => paySelected[f.id]);
 
-    // …ou auto-seleção inteligente (Arquivos): por data informada
+    // …ou auto-seleção por data informada (Aba “Arquivos”)
     if (!selected.length && payload.data_pagamento_vendedor) {
       selected = payFlow.filter(f => (f.data_pagamento_vendedor || "") === payload.data_pagamento_vendedor);
     }
-    // …ou, como último recurso, selecione a única parcela já paga
+    // …ou fallback: se houver só 1 parcela já paga, selecionar essa
     if (!selected.length) {
       const alreadyPaid = payFlow.filter(f => (f.valor_pago_vendedor ?? 0) > 0);
       if (alreadyPaid.length === 1) selected = alreadyPaid;
@@ -290,7 +288,7 @@ export default function ComissoesPage() {
 
     if (!selected.length) return alert("Selecione pelo menos uma parcela (ou informe a mesma data do pagamento ao anexar arquivos).");
 
-    // UPDATE por id (preferível)
+    // UPDATE por id (preferível, nunca sobrescrever valor pago sem input)
     const toUpdate = selected.filter(f => !!f.id);
     if (toUpdate.length) {
       for (const f of toUpdate) {
@@ -298,7 +296,7 @@ export default function ComissoesPage() {
           .from("commission_flow")
           .update({
             data_pagamento_vendedor: payload.data_pagamento_vendedor || f.data_pagamento_vendedor || toDateInput(new Date()),
-            valor_pago_vendedor: payload.valor_pago_vendedor ?? f.valor_pago_vendedor ?? f.valor_previsto ?? 0,
+            valor_pago_vendedor: payload.valor_pago_vendedor ?? (f.valor_pago_vendedor ?? f.valor_previsto ?? 0),
             recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
             comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
           })
@@ -307,7 +305,7 @@ export default function ComissoesPage() {
       }
     }
 
-    // INSERT (se aparecer item sem id)
+    // INSERT apenas quando não há id
     const toInsert = selected.filter(f => !f.id);
     if (toInsert.length) {
       const inserts = toInsert.map(f => ({
@@ -327,11 +325,9 @@ export default function ComissoesPage() {
     // Atualiza status da comissão se todas pagas
     const { data: updated } = await supabase.from("commission_flow").select("*").eq("commission_id", payCommissionId);
     const allPaid = (updated || []).length > 0 && (updated || []).every((f: any) => (f.valor_pago_vendedor ?? 0) > 0);
-    if (allPaid) {
-      await supabase.from("commissions").update({ status: "pago", data_pagamento: toDateInput(new Date()) }).eq("id", payCommissionId);
-    }
+    if (allPaid) await supabase.from("commissions").update({ status: "pago", data_pagamento: toDateInput(new Date()) }).eq("id", payCommissionId);
 
-    // Recarrega fluxo desta comissão + KPIs/Comissões pagas
+    // Recarregar fluxo + KPIs
     const { data: fresh } = await supabase.from("commission_flow").select("*").eq("commission_id", payCommissionId).order("mes", { ascending: true });
     const uniq = new Map<number, CommissionFlow>(); (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
     const freshArr = Array.from(uniq.values()) as CommissionFlow[];
@@ -341,7 +337,7 @@ export default function ComissoesPage() {
     fetchData();
   }
 
-  /* Gerar / Retornar / CSV / Recibo (iguais ao que você já tinha) */
+  /* Gerar comissão (não preencher valor_pago_vendedor) */
   async function gerarComissaoDeVenda(venda: Venda){
     try{
       setGenBusy(venda.id);
@@ -381,14 +377,14 @@ export default function ComissoesPage() {
       const delFlow = await supabase.from("commission_flow").delete().eq("commission_id", c.id).select("id");
       if(delFlow.error) throw delFlow.error;
       const { data: stillFlows } = await supabase.from("commission_flow").select("id", { count: "exact", head: false }).eq("commission_id", c.id);
-      if ((stillFlows && stillFlows.length > 0)) { alert("Não foi possível remover as parcelas (RLS). Ajuste as policies de 'commission_flow' para permitir DELETE pelo owner/admin."); return; }
+      if ((stillFlows && stillFlows.length > 0)) { alert("Não foi possível remover as parcelas (RLS). Ajuste as policies de 'commission_flow' para permitir DELETE."); return; }
       const delComm = await supabase.from("commissions").delete().eq("id", c.id).select("id");
       if(delComm.error) throw delComm.error;
       const { data: stillComm } = await supabase.from("commissions").select("id").eq("id", c.id).limit(1);
-      if (stillComm && stillComm.length) { alert("A comissão não pôde ser excluída (possível RLS). Verifique as policies de 'commissions'."); return; }
+      if (stillComm && stillComm.length) { alert("A comissão não pôde ser excluída (possível RLS). Verifique as policies."); return; }
       setRows(prev => prev.filter(r => r.id !== c.id)); await fetchData();
     } catch (err:any){
-      if(String(err?.message||"").includes("row-level security")) alert("RLS bloqueou a exclusão. Ajuste as policies de 'commissions' e 'commission_flow'.");
+      if(String(err?.message||"").includes("row-level security")) alert("RLS bloqueou a exclusão. Ajuste as policies.");
       else alert("Falha ao retornar: " + (err?.message || err));
     }
   }
@@ -401,6 +397,7 @@ export default function ComissoesPage() {
     const a = document.createElement("a"); a.href = url; a.download = `comissoes_all.csv`; a.click(); URL.revokeObjectURL(url);
   }
 
+  /* Recibo por data (PDF) — KPIs líquidos */
   async function downloadReceiptPDFPorData(){
     const impostoPct = parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0;
     const dataRecibo = reciboDate; const vendedorSel = reciboVendor === "all" ? null : reciboVendor;
@@ -447,7 +444,7 @@ export default function ComissoesPage() {
       parcelas.forEach(p => {
         const comBruta = (c.percent_aplicado||0) * (p.percentual||0) * vendaValor;
         const impostos = comBruta * impostoPct; const liquida = comBruta - impostos; totalLiquido += liquida;
-        body.push([ clienteNome, v?.numero_proposta || "—", `${p.mes}/${parcelas.length}`, BRL(vendaValor), BRL(comBruta), BRL(impostos), BRL(liquida) ]);
+        body.push([ clienteNome, v?.numero_proposta || "—", `M${p.mes}`, BRL(vendaValor), BRL(comBruta), BRL(impostos), BRL(liquida) ]);
       });
     });
 
@@ -455,15 +452,11 @@ export default function ComissoesPage() {
     const endY = (doc as any).lastAutoTable.finalY + 12;
     doc.setFont("helvetica","bold"); doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
     doc.setFont("helvetica","normal"); doc.text(`Forma de Pagamento: PIX`, 40, endY+18); doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado]?.pix_key || "—"}`, 40, endY+34);
-
     const signY = endY + 100; doc.line(40, signY, 320, signY); doc.text(`${userLabel(vendedorUsado)}`, 40, signY+14); doc.text(`${secureById[vendedorUsado]?.cpf || "—"}`, 40, signY+28);
-    const rodapeY = 812 - 40; doc.setFontSize(9); doc.text("Rua Menezes Filho, 3174, Casa Preta", 40, rodapeY-20); doc.text("Ji-Paraná/RO, 76907-532", 40, rodapeY-8); doc.text("consulmaxconsorcios.com.br", 40, rodapeY+4);
-    try { const img = new Image(); img.src="/logo-consulmax.png"; await new Promise(res=>{ img.onload=()=>res(null); img.onerror=()=>res(null); }); const iw = (img as any).width || 160, ih = (img as any).height || 40;
-      const ratio = Math.min(160/iw, 40/ih); doc.addImage(img, "PNG", 420, rodapeY - ih*ratio + 8, iw*ratio, ih*ratio); } catch {}
     doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
   }
 
-  /* ==== Baixar ZIP (recibo + comprovante) — import dinâmico “safe” ==== */
+  /* ==== Baixar ZIP (recibo + comprovante) — import dinâmico ==== */
   async function downloadZipForFlow(flow: CommissionFlow, comm: Commission) {
     try {
       const files: Array<{name: string; url: string}> = [];
@@ -473,11 +466,10 @@ export default function ComissoesPage() {
       if(comp) files.push({ name: `comprovante${getExt(flow.comprovante_pagto_url || "")}`, url: comp });
       if(files.length === 0){ return alert("Nenhum arquivo encontrado para esta parcela."); }
 
-      const m1 = "jszip"; const m2 = "file-saver";
       // @ts-ignore
-      const jszipMod: any = await import(/* @vite-ignore */ (m1)).catch(()=>null);
+      const jszipMod: any = await import(/* @vite-ignore */ "jszip").catch(()=>null);
       // @ts-ignore
-      const fileSaverMod: any = await import(/* @vite-ignore */ (m2)).catch(()=>null);
+      const fileSaverMod: any = await import(/* @vite-ignore */ "file-saver").catch(()=>null);
 
       if(!jszipMod || !fileSaverMod){
         files.forEach(f => window.open(f.url, "_blank"));
@@ -493,7 +485,7 @@ export default function ComissoesPage() {
     } catch (e:any) { alert("Falha ao gerar pacote: " + (e?.message || e)); }
   }
 
-  /* Listas auxiliares para render */
+  /* Listas auxiliares */
   const rowsAPagar = useMemo(() => rows.filter(r => r.status === "a_pagar"), [rows]);
   const pagosFlat = useMemo(() => {
     const list: Array<{flow: CommissionFlow; comm: Commission}> = [];
@@ -553,7 +545,7 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Dashboards */}
+      {/* Dashboards com relógios */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         <Card><CardHeader className="pb-1"><CardTitle>Nos últimos 5 anos — {vendedorAtual}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -584,13 +576,13 @@ export default function ComissoesPage() {
           </CardContent></Card>
       </div>
 
-      {/* Resumo */}
+      {/* Resumo KPIs gerais (líquido) */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <Card><CardHeader className="pb-1"><CardTitle>💰 Vendas no Período</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>💰 Vendas</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent></Card>
         <Card><CardHeader className="pb-1"><CardTitle>🧾 Comissão Bruta</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent></Card>
         <Card><CardHeader className="pb-1"><CardTitle>✅ Comissão Líquida</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comLiquida)}</CardContent></Card>
         <Card><CardHeader className="pb-1"><CardTitle>📤 Comissão Paga (Liq.)</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPaga)}</CardContent></Card>
-        <Card><CardHeader className="pb-1"><CardTitle>⏳ Comissão Pendente (Liq.)</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>⏳ Pendente (Liq.)</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
       </div>
 
       {/* Vendas sem comissão */}
@@ -636,7 +628,7 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Detalhamento — some quando não há a pagar */}
+      {/* Detalhamento — somete se há a pagar */}
       {rowsAPagar.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
@@ -734,7 +726,6 @@ export default function ComissoesPage() {
       <Dialog open={openRules} onOpenChange={setOpenRules}>
         <DialogContent className="max-w-5xl">
           <DialogHeader><DialogTitle>Regras de Comissão</DialogTitle></DialogHeader>
-          {/* ... (conteúdo idêntico ao anterior) ... */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
             <div><Label>Vendedor</Label>
               <Select value={ruleVendorId} onValueChange={(v)=>{ setRuleVendorId(v); }}>
@@ -795,7 +786,7 @@ export default function ComissoesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Pagamento (tela maior) */}
+      {/* Pagamento (overlay maior) */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
         <DialogContent className="w-[98vw] max-w-[1400px]">
           <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
@@ -853,7 +844,7 @@ function UploadArea({ onConfirm }: { onConfirm: (payload:{ data_pagamento_vended
         <div><Label>Recibo assinado (PDF)</Label><Input type="file" accept="application/pdf" onChange={(e)=>setFileRecibo(e.target.files?.[0]||null)} /></div>
         <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e)=>setFileComp(e.target.files?.[0]||null)} /></div>
       </div>
-      <div className="text-xs text-gray-500">Arquivos vão para o bucket <code>comissoes</code>. Se nenhuma parcela estiver marcada, a confirmação aplica aos pagamentos cuja <b>data</b> coincide com a informada.</div>
+      <div className="text-xs text-gray-500">Arquivos vão para o bucket <code>comissoes</code>. Se nenhuma parcela estiver marcada, a confirmação aplica aos pagamentos cuja <b>data</b> coincide com a informada; se ainda assim nada combinar e existir apenas 1 parcela paga, ela será selecionada automaticamente.</div>
     </div>
   );
 }

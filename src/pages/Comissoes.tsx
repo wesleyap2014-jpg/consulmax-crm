@@ -252,19 +252,108 @@ export default function ComissoesPage() {
     setPaySelected({}); setPayDate(toDateInput(new Date())); setPayValue(""); setOpenPay(true);
   }
   async function uploadToBucket(file: File, commissionId: string){ const path = `${commissionId}/${Date.now()}-${file.name}`; const { data, error } = await supabase.storage.from("comissoes").upload(path, file, { upsert: false }); if(error){ alert("Falha ao enviar arquivo: "+error.message); return null; } return data?.path || null; }
-  async function paySelectedParcels(payload:{ data_pagamento_vendedor?: string; valor_pago_vendedor?: number; recibo_file?: File | null; comprovante_file?: File | null; }){
-    const updates: Partial<CommissionFlow>[] = [];
-    let reciboPath: string | null = null, compPath: string | null = null;
-    if(payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
-    if(payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
-    payFlow.forEach(f => { if(paySelected[f.id]) updates.push({ id:f.id, data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()), valor_pago_vendedor: payload.valor_pago_vendedor ?? f.valor_previsto ?? 0, recibo_vendedor_url: reciboPath || f.recibo_vendedor_url, comprovante_pagto_url: compPath || f.comprovante_pagto_url } as any); });
-    if(!updates.length) return alert("Selecione pelo menos uma parcela.");
-    const { error } = await supabase.from("commission_flow").upsert(updates);
-    if(error) return alert(error.message);
-    const { data: updated } = await supabase.from("commission_flow").select("*").eq("commission_id", payCommissionId);
-    const allPaid = (updated||[]).every((f:any)=>(f.valor_pago_vendedor??0)>0);
-    if(allPaid) await supabase.from("commissions").update({ status:"pago", data_pagamento: toDateInput(new Date()) }).eq("id", payCommissionId);
-    setOpenPay(false); fetchData();
+
+  // ✅ NOVA VERSÃO (unificada) — update por id, insert para itens sem id, e upsert opcional comentado
+  async function paySelectedParcels(payload: {
+    data_pagamento_vendedor?: string;
+    valor_pago_vendedor?: number;
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
+  }) {
+    // uploads
+    let reciboPath: string | null = null;
+    let compPath: string | null = null;
+    if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
+    if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
+
+    // prepara os itens selecionados
+    const selected = payFlow.filter(f => paySelected[f.id]);
+    if (!selected.length) return alert("Selecione pelo menos uma parcela.");
+
+    // 1) UPDATE por id (preferível)
+    const toUpdate = selected.filter(f => !!f.id);
+    if (toUpdate.length) {
+      // OPCIONAL: trocar este loop pelo upsert em lote (comentado mais abaixo)
+      for (const f of toUpdate) {
+        const row = {
+          commission_id: f.commission_id, // mantém coerência (RLS/triggers)
+          data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
+          valor_pago_vendedor: payload.valor_pago_vendedor ?? f.valor_previsto ?? 0,
+          recibo_vendedor_url: reciboPath || f.recibo_vendedor_url || null,
+          comprovante_pagto_url: compPath || f.comprovante_pagto_url || null,
+        };
+
+        const { error } = await supabase
+          .from("commission_flow")
+          .update({
+            data_pagamento_vendedor: row.data_pagamento_vendedor,
+            valor_pago_vendedor: row.valor_pago_vendedor,
+            recibo_vendedor_url: row.recibo_vendedor_url,
+            comprovante_pagto_url: row.comprovante_pagto_url,
+          })
+          .eq("id", f.id);
+
+        if (error) return alert("Falha ao atualizar parcela: " + error.message);
+      }
+    }
+
+    // 2) INSERT para itens sem id (garantindo campos mínimos/NOT NULL)
+    const toInsert = selected.filter(f => !f.id);
+    if (toInsert.length) {
+      const inserts = toInsert.map(f => ({
+        commission_id: f.commission_id,                     // NOT NULL
+        mes: f.mes,                                         // ajuste se NOT NULL
+        percentual: f.percentual ?? 0,                      // mínimo
+        valor_previsto: f.valor_previsto ?? 0,              // mínimo
+        data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
+        valor_pago_vendedor: payload.valor_pago_vendedor ?? f.valor_previsto ?? 0,
+        recibo_vendedor_url: reciboPath || null,
+        comprovante_pagto_url: compPath || null,
+      }));
+      const { error } = await supabase.from("commission_flow").insert(inserts);
+      if (error) return alert("Falha ao inserir parcela: " + error.message);
+    }
+
+    // 3) Atualiza status da comissão se todas pagas
+    const { data: updated } = await supabase
+      .from("commission_flow")
+      .select("*")
+      .eq("commission_id", payCommissionId);
+
+    const allPaid =
+      (updated || []).length > 0 &&
+      (updated || []).every((f: any) => (f.valor_pago_vendedor ?? 0) > 0);
+
+    if (allPaid) {
+      await supabase
+        .from("commissions")
+        .update({ status: "pago", data_pagamento: toDateInput(new Date()) })
+        .eq("id", payCommissionId);
+    }
+
+    setOpenPay(false);
+    fetchData();
+
+    /* ================================================
+       OPCIONAL: Upsert em lote com onConflict: 'id'
+       (caso prefira substituir o loop de updates acima)
+       Observação: inclua commission_id no payload
+    =================================================
+    // if (toUpdate.length) {
+    //   const updates = toUpdate.map(f => ({
+    //     id: f.id,
+    //     commission_id: f.commission_id,
+    //     data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
+    //     valor_pago_vendedor: payload.valor_pago_vendedor ?? f.valor_previsto ?? 0,
+    //     recibo_vendedor_url: reciboPath || f.recibo_vendedor_url || null,
+    //     comprovante_pagto_url: compPath || f.comprovante_pagto_url || null,
+    //   }));
+    //   const { error } = await supabase
+    //     .from("commission_flow")
+    //     .upsert(updates, { onConflict: "id" });
+    //   if (error) return alert("Falha no upsert de parcelas: " + error.message);
+    // }
+    */
   }
 
   /* Gerar Comissão */

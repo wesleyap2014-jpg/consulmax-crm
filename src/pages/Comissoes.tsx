@@ -14,7 +14,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Loader2, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle, RotateCcw, Pencil, Trash2,
+  Loader2, Filter as FilterIcon, Settings, Save, DollarSign, Upload, FileText, PlusCircle, RotateCcw, Pencil, Trash2, Download,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -70,8 +70,22 @@ function valorPorExtenso(n: number) {
   return `${ext(i)} ${i===1?"real":"reais"}${ct?` e ${ext(ct)} ${ct===1?"centavo":"centavos"}`:""}`;
 }
 
+const getExt = (path: string) => {
+  const m = path?.match(/\.(pdf|png|jpg|jpeg|webp)$/i);
+  return m ? m[0].toLowerCase() : ".bin";
+};
+
 /* ========================= Relógio Dual (azul recebido / vermelho pendente) ========================= */
-function RadialDual({ paidPct, label }: { paidPct: number; label: string }) {
+function RadialDual({
+  paidPct,
+  label,
+  paidHint,
+  pendHint,
+  tagline = "Quanto já entrou × o que ainda falta"
+}: {
+  paidPct: number; label: string; paidHint: string; pendHint: string; tagline?: string;
+}) {
+  const [hover, setHover] = useState<"paid" | "pend" | null>(null);
   const pct = Math.max(0, Math.min(100, paidPct));
   const radius = 44;
   const circumference = 2 * Math.PI * radius;
@@ -82,19 +96,40 @@ function RadialDual({ paidPct, label }: { paidPct: number; label: string }) {
 
   return (
     <div className="flex items-center gap-3 p-3 border rounded-xl">
-      <svg width="120" height="120" className="-rotate-90">
+      <svg width="120" height="120" className="-rotate-90" role="img" aria-label={label}>
         <circle cx="60" cy="60" r={radius} stroke="#e5e7eb" strokeWidth="10" fill="none" />
-        <circle cx="60" cy="60" r={radius} stroke={azul} strokeWidth="10" fill="none"
-          strokeDasharray={`${paidLen} ${circumference}`} strokeLinecap="round" />
-        <circle cx="60" cy="60" r={radius} stroke={vermelho} strokeWidth="10" fill="none"
-          strokeDasharray={`${pendLen} ${circumference}`} strokeDashoffset={-paidLen} strokeLinecap="round" />
+        <circle
+          cx="60" cy="60" r={radius}
+          stroke={azul}
+          strokeWidth={hover === "paid" ? 12 : 10}
+          fill="none"
+          strokeDasharray={`${paidLen} ${circumference}`}
+          strokeLinecap="round"
+          onMouseEnter={()=>setHover("paid")}
+          onMouseLeave={()=>setHover(null)}
+        >
+          <title>{paidHint}</title>
+        </circle>
+        <circle
+          cx="60" cy="60" r={radius}
+          stroke={vermelho}
+          strokeWidth={hover === "pend" ? 12 : 10}
+          fill="none"
+          strokeDasharray={`${pendLen} ${circumference}`}
+          strokeDashoffset={-paidLen}
+          strokeLinecap="round"
+          onMouseEnter={()=>setHover("pend")}
+          onMouseLeave={()=>setHover(null)}
+        >
+          <title>{pendHint}</title>
+        </circle>
         <text x="60" y="65" textAnchor="middle" fontSize="18" fill="#111827" className="rotate-90">
           {pct.toFixed(0)}%
         </text>
       </svg>
       <div>
         <div className="text-sm text-gray-500">{label}</div>
-        <div className="font-semibold">Recebido (azul) · A receber (vermelho)</div>
+        <div className="font-semibold">{tagline}</div>
       </div>
     </div>
   );
@@ -102,9 +137,7 @@ function RadialDual({ paidPct, label }: { paidPct: number; label: string }) {
 
 /* ========================= Página ========================= */
 export default function ComissoesPage() {
-  /* Filtros */
-  const [dtIni, setDtIni] = useState<string>(() => { const d = new Date(); d.setDate(1); return toDateInput(d); });
-  const [dtFim, setDtFim] = useState<string>(() => toDateInput(new Date()));
+  /* Filtros (sem período) */
   const [vendedorId, setVendedorId] = useState<string>("all");
   const [status, setStatus] = useState<"all" | "a_pagar" | "pago" | "estorno">("all");
   const [segmento, setSegmento] = useState<string>("all");
@@ -150,6 +183,9 @@ export default function ComissoesPage() {
   const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00");
   const [reciboVendor, setReciboVendor] = useState<string>("all");
 
+  /* Comissões pagas (accordion) */
+  const [showPaid, setShowPaid] = useState(false);
+
   /* Bases */
   useEffect(() => {
     (async () => {
@@ -168,8 +204,8 @@ export default function ComissoesPage() {
   async function fetchData() {
     setLoading(true);
     try {
-      // commissions
-      let qb = supabase.from("commissions").select("*").gte("data_venda", dtIni).lte("data_venda", dtFim);
+      // commissions (sem filtro de período)
+      let qb = supabase.from("commissions").select("*");
       if (status !== "all") qb = qb.eq("status", status);
       if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
       if (segmento !== "all") qb = qb.eq("segmento", segmento);
@@ -219,14 +255,14 @@ export default function ComissoesPage() {
         numero_proposta: vendasExtras[c.venda_id]?.numero_proposta || null,
       })));
 
-      // vendas sem comissão
+      // vendas sem comissão (sem filtro de período)
       const { data: vendasPeriodo } = await supabase
         .from("vendas")
         .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id")
-        .gte("data_venda", dtIni).lte("data_venda", dtFim).order("data_venda", { ascending: false });
+        .order("data_venda", { ascending: false });
 
       const { data: commVendaIds } = await supabase
-        .from("commissions").select("venda_id").gte("data_venda", dtIni).lte("data_venda", dtFim);
+        .from("commissions").select("venda_id");
 
       const hasComm = new Set((commVendaIds || []).map((r: any) => r.venda_id));
       const vendasFiltered = (vendasPeriodo || []).filter(v => !hasComm.has(v.id));
@@ -255,7 +291,7 @@ export default function ComissoesPage() {
       } else setClientesMap({});
     } finally { setLoading(false); }
   }
-  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [dtIni, dtFim, vendedorId, status, segmento, tabela]);
+  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [vendedorId, status, segmento, tabela]);
 
   /* Helpers de período para KPIs */
   const now = new Date();
@@ -294,7 +330,7 @@ export default function ComissoesPage() {
     return { totalBruta, totalLiquida, pagoLiquido, pendente, pct };
   }
 
-  /* KPIs (globais do grid superior) */
+  /* KPIs globais */
   const kpi = useMemo(() => {
     const comBruta = sum(rows.map(r => r.valor_total));
     const comLiquida = comBruta * (1 - impostoFrac);
@@ -306,7 +342,6 @@ export default function ComissoesPage() {
     return { vendasTotal, comBruta, comLiquida, comPaga: pagoLiquido, comPendente };
   }, [rows, impostoFrac]);
 
-  // Percentuais por período para os relógios coloridos
   const range5y = totalsInRange2(fiveYearsAgo, now);
   const rangeY = totalsInRange2(yStart, now);
   const rangeM = totalsInRange2(mStart, now);
@@ -392,7 +427,15 @@ export default function ComissoesPage() {
     return data?.path || null;
   }
 
-  // NOVA paySelectedParcels — update por id, insert sem id, trava após recibo/comprovante e refetch do fluxo
+  // assinaturas de URL para storage
+  async function getSignedUrl(path: string | null | undefined){
+    if(!path) return null;
+    const { data, error } = await supabase.storage.from("comissoes").createSignedUrl(path, 60 * 10);
+    if(error){ console.warn("Signed URL error:", error.message); return null; }
+    return (data as any)?.signedUrl || null;
+  }
+
+  // NOVA paySelectedParcels — update por id, insert sem id, trava após recibo/comprovante e refetch do fluxo + atualização local de KPIs
   async function paySelectedParcels(payload: {
     data_pagamento_vendedor?: string;
     valor_pago_vendedor?: number;
@@ -469,25 +512,15 @@ export default function ComissoesPage() {
 
     const uniq = new Map<number, CommissionFlow>();
     (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
-    setPayFlow(Array.from(uniq.values()) as CommissionFlow[]);
+    const freshArr = Array.from(uniq.values()) as CommissionFlow[];
+    setPayFlow(freshArr);
+
+    // 🔹 Atualiza localmente as rows para refletir nos KPIs já na hora
+    setRows(prev => prev.map(r => r.id === payCommissionId ? ({ ...r, flow: freshArr }) : r));
 
     setOpenPay(false);
+    // e ainda faz um refetch para garantir consistência (novo status, etc.)
     fetchData();
-
-    /* OPCIONAL — Upsert em lote com onConflict: 'id'
-    if (toUpdate.length) {
-      const updates = toUpdate.map(f => ({
-        id: f.id,
-        commission_id: f.commission_id,
-        data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
-        valor_pago_vendedor: payload.valor_pago_vendedor ?? f.valor_previsto ?? 0,
-        recibo_vendedor_url: reciboPath || f.recibo_vendedor_url || null,
-        comprovante_pagto_url: compPath || f.comprovante_pagto_url || null,
-      }));
-      const { error } = await supabase.from("commission_flow").upsert(updates, { onConflict: "id" });
-      if (error) return alert("Falha no upsert de parcelas: " + error.message);
-    }
-    */
   }
 
   /* Gerar Comissão */
@@ -592,7 +625,7 @@ export default function ComissoesPage() {
     const csv = [header.join(","), ...lines].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `comissoes_${dtIni}_${dtFim}.csv`; a.click(); URL.revokeObjectURL(url);
+    const a = document.createElement("a"); a.href = url; a.download = `comissoes_all.csv`; a.click(); URL.revokeObjectURL(url);
   }
 
   /* Recibo */
@@ -693,17 +726,62 @@ export default function ComissoesPage() {
     doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
   }
 
+  /* ==== Baixar ZIP (recibo + comprovante) ==== */
+  async function downloadZipForFlow(flow: CommissionFlow, commission: Commission) {
+    try {
+      const files: Array<{name: string; url: string}> = [];
+      const rec = await getSignedUrl(flow.recibo_vendedor_url);
+      const comp = await getSignedUrl(flow.comprovante_pagto_url);
+      if(rec) files.push({ name: `recibo${getExt(flow.recibo_vendedor_url || "")}`, url: rec });
+      if(comp) files.push({ name: `comprovante${getExt(flow.comprovante_pagto_url || "")}`, url: comp });
+      if(files.length === 0){ return alert("Nenhum arquivo encontrado para esta parcela."); }
+
+      // dynamic import para evitar erro se libs não estiverem instaladas
+      const jszipMod: any = await import(/* @vite-ignore */"jszip").catch(()=>null);
+      const fileSaverMod: any = await import(/* @vite-ignore */"file-saver").catch(()=>null);
+      if(!jszipMod || !fileSaverMod){
+        // fallback: abre os links separadamente
+        files.forEach(f => window.open(f.url, "_blank"));
+        return;
+      }
+      const JSZipCtor = jszipMod.default || jszipMod;
+      const zip = new JSZipCtor();
+      for(const f of files){
+        const resp = await fetch(f.url);
+        const blob = await resp.blob();
+        zip.file(f.name, blob);
+      }
+      const content = await zip.generateAsync({ type: "blob" });
+      const saveAs = fileSaverMod.saveAs || fileSaverMod.default || fileSaverMod;
+      const nome = `pagamento_${commission.numero_proposta || commission.id}_M${flow.mes}.zip`;
+      saveAs(content, nome);
+    } catch (e:any) {
+      alert("Falha ao gerar arquivo: " + (e?.message || e));
+    }
+  }
+
   /* Render */
+  const rowsAPagar = useMemo(() => rows.filter(r => r.status === "a_pagar"), [rows]);
+  const pagosFlat = useMemo(() => {
+    // lista de parcelas pagas (com arquivos, se houver)
+    const list: Array<{flow: CommissionFlow; comm: Commission}> = [];
+    rows.forEach(r => {
+      (r.flow || []).forEach(f => {
+        if ((f.valor_pago_vendedor ?? 0) > 0) list.push({ flow: f, comm: r });
+      });
+    });
+    // ordena por data pagto desc
+    return list.sort((a,b) => ((b.flow.data_pagamento_vendedor||"") > (a.flow.data_pagamento_vendedor||"") ? 1 : -1));
+  }, [rows]);
+
   return (
     <div className="p-4 space-y-4">
-      {/* Filtros */}
+      {/* Filtros (sem período) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2"><FilterIcon className="w-5 h-5" /> Filtros</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-7 gap-3">
-          <div><Label>De</Label><Input type="date" value={dtIni} onChange={(e)=>setDtIni(e.target.value)} /></div>
-          <div><Label>Até</Label><Input type="date" value={dtFim} onChange={(e)=>setDtFim(e.target.value)} /></div>
+        <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <div>
             <Label>Vendedor</Label>
             <Select value={vendedorId} onValueChange={setVendedorId}>
@@ -746,7 +824,7 @@ export default function ComissoesPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="md:col-span-7 flex gap-2 justify-end">
+          <div className="md:col-span-6 flex gap-2 justify-end">
             <Button variant="secondary" onClick={()=>setOpenRules(true)}><Settings className="w-4 h-4 mr-1" /> Regras de Comissão</Button>
             <Button onClick={fetchData}><Loader2 className="w-4 h-4 mr-1" /> Atualizar</Button>
           </div>
@@ -763,7 +841,12 @@ export default function ComissoesPage() {
               <Metric title="Recebido Líquido" value={BRL(range5y.pagoLiquido)} />
               <Metric title="Pendente Líquido" value={BRL(range5y.pendente)} />
             </div>
-            <RadialDual paidPct={range5y.pct} label="Recebido / Total (5 anos)" />
+            <RadialDual
+              paidPct={range5y.pct}
+              label="Recebido x A Receber (5 anos)"
+              paidHint="Comissão recebida nos últimos 5 anos"
+              pendHint="Comissão a receber nos próximos pagamentos"
+            />
           </CardContent>
         </Card>
 
@@ -775,7 +858,12 @@ export default function ComissoesPage() {
               <Metric title="Recebido Líquido" value={BRL(rangeY.pagoLiquido)} />
               <Metric title="Pendente Líquido" value={BRL(rangeY.pendente)} />
             </div>
-            <RadialDual paidPct={rangeY.pct} label="Recebido / Total (ano)" />
+            <RadialDual
+              paidPct={rangeY.pct}
+              label="Recebido x A Receber (ano)"
+              paidHint="Comissão recebida neste ano"
+              pendHint="Comissão a receber neste ano"
+            />
           </CardContent>
         </Card>
 
@@ -787,7 +875,12 @@ export default function ComissoesPage() {
               <Metric title="Recebido Líquido" value={BRL(rangeM.pagoLiquido)} />
               <Metric title="Pendente Líquido" value={BRL(rangeM.pendente)} />
             </div>
-            <RadialDual paidPct={rangeM.pct} label="Recebido / Total (mês)" />
+            <RadialDual
+              paidPct={rangeM.pct}
+              label="Recebido x A Receber (mês)"
+              paidHint="Comissão recebida neste mês"
+              pendHint="Comissão a receber neste mês"
+            />
           </CardContent>
         </Card>
       </div>
@@ -805,7 +898,7 @@ export default function ComissoesPage() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
-            <span>Vendas sem comissão (período & filtros)</span>
+            <span>Vendas sem comissão (todos os registros + filtros)</span>
             <Button variant="outline" onClick={exportCSV}><FileText className="w-4 h-4 mr-1" /> Exportar CSV</Button>
           </CardTitle>
         </CardHeader>
@@ -852,81 +945,135 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Detalhamento */}
+      {/* Detalhamento (só aparece se tiver A PAGAR) */}
+      {rowsAPagar.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center justify-between">
+              <span>Detalhamento de Comissões (a pagar)</span>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e)=>setReciboDate(e.target.value)} /></div>
+                  <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e)=>setReciboImpostoPct(e.target.value)} className="w-24" /></div>
+                </div>
+                <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <table className="min-w-[1200px] w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="p-2 text-left">Data</th>
+                  <th className="p-2 text-left">Vendedor</th>
+                  <th className="p-2 text-left">Cliente</th>
+                  <th className="p-2 text-left">Nº Proposta</th>
+                  <th className="p-2 text-left">Segmento</th>
+                  <th className="p-2 text-left">Tabela</th>
+                  <th className="p-2 text-right">Crédito</th>
+                  <th className="p-2 text-right">% Comissão</th>
+                  <th className="p-2 text-right">Valor Comissão</th>
+                  <th className="p-2 text-left">Status</th>
+                  <th className="p-2 text-left">Pagamento</th>
+                  <th className="p-2 text-left">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && <tr><td colSpan={12} className="p-4"><Loader2 className="animate-spin inline mr-2" /> Carregando...</td></tr>}
+                {!loading && rowsAPagar.length===0 && <tr><td colSpan={12} className="p-4 text-gray-500">Sem registros.</td></tr>}
+                {!loading && rowsAPagar.map(r=>(
+                  <tr key={r.id} className="border-b hover:bg-gray-50">
+                    <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
+                    <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                    <td className="p-2">{r.cliente_nome || "—"}</td>
+                    <td className="p-2">{r.numero_proposta || "—"}</td>
+                    <td className="p-2">{r.segmento || "—"}</td>
+                    <td className="p-2">{r.tabela || "—"}</td>
+                    <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
+                    <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
+                    <td className="p-2 text-right">{BRL(r.valor_total)}</td>
+                    <td className="p-2">{r.status}</td>
+                    <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
+                    <td className="p-2">
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" onClick={()=>openPaymentFor(r)}>
+                          <DollarSign className="w-4 h-4 mr-1" /> Registrar pagamento
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={()=>retornarComissao(r)}>
+                          <RotateCcw className="w-4 h-4 mr-1" /> Retornar
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Comissões pagas (Accordion) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span>Detalhamento de Comissões</span>
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-gray-500">Vendedor (recibo)</Label>
-                <Select value={reciboVendor} onValueChange={setReciboVendor}>
-                  <SelectTrigger className="h-8 w-[220px]"><SelectValue placeholder="Todos" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    {users.map(u=><SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2">
-                <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e)=>setReciboDate(e.target.value)} /></div>
-                <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e)=>setReciboImpostoPct(e.target.value)} className="w-24" /></div>
-              </div>
-              <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
-            </div>
+            <span>Comissões pagas</span>
+            <Button size="sm" variant="outline" onClick={()=>setShowPaid(v=>!v)}>
+              {showPaid ? "Ocultar" : "Expandir"}
+            </Button>
           </CardTitle>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="min-w-[1200px] w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="p-2 text-left">Data</th>
-                <th className="p-2 text-left">Vendedor</th>
-                <th className="p-2 text-left">Cliente</th>
-                <th className="p-2 text-left">Nº Proposta</th>
-                <th className="p-2 text-left">Segmento</th>
-                <th className="p-2 text-left">Tabela</th>
-                <th className="p-2 text-right">Crédito</th>
-                <th className="p-2 text-right">% Comissão</th>
-                <th className="p-2 text-right">Valor Comissão</th>
-                <th className="p-2 text-left">Status</th>
-                <th className="p-2 text-left">Pagamento</th>
-                <th className="p-2 text-left">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan={12} className="p-4"><Loader2 className="animate-spin inline mr-2" /> Carregando...</td></tr>}
-              {!loading && rows.length===0 && <tr><td colSpan={12} className="p-4 text-gray-500">Sem registros.</td></tr>}
-              {!loading && rows.map(r=>(
-                <tr key={r.id} className="border-b hover:bg-gray-50">
-                  <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
-                  <td className="p-2">{userLabel(r.vendedor_id)}</td>
-                  <td className="p-2">{r.cliente_nome || "—"}</td>
-                  <td className="p-2">{r.numero_proposta || "—"}</td>
-                  <td className="p-2">{r.segmento || "—"}</td>
-                  <td className="p-2">{r.tabela || "—"}</td>
-                  <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
-                  <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
-                  <td className="p-2 text-right">{BRL(r.valor_total)}</td>
-                  <td className="p-2">{r.status}</td>
-                  <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
-                  <td className="p-2">
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="secondary" onClick={()=>openPaymentFor(r)}>
-                        <DollarSign className="w-4 h-4 mr-1" /> Registrar pagamento
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={()=>retornarComissao(r)}>
-                        <RotateCcw className="w-4 h-4 mr-1" /> Retornar
-                      </Button>
-                    </div>
-                  </td>
+        {showPaid && (
+          <CardContent className="overflow-x-auto">
+            <table className="min-w-[1100px] w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="p-2 text-left">Data Pagto</th>
+                  <th className="p-2 text-left">Vendedor</th>
+                  <th className="p-2 text-left">Nº Proposta</th>
+                  <th className="p-2 text-left">Parcela</th>
+                  <th className="p-2 text-right">Valor Pago</th>
+                  <th className="p-2 text-left">Arquivos</th>
+                  <th className="p-2 text-left">Pacote</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </CardContent>
+              </thead>
+              <tbody>
+                {pagosFlat.length===0 && <tr><td colSpan={7} className="p-4 text-gray-500">Nenhum pagamento encontrado.</td></tr>}
+                {pagosFlat.map(({ flow, comm }) => (
+                  <tr key={flow.id} className="border-b">
+                    <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
+                    <td className="p-2">{userLabel(comm.vendedor_id)}</td>
+                    <td className="p-2">{comm.numero_proposta || "—"}</td>
+                    <td className="p-2">M{flow.mes}</td>
+                    <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
+                    <td className="p-2">
+                      <div className="flex gap-2">
+                        {flow.recibo_vendedor_url && (
+                          <a className="underline text-blue-700" target="_blank" rel="noreferrer"
+                            href={undefined}
+                            onClick={async (e)=>{ e.preventDefault(); const u = await getSignedUrl(flow.recibo_vendedor_url); if(u) window.open(u, "_blank"); }}>
+                            Recibo
+                          </a>
+                        )}
+                        {flow.comprovante_pagto_url && (
+                          <a className="underline text-blue-700" target="_blank" rel="noreferrer"
+                            href={undefined}
+                            onClick={async (e)=>{ e.preventDefault(); const u = await getSignedUrl(flow.comprovante_pagto_url); if(u) window.open(u, "_blank"); }}>
+                            Comprovante
+                          </a>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-2">
+                      <Button size="sm" variant="ghost" onClick={()=>downloadZipForFlow(flow, comm)}>
+                        <Download className="w-4 h-4 mr-1" /> Baixar ZIP
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        )}
       </Card>
 
       {/* Regras (overlay central) */}
@@ -1010,8 +1157,8 @@ export default function ComissoesPage() {
 
       {/* Pagamento */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
-        {/* 🔹 Overlay maior para evitar scroll horizontal */}
-        <DialogContent className="max-w-5xl w-[96vw] md:w-[900px]">
+        {/* 🔹 Overlay ainda maior (quase tela cheia) */}
+        <DialogContent className="w-[98vw] max-w-[1400px]">
           <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
           <Tabs defaultValue="selecionar">
             <TabsList className="mb-3">
@@ -1047,7 +1194,7 @@ export default function ComissoesPage() {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="min-w-[1100px] w-full text-sm">
+                <table className="min-w-[1300px] w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50">
                       <th className="p-2 text-left">Sel.</th>

@@ -558,32 +558,37 @@ export default function ComissoesPage() {
     }
 
     // === Recalcular status da comissão (sai do Detalhamento se quitada) ===
-    const { data: fresh } = await supabase
-      .from("commission_flow")
-      .select("*")
-      .eq("commission_id", payCommissionId)
-      .order("mes", { ascending: true });
+const { data: fresh } = await supabase
+  .from("commission_flow")
+  .select("*")
+  .eq("commission_id", payCommissionId)
+  .order("mes", { ascending: true });
 
-    const unpaidCount = (fresh || []).filter((f) => (Number(f.valor_pago_vendedor) || 0) <= 0).length;
-    const isAllPaid = (fresh || []).length > 0 && unpaidCount === 0;
+// considere apenas parcelas relevantes (percentual > 0)
+const relevant = (fresh || []).filter(f => (Number(f.percentual) || 0) > 0);
+// quitada = todas as relevantes com valor_pago_vendedor > 0
+const isAllPaid = relevant.length > 0 && relevant.every(f => (Number(f.valor_pago_vendedor) || 0) > 0);
 
-    await supabase
-      .from("commissions")
-      .update({
-        status: isAllPaid ? "pago" : "a_pagar",
-        data_pagamento: isAllPaid ? (payload.data_pagamento_vendedor || toDateInput(new Date())) : null,
-      })
-      .eq("id", payCommissionId);
+// Atualiza status + data_pagamento quando quitada
+await supabase
+  .from("commissions")
+  .update({
+    status: isAllPaid ? "pago" : "a_pagar",
+    data_pagamento: isAllPaid ? (payload.data_pagamento_vendedor || toDateInput(new Date())) : null,
+  })
+  .eq("id", payCommissionId);
 
-    // Atualiza estado local e recarrega
-    const uniq = new Map<number, CommissionFlow>(); (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
-    const freshArr = Array.from(uniq.values()) as CommissionFlow[];
-    setPayFlow(freshArr as any);
-    setRows((prev) =>
-      prev.map((r) => (r.id === payCommissionId ? { ...r, flow: freshArr, status: isAllPaid ? "pago" : "a_pagar" } : r)),
-    );
-    setOpenPay(false);
-    fetchData();
+// Atualiza estado local e recarrega
+const uniq = new Map<number, CommissionFlow>(); (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
+const freshArr = Array.from(uniq.values()) as CommissionFlow[];
+setPayFlow(freshArr);
+setRows(prev =>
+  prev.map(r =>
+    r.id === payCommissionId ? { ...r, flow: freshArr, status: isAllPaid ? "pago" : "a_pagar" } : r
+  )
+);
+setOpenPay(false);
+fetchData();
   }
 
   /* Gerar / Retornar / CSV / Recibo */

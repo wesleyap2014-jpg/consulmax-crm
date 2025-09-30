@@ -291,6 +291,15 @@ function RadialDual({
     </div>
   );
 }
+/* ========================= Subcomponentes simples ========================= */
+const Metric: React.FC<{ title: string; value: string }> = ({ title, value }) => {
+  return (
+    <div className="p-3 rounded-xl border bg-white">
+      <div className="text-xs text-gray-500">{title}</div>
+      <div className="text-xl font-bold">{value}</div>
+    </div>
+  );
+};
 
 /* ========================= Página ========================= */
 export default function ComissoesPage() {

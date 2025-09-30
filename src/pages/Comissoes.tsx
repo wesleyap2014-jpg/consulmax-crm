@@ -1528,15 +1528,6 @@ export default function ComissoesPage() {
 }
 
 /* ========================= Subcomponentes ========================= */
-function Metric({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="p-3 rounded-xl border bg-white">
-      <div className="text-xs text-gray-500">{title}</div>
-      <div className="text-xl font-bold">{value}</div>
-    </div>
-  );
-}
-
 function UploadArea({
   onConfirm,
 }: {

@@ -136,16 +136,26 @@ function valorPorExtenso(n: number) {
   const d = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
   const c = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos"];
   const ext = (n0: number): string =>
-    n0 < 20
-      ? u[n0]
-      : n0 < 100
-      ? d[Math.floor(n0 / 10)] + (n0 % 10 ? " e " + u[n0 % 10] : "")
-      : n0 === 100
-      ? "cem"
-      : c[Math.floor(n0 / 100)] + (n0 % 100 ? " e " + ext(n0 % 100) : "");
+    n0 < 20 ? u[n0] :
+    n0 < 100 ? d[Math.floor(n0 / 10)] + (n0 % 10 ? " e " + u[n0 % 10] : "") :
+    n0 === 100 ? "cem" :
+    c[Math.floor(n0 / 100)] + (n0 % 100 ? " e " + ext(n0 % 100) : "");
   const i = Math.floor(n);
   const ct = Math.round((n - i) * 100);
   return `${ext(i)} ${i === 1 ? "real" : "reais"}${ct ? ` e ${ext(ct)} ${ct === 1 ? "centavo" : "centavos"}` : ""}`;
+}
+
+/* ====== Helpers de estágio do pagamento (2 etapas) ====== */
+function hasRegisteredButUnpaid(flow?: CommissionFlow[]) {
+  if (!flow) return false;
+  return flow.some(
+    (f) => (Number(f.percentual) || 0) > 0 && !!f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) === 0
+  );
+}
+function isFullyPaid(flow?: CommissionFlow[]) {
+  if (!flow) return false;
+  const relevant = flow.filter((f) => (Number(f.percentual) || 0) > 0);
+  return relevant.length > 0 && relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
 }
 
 /* ========================= Relógio Dual ========================= */
@@ -217,9 +227,7 @@ export default function ComissoesPage() {
   const usersById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
   const usersByAuth = useMemo(() => {
     const m: Record<string, User> = {};
-    users.forEach((u) => {
-      if (u.auth_user_id) m[u.auth_user_id] = u;
-    });
+    users.forEach((u) => { if (u.auth_user_id) m[u.auth_user_id] = u; });
     return m;
   }, [users]);
   const secureById = useMemo(() => Object.fromEntries(usersSecure.map((u) => [u.id, u])), [usersSecure]);
@@ -253,6 +261,7 @@ export default function ComissoesPage() {
   const [paySelected, setPaySelected] = useState<Record<string, boolean>>({});
   const [payDate, setPayDate] = useState<string>(() => toDateInput(new Date()));
   const [payValue, setPayValue] = useState<string>("");
+  const [payDefaultTab, setPayDefaultTab] = useState<"selecionar" | "arquivos">("selecionar");
 
   /* Recibo */
   const [reciboDate, setReciboDate] = useState<string>(() => toDateInput(new Date()));
@@ -268,14 +277,10 @@ export default function ComissoesPage() {
       const [{ data: u }, { data: st }, { data: us }] = await Promise.all([
         supabase
           .from("users")
-          .select(
-            "id, auth_user_id, nome, email, phone, cep, logradouro, numero, bairro, cidade, uf, pix_key, pix_type",
-          )
+          .select("id, auth_user_id, nome, email, phone, cep, logradouro, numero, bairro, cidade, uf, pix_key, pix_type")
           .order("nome", { ascending: true }),
         supabase.from("sim_tables").select("id, segmento, nome_tabela").order("segmento", { ascending: true }),
-        supabase.from("users_secure").select(
-          "id, nome, email, logradouro, numero, bairro, cidade, uf, pix_key, cpf, cpf_mascarado",
-        ),
+        supabase.from("users_secure").select("id, nome, email, logradouro, numero, bairro, cidade, uf, pix_key, cpf, cpf_mascarado"),
       ]);
       setUsers((u || []) as User[]);
       setSimTables((st || []) as SimTable[]);
@@ -555,6 +560,10 @@ export default function ComissoesPage() {
     );
     setPaySelected(pre);
 
+    // define a aba inicial: se já há data lançada sem valor -> "Arquivos"
+    const registered = hasRegisteredButUnpaid(finalArr);
+    setPayDefaultTab(registered ? "arquivos" : "selecionar");
+
     setPayDate(toDateInput(new Date()));
     setPayValue("");
     setOpenPay(true);
@@ -684,6 +693,13 @@ export default function ComissoesPage() {
           : r
       )
     );
+
+    // UX: se quitou, expande "Comissões pagas" e filtra para "Pago"
+    if (isAllPaid) {
+      setShowPaid(true);
+      setStatus("pago");
+    }
+
     setOpenPay(false);
     fetchData();
   }
@@ -1101,7 +1117,14 @@ export default function ComissoesPage() {
                     <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
                     <td className="p-2">
                       <div className="flex gap-2">
-                        <Button size="sm" variant="secondary" onClick={() => openPaymentFor(r)}><DollarSign className="w-4 h-4 mr-1" /> Registrar pagamento</Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => openPaymentFor(r)}
+                        >
+                          <DollarSign className="w-4 h-4 mr-1" />
+                          {hasRegisteredButUnpaid(r.flow) ? "Confirmar Pagamento" : "Registrar pagamento"}
+                        </Button>
                         <Button size="sm" variant="outline" onClick={() => retornarComissao(r)}><RotateCcw className="w-4 h-4 mr-1" /> Retornar</Button>
                       </div>
                     </td>
@@ -1231,7 +1254,7 @@ export default function ComissoesPage() {
       <Dialog open={openPay} onOpenChange={setOpenPay}>
         <DialogContent className="w-[98vw] max-w-[1400px]">
           <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
-          <Tabs defaultValue="selecionar">
+          <Tabs defaultValue={payDefaultTab}>
             <TabsList className="mb-3"><TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger><TabsTrigger value="arquivos">Arquivos</TabsTrigger></TabsList>
             <TabsContent value="selecionar" className="space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -1324,7 +1347,7 @@ function UploadArea({
         <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
       </div>
       <div className="text-xs text-gray-500">
-        Arquivos vão para o bucket <code>comissoes</code>. Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
       </div>
     </div>
   );

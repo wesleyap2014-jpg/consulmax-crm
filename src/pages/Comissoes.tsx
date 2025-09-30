@@ -210,7 +210,6 @@ function RadialDual({
     </div>
   );
 }
-
 /* ========================= Página ========================= */
 export default function ComissoesPage() {
   /* Filtros (sem período) */
@@ -287,7 +286,6 @@ export default function ComissoesPage() {
       setUsersSecure((us || []) as UserSecure[]);
     })();
   }, []);
-
   /* Fetch principal */
   async function fetchData() {
     setLoading(true);
@@ -545,223 +543,398 @@ export default function ComissoesPage() {
 
     return (created || []) as CommissionFlow[];
   }
-  /* ========================= Funções Auxiliares ========================= */
-  const BRL = (v?: number | null) =>
-    (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-  const pct100 = (v?: number | null) => (v != null ? `${(v * 100).toFixed(2)}%` : "—");
+  /* Pagamento */
+  async function openPaymentFor(c: Commission) {
+    setPayCommissionId(c.id);
 
-  const sum = (arr: (number | null | undefined)[]) =>
-    arr.reduce((acc, v) => acc + (v || 0), 0);
-
-  const userLabel = (id?: string | null) =>
-    id ? users.find((u) => u.auth_user_id === id)?.nome || "—" : "—";
-
-  const toDateInput = (d: Date) => d.toISOString().slice(0, 10);
-
-  const formatISODateBR = (iso?: string | null) => {
-    if (!iso) return "—";
-    const d = new Date(iso);
-    return d.toLocaleDateString("pt-BR");
-  };
-
-  const hasRegisteredButUnpaid = (flow?: CommissionFlow[]) => {
-    if (!flow) return false;
-    const anyWithDate = flow.some((f) => f.data_pagamento_vendedor && !f.valor_pago_vendedor);
-    return anyWithDate;
-  };
-
-  /* ========================= Reconciliar Status (PATCH B) ========================= */
-  const reconcileStatus = useCallback(() => {
-    try {
-      setRows((prev) => {
-        const withFix = prev.map((r) => {
-          const relevant = (r.flow || []).filter(
-            (f) => (Number(f.percentual) || 0) > 0
-          );
-          const allPaid =
-            relevant.length > 0 &&
-            relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
-
-          if (allPaid && r.status !== "pago") {
-            supabase
-              .from("commissions")
-              .update({
-                status: "pago",
-                data_pagamento:
-                  r.data_pagamento ||
-                  relevant[relevant.length - 1]?.data_pagamento_vendedor ??
-                  null,
-              })
-              .eq("id", r.id)
-              .then(({ error }) => {
-                if (error)
-                  console.warn("[reconcile] commissions.update falhou:", error.message);
-              });
-
-            return {
-              ...r,
-              status: "pago",
-              data_pagamento:
-                r.data_pagamento ||
-                relevant[relevant.length - 1]?.data_pagamento_vendedor ??
-                null,
-            };
-          }
-          return r;
-        });
-        return withFix;
-      });
-    } catch (e) {
-      console.warn("[reconcile] erro:", e);
+    // Garante fluxo
+    let { data } = await supabase
+      .from("commission_flow")
+      .select("*")
+      .eq("commission_id", c.id)
+      .order("mes", { ascending: true });
+    if (!data || data.length === 0) {
+      const created = await ensureFlowForCommission(c);
+      data = created as any;
     }
-  }, [setRows]);
 
-  /* ========================= useEffect principal ========================= */
-  useEffect(() => {
-    if (!me?.id) return;
-    fetchData();
-  }, [me?.id, vendedorId, status, segmento, tabela]);
+    // cálculo correto (EXIBIÇÃO)
+    const arr = (data || []).map((f: any) => ({
+      ...f,
+      _valor_previsto_calc: (c.valor_total ?? 0) * (f.percentual ?? 0),
+    }));
 
-  /* ========================= Busca + Paginação ========================= */
-  const [search, setSearch] = useState<string>("");
-  const [page, setPage] = useState<number>(1);
-  const pageSize = 10;
+    const uniq = new Map<number, CommissionFlow & { _valor_previsto_calc?: number }>();
+    arr.forEach((f: any) => uniq.set(f.mes, f));
+    const finalArr = Array.from(uniq.values());
 
-  const norm = (s?: string | null) =>
-    (s || "")
-      .toString()
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
+    setPayFlow(finalArr);
 
-  const filteredPagas = useMemo(() => {
-    const q = norm(search);
-    const pagasRows = rows.filter((r) => r.status === "pago");
-    if (!q) return pagasRows;
-    return pagasRows.filter((r) => {
-      const vend = norm(userLabel(r.vendedor_id));
-      const prop = norm(r.numero_proposta || "");
-      const cli = norm(r.cliente_nome || "");
-      return vend.includes(q) || prop.includes(q) || cli.includes(q);
-    });
-  }, [rows, search, users]);
+    // Pré-selecionar tudo que está pendente (percentual > 0 e sem pagamento)
+    const pre = Object.fromEntries(
+      finalArr
+        .filter((f) => (Number(f.percentual) || 0) > 0 && (Number(f.valor_pago_vendedor) || 0) === 0)
+        .map((f) => [f.id, true])
+    );
+    setPaySelected(pre);
 
-  const totalPages = Math.max(1, Math.ceil(filteredPagas.length / pageSize));
+    // define a aba inicial: se já há data lançada sem valor -> "Arquivos"
+    const registered = hasRegisteredButUnpaid(finalArr);
+    setPayDefaultTab(registered ? "arquivos" : "selecionar");
 
-  useEffect(() => {
-    if (page > totalPages) setPage(1);
-  }, [totalPages, page]);
+    setPayDate(toDateInput(new Date()));
+    setPayValue("");
+    setOpenPay(true);
+  }
 
-  const paginated = useMemo(
-    () => filteredPagas.slice((page - 1) * pageSize, page * pageSize),
-    [filteredPagas, page]
-  );
+  async function uploadToBucket(file: File, commissionId: string) {
+    const path = `${commissionId}/${Date.now()}-${file.name}`;
+    const { data, error } = await supabase.storage.from("comissoes").upload(path, file, { upsert: false });
+    if (error) { alert("Falha ao enviar arquivo: " + error.message); return null; }
+    return data?.path || null;
+  }
+  async function getSignedUrl(path: string | null | undefined) {
+    if (!path) return null;
+    const { data, error } = await supabase.storage.from("comissoes").createSignedUrl(path, 60 * 10);
+    if (error) { console.warn("Signed URL error:", error.message); return null; }
+    return (data as any)?.signedUrl || null;
+  }
 
-  const aPagar = useMemo(
-    () => rows.filter((r) => r.status === "a_pagar"),
-    [rows]
-  );
-
-  /* ========================= Métricas e Cards ========================= */
-  const metricas = useMemo(() => {
-    const total = sum(rows.map((r) => r.valor_total));
-    const pagos = sum(rows.filter((r) => r.status === "pago").map((r) => r.valor_total));
-    const pendentes = total - pagos;
-    const pct = total ? (pagos / total) * 100 : 0;
-    return { total, pagos, pendentes, pct };
-  }, [rows]);
-
-  /* ========================= Funções de Pagamento ========================= */
   async function paySelectedParcels(payload: {
     data_pagamento_vendedor?: string;
     valor_pago_vendedor?: number;
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
   }) {
-    if (!payCommissionId) return;
+    // uploads
+    let reciboPath: string | null = null, compPath: string | null = null;
+    if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
+    if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
 
-    const selectedIds = Object.entries(paySelected)
-      .filter(([_, checked]) => checked)
-      .map(([id]) => id);
+    // candidatos relevantes
+    const candidates = payFlow.filter((f) => (Number(f.percentual) || 0) > 0);
 
-    if (!selectedIds.length) {
-      alert("Selecione ao menos uma parcela para registrar o pagamento.");
+    // seleção explícita…
+    let selected = candidates.filter((f) => paySelected[f.id]);
+
+    // …ou auto-seleção por data (aba Arquivos)
+    if (!selected.length && payload.data_pagamento_vendedor) {
+      selected = candidates.filter(
+        (f) => (f.data_pagamento_vendedor || "") === payload.data_pagamento_vendedor
+      );
+    }
+
+    // …fallback: se só há 1 pendente → seleciona; senão pega a primeira pendente
+    if (!selected.length) {
+      const unpaid = candidates.filter((f) => (Number(f.valor_pago_vendedor) || 0) === 0);
+      if (unpaid.length === 1) selected = unpaid;
+      else if (unpaid.length > 0) selected = [unpaid[0]];
+    }
+
+    if (!selected.length) {
+      alert("Selecione pelo menos uma parcela (ou informe a data/arquivos).");
       return;
     }
 
-    const flowSel = payFlow.filter((f) => selectedIds.includes(f.id));
-
-    const allPaidAfter = payFlow.every((f) => {
-      const prevPago = Number(f.valor_pago_vendedor) || 0;
-      const novoPago =
-        selectedIds.includes(f.id) && payload.valor_pago_vendedor
-          ? payload.valor_pago_vendedor
-          : prevPago;
-      return novoPago > 0;
-    });
-
-    // Atualiza parcelas
-    for (const f of flowSel) {
-      const { error } = await supabase
-        .from("commission_flow")
-        .update({
-          data_pagamento_vendedor:
-            payload.data_pagamento_vendedor || toDateInput(new Date()),
-          valor_pago_vendedor: payload.valor_pago_vendedor ?? 0,
-        })
-        .eq("id", f.id);
-
-      if (error) console.warn("Erro ao atualizar parcela:", error.message);
+    // UPDATE por id — não pisar valor pago sem input
+    const toUpdate = selected.filter((f) => !!f.id);
+    if (toUpdate.length) {
+      for (const f of toUpdate) {
+        const { error } = await supabase
+          .from("commission_flow")
+          .update({
+            data_pagamento_vendedor:
+              payload.data_pagamento_vendedor ||
+              f.data_pagamento_vendedor ||
+              toDateInput(new Date()),
+            valor_pago_vendedor:
+              payload.valor_pago_vendedor !== undefined
+                ? payload.valor_pago_vendedor
+                : (f.valor_pago_vendedor ?? 0),
+            recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
+            comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
+          })
+          .eq("id", f.id);
+        if (error) { alert("Falha ao atualizar parcela: " + error.message); return; }
+      }
     }
 
-    // === PATCH A: Atualiza commission + fallback ===
+    // INSERT (sem id) — caso excepcional
+    const toInsert = selected.filter((f) => !f.id);
+    if (toInsert.length) {
+      const inserts = toInsert.map((f) => ({
+        commission_id: f.commission_id,
+        mes: f.mes,
+        percentual: f.percentual ?? 0,
+        valor_previsto: f.valor_previsto ?? 0,
+        data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
+        valor_pago_vendedor:
+          payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : 0,
+        recibo_vendedor_url: reciboPath || null,
+        comprovante_pagto_url: compPath || null,
+      }));
+      const { error } = await supabase.from("commission_flow").insert(inserts);
+      if (error) { alert("Falha ao inserir parcela: " + error.message); return; }
+    }
+
+    // === Recalcular status da comissão
+    const { data: fresh } = await supabase
+      .from("commission_flow")
+      .select("*")
+      .eq("commission_id", payCommissionId)
+      .order("mes", { ascending: true });
+
+    const relevant = (fresh || []).filter((f) => (Number(f.percentual) || 0) > 0);
+    const isAllPaid =
+      relevant.length > 0 &&
+      relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
+
+    // >>> PATCH A: checar erro ao atualizar commissions, com fallback de UI <<<
     const { error: updErr } = await supabase
       .from("commissions")
       .update({
-        status: allPaidAfter ? "pago" : "a_pagar",
-        data_pagamento: allPaidAfter
-          ? payload.data_pagamento_vendedor || toDateInput(new Date())
+        status: isAllPaid ? "pago" : "a_pagar",
+        data_pagamento: isAllPaid
+          ? (payload.data_pagamento_vendedor || toDateInput(new Date()))
           : null,
       })
       .eq("id", payCommissionId);
 
     if (updErr) {
       console.warn("[commissions.update] falhou:", updErr.message);
-      alert(
-        "A comissão foi paga, mas não consegui atualizar o status no banco (policies/RLS?). Vou ajustar a UI mesmo assim."
-      );
+      alert("A comissão foi paga, mas não consegui atualizar o status no banco (policies/RLS?). Vou ajustar a UI mesmo assim.");
     }
 
-    // Atualiza UI
+    // Estado/local
+    const uniq = new Map<number, CommissionFlow>();
+    (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
+    const freshArr = Array.from(uniq.values()) as CommissionFlow[];
+    setPayFlow(freshArr);
     setRows((prev) =>
       prev.map((r) =>
         r.id === payCommissionId
-          ? {
-              ...r,
-              status: allPaidAfter ? "pago" : "a_pagar",
-              data_pagamento: allPaidAfter
-                ? payload.data_pagamento_vendedor || toDateInput(new Date())
-                : r.data_pagamento,
-              flow: r.flow?.map((f) =>
-                selectedIds.includes(f.id)
-                  ? {
-                      ...f,
-                      data_pagamento_vendedor:
-                        payload.data_pagamento_vendedor || toDateInput(new Date()),
-                      valor_pago_vendedor: payload.valor_pago_vendedor ?? 0,
-                    }
-                  : f
-              ),
-            }
+          ? { ...r, flow: freshArr, status: isAllPaid ? "pago" : "a_pagar" }
           : r
       )
     );
 
+    // UX: se quitou, expande "Comissões pagas" e filtra para "Pago"
+    if (isAllPaid) {
+      setShowPaid(true);
+      setStatus("pago");
+    }
+
     setOpenPay(false);
-    setShowPaid(allPaidAfter);
-    setStatus(allPaidAfter ? "pago" : "a_pagar");
-    setPaySelected({});
-    setPayFlow([]);
+    fetchData();
   }
+
+  /* Gerar / Retornar / CSV / Recibo — resto do arquivo permanece igual */
+  async function gerarComissaoDeVenda(venda: Venda) {
+    try {
+      setGenBusy(venda.id);
+      const vendedorIdCanon = canonUserId(venda.vendedor_id);
+      if (!vendedorIdCanon) { alert("Vendedor desta venda não está cadastrado em 'users' (vínculo por auth_user_id)."); return; }
+      let simTableId: string | null = null;
+      const vendaTabNorm = normalize(venda.tabela), vendaSegNorm = normalize(venda.segmento);
+      const local =
+        simTables.find((s) => normalize(s.nome_tabela) === vendaTabNorm && (!venda.segmento || normalize(s.segmento) === vendaSegNorm)) ||
+        simTables.find((s) => normalize(s.nome_tabela) === vendaTabNorm) || null;
+      simTableId = local?.id || null;
+      if (!simTableId && venda.tabela) {
+        let qb2 = supabase.from("sim_tables").select("id, segmento, nome_tabela").ilike("nome_tabela", `%${venda.tabela}%`).limit(1);
+        if (venda.segmento) qb2 = qb2.eq("segmento", venda.segmento);
+        const { data: st2 } = await qb2; simTableId = st2?.[0]?.id ?? null;
+      }
+      let percent_aplicado: number | null = null;
+      if (simTableId) {
+        const { data: rule } = await supabase
+          .from("commission_rules")
+          .select("percent_padrao")
+          .eq("vendedor_id", vendedorIdCanon)
+          .eq("sim_table_id", simTableId)
+          .limit(1);
+        percent_aplicado = rule?.[0]?.percent_padrao ?? null;
+      }
+      const base = venda.valor_venda ?? null;
+      const valor_total = percent_aplicado && base ? Math.round(base * percent_aplicado * 100) / 100 : null;
+      const insert = {
+        venda_id: venda.id, vendedor_id: vendedorIdCanon, sim_table_id: simTableId,
+        data_venda: venda.data_venda, segmento: venda.segmento, tabela: venda.tabela, administradora: venda.administradora,
+        valor_venda: base, base_calculo: base, percent_aplicado, valor_total, status: "a_pagar" as const,
+      };
+
+      // Inserir e obter a criada
+      const { data: inserted, error } = await supabase
+        .from("commissions")
+        .insert(insert as any)
+        .select("id, venda_id, vendedor_id, sim_table_id, valor_total, base_calculo, percent_aplicado")
+        .limit(1);
+
+      if (error) {
+        if (String(error.message || "").includes("row-level security"))
+          alert("RLS bloqueou o INSERT. Ajuste policies de 'commissions'/'commission_flow'.");
+        else if (String(error.code) === "23503")
+          alert("Não foi possível criar: verifique vendedor em 'users' e/ou a SimTable.");
+        else alert("Erro ao criar a comissão: " + error.message);
+        return;
+      }
+
+      // Cria o fluxo automaticamente (regra ou 1×100%)
+      const createdComm = inserted?.[0] as Commission | undefined;
+      if (createdComm) await ensureFlowForCommission(createdComm);
+
+      await fetchData();
+    } finally { setGenBusy(null); }
+  }
+
+  async function retornarComissao(c: Commission) {
+    if (!confirm("Confirmar retorno desta comissão para 'Vendas sem comissão'?")) return;
+    try {
+      const delFlow = await supabase.from("commission_flow").delete().eq("commission_id", c.id).select("id");
+      if (delFlow.error) throw delFlow.error;
+      const { data: stillFlows } = await supabase.from("commission_flow").select("id", { count: "exact", head: false }).eq("commission_id", c.id);
+      if (stillFlows && stillFlows.length > 0) { alert("Não foi possível remover as parcelas (RLS)."); return; }
+      const delComm = await supabase.from("commissions").delete().eq("id", c.id).select("id");
+      if (delComm.error) throw delComm.error;
+      const { data: stillComm } = await supabase.from("commissions").select("id").eq("id", c.id).limit(1);
+      if (stillComm && stillComm.length) { alert("A comissão não pôde ser excluída (possível RLS)."); return; }
+      setRows((prev) => prev.filter((r) => r.id !== c.id)); await fetchData();
+    } catch (err: any) {
+      if (String(err?.message || "").includes("row-level security")) alert("RLS bloqueou a exclusão.");
+      else alert("Falha ao retornar: " + (err?.message || err));
+    }
+  }
+
+  function exportCSV() {
+    const header = ["data_venda","vendedor","segmento","tabela","administradora","valor_venda","percent_aplicado","valor_total","status","data_pagamento"];
+    const lines = rows.map((r) =>
+      [
+        r.data_venda ?? "",
+        userLabel(r.vendedor_id),
+        JSON.stringify(r.segmento || ""),
+        JSON.stringify(r.tabela || ""),
+        JSON.stringify(r.administradora || ""),
+        r.valor_venda ?? r.base_calculo ?? 0,
+        r.percent_aplicado ?? 0,
+        r.valor_total ?? 0,
+        r.status,
+        r.data_pagamento ?? "",
+      ].join(","),
+    );
+    const csv = [header.join(","), ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `comissoes_all.csv`; a.click(); URL.revokeObjectURL(url);
+  }
+
+  async function downloadReceiptPDFPorData() {
+    const impostoPct = parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0;
+    const dataRecibo = reciboDate;
+    const vendedorSel = reciboVendor === "all" ? null : reciboVendor;
+    const { data: flows } = await supabase.from("commission_flow").select("*").eq("data_pagamento_vendedor", dataRecibo);
+    if (!flows || !flows.length) return alert("Não há parcelas pagas na data selecionada.");
+    const byCommission: Record<string, CommissionFlow[]> = {};
+    flows.forEach((f: any) => {
+      if (!byCommission[f.commission_id]) byCommission[f.commission_id] = [];
+      if (!byCommission[f.commission_id].some((x) => x.mes === f.mes)) byCommission[f.commission_id].push(f);
+    });
+    const commIds = Object.keys(byCommission);
+    const { data: comms } = await supabase.from("commissions").select("*").in("id", commIds);
+    const vendaIds = Array.from(new Set((comms || []).map((c: any) => c.venda_id)));
+    const { data: vendas } = await supabase
+      .from("vendas")
+      .select("id, valor_venda, numero_proposta, cliente_lead_id, lead_id, vendedor_id")
+      .in("id", vendaIds);
+    const commsFiltradas = (comms || []).filter((c: any) => !vendedorSel || c.vendedor_id === vendedorSel);
+    if (!commsFiltradas.length) return alert("Sem parcelas para o vendedor selecionado nessa data.");
+
+    const clienteIds = Array.from(new Set((vendas || []).map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
+    const nomesCli: Record<string, string> = {};
+    if (clienteIds.length) {
+      const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clienteIds);
+      (cli || []).forEach((c: any) => { nomesCli[c.id] = c.nome || ""; });
+    }
+
+    const vendedorUsado = vendedorSel ?? commsFiltradas[0].vendedor_id;
+    const vendInfo = secureById[vendedorUsado] || ({} as any);
+    const totalLinhas = commsFiltradas.reduce((acc, c: any) => acc + new Map((byCommission[c.id] || []).map((p) => [p.mes, p])).size, 0);
+    const numeroRecibo = `${dataRecibo.replace(/-/g, "")}-${String(totalLinhas).padStart(3, "0")}`;
+
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text("RECIBO DE COMISSÃO", 297, 40, { align: "center" });
+    doc.setFontSize(10); doc.setFont("helvetica", "normal");
+    doc.text(`Recibo Nº: ${numeroRecibo}`, 40, 60);
+    doc.text(`Data: ${formatISODateBR(dataRecibo)}`, 40, 74);
+
+    let y = 92;
+    ["Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA. CNPJ: 57.942.043/0001-03",
+     "Endereço: Av. Menezes Filho, 3171, Casa Preta, Ji-Paraná/RO. CEP: 76907-532"].forEach((l) => { doc.text(l, 40, y); y += 14; });
+
+    const recebedor = [
+      `Nome do Recebedor: ${userLabel(vendedorUsado)}`,
+      `CPF/CNPJ: ${vendInfo?.cpf || "—"}`,
+      `Endereço: ${[vendInfo?.logradouro, vendInfo?.numero, vendInfo?.bairro, vendInfo?.cidade && `${vendInfo.cidade}/${vendInfo.uf}`].filter(Boolean).join(", ") || "—"}`,
+    ];
+    y += 10; recebedor.forEach((l) => { doc.text(l, 40, y); y += 14; });
+    y += 6; doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", 40, y); y += 16;
+
+    const head = [["CLIENTE","PROPOSTA","PARCELA","R$ VENDA","COM. BRUTA","IMPOSTOS","COM. LÍQUIDA"]]; const body: any[] = []; let totalLiquido = 0;
+    commsFiltradas.forEach((c: any) => {
+      const v = (vendas || []).find((x) => x.id === c.venda_id);
+      const clienteId = v?.lead_id || v?.cliente_lead_id || ""; const clienteNome = clienteId ? nomesCli[clienteId] || "—" : "—";
+      const vendaValor = v?.valor_venda || 0;
+      const parcelas = Array.from(new Map((byCommission[c.id] || []).map((p) => [p.mes, p])).values());
+      parcelas.forEach((p) => {
+        const comBruta = (c.percent_aplicado || 0) * (p.percentual || 0) * vendaValor;
+        const impostos = comBruta * (parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0);
+        const liquida = comBruta - impostos; totalLiquido += liquida;
+        body.push([clienteNome, v?.numero_proposta || "—", `M${p.mes}`, BRL(vendaValor), BRL(comBruta), BRL(impostos), BRL(liquida)]);
+      });
+    });
+
+    autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30, 41, 63] } });
+    const endY = (doc as any).lastAutoTable.finalY + 12;
+    doc.setFont("helvetica", "bold"); doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
+    doc.setFont("helvetica", "normal"); doc.text(`Forma de Pagamento: PIX`, 40, endY + 18);
+    doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado]?.pix_key || "—"}`, 40, endY + 34);
+    const signY = endY + 100; doc.line(40, signY, 320, signY); doc.text(`${userLabel(vendedorUsado)}`, 40, signY + 14); doc.text(`${secureById[vendedorUsado]?.cpf || "—"}`, 40, signY + 28);
+    doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
+  }
+
+  /* ==== Baixar ZIP (recibo + comprovante) ==== */
+  async function downloadZipForFlow(flow: CommissionFlow, comm: Commission) {
+    try {
+      const files: Array<{ name: string; url: string }> = [];
+      const rec = await getSignedUrl(flow.recibo_vendedor_url);
+      const comp = await getSignedUrl(flow.comprovante_pagto_url);
+      if (rec) files.push({ name: `recibo${getExt(flow.recibo_vendedor_url || "")}`, url: rec });
+      if (comp) files.push({ name: `comprovante${getExt(flow.comprovante_pagto_url || "")}`, url: comp });
+      if (files.length === 0) { return alert("Nenhum arquivo encontrado para esta parcela."); }
+
+      // @ts-ignore
+      const jszipMod: any = await import(/* @vite-ignore */ "jszip").catch(() => null);
+      // @ts-ignore
+      const fileSaverMod: any = await import(/* @vite-ignore */ "file-saver").catch(() => null);
+
+      if (!jszipMod || !fileSaverMod) { files.forEach((f) => window.open(f.url, "_blank")); return; }
+      const JSZipCtor = jszipMod.default || jszipMod; const zip = new JSZipCtor();
+      for (const f of files) { const resp = await fetch(f.url); const blob = await resp.blob(); zip.file(f.name, blob); }
+      const content = await zip.generateAsync({ type: "blob" });
+      const saveAs = fileSaverMod.saveAs || fileSaverMod.default || fileSaverMod;
+      const nome = `pagamento_${comm.numero_proposta || comm.id}_M${flow.mes}.zip`; saveAs(content, nome);
+    } catch (e: any) { alert("Falha ao gerar pacote: " + (e?.message || e)); }
+  }
+
+  /* Listas auxiliares */
+  const rowsAPagar = useMemo(() => rows.filter((r) => r.status === "a_pagar"), [rows]);
+  const pagosFlat = useMemo(() => {
+    const list: Array<{ flow: CommissionFlow; comm: Commission }> = [];
+    rows.forEach((r) => (r.flow || []).forEach((f) => { if ((f.valor_pago_vendedor ?? 0) > 0) list.push({ flow: f, comm: r }); }));
+    return list.sort((a, b) => ((b.flow.data_pagamento_vendedor || "") > (a.flow.data_pagamento_vendedor || "") ? 1 : -1));
+  }, [rows]);
+
   /* ========================= Render ========================= */
   return (
     <div className="p-4 space-y-4">
@@ -780,48 +953,35 @@ export default function ComissoesPage() {
               <SelectContent>
                 <SelectItem value="all">Todos</SelectItem>
                 {users.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.nome?.trim() || u.email?.trim() || u.id}
-                  </SelectItem>
+                  <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-
           <div>
             <Label>Segmento</Label>
             <Select value={segmento} onValueChange={setSegmento}>
               <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos</SelectItem>
-                {Array.from(new Set(simTables.map((t) => t.segmento)))
-                  .filter(Boolean)
-                  .map((seg) => (
-                    <SelectItem key={seg} value={seg as string}>
-                      {seg}
-                    </SelectItem>
-                  ))}
+                {Array.from(new Set(simTables.map((t) => t.segmento))).filter(Boolean).map((seg) => (
+                  <SelectItem key={seg} value={seg}>{seg}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
-
           <div>
             <Label>Tabela</Label>
             <Select value={tabela} onValueChange={setTabela}>
               <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas</SelectItem>
-                {Array.from(new Set(simTables.map((t) => t.nome_tabela)))
-                  .filter(Boolean)
-                  .map((tab) => (
-                    <SelectItem key={tab} value={tab}>
-                      {tab}
-                    </SelectItem>
-                  ))}
+                {Array.from(new Set(simTables.map((t) => t.nome_tabela))).filter(Boolean).map((tab) => (
+                  <SelectItem key={tab} value={tab}>{tab}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
-
           <div>
             <Label>Status</Label>
             <Select value={status} onValueChange={(v) => setStatus(v as any)}>
@@ -834,14 +994,9 @@ export default function ComissoesPage() {
               </SelectContent>
             </Select>
           </div>
-
           <div className="md:col-span-6 flex gap-2 justify-end">
-            <Button variant="secondary" onClick={() => setOpenRules(true)}>
-              <Settings className="w-4 h-4 mr-1" /> Regras de Comissão
-            </Button>
-            <Button onClick={fetchData}>
-              <Loader2 className="w-4 h-4 mr-1" /> Atualizar
-            </Button>
+            <Button variant="secondary" onClick={() => setOpenRules(true)}><Settings className="w-4 h-4 mr-1" /> Regras de Comissão</Button>
+            <Button onClick={fetchData}><Loader2 className="w-4 h-4 mr-1" /> Atualizar</Button>
           </div>
         </CardContent>
       </Card>
@@ -849,45 +1004,47 @@ export default function ComissoesPage() {
       {/* Dashboards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         <Card>
-          <CardHeader className="pb-1">
-            <CardTitle>Nos últimos 5 anos</CardTitle>
-          </CardHeader>
+          <CardHeader className="pb-1"><CardTitle>Nos últimos 5 anos — {vendedorAtual}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-3 gap-3">
-              <Metric title="Total Bruto" value={BRL(metricas.total)} />
-              <Metric title="Recebido" value={BRL(metricas.pagos)} />
-              <Metric title="Pendente" value={BRL(metricas.pendentes)} />
+              <Metric title="Total Bruto" value={BRL(range5y.totalBruta)} />
+              <Metric title="Recebido Líquido" value={BRL(range5y.pagoLiquido)} />
+              <Metric title="Pendente Líquido" value={BRL(range5y.pendente)} />
             </div>
-            <RadialDual
-              paidPct={metricas.pct}
-              label="Recebido x A Receber"
-              paidHint="Comissão recebida"
-              pendHint="Comissão a receber"
-            />
+            <RadialDual paidPct={range5y.pct} label="Recebido x A Receber (5 anos)" paidHint="Comissão recebida nos últimos 5 anos" pendHint="Comissão a receber nos próximos pagamentos" />
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="pb-1">
-            <CardTitle>Pagas</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="text-2xl font-bold">{BRL(metricas.pagos)}</div>
-            <div className="text-sm text-gray-500">
-              Total líquido recebido (estimado conforme regras)
+          <CardHeader className="pb-1"><CardTitle>No ano — {vendedorAtual}</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <Metric title="Total Bruto" value={BRL(rangeY.totalBruta)} />
+              <Metric title="Recebido Líquido" value={BRL(rangeY.pagoLiquido)} />
+              <Metric title="Pendente Líquido" value={BRL(rangeY.pendente)} />
             </div>
+            <RadialDual paidPct={rangeY.pct} label="Recebido x A Receber (ano)" paidHint="Comissão recebida neste ano" pendHint="Comissão a receber neste ano" />
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="pb-1">
-            <CardTitle>A pagar</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="text-2xl font-bold">{BRL(metricas.pendentes)}</div>
-            <div className="text-sm text-gray-500">Projeção de pagamento</div>
+          <CardHeader className="pb-1"><CardTitle>No mês — {vendedorAtual}</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <Metric title="Total Bruto" value={BRL(rangeM.totalBruta)} />
+              <Metric title="Recebido Líquido" value={BRL(rangeM.pagoLiquido)} />
+              <Metric title="Pendente Líquido" value={BRL(rangeM.pendente)} />
+            </div>
+            <RadialDual paidPct={rangeM.pct} label="Recebido x A Receber (mês)" paidHint="Comissão recebida neste mês" pendHint="Comissão a receber neste mês" />
           </CardContent>
         </Card>
+      </div>
+
+      {/* Resumo */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <Card><CardHeader className="pb-1"><CardTitle>💰 Vendas</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>🧾 Comissão Bruta</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>✅ Comissão Líquida</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comLiquida)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>📤 Comissão Paga (Liq.)</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPaga)}</CardContent></Card>
+        <Card><CardHeader className="pb-1"><CardTitle>⏳ Pendente (Liq.)</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
       </div>
 
       {/* Vendas sem comissão */}
@@ -895,59 +1052,33 @@ export default function ComissoesPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
             <span>Vendas sem comissão (todos os registros + filtros)</span>
-            <Button variant="outline" onClick={exportCSV}>
-              <FileText className="w-4 h-4 mr-1" /> Exportar CSV
-            </Button>
+            <Button variant="outline" onClick={exportCSV}><FileText className="w-4 h-4 mr-1" /> Exportar CSV</Button>
           </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           <table className="min-w-[1100px] w-full text-sm">
             <thead>
               <tr className="bg-gray-50">
-                <th className="p-2 text-left">Data</th>
-                <th className="p-2 text-left">Vendedor</th>
-                <th className="p-2 text-left">Cliente</th>
-                <th className="p-2 text-left">Nº Proposta</th>
-                <th className="p-2 text-left">Administradora</th>
-                <th className="p-2 text-left">Segmento</th>
-                <th className="p-2 text-left">Tabela</th>
-                <th className="p-2 text-right">Crédito</th>
-                <th className="p-2 text-left">Ação</th>
+                <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Administradora</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-left">Ação</th>
               </tr>
             </thead>
             <tbody>
-              {vendasSemCom.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="p-3 text-gray-500">
-                    Sem pendências 🎉
-                  </td>
-                </tr>
-              )}
+              {vendasSemCom.length === 0 && <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>}
               {vendasSemCom.map((v) => {
                 const clienteId = v.lead_id || v.cliente_lead_id || "";
                 return (
                   <tr key={v.id} className="border-b">
                     <td className="p-2">{formatISODateBR(v.data_venda)}</td>
                     <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                    <td className="p-2">
-                      {(clienteId && (clientesMap[clienteId] || "")) || "—"}
-                    </td>
+                    <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
                     <td className="p-2">{v.numero_proposta || "—"}</td>
                     <td className="p-2">{v.administradora || "—"}</td>
                     <td className="p-2">{v.segmento || "—"}</td>
                     <td className="p-2">{v.tabela || "—"}</td>
                     <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
                     <td className="p-2">
-                      <Button
-                        size="sm"
-                        onClick={() => gerarComissaoDeVenda(v)}
-                        disabled={genBusy === v.id}
-                      >
-                        {genBusy === v.id ? (
-                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                        ) : (
-                          <PlusCircle className="w-4 h-4 mr-1" />
-                        )}
+                      <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id}>
+                        {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
                         Gerar Comissão
                       </Button>
                     </td>
@@ -959,343 +1090,290 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Detalhamento — a pagar */}
-      {aPagar.length > 0 && (
+      {/* Detalhamento — some quando zera */}
+      {rowsAPagar.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle>Detalhamento de Comissões (a pagar)</CardTitle>
+            <CardTitle className="flex items-center justify-between">
+              <span>Detalhamento de Comissões (a pagar)</span>
+              <div className="flex items-center gap-3">
+                <div>
+                  <Label>Vendedor</Label>
+                  <Select value={vendedorId} onValueChange={setVendedorId}>
+                    <SelectTrigger className="w-[220px]"><SelectValue placeholder="Todos" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      {users.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} /></div>
+                  <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" /></div>
+                </div>
+                <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
+              </div>
+            </CardTitle>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             <table className="min-w-[1200px] w-full text-sm">
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Data</th>
-                  <th className="p-2 text-left">Vendedor</th>
-                  <th className="p-2 text-left">Cliente</th>
-                  <th className="p-2 text-left">Nº Proposta</th>
-                  <th className="p-2 text-left">Segmento</th>
-                  <th className="p-2 text-left">Tabela</th>
-                  <th className="p-2 text-right">Crédito</th>
-                  <th className="p-2 text-right">% Comissão</th>
-                  <th className="p-2 text-right">Valor Comissão</th>
-                  <th className="p-2 text-left">Status</th>
-                  <th className="p-2 text-left">Pagamento</th>
-                  <th className="p-2 text-left">Ações</th>
+                  <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-right">% Comissão</th><th className="p-2 text-right">Valor Comissão</th><th className="p-2 text-left">Status</th><th className="p-2 text-left">Pagamento</th><th className="p-2 text-left">Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {loading && (
-                  <tr>
-                    <td colSpan={12} className="p-4">
-                      <Loader2 className="animate-spin inline mr-2" /> Carregando...
+                {loading && <tr><td colSpan={12} className="p-4"><Loader2 className="animate-spin inline mr-2" /> Carregando...</td></tr>}
+                {!loading && rowsAPagar.length === 0 && <tr><td colSpan={12} className="p-4 text-gray-500">Sem registros.</td></tr>}
+                {!loading && rowsAPagar.map((r) => (
+                  <tr key={r.id} className="border-b hover:bg-gray-50">
+                    <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
+                    <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                    <td className="p-2">{r.cliente_nome || "—"}</td>
+                    <td className="p-2">{r.numero_proposta || "—"}</td>
+                    <td className="p-2">{r.segmento || "—"}</td>
+                    <td className="p-2">{r.tabela || "—"}</td>
+                    <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
+                    <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
+                    <td className="p-2 text-right">{BRL(r.valor_total)}</td>
+                    <td className="p-2">{r.status}</td>
+                    <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
+                    <td className="p-2">
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => openPaymentFor(r)}
+                        >
+                          <DollarSign className="w-4 h-4 mr-1" />
+                          {hasRegisteredButUnpaid(r.flow) ? "Confirmar Pagamento" : "Registrar pagamento"}
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => retornarComissao(r)}><RotateCcw className="w-4 h-4 mr-1" /> Retornar</Button>
+                      </div>
                     </td>
                   </tr>
-                )}
-                {!loading &&
-                  aPagar.map((r) => (
-                    <tr key={r.id} className="border-b hover:bg-gray-50">
-                      <td className="p-2">
-                        {r.data_venda ? formatISODateBR(r.data_venda) : "—"}
-                      </td>
-                      <td className="p-2">{userLabel(r.vendedor_id)}</td>
-                      <td className="p-2">{r.cliente_nome || "—"}</td>
-                      <td className="p-2">{r.numero_proposta || "—"}</td>
-                      <td className="p-2">{r.segmento || "—"}</td>
-                      <td className="p-2">{r.tabela || "—"}</td>
-                      <td className="p-2 text-right">
-                        {BRL(r.valor_venda ?? r.base_calculo)}
-                      </td>
-                      <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
-                      <td className="p-2 text-right">{BRL(r.valor_total)}</td>
-                      <td className="p-2">{r.status}</td>
-                      <td className="p-2">
-                        {r.data_pagamento
-                          ? formatISODateBR(r.data_pagamento)
-                          : "—"}
-                      </td>
-                      <td className="p-2">
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => openPaymentFor(r)}
-                          >
-                            <DollarSign className="w-4 h-4 mr-1" />
-                            {hasRegisteredButUnpaid(r.flow)
-                              ? "Confirmar Pagamento"
-                              : "Registrar pagamento"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => retornarComissao(r)}
-                          >
-                            <RotateCcw className="w-4 h-4 mr-1" /> Retornar
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                ))}
               </tbody>
             </table>
           </CardContent>
         </Card>
       )}
 
-      {/* Comissões pagas */}
+      {/* Comissões pagas (Accordion) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
             <span>Comissões pagas</span>
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Buscar por vendedor, cliente ou proposta..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-[320px]"
-              />
-              <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>
-                {showPaid ? "Ocultar" : "Expandir"}
-              </Button>
-            </div>
+            <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>{showPaid ? "Ocultar" : "Expandir"}</Button>
           </CardTitle>
         </CardHeader>
-
         {showPaid && (
-          <CardContent className="overflow-x-auto space-y-3">
+          <CardContent className="overflow-x-auto">
             <table className="min-w-[1100px] w-full text-sm">
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Data Pagto</th>
-                  <th className="p-2 text-left">Vendedor</th>
-                  <th className="p-2 text-left">Nº Proposta</th>
-                  <th className="p-2 text-left">Parcela</th>
-                  <th className="p-2 text-right">Valor Pago</th>
-                  <th className="p-2 text-left">Arquivos</th>
+                  <th className="p-2 text-left">Data Pagto</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Parcela</th><th className="p-2 text-right">Valor Pago</th><th className="p-2 text-left">Arquivos</th><th className="p-2 text-left">Pacote</th>
                 </tr>
               </thead>
               <tbody>
-                {paginated.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="p-4 text-gray-500">
-                      Nenhum pagamento encontrado.
+                {pagosFlat.length === 0 && <tr><td colSpan={7} className="p-4 text-gray-500">Nenhum pagamento encontrado.</td></tr>}
+                {pagosFlat.map(({ flow, comm }) => (
+                  <tr key={flow.id} className="border-b">
+                    <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
+                    <td className="p-2">{userLabel(comm.vendedor_id)}</td>
+                    <td className="p-2">{comm.numero_proposta || "—"}</td>
+                    <td className="p-2">M{flow.mes}</td>
+                    <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
+                    <td className="p-2">
+                      <div className="flex gap-2">
+                        {flow.recibo_vendedor_url && <a className="underline text-blue-700" href="#" onClick={async (e) => { e.preventDefault(); const u = await getSignedUrl(flow.recibo_vendedor_url); if (u) window.open(u, "_blank"); }}>Recibo</a>}
+                        {flow.comprovante_pagto_url && <a className="underline text-blue-700" href="#" onClick={async (e) => { e.preventDefault(); const u = await getSignedUrl(flow.comprovante_pagto_url); if (u) window.open(u, "_blank"); }}>Comprovante</a>}
+                      </div>
+                    </td>
+                    <td className="p-2">
+                      <Button size="sm" variant="ghost" onClick={() => downloadZipForFlow(flow, comm)}><Download className="w-4 h-4 mr-1" /> Baixar ZIP</Button>
                     </td>
                   </tr>
-                )}
-                {paginated.map((r) =>
-                  (r.flow || [])
-                    .filter((f) => (f.valor_pago_vendedor ?? 0) > 0)
-                    .map((f) => (
-                      <tr key={f.id} className="border-b">
-                        <td className="p-2">
-                          {f.data_pagamento_vendedor
-                            ? formatISODateBR(f.data_pagamento_vendedor)
-                            : "—"}
-                        </td>
-                        <td className="p-2">{userLabel(r.vendedor_id)}</td>
-                        <td className="p-2">{r.numero_proposta || "—"}</td>
-                        <td className="p-2">M{f.mes}</td>
-                        <td className="p-2 text-right">
-                          {BRL(f.valor_pago_vendedor)}
-                        </td>
-                        <td className="p-2">
-                          <div className="flex gap-2">
-                            {f.recibo_vendedor_url && (
-                              <a
-                                className="underline text-blue-700"
-                                href="#"
-                                onClick={async (e) => {
-                                  e.preventDefault();
-                                  const { data, error } = await supabase.storage
-                                    .from("comissoes")
-                                    .createSignedUrl(
-                                      f.recibo_vendedor_url!,
-                                      60 * 10
-                                    );
-                                  if (!error && data?.signedUrl)
-                                    window.open(data.signedUrl, "_blank");
-                                }}
-                              >
-                                Recibo
-                              </a>
-                            )}
-                            {f.comprovante_pagto_url && (
-                              <a
-                                className="underline text-blue-700"
-                                href="#"
-                                onClick={async (e) => {
-                                  e.preventDefault();
-                                  const { data, error } = await supabase.storage
-                                    .from("comissoes")
-                                    .createSignedUrl(
-                                      f.comprovante_pagto_url!,
-                                      60 * 10
-                                    );
-                                  if (!error && data?.signedUrl)
-                                    window.open(data.signedUrl, "_blank");
-                                }}
-                              >
-                                Comprovante
-                              </a>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                )}
+                ))}
               </tbody>
             </table>
-
-            {/* Paginação */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-end gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                >
-                  Anterior
-                </Button>
-                <div className="text-sm">
-                  Página <b>{page}</b> de <b>{totalPages}</b>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                >
-                  Próxima
-                </Button>
-              </div>
-            )}
           </CardContent>
         )}
       </Card>
 
-      {/* Modal de Pagamento */}
+      {/* Regras (overlay central) */}
+      <Dialog open={openRules} onOpenChange={setOpenRules}>
+        <DialogContent className="max-w-5xl">
+          <DialogHeader><DialogTitle>Regras de Comissão</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+            <div>
+              <Label>Vendedor</Label>
+              <Select value={ruleVendorId} onValueChange={(v) => { setRuleVendorId(v); }}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Tabela (SimTables)</Label>
+              <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
+                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {simTables.map((t) => <SelectItem key={t.id} value={t.id}>{t.segmento} — {t.nome_tabela}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div><Label>% Padrão (ex.: 1,20 = 1,20%)</Label><Input value={rulePercent} onChange={(e) => setRulePercent(e.target.value)} placeholder="1,20" /></div>
+            <div><Label>Nº de meses do fluxo</Label><Input type="number" min={1} max={36} value={ruleMeses} onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))} /></div>
+          </div>
+          <hr className="my-3" />
+          <div>
+            <Label>Fluxo do pagamento (M1..Mn)</Label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 p-2 border rounded-md max-h-[200px] overflow-y-auto">
+              {Array.from({ length: ruleMeses }).map((_, i) => (
+                <Input key={i} value={ruleFluxoPct[i] || "0,00"} onChange={(e) => { const arr = [...ruleFluxoPct]; arr[i] = e.target.value; setRuleFluxoPct(arr); }} placeholder="0,33" />
+              ))}
+            </div>
+            <div className="text-xs text-gray-600 mt-1">Soma do fluxo: <b>{fluxoSomaPct.toFixed(2)} (100% = 1,00)</b></div>
+          </div>
+          <hr className="my-3" />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end">
+            <div className="lg:col-span-2"><Label>Observações</Label><Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" /></div>
+            <div className="flex gap-2">
+              <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button>
+              <Button variant="outline" onClick={() => { setRuleSimTableId(""); setRulePercent("1,20"); setRuleMeses(1); setRuleFluxoPct(["100,00"]); setRuleObs(""); }}>Limpar</Button>
+            </div>
+          </div>
+          <hr className="my-4" />
+          <div className="border rounded-md max-h-[45vh] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0"><tr><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Administradora</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">% Padrão</th><th className="p-2 text-left">Fluxo</th><th className="p-2 text-left">Ação</th></tr></thead>
+              <tbody>
+                {(!ruleRows || ruleRows.length === 0) && <tr><td colSpan={6} className="p-3 text-gray-500">Nenhuma regra cadastrada para o vendedor selecionado.</td></tr>}
+                {ruleRows.map((r) => (
+                  <tr key={`${r.vendedor_id}-${r.sim_table_id}`} className="border-t">
+                    <td className="p-2">{r.segmento || "—"}</td>
+                    <td className="p-2">—</td>
+                    <td className="p-2">{r.nome_tabela}</td>
+                    <td className="p-2 text-right">{pct100(r.percent_padrao)}</td>
+                    <td className="p-2">{r.fluxo_meses} Pgtos</td>
+                    <td className="p-2">
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => loadRuleToForm(r)}><Pencil className="w-4 h-4 mr-1" /> Editar</Button>
+                        <Button size="sm" variant="outline" onClick={() => deleteRule(r.vendedor_id, r.sim_table_id)}><Trash2 className="w-4 h-4 mr-1" /> Excluir</Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <DialogFooter><Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Pagamento (overlay largo) */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
         <DialogContent className="w-[98vw] max-w-[1400px]">
-          <DialogHeader>
-            <DialogTitle>Registrar pagamento ao vendedor</DialogTitle>
-          </DialogHeader>
-
-          <Tabs defaultValue="selecionar">
-            <TabsList className="mb-3">
-              <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>
-              <TabsTrigger value="arquivos">Arquivos</TabsTrigger>
-            </TabsList>
-
-            {/* Seleção */}
+          <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
+          <Tabs defaultValue={payDefaultTab}>
+            <TabsList className="mb-3"><TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger><TabsTrigger value="arquivos">Arquivos</TabsTrigger></TabsList>
             <TabsContent value="selecionar" className="space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div>
-                  <Label>Data do pagamento</Label>
-                  <Input
-                    type="date"
-                    value={payDate}
-                    onChange={(e) => setPayDate(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label>Valor pago ao vendedor (opcional)</Label>
-                  <Input
-                    placeholder="Ex.: 1.974,00"
-                    value={payValue}
-                    onChange={(e) => setPayValue(e.target.value)}
-                  />
+                <div><Label>Data do pagamento</Label><Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /></div>
+                <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={payValue} onChange={(e) => setPayValue(e.target.value)} /></div>
+                <div className="flex items-end">
+                  <Button onClick={() => paySelectedParcels({
+                    data_pagamento_vendedor: payDate,
+                    valor_pago_vendedor: payValue ? parseFloat(payValue.replace(/\./g, "").replace(",", ".")) : undefined,
+                    recibo_file: null, comprovante_file: null,
+                  })}><Save className="w-4 h-4 mr-1" /> Salvar</Button>
                 </div>
                 <div className="flex items-end">
-                  <Button
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
-                    onClick={() =>
-                      paySelectedParcels({
-                        data_pagamento_vendedor: payDate,
-                        valor_pago_vendedor: payValue
-                          ? parseFloat(
-                              payValue.replace(/\./g, "").replace(",", ".")
-                            )
-                          : undefined,
-                      })
-                    }
-                  >
-                    <Save className="w-4 h-4 mr-1" /> Confirmar pagamento
-                  </Button>
-                </div>
-                <div className="flex items-end">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      const all = Object.fromEntries(
-                        payFlow.map((f) => [f.id, true])
-                      );
-                      setPaySelected(all);
-                    }}
-                  >
-                    Selecionar tudo
-                  </Button>
+                  <Button variant="outline" onClick={() => {
+                    const pend = Object.fromEntries(payFlow
+                      .filter((f) => !f.data_pagamento_vendedor && (f.valor_pago_vendedor ?? 0) === 0)
+                      .map((f) => [f.id, true]));
+                    setPaySelected(pend);
+                  }}>Selecionar tudo pendente</Button>
                 </div>
               </div>
-
               <div className="overflow-x-auto">
-                <table className="min-w-[1100px] w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50">
-                      <th className="p-2 text-left">Sel.</th>
-                      <th className="p-2 text-left">Mês</th>
-                      <th className="p-2 text-left">% Parcela</th>
-                      <th className="p-2 text-right">Valor Previsto</th>
-                      <th className="p-2 text-right">Valor Pago</th>
-                      <th className="p-2 text-left">Data Pagto</th>
-                    </tr>
-                  </thead>
+                <table className="min-w-[1300px] w-full text-sm">
+                  <thead><tr className="bg-gray-50">
+                    <th className="p-2 text-left">Sel.</th><th className="p-2 text-left">Mês</th><th className="p-2 text-left">% Parcela</th>
+                    <th className="p-2 text-right">Valor Previsto</th><th className="p-2 text-right">Valor Pago</th><th className="p-2 text-left">Data Pagto</th>
+                  </tr></thead>
                   <tbody>
-                    {payFlow.map((f) => (
-                      <tr key={f.id} className="border-b">
-                        <td className="p-2">
-                          <Checkbox
-                            checked={!!paySelected[f.id]}
-                            onCheckedChange={(v) =>
-                              setPaySelected((s) => ({ ...s, [f.id]: !!v }))
-                            }
-                          />
-                        </td>
-                        <td className="p-2">M{f.mes}</td>
-                        <td className="p-2">{pct100(f.percentual)}</td>
-                        <td className="p-2 text-right">
-                          {BRL(f.valor_previsto)}
-                        </td>
-                        <td className="p-2 text-right">
-                          {BRL(f.valor_pago_vendedor)}
-                        </td>
-                        <td className="p-2">
-                          {f.data_pagamento_vendedor
-                            ? formatISODateBR(f.data_pagamento_vendedor)
-                            : "—"}
-                        </td>
-                      </tr>
-                    ))}
+                    {payFlow.map((f) => {
+                      const isLocked = (f.valor_pago_vendedor ?? 0) > 0 || Boolean(f.recibo_vendedor_url) || Boolean(f.comprovante_pagto_url);
+                      return (
+                        <tr key={f.id} className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}>
+                          <td className="p-2">
+                            <Checkbox checked={!!paySelected[f.id]} onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))} disabled={isLocked} />
+                          </td>
+                          <td className="p-2">M{f.mes}</td>
+                          <td className="p-2">{pct100(f.percentual)}</td>
+                          <td className="p-2 text-right">{BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}</td>
+                          <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+                          <td className="p-2">{f.data_pagamento_vendedor ? formatISODateBR(f.data_pagamento_vendedor) : "—"}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </TabsContent>
-
-            {/* Aba de arquivos apenas mantém layout; upload permanece como antes se você já tem */}
-            <TabsContent value="arquivos">
-              <div className="text-sm text-gray-600">
-                (Uploads opcionais — funcionalidade preservada)
-              </div>
-            </TabsContent>
+            <TabsContent value="arquivos"><UploadArea onConfirm={paySelectedParcels} /></TabsContent>
           </Tabs>
-
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setOpenPay(false)}>
-              Fechar
-            </Button>
-          </DialogFooter>
+          <DialogFooter><Button onClick={() => setOpenPay(false)} variant="secondary">Fechar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/* ========================= Subcomponentes ========================= */
+function Metric({ title, value }: { title: string; value: string }) {
+  return (<div className="p-3 rounded-xl border bg-white"><div className="text-xs text-gray-500">{title}</div><div className="text-xl font-bold">{value}</div></div>);
+}
+function UploadArea({
+  onConfirm,
+}: {
+  onConfirm: (payload: {
+    data_pagamento_vendedor?: string;
+    valor_pago_vendedor?: number;
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
+  }) => Promise<void>;
+}) {
+  const [dataPg, setDataPg] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [valorPg, setValorPg] = useState<string>("");
+  const [fileRecibo, setFileRecibo] = useState<File | null>(null);
+  const [fileComp, setFileComp] = useState<File | null>(null);
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} /></div>
+        <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
+        <div className="flex items-end">
+          <Button onClick={() => onConfirm({
+            data_pagamento_vendedor: dataPg,
+            valor_pago_vendedor: valorPg ? parseFloat(valorPg.replace(/\./g, "").replace(",", ".")) : undefined,
+            recibo_file: fileRecibo, comprovante_file: fileComp,
+          })}><Save className="w-4 h-4 mr-1" /> Confirmar pagamento</Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><Label>Recibo assinado (PDF)</Label><Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} /></div>
+        <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
+      </div>
+      <div className="text-xs text-gray-500">
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
+      </div>
     </div>
   );
 }

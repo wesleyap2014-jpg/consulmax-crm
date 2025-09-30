@@ -210,7 +210,6 @@ function RadialDual({
     </div>
   );
 }
-
 /* ========================= Página ========================= */
 export default function ComissoesPage() {
   /* Filtros (sem período) */
@@ -287,7 +286,6 @@ export default function ComissoesPage() {
       setUsersSecure((us || []) as UserSecure[]);
     })();
   }, []);
-
   /* Fetch principal */
   async function fetchData() {
     setLoading(true);
@@ -368,6 +366,28 @@ export default function ComissoesPage() {
         (cli || []).forEach((c: any) => (map[c.id] = c.nome || ""));
         setClientesMap(map);
       } else setClientesMap({});
+
+      // === PATCH B: Reconciliar status com base nas parcelas (UI + tentativa silenciosa no banco)
+      try {
+        setRows(prev => {
+          const withFix = prev.map(r => {
+            const relevant = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
+            const allPaid = relevant.length > 0 && relevant.every(f => (Number(f.valor_pago_vendedor) || 0) > 0);
+            if (allPaid && r.status !== "pago") {
+              const lastDate = r.data_pagamento || (relevant[relevant.length - 1]?.data_pagamento_vendedor ?? null);
+              supabase.from("commissions")
+                .update({ status: "pago", data_pagamento: lastDate })
+                .eq("id", r.id)
+                .then(({ error }) => { if (error) console.warn("[reconcile] commissions.update falhou:", error.message); });
+              return { ...r, status: "pago", data_pagamento: lastDate };
+            }
+            return r;
+          });
+          return withFix;
+        });
+      } catch (e) {
+        console.warn("[reconcile] erro:", e);
+      }
     } finally {
       setLoading(false);
     }
@@ -468,7 +488,6 @@ export default function ComissoesPage() {
     setRuleFluxoPct(r.fluxo_percentuais.map((p) => p.toFixed(2).replace(".", ",")));
     setRuleObs(r.obs || "");
   }
-
   /* ============== Garantir fluxo (regra ou 1×100%) ============== */
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
     const { data: existing } = await supabase
@@ -671,7 +690,8 @@ export default function ComissoesPage() {
       relevant.length > 0 &&
       relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
 
-    await supabase
+    // >>> PATCH A: checar erro ao atualizar commissions, com fallback de UI <<<
+    const { error: updErr } = await supabase
       .from("commissions")
       .update({
         status: isAllPaid ? "pago" : "a_pagar",
@@ -680,6 +700,11 @@ export default function ComissoesPage() {
           : null,
       })
       .eq("id", payCommissionId);
+
+    if (updErr) {
+      console.warn("[commissions.update] falhou:", updErr.message);
+      alert("A comissão foi paga, mas não consegui atualizar o status no banco (policies/RLS?). Vou ajustar a UI mesmo assim.");
+    }
 
     // Estado/local
     const uniq = new Map<number, CommissionFlow>();
@@ -704,7 +729,7 @@ export default function ComissoesPage() {
     fetchData();
   }
 
-  /* Gerar / Retornar / CSV / Recibo */
+  /* Gerar / Retornar / CSV / Recibo — resto do arquivo permanece igual */
   async function gerarComissaoDeVenda(venda: Venda) {
     try {
       setGenBusy(venda.id);

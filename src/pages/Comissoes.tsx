@@ -282,6 +282,7 @@ export default function ComissoesPage() {
       setUsersSecure((us || []) as UserSecure[]);
     })();
   }, []);
+
   /* Fetch principal */
   async function fetchData() {
     setLoading(true);
@@ -307,7 +308,7 @@ export default function ComissoesPage() {
         if (!flowBy[f.commission_id].some((x) => x.mes === f.mes)) flowBy[f.commission_id].push(f as CommissionFlow);
       });
 
-      // clientes
+      // clientes extras
       let vendasExtras: Record<string, { clienteId?: string; numero_proposta?: string | null; cliente_nome?: string | null }> = {};
       if (comms && comms.length) {
         const { data: vendas } = await supabase
@@ -368,7 +369,7 @@ export default function ComissoesPage() {
   }
   useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [vendedorId, status, segmento, tabela]);
 
-  /* Totais/KPIs (líquido e com relógio interativo) */
+  /* Totais/KPIs */
   const now = new Date();
   const yStart = new Date(now.getFullYear(), 0, 1);
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -463,9 +464,8 @@ export default function ComissoesPage() {
     setRuleObs(r.obs || "");
   }
 
-  /* ============== NOVO: garantir fluxo criado quando necessário ============== */
+  /* ============== Garantir fluxo (regra ou 1×100%) ============== */
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
-    // já existe?
     const { data: existing } = await supabase
       .from("commission_flow")
       .select("*")
@@ -474,7 +474,6 @@ export default function ComissoesPage() {
 
     if (existing && existing.length > 0) return existing as CommissionFlow[];
 
-    // buscar regra (vendedor + sim_table)
     let meses = 1;
     let percentuais: number[] = [1];
 
@@ -495,7 +494,6 @@ export default function ComissoesPage() {
       }
     }
 
-    // montar inserts
     const valorTotal = c.valor_total ?? ((c.base_calculo ?? 0) * (c.percent_aplicado ?? 0));
     const inserts = percentuais.map((p, idx) => ({
       commission_id: c.id,
@@ -511,9 +509,7 @@ export default function ComissoesPage() {
     }));
 
     const { error } = await supabase.from("commission_flow").insert(inserts as any[]);
-    if (error) {
-      console.warn("[ensureFlowForCommission] erro ao inserir fluxo:", error.message);
-    }
+    if (error) console.warn("[ensureFlowForCommission] erro ao inserir fluxo:", error.message);
 
     const { data: created } = await supabase
       .from("commission_flow")
@@ -528,21 +524,37 @@ export default function ComissoesPage() {
   async function openPaymentFor(c: Commission) {
     setPayCommissionId(c.id);
 
-    // Garante que haja fluxo (se não existir, cria com base na regra ou 1x100%)
-    let { data } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
+    // Garante fluxo
+    let { data } = await supabase
+      .from("commission_flow")
+      .select("*")
+      .eq("commission_id", c.id)
+      .order("mes", { ascending: true });
     if (!data || data.length === 0) {
       const created = await ensureFlowForCommission(c);
       data = created as any;
     }
 
-    // cálculo correto (EXIBIÇÃO): comissão total * % da parcela
-    const arr = (data || []).map((f: any) => ({ ...f, _valor_previsto_calc: (c.valor_total ?? 0) * (f.percentual ?? 0) }));
+    // cálculo correto (EXIBIÇÃO)
+    const arr = (data || []).map((f: any) => ({
+      ...f,
+      _valor_previsto_calc: (c.valor_total ?? 0) * (f.percentual ?? 0),
+    }));
 
     const uniq = new Map<number, CommissionFlow & { _valor_previsto_calc?: number }>();
     arr.forEach((f: any) => uniq.set(f.mes, f));
-    setPayFlow(Array.from(uniq.values()));
+    const finalArr = Array.from(uniq.values());
 
-    setPaySelected({});
+    setPayFlow(finalArr);
+
+    // Pré-selecionar tudo que está pendente (percentual > 0 e sem pagamento)
+    const pre = Object.fromEntries(
+      finalArr
+        .filter((f) => (Number(f.percentual) || 0) > 0 && (Number(f.valor_pago_vendedor) || 0) === 0)
+        .map((f) => [f.id, true])
+    );
+    setPaySelected(pre);
+
     setPayDate(toDateInput(new Date()));
     setPayValue("");
     setOpenPay(true);
@@ -572,33 +584,46 @@ export default function ComissoesPage() {
     if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
     if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
 
+    // candidatos relevantes
+    const candidates = payFlow.filter((f) => (Number(f.percentual) || 0) > 0);
+
     // seleção explícita…
-    let selected = payFlow.filter((f) => paySelected[f.id]);
+    let selected = candidates.filter((f) => paySelected[f.id]);
 
-    // …ou auto-seleção por data (Arquivos)
+    // …ou auto-seleção por data (aba Arquivos)
     if (!selected.length && payload.data_pagamento_vendedor) {
-      selected = payFlow.filter((f) => (f.data_pagamento_vendedor || "") === payload.data_pagamento_vendedor);
+      selected = candidates.filter(
+        (f) => (f.data_pagamento_vendedor || "") === payload.data_pagamento_vendedor
+      );
     }
-    // …fallback: única parcela já paga
+
+    // …fallback: se só há 1 pendente → seleciona; senão pega a primeira pendente
     if (!selected.length) {
-      const alreadyPaid = payFlow.filter((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
-      if (alreadyPaid.length === 1) selected = alreadyPaid;
+      const unpaid = candidates.filter((f) => (Number(f.valor_pago_vendedor) || 0) === 0);
+      if (unpaid.length === 1) selected = unpaid;
+      else if (unpaid.length > 0) selected = [unpaid[0]];
     }
 
     if (!selected.length) {
-      alert("Selecione pelo menos uma parcela (ou informe a mesma data do pagamento ao anexar arquivos).");
+      alert("Selecione pelo menos uma parcela (ou informe a data/arquivos).");
       return;
     }
 
-    // UPDATE por id — NUNCA pisar valor pago sem input explícito
+    // UPDATE por id — não pisar valor pago sem input
     const toUpdate = selected.filter((f) => !!f.id);
     if (toUpdate.length) {
       for (const f of toUpdate) {
         const { error } = await supabase
           .from("commission_flow")
           .update({
-            data_pagamento_vendedor: payload.data_pagamento_vendedor || f.data_pagamento_vendedor || toDateInput(new Date()),
-            valor_pago_vendedor: payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : (f.valor_pago_vendedor ?? 0),
+            data_pagamento_vendedor:
+              payload.data_pagamento_vendedor ||
+              f.data_pagamento_vendedor ||
+              toDateInput(new Date()),
+            valor_pago_vendedor:
+              payload.valor_pago_vendedor !== undefined
+                ? payload.valor_pago_vendedor
+                : (f.valor_pago_vendedor ?? 0),
             recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
             comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
           })
@@ -607,7 +632,7 @@ export default function ComissoesPage() {
       }
     }
 
-    // INSERT (sem id) — não pagar automaticamente sem input
+    // INSERT (sem id) — caso excepcional
     const toInsert = selected.filter((f) => !f.id);
     if (toInsert.length) {
       const inserts = toInsert.map((f) => ({
@@ -616,7 +641,8 @@ export default function ComissoesPage() {
         percentual: f.percentual ?? 0,
         valor_previsto: f.valor_previsto ?? 0,
         data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
-        valor_pago_vendedor: payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : 0,
+        valor_pago_vendedor:
+          payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : 0,
         recibo_vendedor_url: reciboPath || null,
         comprovante_pagto_url: compPath || null,
       }));
@@ -624,34 +650,38 @@ export default function ComissoesPage() {
       if (error) { alert("Falha ao inserir parcela: " + error.message); return; }
     }
 
-    // === Recalcular status da comissão (sai do Detalhamento se quitada) ===
+    // === Recalcular status da comissão
     const { data: fresh } = await supabase
       .from("commission_flow")
       .select("*")
       .eq("commission_id", payCommissionId)
       .order("mes", { ascending: true });
 
-    // considere apenas parcelas relevantes (percentual > 0)
-    const relevant = (fresh || []).filter(f => (Number(f.percentual) || 0) > 0);
-    // quitada = todas as relevantes com valor_pago_vendedor > 0
-    const isAllPaid = relevant.length > 0 && relevant.every(f => (Number(f.valor_pago_vendedor) || 0) > 0);
+    const relevant = (fresh || []).filter((f) => (Number(f.percentual) || 0) > 0);
+    const isAllPaid =
+      relevant.length > 0 &&
+      relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
 
-    // Atualiza status + data_pagamento quando quitada
     await supabase
       .from("commissions")
       .update({
         status: isAllPaid ? "pago" : "a_pagar",
-        data_pagamento: isAllPaid ? (payload.data_pagamento_vendedor || toDateInput(new Date())) : null,
+        data_pagamento: isAllPaid
+          ? (payload.data_pagamento_vendedor || toDateInput(new Date()))
+          : null,
       })
       .eq("id", payCommissionId);
 
-    // Atualiza estado local e recarrega
-    const uniq = new Map<number, CommissionFlow>(); (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
+    // Estado/local
+    const uniq = new Map<number, CommissionFlow>();
+    (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
     const freshArr = Array.from(uniq.values()) as CommissionFlow[];
     setPayFlow(freshArr);
-    setRows(prev =>
-      prev.map(r =>
-        r.id === payCommissionId ? { ...r, flow: freshArr, status: isAllPaid ? "pago" : "a_pagar" } : r
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === payCommissionId
+          ? { ...r, flow: freshArr, status: isAllPaid ? "pago" : "a_pagar" }
+          : r
       )
     );
     setOpenPay(false);
@@ -693,7 +723,7 @@ export default function ComissoesPage() {
         valor_venda: base, base_calculo: base, percent_aplicado, valor_total, status: "a_pagar" as const,
       };
 
-      // Inserir e já retornar a comissão criada
+      // Inserir e obter a criada
       const { data: inserted, error } = await supabase
         .from("commissions")
         .insert(insert as any)
@@ -709,11 +739,9 @@ export default function ComissoesPage() {
         return;
       }
 
-      // === NOVO: cria automaticamente o fluxo se não existir ===
+      // Cria o fluxo automaticamente (regra ou 1×100%)
       const createdComm = inserted?.[0] as Commission | undefined;
-      if (createdComm) {
-        await ensureFlowForCommission(createdComm);
-      }
+      if (createdComm) await ensureFlowForCommission(createdComm);
 
       await fetchData();
     } finally { setGenBusy(null); }
@@ -759,6 +787,7 @@ export default function ComissoesPage() {
     const a = document.createElement("a");
     a.href = url; a.download = `comissoes_all.csv`; a.click(); URL.revokeObjectURL(url);
   }
+
   async function downloadReceiptPDFPorData() {
     const impostoPct = parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0;
     const dataRecibo = reciboDate;
@@ -1020,14 +1049,13 @@ export default function ComissoesPage() {
         </CardContent>
       </Card>
 
-      {/* Detalhamento — com seletor de Vendedor inline e sumir quando zerar */}
+      {/* Detalhamento — some quando zera */}
       {rowsAPagar.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center justify-between">
               <span>Detalhamento de Comissões (a pagar)</span>
               <div className="flex items-center gap-3">
-                {/* Filtro rápido de vendedor (reaproveita estado global) */}
                 <div>
                   <Label>Vendedor</Label>
                   <Select value={vendedorId} onValueChange={setVendedorId}>
@@ -1040,7 +1068,6 @@ export default function ComissoesPage() {
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div className="flex items-center gap-2">
                   <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} /></div>
                   <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" /></div>
@@ -1297,7 +1324,7 @@ function UploadArea({
         <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
       </div>
       <div className="text-xs text-gray-500">
-        Arquivos vão para o bucket <code>comissoes</code>. Se nenhuma parcela estiver marcada, a confirmação usa a <b>data</b> informada para auto-selecionar; se nada combinar e houver apenas 1 parcela paga, ela será selecionada automaticamente.
+        Arquivos vão para o bucket <code>comissoes</code>. Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
       </div>
     </div>
   );

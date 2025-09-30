@@ -20,7 +20,6 @@ import {
   RotateCcw,
   Pencil,
   Trash2,
-  Download,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -125,10 +124,6 @@ const normalize = (s?: string | null) =>
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
-const getExt = (path: string) => {
-  const m = path?.match(/\.(pdf|png|jpg|jpeg|webp)$/i);
-  return m ? m[0].toLowerCase() : ".bin";
-};
 function valorPorExtenso(n: number) {
   const u = [
     "zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove",
@@ -148,6 +143,7 @@ function valorPorExtenso(n: number) {
 /* ====== Helpers de estágio do pagamento (2 etapas) ====== */
 function hasRegisteredButUnpaid(flow?: CommissionFlow[]) {
   if (!flow) return false;
+  // "Registrado": tem data lançada; "Unpaid": valor ainda 0
   return flow.some(
     (f) => (Number(f.percentual) || 0) > 0 && !!f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) === 0
   );
@@ -210,6 +206,7 @@ function RadialDual({
     </div>
   );
 }
+
 /* ========================= Página ========================= */
 export default function ComissoesPage() {
   /* Filtros (sem período) */
@@ -262,13 +259,20 @@ export default function ComissoesPage() {
   const [payValue, setPayValue] = useState<string>("");
   const [payDefaultTab, setPayDefaultTab] = useState<"selecionar" | "arquivos">("selecionar");
 
-  /* Recibo */
+  /* Recibo/Imposto p/ KPIs/relógios */
   const [reciboDate, setReciboDate] = useState<string>(() => toDateInput(new Date()));
   const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00");
   const [reciboVendor, setReciboVendor] = useState<string>("all");
 
-  /* Comissões pagas (accordion) */
+  /* Comissões pagas (accordion + dados independentes do filtro de status) */
   const [showPaid, setShowPaid] = useState(false);
+  const [showSales, setShowSales] = useState(true);          // Vendas sem comissão: expand/ocultar
+  const [showDetalhe, setShowDetalhe] = useState(true);      // Detalhamento a pagar: expand/ocultar
+
+  const [paidSearch, setPaidSearch] = useState<string>("");
+  const [paidPage, setPaidPage] = useState<number>(1);
+  const PAID_PAGE_SIZE = 15;
+  const [paidFlat, setPaidFlat] = useState<Array<{ flow: CommissionFlow; comm: Commission & { cliente_nome?: string | null; numero_proposta?: string | null } }>>([]);
 
   /* Bases */
   useEffect(() => {
@@ -286,13 +290,63 @@ export default function ComissoesPage() {
       setUsersSecure((us || []) as UserSecure[]);
     })();
   }, []);
-  /* Fetch principal */
+
+  /* ===== Carregar pagas independentemente do filtro de status ===== */
+  async function fetchPaidFlat() {
+    // Busca flows com valor pago > 0 (pagamentos confirmados)
+    const { data: flows } = await supabase
+      .from("commission_flow")
+      .select("*")
+      .gt("valor_pago_vendedor", 0)
+      .order("data_pagamento_vendedor", { ascending: false });
+
+    if (!flows || flows.length === 0) {
+      setPaidFlat([]);
+      return;
+    }
+    const commIds = Array.from(new Set(flows.map((f) => f.commission_id)));
+    const { data: comms } = await supabase.from("commissions").select("*").in("id", commIds);
+    const vendaIds = Array.from(new Set((comms || []).map((c: any) => c.venda_id)));
+    const { data: vendas } = await supabase
+      .from("vendas")
+      .select("id, numero_proposta, cliente_lead_id, lead_id")
+      .in("id", vendaIds);
+
+    const cliIds = Array.from(new Set((vendas || []).map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
+    const nomes: Record<string, string> = {};
+    if (cliIds.length) {
+      const { data: cli } = await supabase.from("leads").select("id, nome").in("id", cliIds);
+      (cli || []).forEach((c: any) => { nomes[c.id] = c.nome || ""; });
+    }
+
+    const vendaById: Record<string, any> = {};
+    (vendas || []).forEach((v) => (vendaById[v.id] = v));
+
+    const commById: Record<string, any> = {};
+    (comms || []).forEach((c) => (commById[c.id] = c));
+
+    const flat: Array<{ flow: CommissionFlow; comm: Commission & { cliente_nome?: string | null; numero_proposta?: string | null } }> = [];
+    (flows || []).forEach((flow) => {
+      const c = commById[flow.commission_id] as Commission;
+      if (!c) return;
+      const v = vendaById[c.venda_id];
+      const clienteId = v?.lead_id || v?.cliente_lead_id || "";
+      const cliente_nome = clienteId ? (nomes[clienteId] || null) : null;
+      const numero_proposta = v?.numero_proposta || null;
+      flat.push({ flow, comm: { ...c, cliente_nome, numero_proposta } });
+    });
+
+    // Ordena por data de pagamento desc
+    flat.sort((a, b) => ((b.flow.data_pagamento_vendedor || "") > (a.flow.data_pagamento_vendedor || "") ? 1 : -1));
+    setPaidFlat(flat);
+  }
+
+  /* Fetch principal (para pendentes e base de dados geral) */
   async function fetchData() {
     setLoading(true);
     try {
-      // commissions (sem período)
+      // commissions (SEM filtrar por status aqui para não “sumir” nada em derivadas)
       let qb = supabase.from("commissions").select("*");
-      if (status !== "all") qb = qb.eq("status", status);
       if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
       if (segmento !== "all") qb = qb.eq("segmento", segmento);
       if (tabela !== "all") qb = qb.eq("tabela", tabela);
@@ -367,7 +421,7 @@ export default function ComissoesPage() {
         setClientesMap(map);
       } else setClientesMap({});
 
-      // === PATCH B: Reconciliar status com base nas parcelas (UI + tentativa silenciosa no banco)
+      // Reconciliar status com base nas parcelas (UI + tentativa silenciosa no banco)
       try {
         setRows(prev => {
           const withFix = prev.map(r => {
@@ -388,11 +442,14 @@ export default function ComissoesPage() {
       } catch (e) {
         console.warn("[reconcile] erro:", e);
       }
+
+      // Atualiza lista de pagas (independente dos filtros de status)
+      await fetchPaidFlat();
     } finally {
       setLoading(false);
     }
   }
-  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [vendedorId, status, segmento, tabela]);
+  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [vendedorId, segmento, tabela]);
 
   /* Totais/KPIs */
   const now = new Date();
@@ -488,6 +545,7 @@ export default function ComissoesPage() {
     setRuleFluxoPct(r.fluxo_percentuais.map((p) => p.toFixed(2).replace(".", ",")));
     setRuleObs(r.obs || "");
   }
+
   /* ============== Garantir fluxo (regra ou 1×100%) ============== */
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
     const { data: existing } = await supabase
@@ -571,15 +629,15 @@ export default function ComissoesPage() {
 
     setPayFlow(finalArr);
 
-    // Pré-selecionar tudo que está pendente (percentual > 0 e sem pagamento)
+    // Pré-selecionar pendentes (para etapa Registrar Pagamento)
     const pre = Object.fromEntries(
       finalArr
-        .filter((f) => (Number(f.percentual) || 0) > 0 && (Number(f.valor_pago_vendedor) || 0) === 0)
-        .map((f) => [f.id, true])
+        .filter((f) => (Number(f.percentual) || 0) > 0 && (Number(f.valor_pago_vendedor) || 0) === 0 && !f.data_pagamento_vendedor)
+        .map((f) => [f.id, false]) // deixa não marcado por padrão; o usuário escolhe qual parcela
     );
     setPaySelected(pre);
 
-    // define a aba inicial: se já há data lançada sem valor -> "Arquivos"
+    // define a aba inicial:
     const registered = hasRegisteredButUnpaid(finalArr);
     setPayDefaultTab(registered ? "arquivos" : "selecionar");
 
@@ -601,9 +659,73 @@ export default function ComissoesPage() {
     return (data as any)?.signedUrl || null;
   }
 
+  // Etapa 1: Registrar pagamento (apenas data + (opcional) valor) — selecionando a(s) parcela(s)
   async function paySelectedParcels(payload: {
     data_pagamento_vendedor?: string;
-    valor_pago_vendedor?: number;
+    valor_pago_vendedor?: number; // BRUTO — imposto abatido apenas nos KPIs/relógios
+    recibo_file?: File | null;
+    comprovante_file?: File | null;
+  }) {
+    // uploads (só devem ocorrer na etapa 2; aqui mantemos nulos)
+    let reciboPath: string | null = null, compPath: string | null = null;
+    if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
+    if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
+
+    // candidatos relevantes
+    const candidates = payFlow.filter((f) => (Number(f.percentual) || 0) > 0);
+
+    // seleção explícita na etapa 1
+    let selected = candidates.filter((f) => paySelected[f.id]);
+
+    // fallback: se não marcou, seleciona apenas a primeira pendente
+    if (!selected.length) {
+      const unpaidNoDate = candidates.filter((f) => (Number(f.valor_pago_vendedor) || 0) === 0 && !f.data_pagamento_vendedor);
+      if (unpaidNoDate.length >= 1) selected = [unpaidNoDate[0]];
+    }
+
+    if (!selected.length) {
+      alert("Selecione pelo menos uma parcela para registrar a data do pagamento.");
+      return;
+    }
+
+    // UPDATE por id (registrar data; valor pago continua 0 nesta etapa)
+    for (const f of selected) {
+      const { error } = await supabase
+        .from("commission_flow")
+        .update({
+          data_pagamento_vendedor:
+            payload.data_pagamento_vendedor ||
+            f.data_pagamento_vendedor ||
+            toDateInput(new Date()),
+          // mantém valor 0 (confirmado só na etapa 2)
+          valor_pago_vendedor: f.valor_pago_vendedor ?? 0,
+          recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
+          comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
+        })
+        .eq("id", f.id);
+      if (error) { alert("Falha ao registrar a data da parcela: " + error.message); return; }
+    }
+
+    // Recarrega flows e alterna para Confirmar (aba arquivos)
+    const { data: fresh } = await supabase
+      .from("commission_flow")
+      .select("*")
+      .eq("commission_id", payCommissionId)
+      .order("mes", { ascending: true });
+
+    const uniq = new Map<number, CommissionFlow>();
+    (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
+    const freshArr = Array.from(uniq.values()) as CommissionFlow[];
+    setPayFlow(freshArr);
+    setPayDefaultTab("arquivos");
+    setOpenPay(true);
+    await fetchData();
+  }
+
+  // Etapa 2: Confirmar (somente parcelas com data informada e ainda sem valor pago)
+  async function confirmRegisteredParcels(payload: {
+    data_pagamento_vendedor?: string;
+    valor_pago_vendedor?: number; // BRUTO — abatimento do imposto é refletido nos KPIs/relógios
     recibo_file?: File | null;
     comprovante_file?: File | null;
   }) {
@@ -612,70 +734,29 @@ export default function ComissoesPage() {
     if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
     if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
 
-    // candidatos relevantes
-    const candidates = payFlow.filter((f) => (Number(f.percentual) || 0) > 0);
+    // Seleciona apenas parcelas com data já registrada e ainda sem valor pago
+    const candidates = payFlow.filter(
+      (f) => (Number(f.percentual) || 0) > 0 && !!f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) === 0
+    );
 
-    // seleção explícita…
-    let selected = candidates.filter((f) => paySelected[f.id]);
-
-    // …ou auto-seleção por data (aba Arquivos)
-    if (!selected.length && payload.data_pagamento_vendedor) {
-      selected = candidates.filter(
-        (f) => (f.data_pagamento_vendedor || "") === payload.data_pagamento_vendedor
-      );
-    }
-
-    // …fallback: se só há 1 pendente → seleciona; senão pega a primeira pendente
-    if (!selected.length) {
-      const unpaid = candidates.filter((f) => (Number(f.valor_pago_vendedor) || 0) === 0);
-      if (unpaid.length === 1) selected = unpaid;
-      else if (unpaid.length > 0) selected = [unpaid[0]];
-    }
-
-    if (!selected.length) {
-      alert("Selecione pelo menos uma parcela (ou informe a data/arquivos).");
+    if (!candidates.length) {
+      alert("Não há parcelas registradas (com data) pendentes de confirmação.");
       return;
     }
 
-    // UPDATE por id — não pisar valor pago sem input
-    const toUpdate = selected.filter((f) => !!f.id);
-    if (toUpdate.length) {
-      for (const f of toUpdate) {
-        const { error } = await supabase
-          .from("commission_flow")
-          .update({
-            data_pagamento_vendedor:
-              payload.data_pagamento_vendedor ||
-              f.data_pagamento_vendedor ||
-              toDateInput(new Date()),
-            valor_pago_vendedor:
-              payload.valor_pago_vendedor !== undefined
-                ? payload.valor_pago_vendedor
-                : (f.valor_pago_vendedor ?? 0),
-            recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
-            comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
-          })
-          .eq("id", f.id);
-        if (error) { alert("Falha ao atualizar parcela: " + error.message); return; }
-      }
-    }
-
-    // INSERT (sem id) — caso excepcional
-    const toInsert = selected.filter((f) => !f.id);
-    if (toInsert.length) {
-      const inserts = toInsert.map((f) => ({
-        commission_id: f.commission_id,
-        mes: f.mes,
-        percentual: f.percentual ?? 0,
-        valor_previsto: f.valor_previsto ?? 0,
-        data_pagamento_vendedor: payload.data_pagamento_vendedor || toDateInput(new Date()),
-        valor_pago_vendedor:
-          payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : 0,
-        recibo_vendedor_url: reciboPath || null,
-        comprovante_pagto_url: compPath || null,
-      }));
-      const { error } = await supabase.from("commission_flow").insert(inserts);
-      if (error) { alert("Falha ao inserir parcela: " + error.message); return; }
+    // Atualiza cada parcela com valor + arquivos (mantendo a data já registrada)
+    for (const f of candidates) {
+      const { error } = await supabase
+        .from("commission_flow")
+        .update({
+          data_pagamento_vendedor: f.data_pagamento_vendedor, // mantém a mesma data já informada na etapa 1
+          valor_pago_vendedor:
+            payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : (f.valor_pago_vendedor ?? 0),
+          recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
+          comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
+        })
+        .eq("id", f.id);
+      if (error) { alert("Falha ao confirmar a parcela: " + error.message); return; }
     }
 
     // === Recalcular status da comissão
@@ -690,7 +771,6 @@ export default function ComissoesPage() {
       relevant.length > 0 &&
       relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
 
-    // >>> PATCH A: checar erro ao atualizar commissions, com fallback de UI <<<
     const { error: updErr } = await supabase
       .from("commissions")
       .update({
@@ -703,7 +783,7 @@ export default function ComissoesPage() {
 
     if (updErr) {
       console.warn("[commissions.update] falhou:", updErr.message);
-      alert("A comissão foi paga, mas não consegui atualizar o status no banco (policies/RLS?). Vou ajustar a UI mesmo assim.");
+      alert("A comissão foi confirmada, mas não consegui atualizar o status no banco (policies/RLS?). Vou ajustar a UI mesmo assim.");
     }
 
     // Estado/local
@@ -719,14 +799,11 @@ export default function ComissoesPage() {
       )
     );
 
-    // UX: se quitou, expande "Comissões pagas" e filtra para "Pago"
-    if (isAllPaid) {
-      setShowPaid(true);
-      setStatus("pago");
-    }
+    // UX: se quitou, expande "Comissões pagas"
+    if (isAllPaid) setShowPaid(true);
 
     setOpenPay(false);
-    fetchData();
+    await fetchData();
   }
 
   /* Gerar / Retornar / CSV / Recibo — resto do arquivo permanece igual */
@@ -903,37 +980,31 @@ export default function ComissoesPage() {
     doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
   }
 
-  /* ==== Baixar ZIP (recibo + comprovante) ==== */
-  async function downloadZipForFlow(flow: CommissionFlow, comm: Commission) {
-    try {
-      const files: Array<{ name: string; url: string }> = [];
-      const rec = await getSignedUrl(flow.recibo_vendedor_url);
-      const comp = await getSignedUrl(flow.comprovante_pagto_url);
-      if (rec) files.push({ name: `recibo${getExt(flow.recibo_vendedor_url || "")}`, url: rec });
-      if (comp) files.push({ name: `comprovante${getExt(flow.comprovante_pagto_url || "")}`, url: comp });
-      if (files.length === 0) { return alert("Nenhum arquivo encontrado para esta parcela."); }
-
-      // @ts-ignore
-      const jszipMod: any = await import(/* @vite-ignore */ "jszip").catch(() => null);
-      // @ts-ignore
-      const fileSaverMod: any = await import(/* @vite-ignore */ "file-saver").catch(() => null);
-
-      if (!jszipMod || !fileSaverMod) { files.forEach((f) => window.open(f.url, "_blank")); return; }
-      const JSZipCtor = jszipMod.default || jszipMod; const zip = new JSZipCtor();
-      for (const f of files) { const resp = await fetch(f.url); const blob = await resp.blob(); zip.file(f.name, blob); }
-      const content = await zip.generateAsync({ type: "blob" });
-      const saveAs = fileSaverMod.saveAs || fileSaverMod.default || fileSaverMod;
-      const nome = `pagamento_${comm.numero_proposta || comm.id}_M${flow.mes}.zip`; saveAs(content, nome);
-    } catch (e: any) { alert("Falha ao gerar pacote: " + (e?.message || e)); }
-  }
-
   /* Listas auxiliares */
-  const rowsAPagar = useMemo(() => rows.filter((r) => r.status === "a_pagar"), [rows]);
-  const pagosFlat = useMemo(() => {
-    const list: Array<{ flow: CommissionFlow; comm: Commission }> = [];
-    rows.forEach((r) => (r.flow || []).forEach((f) => { if ((f.valor_pago_vendedor ?? 0) > 0) list.push({ flow: f, comm: r }); }));
-    return list.sort((a, b) => ((b.flow.data_pagamento_vendedor || "") > (a.flow.data_pagamento_vendedor || "") ? 1 : -1));
-  }, [rows]);
+  const rowsAPagarBase = useMemo(() => rows.filter((r) => r.status === "a_pagar"), [rows]);
+  const rowsAPagar = useMemo(() => {
+    // Respeita o seletor de Status SOMENTE para a seção Detalhamento
+    if (status === "all") return rowsAPagarBase;
+    return rowsAPagarBase.filter((r) => r.status === status);
+  }, [rowsAPagarBase, status]);
+
+  // ===== Filtragem + Paginação em Comissões Pagas =====
+  const paidFiltered = useMemo(() => {
+    const q = normalize(paidSearch);
+    if (!q) return paidFlat;
+    return paidFlat.filter(({ comm }) => {
+      const nome = normalize(comm.cliente_nome || "");
+      const prop = normalize(comm.numero_proposta || "");
+      return nome.includes(q) || prop.includes(q);
+    });
+  }, [paidFlat, paidSearch]);
+
+  const paidTotalPages = Math.max(1, Math.ceil(paidFiltered.length / PAID_PAGE_SIZE));
+  const paidPageSafe = Math.min(Math.max(1, paidPage), paidTotalPages);
+  const paidSlice = useMemo(
+    () => paidFiltered.slice((paidPageSafe - 1) * PAID_PAGE_SIZE, paidPageSafe * PAID_PAGE_SIZE),
+    [paidFiltered, paidPageSafe]
+  );
 
   /* ========================= Render ========================= */
   return (
@@ -945,7 +1016,7 @@ export default function ComissoesPage() {
             <FilterIcon className="w-5 h-5" /> Filtros
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-3">
+        <CardContent className="grid grid-cols-1 md:grid-cols-7 gap-3">
           <div>
             <Label>Vendedor</Label>
             <Select value={vendedorId} onValueChange={setVendedorId}>
@@ -983,7 +1054,7 @@ export default function ComissoesPage() {
             </Select>
           </div>
           <div>
-            <Label>Status</Label>
+            <Label>Status (Detalhamento)</Label>
             <Select value={status} onValueChange={(v) => setStatus(v as any)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -994,7 +1065,7 @@ export default function ComissoesPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="md:col-span-6 flex gap-2 justify-end">
+          <div className="md:col-span-3 flex gap-2 justify-end">
             <Button variant="secondary" onClick={() => setOpenRules(true)}><Settings className="w-4 h-4 mr-1" /> Regras de Comissão</Button>
             <Button onClick={fetchData}><Loader2 className="w-4 h-4 mr-1" /> Atualizar</Button>
           </div>
@@ -1052,42 +1123,47 @@ export default function ComissoesPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
             <span>Vendas sem comissão (todos os registros + filtros)</span>
-            <Button variant="outline" onClick={exportCSV}><FileText className="w-4 h-4 mr-1" /> Exportar CSV</Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setShowSales((v) => !v)}>{showSales ? "Ocultar" : "Expandir"}</Button>
+              <Button variant="outline" onClick={exportCSV}><FileText className="w-4 h-4 mr-1" /> Exportar CSV</Button>
+            </div>
           </CardTitle>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="min-w-[1100px] w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Administradora</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-left">Ação</th>
-              </tr>
-            </thead>
-            <tbody>
-              {vendasSemCom.length === 0 && <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>}
-              {vendasSemCom.map((v) => {
-                const clienteId = v.lead_id || v.cliente_lead_id || "";
-                return (
-                  <tr key={v.id} className="border-b">
-                    <td className="p-2">{formatISODateBR(v.data_venda)}</td>
-                    <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                    <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
-                    <td className="p-2">{v.numero_proposta || "—"}</td>
-                    <td className="p-2">{v.administradora || "—"}</td>
-                    <td className="p-2">{v.segmento || "—"}</td>
-                    <td className="p-2">{v.tabela || "—"}</td>
-                    <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
-                    <td className="p-2">
-                      <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id}>
-                        {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
-                        Gerar Comissão
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </CardContent>
+        {showSales && (
+          <CardContent className="overflow-x-auto">
+            <table className="min-w-[1100px] w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Administradora</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-left">Ação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vendasSemCom.length === 0 && <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>}
+                {vendasSemCom.map((v) => {
+                  const clienteId = v.lead_id || v.cliente_lead_id || "";
+                  return (
+                    <tr key={v.id} className="border-b">
+                      <td className="p-2">{formatISODateBR(v.data_venda)}</td>
+                      <td className="p-2">{userLabel(v.vendedor_id)}</td>
+                      <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
+                      <td className="p-2">{v.numero_proposta || "—"}</td>
+                      <td className="p-2">{v.administradora || "—"}</td>
+                      <td className="p-2">{v.segmento || "—"}</td>
+                      <td className="p-2">{v.tabela || "—"}</td>
+                      <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
+                      <td className="p-2">
+                        <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id}>
+                          {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
+                          Gerar Comissão
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        )}
       </Card>
 
       {/* Detalhamento — some quando zera */}
@@ -1113,51 +1189,60 @@ export default function ComissoesPage() {
                   <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} /></div>
                   <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" /></div>
                 </div>
-                <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
+                <div className="flex gap-2">
+                  <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
+                  <Button size="sm" variant="outline" onClick={() => setShowDetalhe((v) => !v)}>{showDetalhe ? "Ocultar" : "Expandir"}</Button>
+                </div>
               </div>
             </CardTitle>
           </CardHeader>
-          <CardContent className="overflow-x-auto">
-            <table className="min-w-[1200px] w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-right">% Comissão</th><th className="p-2 text-right">Valor Comissão</th><th className="p-2 text-left">Status</th><th className="p-2 text-left">Pagamento</th><th className="p-2 text-left">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading && <tr><td colSpan={12} className="p-4"><Loader2 className="animate-spin inline mr-2" /> Carregando...</td></tr>}
-                {!loading && rowsAPagar.length === 0 && <tr><td colSpan={12} className="p-4 text-gray-500">Sem registros.</td></tr>}
-                {!loading && rowsAPagar.map((r) => (
-                  <tr key={r.id} className="border-b hover:bg-gray-50">
-                    <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
-                    <td className="p-2">{userLabel(r.vendedor_id)}</td>
-                    <td className="p-2">{r.cliente_nome || "—"}</td>
-                    <td className="p-2">{r.numero_proposta || "—"}</td>
-                    <td className="p-2">{r.segmento || "—"}</td>
-                    <td className="p-2">{r.tabela || "—"}</td>
-                    <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
-                    <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
-                    <td className="p-2 text-right">{BRL(r.valor_total)}</td>
-                    <td className="p-2">{r.status}</td>
-                    <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
-                    <td className="p-2">
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => openPaymentFor(r)}
-                        >
-                          <DollarSign className="w-4 h-4 mr-1" />
-                          {hasRegisteredButUnpaid(r.flow) ? "Confirmar Pagamento" : "Registrar pagamento"}
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => retornarComissao(r)}><RotateCcw className="w-4 h-4 mr-1" /> Retornar</Button>
-                      </div>
-                    </td>
+          {showDetalhe && (
+            <CardContent className="overflow-x-auto">
+              <table className="min-w-[1200px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-right">% Comissão</th><th className="p-2 text-right">Valor Comissão</th><th className="p-2 text-left">Status</th><th className="p-2 text-left">Pagamento</th><th className="p-2 text-left">Ações</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
+                </thead>
+                <tbody>
+                  {loading && <tr><td colSpan={12} className="p-4"><Loader2 className="animate-spin inline mr-2" /> Carregando...</td></tr>}
+                  {!loading && rowsAPagar.length === 0 && <tr><td colSpan={12} className="p-4 text-gray-500">Sem registros.</td></tr>}
+                  {!loading && rowsAPagar.map((r) => {
+                    const isConfirmStage = hasRegisteredButUnpaid(r.flow);
+                    return (
+                      <tr key={r.id} className="border-b hover:bg-gray-50">
+                        <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
+                        <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                        <td className="p-2">{r.cliente_nome || "—"}</td>
+                        <td className="p-2">{r.numero_proposta || "—"}</td>
+                        <td className="p-2">{r.segmento || "—"}</td>
+                        <td className="p-2">{r.tabela || "—"}</td>
+                        <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
+                        <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
+                        <td className="p-2 text-right">{BRL(r.valor_total)}</td>
+                        <td className="p-2">{r.status}</td>
+                        <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
+                        <td className="p-2">
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant={isConfirmStage ? "default" : "secondary"}
+                              className={isConfirmStage ? "bg-[#1E293F] hover:bg-[#1E293F]/90 text-white" : ""}
+                              onClick={() => openPaymentFor(r)}
+                            >
+                              <DollarSign className="w-4 h-4 mr-1" />
+                              {isConfirmStage ? "Confirmar Pagamento" : "Registrar pagamento"}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => retornarComissao(r)}><RotateCcw className="w-4 h-4 mr-1" /> Retornar</Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </CardContent>
+          )}
         </Card>
       )}
 
@@ -1166,23 +1251,38 @@ export default function ComissoesPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
             <span>Comissões pagas</span>
-            <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>{showPaid ? "Ocultar" : "Expandir"}</Button>
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Buscar por cliente ou nº proposta"
+                value={paidSearch}
+                onChange={(e) => { setPaidSearch(e.target.value); setPaidPage(1); }}
+                className="w-[280px]"
+              />
+              <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>{showPaid ? "Ocultar" : "Expandir"}</Button>
+            </div>
           </CardTitle>
         </CardHeader>
         {showPaid && (
           <CardContent className="overflow-x-auto">
-            <table className="min-w-[1100px] w-full text-sm">
+            <table className="min-w-[1000px] w-full text-sm">
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Data Pagto</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Parcela</th><th className="p-2 text-right">Valor Pago</th><th className="p-2 text-left">Arquivos</th><th className="p-2 text-left">Pacote</th>
+                  <th className="p-2 text-left">Data Pagto</th>
+                  <th className="p-2 text-left">Vendedor</th>
+                  <th className="p-2 text-left">Cliente</th>
+                  <th className="p-2 text-left">Nº Proposta</th>
+                  <th className="p-2 text-left">Parcela</th>
+                  <th className="p-2 text-right">Valor Pago (Bruto)</th>
+                  <th className="p-2 text-left">Arquivos</th>
                 </tr>
               </thead>
               <tbody>
-                {pagosFlat.length === 0 && <tr><td colSpan={7} className="p-4 text-gray-500">Nenhum pagamento encontrado.</td></tr>}
-                {pagosFlat.map(({ flow, comm }) => (
+                {paidSlice.length === 0 && <tr><td colSpan={7} className="p-4 text-gray-500">Nenhum pagamento encontrado.</td></tr>}
+                {paidSlice.map(({ flow, comm }) => (
                   <tr key={flow.id} className="border-b">
                     <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
                     <td className="p-2">{userLabel(comm.vendedor_id)}</td>
+                    <td className="p-2">{comm.cliente_nome || "—"}</td>
                     <td className="p-2">{comm.numero_proposta || "—"}</td>
                     <td className="p-2">M{flow.mes}</td>
                     <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
@@ -1192,13 +1292,35 @@ export default function ComissoesPage() {
                         {flow.comprovante_pagto_url && <a className="underline text-blue-700" href="#" onClick={async (e) => { e.preventDefault(); const u = await getSignedUrl(flow.comprovante_pagto_url); if (u) window.open(u, "_blank"); }}>Comprovante</a>}
                       </div>
                     </td>
-                    <td className="p-2">
-                      <Button size="sm" variant="ghost" onClick={() => downloadZipForFlow(flow, comm)}><Download className="w-4 h-4 mr-1" /> Baixar ZIP</Button>
-                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+
+            {/* Paginação */}
+            <div className="flex items-center justify-between mt-3">
+              <div className="text-xs text-gray-600">
+                Mostrando {paidSlice.length} de {paidFiltered.length} registros • Página {paidPageSafe} de {paidTotalPages}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPaidPage((p) => Math.max(1, p - 1))}
+                  disabled={paidPageSafe <= 1}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPaidPage((p) => Math.min(paidTotalPages, p + 1))}
+                  disabled={paidPageSafe >= paidTotalPages}
+                >
+                  Próxima
+                </Button>
+              </div>
+            </div>
           </CardContent>
         )}
       </Card>
@@ -1278,9 +1400,14 @@ export default function ComissoesPage() {
       {/* Pagamento (overlay largo) */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
         <DialogContent className="w-[98vw] max-w-[1400px]">
-          <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Registrar/Confirmar pagamento ao vendedor</DialogTitle></DialogHeader>
           <Tabs defaultValue={payDefaultTab}>
-            <TabsList className="mb-3"><TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger><TabsTrigger value="arquivos">Arquivos</TabsTrigger></TabsList>
+            <TabsList className="mb-3">
+              <TabsTrigger value="selecionar">Selecionar parcelas (Registrar Data)</TabsTrigger>
+              <TabsTrigger value="arquivos">Arquivos & Valor (Confirmar)</TabsTrigger>
+            </TabsList>
+
+            {/* ETAPA 1: Registrar Data */}
             <TabsContent value="selecionar" className="space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div><Label>Data do pagamento</Label><Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /></div>
@@ -1290,15 +1417,15 @@ export default function ComissoesPage() {
                     data_pagamento_vendedor: payDate,
                     valor_pago_vendedor: payValue ? parseFloat(payValue.replace(/\./g, "").replace(",", ".")) : undefined,
                     recibo_file: null, comprovante_file: null,
-                  })}><Save className="w-4 h-4 mr-1" /> Salvar</Button>
+                  })}><Save className="w-4 h-4 mr-1" /> Salvar (Registrar Data)</Button>
                 </div>
                 <div className="flex items-end">
                   <Button variant="outline" onClick={() => {
                     const pend = Object.fromEntries(payFlow
-                      .filter((f) => !f.data_pagamento_vendedor && (f.valor_pago_vendedor ?? 0) === 0)
-                      .map((f) => [f.id, true]));
+                      .filter((f) => !f.data_pagamento_vendedor && (f.valor_pago_vendedor ?? 0) === 0 && (f.percentual ?? 0) > 0)
+                      .map((f) => [f.id, false]));
                     setPaySelected(pend);
-                  }}>Selecionar tudo pendente</Button>
+                  }}>Limpar seleção</Button>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -1308,26 +1435,42 @@ export default function ComissoesPage() {
                     <th className="p-2 text-right">Valor Previsto</th><th className="p-2 text-right">Valor Pago</th><th className="p-2 text-left">Data Pagto</th>
                   </tr></thead>
                   <tbody>
-                    {payFlow.map((f) => {
-                      const isLocked = (f.valor_pago_vendedor ?? 0) > 0 || Boolean(f.recibo_vendedor_url) || Boolean(f.comprovante_pagto_url);
-                      return (
-                        <tr key={f.id} className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}>
-                          <td className="p-2">
-                            <Checkbox checked={!!paySelected[f.id]} onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))} disabled={isLocked} />
-                          </td>
-                          <td className="p-2">M{f.mes}</td>
-                          <td className="p-2">{pct100(f.percentual)}</td>
-                          <td className="p-2 text-right">{BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}</td>
-                          <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
-                          <td className="p-2">{f.data_pagamento_vendedor ? formatISODateBR(f.data_pagamento_vendedor) : "—"}</td>
-                        </tr>
-                      );
-                    })}
+                    {payFlow
+                      .filter((f) => (f.percentual ?? 0) > 0) // mostra apenas percentuais válidos
+                      .map((f) => {
+                        const isAlreadyRegistered = !!f.data_pagamento_vendedor;
+                        const isLocked = (f.valor_pago_vendedor ?? 0) > 0 || Boolean(f.recibo_vendedor_url) || Boolean(f.comprovante_pagto_url);
+                        const disabled = isAlreadyRegistered || isLocked;
+                        return (
+                          <tr key={f.id} className={`border-b ${disabled ? "opacity-60 pointer-events-none" : ""}`}>
+                            <td className="p-2">
+                              <Checkbox
+                                checked={!!paySelected[f.id]}
+                                onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))}
+                                disabled={disabled}
+                              />
+                            </td>
+                            <td className="p-2">M{f.mes}</td>
+                            <td className="p-2">{pct100(f.percentual)}</td>
+                            <td className="p-2 text-right">{BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}</td>
+                            <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+                            <td className="p-2">{f.data_pagamento_vendedor ? formatISODateBR(f.data_pagamento_vendedor) : "—"}</td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               </div>
             </TabsContent>
-            <TabsContent value="arquivos"><UploadArea onConfirm={paySelectedParcels} /></TabsContent>
+
+            {/* ETAPA 2: Confirmar (somente parcelas com data informada e sem valor pago) */}
+            <TabsContent value="arquivos">
+              <UploadArea
+                onlyRegistered
+                flows={payFlow}
+                onConfirm={confirmRegisteredParcels}
+              />
+            </TabsContent>
           </Tabs>
           <DialogFooter><Button onClick={() => setOpenPay(false)} variant="secondary">Fechar</Button></DialogFooter>
         </DialogContent>
@@ -1340,8 +1483,11 @@ export default function ComissoesPage() {
 function Metric({ title, value }: { title: string; value: string }) {
   return (<div className="p-3 rounded-xl border bg-white"><div className="text-xs text-gray-500">{title}</div><div className="text-xl font-bold">{value}</div></div>);
 }
+
 function UploadArea({
   onConfirm,
+  flows,
+  onlyRegistered = false,
 }: {
   onConfirm: (payload: {
     data_pagamento_vendedor?: string;
@@ -1349,30 +1495,75 @@ function UploadArea({
     recibo_file?: File | null;
     comprovante_file?: File | null;
   }) => Promise<void>;
+  flows?: (CommissionFlow & { _valor_previsto_calc?: number })[];
+  /** Quando true, exibe apenas parcelas com data já registrada e ainda sem valor pago (fluxo Confirmar) */
+  onlyRegistered?: boolean;
 }) {
   const [dataPg, setDataPg] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [valorPg, setValorPg] = useState<string>("");
   const [fileRecibo, setFileRecibo] = useState<File | null>(null);
   const [fileComp, setFileComp] = useState<File | null>(null);
+
+  const list = useMemo(() => {
+    const arr = (flows || []).filter((f) => (f.percentual ?? 0) > 0);
+    if (!onlyRegistered) return arr;
+    return arr.filter((f) => !!f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) === 0);
+  }, [flows, onlyRegistered]);
+
   return (
     <div className="space-y-3">
+      {onlyRegistered && (
+        <div className="text-sm p-2 bg-yellow-50 border rounded">
+          Listando <b>apenas</b> as parcelas com <b>data registrada</b> e ainda <b>sem valor pago</b>. Informe o <b>valor BRUTO</b>, anexe os arquivos e confirme.
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} /></div>
-        <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
+        <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} disabled={onlyRegistered} /></div>
+        <div><Label>Valor pago ao vendedor (BRUTO)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
         <div className="flex items-end">
           <Button onClick={() => onConfirm({
             data_pagamento_vendedor: dataPg,
             valor_pago_vendedor: valorPg ? parseFloat(valorPg.replace(/\./g, "").replace(",", ".")) : undefined,
             recibo_file: fileRecibo, comprovante_file: fileComp,
-          })}><Save className="w-4 h-4 mr-1" /> Confirmar pagamento</Button>
+          })}><Save className="w-4 h-4 mr-1" /> Confirmar</Button>
         </div>
       </div>
+
+      {/* Lista das parcelas exibidas na etapa (útil para conferir antes de confirmar) */}
+      <div className="overflow-x-auto">
+        <table className="min-w-[900px] w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50">
+              <th className="p-2 text-left">Mês</th>
+              <th className="p-2 text-left">% Parcela</th>
+              <th className="p-2 text-right">Valor Previsto</th>
+              <th className="p-2 text-left">Data Pagto</th>
+              <th className="p-2 text-right">Valor Pago</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.length === 0 && (
+              <tr><td colSpan={5} className="p-3 text-gray-500">Nenhuma parcela nesta etapa.</td></tr>
+            )}
+            {list.map((f) => (
+              <tr key={f.id} className="border-b">
+                <td className="p-2">M{f.mes}</td>
+                <td className="p-2">{pct100(f.percentual)}</td>
+                <td className="p-2 text-right">{BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}</td>
+                <td className="p-2">{f.data_pagamento_vendedor ? formatISODateBR(f.data_pagamento_vendedor) : "—"}</td>
+                <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div><Label>Recibo assinado (PDF)</Label><Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} /></div>
         <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
       </div>
       <div className="text-xs text-gray-500">
-        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
+        Os valores inseridos são <b>brutos</b>. O campo <b>Imposto (%)</b> no topo define o abatimento exibido nos indicadores/relógios.
       </div>
     </div>
   );

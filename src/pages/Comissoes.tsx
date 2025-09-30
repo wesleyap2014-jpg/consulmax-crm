@@ -1938,3 +1938,4 @@ export default function ComissoesPage() {
       </Dialog>
     </div>
   );
+}

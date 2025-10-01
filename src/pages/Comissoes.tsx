@@ -20,7 +20,6 @@ import {
   RotateCcw,
   Pencil,
   Trash2,
-  Download,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -55,7 +54,7 @@ type UserSecure = {
   cpf: string | null;
   cpf_mascarado: string | null;
 };
-type SimTable = { id: UUID; segmento: string; nome_tabela: string; administradora?: string | null }; // <- inclui administradora
+type SimTable = { id: UUID; segmento: string; nome_tabela: string };
 type Venda = {
   id: UUID;
   data_venda: string;
@@ -104,9 +103,9 @@ type CommissionFlow = {
 type CommissionRule = {
   vendedor_id: string;
   sim_table_id: string;
-  percent_padrao: number;
+  percent_padrao: number;        // armazenado como fração (ex.: 0.012 = 1,20%)
   fluxo_meses: number;
-  fluxo_percentuais: number[];
+  fluxo_percentuais: number[];   // frações que somam 1.00
   obs: string | null;
 };
 
@@ -125,14 +124,8 @@ const normalize = (s?: string | null) =>
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
-const getExt = (path: string) => {
-  const m = path?.match(/\.(pdf|png|jpg|jpeg|webp)$/i);
-  return m ? m[0].toLowerCase() : ".bin";
-};
 function valorPorExtenso(n: number) {
-  const u = [
-    "zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove",
-  ];
+  const u = ["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
   const d = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
   const c = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos"];
   const ext = (n0: number): string =>
@@ -158,77 +151,88 @@ function isFullyPaid(flow?: CommissionFlow[]) {
   return relevant.length > 0 && relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
 }
 
-/* ========================= Relógio Dual ========================= */
-function RadialDual({
-  paidPct,
+/* ========================= Doughnut moderno ========================= */
+function Donut({
+  paid,
+  pending,
   label,
-  paidHint,
-  pendHint,
-  tagline = "Quanto já entrou × o que ainda falta",
+  hoverPaidText,
+  hoverPendText,
 }: {
-  paidPct: number;
+  paid: number;
+  pending: number;
   label: string;
-  paidHint: string;
-  pendHint: string;
-  tagline?: string;
+  hoverPaidText: string;
+  hoverPendText: string;
 }) {
+  const total = Math.max(0, paid + pending);
+  const paidPct = total > 0 ? (paid / total) * 100 : 0;
+
   const [hover, setHover] = useState<"paid" | "pend" | null>(null);
-  const pct = Math.max(0, Math.min(100, paidPct));
-  const radius = 44, circumference = 2 * Math.PI * radius;
-  const paidLen = (pct / 100) * circumference;
+
+  // estilos (Consulmax)
+  const navy = "#1E293F";   // pago
+  const red = "#A11C27";    // pendente
+
+  const radius = 56;
+  const circumference = 2 * Math.PI * radius;
+  const paidLen = (paidPct / 100) * circumference;
   const pendLen = circumference - paidLen;
-  const azul = "#1E293F";
-  const vermelho = "#A11C27";
 
   return (
-    <div
-      className={`flex items-center gap-4 p-4 border rounded-2xl bg-white transition-all duration-200 ${
-        hover ? "shadow-lg ring-1 ring-gray-200" : "shadow-sm"
-      }`}
-    >
-      <div className={`relative ${hover ? "translate-y-[-2px]" : ""} transition-transform`}>
-        <svg width="140" height="140" className="-rotate-90" role="img" aria-label={label}>
-          <defs>
-            <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
-              <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.25" />
-            </filter>
-          </defs>
-          <circle cx="70" cy="70" r={radius} stroke="#eef2f7" strokeWidth="12" fill="none" />
+    <div className="flex items-center gap-3 p-3 border rounded-xl bg-white">
+      <div className="relative">
+        <svg width="160" height="160" className="-rotate-90" role="img" aria-label={label}>
+          {/* fundo */}
+          <circle cx="80" cy="80" r={radius} stroke="#e5e7eb" strokeWidth="22" fill="none" />
+          {/* pago */}
           <circle
-            cx="70" cy="70" r={radius} stroke={azul}
-            strokeWidth={hover === "paid" ? 14 : 12}
-            fill="none" strokeDasharray={`${paidLen} ${circumference}`} strokeLinecap="round"
-            filter={hover === "paid" ? "url(#softShadow)" : undefined}
-            onMouseEnter={() => setHover("paid")} onMouseLeave={() => setHover(null)}
-          >
-            <title>{paidHint}</title>
-          </circle>
+            cx="80"
+            cy="80"
+            r={radius}
+            stroke={navy}
+            strokeWidth={hover === "paid" ? 26 : 22}
+            fill="none"
+            strokeDasharray={`${paidLen} ${circumference}`}
+            strokeLinecap="butt"
+            onMouseEnter={() => setHover("paid")}
+            onMouseLeave={() => setHover(null)}
+            style={{ transition: "all .2s ease", filter: hover === "paid" ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none" }}
+          />
+          {/* pendente (offset para começar após o pago) */}
           <circle
-            cx="70" cy="70" r={radius} stroke={vermelho}
-            strokeWidth={hover === "pend" ? 14 : 12}
-            fill="none" strokeDasharray={`${pendLen} ${circumference}`} strokeDashoffset={-paidLen} strokeLinecap="round"
-            filter={hover === "pend" ? "url(#softShadow)" : undefined}
-            onMouseEnter={() => setHover("pend")} onMouseLeave={() => setHover(null)}
-          >
-            <title>{pendHint}</title>
-          </circle>
-          <text x="70" y="76" textAnchor="middle" fontSize="20" fill="#111827" className="rotate-90 font-semibold">
-            {pct.toFixed(0)}%
-          </text>
+            cx="80"
+            cy="80"
+            r={radius}
+            stroke={red}
+            strokeWidth={hover === "pend" ? 26 : 22}
+            fill="none"
+            strokeDasharray={`${pendLen} ${circumference}`}
+            strokeDashoffset={-paidLen}
+            strokeLinecap="butt"
+            onMouseEnter={() => setHover("pend")}
+            onMouseLeave={() => setHover(null)}
+            style={{ transition: "all .2s ease", filter: hover === "pend" ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none" }}
+          />
         </svg>
-
-        {/* Tooltip simples */}
-        {hover && (
-          <div className="absolute left-1/2 -translate-x-1/2 top-[110%] z-10 bg-white border shadow-xl rounded-xl px-3 py-2 text-xs w-max">
-            <div className="font-semibold mb-0.5">{hover === "paid" ? "Pago" : "A pagar"}</div>
-            <div className="text-gray-700 whitespace-nowrap">{hover === "paid" ? paidHint : pendHint}</div>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="text-center">
+            <div className="text-xl font-bold">{total === 0 ? "0%" : `${paidPct.toFixed(0)}%`}</div>
+            <div className="text-xs text-gray-500">{label}</div>
           </div>
-        )}
+        </div>
       </div>
-
-      <div>
-        <div className="text-sm text-gray-500">{label}</div>
-        <div className="font-semibold">{tagline}</div>
+      <div className="text-sm">
+        <div className="mb-1">
+          <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: navy }} />
+          <span className="font-medium">Pago</span>
+          <span className="ml-2 text-gray-600">{hover === "paid" ? hoverPaidText : BRL(paid)}</span>
+        </div>
+        <div>
+          <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: red }} />
+          <span className="font-medium">A pagar</span>
+          <span className="ml-2 text-gray-600">{hover === "pend" ? hoverPendText : BRL(pending)}</span>
+        </div>
       </div>
     </div>
   );
@@ -275,7 +279,7 @@ export default function ComissoesPage() {
   const [ruleMeses, setRuleMeses] = useState<number>(1);
   const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]);
   const [ruleObs, setRuleObs] = useState<string>("");
-  const [ruleRows, setRuleRows] = useState<(CommissionRule & { segmento: string; nome_tabela: string; administradora: string | null })[]>([]);
+  const [ruleRows, setRuleRows] = useState<(CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null })[]>([]);
 
   /* Pagamento */
   const [openPay, setOpenPay] = useState(false);
@@ -291,8 +295,15 @@ export default function ComissoesPage() {
   const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00");
   const [reciboVendor, setReciboVendor] = useState<string>("all");
 
-  /* Comissões pagas (accordion) */
+  /* Expand/Collapse (3 blocos) */
   const [showPaid, setShowPaid] = useState(false);
+  const [showUnpaid, setShowUnpaid] = useState(true);
+  const [showVendasSem, setShowVendasSem] = useState(true);
+
+  /* Busca/Paginação (comissões pagas) */
+  const [paidSearch, setPaidSearch] = useState("");
+  const [paidPage, setPaidPage] = useState(1);
+  const pageSize = 15;
 
   /* Bases */
   useEffect(() => {
@@ -302,7 +313,7 @@ export default function ComissoesPage() {
           .from("users")
           .select("id, auth_user_id, nome, email, phone, cep, logradouro, numero, bairro, cidade, uf, pix_key, pix_type")
           .order("nome", { ascending: true }),
-        supabase.from("sim_tables").select("id, segmento, nome_tabela, administradora").order("segmento", { ascending: true }), // <- inclui administradora
+        supabase.from("sim_tables").select("id, segmento, nome_tabela").order("segmento", { ascending: true }),
         supabase.from("users_secure").select("id, nome, email, logradouro, numero, bairro, cidade, uf, pix_key, cpf, cpf_mascarado"),
       ]);
       setUsers((u || []) as User[]);
@@ -310,6 +321,7 @@ export default function ComissoesPage() {
       setUsersSecure((us || []) as UserSecure[]);
     })();
   }, []);
+
   /* Fetch principal */
   async function fetchData() {
     setLoading(true);
@@ -391,7 +403,7 @@ export default function ComissoesPage() {
         setClientesMap(map);
       } else setClientesMap({});
 
-      // === PATCH B: Reconciliar status com base nas parcelas (UI + tentativa silenciosa no banco)
+      // reconcile status por parcelas
       try {
         setRows(prev => {
           const withFix = prev.map(r => {
@@ -462,7 +474,8 @@ export default function ComissoesPage() {
     if (n > arr.length) { while (arr.length < n) arr.push("0,00"); } else arr.length = n;
     setRuleFluxoPct(arr);
   }
-  const fluxoSomaPct = useMemo(() => ruleFluxoPct.reduce((a, b) => a + (parseFloat((b || "0").replace(",", ".")) || 0), 0), [ruleFluxoPct]);
+  const fluxoSoma = useMemo(() => ruleFluxoPct.reduce((a, b) => a + (parseFloat((b || "0").replace(",", ".")) || 0), 0), [ruleFluxoPct]);
+
   async function fetchRulesForVendor(vId: string) {
     if (!vId) { setRuleRows([]); return; }
     const { data: rules } = await supabase
@@ -470,42 +483,68 @@ export default function ComissoesPage() {
       .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
       .eq("vendedor_id", vId);
     if (!rules || !rules.length) { setRuleRows([]); return; }
+
     const stIds = Array.from(new Set(rules.map((r) => r.sim_table_id)));
-    const { data: st } = await supabase.from("sim_tables").select("id, segmento, nome_tabela, administradora").in("id", stIds);
+    const { data: st } = await supabase.from("sim_tables").select("id, segmento, nome_tabela").in("id", stIds);
     const bySt: Record<string, SimTable> = {}; (st || []).forEach((s) => { bySt[s.id] = s as SimTable; });
-    setRuleRows(rules.map((r) => ({
-      ...(r as CommissionRule),
-      segmento: bySt[r.sim_table_id]?.segmento || "-",
-      nome_tabela: bySt[r.sim_table_id]?.nome_tabela || "-",
-      administradora: bySt[r.sim_table_id]?.administradora || null,
-    })));
-  }
-  useEffect(() => { if (openRules) fetchRulesForVendor(ruleVendorId); }, [openRules, ruleVendorId]);
-  async function saveRule() {
-    if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
-    const padraoPctPercent = parseFloat((rulePercent || "0").replace(",", ".")); // ex.: 2,25
-    const somaFluxo = fluxoSomaPct; // soma digitada nos campos
 
-    // Aceitar 2 formatos: (A) soma = 1,00 (frações) OU (B) soma = % Padrão (em pontos percentuais)
-    const approx = (a: number, b: number) => Math.abs(a - b) <= 1e-6;
-
-    let fluxo_percentuais_frac: number[] = [];
-    if (approx(somaFluxo, 1.0)) {
-      fluxo_percentuais_frac = ruleFluxoPct.map((x) => parseFloat((x || "0").replace(",", ".")) || 0);
-    } else if (approx(somaFluxo, padraoPctPercent)) {
-      // usuário digitou 0,50 + 0,50 + ... que somam ao % padrão (ex. 2,25)
-      const absolutos = ruleFluxoPct.map((x) => parseFloat((x || "0").replace(",", ".")) || 0);
-      if (padraoPctPercent <= 0) return alert("Informe um % Padrão válido para usar soma por pontos percentuais.");
-      fluxo_percentuais_frac = absolutos.map((v) => v / padraoPctPercent); // converte para frações de 1
-    } else {
-      return alert(
-        `Soma do fluxo deve ser 1,00 (100%) ou igual ao % Padrão (${padraoPctPercent
-          .toFixed(2)
-          .replace(".", ",")}). Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`
-      );
+    // buscar administradora provável baseada nas vendas para nome_tabela/segmento
+    const tableNames = Array.from(new Set((st || []).map(s => s.nome_tabela))).filter(Boolean);
+    let adminMap: Record<string, string> = {};
+    if (tableNames.length) {
+      const { data: vendas } = await supabase
+        .from("vendas")
+        .select("segmento, tabela, administradora")
+        .in("tabela", tableNames);
+      (vendas || []).forEach(v => {
+        const key = `${v.segmento || "-"}|${v.tabela || "-"}`;
+        if (!adminMap[key] && v.administradora) adminMap[key] = v.administradora;
+      });
     }
 
-    const percent_padrao_frac = (padraoPctPercent || 0) / 100;
+    setRuleRows(rules.map((r) => {
+      const stInfo = bySt[r.sim_table_id];
+      const key = `${stInfo?.segmento || "-"}|${stInfo?.nome_tabela || "-"}`;
+      return {
+        ...(r as CommissionRule),
+        segmento: stInfo?.segmento || "-",
+        nome_tabela: stInfo?.nome_tabela || "-",
+        administradora: adminMap[key] || "—",
+      };
+    }));
+  }
+  useEffect(() => { if (openRules) fetchRulesForVendor(ruleVendorId); }, [openRules, ruleVendorId]);
+
+  async function saveRule() {
+    if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
+
+    // % padrão digitado (ex.: "2,25")
+    const pctPadraoPercent = parseFloat((rulePercent || "0").replace(",", "."));
+    if (!isFinite(pctPadraoPercent) || pctPadraoPercent <= 0) return alert("Informe o % Padrão corretamente.");
+
+    // soma do fluxo digitada
+    const somaFluxo = fluxoSoma; // já está em 'pontos percentuais' (ex.: 2.25) se usuário digitou assim
+    const soma100 = Math.abs(somaFluxo - 1.0) < 1e-6;
+    const somaIgualPadrao = Math.abs(somaFluxo - pctPadraoPercent) < 1e-6;
+
+    if (!(soma100 || somaIgualPadrao)) {
+      return alert(`Soma do fluxo (M1..Mn) deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
+    }
+
+    // normalizar fluxo em frações que somam 1.00
+    let fluxo_percentuais_frac: number[] = [];
+    if (soma100) {
+      fluxo_percentuais_frac = ruleFluxoPct.map((x) => parseFloat((x || "0").replace(",", ".")) || 0);
+    } else {
+      fluxo_percentuais_frac = ruleFluxoPct.map((x) => {
+        const v = parseFloat((x || "0").replace(",", ".")) || 0;
+        return pctPadraoPercent > 0 ? v / pctPadraoPercent : 0;
+      });
+    }
+
+    // converter % padrão para fração
+    const percent_padrao_frac = pctPadraoPercent / 100;
+
     const { error } = await supabase
       .from("commission_rules")
       .upsert(
@@ -523,20 +562,26 @@ export default function ComissoesPage() {
     await fetchRulesForVendor(ruleVendorId);
     alert("Regra salva.");
   }
+
   async function deleteRule(vId: string, stId: string) {
     if (!confirm("Excluir esta regra?")) return;
     const { error } = await supabase.from("commission_rules").delete().eq("vendedor_id", vId).eq("sim_table_id", stId);
     if (error) return alert(error.message);
     await fetchRulesForVendor(vId);
   }
+
   function loadRuleToForm(r: CommissionRule & { segmento: string; nome_tabela: string }) {
     setRuleVendorId(r.vendedor_id);
     setRuleSimTableId(r.sim_table_id);
     setRulePercent(((r.percent_padrao || 0) * 100).toFixed(2).replace(".", ","));
     setRuleMeses(r.fluxo_meses);
-    setRuleFluxoPct(r.fluxo_percentuais.map((p) => p.toFixed(2).replace(".", ",")));
+    // trazer para a UI no formato “pontos percentuais” do padrão
+    const padraoPctPercent = (r.percent_padrao || 0) * 100;
+    const arr = r.fluxo_percentuais.map((p) => (p * padraoPctPercent).toFixed(2).replace(".", ","));
+    setRuleFluxoPct(arr);
     setRuleObs(r.obs || "");
   }
+
   /* ============== Garantir fluxo (regra ou 1×100%) ============== */
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
     const { data: existing } = await supabase
@@ -739,7 +784,6 @@ export default function ComissoesPage() {
       relevant.length > 0 &&
       relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
 
-    // >>> PATCH A: checar erro ao atualizar commissions, com fallback de UI <<<
     const { error: updErr } = await supabase
       .from("commissions")
       .update({
@@ -768,7 +812,6 @@ export default function ComissoesPage() {
       )
     );
 
-    // UX: se quitou, expande "Comissões pagas" e filtra para "Pago"
     if (isAllPaid) {
       setShowPaid(true);
       setStatus("pago");
@@ -778,12 +821,14 @@ export default function ComissoesPage() {
     fetchData();
   }
 
-  /* Gerar / Retornar / CSV / Recibo — resto do arquivo permanece igual */
+  /* Gerar / Retornar / CSV / Recibo — resto permanece */
   async function gerarComissaoDeVenda(venda: Venda) {
     try {
       setGenBusy(venda.id);
       const vendedorIdCanon = canonUserId(venda.vendedor_id);
       if (!vendedorIdCanon) { alert("Vendedor desta venda não está cadastrado em 'users' (vínculo por auth_user_id)."); return; }
+
+      // localizar sim_table por nome + segmento
       let simTableId: string | null = null;
       const vendaTabNorm = normalize(venda.tabela), vendaSegNorm = normalize(venda.segmento);
       const local =
@@ -791,10 +836,12 @@ export default function ComissoesPage() {
         simTables.find((s) => normalize(s.nome_tabela) === vendaTabNorm) || null;
       simTableId = local?.id || null;
       if (!simTableId && venda.tabela) {
-        let qb2 = supabase.from("sim_tables").select("id, segmento, nome_tabela, administradora").ilike("nome_tabela", `%${venda.tabela}%`).limit(1);
+        let qb2 = supabase.from("sim_tables").select("id, segmento, nome_tabela").ilike("nome_tabela", `%${venda.tabela}%`).limit(1);
         if (venda.segmento) qb2 = qb2.eq("segmento", venda.segmento);
         const { data: st2 } = await qb2; simTableId = st2?.[0]?.id ?? null;
       }
+
+      // pegar % padrão se houver regra
       let percent_aplicado: number | null = null;
       if (simTableId) {
         const { data: rule } = await supabase
@@ -805,15 +852,16 @@ export default function ComissoesPage() {
           .limit(1);
         percent_aplicado = rule?.[0]?.percent_padrao ?? null;
       }
+
       const base = venda.valor_venda ?? null;
       const valor_total = percent_aplicado && base ? Math.round(base * percent_aplicado * 100) / 100 : null;
+
       const insert = {
         venda_id: venda.id, vendedor_id: vendedorIdCanon, sim_table_id: simTableId,
         data_venda: venda.data_venda, segmento: venda.segmento, tabela: venda.tabela, administradora: venda.administradora,
         valor_venda: base, base_calculo: base, percent_aplicado, valor_total, status: "a_pagar" as const,
       };
 
-      // Inserir e obter a criada
       const { data: inserted, error } = await supabase
         .from("commissions")
         .insert(insert as any)
@@ -829,7 +877,6 @@ export default function ComissoesPage() {
         return;
       }
 
-      // Cria o fluxo automaticamente (regra ou 1×100%)
       const createdComm = inserted?.[0] as Commission | undefined;
       if (createdComm) await ensureFlowForCommission(createdComm);
 
@@ -952,30 +999,6 @@ export default function ComissoesPage() {
     doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
   }
 
-  /* ==== Baixar ZIP (recibo + comprovante) ==== */
-  async function downloadZipForFlow(flow: CommissionFlow, comm: Commission) {
-    try {
-      const files: Array<{ name: string; url: string }> = [];
-      const rec = await getSignedUrl(flow.recibo_vendedor_url);
-      const comp = await getSignedUrl(flow.comprovante_pagto_url);
-      if (rec) files.push({ name: `recibo${getExt(flow.recibo_vendedor_url || "")}`, url: rec });
-      if (comp) files.push({ name: `comprovante${getExt(flow.comprovante_pagto_url || "")}`, url: comp });
-      if (files.length === 0) { return alert("Nenhum arquivo encontrado para esta parcela."); }
-
-      // @ts-ignore
-      const jszipMod: any = await import(/* @vite-ignore */ "jszip").catch(() => null);
-      // @ts-ignore
-      const fileSaverMod: any = await import(/* @vite-ignore */ "file-saver").catch(() => null);
-
-      if (!jszipMod || !fileSaverMod) { files.forEach((f) => window.open(f.url, "_blank")); return; }
-      const JSZipCtor = jszipMod.default || jszipMod; const zip = new JSZipCtor();
-      for (const f of files) { const resp = await fetch(f.url); const blob = await resp.blob(); zip.file(f.name, blob); }
-      const content = await zip.generateAsync({ type: "blob" });
-      const saveAs = fileSaverMod.saveAs || fileSaverMod.default || fileSaverMod;
-      const nome = `pagamento_${comm.numero_proposta || comm.id}_M${flow.mes}.zip`; saveAs(content, nome);
-    } catch (e: any) { alert("Falha ao gerar pacote: " + (e?.message || e)); }
-  }
-
   /* Listas auxiliares */
   const rowsAPagar = useMemo(() => rows.filter((r) => r.status === "a_pagar"), [rows]);
   const pagosFlat = useMemo(() => {
@@ -983,6 +1006,21 @@ export default function ComissoesPage() {
     rows.forEach((r) => (r.flow || []).forEach((f) => { if ((f.valor_pago_vendedor ?? 0) > 0) list.push({ flow: f, comm: r }); }));
     return list.sort((a, b) => ((b.flow.data_pagamento_vendedor || "") > (a.flow.data_pagamento_vendedor || "") ? 1 : -1));
   }, [rows]);
+
+  // busca/paginação de pagos
+  const pagosFiltered = useMemo(() => {
+    const q = normalize(paidSearch);
+    if (!q) return pagosFlat;
+    return pagosFlat.filter(({ comm }) => {
+      const cliente = normalize(comm.cliente_nome || "");
+      const prop = normalize(comm.numero_proposta || "");
+      return cliente.includes(q) || prop.includes(q);
+    });
+  }, [pagosFlat, paidSearch]);
+
+  const totalPages = Math.max(1, Math.ceil(pagosFiltered.length / pageSize));
+  const pageStart = (Math.min(Math.max(paidPage, 1), totalPages) - 1) * pageSize;
+  const pagosPage = pagosFiltered.slice(pageStart, pageStart + pageSize);
 
   /* ========================= Render ========================= */
   return (
@@ -1060,12 +1098,12 @@ export default function ComissoesPage() {
               <Metric title="Recebido Líquido" value={BRL(range5y.pagoLiquido)} />
               <Metric title="Pendente Líquido" value={BRL(range5y.pendente)} />
             </div>
-            <RadialDual
-              paidPct={range5y.pct}
-              label="Recebido x A Receber (5 anos)"
-              paidHint={`Pago no período: ${BRL(range5y.pagoLiquido)} — ${range5y.pct.toFixed(2).replace(".", ",")}%`}
-              pendHint={`A pagar no período: ${BRL(range5y.pendente)} — ${(100 - range5y.pct).toFixed(2).replace(".", ",")}%`}
-              tagline="Quanto já entrou × o que ainda falta"
+            <Donut
+              paid={range5y.pagoLiquido}
+              pending={range5y.pendente}
+              label="5 anos"
+              hoverPaidText={`Pago no período: ${BRL(range5y.pagoLiquido)} — ${(range5y.pct || 0).toFixed(2).replace(".", ",")}%`}
+              hoverPendText={`A pagar no período: ${BRL(range5y.pendente)} — ${range5y.totalLiquida > 0 ? ((range5y.pendente / range5y.totalLiquida) * 100).toFixed(2).replace(".", ",") : "0,00"}%`}
             />
           </CardContent>
         </Card>
@@ -1077,11 +1115,12 @@ export default function ComissoesPage() {
               <Metric title="Recebido Líquido" value={BRL(rangeY.pagoLiquido)} />
               <Metric title="Pendente Líquido" value={BRL(rangeY.pendente)} />
             </div>
-            <RadialDual
-              paidPct={rangeY.pct}
-              label="Recebido x A Receber (ano)"
-              paidHint={`Pago no ano: ${BRL(rangeY.pagoLiquido)} — ${rangeY.pct.toFixed(2).replace(".", ",")}%`}
-              pendHint={`A pagar no ano: ${BRL(rangeY.pendente)} — ${(100 - rangeY.pct).toFixed(2).replace(".", ",")}%`}
+            <Donut
+              paid={rangeY.pagoLiquido}
+              pending={rangeY.pendente}
+              label="Ano"
+              hoverPaidText={`Pago no ano: ${BRL(rangeY.pagoLiquido)} — ${(rangeY.pct || 0).toFixed(2).replace(".", ",")}%`}
+              hoverPendText={`A pagar no ano: ${BRL(rangeY.pendente)} — ${rangeY.totalLiquida > 0 ? ((rangeY.pendente / rangeY.totalLiquida) * 100).toFixed(2).replace(".", ",") : "0,00"}%`}
             />
           </CardContent>
         </Card>
@@ -1093,11 +1132,12 @@ export default function ComissoesPage() {
               <Metric title="Recebido Líquido" value={BRL(rangeM.pagoLiquido)} />
               <Metric title="Pendente Líquido" value={BRL(rangeM.pendente)} />
             </div>
-            <RadialDual
-              paidPct={rangeM.pct}
-              label="Recebido x A Receber (mês)"
-              paidHint={`Pago no mês: ${BRL(rangeM.pagoLiquido)} — ${rangeM.pct.toFixed(2).replace(".", ",")}%`}
-              pendHint={`A pagar no mês: ${BRL(rangeM.pendente)} — ${(100 - rangeM.pct).toFixed(2).replace(".", ",")}%`}
+            <Donut
+              paid={rangeM.pagoLiquido}
+              pending={rangeM.pendente}
+              label="Mês"
+              hoverPaidText={`Pago no mês: ${BRL(rangeM.pagoLiquido)} — ${(rangeM.pct || 0).toFixed(2).replace(".", ",")}%`}
+              hoverPendText={`A pagar no mês: ${BRL(rangeM.pendente)} — ${rangeM.totalLiquida > 0 ? ((rangeM.pendente / rangeM.totalLiquida) * 100).toFixed(2).replace(".", ",") : "0,00"}%`}
             />
           </CardContent>
         </Card>
@@ -1117,71 +1157,79 @@ export default function ComissoesPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
             <span>Vendas sem comissão (todos os registros + filtros)</span>
-            <Button variant="outline" onClick={exportCSV}><FileText className="w-4 h-4 mr-1" /> Exportar CSV</Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={exportCSV}><FileText className="w-4 h-4 mr-1" /> Exportar CSV</Button>
+              <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>{showVendasSem ? "Ocultar" : "Expandir"}</Button>
+            </div>
           </CardTitle>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="min-w-[1100px] w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Administradora</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-left">Ação</th>
-              </tr>
-            </thead>
-            <tbody>
-              {vendasSemCom.length === 0 && <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>}
-              {vendasSemCom.map((v) => {
-                const clienteId = v.lead_id || v.cliente_lead_id || "";
-                return (
-                  <tr key={v.id} className="border-b">
-                    <td className="p-2">{formatISODateBR(v.data_venda)}</td>
-                    <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                    <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
-                    <td className="p-2">{v.numero_proposta || "—"}</td>
-                    <td className="p-2">{v.administradora || "—"}</td>
-                    <td className="p-2">{v.segmento || "—"}</td>
-                    <td className="p-2">{v.tabela || "—"}</td>
-                    <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
-                    <td className="p-2">
-                      <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id}>
-                        {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
-                        Gerar Comissão
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </CardContent>
+        {showVendasSem && (
+          <CardContent className="overflow-x-auto">
+            <table className="min-w-[1100px] w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Administradora</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-left">Ação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vendasSemCom.length === 0 && <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>}
+                {vendasSemCom.map((v) => {
+                  const clienteId = v.lead_id || v.cliente_lead_id || "";
+                  return (
+                    <tr key={v.id} className="border-b">
+                      <td className="p-2">{formatISODateBR(v.data_venda)}</td>
+                      <td className="p-2">{userLabel(v.vendedor_id)}</td>
+                      <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
+                      <td className="p-2">{v.numero_proposta || "—"}</td>
+                      <td className="p-2">{v.administradora || "—"}</td>
+                      <td className="p-2">{v.segmento || "—"}</td>
+                      <td className="p-2">{v.tabela || "—"}</td>
+                      <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
+                      <td className="p-2">
+                        <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id}>
+                          {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
+                          Gerar Comissão
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        )}
       </Card>
 
       {/* Detalhamento — some quando zera */}
-      {rowsAPagar.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center justify-between">
-              <span>Detalhamento de Comissões (a pagar)</span>
-              <div className="flex items-center gap-3">
-                <div>
-                  <Label>Vendedor</Label>
-                  <Select value={vendedorId} onValueChange={setVendedorId}>
-                    <SelectTrigger className="w-[220px]"><SelectValue placeholder="Todos" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      {users.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} /></div>
-                  <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" /></div>
-                </div>
-                <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center justify-between">
+            <span>Detalhamento de Comissões (a pagar)</span>
+            <div className="flex items-center gap-3">
+              <div>
+                <Label>Vendedor</Label>
+                <Select value={vendedorId} onValueChange={setVendedorId}>
+                  <SelectTrigger className="w-[220px]"><SelectValue placeholder="Todos" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            </CardTitle>
-          </CardHeader>
+              <div className="flex items-end gap-2">
+                <Button size="sm" variant="outline" onClick={() => setShowUnpaid((v) => !v)}>{showUnpaid ? "Ocultar" : "Expandir"}</Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} /></div>
+                <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" /></div>
+              </div>
+              <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        {showUnpaid && (
           <CardContent className="overflow-x-auto">
             <table className="min-w-[1200px] w-full text-sm">
               <thead>
@@ -1207,11 +1255,7 @@ export default function ComissoesPage() {
                     <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
                     <td className="p-2">
                       <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => openPaymentFor(r)}
-                        >
+                        <Button size="sm" variant="secondary" onClick={() => openPaymentFor(r)}>
                           <DollarSign className="w-4 h-4 mr-1" />
                           {hasRegisteredButUnpaid(r.flow) ? "Confirmar Pagamento" : "Registrar pagamento"}
                         </Button>
@@ -1223,15 +1267,23 @@ export default function ComissoesPage() {
               </tbody>
             </table>
           </CardContent>
-        </Card>
-      )}
+        )}
+      </Card>
 
-      {/* Comissões pagas (Accordion) */}
+      {/* Comissões pagas (Accordion + busca + paginação) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between">
             <span>Comissões pagas</span>
-            <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>{showPaid ? "Ocultar" : "Expandir"}</Button>
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Buscar por cliente ou nº proposta"
+                value={paidSearch}
+                onChange={(e) => { setPaidSearch(e.target.value); setPaidPage(1); }}
+                className="w-[280px]"
+              />
+              <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>{showPaid ? "Ocultar" : "Expandir"}</Button>
+            </div>
           </CardTitle>
         </CardHeader>
         {showPaid && (
@@ -1239,15 +1291,22 @@ export default function ComissoesPage() {
             <table className="min-w-[1100px] w-full text-sm">
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Data Pagto</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Parcela</th><th className="p-2 text-right">Valor Pago</th><th className="p-2 text-left">Arquivos</th>
+                  <th className="p-2 text-left">Data Pagto</th>
+                  <th className="p-2 text-left">Vendedor</th>
+                  <th className="p-2 text-left">Cliente</th>
+                  <th className="p-2 text-left">Nº Proposta</th>
+                  <th className="p-2 text-left">Parcela</th>
+                  <th className="p-2 text-right">Valor Pago (Bruto)</th>
+                  <th className="p-2 text-left">Arquivos</th>
                 </tr>
               </thead>
               <tbody>
-                {pagosFlat.length === 0 && <tr><td colSpan={6} className="p-4 text-gray-500">Nenhum pagamento encontrado.</td></tr>}
-                {pagosFlat.map(({ flow, comm }) => (
+                {pagosPage.length === 0 && <tr><td colSpan={7} className="p-4 text-gray-500">Nenhum pagamento encontrado.</td></tr>}
+                {pagosPage.map(({ flow, comm }) => (
                   <tr key={flow.id} className="border-b">
                     <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
                     <td className="p-2">{userLabel(comm.vendedor_id)}</td>
+                    <td className="p-2">{comm.cliente_nome || "—"}</td>
                     <td className="p-2">{comm.numero_proposta || "—"}</td>
                     <td className="p-2">M{flow.mes}</td>
                     <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
@@ -1261,15 +1320,23 @@ export default function ComissoesPage() {
                 ))}
               </tbody>
             </table>
+            <div className="flex items-center justify-end gap-3 pt-3">
+              <div className="text-sm text-gray-600">
+                Mostrando {pagosPage.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageSize, pagosFiltered.length)} de {pagosFiltered.length}
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.max(1, p - 1))} disabled={paidPage <= 1}>Anterior</Button>
+              <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.min(totalPages, p + 1))} disabled={paidPage >= totalPages}>Próxima</Button>
+            </div>
           </CardContent>
         )}
       </Card>
 
-      {/* Regras (overlay central) */}
+      {/* Regras (overlay) */}
       <Dialog open={openRules} onOpenChange={setOpenRules}>
-        <DialogContent className="max-w-6xl p-6"> {/* overlay mais espaçado */}
+        <DialogContent className="max-w-6xl">
           <DialogHeader><DialogTitle>Regras de Comissão</DialogTitle></DialogHeader>
 
+          {/* Cabeçalho do formulário */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
             <div>
               <Label>Vendedor</Label>
@@ -1284,7 +1351,7 @@ export default function ComissoesPage() {
               <Label>Tabela (SimTables)</Label>
               <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-[300px]">
                   {simTables.map((t) => <SelectItem key={t.id} value={t.id}>{t.segmento} — {t.nome_tabela}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -1301,22 +1368,28 @@ export default function ComissoesPage() {
 
           <hr className="my-4" />
 
-          <div>
-            <Label>Fluxo do pagamento (M1..Mn)</Label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-3 border rounded-xl max-h-[240px] overflow-y-auto bg-white">
+          {/* Fluxo */}
+          <div className="space-y-2">
+            <Label>Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total **ou** a soma igual ao % Padrão</Label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-3 border rounded-md bg-white">
               {Array.from({ length: ruleMeses }).map((_, i) => (
-                <Input key={i} value={ruleFluxoPct[i] || "0,00"} onChange={(e) => { const arr = [...ruleFluxoPct]; arr[i] = e.target.value; setRuleFluxoPct(arr); }} placeholder="0,33" />
+                <Input
+                  key={i}
+                  value={ruleFluxoPct[i] || "0,00"}
+                  onChange={(e) => { const arr = [...ruleFluxoPct]; arr[i] = e.target.value; setRuleFluxoPct(arr); }}
+                  placeholder="0,33"
+                />
               ))}
             </div>
-            <div className="text-xs text-gray-600 mt-2">
-              Soma do fluxo: <b>{fluxoSomaPct.toFixed(2)} </b>
-              <span className="opacity-80">(aceitas: <b>1,00</b> ou <b>% padrão {parseFloat((rulePercent || "0").replace(",", ".")).toFixed(2).replace(".", ",")}</b>)</span>
+            <div className="text-xs text-gray-600 mt-1">
+              Soma do fluxo: <b>{fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão {rulePercent || "0,00"})</b>
             </div>
           </div>
 
           <hr className="my-4" />
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-end">
+          {/* Observações + Ações */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end">
             <div className="lg:col-span-2">
               <Label>Observações</Label>
               <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
@@ -1329,7 +1402,8 @@ export default function ComissoesPage() {
 
           <hr className="my-4" />
 
-          <div className="border rounded-xl max-h-[45vh] overflow-y-auto">
+          {/* Lista de regras */}
+          <div className="border rounded-md max-h-[45vh] overflow-y-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 sticky top-0">
                 <tr>
@@ -1346,7 +1420,7 @@ export default function ComissoesPage() {
                 {ruleRows.map((r) => (
                   <tr key={`${r.vendedor_id}-${r.sim_table_id}`} className="border-t">
                     <td className="p-2">{r.segmento || "—"}</td>
-                    <td className="p-2">{r.administradora || "—"}</td> {/* agora mostra administradora */}
+                    <td className="p-2">{r.administradora || "—"}</td>
                     <td className="p-2">{r.nome_tabela}</td>
                     <td className="p-2 text-right">{pct100(r.percent_padrao)}</td>
                     <td className="p-2">{r.fluxo_meses} Pgtos</td>
@@ -1362,20 +1436,18 @@ export default function ComissoesPage() {
             </table>
           </div>
 
-          <DialogFooter className="mt-4">
-            <Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button>
-          </DialogFooter>
+          <DialogFooter><Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Pagamento (overlay largo) */}
       <Dialog open={openPay} onOpenChange={setOpenPay}>
-        <DialogContent className="w-[98vw] max-w-[1400px] p-6">
+        <DialogContent className="w-[98vw] max-w-[1400px]">
           <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
           <Tabs defaultValue={payDefaultTab}>
             <TabsList className="mb-3"><TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger><TabsTrigger value="arquivos">Arquivos</TabsTrigger></TabsList>
             <TabsContent value="selecionar" className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div><Label>Data do pagamento</Label><Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /></div>
                 <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={payValue} onChange={(e) => setPayValue(e.target.value)} /></div>
                 <div className="flex items-end">
@@ -1433,6 +1505,7 @@ export default function ComissoesPage() {
 function Metric({ title, value }: { title: string; value: string }) {
   return (<div className="p-3 rounded-xl border bg-white"><div className="text-xs text-gray-500">{title}</div><div className="text-xl font-bold">{value}</div></div>);
 }
+
 function UploadArea({
   onConfirm,
 }: {
@@ -1448,8 +1521,8 @@ function UploadArea({
   const [fileRecibo, setFileRecibo] = useState<File | null>(null);
   const [fileComp, setFileComp] = useState<File | null>(null);
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} /></div>
         <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
         <div className="flex items-end">
@@ -1460,7 +1533,7 @@ function UploadArea({
           })}><Save className="w-4 h-4 mr-1" /> Confirmar pagamento</Button>
         </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div><Label>Recibo assinado (PDF)</Label><Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} /></div>
         <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
       </div>

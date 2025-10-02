@@ -1442,8 +1442,6 @@ const seriesMesCorrente = useMemo(() => {
     }));
 }, [rows, now]);
 
-/* ========================= Render ========================= */
-return (
   <div className="p-4 space-y-4">
     {/* Filtros topo */}
     <Card>

@@ -1757,8 +1757,7 @@ const seriesMesCorrente = useMemo(() => {
     </Dialog>
 
     {/* Dialog Estorno (Etapa 2) — será funcional após bloco de handlers/estado */}
-    {/* (adição dos estados/handlers virá em bloco próprio; não incluído aqui para não quebrar a compilação) */}
-}
+    /* (adição dos estados/handlers virá em bloco próprio; não incluído aqui para não quebrar a compilação) */
 
 /* ========================= Subcomponentes ========================= */
 function Metric({ title, value }: { title: string; value: string }) {

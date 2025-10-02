@@ -476,6 +476,8 @@ function totalsInRangePaidAndProjected(s: Date, e: Date) {
   };
 }
 
+/* ========================= Página ========================= */
+export default function ComissoesPage() {
 /* Filtros (sem período) */
 const [vendedorId, setVendedorId] = useState<string>("all");
 const [status, setStatus] = useState<"all" | "a_pagar" | "pago" | "estorno">("all");

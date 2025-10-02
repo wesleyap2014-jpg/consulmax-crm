@@ -1755,8 +1755,9 @@ const seriesMesCorrente = useMemo(() => {
         <DialogFooter><Button onClick={() => setOpenPay(false)} variant="secondary">Fechar</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+    );
+    }
 
-    {/* Dialog Estorno (Etapa 2) — será funcional após bloco de handlers/estado */}
     /* (adição dos estados/handlers virá em bloco próprio; não incluído aqui para não quebrar a compilação) */
 
 /* ========================= Subcomponentes ========================= */

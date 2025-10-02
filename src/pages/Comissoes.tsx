@@ -254,7 +254,9 @@ export default function ComissoesPage() {
   const usersById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
   const usersByAuth = useMemo(() => {
     const m: Record<string, User> = {};
-    users.forEach((u) => { if (u.auth_user_id) m[u.auth_user_id] = u; });
+    users.forEach((u) => {
+      if (u.auth_user_id) m[u.auth_user_id] = u;
+    });
     return m;
   }, [users]);
   const secureById = useMemo(() => Object.fromEntries(usersSecure.map((u) => [u.id, u])), [usersSecure]);
@@ -263,7 +265,8 @@ export default function ComissoesPage() {
     const u = usersById[id] || usersByAuth[id];
     return u?.nome?.trim() || u?.email?.trim() || id;
   };
-  const canonUserId = (id?: string | null) => (id ? usersById[id]?.id || usersByAuth[id]?.id || null : null);
+  const canonUserId = (id?: string | null) =>
+    (id ? usersById[id]?.id || usersByAuth[id]?.id || null : null);
 
   /* Dados */
   const [loading, setLoading] = useState(false);
@@ -279,7 +282,9 @@ export default function ComissoesPage() {
   const [ruleMeses, setRuleMeses] = useState<number>(1);
   const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]);
   const [ruleObs, setRuleObs] = useState<string>("");
-  const [ruleRows, setRuleRows] = useState<(CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null })[]>([]);
+  const [ruleRows, setRuleRows] = useState<
+    (CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null })[]
+  >([]);
 
   /* Pagamento */
   const [openPay, setOpenPay] = useState(false);
@@ -294,6 +299,11 @@ export default function ComissoesPage() {
   const [reciboDate, setReciboDate] = useState<string>(() => toDateInput(new Date()));
   const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00");
   const [reciboVendor, setReciboVendor] = useState<string>("all");
+
+  /* Estorno */
+  const [openEstorno, setOpenEstorno] = useState(false);
+  const [proposta, setProposta] = useState("");
+  const [valorEstorno, setValorEstorno] = useState("");
 
   /* Expand/Collapse (3 blocos) */
   const [showPaid, setShowPaid] = useState(false);
@@ -430,42 +440,135 @@ export default function ComissoesPage() {
   }
   useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [vendedorId, status, segmento, tabela]);
 
-  /* Totais/KPIs */
-  const now = new Date();
-  const yStart = new Date(now.getFullYear(), 0, 1);
-  const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), 1);
-  const isBetween = (iso?: string | null, s?: Date, e?: Date) =>
-    iso ? new Date(iso + "T00:00:00").getTime() >= (s?.getTime() || 0) &&
-      new Date(iso + "T00:00:00").getTime() <= (e?.getTime() || now.getTime()) : false;
-  const impostoFrac = useMemo(() => (parseFloat(reciboImpostoPct.replace(",", ".")) || 0) / 100, [reciboImpostoPct]);
-  function totalsInRange2(s: Date, e: Date) {
-    const rowsPeriodo = rows.filter((r) => isBetween(r.data_venda || undefined, s, e));
-    const totalBruta = sum(rowsPeriodo.map((r) => r.valor_total));
-    const totalLiquida = totalBruta * (1 - impostoFrac);
-    const pagoLiquido = sum(
-      rowsPeriodo.flatMap((r) =>
-        (r.flow || [])
-          .filter((f) => isBetween(f.data_pagamento_vendedor || undefined, s, e))
-          .map((f) => (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac)),
-      ),
-    );
-    const pendente = clamp0(totalLiquida - pagoLiquido);
-    const pct = totalLiquida > 0 ? (pagoLiquido / totalLiquida) * 100 : 0;
-    return { totalBruta, totalLiquida, pagoLiquido, pendente, pct };
-  }
-  const kpi = useMemo(() => {
-    const comBruta = sum(rows.map((r) => r.valor_total));
-    const comLiquida = comBruta * (1 - impostoFrac);
-    const pagoLiquido = sum(rows.flatMap((r) => (r.flow || []).map((f) => (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac))));
-    const comPendente = clamp0(comLiquida - pagoLiquido);
-    const vendasTotal = sum(rows.map((r) => r.valor_venda ?? r.base_calculo));
-    return { vendasTotal, comBruta, comLiquida, comPaga: pagoLiquido, comPendente };
-  }, [rows, impostoFrac]);
-  const range5y = totalsInRange2(fiveYearsAgo, now);
-  const rangeY = totalsInRange2(yStart, now);
-  const rangeM = totalsInRange2(mStart, now);
-  const vendedorAtual = useMemo(() => userLabel(vendedorId === "all" ? null : vendedorId), [usersById, usersByAuth, vendedorId]);
+ /* Totais/KPIs */
+const now = new Date();
+const yStart = new Date(now.getFullYear(), 0, 1);
+const yEnd = new Date(now.getFullYear(), 11, 31);
+const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
+const mEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), 1);
+
+const isBetween = (iso?: string | null, s?: Date, e?: Date) =>
+  iso
+    ? new Date(iso + "T00:00:00").getTime() >= (s?.getTime() || 0) &&
+      new Date(iso + "T00:00:00").getTime() <= (e?.getTime() || now.getTime())
+    : false;
+
+const addDays = (d: Date, days: number) => {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+};
+
+const impostoFrac = useMemo(() => (parseFloat(reciboImpostoPct.replace(",", ".")) || 0) / 100, [reciboImpostoPct]);
+
+/** Pago líquido por DATA DE PAGAMENTO DO VENDEDOR, dentro do intervalo */
+function pagoLiquidoPorPagamento(s: Date, e: Date) {
+  const valor = sum(
+    rows.flatMap((r) =>
+      (r.flow || [])
+        .filter((f) => isBetween(f.data_pagamento_vendedor || undefined, s, e))
+        .map((f) => (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac)),
+    ),
+  );
+  return Math.max(0, valor);
+}
+
+/** Projeta a partir do M2 (se existir data), em passos de 30 dias. Considera só parcelas mes>=2 ainda NÃO pagas. */
+function projetadoLiquidoNoIntervalo(s: Date, e: Date) {
+  let total = 0;
+
+  rows.forEach((r) => {
+    const flow = (r.flow || []).slice().sort((a, b) => a.mes - b.mes);
+
+    // âncora: data do M2 (preferência: data_recebimento_admin; fallback: data_pagamento_vendedor do M2)
+    const m2 = flow.find((f) => f.mes === 2);
+    const m2DateISO =
+      (m2?.data_recebimento_admin && m2.data_recebimento_admin) ||
+      (m2?.data_pagamento_vendedor && m2.data_pagamento_vendedor) ||
+      null;
+
+    if (!m2DateISO) return; // sem M2, não projetamos
+
+    const m2Date = new Date(m2DateISO + "T00:00:00");
+
+    flow.forEach((f) => {
+      const mes = Number(f.mes) || 0;
+      const jaPago = (Number(f.valor_pago_vendedor) || 0) > 0;
+      const temPercentual = (Number(f.percentual) || 0) > 0;
+
+      if (!temPercentual || jaPago) return;
+      if (mes < 2) return; // projeção só a partir do M2
+
+      // data projetada = M2 + 30*(mes-2) dias
+      const projDate = addDays(m2Date, 30 * (mes - 2));
+
+      if (projDate >= s && projDate <= e) {
+        // valor previsto líquido
+        const valorBruto = (typeof f.valor_previsto === "number")
+          ? f.valor_previsto
+          : (r.valor_total ?? 0) * (f.percentual ?? 0);
+        const liq = valorBruto * (1 - impostoFrac);
+        total += liq;
+      }
+    });
+  });
+
+  return Math.max(0, total);
+}
+
+/** KPIs gerais (mantido) */
+const kpi = useMemo(() => {
+  const comBruta = sum(rows.map((r) => r.valor_total));
+  const comLiquida = comBruta * (1 - impostoFrac);
+  const pagoLiquidoAll = sum(
+    rows.flatMap((r) => (r.flow || []).map((f) => (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac))),
+  );
+  const comPendente = clamp0(comLiquida - pagoLiquidoAll);
+  const vendasTotal = sum(rows.map((r) => r.valor_venda ?? r.base_calculo));
+  return { vendasTotal, comBruta, comLiquida, comPaga: pagoLiquidoAll, comPendente };
+}, [rows, impostoFrac]);
+
+/* === Relógios, conforme pedido ===
+   - Nos últimos 5 anos: SOMENTE PAGO (tirar "a pagar")
+   - No ano: Pago + A Pagar (PROJETADO via M2)
+   - No mês: Pago + A Pagar (PROJETADO via M2)
+*/
+const cincoAnosPago = pagoLiquidoPorPagamento(fiveYearsAgo, now);
+const range5y = {
+  totalBruta: 0,               // não exibiremos "total" aqui; mantemos 0 para não confundir
+  totalLiquida: cincoAnosPago, // usamos a mesma chave para manter o Donut feliz se necessário
+  pagoLiquido: cincoAnosPago,
+  pendente: 0,
+  pct: 100,
+};
+
+const pagoAno = pagoLiquidoPorPagamento(yStart, yEnd);
+const projAno = projetadoLiquidoNoIntervalo(yStart, yEnd);
+const totalAno = pagoAno + projAno;
+const rangeY = {
+  totalBruta: 0,
+  totalLiquida: totalAno,
+  pagoLiquido: pagoAno,
+  pendente: clamp0(projAno),
+  pct: totalAno > 0 ? (pagoAno / totalAno) * 100 : 0,
+};
+
+const pagoMes = pagoLiquidoPorPagamento(mStart, mEnd);
+const projMes = projetadoLiquidoNoIntervalo(mStart, mEnd);
+const totalMes = pagoMes + projMes;
+const rangeM = {
+  totalBruta: 0,
+  totalLiquida: totalMes,
+  pagoLiquido: pagoMes,
+  pendente: clamp0(projMes),
+  pct: totalMes > 0 ? (pagoMes / totalMes) * 100 : 0,
+};
+
+const vendedorAtual = useMemo(
+  () => userLabel(vendedorId === "all" ? null : vendedorId),
+  [usersById, usersByAuth, vendedorId],
+);
 
   /* Regras — utilitários */
   function onChangeMeses(n: number) {
@@ -1142,6 +1245,7 @@ export default function ComissoesPage() {
           </CardContent>
         </Card>
       </div>
+<ChartsSection rows={rows} />
 
       {/* Resumo */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
@@ -1158,7 +1262,6 @@ export default function ComissoesPage() {
           <CardTitle className="flex items-center justify-between">
             <span>Vendas sem comissão (todos os registros + filtros)</span>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={exportCSV}><FileText className="w-4 h-4 mr-1" /> Exportar CSV</Button>
               <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>{showVendasSem ? "Ocultar" : "Expandir"}</Button>
             </div>
           </CardTitle>
@@ -1203,31 +1306,55 @@ export default function ComissoesPage() {
       {/* Detalhamento — some quando zera */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="flex items-center justify-between">
-            <span>Detalhamento de Comissões (a pagar)</span>
-            <div className="flex items-center gap-3">
-              <div>
-                <Label>Vendedor</Label>
-                <Select value={vendedorId} onValueChange={setVendedorId}>
-                  <SelectTrigger className="w-[220px]"><SelectValue placeholder="Todos" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    {users.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-end gap-2">
-                <Button size="sm" variant="outline" onClick={() => setShowUnpaid((v) => !v)}>{showUnpaid ? "Ocultar" : "Expandir"}</Button>
-              </div>
-              <div className="flex items-center gap-2">
-                <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} /></div>
-                <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" /></div>
-              </div>
-              <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
-            </div>
-          </CardTitle>
+        <CardTitle className="flex items-center justify-between">
+  <span>Detalhamento de Comissões (a pagar)</span>
+  <div className="flex items-center gap-3">
+    
+    {/* Filtro do Vendedor */}
+    <div>
+      <Label>Vendedor</Label>
+      <Select value={vendedorId} onValueChange={setVendedorId}>
+        <SelectTrigger className="w-[220px]"><SelectValue placeholder="Todos" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">Todos</SelectItem>
+          {users.map((u) => (
+            <SelectItem key={u.id} value={u.id}>
+              {u.nome?.trim() || u.email?.trim() || u.id}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+
+    {/* Data do Recibo */}
+    <div>
+      <Label>Data do Recibo</Label>
+      <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
+    </div>
+
+    {/* Imposto (%) */}
+    <div>
+      <Label>Imposto (%)</Label>
+      <Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" />
+    </div>
+
+    {/* Chip Ocultar/Expandir */}
+    <Button size="sm" variant="outline" onClick={() => setShowUnpaid((v) => !v)}>
+      {showUnpaid ? "Ocultar" : "Expandir"}
+    </Button>
+
+    {/* Chip Recibo */}
+    <Button onClick={downloadReceiptPDFPorData}>
+      <FileText className="w-4 h-4 mr-1" /> Recibo
+    </Button>
+
+    {/* Chip Estorno */}
+    <Button variant="destructive" onClick={() => setOpenEstorno(true)}>
+      <RotateCcw className="w-4 h-4 mr-1" /> Estorno
+    </Button>
+  </div>
+</CardTitle>
+          
         </CardHeader>
         {showUnpaid && (
           <CardContent className="overflow-x-auto">
@@ -1542,4 +1669,247 @@ function UploadArea({
       </div>
     </div>
   );
+}
+/* ===========================================================
+   PATCH DE MELHORIAS — cole no final de Comissoes.tsx
+   =========================================================== */
+
+/* ===== Função utilitária: quintas do mês ===== */
+function getThursdaysOfMonth(year: number, month: number): Date[] {
+  const dates: Date[] = [];
+  const d = new Date(year, month, 1);
+  while (d.getMonth() === month) {
+    if (d.getDay() === 4) dates.push(new Date(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
+/* ===== Componente: Gráficos de Linhas ===== */
+import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
+
+function ChartsSection({ rows }: { rows: any[] }) {
+  const [chartData5y, setChartData5y] = useState<any[]>([]);
+  const [chartDataPrevYear, setChartDataPrevYear] = useState<any[]>([]);
+  const [chartDataYear, setChartDataYear] = useState<any[]>([]);
+  const [chartDataMonth, setChartDataMonth] = useState<any[]>([]);
+
+ useEffect(() => {
+  if (!rows) return;
+
+  const now = new Date();
+  const anoAtual = now.getFullYear();
+  const anoAnterior = anoAtual - 1;
+  const mesAtual = now.getMonth();
+  const yStart = new Date(anoAtual, 0, 1);
+  const yEnd = new Date(anoAtual, 11, 31);
+  const mStart = new Date(anoAtual, mesAtual, 1);
+  const mEnd = new Date(anoAtual, mesAtual + 1, 0);
+
+  const impostoFracLocal = (parseFloat((reciboImpostoPct as any)?.replace?.(",", ".") || "0") || 0) / 100;
+
+  const addDays = (d: Date, days: number) => {
+    const x = new Date(d);
+    x.setDate(x.getDate() + days);
+    return x;
+  };
+
+  // ======== 5 anos (Recebido por ano) ========
+  const data5: any[] = [];
+  for (let y = anoAtual - 5; y <= anoAtual; y++) {
+    const recebido = sum(
+      rows.flatMap((r: any) =>
+        (r.flow || [])
+          .filter((f: any) => f.data_pagamento_vendedor?.startsWith(String(y)))
+          .map((f: any) => f.valor_pago_vendedor || 0),
+      ),
+    );
+    data5.push({ year: y, Recebido: recebido });
+  }
+  setChartData5y(data5);
+
+  // ======== Ano anterior (Recebido mensal) ========
+  const dataPrev: any[] = [];
+  for (let m = 0; m < 12; m++) {
+    const recebido = sum(
+      rows.flatMap((r: any) =>
+        (r.flow || [])
+          .filter((f: any) => {
+            const d = f.data_pagamento_vendedor ? new Date(f.data_pagamento_vendedor) : null;
+            return d && d.getFullYear() === anoAnterior && d.getMonth() === m;
+          })
+          .map((f: any) => f.valor_pago_vendedor || 0),
+      ),
+    );
+    dataPrev.push({
+      mes: new Date(anoAnterior, m, 1).toLocaleString("pt-BR", { month: "short" }),
+      Recebido: recebido,
+    });
+  }
+  setChartDataPrevYear(dataPrev);
+
+  // ======== Ano atual (Recebido + Projetado mensal) ========
+  const dataAno: any[] = [];
+  for (let m = 0; m < 12; m++) {
+    const recebido = sum(
+      rows.flatMap((r: any) =>
+        (r.flow || [])
+          .filter((f: any) => {
+            const d = f.data_pagamento_vendedor ? new Date(f.data_pagamento_vendedor) : null;
+            return d && d.getFullYear() === anoAtual && d.getMonth() === m;
+          })
+          .map((f: any) => (f.valor_pago_vendedor || 0) * (1 - impostoFracLocal)),
+      ),
+    );
+
+    // PROJEÇÃO mensal: somatório das parcelas (mes>=2, não pagas) cuja data projetada cai neste mês (ancorada em M2 + 30*(mes-2))
+    let projetadoMes = 0;
+    rows.forEach((r: any) => {
+      const flow = (r.flow || []).slice().sort((a: any, b: any) => a.mes - b.mes);
+      const m2 = flow.find((f: any) => f.mes === 2);
+      const m2ISO =
+        (m2?.data_recebimento_admin && m2.data_recebimento_admin) ||
+        (m2?.data_pagamento_vendedor && m2.data_pagamento_vendedor) ||
+        null;
+      if (!m2ISO) return;
+      const m2Date = new Date(m2ISO + "T00:00:00");
+
+      flow.forEach((f: any) => {
+        if ((Number(f.percentual) || 0) <= 0) return;
+        if ((Number(f.valor_pago_vendedor) || 0) > 0) return;
+        if (f.mes < 2) return;
+
+        const projDate = addDays(m2Date, 30 * (f.mes - 2));
+        if (projDate.getFullYear() === anoAtual && projDate.getMonth() === m) {
+          const bruto =
+            typeof f.valor_previsto === "number"
+              ? f.valor_previsto
+              : (r.valor_total ?? 0) * (f.percentual ?? 0);
+          projetadoMes += bruto * (1 - impostoFracLocal);
+        }
+      });
+    });
+
+    dataAno.push({
+      mes: new Date(anoAtual, m, 1).toLocaleString("pt-BR", { month: "short" }),
+      Recebido: Math.max(0, recebido),
+      Projetado: Math.max(0, projetadoMes),
+    });
+  }
+  setChartDataYear(dataAno);
+
+  // ======== Mês atual (Recebido + Projetado por SEMANA, buckets pelas quintas) ========
+  const quintas = getThursdaysOfMonth(anoAtual, mesAtual);
+  const buckets: { start: Date; end: Date; label: string }[] = [];
+  quintas.forEach((q, i) => {
+    const start = new Date(q);
+    start.setDate(q.getDate() - 6); // sexta anterior
+    buckets.push({ start, end: q, label: `Sem ${i + 1}` });
+  });
+
+  const dataMes: any[] = buckets.map((b) => {
+    const recebido = sum(
+      rows.flatMap((r: any) =>
+        (r.flow || [])
+          .filter((f: any) => {
+            const d = f.data_pagamento_vendedor ? new Date(f.data_pagamento_vendedor) : null;
+            return d && d >= b.start && d <= b.end;
+          })
+          .map((f: any) => (f.valor_pago_vendedor || 0) * (1 - impostoFracLocal)),
+      ),
+    );
+
+    // projeção semanal: soma das parcelas projetadas cuja data projetada cai no intervalo [start..end]
+    let projetado = 0;
+    rows.forEach((r: any) => {
+      const flow = (r.flow || []).slice().sort((a: any, b: any) => a.mes - b.mes);
+      const m2 = flow.find((f: any) => f.mes === 2);
+      const m2ISO =
+        (m2?.data_recebimento_admin && m2.data_recebimento_admin) ||
+        (m2?.data_pagamento_vendedor && m2.data_pagamento_vendedor) ||
+        null;
+      if (!m2ISO) return;
+      const m2Date = new Date(m2ISO + "T00:00:00");
+
+      flow.forEach((f: any) => {
+        if ((Number(f.percentual) || 0) <= 0) return;
+        if ((Number(f.valor_pago_vendedor) || 0) > 0) return;
+        if (f.mes < 2) return;
+
+        const projDate = addDays(m2Date, 30 * (f.mes - 2));
+        if (projDate >= b.start && projDate <= b.end) {
+          const bruto =
+            typeof f.valor_previsto === "number"
+              ? f.valor_previsto
+              : (r.valor_total ?? 0) * (f.percentual ?? 0);
+          projetado += bruto * (1 - impostoFracLocal);
+        }
+      });
+    });
+
+    return {
+      semana: b.label,
+      Recebido: Math.max(0, recebido),
+      Projetado: Math.max(0, projetado),
+      // para tooltip você pode também expor os limites:
+      start: b.start,
+      end: b.end,
+    };
+  });
+
+  setChartDataMonth(dataMes);
+}, [rows]);
+
+/* ===== Overlay de Estorno ===== */
+function EstornoOverlay({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [proposta, setProposta] = useState("");
+  const [valorEstorno, setValorEstorno] = useState("");
+
+  // TODO: buscar dados da proposta no Supabase aqui
+
+  return (
+   <Dialog open={openEstorno} onOpenChange={setOpenEstorno}>
+  <DialogContent className="max-w-2xl">
+    <DialogHeader>
+      <DialogTitle>Registrar Estorno</DialogTitle>
+    </DialogHeader>
+    <div className="space-y-3">
+      <div>
+        <Label>Número da Proposta</Label>
+        <Input
+          value={proposta}
+          onChange={(e) => setProposta(e.target.value)}
+          placeholder="Digite o nº da proposta"
+        />
+      </div>
+      <div>
+        <Label>Valor do Estorno (Bruto)</Label>
+        <Input
+          value={valorEstorno}
+          onChange={(e) => setValorEstorno(e.target.value)}
+          placeholder="0,00"
+        />
+      </div>
+      {/* Aqui você pode exibir tabela com Proposta, Total Pago, Imposto, Pago Líquido etc */}
+    </div>
+    <DialogFooter>
+      <Button
+        onClick={() => {
+          // TODO: salvar no Supabase e atualizar KPIs
+        }}
+      >
+        Salvar Estorno
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
+  );
+}
+
+/* ===== Controle de Permissões ===== */
+function canEdit(role: string) {
+  return role === "admin";
+}
+function canView(role: string) {
+  return role === "admin" || role === "vendedor";
 }

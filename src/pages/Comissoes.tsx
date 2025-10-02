@@ -962,9 +962,7 @@ export default function ComissoesPage() {
   </DialogContent>
 </Dialog>
 {/* ======== /Regras ======== */}
-</div> {/* <- fecha o container principal da página */}
-
-  /* ================== Garantir Fluxo ================== */
+{/* ================== Garantir Fluxo ================== */}
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
     const { data: existing } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
     if (existing && existing.length > 0) return existing as CommissionFlow[];

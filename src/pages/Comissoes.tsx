@@ -2076,9 +2076,3 @@ const can = {
   showRowVenda: (v: Venda) => userRole === "admin" || isOwnerByVenda(v),
   showRowCommission: (c: Commission) => userRole === "admin" || isOwnerByCommission(c),
 };
-function Comissoes() {
-  return <div>...</div>
-}
-
-export default Comissoes;
-

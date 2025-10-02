@@ -828,20 +828,3 @@ export default function ComissoesPage() {
     </div>
   );
 }
-
-/******************************************************
- * NOTAS DE INTEGRAÇÃO (BACKEND/SUPABASE)
- * - Funções RPC esperadas:
- *   1) crm_listar_comissoes_a_pagar(p_vendedor_id UUID|null)
- *      -> retorna linhas { id, proposta, cliente_nome, vendedor_id, created_at, parcelas: [ { id, venda_id, numero, valor_bruto, vencimento, paga_em, recibo_id } ] }
- *   2) crm_listar_comissoes_pagas(p_vendedor_id UUID|null)
- *      -> similar ao acima, só que filtrando parcelas com paga_em IS NOT NULL
- *   3) crm_buscar_venda_por_proposta(p_proposta TEXT)
- *      -> retorna uma venda única com as parcelas
- * - Tabelas usadas diretamente:
- *   - parcelas_comissao: upsert({ id, paga_em, recibo_id, imposto_pct }) para registrar pagamento
- *   - recibos: insert({ vendedor_id, data_recibo, imposto_pct }) quando "Gerar Recibo" estiver ativo
- *   - estornos: insert({ venda_id, valor_bruto, valor_liquido }) ao confirmar estorno
- *
- * Ajuste os nomes se no seu schema forem diferentes.
- ******************************************************/

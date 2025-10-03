@@ -482,10 +482,8 @@ function LineChart({
 /** Último dia do mês (local) */
 const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
-/** Soma simples */
-const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
-
-/** Data esperada da parcela M(n) segundo as regras:
+/**
+ * Data esperada da parcela M(n) segundo as regras:
  * - M1 e M2: usam a data registrada em commission_flow.data_pagamento_vendedor (se pago) OU a data registrada “de agendamento” (se existir) — no nosso caso, consideramos:
  *     • se o flow tem data_pagamento_vendedor -> é pago (sai de “Previsto”)
  *     • se NÃO tem pagamento mas a parcela tem “data” registrada (no seu modelo, você está usando a data de pagamento para registrar datas; então para previsto usamos a âncora de M2 quando existir)
@@ -568,7 +566,8 @@ function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
   return { labels: years.map(String), previstoBruto: previsto, pagoBruto: pagos };
 }
 
-/** Série mensal de um ano específico:
+/**
+ * Série mensal de um ano específico:
  * - Ano anterior: mostrar apenas pagos (previsto = 0)
  * - Ano atual: pagos + previsto (M1/M2 com data registrada + M3+ projetados a partir da M2)
  */
@@ -612,7 +611,8 @@ function projectMonthlyFlows(
   return { labels, previstoBruto: previsto, pagoBruto: pagos };
 }
 
-/** Série semanal do mês atual (sexta→quinta):
+/**
+ * Série semanal do mês atual (sexta→quinta):
  * - Mostrar pagos + previsto (regras de cima), apenas para o mês/ano atuais
  */
 function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries & { labels: string[] } {

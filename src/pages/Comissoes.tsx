@@ -2274,8 +2274,10 @@ function UploadArea({
   const [valorPg, setValorPg] = useState<string>("");
   const [fileRecibo, setFileRecibo] = useState<File | null>(null);
   const [fileComp, setFileComp] = useState<File | null>(null);
+
   return (
     <div className="space-y-3">
+      {/* Linha: data + valor + botão confirmar */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <Label>Data do pagamento</Label>
@@ -2285,6 +2287,7 @@ function UploadArea({
             onChange={(e) => setDataPg(e.target.value)}
           />
         </div>
+
         <div>
           <Label>Valor pago ao vendedor (opcional)</Label>
           <Input
@@ -2293,6 +2296,7 @@ function UploadArea({
             onChange={(e) => setValorPg(e.target.value)}
           />
         </div>
+
         <div className="flex items-end">
           <Button
             onClick={() =>
@@ -2310,6 +2314,8 @@ function UploadArea({
           </Button>
         </div>
       </div>
+
+      {/* Linha: upload de arquivos */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
           <Label>Recibo assinado (PDF)</Label>
@@ -2319,6 +2325,7 @@ function UploadArea({
             onChange={(e) => setFileRecibo(e.target.files?.[0] || null)}
           />
         </div>
+
         <div>
           <Label>Comprovante de pagamento (PDF/Imagem)</Label>
           <Input
@@ -2328,9 +2335,13 @@ function UploadArea({
           />
         </div>
       </div>
+
+      {/* Observação */}
       <div className="text-xs text-gray-500">
-        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada,
-        a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor{" "}
+        <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma
+        seleção segura automática (especialmente no fluxo 1×100%).
       </div>
+    </div>
   );
 }

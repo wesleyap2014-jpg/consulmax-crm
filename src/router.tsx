@@ -23,8 +23,11 @@ import Propostas from './pages/Propostas'
 // ✅ comissões
 import Comissoes from './pages/Comissoes' // 👈 NOVO
 
+// ✅ página real de adicionar administradora
+import AdicionarAdministradora from './pages/AdicionarAdministradora'
+
 // ====== Páginas leves inline para Simuladores ======
-// (+Add Adm) — simples placeholder para agora; depois você pode trocar por uma página própria
+// (+Add Adm) — simples placeholder anterior (mantido aqui caso queira usar futuramente)
 const AddAdm = () => (
   <div className="p-6 space-y-4">
     <h1 className="text-xl font-semibold">Adicionar Administradora</h1>
@@ -89,8 +92,8 @@ export const router = createBrowserRouter([
               // Embracon continua usando a página atual de Simuladores (não mexemos)
               { path: 'embracon', element: <Simuladores /> },
 
-              // +Add Adm (placeholder)
-              { path: 'add', element: <AddAdm /> },
+              // +Add Adm → agora usa a página real
+              { path: 'add', element: <AdicionarAdministradora /> },
 
               // Rota dinâmica para futuras administradoras cadastradas
               { path: ':admSlug', element: <AdmConfigPage /> },

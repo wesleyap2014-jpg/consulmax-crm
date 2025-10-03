@@ -483,30 +483,33 @@ function LineChart({
 const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
 /**
- * Data esperada da parcela M(n) segundo as regras:
- * - M1 e M2: usam a data registrada em commission_flow.data_pagamento_vendedor (se pago) OU a data registrada “de agendamento” (se existir) — no nosso caso, consideramos:
- *     • se o flow tem data_pagamento_vendedor -> é pago (sai de “Previsto”)
- *     • se NÃO tem pagamento mas a parcela tem “data” registrada (no seu modelo, você está usando a data de pagamento para registrar datas; então para previsto usamos a âncora de M2 quando existir)
- * - M3+: só projetar se M2 tiver data registrada (paga ou não). Projeção linear em passos de 30 dias desde a data de M2.
+ * Data esperada da parcela M(n) (versão defensiva):
+ * - M1/M2: previstas apenas se tiverem data registrada (a sua âncora).
+ * - M3+: só projetar se M2 tiver data; projeção a cada 30 dias desde M2.
+ *
+ * Obs.: mantemos a assinatura compatível; o primeiro parâmetro não é usado,
+ *       então prefixamos com "_" para evitar warning de TS/ESLint.
  */
 function expectedDateForParcel(
-  saleDateISO: string | null | undefined,
-  flow: CommissionFlow[],
+  _saleDateISO: string | null | undefined,
+  flow: CommissionFlow[] | undefined,   // <- aceita undefined
   mes: number
 ): Date | null {
+  const safeFlow = Array.isArray(flow) ? flow : [];
+
   // Âncora: data de M2 (se existir)
-  const m2 = flow.find(f => f.mes === 2);
+  const m2 = safeFlow.find(f => f.mes === 2);
   const m2Date = m2?.data_pagamento_vendedor
     ? localDateFromISO(m2.data_pagamento_vendedor)
     : null;
 
   if (mes <= 2) {
-    // M1/M2: entram como Previsto se tiverem data registrada (mesma regra do recibo por data)
-    const f = flow.find(x => x.mes === mes);
+    // M1/M2: previstos só se tiver data registrada
+    const f = safeFlow.find(x => x.mes === mes);
     const regDate = f?.data_pagamento_vendedor
       ? localDateFromISO(f.data_pagamento_vendedor)
       : null;
-    return regDate; // se não tem data, não entra como “previsto”
+    return regDate ?? null; // sem data => não entra como previsto
   }
 
   // M3+ só se existir M2 “datada”
@@ -519,9 +522,13 @@ function expectedDateForParcel(
 }
 
 /** Intervalos semanais agora são: SEXTA → QUINTA */
-function getWeeklyIntervalsFriToThu(year: number, month: number): Array<{ start: Date; end: Date; label: string }> {
+function getWeeklyIntervalsFriToThu(
+  year: number,
+  month: number
+): Array<{ start: Date; end: Date; label: string }> {
   const eom = endOfMonth(new Date(year, month, 1));
-  // Encontrar a primeira SEXTA do mês
+
+  // primeira SEXTA do mês
   let d = new Date(year, month, 1);
   while (d.getDay() !== 5) d = new Date(year, month, d.getDate() + 1); // 5 = sexta
 
@@ -532,8 +539,9 @@ function getWeeklyIntervalsFriToThu(year: number, month: number): Array<{ start:
     if (end > eom) end.setTime(eom.getTime());
     const lb = `S${weeks.length + 1} (${String(start.getDate()).padStart(2,"0")}/${String(start.getMonth()+1).padStart(2,"0")}–${String(end.getDate()).padStart(2,"0")}/${String(end.getMonth()+1).padStart(2,"0")})`;
     weeks.push({ start, end, label: lb });
-    d = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1); // próximo dia após quinta
+    d = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1); // dia seguinte à quinta
   }
+
   if (weeks.length === 0) {
     const s = new Date(year, month, 1);
     const lb = `S1 (01/${String(month+1).padStart(2,"0")}–${String(eom.getDate()).padStart(2,"0")}/${String(month+1).padStart(2,"0")})`;
@@ -544,7 +552,7 @@ function getWeeklyIntervalsFriToThu(year: number, month: number): Array<{ start:
 
 type ProjSeries = { labels: string[]; previstoBruto: number[]; pagoBruto: number[] };
 
-/** Série anual (5 anos): mostramos apenas pagos, e “previsto” aqui fica zerado por decisão de negócio */
+/** Série anual (5 anos): apenas pagos; “previsto” zerado por decisão de negócio */
 function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries {
   const now = new Date();
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 4 + i);
@@ -568,7 +576,7 @@ function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
 
 /**
  * Série mensal de um ano específico:
- * - Ano anterior: mostrar apenas pagos (previsto = 0)
+ * - Ano anterior: apenas pagos (previsto = 0)
  * - Ano atual: pagos + previsto (M1/M2 com data registrada + M3+ projetados a partir da M2)
  */
 function projectMonthlyFlows(
@@ -596,7 +604,7 @@ function projectMonthlyFlows(
       if (!includePrevisto) continue;
 
       // Previsto:
-      // - M1/M2: só se tiver data registrada (a data que você está usando para ancoragem)
+      // - M1/M2: só se tiver data registrada (a âncora usada no seu modelo)
       // - M3+: só se M2 tiver data; projeção linear a partir de M2 a cada 30 dias
       const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
       if (exp && exp.getFullYear() === year) {
@@ -613,9 +621,11 @@ function projectMonthlyFlows(
 
 /**
  * Série semanal do mês atual (sexta→quinta):
- * - Mostrar pagos + previsto (regras de cima), apenas para o mês/ano atuais
+ * - Mostrar pagos + previsto (regras acima), apenas para o mês/ano atuais
  */
-function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries & { labels: string[] } {
+function projectWeeklyFlows(
+  rows: Array<Commission & { flow?: CommissionFlow[] }>
+): ProjSeries & { labels: string[] } {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -655,11 +665,11 @@ function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
 
 /** ======================== Backward-compat =========================
  * Alguns pontos antigos chamam extractProjectedDates; mantemos aqui
- * para não quebrar nada (encaminha para a nova lógica).
+ * para não quebrar nada (encaminha para a nova lógica, defensiva).
  */
 function extractProjectedDates(
   saleDateISO: string | null | undefined,
-  flow: CommissionFlow[],
+  flow: CommissionFlow[] | undefined,   // <- aceita undefined
   mes: number
 ): Date | null {
   return expectedDateForParcel(saleDateISO, flow, mes);

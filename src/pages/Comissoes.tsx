@@ -1785,11 +1785,11 @@ const rangeMPrev    = previstoInRange(mStart, mEnd);    // previsto até último
           <CardHeader className="pb-1"><CardTitle>Ano atual — {new Date().getFullYear()}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <Donut
-  paid={rangeMPago}
-  pending={rangeMPrev}
-  label="Mês"
-  hoverPaidText={`Pago no mês: ${BRL(rangeMPago)}`}
-  hoverPendText={`Previsto no mês: ${BRL(rangeMPrev)}`}
+  paid={rangeYPago}
+  pending={rangeYPrev}
+  label="Ano"
+  hoverPaidText={`Pago no ano: ${BRL(rangeYPago)}`}
+  hoverPendText={`Previsto no ano: ${BRL(rangeYPrev)}`}
 />
            <LineChart
               labels={monthlyCurr.labels}

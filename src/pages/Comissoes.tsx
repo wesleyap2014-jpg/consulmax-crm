@@ -2263,9 +2263,9 @@ export default function ComissoesPage() {
   </DialogContent>
 </Dialog>
 
-</div> {/* fecha o wrapper da página */}
-);     {/* fecha o return */}
-}      {/* fecha a função ComissoesPage() */}
+</div>
+);
+}
 
 /* ========================= Subcomponentes ========================= */
 function Metric({ title, value }: { title: string; value: string }) {

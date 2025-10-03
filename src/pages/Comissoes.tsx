@@ -1878,7 +1878,9 @@ export default function ComissoesPage() {
               <td className="p-2">{comm.cliente_nome || "—"}</td>
               <td className="p-2">{comm.numero_proposta || "—"}</td>
               <td className="p-2">M{flow.mes}</td>
-              <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
+              <td className="p-2 text-right">
+                {BRL(flow.valor_pago_vendedor)}
+              </td>
               <td className="p-2">
                 <div className="flex gap-2">
                   {flow.recibo_vendedor_url && (
@@ -2029,7 +2031,11 @@ export default function ComissoesPage() {
         ))}
       </div>
       <div className="text-xs text-gray-600 mt-1">
-        Soma do fluxo: <b>{fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão {rulePercent || "0,00"})</b>
+        Soma do fluxo:{" "}
+        <b>
+          {fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão{" "}
+          {rulePercent || "0,00"})
+        </b>
       </div>
     </div>
 
@@ -2096,7 +2102,11 @@ export default function ComissoesPage() {
               <td className="p-2">{r.fluxo_meses} Pgtos</td>
               <td className="p-2">
                 <div className="flex gap-2">
-                  <Button size="sm" variant="secondary" onClick={() => loadRuleToForm(r)}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => loadRuleToForm(r)}
+                  >
                     <Pencil className="w-4 h-4 mr-1" /> Editar
                   </Button>
                   <Button
@@ -2137,7 +2147,11 @@ export default function ComissoesPage() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <Label>Data do pagamento</Label>
-            <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+            <Input
+              type="date"
+              value={payDate}
+              onChange={(e) => setPayDate(e.target.value)}
+            />
           </div>
           <div>
             <Label>Valor pago ao vendedor (opcional)</Label>
@@ -2204,7 +2218,9 @@ export default function ComissoesPage() {
                 return (
                   <tr
                     key={f.id}
-                    className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}
+                    className={`border-b ${
+                      isLocked ? "opacity-60 pointer-events-none" : ""
+                    }`}
                   >
                     <td className="p-2">
                       <Checkbox
@@ -2220,7 +2236,9 @@ export default function ComissoesPage() {
                     <td className="p-2 text-right">
                       {BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}
                     </td>
-                    <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+                    <td className="p-2 text-right">
+                      {BRL(f.valor_pago_vendedor)}
+                    </td>
                     <td className="p-2">
                       {f.data_pagamento_vendedor
                         ? formatISODateBR(f.data_pagamento_vendedor)
@@ -2242,11 +2260,12 @@ export default function ComissoesPage() {
         Fechar
       </Button>
     </DialogFooter>
-        </DialogContent>
-    </Dialog>
-  </div> {/* fecha o wrapper da página: <div className="p-4 space-y-4"> */}
-);        {/* fecha o return */}
-}         {/* fecha a função ComissoesPage() */}
+  </DialogContent>
+</Dialog>
+
+</div> {/* fecha o wrapper da página */}
+);     {/* fecha o return */}
+}      {/* fecha a função ComissoesPage() */}
 
 /* ========================= Subcomponentes ========================= */
 function Metric({ title, value }: { title: string; value: string }) {
@@ -2332,9 +2351,7 @@ function UploadArea({
       </div>
 
       <div className="text-xs text-gray-500">
-        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>.
-        Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática
-        (especialmente no fluxo 1×100%).
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
       </div>
     </div>
   );

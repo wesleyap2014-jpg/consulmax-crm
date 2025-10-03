@@ -1599,358 +1599,692 @@ export default function ComissoesPage() {
         <Card><CardHeader className="pb-1"><CardTitle>⏳ Pendente (Liq.)</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
       </div>
 
-      {/* Vendas sem comissão */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center justify-between">
-            <span>Vendas sem comissão (todos os registros + filtros)</span>
-            <div className="flex items-center gap-2">
-              {/* ❌ Removido Exportar CSV */}
-              <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>{showVendasSem ? "Ocultar" : "Expandir"}</Button>
-            </div>
-          </CardTitle>
-        </CardHeader>
-        {showVendasSem && (
-          <CardContent className="overflow-x-auto">
-            <table className="min-w-[1100px] w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Administradora</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-left">Ação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {vendasSemCom.length === 0 && <tr><td colSpan={9} className="p-3 text-gray-500">Sem pendências 🎉</td></tr>}
-                {vendasSemCom.map((v) => {
-                  const clienteId = v.lead_id || v.cliente_lead_id || "";
-                  return (
-                    <tr key={v.id} className="border-b">
-                      <td className="p-2">{formatISODateBR(v.data_venda)}</td>
-                      <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                      <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
-                      <td className="p-2">{v.numero_proposta || "—"}</td>
-                      <td className="p-2">{v.administradora || "—"}</td>
-                      <td className="p-2">{v.segmento || "—"}</td>
-                      <td className="p-2">{v.tabela || "—"}</td>
-                      <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
-                      <td className="p-2">
-                        <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id}>
-                          {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
-                          Gerar Comissão
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </CardContent>
-        )}
-      </Card>
+     {/* Vendas sem comissão */}
+<Card>
+  <CardHeader className="pb-2">
+    <CardTitle className="flex items-center justify-between">
+      <span>Vendas sem comissão (todos os registros + filtros)</span>
+      <div className="flex items-center gap-2">
+        {/* ❌ Removido Exportar CSV */}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setShowVendasSem((v) => !v)}
+        >
+          {showVendasSem ? "Ocultar" : "Expandir"}
+        </Button>
+      </div>
+    </CardTitle>
+  </CardHeader>
+  {showVendasSem && (
+    <CardContent className="overflow-x-auto">
+      <table className="min-w-[1100px] w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50">
+            <th className="p-2 text-left">Data</th>
+            <th className="p-2 text-left">Vendedor</th>
+            <th className="p-2 text-left">Cliente</th>
+            <th className="p-2 text-left">Nº Proposta</th>
+            <th className="p-2 text-left">Administradora</th>
+            <th className="p-2 text-left">Segmento</th>
+            <th className="p-2 text-left">Tabela</th>
+            <th className="p-2 text-right">Crédito</th>
+            <th className="p-2 text-left">Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {vendasSemCom.length === 0 && (
+            <tr>
+              <td colSpan={9} className="p-3 text-gray-500">
+                Sem pendências 🎉
+              </td>
+            </tr>
+          )}
+          {vendasSemCom.map((v) => {
+            const clienteId = v.lead_id || v.cliente_lead_id || "";
+            return (
+              <tr key={v.id} className="border-b">
+                <td className="p-2">{formatISODateBR(v.data_venda)}</td>
+                <td className="p-2">{userLabel(v.vendedor_id)}</td>
+                <td className="p-2">
+                  {(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}
+                </td>
+                <td className="p-2">{v.numero_proposta || "—"}</td>
+                <td className="p-2">{v.administradora || "—"}</td>
+                <td className="p-2">{v.segmento || "—"}</td>
+                <td className="p-2">{v.tabela || "—"}</td>
+                <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
+                <td className="p-2">
+                  <Button
+                    size="sm"
+                    onClick={() => gerarComissaoDeVenda(v)}
+                    disabled={genBusy === v.id}
+                  >
+                    {genBusy === v.id ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <PlusCircle className="w-4 h-4 mr-1" />
+                    )}
+                    Gerar Comissão
+                  </Button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </CardContent>
+  )}
+</Card>
 
-      {/* Detalhamento — a pagar */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center justify-between">
-            <span>Detalhamento de Comissões (a pagar)</span>
-            <div className="flex items-center gap-3">
-              <div>
-                <Label>Vendedor</Label>
-                <Select value={vendedorId} onValueChange={setVendedorId}>
-                  <SelectTrigger className="w-[220px]"><SelectValue placeholder="Todos" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    {users.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-end gap-2">
-                <Button size="sm" variant="outline" onClick={() => setShowUnpaid((v) => !v)}>{showUnpaid ? "Ocultar" : "Expandir"}</Button>
-              </div>
-              <div className="flex items-center gap-2">
-                <div><Label>Data do Recibo</Label><Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} /></div>
-                <div><Label>Imposto (%)</Label><Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" /></div>
-              </div>
-              <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
-            </div>
-          </CardTitle>
-        </CardHeader>
-        {showUnpaid && (
-          <CardContent className="overflow-x-auto">
-            <table className="min-w-[1200px] w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Data</th><th className="p-2 text-left">Vendedor</th><th className="p-2 text-left">Cliente</th><th className="p-2 text-left">Nº Proposta</th><th className="p-2 text-left">Segmento</th><th className="p-2 text-left">Tabela</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-right">% Comissão</th><th className="p-2 text-right">Valor Comissão</th><th className="p-2 text-left">Status</th><th className="p-2 text-left">Pagamento</th><th className="p-2 text-left">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading && <tr><td colSpan={12} className="p-4"><Loader2 className="animate-spin inline mr-2" /> Carregando...</td></tr>}
-                {!loading && rowsAPagar.length === 0 && <tr><td colSpan={12} className="p-4 text-gray-500">Sem registros.</td></tr>}
-                {!loading && rowsAPagar.map((r) => (
-                  <tr key={r.id} className="border-b hover:bg-gray-50">
-                    <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
-                    <td className="p-2">{userLabel(r.vendedor_id)}</td>
-                    <td className="p-2">{r.cliente_nome || "—"}</td>
-                    <td className="p-2">{r.numero_proposta || "—"}</td>
-                    <td className="p-2">{r.segmento || "—"}</td>
-                    <td className="p-2">{r.tabela || "—"}</td>
-                    <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
-                    <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
-                    <td className="p-2 text-right">{BRL(r.valor_total)}</td>
-                    <td className="p-2">{r.status}</td>
-                    <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
-                    <td className="p-2">
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="secondary" onClick={() => openPaymentFor(r)}>
-                          <DollarSign className="w-4 h-4 mr-1" />
-                          {hasRegisteredButUnpaid(r.flow) ? "Confirmar Pagamento" : "Registrar pagamento"}
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => retornarComissao(r)}><RotateCcw className="w-4 h-4 mr-1" /> Retornar</Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        )}
-      </Card>
-
-      {/* Comissões pagas */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center justify-between">
-            <span>Comissões pagas</span>
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Buscar por cliente ou nº proposta"
-                value={paidSearch}
-                onChange={(e) => { setPaidSearch(e.target.value); setPaidPage(1); }}
-                className="w-[280px]"
-              />
-              <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>{showPaid ? "Ocultar" : "Expandir"}</Button>
-            </div>
-          </CardTitle>
-        </CardHeader>
-        {showPaid && (
-          <CardContent className="overflow-x-auto">
-            <table className="min-w-[1100px] w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Data Pagto</th>
-                  <th className="p-2 text-left">Vendedor</th>
-                  <th className="p-2 text-left">Cliente</th>
-                  <th className="p-2 text-left">Nº Proposta</th>
-                  <th className="p-2 text-left">Parcela</th>
-                  <th className="p-2 text-right">Valor Pago (Bruto)</th>
-                  <th className="p-2 text-left">Arquivos</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagosPage.length === 0 && <tr><td colSpan={7} className="p-4 text-gray-500">Nenhum pagamento encontrado.</td></tr>}
-                {pagosPage.map(({ flow, comm }) => (
-                  <tr key={flow.id} className="border-b">
-                    <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
-                    <td className="p-2">{userLabel(comm.vendedor_id)}</td>
-                    <td className="p-2">{comm.cliente_nome || "—"}</td>
-                    <td className="p-2">{comm.numero_proposta || "—"}</td>
-                    <td className="p-2">M{flow.mes}</td>
-                    <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
-                    <td className="p-2">
-                      <div className="flex gap-2">
-                        {flow.recibo_vendedor_url && <a className="underline text-blue-700" href="#" onClick={async (e) => { e.preventDefault(); const u = await getSignedUrl(flow.recibo_vendedor_url); if (u) window.open(u, "_blank"); }}>Recibo</a>}
-                        {flow.comprovante_pagto_url && <a className="underline text-blue-700" href="#" onClick={async (e) => { e.preventDefault(); const u = await getSignedUrl(flow.comprovante_pagto_url); if (u) window.open(u, "_blank"); }}>Comprovante</a>}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="flex items-center justify-end gap-3 pt-3">
-              <div className="text-sm text-gray-600">
-                Mostrando {pagosPage.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageSize, pagosFiltered.length)} de {pagosFiltered.length}
-              </div>
-              <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.max(1, p - 1))} disabled={paidPage <= 1}>Anterior</Button>
-              <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.min(totalPages, p + 1))} disabled={paidPage >= totalPages}>Próxima</Button>
-            </div>
-          </CardContent>
-        )}
-      </Card>
-
-     {/* Regras (overlay) */}
-      <Dialog open={openRules} onOpenChange={setOpenRules}>
-        <DialogContent className="max-w-6xl">
-          <DialogHeader><DialogTitle>Regras de Comissão</DialogTitle></DialogHeader>
-
-          {/* Cabeçalho do formulário */}
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-            <div>
-              <Label>Vendedor</Label>
-              <Select value={ruleVendorId} onValueChange={(v) => { setRuleVendorId(v); }}>
-                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Tabela (SimTables)</Label>
-              <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
-                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent className="max-h-[300px]">
-                  {simTables.map((t) => <SelectItem key={t.id} value={t.id}>{t.segmento} — {t.nome_tabela}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
-              <Input value={rulePercent} onChange={(e) => setRulePercent(e.target.value)} placeholder="1,20" />
-            </div>
-            <div>
-              <Label>Nº de meses do fluxo</Label>
-              <Input type="number" min={1} max={36} value={ruleMeses} onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))} />
-            </div>
-          </div>
-
-          <hr className="my-4" />
-
-          {/* Fluxo */}
-          <div className="space-y-2">
-            <Label>Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total **ou** a soma igual ao % Padrão</Label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-3 border rounded-md bg-white">
-              {Array.from({ length: ruleMeses }).map((_, i) => (
-                <Input
-                  key={i}
-                  value={ruleFluxoPct[i] || "0,00"}
-                  onChange={(e) => { const arr = [...ruleFluxoPct]; arr[i] = e.target.value; setRuleFluxoPct(arr); }}
-                  placeholder="0,33"
-                />
+{/* Detalhamento — a pagar */}
+<Card>
+  <CardHeader className="pb-2">
+    <CardTitle className="flex items-center justify-between">
+      <span>Detalhamento de Comissões (a pagar)</span>
+      <div className="flex items-center gap-3">
+        {/* Seletor de vendedor mantém à esquerda */}
+        <div>
+          <Label>Vendedor</Label>
+          <Select value={vendedorId} onValueChange={setVendedorId}>
+            <SelectTrigger className="w-[220px]">
+              <SelectValue placeholder="Todos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos</SelectItem>
+              {users.map((u) => (
+                <SelectItem key={u.id} value={u.id}>
+                  {u.nome?.trim() || u.email?.trim() || u.id}
+                </SelectItem>
               ))}
-            </div>
-            <div className="text-xs text-gray-600 mt-1">
-              Soma do fluxo: <b>{fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão {rulePercent || "0,00"})</b>
-            </div>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Campos de recibo ficam no meio */}
+        <div className="flex items-center gap-2">
+          <div>
+            <Label>Data do Recibo</Label>
+            <Input
+              type="date"
+              value={reciboDate}
+              onChange={(e) => setReciboDate(e.target.value)}
+            />
           </div>
-
-          <hr className="my-4" />
-
-          {/* Observações + Ações */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end">
-            <div className="lg:col-span-2">
-              <Label>Observações</Label>
-              <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button>
-              <Button variant="outline" onClick={() => { setRuleSimTableId(""); setRulePercent("1,20"); setRuleMeses(1); setRuleFluxoPct(["100,00"]); setRuleObs(""); }}>Limpar</Button>
-            </div>
+          <div>
+            <Label>Imposto (%)</Label>
+            <Input
+              value={reciboImpostoPct}
+              onChange={(e) => setReciboImpostoPct(e.target.value)}
+              className="w-24"
+            />
           </div>
+        </div>
 
-          <hr className="my-4" />
+        {/* 👉 Botões lado a lado: Recibo + Ocultar (na direita) */}
+        <div className="flex items-end gap-2">
+          <Button onClick={downloadReceiptPDFPorData}>
+            <FileText className="w-4 h-4 mr-1" /> Recibo
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setShowUnpaid((v) => !v)}
+          >
+            {showUnpaid ? "Ocultar" : "Expandir"}
+          </Button>
+        </div>
+      </div>
+    </CardTitle>
+  </CardHeader>
+  {showUnpaid && (
+    <CardContent className="overflow-x-auto">
+      <table className="min-w-[1200px] w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50">
+            <th className="p-2 text-left">Data</th>
+            <th className="p-2 text-left">Vendedor</th>
+            <th className="p-2 text-left">Cliente</th>
+            <th className="p-2 text-left">Nº Proposta</th>
+            <th className="p-2 text-left">Segmento</th>
+            <th className="p-2 text-left">Tabela</th>
+            <th className="p-2 text-right">Crédito</th>
+            <th className="p-2 text-right">% Comissão</th>
+            <th className="p-2 text-right">Valor Comissão</th>
+            <th className="p-2 text-left">Status</th>
+            <th className="p-2 text-left">Pagamento</th>
+            <th className="p-2 text-left">Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {loading && (
+            <tr>
+              <td colSpan={12} className="p-4">
+                <Loader2 className="animate-spin inline mr-2" /> Carregando...
+              </td>
+            </tr>
+          )}
+          {!loading && rowsAPagar.length === 0 && (
+            <tr>
+              <td colSpan={12} className="p-4 text-gray-500">
+                Sem registros.
+              </td>
+            </tr>
+          )}
+          {!loading &&
+            rowsAPagar.map((r) => (
+              <tr key={r.id} className="border-b hover:bg-gray-50">
+                <td className="p-2">
+                  {r.data_venda ? formatISODateBR(r.data_venda) : "—"}
+                </td>
+                <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                <td className="p-2">{r.cliente_nome || "—"}</td>
+                <td className="p-2">{r.numero_proposta || "—"}</td>
+                <td className="p-2">{r.segmento || "—"}</td>
+                <td className="p-2">{r.tabela || "—"}</td>
+                <td className="p-2 text-right">
+                  {BRL(r.valor_venda ?? r.base_calculo)}
+                </td>
+                <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
+                <td className="p-2 text-right">{BRL(r.valor_total)}</td>
+                <td className="p-2">{r.status}</td>
+                <td className="p-2">
+                  {r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}
+                </td>
+                <td className="p-2">
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => openPaymentFor(r)}
+                    >
+                      <DollarSign className="w-4 h-4 mr-1" />
+                      {hasRegisteredButUnpaid(r.flow)
+                        ? "Confirmar Pagamento"
+                        : "Registrar pagamento"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => retornarComissao(r)}
+                    >
+                      <RotateCcw className="w-4 h-4 mr-1" /> Retornar
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </CardContent>
+  )}
+</Card>
 
-          {/* Lista de regras */}
-          <div className="border rounded-md max-h-[45vh] overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0">
-                <tr>
-                  <th className="p-2 text-left">Segmento</th>
-                  <th className="p-2 text-left">Administradora</th>
-                  <th className="p-2 text-left">Tabela</th>
-                  <th className="p-2 text-right">% Padrão</th>
-                  <th className="p-2 text-left">Fluxo</th>
-                  <th className="p-2 text-left">Ação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(!ruleRows || ruleRows.length === 0) && <tr><td colSpan={6} className="p-3 text-gray-500">Nenhuma regra cadastrada para o vendedor selecionado.</td></tr>}
-                {ruleRows.map((r) => (
-                  <tr key={`${r.vendedor_id}-${r.sim_table_id}`} className="border-t">
-                    <td className="p-2">{r.segmento || "—"}</td>
-                    <td className="p-2">{r.administradora || "—"}</td>
-                    <td className="p-2">{r.nome_tabela}</td>
-                    <td className="p-2 text-right">{pct100(r.percent_padrao)}</td>
-                    <td className="p-2">{r.fluxo_meses} Pgtos</td>
+{/* Comissões pagas */}
+<Card>
+  <CardHeader className="pb-2">
+    <CardTitle className="flex items-center justify-between">
+      <span>Comissões pagas</span>
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="Buscar por cliente ou nº proposta"
+          value={paidSearch}
+          onChange={(e) => {
+            setPaidSearch(e.target.value);
+            setPaidPage(1);
+          }}
+          className="w-[280px]"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setShowPaid((v) => !v)}
+        >
+          {showPaid ? "Ocultar" : "Expandir"}
+        </Button>
+      </div>
+    </CardTitle>
+  </CardHeader>
+  {showPaid && (
+    <CardContent className="overflow-x-auto">
+      <table className="min-w-[1100px] w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50">
+            <th className="p-2 text-left">Data Pagto</th>
+            <th className="p-2 text-left">Vendedor</th>
+            <th className="p-2 text-left">Cliente</th>
+            <th className="p-2 text-left">Nº Proposta</th>
+            <th className="p-2 text-left">Parcela</th>
+            <th className="p-2 text-right">Valor Pago (Bruto)</th>
+            <th className="p-2 text-left">Arquivos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pagosPage.length === 0 && (
+            <tr>
+              <td colSpan={7} className="p-4 text-gray-500">
+                Nenhum pagamento encontrado.
+              </td>
+            </tr>
+          )}
+          {pagosPage.map(({ flow, comm }) => (
+            <tr key={flow.id} className="border-b">
+              <td className="p-2">
+                {flow.data_pagamento_vendedor
+                  ? formatISODateBR(flow.data_pagamento_vendedor)
+                  : "—"}
+              </td>
+              <td className="p-2">{userLabel(comm.vendedor_id)}</td>
+              <td className="p-2">{comm.cliente_nome || "—"}</td>
+              <td className="p-2">{comm.numero_proposta || "—"}</td>
+              <td className="p-2">M{flow.mes}</td>
+              <td className="p-2 text-right">
+                {BRL(flow.valor_pago_vendedor)}
+              </td>
+              <td className="p-2">
+                <div className="flex gap-2">
+                  {flow.recibo_vendedor_url && (
+                    <a
+                      className="underline text-blue-700"
+                      href="#"
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        const u = await getSignedUrl(flow.recibo_vendedor_url);
+                        if (u) window.open(u, "_blank");
+                      }}
+                    >
+                      Recibo
+                    </a>
+                  )}
+                  {flow.comprovante_pagto_url && (
+                    <a
+                      className="underline text-blue-700"
+                      href="#"
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        const u = await getSignedUrl(
+                          flow.comprovante_pagto_url
+                        );
+                        if (u) window.open(u, "_blank");
+                      }}
+                    >
+                      Comprovante
+                    </a>
+                  )}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="flex items-center justify-end gap-3 pt-3">
+        <div className="text-sm text-gray-600">
+          Mostrando {pagosPage.length ? pageStart + 1 : 0}–
+          {Math.min(pageStart + pageSize, pagosFiltered.length)} de{" "}
+          {pagosFiltered.length}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setPaidPage((p) => Math.max(1, p - 1))}
+          disabled={paidPage <= 1}
+        >
+          Anterior
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setPaidPage((p) => Math.min(totalPages, p + 1))}
+          disabled={paidPage >= totalPages}
+        >
+          Próxima
+        </Button>
+      </div>
+    </CardContent>
+  )}
+</Card>
+
+{/* Regras (overlay) */}
+<Dialog open={openRules} onOpenChange={setOpenRules}>
+  <DialogContent className="max-w-6xl">
+    <DialogHeader>
+      <DialogTitle>Regras de Comissão</DialogTitle>
+    </DialogHeader>
+
+    {/* Cabeçalho do formulário */}
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+      <div>
+        <Label>Vendedor</Label>
+        <Select
+          value={ruleVendorId}
+          onValueChange={(v) => {
+            setRuleVendorId(v);
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Selecione..." />
+          </SelectTrigger>
+          <SelectContent>
+            {users.map((u) => (
+              <SelectItem key={u.id} value={u.id}>
+                {u.nome?.trim() || u.email?.trim() || u.id}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label>Tabela (SimTables)</Label>
+        <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
+          <SelectTrigger>
+            <SelectValue placeholder="Selecione..." />
+          </SelectTrigger>
+          <SelectContent className="max-h-[300px]">
+            {simTables.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {t.segmento} — {t.nome_tabela}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
+        <Input
+          value={rulePercent}
+          onChange={(e) => setRulePercent(e.target.value)}
+          placeholder="1,20"
+        />
+      </div>
+      <div>
+        <Label>Nº de meses do fluxo</Label>
+        <Input
+          type="number"
+          min={1}
+          max={36}
+          value={ruleMeses}
+          onChange={(e) =>
+            onChangeMeses(parseInt(e.target.value || "1"))
+          }
+        />
+      </div>
+    </div>
+
+    <hr className="my-4" />
+
+    {/* Fluxo */}
+    <div className="space-y-2">
+      <Label>
+        Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total{" "}
+        <b>ou</b> a soma igual ao % Padrão
+      </Label>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-3 border rounded-md bg-white">
+        {Array.from({ length: ruleMeses }).map((_, i) => (
+          <Input
+            key={i}
+            value={ruleFluxoPct[i] || "0,00"}
+            onChange={(e) => {
+              const arr = [...ruleFluxoPct];
+              arr[i] = e.target.value;
+              setRuleFluxoPct(arr);
+            }}
+            placeholder="0,33"
+          />
+        ))}
+      </div>
+      <div className="text-xs text-gray-600 mt-1">
+        Soma do fluxo:{" "}
+        <b>
+          {fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão{" "}
+          {rulePercent || "0,00"})
+        </b>
+      </div>
+    </div>
+
+    <hr className="my-4" />
+
+    {/* Observações + Ações */}
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end">
+      <div className="lg:col-span-2">
+        <Label>Observações</Label>
+        <Input
+          value={ruleObs}
+          onChange={(e) => setRuleObs(e.target.value)}
+          placeholder="Opcional"
+        />
+      </div>
+      <div className="flex gap-2">
+        <Button onClick={saveRule}>
+          <Save className="w-4 h-4 mr-1" /> Salvar Regra
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setRuleSimTableId("");
+            setRulePercent("1,20");
+            setRuleMeses(1);
+            setRuleFluxoPct(["100,00"]);
+            setRuleObs("");
+          }}
+        >
+          Limpar
+        </Button>
+      </div>
+    </div>
+
+    <hr className="my-4" />
+
+    {/* Lista de regras */}
+    <div className="border rounded-md max-h-[45vh] overflow-y-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 sticky top-0">
+          <tr>
+            <th className="p-2 text-left">Segmento</th>
+            <th className="p-2 text-left">Administradora</th>
+            <th className="p-2 text-left">Tabela</th>
+            <th className="p-2 text-right">% Padrão</th>
+            <th className="p-2 text-left">Fluxo</th>
+            <th className="p-2 text-left">Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(!ruleRows || ruleRows.length === 0) && (
+            <tr>
+              <td colSpan={6} className="p-3 text-gray-500">
+                Nenhuma regra cadastrada para o vendedor selecionado.
+              </td>
+            </tr>
+          )}
+          {ruleRows.map((r) => (
+            <tr
+              key={`${r.vendedor_id}-${r.sim_table_id}`}
+              className="border-t"
+            >
+              <td className="p-2">{r.segmento || "—"}</td>
+              <td className="p-2">{r.administradora || "—"}</td>
+              <td className="p-2">{r.nome_tabela}</td>
+              <td className="p-2 text-right">{pct100(r.percent_padrao)}</td>
+              <td className="p-2">{r.fluxo_meses} Pgtos</td>
+              <td className="p-2">
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => loadRuleToForm(r)}
+                  >
+                    <Pencil className="w-4 h-4 mr-1" /> Editar
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      deleteRule(r.vendedor_id, r.sim_table_id)
+                    }
+                  >
+                    <Trash2 className="w-4 h-4 mr-1" /> Excluir
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <DialogFooter>
+      <Button variant="secondary" onClick={() => setOpenRules(false)}>
+        Fechar
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
+
+{/* Pagamento (overlay largo) */}
+<Dialog open={openPay} onOpenChange={setOpenPay}>
+  <DialogContent className="w-[98vw] max-w-[1400px]">
+    <DialogHeader>
+      <DialogTitle>Registrar pagamento ao vendedor</DialogTitle>
+    </DialogHeader>
+    <Tabs defaultValue={payDefaultTab}>
+      <TabsList className="mb-3">
+        <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>
+        <TabsTrigger value="arquivos">Arquivos</TabsTrigger>
+      </TabsList>
+      <TabsContent value="selecionar" className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div>
+            <Label>Data do pagamento</Label>
+            <Input
+              type="date"
+              value={payDate}
+              onChange={(e) => setPayDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label>Valor pago ao vendedor (opcional)</Label>
+            <Input
+              placeholder="Ex.: 1.974,00"
+              value={payValue}
+              onChange={(e) => setPayValue(e.target.value)}
+            />
+          </div>
+          <div className="flex items-end">
+            <Button
+              onClick={() =>
+                paySelectedParcels({
+                  data_pagamento_vendedor: payDate,
+                  valor_pago_vendedor: payValue
+                    ? parseFloat(
+                        payValue.replace(/\./g, "").replace(",", ".")
+                      )
+                    : undefined,
+                  recibo_file: null,
+                  comprovante_file: null,
+                })
+              }
+            >
+              <Save className="w-4 h-4 mr-1" /> Salvar
+            </Button>
+          </div>
+          <div className="flex items-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                const pend = Object.fromEntries(
+                  payFlow
+                    .filter(
+                      (f) =>
+                        !f.data_pagamento_vendedor &&
+                        (f.valor_pago_vendedor ?? 0) === 0
+                    )
+                    .map((f) => [f.id, true])
+                );
+                setPaySelected(pend);
+              }}
+            >
+              Selecionar tudo pendente
+            </Button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-[1300px] w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="p-2 text-left">Sel.</th>
+                <th className="p-2 text-left">Mês</th>
+                <th className="p-2 text-left">% Parcela</th>
+                <th className="p-2 text-right">Valor Previsto</th>
+                <th className="p-2 text-right">Valor Pago</th>
+                <th className="p-2 text-left">Data Pagto</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payFlow.map((f) => {
+                const isLocked =
+                  (f.valor_pago_vendedor ?? 0) > 0 ||
+                  Boolean(f.recibo_vendedor_url) ||
+                  Boolean(f.comprovante_pagto_url);
+                return (
+                  <tr
+                    key={f.id}
+                    className={`border-b ${
+                      isLocked ? "opacity-60 pointer-events-none" : ""
+                    }`}
+                  >
                     <td className="p-2">
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="secondary" onClick={() => loadRuleToForm(r)}><Pencil className="w-4 h-4 mr-1" /> Editar</Button>
-                        <Button size="sm" variant="outline" onClick={() => deleteRule(r.vendedor_id, r.sim_table_id)}><Trash2 className="w-4 h-4 mr-1" /> Excluir</Button>
-                      </div>
+                      <Checkbox
+                        checked={!!paySelected[f.id]}
+                        onCheckedChange={(v) =>
+                          setPaySelected((s) => ({ ...s, [f.id]: !!v }))
+                        }
+                        disabled={isLocked}
+                      />
+                    </td>
+                    <td className="p-2">M{f.mes}</td>
+                    <td className="p-2">{pct100(f.percentual)}</td>
+                    <td className="p-2 text-right">
+                      {BRL(
+                        (f as any)._valor_previsto_calc ?? f.valor_previsto
+                      )}
+                    </td>
+                    <td className="p-2 text-right">
+                      {BRL(f.valor_pago_vendedor)}
+                    </td>
+                    <td className="p-2">
+                      {f.data_pagamento_vendedor
+                        ? formatISODateBR(f.data_pagamento_vendedor)
+                        : "—"}
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </TabsContent>
+      <TabsContent value="arquivos">
+        <UploadArea onConfirm={paySelectedParcels} />
+      </TabsContent>
+    </Tabs>
+    <DialogFooter>
+      <Button onClick={() => setOpenPay(false)} variant="secondary">
+        Fechar
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
 
-          <DialogFooter><Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Pagamento (overlay largo) */}
-      <Dialog open={openPay} onOpenChange={setOpenPay}>
-        <DialogContent className="w-[98vw] max-w-[1400px]">
-          <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
-          <Tabs defaultValue={payDefaultTab}>
-            <TabsList className="mb-3"><TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger><TabsTrigger value="arquivos">Arquivos</TabsTrigger></TabsList>
-            <TabsContent value="selecionar" className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div><Label>Data do pagamento</Label><Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /></div>
-                <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={payValue} onChange={(e) => setPayValue(e.target.value)} /></div>
-                <div className="flex items-end">
-                  <Button onClick={() => paySelectedParcels({
-                    data_pagamento_vendedor: payDate,
-                    valor_pago_vendedor: payValue ? parseFloat(payValue.replace(/\./g, "").replace(",", ".")) : undefined,
-                    recibo_file: null, comprovante_file: null,
-                  })}><Save className="w-4 h-4 mr-1" /> Salvar</Button>
-                </div>
-                <div className="flex items-end">
-                  <Button variant="outline" onClick={() => {
-                    const pend = Object.fromEntries(payFlow
-                      .filter((f) => !f.data_pagamento_vendedor && (f.valor_pago_vendedor ?? 0) === 0)
-                      .map((f) => [f.id, true]));
-                    setPaySelected(pend);
-                  }}>Selecionar tudo pendente</Button>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-[1300px] w-full text-sm">
-                  <thead><tr className="bg-gray-50">
-                    <th className="p-2 text-left">Sel.</th><th className="p-2 text-left">Mês</th><th className="p-2 text-left">% Parcela</th>
-                    <th className="p-2 text-right">Valor Previsto</th><th className="p-2 text-right">Valor Pago</th><th className="p-2 text-left">Data Pagto</th>
-                  </tr></thead>
-                  <tbody>
-                    {payFlow.map((f) => {
-                      const isLocked = (f.valor_pago_vendedor ?? 0) > 0 || Boolean(f.recibo_vendedor_url) || Boolean(f.comprovante_pagto_url);
-                      return (
-                        <tr key={f.id} className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}>
-                          <td className="p-2">
-                            <Checkbox checked={!!paySelected[f.id]} onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))} disabled={isLocked} />
-                          </td>
-                          <td className="p-2">M{f.mes}</td>
-                          <td className="p-2">{pct100(f.percentual)}</td>
-                          <td className="p-2 text-right">{BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}</td>
-                          <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
-                          <td className="p-2">{f.data_pagamento_vendedor ? formatISODateBR(f.data_pagamento_vendedor) : "—"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </TabsContent>
-            <TabsContent value="arquivos"><UploadArea onConfirm={paySelectedParcels} /></TabsContent>
-          </Tabs>
-          <DialogFooter><Button onClick={() => setOpenPay(false)} variant="secondary">Fechar</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
+</div>
+);
 
 /* ========================= Subcomponentes ========================= */
 function Metric({ title, value }: { title: string; value: string }) {
-  return (<div className="p-3 rounded-xl border bg-white"><div className="text-xs text-gray-500">{title}</div><div className="text-xl font-bold">{value}</div></div>);
+  return (
+    <div className="p-3 rounded-xl border bg-white">
+      <div className="text-xs text-gray-500">{title}</div>
+      <div className="text-xl font-bold">{value}</div>
+    </div>
+  );
 }
 
 function UploadArea({
@@ -1963,29 +2297,72 @@ function UploadArea({
     comprovante_file?: File | null;
   }) => Promise<void>;
 }) {
-  const [dataPg, setDataPg] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [dataPg, setDataPg] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10)
+  );
   const [valorPg, setValorPg] = useState<string>("");
   const [fileRecibo, setFileRecibo] = useState<File | null>(null);
   const [fileComp, setFileComp] = useState<File | null>(null);
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div><Label>Data do pagamento</Label><Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} /></div>
-        <div><Label>Valor pago ao vendedor (opcional)</Label><Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} /></div>
+        <div>
+          <Label>Data do pagamento</Label>
+          <Input
+            type="date"
+            value={dataPg}
+            onChange={(e) => setDataPg(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Valor pago ao vendedor (opcional)</Label>
+          <Input
+            placeholder="Ex.: 1.974,00"
+            value={valorPg}
+            onChange={(e) => setValorPg(e.target.value)}
+          />
+        </div>
         <div className="flex items-end">
-          <Button onClick={() => onConfirm({
-            data_pagamento_vendedor: dataPg,
-            valor_pago_vendedor: valorPg ? parseFloat(valorPg.replace(/\./g, "").replace(",", ".")) : undefined,
-            recibo_file: fileRecibo, comprovante_file: fileComp,
-          })}><Save className="w-4 h-4 mr-1" /> Confirmar pagamento</Button>
+          <Button
+            onClick={() =>
+              onConfirm({
+                data_pagamento_vendedor: dataPg,
+                valor_pago_vendedor: valorPg
+                  ? parseFloat(
+                      valorPg.replace(/\./g, "").replace(",", ".")
+                    )
+                  : undefined,
+                recibo_file: fileRecibo,
+                comprovante_file: fileComp,
+              })
+            }
+          >
+            <Save className="w-4 h-4 mr-1" /> Confirmar pagamento
+          </Button>
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div><Label>Recibo assinado (PDF)</Label><Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} /></div>
-        <div><Label>Comprovante de pagamento (PDF/Imagem)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} /></div>
+        <div>
+          <Label>Recibo assinado (PDF)</Label>
+          <Input
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => setFileRecibo(e.target.files?.[0] || null)}
+          />
+        </div>
+        <div>
+          <Label>Comprovante de pagamento (PDF/Imagem)</Label>
+          <Input
+            type="file"
+            accept="application/pdf,image/*"
+            onChange={(e) => setFileComp(e.target.files?.[0] || null)}
+          />
+        </div>
       </div>
       <div className="text-xs text-gray-500">
-        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor{" "}
+        <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma
+        seleção segura automática (especialmente no fluxo 1×100%).
       </div>
     </div>
   );

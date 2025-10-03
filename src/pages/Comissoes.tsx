@@ -132,6 +132,73 @@ const normalize = (s?: string | null) =>
     .trim()
     .toLowerCase();
 
+/* ======================== Helpers extras (datas BR-safe, projeções) ======================== */
+const parseISODateBR = (iso?: string | null) => {
+  if (!iso) return null;
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d); // cria data local sem UTC
+};
+
+const isBetweenBR = (iso?: string | null, s?: Date, e?: Date) => {
+  const d = parseISODateBR(iso);
+  if (!d) return false;
+  const t = d.getTime();
+  return t >= (s?.getTime() ?? -Infinity) && t <= (e?.getTime() ?? Infinity);
+};
+
+const addDaysBR = (d: Date, days: number) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate() + days);
+
+const flowAmount = (c: Commission, f: CommissionFlow) => {
+  const total =
+    c.valor_total ??
+    (c.base_calculo ?? 0) * (c.percent_aplicado ?? 0);
+  const p = Number(f.percentual) || 0;
+  return Math.max(0, total * p);
+};
+
+function getFriToThuIntervals(year: number, month: number) {
+  const first = new Date(year, month, 1);
+  const eom = new Date(year, month + 1, 0);
+
+  let d = new Date(year, month, 1);
+  while (d.getDay() !== 5) d = addDaysBR(d, 1); // 5 = sexta
+
+  const intervals: Array<{ start: Date; end: Date; label: string }> = [];
+  while (d <= eom) {
+    const start = new Date(d);
+    const end = addDaysBR(start, 6); // até quinta
+    const endClamped = end > eom ? eom : end;
+
+    const s = `${String(start.getDate()).padStart(2, "0")}/${String(
+      start.getMonth() + 1
+    ).padStart(2, "0")}`;
+    const e = `${String(endClamped.getDate()).padStart(2, "0")}/${String(
+      endClamped.getMonth() + 1
+    ).padStart(2, "0")}`;
+
+    intervals.push({
+      start,
+      end: endClamped,
+      label: `S${intervals.length + 1} (${s}–${e})`,
+    });
+
+    d = addDaysBR(start, 7);
+  }
+
+  if (!intervals.length) {
+    intervals.push({
+      start: first,
+      end: eom,
+      label: `S1 (01/${String(month + 1).padStart(2, "0")}–${String(
+        eom.getDate()
+      ).padStart(2, "0")}/${String(month + 1).padStart(2, "0")})`,
+    });
+  }
+  return intervals;
+}
+
 // Construção local de data (YYYY-MM-DD) evitando UTC.
 const localDateFromISO = (iso?: string | null) => {
   if (!iso) return null;

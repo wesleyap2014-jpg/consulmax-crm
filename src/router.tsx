@@ -1,5 +1,5 @@
 // src/router.tsx
-import { createBrowserRouter, Navigate, Link, useParams } from 'react-router-dom'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 
 import App from './App'
 import Login from './pages/Login'
@@ -26,43 +26,6 @@ import Comissoes from './pages/Comissoes' // 👈 NOVO
 // ✅ página real de adicionar administradora
 import AdicionarAdministradora from './pages/AdicionarAdministradora'
 
-// ====== Páginas leves inline para Simuladores ======
-// (+Add Adm) — simples placeholder anterior (mantido aqui caso queira usar futuramente)
-const AddAdm = () => (
-  <div className="p-6 space-y-4">
-    <h1 className="text-xl font-semibold">Adicionar Administradora</h1>
-    <p className="text-sm text-muted-foreground">
-      Aqui você poderá cadastrar novas administradoras para o Simulador. Após cadastrar, acesse
-      a rota <code className="px-1 py-0.5 rounded bg-gray-100">/simuladores/&lt;slug&gt;</code> para configurar os critérios.
-    </p>
-    <div className="text-sm">
-      <p className="mb-2">Por enquanto, use a página <Link to="/parametros" className="text-blue-600 underline">Parâmetros</Link> para centralizar esse cadastro.</p>
-      <ul className="list-disc ml-6">
-        <li>Defina um <strong>slug</strong> (ex.: <code>maggi</code>, <code>ancora</code>, <code>hs</code>).</li>
-        <li>Depois acesse <code>/simuladores/&lt;seu-slug&gt;</code> para configurar os critérios.</li>
-      </ul>
-    </div>
-  </div>
-);
-
-// Configuração de critérios por administradora (rota dinâmica)
-// Quando você criar a tela real, basta substituir este placeholder pelo componente definitivo.
-const AdmConfigPage = () => {
-  const { admSlug } = useParams();
-  return (
-    <div className="p-6 space-y-3">
-      <h1 className="text-xl font-semibold">Configurar critérios — {admSlug?.toUpperCase()}</h1>
-      <p className="text-sm text-muted-foreground">
-        Esta é a rota de configuração específica da administradora <strong>{admSlug}</strong>.
-        Aqui você vai definir coeficientes, prazos, faixas de crédito e regras.
-      </p>
-      <p className="text-sm">
-        Se preferir, volte para <Link to="/parametros" className="text-blue-600 underline">Parâmetros</Link> para centralizar o cadastro inicial.
-      </p>
-    </div>
-  );
-};
-
 // ====== Rotas ======
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -86,17 +49,13 @@ export const router = createBrowserRouter([
           {
             path: 'simuladores',
             children: [
-              // Ao entrar em /simuladores, manda para Embracon (mantém seu fluxo atual)
               { index: true, element: <Navigate to="/simuladores/embracon" replace /> },
-
-              // Embracon continua usando a página atual de Simuladores (não mexemos)
               { path: 'embracon', element: <Simuladores /> },
-
-              // +Add Adm → agora usa a página real
               { path: 'add', element: <AdicionarAdministradora /> },
 
-              // Rota dinâmica para futuras administradoras cadastradas
-              { path: ':admSlug', element: <AdmConfigPage /> },
+              // ✅ AGORA a rota dinâmica usa a própria página de Simuladores
+              //    e passaremos o id da administradora na URL
+              { path: ':adminId', element: <Simuladores /> },
             ],
           },
 

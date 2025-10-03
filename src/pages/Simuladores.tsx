@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
+import { useLocation } from "react-router-dom";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -328,6 +329,10 @@ export default function Simuladores() {
 
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
+
+// 👉 Adicione aqui:
+const { pathname } = useLocation();
+const showTopChips = false; // ou pathname === "/simuladores"
 
   useEffect(() => {
     (async () => {
@@ -668,47 +673,51 @@ Vantagens
   return (
     <div className="p-6 space-y-4">
       {/* topo: admins + botões */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-2">
-          {admins.map((a) => (
-            <Button
-              key={a.id}
-              variant={activeAdminId === a.id ? "default" : "secondary"}
-              onClick={() => {
-                setActiveAdminId(a.id);
-              }}
-              className="h-10 rounded-2xl px-4"
-            >
-              {a.name}
-            </Button>
-          ))}
-        </div>
+<div className="flex flex-wrap items-center gap-2">
+  {/* Chips de administradoras (escondidos quando showTopChips === false) */}
+  {showTopChips && (
+    <div className="flex flex-wrap gap-2">
+      {admins.map((a) => (
+        <Button
+          key={a.id}
+          variant={activeAdminId === a.id ? "default" : "secondary"}
+          onClick={() => setActiveAdminId(a.id)}
+          className="h-10 rounded-2xl px-4"
+        >
+          {a.name}
+        </Button>
+      ))}
+    </div>
+  )}
 
-        <div className="ml-auto flex items-center gap-2">
-          {activeAdmin && (
-            <>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setMgrOpen(true)}
-                className="h-10 rounded-2xl px-4"
-              >
-                Gerenciar Tabelas
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() =>
-                  alert("Em breve: adicionar administradora.")
-                }
-                className="h-10 rounded-2xl px-4 whitespace-nowrap"
-              >
-                <Plus className="h-4 w-4 mr-1" /> + Add Administradora
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
+  <div className="ml-auto flex items-center gap-2">
+    {activeAdmin && (
+      <>
+        {/* ✅ Mantido SEM depender do showTopChips */}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setMgrOpen(true)}
+          className="h-10 rounded-2xl px-4"
+        >
+          Gerenciar Tabelas
+        </Button>
+
+        {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
+        {showTopChips && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => alert("Em breve: adicionar administradora.")}
+            className="h-10 rounded-2xl px-4 whitespace-nowrap"
+          >
+            <Plus className="h-4 w-4 mr-1" /> + Add Administradora
+          </Button>
+        )}
+      </>
+    )}
+  </div>
+</div>
 
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">

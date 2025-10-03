@@ -2,17 +2,18 @@
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, useEffect } from 'react'
 
+// ordem ajustada conforme solicitado
 const items = [
   { to: '/leads', label: 'Leads' },
-  { to: '/clientes', label: 'Clientes' },
   { to: '/oportunidades', label: 'Oportunidades' },
-  { to: '/agenda', label: 'Agenda' },
-  // { to: '/simuladores', label: 'Simuladores' }, // 🔁 vira grupo abaixo
+  // { to: '/simuladores', label: 'Simuladores' }, // agora é grupo abaixo
   { to: '/propostas', label: 'Propostas' },
-  { to: '/comissoes', label: 'Comissões' }, // 👈 NOVO
   { to: '/carteira', label: 'Carteira' },
-  { to: '/usuarios', label: 'Usuários' },
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos' },
+  { to: '/clientes', label: 'Clientes' },
+  { to: '/agenda', label: 'Agenda' },
+  { to: '/comissoes', label: 'Comissões' },
+  { to: '/usuarios', label: 'Usuários' },
   { to: '/parametros', label: 'Parâmetros' },
 ]
 
@@ -59,42 +60,12 @@ export default function Sidebar() {
 
       {/* Navegação */}
       <nav className="grid gap-2">
-        {/* Itens padrão */}
-        {items.map((i) => (
-          <NavLink
-            key={i.to}
-            to={i.to}
-            className={({ isActive }) =>
-              `px-3 py-2 rounded-2xl transition-colors ${
-                isActive
-                  ? 'bg-consulmax-primary text-white'
-                  : 'hover:bg-consulmax-neutral'
-              }`
-            }
-          >
-            {i.label}
-          </NavLink>
-        ))}
-
-        {/* Grupo: Simuladores */}
-        <button
-          type="button"
-          onClick={() => setSimGroupOpen((v) => !v)}
-          className={`text-left px-3 py-2 rounded-2xl transition-colors flex items-center justify-between ${
-            simuladoresActive
-              ? 'bg-consulmax-primary text-white'
-              : 'hover:bg-consulmax-neutral'
-          }`}
-          aria-expanded={simGroupOpen}
-        >
-          <span>Simuladores</span>
-          <span className="text-xs opacity-80">{simGroupOpen ? '▾' : '▸'}</span>
-        </button>
-
-        {simGroupOpen && (
-          <div className="ml-3 grid gap-1">
+        {/* Itens padrão na ordem solicitada */}
+        {items.map((i) =>
+          i.to !== '/simuladores' ? (
             <NavLink
-              to="/simuladores/embracon"
+              key={i.to}
+              to={i.to}
               className={({ isActive }) =>
                 `px-3 py-2 rounded-2xl transition-colors ${
                   isActive
@@ -103,23 +74,57 @@ export default function Sidebar() {
                 }`
               }
             >
-              Embracon
+              {i.label}
             </NavLink>
-
-            <NavLink
-              to="/simuladores/add"
-              className={({ isActive }) =>
-                `px-3 py-2 rounded-2xl transition-colors ${
-                  isActive
-                    ? 'bg-consulmax-primary text-white'
-                    : 'hover:bg-consulmax-neutral'
-                }`
-              }
-            >
-              + Add Administradora
-            </NavLink>
-          </div>
+          ) : null
         )}
+
+        {/* Grupo: Simuladores (entra no lugar certo da ordem) */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setSimGroupOpen((v) => !v)}
+            className={`w-full text-left px-3 py-2 rounded-2xl transition-colors flex items-center justify-between ${
+              simuladoresActive
+                ? 'bg-consulmax-primary text-white'
+                : 'hover:bg-consulmax-neutral'
+            }`}
+            aria-expanded={simGroupOpen}
+          >
+            <span>Simuladores</span>
+            <span className="text-xs opacity-80">{simGroupOpen ? '▾' : '▸'}</span>
+          </button>
+
+          {simGroupOpen && (
+            <div className="ml-3 grid gap-1 mt-1">
+              <NavLink
+                to="/simuladores/embracon"
+                className={({ isActive }) =>
+                  `px-3 py-2 rounded-2xl transition-colors ${
+                    isActive
+                      ? 'bg-consulmax-primary text-white'
+                      : 'hover:bg-consulmax-neutral'
+                  }`
+                }
+              >
+                Embracon
+              </NavLink>
+
+              <NavLink
+                to="/simuladores/add"
+                className={({ isActive }) =>
+                  `px-3 py-2 rounded-2xl transition-colors ${
+                    isActive
+                      ? 'bg-consulmax-primary text-white'
+                      : 'hover:bg-consulmax-neutral'
+                  }`
+                }
+              >
+                + Add Administradora
+              </NavLink>
+            </div>
+          )}
+        </div>
       </nav>
     </aside>
   )

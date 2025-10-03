@@ -1878,9 +1878,7 @@ export default function ComissoesPage() {
               <td className="p-2">{comm.cliente_nome || "—"}</td>
               <td className="p-2">{comm.numero_proposta || "—"}</td>
               <td className="p-2">M{flow.mes}</td>
-              <td className="p-2 text-right">
-                {BRL(flow.valor_pago_vendedor)}
-              </td>
+              <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
               <td className="p-2">
                 <div className="flex gap-2">
                   {flow.recibo_vendedor_url && (
@@ -2003,9 +2001,7 @@ export default function ComissoesPage() {
           min={1}
           max={36}
           value={ruleMeses}
-          onChange={(e) =>
-            onChangeMeses(parseInt(e.target.value || "1"))
-          }
+          onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
         />
       </div>
     </div>
@@ -2015,8 +2011,8 @@ export default function ComissoesPage() {
     {/* Fluxo */}
     <div className="space-y-2">
       <Label>
-        Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total{" "}
-        <b>ou</b> a soma igual ao % Padrão
+        Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total <b>ou</b>{" "}
+        a soma igual ao % Padrão
       </Label>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-3 border rounded-md bg-white">
         {Array.from({ length: ruleMeses }).map((_, i) => (
@@ -2033,11 +2029,7 @@ export default function ComissoesPage() {
         ))}
       </div>
       <div className="text-xs text-gray-600 mt-1">
-        Soma do fluxo:{" "}
-        <b>
-          {fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão{" "}
-          {rulePercent || "0,00"})
-        </b>
+        Soma do fluxo: <b>{fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão {rulePercent || "0,00"})</b>
       </div>
     </div>
 
@@ -2096,10 +2088,7 @@ export default function ComissoesPage() {
             </tr>
           )}
           {ruleRows.map((r) => (
-            <tr
-              key={`${r.vendedor_id}-${r.sim_table_id}`}
-              className="border-t"
-            >
+            <tr key={`${r.vendedor_id}-${r.sim_table_id}`} className="border-t">
               <td className="p-2">{r.segmento || "—"}</td>
               <td className="p-2">{r.administradora || "—"}</td>
               <td className="p-2">{r.nome_tabela}</td>
@@ -2107,19 +2096,13 @@ export default function ComissoesPage() {
               <td className="p-2">{r.fluxo_meses} Pgtos</td>
               <td className="p-2">
                 <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => loadRuleToForm(r)}
-                  >
+                  <Button size="sm" variant="secondary" onClick={() => loadRuleToForm(r)}>
                     <Pencil className="w-4 h-4 mr-1" /> Editar
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() =>
-                      deleteRule(r.vendedor_id, r.sim_table_id)
-                    }
+                    onClick={() => deleteRule(r.vendedor_id, r.sim_table_id)}
                   >
                     <Trash2 className="w-4 h-4 mr-1" /> Excluir
                   </Button>
@@ -2154,11 +2137,7 @@ export default function ComissoesPage() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <Label>Data do pagamento</Label>
-            <Input
-              type="date"
-              value={payDate}
-              onChange={(e) => setPayDate(e.target.value)}
-            />
+            <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
           </div>
           <div>
             <Label>Valor pago ao vendedor (opcional)</Label>
@@ -2174,9 +2153,7 @@ export default function ComissoesPage() {
                 paySelectedParcels({
                   data_pagamento_vendedor: payDate,
                   valor_pago_vendedor: payValue
-                    ? parseFloat(
-                        payValue.replace(/\./g, "").replace(",", ".")
-                      )
+                    ? parseFloat(payValue.replace(/\./g, "").replace(",", "."))
                     : undefined,
                   recibo_file: null,
                   comprovante_file: null,
@@ -2227,9 +2204,7 @@ export default function ComissoesPage() {
                 return (
                   <tr
                     key={f.id}
-                    className={`border-b ${
-                      isLocked ? "opacity-60 pointer-events-none" : ""
-                    }`}
+                    className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}
                   >
                     <td className="p-2">
                       <Checkbox
@@ -2243,13 +2218,9 @@ export default function ComissoesPage() {
                     <td className="p-2">M{f.mes}</td>
                     <td className="p-2">{pct100(f.percentual)}</td>
                     <td className="p-2 text-right">
-                      {BRL(
-                        (f as any)._valor_previsto_calc ?? f.valor_previsto
-                      )}
+                      {BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}
                     </td>
-                    <td className="p-2 text-right">
-                      {BRL(f.valor_pago_vendedor)}
-                    </td>
+                    <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
                     <td className="p-2">
                       {f.data_pagamento_vendedor
                         ? formatISODateBR(f.data_pagamento_vendedor)
@@ -2328,9 +2299,7 @@ function UploadArea({
               onConfirm({
                 data_pagamento_vendedor: dataPg,
                 valor_pago_vendedor: valorPg
-                  ? parseFloat(
-                      valorPg.replace(/\./g, "").replace(",", ".")
-                    )
+                  ? parseFloat(valorPg.replace(/\./g, "").replace(",", "."))
                   : undefined,
                 recibo_file: fileRecibo,
                 comprovante_file: fileComp,
@@ -2360,9 +2329,8 @@ function UploadArea({
         </div>
       </div>
       <div className="text-xs text-gray-500">
-        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor{" "}
-        <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma
-        seleção segura automática (especialmente no fluxo 1×100%).
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada,
+        a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
       </div>
     </div>
   );

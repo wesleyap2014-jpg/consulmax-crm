@@ -2332,6 +2332,5 @@ function UploadArea({
         Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada,
         a confirmação faz uma seleção segura automática (especialmente no fluxo 1×100%).
       </div>
-    </div>
   );
 }

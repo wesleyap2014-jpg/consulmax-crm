@@ -478,192 +478,191 @@ function LineChart({
 }
 
 /* ========================= Helpers de projeção p/ gráficos (revisto) ========================= */
-/** fim de mês no fuso local */
+
+/** Último dia do mês (local) */
 const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
-/** soma dias (local) sem escorregar UTC */
-function addDaysLocal(d: Date, days: number) {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + days);
-}
 
-/** âncora M2 → retorna Date local se M2 tem data registrada (independe de estar pago) */
-function getAnchorM2Date(flow?: CommissionFlow[]): Date | null {
-  if (!flow) return null;
-  const m2 = flow.find(f => Number(f.mes) === 2);
-  if (!m2 || !m2.data_pagamento_vendedor) return null;
-  const d = localDateFromISO(m2.data_pagamento_vendedor);
-  return d ?? null;
-}
+/** Soma simples */
+const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b || 0), 0);
 
-/** valor previsto “padrão” da parcela */
-function predictedValueForParcel(c: Commission, f: CommissionFlow): number {
-  const total =
-    (typeof c.valor_total === "number" ? c.valor_total
-      : (c.base_calculo ?? 0) * (c.percent_aplicado ?? 0)) || 0;
-  const base = typeof f.valor_previsto === "number" ? f.valor_previsto : total * (f.percentual ?? 0);
-  // arredonda a centavos
-  return Math.round(base * 100) / 100;
-}
-
-/** data prevista da parcela seguindo as regras:
- * - M1 e M2: entram em Previsto **se têm data registrada** (usamos a própria data da parcela)
- * - M3+: só projetamos se existir M2 com data; âncora = data de M2; cada mês adicional = +30 dias
- * - se a parcela já foi paga (valor_pago_vendedor > 0), ela não entra em Previsto
+/** Data esperada da parcela M(n) segundo as regras:
+ * - M1 e M2: usam a data registrada em commission_flow.data_pagamento_vendedor (se pago) OU a data registrada “de agendamento” (se existir) — no nosso caso, consideramos:
+ *     • se o flow tem data_pagamento_vendedor -> é pago (sai de “Previsto”)
+ *     • se NÃO tem pagamento mas a parcela tem “data” registrada (no seu modelo, você está usando a data de pagamento para registrar datas; então para previsto usamos a âncora de M2 quando existir)
+ * - M3+: só projetar se M2 tiver data registrada (paga ou não). Projeção linear em passos de 30 dias desde a data de M2.
  */
-function expectedDateForParcel(c: Commission, f: CommissionFlow, flow?: CommissionFlow[]): Date | null {
-  const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0 && !!f.data_pagamento_vendedor;
-  if (isPaid) return null;
+function expectedDateForParcel(
+  saleDateISO: string | null | undefined,
+  flow: CommissionFlow[],
+  mes: number
+): Date | null {
+  // Âncora: data de M2 (se existir)
+  const m2 = flow.find(f => f.mes === 2);
+  const m2Date = m2?.data_pagamento_vendedor
+    ? localDateFromISO(m2.data_pagamento_vendedor)
+    : null;
 
-  const mes = Number(f.mes) || 0;
-
-  // M1 e M2: precisam ter data registrada para aparecer em Previsto
-  if (mes === 1 || mes === 2) {
-    if (!f.data_pagamento_vendedor) return null;
-    return localDateFromISO(f.data_pagamento_vendedor);
+  if (mes <= 2) {
+    // M1/M2: entram como Previsto se tiverem data registrada (mesma regra do recibo por data)
+    const f = flow.find(x => x.mes === mes);
+    const regDate = f?.data_pagamento_vendedor
+      ? localDateFromISO(f.data_pagamento_vendedor)
+      : null;
+    return regDate; // se não tem data, não entra como “previsto”
   }
 
-  // M3+: depende de M2 com data; projeção linear a cada 30 dias
-  const anchor = getAnchorM2Date(flow);
-  if (!anchor) return null;
-  const offset = (mes - 2) * 30; // 30 dias por parcela após M2
-  return addDaysLocal(anchor, offset);
+  // M3+ só se existir M2 “datada”
+  if (!m2Date) return null;
+
+  const offset = mes - 2; // M3 = +1*30d, M4 = +2*30d, ...
+  const expected = new Date(m2Date.getFullYear(), m2Date.getMonth(), m2Date.getDate());
+  expected.setDate(expected.getDate() + offset * 30);
+  return expected;
 }
 
-/** retorna sextas-feiras do mês (0=dom, 5=sex) no fuso local */
-function getFridaysOfMonth(year: number, month: number): Date[] {
-  const last = endOfMonth(new Date(year, month, 1));
-  const fridays: Date[] = [];
-  let d = new Date(year, month, 1);
-  while (d.getDay() !== 5) d = new Date(year, month, d.getDate() + 1);
-  while (d <= last) {
-    fridays.push(new Date(year, month, d.getDate()));
-    d = new Date(year, month, d.getDate() + 7);
-  }
-  return fridays;
-}
-
-/** intervalos semanais: **sexta → quinta** */
-function getWeeklyIntervalsFriThu(
-  year: number,
-  month: number
-): Array<{ start: Date; end: Date; label: string }> {
-  const fridays = getFridaysOfMonth(year, month);
+/** Intervalos semanais agora são: SEXTA → QUINTA */
+function getWeeklyIntervalsFriToThu(year: number, month: number): Array<{ start: Date; end: Date; label: string }> {
   const eom = endOfMonth(new Date(year, month, 1));
-  if (fridays.length === 0) {
-    const s = new Date(year, month, 1);
-    const e = eom;
-    const lb = `S1 (${String(s.getDate()).padStart(2,"0")}/${String(s.getMonth()+1).padStart(2,"0")}–${String(e.getDate()).padStart(2,"0")}/${String(e.getMonth()+1).padStart(2,"0")})`;
-    return [{ start: s, end: e, label: lb }];
-  }
+  // Encontrar a primeira SEXTA do mês
+  let d = new Date(year, month, 1);
+  while (d.getDay() !== 5) d = new Date(year, month, d.getDate() + 1); // 5 = sexta
 
-  const intervals: Array<{ start: Date; end: Date; label: string }> = [];
-  for (let i = 0; i < fridays.length; i++) {
-    const start = fridays[i];
-    // fim = quinta seguinte (sexta + 6 dias) **ou** fim do mês
-    const theoreticalEnd = addDaysLocal(start, 6);
-    const end = theoreticalEnd.getMonth() === month ? theoreticalEnd : eom;
-    const s = `${String(start.getDate()).padStart(2, "0")}/${String(start.getMonth()+1).padStart(2, "0")}`;
-    const e = `${String(end.getDate()).padStart(2, "0")}/${String(end.getMonth()+1).padStart(2, "0")}`;
-    intervals.push({ start, end, label: `S${i + 1} (${s}–${e})` });
+  const weeks: Array<{ start: Date; end: Date; label: string }> = [];
+  while (d <= eom) {
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6); // até quinta
+    if (end > eom) end.setTime(eom.getTime());
+    const lb = `S${weeks.length + 1} (${String(start.getDate()).padStart(2,"0")}/${String(start.getMonth()+1).padStart(2,"0")}–${String(end.getDate()).padStart(2,"0")}/${String(end.getMonth()+1).padStart(2,"0")})`;
+    weeks.push({ start, end, label: lb });
+    d = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1); // próximo dia após quinta
   }
-  return intervals;
+  if (weeks.length === 0) {
+    const s = new Date(year, month, 1);
+    const lb = `S1 (01/${String(month+1).padStart(2,"0")}–${String(eom.getDate()).padStart(2,"0")}/${String(month+1).padStart(2,"0")})`;
+    return [{ start: s, end: eom, label: lb }];
+  }
+  return weeks;
 }
 
 type ProjSeries = { labels: string[]; previstoBruto: number[]; pagoBruto: number[] };
 
-/** ===== Projeção Anual (5 anos) =====
- * - Pago: soma por ano usando commission_flow.data_pagamento_vendedor
- * - Previsto: datas conforme regras acima (M1/M2 com data; M3+ ancorado em M2)
- */
+/** Série anual (5 anos): mostramos apenas pagos, e “previsto” aqui fica zerado por decisão de negócio */
 function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries {
   const now = new Date();
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 4 + i);
-  const labels = years.map((y) => String(y));
   const previsto = Array(years.length).fill(0);
   const pagos = Array(years.length).fill(0);
 
   for (const r of rows) {
-    const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
-
+    const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
     for (const f of flows) {
-      // PAGO
-      if (f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) > 0) {
+      if (f.data_pagamento_vendedor) {
         const pd = localDateFromISO(f.data_pagamento_vendedor);
         if (pd) {
           const yi = years.indexOf(pd.getFullYear());
-          if (yi >= 0) pagos[yi] += f.valor_pago_vendedor || 0;
+          if (yi >= 0) pagos[yi] += f.valor_pago_vendedor ?? 0;
+        }
+      }
+    }
+  }
+  return { labels: years.map(String), previstoBruto: previsto, pagoBruto: pagos };
+}
+
+/** Série mensal de um ano específico:
+ * - Ano anterior: mostrar apenas pagos (previsto = 0)
+ * - Ano atual: pagos + previsto (M1/M2 com data registrada + M3+ projetados a partir da M2)
+ */
+function projectMonthlyFlows(
+  rows: Array<Commission & { flow?: CommissionFlow[] }>,
+  year: number,
+  includePrevisto: boolean
+): ProjSeries {
+  const labels = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+  const previsto = Array(12).fill(0);
+  const pagos    = Array(12).fill(0);
+
+  for (const r of rows) {
+    const total = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+    const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
+
+    for (const f of flows) {
+      // Pagos sempre entram
+      if (f.data_pagamento_vendedor) {
+        const pd = localDateFromISO(f.data_pagamento_vendedor);
+        if (pd && pd.getFullYear() === year) {
+          pagos[pd.getMonth()] += f.valor_pago_vendedor ?? 0;
         }
       }
 
-      // PREVISTO
-      const expDate = expectedDateForParcel(r, f, flows);
-      if (expDate) {
-        const yi = years.indexOf(expDate.getFullYear());
-        if (yi >= 0) previsto[yi] += predictedValueForParcel(r, f);
+      if (!includePrevisto) continue;
+
+      // Previsto:
+      // - M1/M2: só se tiver data registrada (a data que você está usando para ancoragem)
+      // - M3+: só se M2 tiver data; projeção linear a partir de M2 a cada 30 dias
+      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
+      if (exp && exp.getFullYear() === year) {
+        const expVal = (f.valor_previsto ?? (total * (f.percentual ?? 0))) ?? 0;
+
+        // Se já foi pago, não contabiliza como previsto
+        const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+        if (!isPaid) previsto[exp.getMonth()] += expVal;
       }
     }
   }
   return { labels, previstoBruto: previsto, pagoBruto: pagos };
 }
 
-/** ===== Projeção Mensal (por ano) ===== */
-function projectMonthlyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>, year: number): ProjSeries {
-  const labels = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
-  const previsto = Array(12).fill(0);
-  const pagos = Array(12).fill(0);
-
-  for (const r of rows) {
-    const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
-
-    for (const f of flows) {
-      // PAGO
-      if (f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) > 0) {
-        const pd = localDateFromISO(f.data_pagamento_vendedor);
-        if (pd && pd.getFullYear() === year) pagos[pd.getMonth()] += f.valor_pago_vendedor || 0;
-      }
-
-      // PREVISTO
-      const expDate = expectedDateForParcel(r, f, flows);
-      if (expDate && expDate.getFullYear() === year) {
-        previsto[expDate.getMonth()] += predictedValueForParcel(r, f);
-      }
-    }
-  }
-  return { labels, previstoBruto: previsto, pagoBruto: pagos };
-}
-
-/** ===== Projeção Semanal (mês atual, sexta→quinta) ===== */
+/** Série semanal do mês atual (sexta→quinta):
+ * - Mostrar pagos + previsto (regras de cima), apenas para o mês/ano atuais
+ */
 function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries & { labels: string[] } {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
-  const intervals = getWeeklyIntervalsFriThu(year, month);
-  const labels = intervals.map((i) => i.label);
+  const intervals = getWeeklyIntervalsFriToThu(year, month);
+  const labels = intervals.map(i => i.label);
   const previsto = Array(intervals.length).fill(0);
-  const pagos = Array(intervals.length).fill(0);
+  const pagos    = Array(intervals.length).fill(0);
 
   for (const r of rows) {
-    const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+    const total = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+    const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
 
     for (const f of flows) {
-      // PAGO no mês atual
-      if (f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) > 0) {
+      // Pagos do mês atual
+      if (f.data_pagamento_vendedor) {
         const pd = localDateFromISO(f.data_pagamento_vendedor);
         if (pd && pd.getFullYear() === year && pd.getMonth() === month) {
-          const idx = intervals.findIndex(iv => pd.getTime() >= iv.start.getTime() && pd.getTime() <= iv.end.getTime());
-          if (idx >= 0) pagos[idx] += f.valor_pago_vendedor || 0;
+          const idx = intervals.findIndex(iv => pd >= iv.start && pd <= iv.end);
+          if (idx >= 0) pagos[idx] += f.valor_pago_vendedor ?? 0;
         }
       }
 
-      // PREVISTO no mês atual
-      const expDate = expectedDateForParcel(r, f, flows);
-      if (expDate && expDate.getFullYear() === year && expDate.getMonth() === month) {
-        const idx2 = intervals.findIndex(iv => expDate.getTime() >= iv.start.getTime() && expDate.getTime() <= iv.end.getTime());
-        if (idx2 >= 0) previsto[idx2] += predictedValueForParcel(r, f);
+      // Previsto do mês atual
+      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
+      if (exp && exp.getFullYear() === year && exp.getMonth() === month) {
+        const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+        if (!isPaid) {
+          const expVal = (f.valor_previsto ?? (total * (f.percentual ?? 0))) ?? 0;
+          const idx = intervals.findIndex(iv => exp >= iv.start && exp <= iv.end);
+          if (idx >= 0) previsto[idx] += expVal;
+        }
       }
     }
   }
-
   return { labels, previstoBruto: previsto, pagoBruto: pagos };
+}
+
+/** ======================== Backward-compat =========================
+ * Alguns pontos antigos chamam extractProjectedDates; mantemos aqui
+ * para não quebrar nada (encaminha para a nova lógica).
+ */
+function extractProjectedDates(
+  saleDateISO: string | null | undefined,
+  flow: CommissionFlow[],
+  mes: number
+): Date | null {
+  return expectedDateForParcel(saleDateISO, flow, mes);
 }
 
 /* ========================= Página ========================= */

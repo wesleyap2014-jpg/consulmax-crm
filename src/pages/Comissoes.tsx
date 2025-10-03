@@ -675,6 +675,24 @@ function extractProjectedDates(
   return expectedDateForParcel(saleDateISO, flow, mes);
 }
 
+/* ======================== Normalizador de Projeções ========================= */
+/**
+ * Garante que sempre temos as chaves projetadas/pagas mesmo se vier null/undefined.
+ * 
+ * Exemplo de uso:
+ *   const { projected, paid } = normalizeProjection(getDonutPeriodo(...));
+ *   const { previsto, pago }  = normalizeProjection(getKpiAno(...));
+ */
+type ProjectionLike = Partial<Record<"projected" | "paid" | "previsto" | "pago", number>> & Record<string, any>;
+
+const normalizeProjection = (p?: ProjectionLike | null) => ({
+  projected: 0,
+  paid: 0,
+  previsto: 0,
+  pago: 0,
+  ...(p ?? {}),
+});
+
 /* ========================= Página ========================= */
 export default function ComissoesPage() {
   /* Filtros (sem período) */
@@ -894,18 +912,30 @@ export default function ComissoesPage() {
   }
 
   // Previsto (não confirmados) no período (usando regras novas)
-  function previstoInRange(s: Date, e: Date) {
-    let total = 0;
-    for (const r of rows) {
-      const { projected } = extractProjectedDates(r); // já exclui pagos e segue regra M2
-      for (const p of projected) {
-        if (p.date.getTime() >= s.getTime() && p.date.getTime() <= e.getTime()) {
-          total += p.value * (1 - impostoFrac);
-        }
+function previstoInRange(s: Date, e: Date) {
+  let total = 0;
+  for (const r of rows) {
+    const totalComissao = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+    const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
+
+    for (const f of flows) {
+      // já pagos não entram no previsto
+      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+      if (isPaid) continue;
+
+      // data “esperada” da parcela conforme regras (M1/M2 datadas; M3+ ancorado em M2)
+      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
+      if (!exp) continue;
+
+      // só conta se cair dentro do intervalo solicitado
+      if (exp.getTime() >= s.getTime() && exp.getTime() <= e.getTime()) {
+        const expVal = (f.valor_previsto ?? (totalComissao * (f.percentual ?? 0))) ?? 0;
+        total += expVal * (1 - impostoFrac);
       }
     }
-    return total;
   }
+  return total;
+}
 
   // KPIs para cartões
   const kpi = useMemo(() => {
@@ -936,8 +966,8 @@ export default function ComissoesPage() {
 
   /* ===== Projeções p/ gráficos ===== */
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
-  const monthlyPrev = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1), [rows]);
-  const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear()), [rows]);
+  const monthlyPrev = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1, false), [rows]); // ano anterior: só pagos
+  const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);      // ano atual: pago + previsto
   const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
 
   /* Regras — utilitários */

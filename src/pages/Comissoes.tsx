@@ -693,7 +693,110 @@ const normalizeProjection = (p?: ProjectionLike | null) => ({
   ...(p ?? {}),
 });
 
+/* ===== Série diária do Mês Atual (01 → último dia) ===== */
+function buildDailyMonthSeries(
+  rows: Array<Commission & { flow?: CommissionFlow[] }>,
+  impostoFrac: number
+) {
+  const today  = new Date();
+  const mStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const mEnd   = endOfMonth(today);
+
+  // labels: "01", "02", ..., "31"
+  const labels: string[] = [];
+  const days: Date[] = [];
+  for (let d = new Date(mStart); d <= mEnd; d.setDate(d.getDate() + 1)) {
+    labels.push(String(d.getDate()).padStart(2, "0"));
+    days.push(new Date(d));
+  }
+
+  const pago     = Array(labels.length).fill(0);
+  const previsto = Array(labels.length).fill(0);
+
+  for (const r of rows) {
+    const total = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+    const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
+
+    for (const f of flows) {
+      // pagos: soma no dia pago (se cair no mês)
+      if (f.data_pagamento_vendedor) {
+        const pd = localDateFromISO(f.data_pagamento_vendedor);
+        if (pd && pd.getFullYear() === today.getFullYear() && pd.getMonth() === today.getMonth()) {
+          const idx = pd.getDate() - 1; // 0-based
+          if (idx >= 0 && idx < pago.length) pago[idx] += (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac);
+        }
+      }
+
+      // previsto: usa expectedDateForParcel (M1/M2 datadas; M3+ a partir de M2)
+      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+      if (isPaid) continue;
+
+      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
+      if (exp && exp.getFullYear() === today.getFullYear() && exp.getMonth() === today.getMonth()) {
+        const idx = exp.getDate() - 1;
+        if (idx >= 0 && idx < previsto.length) {
+          const val = (f.valor_previsto ?? (total * (f.percentual ?? 0))) ?? 0;
+          previsto[idx] += val * (1 - impostoFrac);
+        }
+      }
+    }
+  }
+
+  return { labels, pago, previsto };
+}
+
 /* ========================= Página ========================= */
+
+/* ===== Mini line chart (SVG) para usar no "Mês Atual" ===== */
+type LineSeries = { name: string; data: number[] };
+
+function SimpleLineChart({
+  labels,
+  series,
+  height = 180,
+}: {
+  labels: string[];
+  series: LineSeries[];
+  height?: number;
+}) {
+  const width = Math.max(320, labels.length * 14); // largura responsiva simples
+  const maxY = Math.max(
+    1,
+    ...series.flatMap(s => s.data).map(v => Number.isFinite(v) ? v : 0)
+  );
+
+  const xStep = labels.length > 1 ? width / (labels.length - 1) : width;
+  const yMap = (v: number) => height - (maxY ? (v / maxY) * height : 0);
+
+  const toPoints = (arr: number[]) =>
+    arr.map((v, i) => `${i * xStep},${yMap(v || 0)}`).join(" ");
+
+  if (!labels.length) {
+    return <div className="text-sm text-muted-foreground">Sem dados para este mês.</div>;
+  }
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-44">
+        {/* linha base */}
+        <line x1="0" y1={height} x2={width} y2={height} stroke="currentColor" className="opacity-20" />
+
+        {/* séries */}
+        {series.map((s, idx) => (
+          <g key={s.name} className={idx === 0 ? "text-[#1E293F]" : "text-[#B5A573]"}>
+            <polyline
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              points={toPoints(s.data)}
+            />
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 export default function ComissoesPage() {
   /* Filtros (sem período) */
   const [vendedorId, setVendedorId] = useState<string>("all");
@@ -969,6 +1072,7 @@ function previstoInRange(s: Date, e: Date) {
   const monthlyPrev = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1, false), [rows]); // ano anterior: só pagos
   const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);      // ano atual: pago + previsto
   const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
+  const dailyMonth = useMemo(() => buildDailyMonthSeries(rows, impostoFrac), [rows, impostoFrac]);
 
   /* Regras — utilitários */
   function onChangeMeses(n: number) {
@@ -1665,6 +1769,22 @@ function previstoInRange(s: Date, e: Date) {
             />
           </CardContent>
         </Card>
+
+{/* --- MÊS ATUAL — Pago x Previsto (linha diária 01→último dia) --- */}
+<Card className="xl:col-span-2">
+  <CardHeader className="pb-1">
+    <CardTitle>Mês Atual — Pago x Previsto</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-3">
+    <SimpleLineChart
+      labels={dailyMonth.labels}
+      series={[
+        { name: "Pago",     data: dailyMonth.pago },
+        { name: "Previsto", data: dailyMonth.previsto },
+      ]}
+    />
+  </CardContent>
+</Card>
 
         {/* Ano atual: Pago + Previsto */}
         <Card>

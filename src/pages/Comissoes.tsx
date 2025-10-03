@@ -1770,22 +1770,6 @@ function previstoInRange(s: Date, e: Date) {
           </CardContent>
         </Card>
 
-{/* --- MÊS ATUAL — Pago x Previsto (linha diária 01→último dia) --- */}
-<Card className="xl:col-span-2">
-  <CardHeader className="pb-1">
-    <CardTitle>Mês Atual — Pago x Previsto</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-3">
-    <SimpleLineChart
-      labels={dailyMonth.labels}
-      series={[
-        { name: "Pago",     data: dailyMonth.pago },
-        { name: "Previsto", data: dailyMonth.previsto },
-      ]}
-    />
-  </CardContent>
-</Card>
-
         {/* Ano atual: Pago + Previsto */}
         <Card>
           <CardHeader className="pb-1"><CardTitle>Ano atual — {new Date().getFullYear()}</CardTitle></CardHeader>

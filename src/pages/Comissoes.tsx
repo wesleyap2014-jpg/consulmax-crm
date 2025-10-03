@@ -1055,15 +1055,25 @@ function previstoInRange(s: Date, e: Date) {
     return { vendasTotal, comBruta, comLiquida, comPaga: pagoLiquido, comPendente };
   }, [rows, impostoFrac]);
 
-  // Donuts/Períodos conforme regra:
-  // - 5 anos: apenas pagos
-  // - Ano anterior: apenas pagos
-  // - Ano atual / mês atual: pagos + previsto (não confirmados)
-  const range5yPago = paidInRangeLiquid(fiveYearsAgo, now);
-  const rangeYPago = paidInRangeLiquid(yStart, now);
-  const rangeMPago = paidInRangeLiquid(mStart, now);
-  const rangeYPrev = previstoInRange(yStart, now);
-  const rangeMPrev = previstoInRange(mStart, now);
+ // ===== Donuts (valores) =====
+const pyStart = new Date(now.getFullYear() - 1, 0, 1);   // 01/01 do ano anterior
+const pyEnd   = new Date(now.getFullYear() - 1, 11, 31); // 31/12 do ano anterior
+const yEnd    = new Date(now.getFullYear(), 11, 31);     // 31/12 do ano atual
+const mEnd    = endOfMonth(now);                          // último dia do mês atual
+
+// 5 anos (apenas pagos)
+const range5yPago   = paidInRangeLiquid(fiveYearsAgo, now);
+
+// Ano anterior (apenas pagos)
+const rangePrevYPago = paidInRangeLiquid(pyStart, pyEnd);
+
+// Ano atual (Pago + Previsto)
+const rangeYPago    = paidInRangeLiquid(yStart, now);   // YTD
+const rangeYPrev    = previstoInRange(yStart, yEnd);    // previsto até 31/12 (sem duplicar pagos)
+
+// Mês atual (Pago + Previsto)
+const rangeMPago    = paidInRangeLiquid(mStart, now);   // mês até hoje
+const rangeMPrev    = previstoInRange(mStart, mEnd);    // previsto até último dia do mês
 
   const vendedorAtual = useMemo(() => userLabel(vendedorId === "all" ? null : vendedorId), [usersById, usersByAuth, vendedorId]);
 
@@ -1753,13 +1763,13 @@ function previstoInRange(s: Date, e: Date) {
           <CardHeader className="pb-1"><CardTitle>Ano anterior — {new Date().getFullYear() - 1}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <Donut
-              paid={rangeYPago /* período atual do ano tem pago, mas o cartão é ano anterior — mantemos "apenas pagos" */}
-              pending={0}
-              label="Ano anterior"
-              hoverPaidText={`Pago no ano anterior: ${BRL(rangeYPago)}`}
-              hoverPendText={`—`}
-              pendingLegend="—"
-            />
+  paid={rangePrevYPago}
+  pending={0}
+  label="Ano anterior"
+  hoverPaidText={`Pago no ano anterior: ${BRL(rangePrevYPago)}`}
+  hoverPendText={"—"}
+  pendingLegend="—"
+/>
             <LineChart
               labels={monthlyPrev.labels}
               series={[
@@ -1775,14 +1785,13 @@ function previstoInRange(s: Date, e: Date) {
           <CardHeader className="pb-1"><CardTitle>Ano atual — {new Date().getFullYear()}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <Donut
-              paid={rangeYPago}
-              pending={rangeYPrev}
-              label="Ano"
-              hoverPaidText={`Pago no ano: ${BRL(rangeYPago)}`}
-              hoverPendText={`Previsto (não confirmados): ${BRL(rangeYPrev)}`}
-              pendingLegend="Previsto"
-            />
-            <LineChart
+  paid={rangeMPago}
+  pending={rangeMPrev}
+  label="Mês"
+  hoverPaidText={`Pago no mês: ${BRL(rangeMPago)}`}
+  hoverPendText={`Previsto no mês: ${BRL(rangeMPrev)}`}
+/>
+           <LineChart
               labels={monthlyCurr.labels}
               series={[
                 { name: "Previsto", data: monthlyCurr.previstoBruto },
@@ -1797,13 +1806,12 @@ function previstoInRange(s: Date, e: Date) {
           <CardHeader className="pb-1"><CardTitle>Mês atual (semanas sex→qui)</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <Donut
-              paid={rangeMPago}
-              pending={rangeMPrev}
-              label="Mês"
-              hoverPaidText={`Pago no mês: ${BRL(rangeMPago)}`}
-              hoverPendText={`Previsto (não confirmados): ${BRL(rangeMPrev)}`}
-              pendingLegend="Previsto"
-            />
+  paid={rangeMPago}
+  pending={rangeMPrev}
+  label="Mês"
+  hoverPaidText={`Pago no mês: ${BRL(rangeMPago)}`}
+  hoverPendText={`Previsto no mês: ${BRL(rangeMPrev)}`}
+/>
             <LineChart
               labels={weeklyCurr.labels}
               series={[

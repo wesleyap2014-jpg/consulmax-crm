@@ -22,21 +22,51 @@ export default function AdicionarAdministradora() {
       setError("Informe o nome da administradora.");
       return;
     }
+
     setSaving(true);
-    const { data, error } = await supabase
+
+    // tenta inserir
+    const ins = await supabase
       .from("sim_admins")
       .insert({ name: trimmed })
       .select("id")
       .single();
 
-    setSaving(false);
-    if (error) {
-      setError(error.message);
+    // se inseriu com sucesso
+    if (ins.data && !ins.error) {
+      setSaving(false);
+      navigate(`/simuladores/${ins.data.id}?setup=1`, { replace: true });
       return;
     }
 
-    // ✅ vai direto para /simuladores/<id>?setup=1
-    navigate(`/simuladores/${data?.id}?setup=1`, { replace: true });
+    // se já existe (duplicado)
+    const isUniqueViolation =
+      ins.error?.code === "23505" ||
+      (ins.error?.message || "").toLowerCase().includes("duplicate key");
+
+    if (isUniqueViolation) {
+      const { data: existing } = await supabase
+        .from("sim_admins")
+        .select("id, name")
+        .eq("name", trimmed)
+        .maybeSingle();
+
+      setSaving(false);
+
+      if (existing?.id) {
+        // já existe → abre direto essa administradora
+        navigate(`/simuladores/${existing.id}`, { replace: true });
+        return;
+      }
+
+      // fallback
+      setError("Essa administradora já existe.");
+      return;
+    }
+
+    // outros erros
+    setSaving(false);
+    setError(ins.error?.message || "Não foi possível salvar.");
   }
 
   return (
@@ -83,7 +113,8 @@ export default function AdicionarAdministradora() {
           </div>
 
           <div className="text-xs text-muted-foreground">
-            Dica: após salvar, use <em>Gerenciar Tabelas</em> para cadastrar os critérios (segmentos, prazos, taxas).
+            Dica: após salvar, use <em>Gerenciar Tabelas</em> para cadastrar os critérios
+            (segmentos, prazos, taxas).
           </div>
         </CardContent>
       </Card>

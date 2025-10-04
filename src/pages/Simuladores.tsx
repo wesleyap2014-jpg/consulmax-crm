@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
 import { useLocation } from "react-router-dom";
-import { useLocation, useParams } from "react-router-dom";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -331,6 +330,11 @@ export default function Simuladores() {
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
 
+// URL: /simuladores/:adminId?setup=1
+const { adminId } = useParams();
+const { search } = useLocation();
+const openSetup = new URLSearchParams(search).get("setup") === "1";
+
 // 👉 Adicione aqui:
 const { pathname } = useLocation();
 const showTopChips = false; // ou pathname === "/simuladores"
@@ -343,12 +347,27 @@ const showTopChips = false; // ou pathname === "/simuladores"
         supabase.from("sim_tables").select("*"),
         supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
-      setAdmins(a ?? []);
-      setTables(t ?? []);
-      setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
-      const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-      setActiveAdminId(embr?.id ?? (a?.[0]?.id ?? null));
-      setLoading(false);
+     setAdmins(a ?? []);
+setTables(t ?? []);
+setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
+
+// 1) padrão: Embracon > ou o primeiro da lista
+const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
+let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+
+// 2) se a URL tiver um adminId válido, priorize ele
+if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
+  nextActiveId = adminId as string;
+}
+setActiveAdminId(nextActiveId);
+
+// 3) terminou o loading
+setLoading(false);
+
+// 4) se a URL tiver ?setup=1, abre o modal de tabelas
+if (openSetup) {
+  setTimeout(() => setMgrOpen(true), 0);
+}
     })();
   }, []);
 

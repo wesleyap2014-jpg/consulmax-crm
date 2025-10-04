@@ -23,9 +23,9 @@ export default function AdicionarAdministradora() {
       return;
     }
     setSaving(true);
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("sim_admins")
-      .insert({ name: trimmed }) // compatível com seu schema atual (id,name)
+      .insert({ name: trimmed })
       .select("id")
       .single();
 
@@ -34,8 +34,9 @@ export default function AdicionarAdministradora() {
       setError(error.message);
       return;
     }
-    // volta para o simulador
-    navigate("/simuladores", { replace: true });
+
+    // ✅ vai direto para /simuladores/<id>?setup=1
+    navigate(`/simuladores/${data?.id}?setup=1`, { replace: true });
   }
 
   return (
@@ -64,11 +65,19 @@ export default function AdicionarAdministradora() {
           {error && <div className="text-sm text-red-600">{error}</div>}
 
           <div className="flex items-center gap-2">
-            <Button onClick={handleSave} disabled={saving || !name.trim()} className="h-10 rounded-2xl px-4">
+            <Button
+              onClick={handleSave}
+              disabled={saving || !name.trim()}
+              className="h-10 rounded-2xl px-4"
+            >
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar
             </Button>
-            <Button variant="secondary" onClick={() => navigate("/simuladores")} className="h-10 rounded-2xl px-4">
+            <Button
+              variant="secondary"
+              onClick={() => navigate("/simuladores")}
+              className="h-10 rounded-2xl px-4"
+            >
               Cancelar
             </Button>
           </div>

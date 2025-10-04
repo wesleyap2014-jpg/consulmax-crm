@@ -1,6 +1,7 @@
 // src/components/layout/Sidebar.tsx
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, useEffect } from 'react'
+import { supabase } from '@/lib/supabaseClient' // ✅ novo
 
 // 👇 Ícones do lucide-react
 import {
@@ -46,6 +47,25 @@ export default function Sidebar() {
   useEffect(() => {
     setSimGroupOpen(simuladoresActive)
   }, [simuladoresActive])
+
+  // ✅ lista dinâmica de administradoras
+  const [admins, setAdmins] = useState<Array<{ id: string; name: string }>>([])
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const { data } = await supabase
+        .from('sim_admins')
+        .select('id, name')
+        .order('name', { ascending: true })
+      if (!alive) return
+      setAdmins(data ?? [])
+    })()
+    return () => {
+      alive = false
+    }
+    // refaz a busca quando navegar dentro dos simuladores (ex.: add / novo id)
+  }, [location.pathname])
 
   return (
     <aside className="w-64 bg-white shadow h-[calc(100vh-56px)] sticky top-14 p-3">
@@ -97,18 +117,40 @@ export default function Sidebar() {
 
               {simGroupOpen && (
                 <div className="ml-6 grid gap-1 mt-1">
-                  <NavLink
-                    to="/simuladores/embracon"
-                    className={({ isActive }) =>
-                      `px-3 py-2 rounded-2xl transition-colors ${
-                        isActive
-                          ? 'bg-consulmax-primary text-white'
-                          : 'hover:bg-consulmax-neutral'
-                      }`
-                    }
-                  >
-                    Embracon
-                  </NavLink>
+                  {/* ✅ Lista dinâmica de administradoras (A→Z) */}
+                  {admins.length > 0 ? (
+                    admins.map((ad) => (
+                      <NavLink
+                        key={ad.id}
+                        to={`/simuladores/${ad.id}`}
+                        className={({ isActive }) =>
+                          `px-3 py-2 rounded-2xl transition-colors ${
+                            isActive
+                              ? 'bg-consulmax-primary text-white'
+                              : 'hover:bg-consulmax-neutral'
+                          }`
+                        }
+                      >
+                        {ad.name}
+                      </NavLink>
+                    ))
+                  ) : (
+                    // Fallback se ainda não houver nenhuma cadastrada
+                    <NavLink
+                      to="/simuladores/embracon"
+                      className={({ isActive }) =>
+                        `px-3 py-2 rounded-2xl transition-colors ${
+                          isActive
+                            ? 'bg-consulmax-primary text-white'
+                            : 'hover:bg-consulmax-neutral'
+                        }`
+                      }
+                    >
+                      Embracon
+                    </NavLink>
+                  )}
+
+                  {/* Botão para adicionar nova administradora */}
                   <NavLink
                     to="/simuladores/add"
                     className={({ isActive }) =>

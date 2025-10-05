@@ -313,71 +313,71 @@ export default function Simuladores() {
   const [mgrOpen, setMgrOpen] = useState(false);
 
   useEffect(() => {
-  setActiveAdminId(routeKey);
-}, [routeKey]);
+    setActiveAdminId(routeKey as string | null);
+  }, [routeKey]);
 
-// carrega admin por id OU slug e decide a aba inicial
-useEffect(() => {
-  let mounted = true;
+  // carrega admin por id OU slug e decide a aba inicial
+  useEffect(() => {
+    let mounted = true;
 
-  async function fetchAdminAndPrefs() {
-    if (!routeKey) {
-      setAdmin(null);
-      setPrefs(null);
-      return;
-    }
+    async function fetchAdminAndPrefs() {
+      if (!routeKey) {
+        setAdmin(null);
+        setPrefs(null);
+        return;
+      }
 
-    setLoadingAdmin(true);
+      setLoadingAdmin(true);
 
-    // tenta por id
-    let { data: byId } = await supabase
-      .from("sim_admins")
-      .select("id,name")
-      .eq("id", routeKey)
-      .maybeSingle();
-
-    // se não achou por id, tenta por slug
-    if (!byId) {
-      const { data: bySlug } = await supabase
+      // tenta por id
+      let { data: byId } = await supabase
         .from("sim_admins")
         .select("id,name")
-        .eq("slug", routeKey)
+        .eq("id", routeKey)
         .maybeSingle();
-      byId = bySlug || null;
-    }
 
-    if (!mounted) return;
-    setAdmin(byId);
-
-    if (byId?.id) {
-      const { data: prefsRow } = await supabase
-        .from("sim_admin_calc_prefs")
-        .select("*")
-        .eq("admin_id", byId.id)
-        .maybeSingle();
+      // se não achou por id, tenta por slug
+      if (!byId) {
+        const { data: bySlug } = await supabase
+          .from("sim_admins")
+          .select("id,name")
+          .eq("slug", routeKey)
+          .maybeSingle();
+        byId = bySlug || null;
+      }
 
       if (!mounted) return;
-      setActiveAdminId(byId.id);
-      setPrefs(prefsRow || null);
+      setAdmin(byId);
 
-      // decide aba inicial
-      const shouldOpenSetup = openSetup || !prefsRow;
-      setActiveTab(shouldOpenSetup ? "configurar" : "simular");
+      if (byId?.id) {
+        const { data: prefsRow } = await supabase
+          .from("sim_admin_calc_prefs")
+          .select("*")
+          .eq("admin_id", byId.id)
+          .maybeSingle();
+
+        if (!mounted) return;
+        setActiveAdminId(byId.id);
+        setPrefs(prefsRow || null);
+
+        // decide aba inicial
+        const shouldOpenSetup = openSetup || !prefsRow;
+        setActiveTab(shouldOpenSetup ? "configurar" : "simular");
+      }
+
+      if (!mounted) return;
+      setLoadingAdmin(false);
     }
 
-    if (!mounted) return;
-    setLoadingAdmin(false);
-  }
+    fetchAdminAndPrefs();
+    return () => { mounted = false; };
+  }, [routeKey, openSetup]);
 
-  fetchAdminAndPrefs();
-  return () => { mounted = false; };
-}, [routeKey, openSetup]);
-
-useEffect(() => {
-  if (!routeKey && !activeAdminId && admins.length) {
-    setActiveAdminId(admins[0].id);
-  }
-}, [routeKey, activeAdminId, admins]);
+  useEffect(() => {
+    if (!routeKey && !activeAdminId && admins.length) {
+      setActiveAdminId(admins[0].id);
+    }
+  }, [routeKey, activeAdminId, admins]);
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -417,29 +417,29 @@ useEffect(() => {
         supabase.from("sim_tables").select("*"),
         supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
-     setAdmins(a ?? []);
-setTables(t ?? []);
-setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
+      setAdmins(a ?? []);
+      setTables(t ?? []);
+      setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-// 1) padrão: Embracon > ou o primeiro da lista
-const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+      // 1) padrão: Embracon > ou o primeiro da lista
+      const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
+      let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
 
-// 2) se a URL tiver um adminId/slug válido, priorize ele
-if (routeKey && (a ?? []).some((ad: any) => ad.id === routeKey)) {
-  nextActiveId = routeKey as string;
-}
-setActiveAdminId(nextActiveId);
+      // 2) se a URL tiver um adminId/slug válido, priorize ele
+      if (routeKey && (a ?? []).some((ad: any) => ad.id === routeKey)) {
+        nextActiveId = routeKey as string;
+      }
+      setActiveAdminId(nextActiveId);
 
-// 3) terminou o loading
-setLoading(false);
+      // 3) terminou o loading
+      setLoading(false);
 
-// 4) se a URL tiver ?setup=1, abre o modal de tabelas
-if (openSetup) {
-  setTimeout(() => setMgrOpen(true), 0);
-}
+      // 4) se a URL tiver ?setup=1, abre o modal de tabelas
+      if (openSetup) {
+        setTimeout(() => setMgrOpen(true), 0);
+      }
     })();
-  }, []);
+  }, []); // carregamento inicial
 
   // pega telefone do usuário logado
   useEffect(() => {
@@ -680,43 +680,43 @@ ${wa}`
   }
 
   // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
-function normalizarSegmento(seg?: string) {
-  const s = (seg || "").toLowerCase();
-  if (s.includes("imó")) return "Imóvel";
-  if (s.includes("auto")) return "Automóvel";
-  if (s.includes("moto")) return "Motocicleta";
-  if (s.includes("serv")) return "Serviços";
-  if (s.includes("pesad")) return "Pesados";
-  return (seg || "Automóvel");
-}
-function emojiDoSegmento(seg?: string) {
-  const s = (seg || "").toLowerCase();
-  if (s.includes("imó")) return "🏠";
-  if (s.includes("moto")) return "🏍️";
-  if (s.includes("serv")) return "✈️";
-  if (s.includes("pesad")) return "🚚";
-  return "🚗";
-}
+  function normalizarSegmento(seg?: string) {
+    const s = (seg || "").toLowerCase();
+    if (s.includes("imó")) return "Imóvel";
+    if (s.includes("auto")) return "Automóvel";
+    if (s.includes("moto")) return "Motocicleta";
+    if (s.includes("serv")) return "Serviços";
+    if (s.includes("pesad")) return "Pesados";
+    return seg || "Automóvel";
+  }
+  function emojiDoSegmento(seg?: string) {
+    const s = (seg || "").toLowerCase();
+    if (s.includes("imó")) return "🏠";
+    if (s.includes("moto")) return "🏍️";
+    if (s.includes("serv")) return "✈️";
+    if (s.includes("pesad")) return "🚚";
+    return "🚗";
+  }
 
-const propostaTexto = useMemo(() => {
-  if (!calc || !podeCalcular) return "";
+  const propostaTexto = useMemo(() => {
+    if (!calc || !podeCalcular) return "";
 
-  const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
-  const seg = normalizarSegmento(segBase);
-  const emoji = emojiDoSegmento(segBase);
+    const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
+    const seg = normalizarSegmento(segBase);
+    const emoji = emojiDoSegmento(segBase);
 
-  const parcela1 = brMoney(calc.parcelaAte);
-  const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
-  const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
+    const parcela1 = brMoney(calc.parcelaAte);
+    const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
+    const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
 
-  const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
+    const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
 
-  const grupoTxt = grupo || "—";
+    const grupoTxt = grupo || "—";
 
-  const whatsappFmt = formatPhoneBR(userPhone);
-  const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
+    const whatsappFmt = formatPhoneBR(userPhone);
+    const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
 
-  return (
+    return (
 `🚨OPORTUNIDADE 🚨
 
 🔥 PROPOSTA EMBRACON🔥
@@ -739,326 +739,326 @@ Vantagens
 ✅ Primeira parcela em até 3x no cartão
 ✅ Parcelas acessíveis
 ✅ Alta taxa de contemplação`
-  );
-}, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone]);
+    );
+  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone]);
 
-async function copiarProposta() {
-  try {
-    await navigator.clipboard.writeText(propostaTexto);
-    alert("Texto copiado!");
-  } catch {
-    alert("Não foi possível copiar o texto.");
+  async function copiarProposta() {
+    try {
+      await navigator.clipboard.writeText(propostaTexto);
+      alert("Texto copiado!");
+    } catch {
+      alert("Não foi possível copiar o texto.");
+    }
   }
-}
 
-if (loading) {
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" /> Carregando simuladores...
+      </div>
+    );
+  }
+
+  /* ==== GUARDS DE RENDER ==== */
+  if (!routeKey) {
+    return (
+      <Card>
+        <CardHeader><CardTitle>Simuladores</CardTitle></CardHeader>
+        <CardContent>Escolha uma administradora no menu para configurar ou simular.</CardContent>
+      </Card>
+    );
+  }
+
+  if (loadingAdmin) {
+    return (
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Carregando administradora…
+      </div>
+    );
+  }
+
+  if (!admin) {
+    return <div className="text-destructive">Administradora não encontrada.</div>;
+  }
+
+  /* ==== RETURN PRINCIPAL ==== */
   return (
-    <div className="p-6 flex items-center gap-2">
-      <Loader2 className="h-5 w-5 animate-spin" /> Carregando simuladores...
-    </div>
-  );
-}
-
-/* ==== GUARDS DE RENDER ==== */
-if (!routeKey) {
-  return (
-    <Card>
-      <CardHeader><CardTitle>Simuladores</CardTitle></CardHeader>
-      <CardContent>Escolha uma administradora no menu para configurar ou simular.</CardContent>
-    </Card>
-  );
-}
-
-if (loadingAdmin) {
-  return (
-    <div className="flex items-center gap-2 text-muted-foreground">
-      <Loader2 className="h-4 w-4 animate-spin" /> Carregando administradora…
-    </div>
-  );
-}
-
-if (!admin) {
-  return <div className="text-destructive">Administradora não encontrada.</div>;
-}
-
-/* ==== RETURN PRINCIPAL ==== */
-return (
-  <div className="space-y-4">
-    <div className="flex items-center justify-between">
-  <h1 className="text-xl font-semibold">{admin.name}</h1>
-  <div className="space-x-2">
-    <Button
-      variant="secondary"
-      onClick={() => setMgrOpen(true)}
-      title="Abrir gerenciador de tabelas desta administradora"
-    >
-      Gerenciar Tabelas
-    </Button>
-    <Button
-      variant={activeTab === "configurar" ? "default" : "outline"}
-      onClick={() => setActiveTab("configurar")}
-    >
-      Configurar
-    </Button>
-    <Button
-      variant={activeTab === "simular" ? "default" : "outline"}
-      onClick={() => setActiveTab("simular")}
-    >
-      Simular
-    </Button>
-  </div>
-</div>
-
-    <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-      <TabsList>
-        <TabsTrigger value="configurar">Configurar</TabsTrigger>
-        <TabsTrigger value="simular">Simular</TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="configurar">
-  <AdminCalcSetup
-    adminId={admin.id}
-    initialPrefs={prefs}
-    onSaved={(p) => { setPrefs(p); setActiveTab("simular"); }}
-  />
-</TabsContent>
-
-<TabsContent value="simular">
-  {!prefs ? (
-    <Card>
-      <CardHeader><CardTitle>Configuração pendente</CardTitle></CardHeader>
-      <CardContent>
-        Para simular {admin.name}, você precisa <b>configurar</b> primeiro.
-        <div className="mt-3">
-          <Button onClick={() => setActiveTab("configurar")}>Abrir Configuração</Button>
-        </div>
-      </CardContent>
-    </Card>
-  ) : (
-    <>
-      {/* layout em duas colunas */}
-      <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador */}
-        <div className="col-span-12 lg:col-span-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>Simuladores</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {admin.name === "Embracon" ? (
-                <EmbraconSimulator
-                  leads={leads}
-                  adminTables={adminTables}
-                  nomesTabelaSegmento={nomesTabelaSegmento}
-                  variantesDaTabela={variantesDaTabela}
-                  tabelaSelecionada={tabelaSelecionada}
-                  prazoAte={prazoAte}
-                  faixa={faixa}
-                  leadId={leadId}
-                  setLeadId={setLeadId}
-                  leadInfo={leadInfo}
-                  grupo={grupo}
-                  setGrupo={setGrupo}
-                  segmento={segmento}
-                  setSegmento={(v) => {
-                    setSegmento(v);
-                    setNomeTabela("");
-                    setTabelaId("");
-                  }}
-                  nomeTabela={nomeTabela}
-                  setNomeTabela={(v) => {
-                    setNomeTabela(v);
-                    setTabelaId("");
-                  }}
-                  tabelaId={tabelaId}
-                  setTabelaId={setTabelaId}
-                  credito={credito}
-                  setCredito={setCredito}
-                  prazoVenda={prazoVenda}
-                  setPrazoVenda={setPrazoVenda}
-                  forma={forma}
-                  setForma={setForma}
-                  seguroPrest={seguroPrest}
-                  setSeguroPrest={setSeguroPrest}
-                  lanceOfertPct={lanceOfertPct}
-                  setLanceOfertPct={setLanceOfertPct}
-                  lanceEmbutPct={lanceEmbutPct}
-                  setLanceEmbutPct={setLanceEmbutPct}
-                  parcContemplacao={parcContemplacao}
-                  setParcContemplacao={setParcContemplacao}
-                  prazoAviso={prazoAviso}
-                  calc={calc}
-                  salvar={salvarSimulacao}
-                  salvando={salvando}
-                  simCode={simCode}
-                />
-              ) : (
-                <div className="text-sm text-muted-foreground">
-                  Em breve: simulador para <strong>{admin.name}</strong>.
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Ações principais */}
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
-              {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Salvar Simulação
-            </Button>
-            {simCode && (
-              <span className="text-sm">
-                ✅ Salvo como <strong>Simulação #{simCode}</strong>
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* coluna direita: memória + textos */}
-        <div className="col-span-12 lg:col-span-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Memória de Cálculo</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {!tabelaSelecionada ? (
-                <div className="text-muted-foreground">
-                  Selecione uma tabela para ver os detalhes.
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>Crédito</div>
-                    <div className="text-right font-medium">
-                      {brMoney(credito || 0)}
-                    </div>
-                    <div>Prazo da Venda</div>
-                    <div className="text-right">{prazoVenda || "-"}</div>
-                    <div>Forma</div>
-                    <div className="text-right">{forma}</div>
-                    <div>Seguro / parcela</div>
-                    <div className="text-right">
-                      {seguroPrest
-                        ? pctHuman(tabelaSelecionada.seguro_prest_pct)
-                        : "—"}
-                    </div>
-                  </div>
-                  <hr className="my-2" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>Fundo Comum (fator)</div>
-                    <div className="text-right">
-                      {calc
-                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
-                        : "—"}
-                    </div>
-                    <div>Taxa Adm (total)</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.taxa_adm_pct)}
-                    </div>
-                    <div>TA efetiva</div>
-                    <div className="text-right">
-                      {calc ? pctHuman(calc.TA_efetiva) : "—"}
-                    </div>
-                    <div>Fundo Reserva</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
-                    </div>
-                    <div>Antecipação Adm</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
-                      {tabelaSelecionada.antecip_parcelas}x
-                    </div>
-                    <div>Limitador Parcela</div>
-                    <div className="text-right">
-                      {pctHuman(
-                        resolveLimitadorPct(
-                          tabelaSelecionada.limitador_parcela_pct,
-                          tabelaSelecionada.segmento,
-                          credito || 0
-                        )
-                      )}
-                    </div>
-                    <div>Valor de Categoria</div>
-                    <div className="text-right">
-                      {calc ? brMoney(calc.valorCategoria) : "—"}
-                    </div>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Resumo antigo */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Resumo da Proposta</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <textarea
-                className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
-                style={{ lineHeight: "1.6" }}
-                readOnly
-                value={resumoTexto}
-                placeholder="Preencha os campos da simulação para gerar o resumo."
-              />
-              <div className="flex items-center justify-end gap-2">
-                <Button onClick={copiarResumo} disabled={!resumoTexto}>
-                  Copiar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <Label>Assembleia (ex.: 15/10)</Label>
-                  <Input
-                    value={assembleia}
-                    onChange={(e) => setAssembleia(e.target.value)}
-                    placeholder="dd/mm"
-                  />
-                </div>
-              </div>
-              <textarea
-                className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
-                style={{ lineHeight: "1.6" }}
-                readOnly
-                value={propostaTexto}
-                placeholder="Preencha a simulação para gerar o texto."
-              />
-              <div className="flex items-center justify-end gap-2">
-                <Button onClick={copiarProposta} disabled={!propostaTexto}>
-                  Copiar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">{admin.name}</h1>
+        <div className="space-x-2">
+          <Button
+            variant="secondary"
+            onClick={() => setMgrOpen(true)}
+            title="Abrir gerenciador de tabelas desta administradora"
+          >
+            Gerenciar Tabelas
+          </Button>
+          <Button
+            variant={activeTab === "configurar" ? "default" : "outline"}
+            onClick={() => setActiveTab("configurar")}
+          >
+            Configurar
+          </Button>
+          <Button
+            variant={activeTab === "simular" ? "default" : "outline"}
+            onClick={() => setActiveTab("simular")}
+          >
+            Simular
+          </Button>
         </div>
       </div>
-    </>
-  )}
-</TabsContent>
-</Tabs>
 
-{/* Overlay de gerenciamento de tabelas */}
-{mgrOpen && admin && (
-  <TableManagerModal
-    admin={admin}
-    allTables={adminTables}
-    onClose={() => setMgrOpen(false)}
-    onCreatedOrUpdated={handleTableCreatedOrUpdated}
-    onDeleted={handleTableDeleted}
-  />
-)}
-</div>   {/* fecha o container do return */}
-);
-}        {/* fecha o componente Simuladores */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+        <TabsList>
+          <TabsTrigger value="configurar">Configurar</TabsTrigger>
+          <TabsTrigger value="simular">Simular</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="configurar">
+          <AdminCalcSetup
+            adminId={admin.id}
+            initialPrefs={prefs}
+            onSaved={(p) => { setPrefs(p); setActiveTab("simular"); }}
+          />
+        </TabsContent>
+
+        <TabsContent value="simular">
+          {!prefs ? (
+            <Card>
+              <CardHeader><CardTitle>Configuração pendente</CardTitle></CardHeader>
+              <CardContent>
+                Para simular {admin.name}, você precisa <b>configurar</b> primeiro.
+                <div className="mt-3">
+                  <Button onClick={() => setActiveTab("configurar")}>Abrir Configuração</Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* layout em duas colunas */}
+              <div className="grid grid-cols-12 gap-4">
+                {/* coluna esquerda: simulador */}
+                <div className="col-span-12 lg:col-span-8">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Simuladores</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {admin.name === "Embracon" ? (
+                        <EmbraconSimulator
+                          leads={leads}
+                          adminTables={adminTables}
+                          nomesTabelaSegmento={nomesTabelaSegmento}
+                          variantesDaTabela={variantesDaTabela}
+                          tabelaSelecionada={tabelaSelecionada}
+                          prazoAte={prazoAte}
+                          faixa={faixa}
+                          leadId={leadId}
+                          setLeadId={setLeadId}
+                          leadInfo={leadInfo}
+                          grupo={grupo}
+                          setGrupo={setGrupo}
+                          segmento={segmento}
+                          setSegmento={(v) => {
+                            setSegmento(v);
+                            setNomeTabela("");
+                            setTabelaId("");
+                          }}
+                          nomeTabela={nomeTabela}
+                          setNomeTabela={(v) => {
+                            setNomeTabela(v);
+                            setTabelaId("");
+                          }}
+                          tabelaId={tabelaId}
+                          setTabelaId={setTabelaId}
+                          credito={credito}
+                          setCredito={setCredito}
+                          prazoVenda={prazoVenda}
+                          setPrazoVenda={setPrazoVenda}
+                          forma={forma}
+                          setForma={setForma}
+                          seguroPrest={seguroPrest}
+                          setSeguroPrest={setSeguroPrest}
+                          lanceOfertPct={lanceOfertPct}
+                          setLanceOfertPct={setLanceOfertPct}
+                          lanceEmbutPct={lanceEmbutPct}
+                          setLanceEmbutPct={setLanceEmbutPct}
+                          parcContemplacao={parcContemplacao}
+                          setParcContemplacao={setParcContemplacao}
+                          prazoAviso={prazoAviso}
+                          calc={calc}
+                          salvar={salvarSimulacao}
+                          salvando={salvando}
+                          simCode={simCode}
+                        />
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          Em breve: simulador para <strong>{admin.name}</strong>.
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Ações principais */}
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
+                      {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Salvar Simulação
+                    </Button>
+                    {simCode && (
+                      <span className="text-sm">
+                        ✅ Salvo como <strong>Simulação #{simCode}</strong>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* coluna direita: memória + textos */}
+                <div className="col-span-12 lg:col-span-4 space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Memória de Cálculo</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      {!tabelaSelecionada ? (
+                        <div className="text-muted-foreground">
+                          Selecione uma tabela para ver os detalhes.
+                        </div>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>Crédito</div>
+                            <div className="text-right font-medium">
+                              {brMoney(credito || 0)}
+                            </div>
+                            <div>Prazo da Venda</div>
+                            <div className="text-right">{prazoVenda || "-"}</div>
+                            <div>Forma</div>
+                            <div className="text-right">{forma}</div>
+                            <div>Seguro / parcela</div>
+                            <div className="text-right">
+                              {seguroPrest
+                                ? pctHuman(tabelaSelecionada.seguro_prest_pct)
+                                : "—"}
+                            </div>
+                          </div>
+                          <hr className="my-2" />
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>Fundo Comum (fator)</div>
+                            <div className="text-right">
+                              {calc
+                                ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
+                                : "—"}
+                            </div>
+                            <div>Taxa Adm (total)</div>
+                            <div className="text-right">
+                              {pctHuman(tabelaSelecionada.taxa_adm_pct)}
+                            </div>
+                            <div>TA efetiva</div>
+                            <div className="text-right">
+                              {calc ? pctHuman(calc.TA_efetiva) : "—"}
+                            </div>
+                            <div>Fundo Reserva</div>
+                            <div className="text-right">
+                              {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
+                            </div>
+                            <div>Antecipação Adm</div>
+                            <div className="text-right">
+                              {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
+                              {tabelaSelecionada.antecip_parcelas}x
+                            </div>
+                            <div>Limitador Parcela</div>
+                            <div className="text-right">
+                              {pctHuman(
+                                resolveLimitadorPct(
+                                  tabelaSelecionada.limitador_parcela_pct,
+                                  tabelaSelecionada.segmento,
+                                  credito || 0
+                                )
+                              )}
+                            </div>
+                            <div>Valor de Categoria</div>
+                            <div className="text-right">
+                              {calc ? brMoney(calc.valorCategoria) : "—"}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Resumo antigo */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Resumo da Proposta</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <textarea
+                        className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
+                        style={{ lineHeight: "1.6" }}
+                        readOnly
+                        value={resumoTexto}
+                        placeholder="Preencha os campos da simulação para gerar o resumo."
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <Button onClick={copiarResumo} disabled={!resumoTexto}>
+                          Copiar
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="col-span-2">
+                          <Label>Assembleia (ex.: 15/10)</Label>
+                          <Input
+                            value={assembleia}
+                            onChange={(e) => setAssembleia(e.target.value)}
+                            placeholder="dd/mm"
+                          />
+                        </div>
+                      </div>
+                      <textarea
+                        className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
+                        style={{ lineHeight: "1.6" }}
+                        readOnly
+                        value={propostaTexto}
+                        placeholder="Preencha a simulação para gerar o texto."
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <Button onClick={copiarProposta} disabled={!propostaTexto}>
+                          Copiar
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            </>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {/* Overlay de gerenciamento de tabelas */}
+      {mgrOpen && admin && (
+        <TableManagerModal
+          admin={admin}
+          allTables={adminTables}
+          onClose={() => setMgrOpen(false)}
+          onCreatedOrUpdated={handleTableCreatedOrUpdated}
+          onDeleted={handleTableDeleted}
+        />
+      )}
+    </div>
+  );
+} // fecha o componente Simuladores
 
 /* =============== Modal: base com ESC para fechar =============== */
 function ModalBase({

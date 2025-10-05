@@ -476,8 +476,9 @@ useEffect(() => {
       setTimeout(() => setMgrOpen(true), 0);
     }
   })();
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []); // ⬅️ o comentário precisa estar exatamente aqui, acima de []
+}, []); // carregamento inicial
 
   // pega telefone do usuário logado
   useEffect(() => {

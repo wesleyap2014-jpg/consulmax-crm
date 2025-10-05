@@ -1,5 +1,5 @@
 // src/pages/AdicionarAdministradora.tsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,12 +8,44 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 
+// helper para gerar/limpar slug
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .normalize("NFD")
+    // remove diacríticos
+    .replace(/\p{Diacritic}/gu, "")
+    // & -> e
+    .replace(/&/g, "e")
+    // qualquer coisa que não seja a-z 0-9 vira "-"
+    .replace(/[^a-z0-9]+/g, "-")
+    // remove "-" no começo/fim
+    .replace(/^-+|-+$/g, "")
+    // colapsa múltiplos "-"
+    .replace(/-{2,}/g, "-");
+}
+
 export default function AdicionarAdministradora() {
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
+  const [slug, setSlug] = useState<string>("");
+  const [slugTouched, setSlugTouched] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // gera slug automaticamente a partir do nome (se o usuário ainda não mexeu no campo slug)
+  useEffect(() => {
+    if (!slugTouched) {
+      setSlug(slugify(name));
+    }
+  }, [name, slugTouched]);
+
+  function onSlugChange(v: string) {
+    setSlugTouched(true);
+    setSlug(v);
+  }
 
   async function handleSave() {
     setError(null);
@@ -23,48 +55,79 @@ export default function AdicionarAdministradora() {
       return;
     }
 
+    // normaliza slug (se o usuário limpou, vira null)
+    const normalizedSlug = slugify(slug.trim());
+    const payload: { name: string; slug: string | null } = {
+      name: trimmed,
+      slug: normalizedSlug || null,
+    };
+
     setSaving(true);
 
-    // tenta inserir
+    // 1) tenta inserir
     const ins = await supabase
       .from("sim_admins")
-      .insert({ name: trimmed })
-      .select("id")
+      .insert(payload)
+      .select("id, slug")
       .single();
 
-    // se inseriu com sucesso
+    // 1a) sucesso → abre setup
     if (ins.data && !ins.error) {
       setSaving(false);
-      navigate(`/simuladores/${ins.data.id}?setup=1`, { replace: true });
+      const key = ins.data.slug || ins.data.id;
+      navigate(`/simuladores/${key}?setup=1`, { replace: true });
       return;
     }
 
-    // se já existe (duplicado)
+    // 1b) duplicado → tenta achar existente por nome/slug
     const isUniqueViolation =
       ins.error?.code === "23505" ||
       (ins.error?.message || "").toLowerCase().includes("duplicate key");
 
     if (isUniqueViolation) {
-      const { data: existing } = await supabase
-        .from("sim_admins")
-        .select("id, name")
-        .eq("name", trimmed)
-        .maybeSingle();
+      // procura por slug (se houver) primeiro
+      let existingId: string | null = null;
+      let existingSlug: string | null = null;
+
+      if (payload.slug) {
+        const { data: bySlug } = await supabase
+          .from("sim_admins")
+          .select("id, slug")
+          .eq("slug", payload.slug)
+          .maybeSingle();
+        if (bySlug?.id) {
+          existingId = bySlug.id;
+          existingSlug = bySlug.slug ?? null;
+        }
+      }
+
+      if (!existingId) {
+        const { data: byName } = await supabase
+          .from("sim_admins")
+          .select("id, slug")
+          .eq("name", trimmed)
+          .maybeSingle();
+        if (byName?.id) {
+          existingId = byName.id;
+          existingSlug = byName.slug ?? null;
+        }
+      }
 
       setSaving(false);
 
-      if (existing?.id) {
-        // já existe → abre direto essa administradora
-        navigate(`/simuladores/${existing.id}`, { replace: true });
+      if (existingId) {
+        // já existe → abre a existente (sem setup forçado)
+        const key = existingSlug || existingId;
+        navigate(`/simuladores/${key}`, { replace: true });
         return;
       }
 
-      // fallback
+      // se não achou por algum motivo, avisa
       setError("Essa administradora já existe.");
       return;
     }
 
-    // outros erros
+    // 1c) outros erros
     setSaving(false);
     setError(ins.error?.message || "Não foi possível salvar.");
   }
@@ -77,8 +140,8 @@ export default function AdicionarAdministradora() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="text-sm text-muted-foreground">
-            Cadastre uma nova administradora para usar no Simulador. Depois você poderá
-            criar/ajustar as <strong>Tabelas</strong> em <em>Simuladores → Gerenciar Tabelas</em>.
+            Cadastre uma nova administradora para usar no Simulador. Após criar, você poderá
+            configurar o comportamento de cálculo e as Tabelas.
           </div>
 
           <div className="grid gap-3">
@@ -89,6 +152,18 @@ export default function AdicionarAdministradora() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
+            </div>
+
+            <div>
+              <Label>Slug (gerado do nome; você pode editar)</Label>
+              <Input
+                placeholder="ex.: embracon, ancora, maggi-consorcios"
+                value={slug}
+                onChange={(e) => onSlugChange(e.target.value)}
+              />
+              <div className="text-xs text-muted-foreground mt-1">
+                Use apenas letras, números e hífens. Deixe em branco para não definir slug.
+              </div>
             </div>
           </div>
 
@@ -113,8 +188,7 @@ export default function AdicionarAdministradora() {
           </div>
 
           <div className="text-xs text-muted-foreground">
-            Dica: após salvar, use <em>Gerenciar Tabelas</em> para cadastrar os critérios
-            (segmentos, prazos, taxas).
+            Dica: após salvar, você será levado à tela da administradora para configurar o simulador.
           </div>
         </CardContent>
       </Card>

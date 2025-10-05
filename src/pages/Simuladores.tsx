@@ -1369,15 +1369,21 @@ function TableFormOverlay({
       indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
     };
 
-    let res;
-    if (initial) {
-      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
-    } else {
-      res = await supabase.from("sim_tables").insert(payload).select("*").single();
-    }
-    setSaving(false);
-    if ((res as any).error) { alert("Erro ao salvar tabela: " + (res as any).error.message); return; }
-    onSaved((res as any).data as SimTable);
+    let data: SimTable | null = null;
+let error: any = null;
+
+if (initial) {
+  const r = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
+  data = r.data as SimTable | null;
+  error = r.error;
+} else {
+  const r = await supabase.from("sim_tables").insert(payload).select("*").single();
+  data = r.data as SimTable | null;
+  error = r.error;
+}
+setSaving(false);
+if (error) { alert("Erro ao salvar tabela: " + error.message); return; }
+if (data) onSaved(data);
   }
 
   return (

@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
-import { useLocation } from "react-router-dom";
+import { useParams, useLocation, useSearchParams } from "react-router-dom";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { ChevronsUpDown, Search } from "lucide-react";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -292,13 +294,29 @@ function PercentInput({
 
 /* ========================= Página ======================== */
 export default function Simuladores() {
+  const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams(); // se usa ?setup=1
+  const setup = searchParams.get("setup") === "1";
+  const routeAdminId = id ?? null;
+  
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
+  const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
+  
+  useEffect(() => {
+  setActiveAdminId(routeAdminId);
+}, [routeAdminId]);
 
-  const [mgrOpen, setMgrOpen] = useState(false); // overlay lista/edição
+useEffect(() => {
+  if (!routeAdminId && !activeAdminId && admins.length) {
+    setActiveAdminId(admins[0].id);
+  }
+}, [routeAdminId, activeAdminId, admins]);
+
+const [mgrOpen, setMgrOpen] = useState(false);
+
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");

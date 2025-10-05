@@ -1313,26 +1313,26 @@ function TableFormOverlay({
 }) {
   const [segmento, setSegmento] = useState(initial?.segmento || "Imóvel Estendido");
   const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
-  const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
-  const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
-  const [prazoLimite, setPrazoLimite] = useState(initial?.prazo_limite ?? 240);
+  const [faixaMin, setFaixaMin] = useState<number>(initial?.faixa_min ?? 120000);
+  const [faixaMax, setFaixaMax] = useState<number>(initial?.faixa_max ?? 1200000);
+  const [prazoLimite, setPrazoLimite] = useState<number>(initial?.prazo_limite ?? 240);
 
   const [taxaAdmHuman, setTaxaAdmHuman] = useState(formatPctInputFromDecimal(initial?.taxa_adm_pct ?? 0.22));
   const [frHuman, setFrHuman] = useState(formatPctInputFromDecimal(initial?.fundo_reserva_pct ?? 0.02));
   const [antecipHuman, setAntecipHuman] = useState(formatPctInputFromDecimal(initial?.antecip_pct ?? 0.02));
-  const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
+  const [antecipParcelas, setAntecipParcelas] = useState<number>(initial?.antecip_parcelas ?? 1);
   const [limHuman, setLimHuman] = useState(formatPctInputFromDecimal(initial?.limitador_parcela_pct ?? 0.002565));
   const [seguroHuman, setSeguroHuman] = useState(formatPctInputFromDecimal(initial?.seguro_prest_pct ?? 0.00061));
 
-  const [perEmbutido, setPerEmbutido] = useState(initial?.permite_lance_embutido ?? true);
-  const [perFixo25, setPerFixo25] = useState(initial?.permite_lance_fixo_25 ?? true);
-  const [perFixo50, setPerFixo50] = useState(initial?.permite_lance_fixo_50 ?? true);
-  const [perLivre, setPerLivre] = useState(initial?.permite_lance_livre ?? true);
+  const [perEmbutido, setPerEmbutido] = useState<boolean>(initial?.permite_lance_embutido ?? true);
+  const [perFixo25, setPerFixo25] = useState<boolean>(initial?.permite_lance_fixo_25 ?? true);
+  const [perFixo50, setPerFixo50] = useState<boolean>(initial?.permite_lance_fixo_50 ?? true);
+  const [perLivre, setPerLivre] = useState<boolean>(initial?.permite_lance_livre ?? true);
 
-  const [cParcelaCheia, setCParcelaCheia] = useState(initial?.contrata_parcela_cheia ?? true);
-  const [cRed25, setCRed25] = useState(initial?.contrata_reduzida_25 ?? true);
-  const [cRed50, setCRed50] = useState(initial?.contrata_reduzida_50 ?? true);
-  const [indices, setIndices] = useState((initial?.indice_correcao || ["IPCA"]).join(", "));
+  const [cParcelaCheia, setCParcelaCheia] = useState<boolean>(initial?.contrata_parcela_cheia ?? true);
+  const [cRed25, setCRed25] = useState<boolean>(initial?.contrata_reduzida_25 ?? true);
+  const [cRed50, setCRed50] = useState<boolean>(initial?.contrata_reduzida_50 ?? true);
+  const [indices, setIndices] = useState<string>((initial?.indice_correcao || ["IPCA"]).join(", "));
 
   const [saving, setSaving] = useState(false);
 
@@ -1344,41 +1344,41 @@ function TableFormOverlay({
   }, [onClose]);
 
   async function salvar() {
-  setSaving(true);
-  const payload: Omit<SimTable, "id"> = {
-    admin_id: adminId,
-    segmento,
-    nome_tabela: nome,
-    faixa_min: Number(faixaMin) || 0,
-    faixa_max: Number(faixaMax) || 0,
-    prazo_limite: Number(prazoLimite) || 0,
-    taxa_adm_pct: parsePctInputToDecimal(taxaAdmHuman),
-    fundo_reserva_pct: parsePctInputToDecimal(frHuman),
-    antecip_pct: parsePctInputToDecimal(antecipHuman),
-    antecip_parcelas: Number(antecipParcelas) || 0,
-    limitador_parcela_pct: parsePctInputToDecimal(limHuman),
-    seguro_prest_pct: parsePctInputToDecimal(seguroHuman),
-    permite_lance_embutido: perEmbutido,
-    permite_lance_fixo_25: perFixo25,
-    permite_lance_fixo_50: perFixo50,
-    // ⬇️ mantenha só este (é o que existe na sua tabela/tipo)
-    permite_lance_livre: perLivre,
-    contrata_parcela_cheia: cParcelaCheia,
-    contrata_reduzida_25: cRed25,
-    contrata_reduzida_50: cRed50,
-    indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
-  };
+    setSaving(true);
+    const payload: Omit<SimTable, "id"> = {
+      admin_id: adminId,
+      segmento,
+      nome_tabela: nome,
+      faixa_min: Number(faixaMin) || 0,
+      faixa_max: Number(faixaMax) || 0,
+      prazo_limite: Number(prazoLimite) || 0,
+      taxa_adm_pct: parsePctInputToDecimal(taxaAdmHuman),
+      fundo_reserva_pct: parsePctInputToDecimal(frHuman),
+      antecip_pct: parsePctInputToDecimal(antecipHuman),
+      antecip_parcelas: Number(antecipParcelas) || 0,
+      limitador_parcela_pct: parsePctInputToDecimal(limHuman),
+      seguro_prest_pct: parsePctInputToDecimal(seguroHuman),
+      permite_lance_embutido: perEmbutido,
+      permite_lance_fixo_25: perFixo25,
+      permite_lance_fixo_50: perFixo50,
+      // ⬇️ mantenha só este (é o que existe na sua tabela/tipo)
+      permite_lance_livre: perLivre,
+      contrata_parcela_cheia: cParcelaCheia,
+      contrata_reduzida_25: cRed25,
+      contrata_reduzida_50: cRed50,
+      indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
+    };
 
-  let res;
-  if (initial) {
-    res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
-  } else {
-    res = await supabase.from("sim_tables").insert(payload).select("*").single();
+    let res;
+    if (initial) {
+      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
+    } else {
+      res = await supabase.from("sim_tables").insert(payload).select("*").single();
+    }
+    setSaving(false);
+    if ((res as any).error) { alert("Erro ao salvar tabela: " + (res as any).error.message); return; }
+    onSaved((res as any).data as SimTable);
   }
-  setSaving(false);
-  if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
-  onSaved(res.data as SimTable);
-}
 
   return (
     <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
@@ -1479,7 +1479,7 @@ type EmbraconProps = {
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
-const [leadOpen, setLeadOpen] = useState(false);
+  const [leadOpen, setLeadOpen] = useState(false);
   const [leadQuery, setLeadQuery] = useState("");
 
   const filteredLeads = useMemo(() => {
@@ -1499,8 +1499,9 @@ const [leadOpen, setLeadOpen] = useState(false);
 
   useEffect(() => {
     if (!leadOpen) setLeadQuery("");
-  }, [leadOpen]);  
-return (
+  }, [leadOpen]);
+
+  return (
     <div className="space-y-6">
       {/* Lead */}
       <Card>
@@ -1508,61 +1509,61 @@ return (
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-             <Label>Selecionar Lead</Label>
-<Popover onOpenChange={setLeadOpen}>
-  <PopoverButton className="w-full justify-between h-10">
-    {p.leadInfo?.nome || "Escolher lead"}
-    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-  </PopoverButton>
+              <Label>Selecionar Lead</Label>
+              <Popover onOpenChange={setLeadOpen}>
+                <PopoverButton className="w-full justify-between h-10">
+                  {p.leadInfo?.nome || "Escolher lead"}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                </PopoverButton>
 
-  <PopoverContent className="min-w-[260px] p-2 z-50">
-    {/* Busca */}
-    <div className="flex items-center gap-2 mb-2">
-      <Search className="h-4 w-4 opacity-60" />
-      <Input
-        placeholder="Buscar lead por nome ou telefone..."
-        value={leadQuery}
-        onChange={(e) => setLeadQuery(e.target.value)}
-        className="h-8"
-      />
-    </div>
+                <PopoverContent className="min-w-[260px] p-2 z-50">
+                  {/* Busca */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <Search className="h-4 w-4 opacity-60" />
+                    <Input
+                      placeholder="Buscar lead por nome ou telefone..."
+                      value={leadQuery}
+                      onChange={(e) => setLeadQuery(e.target.value)}
+                      className="h-8"
+                    />
+                  </div>
 
-    {/* Lista */}
-<div className="max-h-64 overflow-y-auto space-y-1">
-  {filteredLeads.length > 0 ? (
-    filteredLeads.map((l) => (
-      <PopoverClose asChild key={l.id}>
-        <button
-          type="button"
-          className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-          onClick={() => {
-            p.setLeadId(l.id);
-            setLeadQuery(""); // limpa a busca
-          }}
-        >
-          <div className="text-sm font-medium">{l.nome}</div>
-          {l.telefone && (
-            <div className="text-xs text-muted-foreground">{l.telefone}</div>
-          )}
-        </button>
-      </PopoverClose>
-    ))
-  ) : (
-    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-      Nenhum lead encontrado
-    </div>
-  )}
-</div>
-</PopoverContent>
-</Popover>
+                  {/* Lista */}
+                  <div className="max-h-64 overflow-y-auto space-y-1">
+                    {filteredLeads.length > 0 ? (
+                      filteredLeads.map((l) => (
+                        <PopoverClose asChild key={l.id}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+                            onClick={() => {
+                              p.setLeadId(l.id);
+                              setLeadQuery(""); // limpa a busca
+                            }}
+                          >
+                            <div className="text-sm font-medium">{l.nome}</div>
+                            {l.telefone && (
+                              <div className="text-xs text-muted-foreground">{l.telefone}</div>
+                            )}
+                          </button>
+                        </PopoverClose>
+                      ))
+                    ) : (
+                      <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+                        Nenhum lead encontrado
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
 
-{p.leadInfo && (
-  <p className="text-xs text-muted-foreground mt-1">
-    {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-  </p>
-)}
-
+              {p.leadInfo && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+                </p>
+              )}
             </div>
+
             <div>
               <Label>Nº do Grupo (opcional)</Label>
               <Input
@@ -1675,7 +1676,7 @@ return (
                   className="w-full h-10 border rounded-md px-3"
                   value={p.forma}
                   disabled={!p.tabelaSelecionada}
-                  onChange={(e) => p.setForma(e.target.value as any)}
+                  onChange={(e) => p.setForma(e.target.value as FormaContratacao)}
                 >
                   <option value="">Selecione</option>
                   {p.tabelaSelecionada?.contrata_parcela_cheia && (
@@ -1916,26 +1917,26 @@ function AdminCalcSetup({
   const [saving, setSaving] = useState(false);
 
   // estados com defaults
-  const [formas_definicao, setFormasDefinicao] = useState(initialPrefs?.formas_definicao ?? 'adm');
-  const [adm_cheia, setAdmCheia] = useState(!!initialPrefs?.adm_permite_parcela_cheia ?? true);
-  const [adm_r25, setAdmR25] = useState(!!initialPrefs?.adm_permite_reduzida_25 ?? false);
-  const [adm_r50, setAdmR50] = useState(!!initialPrefs?.adm_permite_reduzida_50 ?? false);
+  const [formas_definicao, setFormasDefinicao] = useState<string>(initialPrefs?.formas_definicao ?? "adm");
+  const [adm_cheia, setAdmCheia] = useState<boolean>(initialPrefs?.adm_permite_parcela_cheia ?? true);
+  const [adm_r25, setAdmR25] = useState<boolean>(initialPrefs?.adm_permite_reduzida_25 ?? false);
+  const [adm_r50, setAdmR50] = useState<boolean>(initialPrefs?.adm_permite_reduzida_50 ?? false);
 
-  const [redutor_modo, setRedutorModo] = useState(initialPrefs?.redutor_modo ?? 'sobre_credito');
-  const [redutor_override, setRedutorOverride] = useState(!!initialPrefs?.redutor_permite_override_tabela ?? true);
+  const [redutor_modo, setRedutorModo] = useState<string>(initialPrefs?.redutor_modo ?? "sobre_credito");
+  const [redutor_override, setRedutorOverride] = useState<boolean>(initialPrefs?.redutor_permite_override_tabela ?? true);
 
-  const [embutido_max_modo, setEmbutidoMaxModo] = useState(initialPrefs?.embutido_max_modo ?? 'tabela');
-  const [embutido_max_pct, setEmbutidoMaxPct] = useState<number | ''>(initialPrefs?.embutido_max_pct ?? '');
-  const [base_embutido, setBaseEmbutido] = useState(initialPrefs?.base_embutido ?? 'credito');
-  const [base_embutido_override, setBaseEmbutidoOverride] = useState(!!initialPrefs?.base_embutido_permite_override_tabela ?? true);
+  const [embutido_max_modo, setEmbutidoMaxModo] = useState<string>(initialPrefs?.embutido_max_modo ?? "tabela");
+  const [embutido_max_pct, setEmbutidoMaxPct] = useState<number | "">(initialPrefs?.embutido_max_pct ?? "");
+  const [base_embutido, setBaseEmbutido] = useState<string>(initialPrefs?.base_embutido ?? "credito");
+  const [base_embutido_override, setBaseEmbutidoOverride] = useState<boolean>(initialPrefs?.base_embutido_permite_override_tabela ?? true);
 
-  const [base_pct_lance_ofertado, setBasePctLanceOfertado] = useState(initialPrefs?.base_pct_lance_ofertado ?? 'credito');
-  const [base_pct_lance_override, setBasePctLanceOverride] = useState(!!initialPrefs?.base_pct_lance_ofertado_permite_override_tabela ?? true);
+  const [base_pct_lance_ofertado, setBasePctLanceOfertado] = useState<string>(initialPrefs?.base_pct_lance_ofertado ?? "credito");
+  const [base_pct_lance_override, setBasePctLanceOverride] = useState<boolean>(initialPrefs?.base_pct_lance_ofertado_permite_override_tabela ?? true);
 
-  const [limitador_ativo, setLimitadorAtivo] = useState(!!initialPrefs?.limitador_pos_contemplacao_ativo ?? false);
-  const [limitador_def, setLimitadorDef] = useState(initialPrefs?.limitador_definicao ?? 'tabela');
-  const [limitador_pct, setLimitadorPct] = useState<number | ''>(initialPrefs?.limitador_pct ?? '');
-  const [limitador_base, setLimitadorBase] = useState(initialPrefs?.limitador_base ?? 'credito');
+  const [limitador_ativo, setLimitadorAtivo] = useState<boolean>(initialPrefs?.limitador_pos_contemplacao_ativo ?? false);
+  const [limitador_def, setLimitadorDef] = useState<string>(initialPrefs?.limitador_definicao ?? "tabela");
+  const [limitador_pct, setLimitadorPct] = useState<number | "">(initialPrefs?.limitador_pct ?? "");
+  const [limitador_base, setLimitadorBase] = useState<string>(initialPrefs?.limitador_base ?? "credito");
 
   async function handleSave() {
     setSaving(true);
@@ -1947,24 +1948,24 @@ function AdminCalcSetup({
       adm_permite_reduzida_50: adm_r50,
       redutor_modo,
       redutor_permite_override_tabela: redutor_override,
-      antecipacao_adm_modo: 'tabela',
+      antecipacao_adm_modo: "tabela",
       embutido_max_modo,
-      embutido_max_pct: embutido_max_pct === '' ? null : Number(embutido_max_pct),
+      embutido_max_pct: embutido_max_pct === "" ? null : Number(embutido_max_pct),
       base_embutido,
       base_embutido_permite_override_tabela: base_embutido_override,
       base_pct_lance_ofertado,
       base_pct_lance_ofertado_permite_override_tabela: base_pct_lance_override,
       limitador_pos_contemplacao_ativo: limitador_ativo,
       limitador_definicao: limitador_def,
-      limitador_pct: limitador_pct === '' ? null : Number(limitador_pct),
+      limitador_pct: limitador_pct === "" ? null : Number(limitador_pct),
       limitador_base,
     };
 
     // upsert
     const { data, error } = await supabase
-      .from('sim_admin_calc_prefs')
-      .upsert(payload, { onConflict: 'admin_id' })
-      .select('*')
+      .from("sim_admin_calc_prefs")
+      .upsert(payload, { onConflict: "admin_id" })
+      .select("*")
       .single();
 
     setSaving(false);
@@ -1989,7 +1990,7 @@ function AdminCalcSetup({
               <option value="tabela">Definido por Tabela/Segmento</option>
             </select>
           </div>
-          {formas_definicao === 'adm' && (
+          {formas_definicao === "adm" && (
             <div className="md:col-span-2 grid grid-cols-3 gap-3 items-end">
               <label className="flex items-center gap-2"><input type="checkbox" checked={adm_cheia} onChange={e=>setAdmCheia(e.target.checked)}/>Cheia</label>
               <label className="flex items-center gap-2"><input type="checkbox" checked={adm_r25} onChange={e=>setAdmR25(e.target.checked)}/>Reduzida 25%</label>
@@ -2022,10 +2023,10 @@ function AdminCalcSetup({
               <option value="tabela">Definido por Tabela</option>
             </select>
           </div>
-          {embutido_max_modo === 'adm' && (
+          {embutido_max_modo === "adm" && (
             <div>
               <Label>Percentual (humanizado)</Label>
-              <Input type="number" step="0.1" value={embutido_max_pct} onChange={e=>setEmbutidoMaxPct(e.target.value === '' ? '' : Number(e.target.value))} placeholder="ex.: 25" />
+              <Input type="number" step="0.1" value={embutido_max_pct} onChange={e=>setEmbutidoMaxPct(e.target.value === "" ? "" : Number(e.target.value))} placeholder="ex.: 25" />
             </div>
           )}
           <div>
@@ -2062,8 +2063,8 @@ function AdminCalcSetup({
             <Label>Limitador pós-contemplação</Label>
             <select
               className="w-full border rounded p-2"
-              value={limitador_ativo ? 'sim' : 'nao'}
-              onChange={(e)=>setLimitadorAtivo(e.target.value === 'sim')}
+              value={limitador_ativo ? "sim" : "nao"}
+              onChange={(e)=>setLimitadorAtivo(e.target.value === "sim")}
             >
               <option value="nao">Não</option>
               <option value="sim">Sim</option>
@@ -2079,11 +2080,11 @@ function AdminCalcSetup({
                   <option value="adm">Padrão Adm</option>
                 </select>
               </div>
-              {limitador_def === 'adm' && (
+              {limitador_def === "adm" && (
                 <>
                   <div>
                     <Label>% (humanizado)</Label>
-                    <Input type="number" step="0.1" value={limitador_pct} onChange={e=>setLimitadorPct(e.target.value === '' ? '' : Number(e.target.value))} placeholder="ex.: 2.8" />
+                    <Input type="number" step="0.1" value={limitador_pct} onChange={e=>setLimitadorPct(e.target.value === "" ? "" : Number(e.target.value))} placeholder="ex.: 2.8" />
                   </div>
                   <div>
                     <Label>Base</Label>

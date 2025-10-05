@@ -11,6 +11,7 @@ import RequireAuth from './components/auth/RequireAuth'
 import AlterarSenha from './pages/AlterarSenha'
 import Carteira from './pages/Carteira'
 import GestaoDeGrupos from './pages/GestaoDeGrupos'
+import Parametros from './pages/Parametros'
 
 // ✅ novas páginas
 import Clientes from './pages/Clientes'
@@ -49,13 +50,14 @@ export const router = createBrowserRouter([
           {
             path: 'simuladores',
             children: [
-              { index: true, element: <Navigate to="/simuladores/embracon" replace /> },
-              { path: 'embracon', element: <Simuladores /> },
-              { path: 'add', element: <AdicionarAdministradora /> },
-
-              // ✅ AGORA a rota dinâmica usa a própria página de Simuladores
-              //    e passaremos o id da administradora na URL
-              { path: ':adminId', element: <Simuladores /> },
+              // índice de simuladores (pode mostrar instruções/lista)
+              { index: true, element: <Simuladores /> },              // /simuladores
+              // compatibilidade com rota fixa da Embracon
+              { path: 'embracon', element: <Simuladores /> },          // /simuladores/embracon
+              // adicionar administradora
+              { path: 'add', element: <AdicionarAdministradora /> },   // /simuladores/add
+              // ✅ dinâmica por slug **ou** id
+              { path: ':adminKey', element: <Simuladores /> },         // /simuladores/:adminKey
             ],
           },
 
@@ -80,6 +82,3 @@ export const router = createBrowserRouter([
   // fallback global
   { path: '*', element: <Navigate to="/login" replace /> },
 ])
-
-// nota: Parametros é importado abaixo para manter a ordem original
-import Parametros from './pages/Parametros'

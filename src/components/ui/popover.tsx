@@ -37,6 +37,7 @@ PopoverButton.displayName = "PopoverButton";
 
 /**
  * Conteúdo do popover com classes neutras (sem depender de tokens bg-popover/text-popover-foreground)
+ * ➜ LARGURA CONTROLADA (Opção B)
  */
 const PopoverContent = React.forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
@@ -51,6 +52,8 @@ const PopoverContent = React.forwardRef<
       sideOffset={sideOffset}
       className={cn(
         "z-50 rounded-md border bg-white p-2 text-foreground shadow-md outline-none",
+        // largura padrão do popover
+        "w-[360px] sm:w-[420px] max-w-[95vw]",
         // animações (opcional)
         "data-[state=open]:animate-in data-[state=closed]:animate-out",
         "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",

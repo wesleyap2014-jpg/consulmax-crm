@@ -1,7 +1,7 @@
 // src/components/layout/Sidebar.tsx
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabaseClient' // ✅ novo
+import { supabase } from '@/lib/supabaseClient' // ✅ Supabase para listar administradoras
 
 // 👇 Ícones do lucide-react
 import {
@@ -36,6 +36,8 @@ const items = [
 const LOGO_URL = '/logo-consulmax.png?v=3'
 const FALLBACK_URL = '/favicon.ico?v=3'
 
+type AdminRow = { id: string; name: string; slug: string | null }
+
 export default function Sidebar() {
   const location = useLocation()
   const simuladoresActive = useMemo(
@@ -49,22 +51,28 @@ export default function Sidebar() {
   }, [simuladoresActive])
 
   // ✅ lista dinâmica de administradoras
-  const [admins, setAdmins] = useState<Array<{ id: string; name: string }>>([])
+  const [admins, setAdmins] = useState<AdminRow[]>([])
 
   useEffect(() => {
     let alive = true
     ;(async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sim_admins')
-        .select('id, name')
+        .select('id, name, slug') // ✅ pega o slug
         .order('name', { ascending: true })
+
       if (!alive) return
+      if (error) {
+        console.error('Erro ao carregar administradoras:', error.message)
+        setAdmins([])
+        return
+      }
       setAdmins(data ?? [])
     })()
     return () => {
       alive = false
     }
-    // refaz a busca quando navegar dentro dos simuladores (ex.: add / novo id)
+    // refaz a busca quando navegar dentro de simuladores (ex.: add / novo id ou slug)
   }, [location.pathname])
 
   return (
@@ -117,23 +125,26 @@ export default function Sidebar() {
 
               {simGroupOpen && (
                 <div className="ml-6 grid gap-1 mt-1">
-                  {/* ✅ Lista dinâmica de administradoras (A→Z) */}
+                  {/* ✅ Lista dinâmica de administradoras (A→Z) com slug (fallback id) */}
                   {admins.length > 0 ? (
-                    admins.map((ad) => (
-                      <NavLink
-                        key={ad.id}
-                        to={`/simuladores/${ad.id}`}
-                        className={({ isActive }) =>
-                          `px-3 py-2 rounded-2xl transition-colors ${
-                            isActive
-                              ? 'bg-consulmax-primary text-white'
-                              : 'hover:bg-consulmax-neutral'
-                          }`
-                        }
-                      >
-                        {ad.name}
-                      </NavLink>
-                    ))
+                    admins.map((ad) => {
+                      const key = ad.slug || ad.id // usa slug quando houver
+                      return (
+                        <NavLink
+                          key={ad.id}
+                          to={`/simuladores/${key}`}
+                          className={({ isActive }) =>
+                            `px-3 py-2 rounded-2xl transition-colors ${
+                              isActive
+                                ? 'bg-consulmax-primary text-white'
+                                : 'hover:bg-consulmax-neutral'
+                            }`
+                          }
+                        >
+                          {ad.name}
+                        </NavLink>
+                      )
+                    })
                   ) : (
                     // Fallback se ainda não houver nenhuma cadastrada
                     <NavLink

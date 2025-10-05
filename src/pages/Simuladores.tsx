@@ -310,6 +310,7 @@ export default function Simuladores() {
   const [admin, setAdmin] = useState<{ id: string; name: string } | null>(null);
   const [prefs, setPrefs] = useState<any | null>(null); // sim_admin_calc_prefs
   const [activeTab, setActiveTab] = useState<"simular" | "configurar">("simular");
+  const [mgrOpen, setMgrOpen] = useState(false);
 
   useEffect(() => {
   setActiveAdminId(routeKey);
@@ -320,7 +321,11 @@ useEffect(() => {
   let mounted = true;
 
   async function fetchAdminAndPrefs() {
-    if (!routeKey) { setAdmin(null); setPrefs(null); return; }
+    if (!routeKey) {
+      setAdmin(null);
+      setPrefs(null);
+      return;
+    }
 
     setLoadingAdmin(true);
 
@@ -341,26 +346,28 @@ useEffect(() => {
       byId = bySlug || null;
     }
 
-    if (mounted) {
-  setAdmin(byId);
+    if (!mounted) return;
+    setAdmin(byId);
 
-  if (byId?.id) {
-    const { data: prefsRow } = await supabase
-      .from("sim_admin_calc_prefs")
-      .select("*")
-      .eq("admin_id", byId.id)
-      .maybeSingle();
+    if (byId?.id) {
+      const { data: prefsRow } = await supabase
+        .from("sim_admin_calc_prefs")
+        .select("*")
+        .eq("admin_id", byId.id)
+        .maybeSingle();
 
-    setActiveAdminId(byId.id); // garante o id correto mesmo quando a rota é slug
-    setPrefs(prefsRow || null);
+      if (!mounted) return;
+      setActiveAdminId(byId.id);
+      setPrefs(prefsRow || null);
 
-    // decide aba inicial: abre "Configurar" se veio ?setup=1 ou se ainda não tem prefs
-    const shouldOpenSetup = openSetup || !prefsRow;
-    setActiveTab(shouldOpenSetup ? "configurar" : "simular");
+      // decide aba inicial
+      const shouldOpenSetup = openSetup || !prefsRow;
+      setActiveTab(shouldOpenSetup ? "configurar" : "simular");
+    }
+
+    if (!mounted) return;
+    setLoadingAdmin(false);
   }
-
-  setLoadingAdmin(false);
-}
 
   fetchAdminAndPrefs();
   return () => { mounted = false; };
@@ -1049,6 +1056,9 @@ return (
     onDeleted={handleTableDeleted}
   />
 )}
+</div>   {/* fecha o container do return */}
+);
+}        {/* fecha o componente Simuladores */}
 
 /* =============== Modal: base com ESC para fechar =============== */
 function ModalBase({

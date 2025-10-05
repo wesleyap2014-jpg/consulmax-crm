@@ -468,7 +468,48 @@ useEffect(() => {
   })();
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []); // carregamento inicial
+}, []);
+
+// carregamento inicial
+useEffect(() => {
+  (async () => {
+    setLoading(true);
+
+    const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
+      supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+      supabase.from("sim_tables").select("*"),
+      supabase
+        .from("leads")
+        .select("id, nome, telefone")
+        .limit(200)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    setAdmins(a ?? []);
+    setTables(t ?? []);
+    setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
+
+    // 1) padrão: Embracon > ou o primeiro da lista
+    const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
+    let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+
+    // 2) se a URL tiver um adminId/slug válido, priorize ele
+    if (routeKey && (a ?? []).some((ad: any) => ad.id === routeKey)) {
+      nextActiveId = routeKey as string;
+    }
+    setActiveAdminId(nextActiveId);
+
+    // 3) terminou o loading
+    setLoading(false);
+
+    // 4) se a URL tiver ?setup=1, abre o modal de tabelas
+    if (openSetup) {
+      setTimeout(() => setMgrOpen(true), 0);
+    }
+  })();
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   // pega telefone do usuário logado
   useEffect(() => {

@@ -1085,9 +1085,9 @@ Vantagens
       </Tabs>
 
       {/* Overlay de gerenciamento de tabelas */}
-      {mgrOpen && admin && (
+      {mgrOpen && activeAdmin && (
         <TableManagerModal
-          admin={admin}
+          admin={activeAdmin}
           allTables={adminTables}
           onClose={() => setMgrOpen(false)}
           onCreatedOrUpdated={handleTableCreatedOrUpdated}
@@ -1096,7 +1096,7 @@ Vantagens
       )}
     </div>
   );
-} // fecha o componente Simuladores
+}
 
 /* =============== Modal: base com ESC para fechar =============== */
 function ModalBase({
@@ -1121,11 +1121,7 @@ function ModalBase({
       <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{title}</div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-muted"
-            aria-label="Fechar"
-          >
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
             <X className="h-5 w-5" />
           </button>
         </div>

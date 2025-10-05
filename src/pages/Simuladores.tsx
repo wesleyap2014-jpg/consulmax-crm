@@ -1,15 +1,13 @@
 // src/pages/Simuladores.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
-
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-
-import { Loader2, Plus, Pencil, Trash2, X, ChevronsUpDown, Search } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
+import { useParams, useLocation, useSearchParams } from "react-router-dom";
+import { ChevronsUpDown, Search } from "lucide-react";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
@@ -296,88 +294,29 @@ function PercentInput({
 
 /* ========================= Página ======================== */
 export default function Simuladores() {
-  const { adminKey, id } = useParams<{ adminKey?: string; id?: string }>();
-  const [searchParams] = useSearchParams(); // ?setup=1
-  const openSetup = searchParams.get("setup") === "1";
-  const routeKey = adminKey ?? id ?? null; // slug ou id
+  const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams(); // se usa ?setup=1
+  const setup = searchParams.get("setup") === "1";
+  const routeAdminId = id ?? null;
   
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
-  const [loadingAdmin, setLoadingAdmin] = useState(false);
-  const [admin, setAdmin] = useState<{ id: string; name: string } | null>(null);
-  const [prefs, setPrefs] = useState<any | null>(null); // sim_admin_calc_prefs
-  const [activeTab, setActiveTab] = useState<"simular" | "configurar">("simular");
-  const [mgrOpen, setMgrOpen] = useState(false);
-
+  const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
+  
   useEffect(() => {
-  if (routeKey) setActiveAdminId(routeKey);
-}, [routeKey]);
+  setActiveAdminId(routeAdminId);
+}, [routeAdminId]);
 
-  // carrega admin por id OU slug e decide a aba inicial
-  useEffect(() => {
-    let mounted = true;
+useEffect(() => {
+  if (!routeAdminId && !activeAdminId && admins.length) {
+    setActiveAdminId(admins[0].id);
+  }
+}, [routeAdminId, activeAdminId, admins]);
 
-    async function fetchAdminAndPrefs() {
-      if (!routeKey) {
-        setAdmin(null);
-        setPrefs(null);
-        return;
-      }
+const [mgrOpen, setMgrOpen] = useState(false);
 
-      setLoadingAdmin(true);
-
-      // tenta por id
-      let { data: byId } = await supabase
-        .from("sim_admins")
-        .select("id,name")
-        .eq("id", routeKey)
-        .maybeSingle();
-
-      // se não achou por id, tenta por slug
-      if (!byId) {
-        const { data: bySlug } = await supabase
-          .from("sim_admins")
-          .select("id,name")
-          .eq("slug", routeKey)
-          .maybeSingle();
-        byId = bySlug || null;
-      }
-
-      if (!mounted) return;
-      setAdmin(byId);
-
-      if (byId?.id) {
-        const { data: prefsRow } = await supabase
-          .from("sim_admin_calc_prefs")
-          .select("*")
-          .eq("admin_id", byId.id)
-          .maybeSingle();
-
-        if (!mounted) return;
-        setActiveAdminId(byId.id);
-        setPrefs(prefsRow || null);
-
-        // decide aba inicial
-        const shouldOpenSetup = openSetup || !prefsRow;
-        setActiveTab(shouldOpenSetup ? "configurar" : "simular");
-      }
-
-      if (!mounted) return;
-      setLoadingAdmin(false);
-    }
-
-    fetchAdminAndPrefs();
-    return () => { mounted = false; };
-  }, [routeKey, openSetup]);
-
-  useEffect(() => {
-    if (!routeKey && !activeAdminId && admins.length) {
-      setActiveAdminId(admins[0].id);
-    }
-  }, [routeKey, activeAdminId, admins]);
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -409,6 +348,12 @@ export default function Simuladores() {
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
 
+// URL: /simuladores/:id?setup=1
+const adminId = routeAdminId;   // reaproveita o id já lido lá em cima
+const openSetup = setup;        // reaproveita o boolean já calculado
+const { pathname: _pathname } = useLocation();
+const showTopChips = false;     // ou pathname === "/simuladores"
+
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -417,68 +362,29 @@ export default function Simuladores() {
         supabase.from("sim_tables").select("*"),
         supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
-      setAdmins(a ?? []);
-      setTables(t ?? []);
-      setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
+     setAdmins(a ?? []);
+setTables(t ?? []);
+setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-      // 1) padrão: Embracon > ou o primeiro da lista
-      const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-      let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+// 1) padrão: Embracon > ou o primeiro da lista
+const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
+let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
 
-      // 2) se a URL tiver um adminId/slug válido, priorize ele
-      if (routeKey && (a ?? []).some((ad: any) => ad.id === routeKey)) {
-        nextActiveId = routeKey as string;
-      }
-      setActiveAdminId(nextActiveId);
+// 2) se a URL tiver um adminId válido, priorize ele
+if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
+  nextActiveId = adminId as string;
+}
+setActiveAdminId(nextActiveId);
 
-      // 3) terminou o loading
-      setLoading(false);
+// 3) terminou o loading
+setLoading(false);
 
-      // 4) se a URL tiver ?setup=1, abre o modal de tabelas
-      if (openSetup) {
-        setTimeout(() => setMgrOpen(true), 0);
-      }
+// 4) se a URL tiver ?setup=1, abre o modal de tabelas
+if (openSetup) {
+  setTimeout(() => setMgrOpen(true), 0);
+}
     })();
-
-// carregamento inicial
-useEffect(() => {
-  (async () => {
-    setLoading(true);
-    const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
-      supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-      supabase.from("sim_tables").select("*"),
-      supabase
-        .from("leads")
-        .select("id, nome, telefone")
-        .limit(200)
-        .order("created_at", { ascending: false }),
-    ]);
-
-    setAdmins(a ?? []);
-    setTables(t ?? []);
-    setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
-
-    // 1) padrão: Embracon > ou o primeiro da lista
-    const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-    let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
-
-    // 2) se a URL tiver um adminId/slug válido, priorize ele
-    if (routeKey && (a ?? []).some((ad: any) => ad.id === routeKey)) {
-      nextActiveId = routeKey as string;
-    }
-    setActiveAdminId(nextActiveId);
-
-    // 3) terminou o loading
-    setLoading(false);
-
-    // 4) se a URL tiver ?setup=1, abre o modal de tabelas
-    if (openSetup) {
-      setTimeout(() => setMgrOpen(true), 0);
-    }
-  })();
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []); // carregamento inicial
+  }, []);
 
   // pega telefone do usuário logado
   useEffect(() => {
@@ -692,7 +598,6 @@ useEffect(() => {
 💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
-
 🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
@@ -726,7 +631,7 @@ ${wa}`
     if (s.includes("moto")) return "Motocicleta";
     if (s.includes("serv")) return "Serviços";
     if (s.includes("pesad")) return "Pesados";
-    return seg || "Automóvel";
+    return (seg || "Automóvel");
   }
   function emojiDoSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
@@ -798,292 +703,268 @@ Vantagens
     );
   }
 
-  /* ==== GUARDS DE RENDER ==== */
-  if (!routeKey) {
-    return (
-      <Card>
-        <CardHeader><CardTitle>Simuladores</CardTitle></CardHeader>
-        <CardContent>Escolha uma administradora no menu para configurar ou simular.</CardContent>
-      </Card>
-    );
-  }
+  const activeAdmin = admins.find((a) => a.id === activeAdminId);
 
-  if (loadingAdmin) {
-    return (
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Carregando administradora…
-      </div>
-    );
-  }
-
-  if (!admin) {
-    return <div className="text-destructive">Administradora não encontrada.</div>;
-  }
-
-  /* ==== RETURN PRINCIPAL ==== */
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{admin.name}</h1>
-        <div className="space-x-2">
+    <div className="p-6 space-y-4">
+      {/* topo: admins + botões */}
+<div className="flex flex-wrap items-center gap-2">
+  {/* Chips de administradoras (escondidos quando showTopChips === false) */}
+  {showTopChips && (
+    <div className="flex flex-wrap gap-2">
+      {admins.map((a) => (
+        <Button
+          key={a.id}
+          variant={activeAdminId === a.id ? "default" : "secondary"}
+          onClick={() => setActiveAdminId(a.id)}
+          className="h-10 rounded-2xl px-4"
+        >
+          {a.name}
+        </Button>
+      ))}
+    </div>
+  )}
+
+  <div className="ml-auto flex items-center gap-2">
+    {activeAdmin && (
+      <>
+        {/* ✅ Mantido SEM depender do showTopChips */}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setMgrOpen(true)}
+          className="h-10 rounded-2xl px-4"
+        >
+          Gerenciar Tabelas
+        </Button>
+
+        {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
+        {showTopChips && (
           <Button
             variant="secondary"
-            onClick={() => setMgrOpen(true)}
-            title="Abrir gerenciador de tabelas desta administradora"
+            size="sm"
+            onClick={() => alert("Em breve: adicionar administradora.")}
+            className="h-10 rounded-2xl px-4 whitespace-nowrap"
           >
-            Gerenciar Tabelas
+            <Plus className="h-4 w-4 mr-1" /> + Add Administradora
           </Button>
-          <Button
-            variant={activeTab === "configurar" ? "default" : "outline"}
-            onClick={() => setActiveTab("configurar")}
-          >
-            Configurar
-          </Button>
-          <Button
-            variant={activeTab === "simular" ? "default" : "outline"}
-            onClick={() => setActiveTab("simular")}
-          >
-            Simular
-          </Button>
-        </div>
-      </div>
+        )}
+      </>
+    )}
+  </div>
+</div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-        <TabsList>
-          <TabsTrigger value="configurar">Configurar</TabsTrigger>
-          <TabsTrigger value="simular">Simular</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="configurar">
-          <AdminCalcSetup
-            adminId={admin.id}
-            initialPrefs={prefs}
-            onSaved={(p) => { setPrefs(p); setActiveTab("simular"); }}
-          />
-        </TabsContent>
-
-        <TabsContent value="simular">
-          {!prefs ? (
-            <Card>
-              <CardHeader><CardTitle>Configuração pendente</CardTitle></CardHeader>
-              <CardContent>
-                Para simular {admin.name}, você precisa <b>configurar</b> primeiro.
-                <div className="mt-3">
-                  <Button onClick={() => setActiveTab("configurar")}>Abrir Configuração</Button>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              {/* layout em duas colunas */}
-              <div className="grid grid-cols-12 gap-4">
-                {/* coluna esquerda: simulador */}
-                <div className="col-span-12 lg:col-span-8">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Simuladores</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {admin.name === "Embracon" ? (
-                        <EmbraconSimulator
-                          leads={leads}
-                          adminTables={adminTables}
-                          nomesTabelaSegmento={nomesTabelaSegmento}
-                          variantesDaTabela={variantesDaTabela}
-                          tabelaSelecionada={tabelaSelecionada}
-                          prazoAte={prazoAte}
-                          faixa={faixa}
-                          leadId={leadId}
-                          setLeadId={setLeadId}
-                          leadInfo={leadInfo}
-                          grupo={grupo}
-                          setGrupo={setGrupo}
-                          segmento={segmento}
-                          setSegmento={(v) => {
-                            setSegmento(v);
-                            setNomeTabela("");
-                            setTabelaId("");
-                          }}
-                          nomeTabela={nomeTabela}
-                          setNomeTabela={(v) => {
-                            setNomeTabela(v);
-                            setTabelaId("");
-                          }}
-                          tabelaId={tabelaId}
-                          setTabelaId={setTabelaId}
-                          credito={credito}
-                          setCredito={setCredito}
-                          prazoVenda={prazoVenda}
-                          setPrazoVenda={setPrazoVenda}
-                          forma={forma}
-                          setForma={setForma}
-                          seguroPrest={seguroPrest}
-                          setSeguroPrest={setSeguroPrest}
-                          lanceOfertPct={lanceOfertPct}
-                          setLanceOfertPct={setLanceOfertPct}
-                          lanceEmbutPct={lanceEmbutPct}
-                          setLanceEmbutPct={setLanceEmbutPct}
-                          parcContemplacao={parcContemplacao}
-                          setParcContemplacao={setParcContemplacao}
-                          prazoAviso={prazoAviso}
-                          calc={calc}
-                          salvar={salvarSimulacao}
-                          salvando={salvando}
-                          simCode={simCode}
-                        />
-                      ) : (
-                        <div className="text-sm text-muted-foreground">
-                          Em breve: simulador para <strong>{admin.name}</strong>.
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Ações principais */}
-                  <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
-                      {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                      Salvar Simulação
-                    </Button>
-                    {simCode && (
-                      <span className="text-sm">
-                        ✅ Salvo como <strong>Simulação #{simCode}</strong>
-                      </span>
-                    )}
+      {/* layout em duas colunas */}
+      <div className="grid grid-cols-12 gap-4">
+        {/* coluna esquerda: simulador */}
+        <div className="col-span-12 lg:col-span-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Simuladores</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {activeAdmin ? (
+                activeAdmin.name === "Embracon" ? (
+                  <EmbraconSimulator
+                    leads={leads}
+                    adminTables={adminTables}
+                    nomesTabelaSegmento={nomesTabelaSegmento}
+                    variantesDaTabela={variantesDaTabela}
+                    tabelaSelecionada={tabelaSelecionada}
+                    prazoAte={prazoAte}
+                    faixa={faixa}
+                    leadId={leadId}
+                    setLeadId={setLeadId}
+                    leadInfo={leadInfo}
+                    grupo={grupo}
+                    setGrupo={setGrupo}
+                    segmento={segmento}
+                    setSegmento={(v) => {
+                      setSegmento(v);
+                      setNomeTabela("");
+                      setTabelaId("");
+                    }}
+                    nomeTabela={nomeTabela}
+                    setNomeTabela={(v) => {
+                      setNomeTabela(v);
+                      setTabelaId("");
+                    }}
+                    tabelaId={tabelaId}
+                    setTabelaId={setTabelaId}
+                    credito={credito}
+                    setCredito={setCredito}
+                    prazoVenda={prazoVenda}
+                    setPrazoVenda={setPrazoVenda}
+                    forma={forma}
+                    setForma={setForma}
+                    seguroPrest={seguroPrest}
+                    setSeguroPrest={setSeguroPrest}
+                    lanceOfertPct={lanceOfertPct}
+                    setLanceOfertPct={setLanceOfertPct}
+                    lanceEmbutPct={lanceEmbutPct}
+                    setLanceEmbutPct={setLanceEmbutPct}
+                    parcContemplacao={parcContemplacao}
+                    setParcContemplacao={setParcContemplacao}
+                    prazoAviso={prazoAviso}
+                    calc={calc}
+                    salvar={salvarSimulacao}
+                    salvando={salvando}
+                    simCode={simCode}
+                  />
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
                   </div>
+                )
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  Nenhuma administradora encontrada.
                 </div>
+              )}
+            </CardContent>
+          </Card>
 
-                {/* coluna direita: memória + textos */}
-                <div className="col-span-12 lg:col-span-4 space-y-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Memória de Cálculo</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2 text-sm">
-                      {!tabelaSelecionada ? (
-                        <div className="text-muted-foreground">
-                          Selecione uma tabela para ver os detalhes.
-                        </div>
-                      ) : (
-                        <>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>Crédito</div>
-                            <div className="text-right font-medium">
-                              {brMoney(credito || 0)}
-                            </div>
-                            <div>Prazo da Venda</div>
-                            <div className="text-right">{prazoVenda || "-"}</div>
-                            <div>Forma</div>
-                            <div className="text-right">{forma}</div>
-                            <div>Seguro / parcela</div>
-                            <div className="text-right">
-                              {seguroPrest
-                                ? pctHuman(tabelaSelecionada.seguro_prest_pct)
-                                : "—"}
-                            </div>
-                          </div>
-                          <hr className="my-2" />
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>Fundo Comum (fator)</div>
-                            <div className="text-right">
-                              {calc
-                                ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
-                                : "—"}
-                            </div>
-                            <div>Taxa Adm (total)</div>
-                            <div className="text-right">
-                              {pctHuman(tabelaSelecionada.taxa_adm_pct)}
-                            </div>
-                            <div>TA efetiva</div>
-                            <div className="text-right">
-                              {calc ? pctHuman(calc.TA_efetiva) : "—"}
-                            </div>
-                            <div>Fundo Reserva</div>
-                            <div className="text-right">
-                              {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
-                            </div>
-                            <div>Antecipação Adm</div>
-                            <div className="text-right">
-                              {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
-                              {tabelaSelecionada.antecip_parcelas}x
-                            </div>
-                            <div>Limitador Parcela</div>
-                            <div className="text-right">
-                              {pctHuman(
-                                resolveLimitadorPct(
-                                  tabelaSelecionada.limitador_parcela_pct,
-                                  tabelaSelecionada.segmento,
-                                  credito || 0
-                                )
-                              )}
-                            </div>
-                            <div>Valor de Categoria</div>
-                            <div className="text-right">
-                              {calc ? brMoney(calc.valorCategoria) : "—"}
-                            </div>
-                          </div>
-                        </>
+          {/* Ações principais */}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
+              {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Salvar Simulação
+            </Button>
+            {simCode && (
+              <span className="text-sm">
+                ✅ Salvo como <strong>Simulação #{simCode}</strong>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* coluna direita: memória + textos */}
+        <div className="col-span-12 lg:col-span-4 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Memória de Cálculo</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {!tabelaSelecionada ? (
+                <div className="text-muted-foreground">
+                  Selecione uma tabela para ver os detalhes.
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>Crédito</div>
+                    <div className="text-right font-medium">
+                      {brMoney(credito || 0)}
+                    </div>
+                    <div>Prazo da Venda</div>
+                    <div className="text-right">{prazoVenda || "-"}</div>
+                    <div>Forma</div>
+                    <div className="text-right">{forma}</div>
+                    <div>Seguro / parcela</div>
+                    <div className="text-right">
+                      {seguroPrest
+                        ? pctHuman(tabelaSelecionada.seguro_prest_pct)
+                        : "—"}
+                    </div>
+                  </div>
+                  <hr className="my-2" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>Fundo Comum (fator)</div>
+                    <div className="text-right">
+                      {calc
+                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
+                        : "—"}
+                    </div>
+                    <div>Taxa Adm (total)</div>
+                    <div className="text-right">
+                      {pctHuman(tabelaSelecionada.taxa_adm_pct)}
+                    </div>
+                    <div>TA efetiva</div>
+                    <div className="text-right">
+                      {calc ? pctHuman(calc.TA_efetiva) : "—"}
+                    </div>
+                    <div>Fundo Reserva</div>
+                    <div className="text-right">
+                      {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
+                    </div>
+                    <div>Antecipação Adm</div>
+                    <div className="text-right">
+                      {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
+                      {tabelaSelecionada.antecip_parcelas}x
+                    </div>
+                    <div>Limitador Parcela</div>
+                    <div className="text-right">
+                      {pctHuman(
+                        resolveLimitadorPct(
+                          tabelaSelecionada.limitador_parcela_pct,
+                          tabelaSelecionada.segmento,
+                          credito || 0
+                        )
                       )}
-                    </CardContent>
-                  </Card>
+                    </div>
+                    <div>Valor de Categoria</div>
+                    <div className="text-right">
+                      {calc ? brMoney(calc.valorCategoria) : "—"}
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-                  {/* Resumo antigo */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Resumo da Proposta</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <textarea
-                        className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
-                        style={{ lineHeight: "1.6" }}
-                        readOnly
-                        value={resumoTexto}
-                        placeholder="Preencha os campos da simulação para gerar o resumo."
-                      />
-                      <div className="flex items-center justify-end gap-2">
-                        <Button onClick={copiarResumo} disabled={!resumoTexto}>
-                          Copiar
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
+          {/* Resumo antigo */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Resumo da Proposta</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <textarea
+                className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
+                style={{ lineHeight: "1.6" }}
+                readOnly
+                value={resumoTexto}
+                placeholder="Preencha os campos da simulação para gerar o resumo."
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button onClick={copiarResumo} disabled={!resumoTexto}>
+                  Copiar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
-                  {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="col-span-2">
-                          <Label>Assembleia (ex.: 15/10)</Label>
-                          <Input
-                            value={assembleia}
-                            onChange={(e) => setAssembleia(e.target.value)}
-                            placeholder="dd/mm"
-                          />
-                        </div>
-                      </div>
-                      <textarea
-                        className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
-                        style={{ lineHeight: "1.6" }}
-                        readOnly
-                        value={propostaTexto}
-                        placeholder="Preencha a simulação para gerar o texto."
-                      />
-                      <div className="flex items-center justify-end gap-2">
-                        <Button onClick={copiarProposta} disabled={!propostaTexto}>
-                          Copiar
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
+          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <Label>Assembleia (ex.: 15/10)</Label>
+                  <Input
+                    value={assembleia}
+                    onChange={(e) => setAssembleia(e.target.value)}
+                    placeholder="dd/mm"
+                  />
                 </div>
               </div>
-            </>
-          )}
-        </TabsContent>
-      </Tabs>
+              <textarea
+                className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
+                style={{ lineHeight: "1.6" }}
+                readOnly
+                value={propostaTexto}
+                placeholder="Preencha a simulação para gerar o texto."
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button onClick={copiarProposta} disabled={!propostaTexto}>
+                  Copiar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
 
       {/* Overlay de gerenciamento de tabelas */}
       {mgrOpen && activeAdmin && (
@@ -1122,7 +1003,11 @@ function ModalBase({
       <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{title}</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-muted"
+            aria-label="Fechar"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -1348,26 +1233,26 @@ function TableFormOverlay({
 }) {
   const [segmento, setSegmento] = useState(initial?.segmento || "Imóvel Estendido");
   const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
-  const [faixaMin, setFaixaMin] = useState<number>(initial?.faixa_min ?? 120000);
-  const [faixaMax, setFaixaMax] = useState<number>(initial?.faixa_max ?? 1200000);
-  const [prazoLimite, setPrazoLimite] = useState<number>(initial?.prazo_limite ?? 240);
+  const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
+  const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
+  const [prazoLimite, setPrazoLimite] = useState(initial?.prazo_limite ?? 240);
 
   const [taxaAdmHuman, setTaxaAdmHuman] = useState(formatPctInputFromDecimal(initial?.taxa_adm_pct ?? 0.22));
   const [frHuman, setFrHuman] = useState(formatPctInputFromDecimal(initial?.fundo_reserva_pct ?? 0.02));
   const [antecipHuman, setAntecipHuman] = useState(formatPctInputFromDecimal(initial?.antecip_pct ?? 0.02));
-  const [antecipParcelas, setAntecipParcelas] = useState<number>(initial?.antecip_parcelas ?? 1);
+  const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
   const [limHuman, setLimHuman] = useState(formatPctInputFromDecimal(initial?.limitador_parcela_pct ?? 0.002565));
   const [seguroHuman, setSeguroHuman] = useState(formatPctInputFromDecimal(initial?.seguro_prest_pct ?? 0.00061));
 
-  const [perEmbutido, setPerEmbutido] = useState<boolean>(initial?.permite_lance_embutido ?? true);
-  const [perFixo25, setPerFixo25] = useState<boolean>(initial?.permite_lance_fixo_25 ?? true);
-  const [perFixo50, setPerFixo50] = useState<boolean>(initial?.permite_lance_fixo_50 ?? true);
-  const [perLivre, setPerLivre] = useState<boolean>(initial?.permite_lance_livre ?? true);
+  const [perEmbutido, setPerEmbutido] = useState(initial?.permite_lance_embutido ?? true);
+  const [perFixo25, setPerFixo25] = useState(initial?.permite_lance_fixo_25 ?? true);
+  const [perFixo50, setPerFixo50] = useState(initial?.permite_lance_fixo_50 ?? true);
+  const [perLivre, setPerLivre] = useState(initial?.permite_lance_livre ?? true);
 
-  const [cParcelaCheia, setCParcelaCheia] = useState<boolean>(initial?.contrata_parcela_cheia ?? true);
-  const [cRed25, setCRed25] = useState<boolean>(initial?.contrata_reduzida_25 ?? true);
-  const [cRed50, setCRed50] = useState<boolean>(initial?.contrata_reduzida_50 ?? true);
-  const [indices, setIndices] = useState<string>((initial?.indice_correcao || ["IPCA"]).join(", "));
+  const [cParcelaCheia, setCParcelaCheia] = useState(initial?.contrata_parcela_cheia ?? true);
+  const [cRed25, setCRed25] = useState(initial?.contrata_reduzida_25 ?? true);
+  const [cRed50, setCRed50] = useState(initial?.contrata_reduzida_50 ?? true);
+  const [indices, setIndices] = useState((initial?.indice_correcao || ["IPCA"]).join(", "));
 
   const [saving, setSaving] = useState(false);
 
@@ -1396,7 +1281,7 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
-      // ⬇️ mantenha só este (é o que existe na sua tabela/tipo)
+      permite_livre: perLivre as any, // compat
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1404,21 +1289,15 @@ function TableFormOverlay({
       indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
     };
 
-    let data: SimTable | null = null;
-let error: any = null;
-
-if (initial) {
-  const r = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
-  data = r.data as SimTable | null;
-  error = r.error;
-} else {
-  const r = await supabase.from("sim_tables").insert(payload).select("*").single();
-  data = r.data as SimTable | null;
-  error = r.error;
-}
-setSaving(false);
-if (error) { alert("Erro ao salvar tabela: " + error.message); return; }
-if (data) onSaved(data);
+    let res;
+    if (initial) {
+      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
+    } else {
+      res = await supabase.from("sim_tables").insert(payload).select("*").single();
+    }
+    setSaving(false);
+    if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
+    onSaved(res.data as SimTable);
   }
 
   return (
@@ -1520,7 +1399,7 @@ type EmbraconProps = {
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
-  const [leadOpen, setLeadOpen] = useState(false);
+const [leadOpen, setLeadOpen] = useState(false);
   const [leadQuery, setLeadQuery] = useState("");
 
   const filteredLeads = useMemo(() => {
@@ -1540,9 +1419,8 @@ function EmbraconSimulator(p: EmbraconProps) {
 
   useEffect(() => {
     if (!leadOpen) setLeadQuery("");
-  }, [leadOpen]);
-
-  return (
+  }, [leadOpen]);  
+return (
     <div className="space-y-6">
       {/* Lead */}
       <Card>
@@ -1550,61 +1428,61 @@ function EmbraconSimulator(p: EmbraconProps) {
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <Label>Selecionar Lead</Label>
-              <Popover onOpenChange={setLeadOpen}>
-                <PopoverButton className="w-full justify-between h-10">
-                  {p.leadInfo?.nome || "Escolher lead"}
-                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-                </PopoverButton>
+             <Label>Selecionar Lead</Label>
+<Popover onOpenChange={setLeadOpen}>
+  <PopoverButton className="w-full justify-between h-10">
+    {p.leadInfo?.nome || "Escolher lead"}
+    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+  </PopoverButton>
 
-                <PopoverContent className="min-w-[260px] p-2 z-50">
-                  {/* Busca */}
-                  <div className="flex items-center gap-2 mb-2">
-                    <Search className="h-4 w-4 opacity-60" />
-                    <Input
-                      placeholder="Buscar lead por nome ou telefone..."
-                      value={leadQuery}
-                      onChange={(e) => setLeadQuery(e.target.value)}
-                      className="h-8"
-                    />
-                  </div>
+  <PopoverContent className="min-w-[260px] p-2 z-50">
+    {/* Busca */}
+    <div className="flex items-center gap-2 mb-2">
+      <Search className="h-4 w-4 opacity-60" />
+      <Input
+        placeholder="Buscar lead por nome ou telefone..."
+        value={leadQuery}
+        onChange={(e) => setLeadQuery(e.target.value)}
+        className="h-8"
+      />
+    </div>
 
-                  {/* Lista */}
-                  <div className="max-h-64 overflow-y-auto space-y-1">
-                    {filteredLeads.length > 0 ? (
-                      filteredLeads.map((l) => (
-                        <PopoverClose asChild key={l.id}>
-                          <button
-                            type="button"
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-                            onClick={() => {
-                              p.setLeadId(l.id);
-                              setLeadQuery(""); // limpa a busca
-                            }}
-                          >
-                            <div className="text-sm font-medium">{l.nome}</div>
-                            {l.telefone && (
-                              <div className="text-xs text-muted-foreground">{l.telefone}</div>
-                            )}
-                          </button>
-                        </PopoverClose>
-                      ))
-                    ) : (
-                      <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-                        Nenhum lead encontrado
-                      </div>
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
+    {/* Lista */}
+<div className="max-h-64 overflow-y-auto space-y-1">
+  {filteredLeads.length > 0 ? (
+    filteredLeads.map((l) => (
+      <PopoverClose asChild key={l.id}>
+        <button
+          type="button"
+          className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+          onClick={() => {
+            p.setLeadId(l.id);
+            setLeadQuery(""); // limpa a busca
+          }}
+        >
+          <div className="text-sm font-medium">{l.nome}</div>
+          {l.telefone && (
+            <div className="text-xs text-muted-foreground">{l.telefone}</div>
+          )}
+        </button>
+      </PopoverClose>
+    ))
+  ) : (
+    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+      Nenhum lead encontrado
+    </div>
+  )}
+</div>
+</PopoverContent>
+</Popover>
 
-              {p.leadInfo && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-                </p>
-              )}
+{p.leadInfo && (
+  <p className="text-xs text-muted-foreground mt-1">
+    {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+  </p>
+)}
+
             </div>
-
             <div>
               <Label>Nº do Grupo (opcional)</Label>
               <Input
@@ -1717,7 +1595,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                   className="w-full h-10 border rounded-md px-3"
                   value={p.forma}
                   disabled={!p.tabelaSelecionada}
-                  onChange={(e) => p.setForma(e.target.value as FormaContratacao)}
+                  onChange={(e) => p.setForma(e.target.value as any)}
                 >
                   <option value="">Selecione</option>
                   {p.tabelaSelecionada?.contrata_parcela_cheia && (
@@ -1943,210 +1821,5 @@ function EmbraconSimulator(p: EmbraconProps) {
         </div>
       )}
     </div>
-  );
-}
-
-function AdminCalcSetup({
-  adminId,
-  initialPrefs,
-  onSaved,
-}: {
-  adminId: string;
-  initialPrefs: any | null;
-  onSaved: (prefs: any) => void;
-}) {
-  const [saving, setSaving] = useState(false);
-
-  // estados com defaults
-  const [formas_definicao, setFormasDefinicao] = useState<string>(initialPrefs?.formas_definicao ?? "adm");
-  const [adm_cheia, setAdmCheia] = useState<boolean>(initialPrefs?.adm_permite_parcela_cheia ?? true);
-  const [adm_r25, setAdmR25] = useState<boolean>(initialPrefs?.adm_permite_reduzida_25 ?? false);
-  const [adm_r50, setAdmR50] = useState<boolean>(initialPrefs?.adm_permite_reduzida_50 ?? false);
-
-  const [redutor_modo, setRedutorModo] = useState<string>(initialPrefs?.redutor_modo ?? "sobre_credito");
-  const [redutor_override, setRedutorOverride] = useState<boolean>(initialPrefs?.redutor_permite_override_tabela ?? true);
-
-  const [embutido_max_modo, setEmbutidoMaxModo] = useState<string>(initialPrefs?.embutido_max_modo ?? "tabela");
-  const [embutido_max_pct, setEmbutidoMaxPct] = useState<number | "">(initialPrefs?.embutido_max_pct ?? "");
-  const [base_embutido, setBaseEmbutido] = useState<string>(initialPrefs?.base_embutido ?? "credito");
-  const [base_embutido_override, setBaseEmbutidoOverride] = useState<boolean>(initialPrefs?.base_embutido_permite_override_tabela ?? true);
-
-  const [base_pct_lance_ofertado, setBasePctLanceOfertado] = useState<string>(initialPrefs?.base_pct_lance_ofertado ?? "credito");
-  const [base_pct_lance_override, setBasePctLanceOverride] = useState<boolean>(initialPrefs?.base_pct_lance_ofertado_permite_override_tabela ?? true);
-
-  const [limitador_ativo, setLimitadorAtivo] = useState<boolean>(initialPrefs?.limitador_pos_contemplacao_ativo ?? false);
-  const [limitador_def, setLimitadorDef] = useState<string>(initialPrefs?.limitador_definicao ?? "tabela");
-  const [limitador_pct, setLimitadorPct] = useState<number | "">(initialPrefs?.limitador_pct ?? "");
-  const [limitador_base, setLimitadorBase] = useState<string>(initialPrefs?.limitador_base ?? "credito");
-
-  async function handleSave() {
-    setSaving(true);
-    const payload = {
-      admin_id: adminId,
-      formas_definicao,
-      adm_permite_parcela_cheia: adm_cheia,
-      adm_permite_reduzida_25: adm_r25,
-      adm_permite_reduzida_50: adm_r50,
-      redutor_modo,
-      redutor_permite_override_tabela: redutor_override,
-      antecipacao_adm_modo: "tabela",
-      embutido_max_modo,
-      embutido_max_pct: embutido_max_pct === "" ? null : Number(embutido_max_pct),
-      base_embutido,
-      base_embutido_permite_override_tabela: base_embutido_override,
-      base_pct_lance_ofertado,
-      base_pct_lance_ofertado_permite_override_tabela: base_pct_lance_override,
-      limitador_pos_contemplacao_ativo: limitador_ativo,
-      limitador_definicao: limitador_def,
-      limitador_pct: limitador_pct === "" ? null : Number(limitador_pct),
-      limitador_base,
-    };
-
-    // upsert
-    const { data, error } = await supabase
-      .from("sim_admin_calc_prefs")
-      .upsert(payload, { onConflict: "admin_id" })
-      .select("*")
-      .single();
-
-    setSaving(false);
-    if (error) {
-      console.error(error);
-      return;
-    }
-    onSaved(data);
-  }
-
-  return (
-    <Card>
-      <CardHeader><CardTitle>Comportamentos do Cálculo (Padrão da Adm)</CardTitle></CardHeader>
-      <CardContent className="space-y-6">
-
-        {/* Formas de Contratação */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <Label>Formas de Contratação</Label>
-            <select className="w-full border rounded p-2" value={formas_definicao} onChange={e => setFormasDefinicao(e.target.value)}>
-              <option value="adm">Padrão Adm</option>
-              <option value="tabela">Definido por Tabela/Segmento</option>
-            </select>
-          </div>
-          {formas_definicao === "adm" && (
-            <div className="md:col-span-2 grid grid-cols-3 gap-3 items-end">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={adm_cheia} onChange={e=>setAdmCheia(e.target.checked)}/>Cheia</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={adm_r25} onChange={e=>setAdmR25(e.target.checked)}/>Reduzida 25%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={adm_r50} onChange={e=>setAdmR50(e.target.checked)}/>Reduzida 50%</label>
-            </div>
-          )}
-        </div>
-
-        {/* Redutor */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <Label>Cálculo do Redutor</Label>
-            <select className="w-full border rounded p-2" value={redutor_modo} onChange={e=>setRedutorModo(e.target.value as any)}>
-              <option value="sobre_credito">Sobre o Crédito</option>
-              <option value="valor_categoria">Crédito + Taxas (Valor de Categoria)</option>
-            </select>
-            <label className="mt-2 flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={redutor_override} onChange={e=>setRedutorOverride(e.target.checked)}/>
-              Permitir override por Tabela
-            </label>
-          </div>
-        </div>
-
-        {/* Embutido */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <Label>Embutido Máx</Label>
-            <select className="w-full border rounded p-2" value={embutido_max_modo} onChange={e=>setEmbutidoMaxModo(e.target.value as any)}>
-              <option value="adm">Padrão Adm</option>
-              <option value="tabela">Definido por Tabela</option>
-            </select>
-          </div>
-          {embutido_max_modo === "adm" && (
-            <div>
-              <Label>Percentual (humanizado)</Label>
-              <Input type="number" step="0.1" value={embutido_max_pct} onChange={e=>setEmbutidoMaxPct(e.target.value === "" ? "" : Number(e.target.value))} placeholder="ex.: 25" />
-            </div>
-          )}
-          <div>
-            <Label>Base do Embutido</Label>
-            <select className="w-full border rounded p-2" value={base_embutido} onChange={e=>setBaseEmbutido(e.target.value as any)}>
-              <option value="credito">Crédito</option>
-              <option value="valor_categoria">Valor de Categoria</option>
-            </select>
-            <label className="mt-2 flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={base_embutido_override} onChange={e=>setBaseEmbutidoOverride(e.target.checked)}/>
-              Permitir override por Tabela
-            </label>
-          </div>
-        </div>
-
-        {/* Base % do lance ofertado */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <Label>Base % do Lance Ofertado</Label>
-            <select className="w-full border rounded p-2" value={base_pct_lance_ofertado} onChange={e=>setBasePctLanceOfertado(e.target.value as any)}>
-              <option value="credito">Crédito</option>
-              <option value="valor_categoria">Valor de Categoria</option>
-            </select>
-            <label className="mt-2 flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={base_pct_lance_override} onChange={e=>setBasePctLanceOverride(e.target.checked)}/>
-              Permitir override por Tabela
-            </label>
-          </div>
-        </div>
-
-        {/* Pós-contemplação */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <Label>Limitador pós-contemplação</Label>
-            <select
-              className="w-full border rounded p-2"
-              value={limitador_ativo ? "sim" : "nao"}
-              onChange={(e)=>setLimitadorAtivo(e.target.value === "sim")}
-            >
-              <option value="nao">Não</option>
-              <option value="sim">Sim</option>
-            </select>
-          </div>
-
-          {limitador_ativo && (
-            <>
-              <div>
-                <Label>Quem define?</Label>
-                <select className="w-full border rounded p-2" value={limitador_def} onChange={e=>setLimitadorDef(e.target.value as any)}>
-                  <option value="tabela">Definido por Tabela</option>
-                  <option value="adm">Padrão Adm</option>
-                </select>
-              </div>
-              {limitador_def === "adm" && (
-                <>
-                  <div>
-                    <Label>% (humanizado)</Label>
-                    <Input type="number" step="0.1" value={limitador_pct} onChange={e=>setLimitadorPct(e.target.value === "" ? "" : Number(e.target.value))} placeholder="ex.: 2.8" />
-                  </div>
-                  <div>
-                    <Label>Base</Label>
-                    <select className="w-full border rounded p-2" value={limitador_base} onChange={e=>setLimitadorBase(e.target.value as any)}>
-                      <option value="credito">Crédito</option>
-                      <option value="valor_categoria">Valor de Categoria</option>
-                      <option value="parcela_vigente">% sobre parcela vigente</option>
-                    </select>
-                  </div>
-                </>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="pt-2">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? "Salvando..." : "Salvar configuração"}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
   );
 }

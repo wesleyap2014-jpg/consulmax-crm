@@ -444,7 +444,6 @@ export default function Simuladores() {
 useEffect(() => {
   (async () => {
     setLoading(true);
-
     const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
       supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
       supabase.from("sim_tables").select("*"),
@@ -477,9 +476,8 @@ useEffect(() => {
       setTimeout(() => setMgrOpen(true), 0);
     }
   })();
-
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+}, []); // ⬅️ o comentário precisa estar exatamente aqui, acima de []
 
   // pega telefone do usuário logado
   useEffect(() => {

@@ -1,14 +1,16 @@
 // src/pages/Simuladores.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
-import { useParams, useLocation, useSearchParams } from "react-router-dom";
-import { ChevronsUpDown, Search } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
+
+import { Loader2, Plus, Pencil, Trash2, X, ChevronsUpDown, Search } from "lucide-react";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -294,29 +296,81 @@ function PercentInput({
 
 /* ========================= Página ======================== */
 export default function Simuladores() {
-  const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams(); // se usa ?setup=1
-  const setup = searchParams.get("setup") === "1";
-  const routeAdminId = id ?? null;
+  const { adminKey, id } = useParams<{ adminKey?: string; id?: string }>();
+  const [searchParams] = useSearchParams(); // ?setup=1
+  const openSetup = searchParams.get("setup") === "1";
+  const routeKey = adminKey ?? id ?? null; // slug ou id
   
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
-  
+  const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
+  const [loadingAdmin, setLoadingAdmin] = useState(false);
+  const [admin, setAdmin] = useState<{ id: string; name: string } | null>(null);
+  const [prefs, setPrefs] = useState<any | null>(null); // sim_admin_calc_prefs
+  const [activeTab, setActiveTab] = useState<"simular" | "configurar">("simular");
+
   useEffect(() => {
-  setActiveAdminId(routeAdminId);
-}, [routeAdminId]);
+  setActiveAdminId(routeKey);
+}, [routeKey]);
+
+// carrega admin por id OU slug e decide a aba inicial
+useEffect(() => {
+  let mounted = true;
+
+  async function fetchAdminAndPrefs() {
+    if (!routeKey) { setAdmin(null); setPrefs(null); return; }
+
+    setLoadingAdmin(true);
+
+    // tenta por id
+    let { data: byId } = await supabase
+      .from("sim_admins")
+      .select("id,name")
+      .eq("id", routeKey)
+      .maybeSingle();
+
+    // se não achou por id, tenta por slug
+    if (!byId) {
+      const { data: bySlug } = await supabase
+        .from("sim_admins")
+        .select("id,name")
+        .eq("slug", routeKey)
+        .maybeSingle();
+      byId = bySlug || null;
+    }
+
+    if (mounted) {
+  setAdmin(byId);
+
+  if (byId?.id) {
+    const { data: prefsRow } = await supabase
+      .from("sim_admin_calc_prefs")
+      .select("*")
+      .eq("admin_id", byId.id)
+      .maybeSingle();
+
+    setActiveAdminId(byId.id); // garante o id correto mesmo quando a rota é slug
+    setPrefs(prefsRow || null);
+
+    // decide aba inicial: abre "Configurar" se veio ?setup=1 ou se ainda não tem prefs
+    const shouldOpenSetup = openSetup || !prefsRow;
+    setActiveTab(shouldOpenSetup ? "configurar" : "simular");
+  }
+
+  setLoadingAdmin(false);
+}
+
+  fetchAdminAndPrefs();
+  return () => { mounted = false; };
+}, [routeKey, openSetup]);
 
 useEffect(() => {
-  if (!routeAdminId && !activeAdminId && admins.length) {
+  if (!routeKey && !activeAdminId && admins.length) {
     setActiveAdminId(admins[0].id);
   }
-}, [routeAdminId, activeAdminId, admins]);
-
-const [mgrOpen, setMgrOpen] = useState(false);
-
+}, [routeKey, activeAdminId, admins]);
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -348,12 +402,6 @@ const [mgrOpen, setMgrOpen] = useState(false);
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
 
-// URL: /simuladores/:id?setup=1
-const adminId = routeAdminId;   // reaproveita o id já lido lá em cima
-const openSetup = setup;        // reaproveita o boolean já calculado
-const { pathname: _pathname } = useLocation();
-const showTopChips = false;     // ou pathname === "/simuladores"
-
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -370,9 +418,9 @@ setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefo
 const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
 let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
 
-// 2) se a URL tiver um adminId válido, priorize ele
-if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
-  nextActiveId = adminId as string;
+// 2) se a URL tiver um adminId/slug válido, priorize ele
+if (routeKey && (a ?? []).some((ad: any) => ad.id === routeKey)) {
+  nextActiveId = routeKey as string;
 }
 setActiveAdminId(nextActiveId);
 
@@ -598,6 +646,7 @@ if (openSetup) {
 💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
+
 🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
@@ -624,43 +673,43 @@ ${wa}`
   }
 
   // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
-  function normalizarSegmento(seg?: string) {
-    const s = (seg || "").toLowerCase();
-    if (s.includes("imó")) return "Imóvel";
-    if (s.includes("auto")) return "Automóvel";
-    if (s.includes("moto")) return "Motocicleta";
-    if (s.includes("serv")) return "Serviços";
-    if (s.includes("pesad")) return "Pesados";
-    return (seg || "Automóvel");
-  }
-  function emojiDoSegmento(seg?: string) {
-    const s = (seg || "").toLowerCase();
-    if (s.includes("imó")) return "🏠";
-    if (s.includes("moto")) return "🏍️";
-    if (s.includes("serv")) return "✈️";
-    if (s.includes("pesad")) return "🚚";
-    return "🚗";
-  }
+function normalizarSegmento(seg?: string) {
+  const s = (seg || "").toLowerCase();
+  if (s.includes("imó")) return "Imóvel";
+  if (s.includes("auto")) return "Automóvel";
+  if (s.includes("moto")) return "Motocicleta";
+  if (s.includes("serv")) return "Serviços";
+  if (s.includes("pesad")) return "Pesados";
+  return (seg || "Automóvel");
+}
+function emojiDoSegmento(seg?: string) {
+  const s = (seg || "").toLowerCase();
+  if (s.includes("imó")) return "🏠";
+  if (s.includes("moto")) return "🏍️";
+  if (s.includes("serv")) return "✈️";
+  if (s.includes("pesad")) return "🚚";
+  return "🚗";
+}
 
-  const propostaTexto = useMemo(() => {
-    if (!calc || !podeCalcular) return "";
+const propostaTexto = useMemo(() => {
+  if (!calc || !podeCalcular) return "";
 
-    const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
-    const seg = normalizarSegmento(segBase);
-    const emoji = emojiDoSegmento(segBase);
+  const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
+  const seg = normalizarSegmento(segBase);
+  const emoji = emojiDoSegmento(segBase);
 
-    const parcela1 = brMoney(calc.parcelaAte);
-    const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
-    const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
+  const parcela1 = brMoney(calc.parcelaAte);
+  const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
+  const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
 
-    const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
+  const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
 
-    const grupoTxt = grupo || "—";
+  const grupoTxt = grupo || "—";
 
-    const whatsappFmt = formatPhoneBR(userPhone);
-    const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
+  const whatsappFmt = formatPhoneBR(userPhone);
+  const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
 
-    return (
+  return (
 `🚨OPORTUNIDADE 🚨
 
 🔥 PROPOSTA EMBRACON🔥
@@ -683,77 +732,103 @@ Vantagens
 ✅ Primeira parcela em até 3x no cartão
 ✅ Parcelas acessíveis
 ✅ Alta taxa de contemplação`
-    );
-  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone]);
+  );
+}, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone]);
 
-  async function copiarProposta() {
-    try {
-      await navigator.clipboard.writeText(propostaTexto);
-      alert("Texto copiado!");
-    } catch {
-      alert("Não foi possível copiar o texto.");
-    }
+async function copiarProposta() {
+  try {
+    await navigator.clipboard.writeText(propostaTexto);
+    alert("Texto copiado!");
+  } catch {
+    alert("Não foi possível copiar o texto.");
   }
+}
 
-  if (loading) {
-    return (
-      <div className="p-6 flex items-center gap-2">
-        <Loader2 className="h-5 w-5 animate-spin" /> Carregando simuladores...
-      </div>
-    );
-  }
-
-  const activeAdmin = admins.find((a) => a.id === activeAdminId);
-
+if (loading) {
   return (
-    <div className="p-6 space-y-4">
-      {/* topo: admins + botões */}
-<div className="flex flex-wrap items-center gap-2">
-  {/* Chips de administradoras (escondidos quando showTopChips === false) */}
-  {showTopChips && (
-    <div className="flex flex-wrap gap-2">
-      {admins.map((a) => (
-        <Button
-          key={a.id}
-          variant={activeAdminId === a.id ? "default" : "secondary"}
-          onClick={() => setActiveAdminId(a.id)}
-          className="h-10 rounded-2xl px-4"
-        >
-          {a.name}
-        </Button>
-      ))}
+    <div className="p-6 flex items-center gap-2">
+      <Loader2 className="h-5 w-5 animate-spin" /> Carregando simuladores...
     </div>
-  )}
+  );
+}
 
-  <div className="ml-auto flex items-center gap-2">
-    {activeAdmin && (
-      <>
-        {/* ✅ Mantido SEM depender do showTopChips */}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setMgrOpen(true)}
-          className="h-10 rounded-2xl px-4"
-        >
-          Gerenciar Tabelas
-        </Button>
+/* ==== GUARDS DE RENDER ==== */
+if (!routeKey) {
+  return (
+    <Card>
+      <CardHeader><CardTitle>Simuladores</CardTitle></CardHeader>
+      <CardContent>Escolha uma administradora no menu para configurar ou simular.</CardContent>
+    </Card>
+  );
+}
 
-        {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
-        {showTopChips && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => alert("Em breve: adicionar administradora.")}
-            className="h-10 rounded-2xl px-4 whitespace-nowrap"
-          >
-            <Plus className="h-4 w-4 mr-1" /> + Add Administradora
-          </Button>
-        )}
-      </>
-    )}
+if (loadingAdmin) {
+  return (
+    <div className="flex items-center gap-2 text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin" /> Carregando administradora…
+    </div>
+  );
+}
+
+if (!admin) {
+  return <div className="text-destructive">Administradora não encontrada.</div>;
+}
+
+/* ==== RETURN PRINCIPAL ==== */
+return (
+  <div className="space-y-4">
+    <div className="flex items-center justify-between">
+  <h1 className="text-xl font-semibold">{admin.name}</h1>
+  <div className="space-x-2">
+    <Button
+      variant="secondary"
+      onClick={() => setMgrOpen(true)}
+      title="Abrir gerenciador de tabelas desta administradora"
+    >
+      Gerenciar Tabelas
+    </Button>
+    <Button
+      variant={activeTab === "configurar" ? "default" : "outline"}
+      onClick={() => setActiveTab("configurar")}
+    >
+      Configurar
+    </Button>
+    <Button
+      variant={activeTab === "simular" ? "default" : "outline"}
+      onClick={() => setActiveTab("simular")}
+    >
+      Simular
+    </Button>
   </div>
 </div>
 
+    <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+      <TabsList>
+        <TabsTrigger value="configurar">Configurar</TabsTrigger>
+        <TabsTrigger value="simular">Simular</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="configurar">
+  <AdminCalcSetup
+    adminId={admin.id}
+    initialPrefs={prefs}
+    onSaved={(p) => { setPrefs(p); setActiveTab("simular"); }}
+  />
+</TabsContent>
+
+<TabsContent value="simular">
+  {!prefs ? (
+    <Card>
+      <CardHeader><CardTitle>Configuração pendente</CardTitle></CardHeader>
+      <CardContent>
+        Para simular {admin.name}, você precisa <b>configurar</b> primeiro.
+        <div className="mt-3">
+          <Button onClick={() => setActiveTab("configurar")}>Abrir Configuração</Button>
+        </div>
+      </CardContent>
+    </Card>
+  ) : (
+    <>
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
         {/* coluna esquerda: simulador */}
@@ -763,62 +838,56 @@ Vantagens
               <CardTitle>Simuladores</CardTitle>
             </CardHeader>
             <CardContent>
-              {activeAdmin ? (
-                activeAdmin.name === "Embracon" ? (
-                  <EmbraconSimulator
-                    leads={leads}
-                    adminTables={adminTables}
-                    nomesTabelaSegmento={nomesTabelaSegmento}
-                    variantesDaTabela={variantesDaTabela}
-                    tabelaSelecionada={tabelaSelecionada}
-                    prazoAte={prazoAte}
-                    faixa={faixa}
-                    leadId={leadId}
-                    setLeadId={setLeadId}
-                    leadInfo={leadInfo}
-                    grupo={grupo}
-                    setGrupo={setGrupo}
-                    segmento={segmento}
-                    setSegmento={(v) => {
-                      setSegmento(v);
-                      setNomeTabela("");
-                      setTabelaId("");
-                    }}
-                    nomeTabela={nomeTabela}
-                    setNomeTabela={(v) => {
-                      setNomeTabela(v);
-                      setTabelaId("");
-                    }}
-                    tabelaId={tabelaId}
-                    setTabelaId={setTabelaId}
-                    credito={credito}
-                    setCredito={setCredito}
-                    prazoVenda={prazoVenda}
-                    setPrazoVenda={setPrazoVenda}
-                    forma={forma}
-                    setForma={setForma}
-                    seguroPrest={seguroPrest}
-                    setSeguroPrest={setSeguroPrest}
-                    lanceOfertPct={lanceOfertPct}
-                    setLanceOfertPct={setLanceOfertPct}
-                    lanceEmbutPct={lanceEmbutPct}
-                    setLanceEmbutPct={setLanceEmbutPct}
-                    parcContemplacao={parcContemplacao}
-                    setParcContemplacao={setParcContemplacao}
-                    prazoAviso={prazoAviso}
-                    calc={calc}
-                    salvar={salvarSimulacao}
-                    salvando={salvando}
-                    simCode={simCode}
-                  />
-                ) : (
-                  <div className="text-sm text-muted-foreground">
-                    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
-                  </div>
-                )
+              {admin.name === "Embracon" ? (
+                <EmbraconSimulator
+                  leads={leads}
+                  adminTables={adminTables}
+                  nomesTabelaSegmento={nomesTabelaSegmento}
+                  variantesDaTabela={variantesDaTabela}
+                  tabelaSelecionada={tabelaSelecionada}
+                  prazoAte={prazoAte}
+                  faixa={faixa}
+                  leadId={leadId}
+                  setLeadId={setLeadId}
+                  leadInfo={leadInfo}
+                  grupo={grupo}
+                  setGrupo={setGrupo}
+                  segmento={segmento}
+                  setSegmento={(v) => {
+                    setSegmento(v);
+                    setNomeTabela("");
+                    setTabelaId("");
+                  }}
+                  nomeTabela={nomeTabela}
+                  setNomeTabela={(v) => {
+                    setNomeTabela(v);
+                    setTabelaId("");
+                  }}
+                  tabelaId={tabelaId}
+                  setTabelaId={setTabelaId}
+                  credito={credito}
+                  setCredito={setCredito}
+                  prazoVenda={prazoVenda}
+                  setPrazoVenda={setPrazoVenda}
+                  forma={forma}
+                  setForma={setForma}
+                  seguroPrest={seguroPrest}
+                  setSeguroPrest={setSeguroPrest}
+                  lanceOfertPct={lanceOfertPct}
+                  setLanceOfertPct={setLanceOfertPct}
+                  lanceEmbutPct={lanceEmbutPct}
+                  setLanceEmbutPct={setLanceEmbutPct}
+                  parcContemplacao={parcContemplacao}
+                  setParcContemplacao={setParcContemplacao}
+                  prazoAviso={prazoAviso}
+                  calc={calc}
+                  salvar={salvarSimulacao}
+                  salvando={salvando}
+                  simCode={simCode}
+                />
               ) : (
                 <div className="text-sm text-muted-foreground">
-                  Nenhuma administradora encontrada.
+                  Em breve: simulador para <strong>{admin.name}</strong>.
                 </div>
               )}
             </CardContent>
@@ -965,20 +1034,21 @@ Vantagens
           </Card>
         </div>
       </div>
+    </>
+  )}
+</TabsContent>
+</Tabs>
 
-      {/* Overlay de gerenciamento de tabelas */}
-      {mgrOpen && activeAdmin && (
-        <TableManagerModal
-          admin={activeAdmin}
-          allTables={adminTables}
-          onClose={() => setMgrOpen(false)}
-          onCreatedOrUpdated={handleTableCreatedOrUpdated}
-          onDeleted={handleTableDeleted}
-        />
-      )}
-    </div>
-  );
-}
+{/* Overlay de gerenciamento de tabelas */}
+{mgrOpen && admin && (
+  <TableManagerModal
+    admin={admin}
+    allTables={adminTables}
+    onClose={() => setMgrOpen(false)}
+    onCreatedOrUpdated={handleTableCreatedOrUpdated}
+    onDeleted={handleTableDeleted}
+  />
+)}
 
 /* =============== Modal: base com ESC para fechar =============== */
 function ModalBase({
@@ -1264,41 +1334,41 @@ function TableFormOverlay({
   }, [onClose]);
 
   async function salvar() {
-    setSaving(true);
-    const payload: Omit<SimTable, "id"> = {
-      admin_id: adminId,
-      segmento,
-      nome_tabela: nome,
-      faixa_min: Number(faixaMin) || 0,
-      faixa_max: Number(faixaMax) || 0,
-      prazo_limite: Number(prazoLimite) || 0,
-      taxa_adm_pct: parsePctInputToDecimal(taxaAdmHuman),
-      fundo_reserva_pct: parsePctInputToDecimal(frHuman),
-      antecip_pct: parsePctInputToDecimal(antecipHuman),
-      antecip_parcelas: Number(antecipParcelas) || 0,
-      limitador_parcela_pct: parsePctInputToDecimal(limHuman),
-      seguro_prest_pct: parsePctInputToDecimal(seguroHuman),
-      permite_lance_embutido: perEmbutido,
-      permite_lance_fixo_25: perFixo25,
-      permite_lance_fixo_50: perFixo50,
-      permite_livre: perLivre as any, // compat
-      permite_lance_livre: perLivre,
-      contrata_parcela_cheia: cParcelaCheia,
-      contrata_reduzida_25: cRed25,
-      contrata_reduzida_50: cRed50,
-      indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
-    };
+  setSaving(true);
+  const payload: Omit<SimTable, "id"> = {
+    admin_id: adminId,
+    segmento,
+    nome_tabela: nome,
+    faixa_min: Number(faixaMin) || 0,
+    faixa_max: Number(faixaMax) || 0,
+    prazo_limite: Number(prazoLimite) || 0,
+    taxa_adm_pct: parsePctInputToDecimal(taxaAdmHuman),
+    fundo_reserva_pct: parsePctInputToDecimal(frHuman),
+    antecip_pct: parsePctInputToDecimal(antecipHuman),
+    antecip_parcelas: Number(antecipParcelas) || 0,
+    limitador_parcela_pct: parsePctInputToDecimal(limHuman),
+    seguro_prest_pct: parsePctInputToDecimal(seguroHuman),
+    permite_lance_embutido: perEmbutido,
+    permite_lance_fixo_25: perFixo25,
+    permite_lance_fixo_50: perFixo50,
+    // ⬇️ mantenha só este (é o que existe na sua tabela/tipo)
+    permite_lance_livre: perLivre,
+    contrata_parcela_cheia: cParcelaCheia,
+    contrata_reduzida_25: cRed25,
+    contrata_reduzida_50: cRed50,
+    indice_correcao: indices.split(",").map((s) => s.trim()).filter(Boolean),
+  };
 
-    let res;
-    if (initial) {
-      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
-    } else {
-      res = await supabase.from("sim_tables").insert(payload).select("*").single();
-    }
-    setSaving(false);
-    if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
-    onSaved(res.data as SimTable);
+  let res;
+  if (initial) {
+    res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
+  } else {
+    res = await supabase.from("sim_tables").insert(payload).select("*").single();
   }
+  setSaving(false);
+  if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
+  onSaved(res.data as SimTable);
+}
 
   return (
     <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
@@ -1821,5 +1891,210 @@ return (
         </div>
       )}
     </div>
+  );
+}
+
+function AdminCalcSetup({
+  adminId,
+  initialPrefs,
+  onSaved,
+}: {
+  adminId: string;
+  initialPrefs: any | null;
+  onSaved: (prefs: any) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  // estados com defaults
+  const [formas_definicao, setFormasDefinicao] = useState(initialPrefs?.formas_definicao ?? 'adm');
+  const [adm_cheia, setAdmCheia] = useState(!!initialPrefs?.adm_permite_parcela_cheia ?? true);
+  const [adm_r25, setAdmR25] = useState(!!initialPrefs?.adm_permite_reduzida_25 ?? false);
+  const [adm_r50, setAdmR50] = useState(!!initialPrefs?.adm_permite_reduzida_50 ?? false);
+
+  const [redutor_modo, setRedutorModo] = useState(initialPrefs?.redutor_modo ?? 'sobre_credito');
+  const [redutor_override, setRedutorOverride] = useState(!!initialPrefs?.redutor_permite_override_tabela ?? true);
+
+  const [embutido_max_modo, setEmbutidoMaxModo] = useState(initialPrefs?.embutido_max_modo ?? 'tabela');
+  const [embutido_max_pct, setEmbutidoMaxPct] = useState<number | ''>(initialPrefs?.embutido_max_pct ?? '');
+  const [base_embutido, setBaseEmbutido] = useState(initialPrefs?.base_embutido ?? 'credito');
+  const [base_embutido_override, setBaseEmbutidoOverride] = useState(!!initialPrefs?.base_embutido_permite_override_tabela ?? true);
+
+  const [base_pct_lance_ofertado, setBasePctLanceOfertado] = useState(initialPrefs?.base_pct_lance_ofertado ?? 'credito');
+  const [base_pct_lance_override, setBasePctLanceOverride] = useState(!!initialPrefs?.base_pct_lance_ofertado_permite_override_tabela ?? true);
+
+  const [limitador_ativo, setLimitadorAtivo] = useState(!!initialPrefs?.limitador_pos_contemplacao_ativo ?? false);
+  const [limitador_def, setLimitadorDef] = useState(initialPrefs?.limitador_definicao ?? 'tabela');
+  const [limitador_pct, setLimitadorPct] = useState<number | ''>(initialPrefs?.limitador_pct ?? '');
+  const [limitador_base, setLimitadorBase] = useState(initialPrefs?.limitador_base ?? 'credito');
+
+  async function handleSave() {
+    setSaving(true);
+    const payload = {
+      admin_id: adminId,
+      formas_definicao,
+      adm_permite_parcela_cheia: adm_cheia,
+      adm_permite_reduzida_25: adm_r25,
+      adm_permite_reduzida_50: adm_r50,
+      redutor_modo,
+      redutor_permite_override_tabela: redutor_override,
+      antecipacao_adm_modo: 'tabela',
+      embutido_max_modo,
+      embutido_max_pct: embutido_max_pct === '' ? null : Number(embutido_max_pct),
+      base_embutido,
+      base_embutido_permite_override_tabela: base_embutido_override,
+      base_pct_lance_ofertado,
+      base_pct_lance_ofertado_permite_override_tabela: base_pct_lance_override,
+      limitador_pos_contemplacao_ativo: limitador_ativo,
+      limitador_definicao: limitador_def,
+      limitador_pct: limitador_pct === '' ? null : Number(limitador_pct),
+      limitador_base,
+    };
+
+    // upsert
+    const { data, error } = await supabase
+      .from('sim_admin_calc_prefs')
+      .upsert(payload, { onConflict: 'admin_id' })
+      .select('*')
+      .single();
+
+    setSaving(false);
+    if (error) {
+      console.error(error);
+      return;
+    }
+    onSaved(data);
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Comportamentos do Cálculo (Padrão da Adm)</CardTitle></CardHeader>
+      <CardContent className="space-y-6">
+
+        {/* Formas de Contratação */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <Label>Formas de Contratação</Label>
+            <select className="w-full border rounded p-2" value={formas_definicao} onChange={e => setFormasDefinicao(e.target.value)}>
+              <option value="adm">Padrão Adm</option>
+              <option value="tabela">Definido por Tabela/Segmento</option>
+            </select>
+          </div>
+          {formas_definicao === 'adm' && (
+            <div className="md:col-span-2 grid grid-cols-3 gap-3 items-end">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={adm_cheia} onChange={e=>setAdmCheia(e.target.checked)}/>Cheia</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={adm_r25} onChange={e=>setAdmR25(e.target.checked)}/>Reduzida 25%</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={adm_r50} onChange={e=>setAdmR50(e.target.checked)}/>Reduzida 50%</label>
+            </div>
+          )}
+        </div>
+
+        {/* Redutor */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <Label>Cálculo do Redutor</Label>
+            <select className="w-full border rounded p-2" value={redutor_modo} onChange={e=>setRedutorModo(e.target.value as any)}>
+              <option value="sobre_credito">Sobre o Crédito</option>
+              <option value="valor_categoria">Crédito + Taxas (Valor de Categoria)</option>
+            </select>
+            <label className="mt-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={redutor_override} onChange={e=>setRedutorOverride(e.target.checked)}/>
+              Permitir override por Tabela
+            </label>
+          </div>
+        </div>
+
+        {/* Embutido */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <Label>Embutido Máx</Label>
+            <select className="w-full border rounded p-2" value={embutido_max_modo} onChange={e=>setEmbutidoMaxModo(e.target.value as any)}>
+              <option value="adm">Padrão Adm</option>
+              <option value="tabela">Definido por Tabela</option>
+            </select>
+          </div>
+          {embutido_max_modo === 'adm' && (
+            <div>
+              <Label>Percentual (humanizado)</Label>
+              <Input type="number" step="0.1" value={embutido_max_pct} onChange={e=>setEmbutidoMaxPct(e.target.value === '' ? '' : Number(e.target.value))} placeholder="ex.: 25" />
+            </div>
+          )}
+          <div>
+            <Label>Base do Embutido</Label>
+            <select className="w-full border rounded p-2" value={base_embutido} onChange={e=>setBaseEmbutido(e.target.value as any)}>
+              <option value="credito">Crédito</option>
+              <option value="valor_categoria">Valor de Categoria</option>
+            </select>
+            <label className="mt-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={base_embutido_override} onChange={e=>setBaseEmbutidoOverride(e.target.checked)}/>
+              Permitir override por Tabela
+            </label>
+          </div>
+        </div>
+
+        {/* Base % do lance ofertado */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <Label>Base % do Lance Ofertado</Label>
+            <select className="w-full border rounded p-2" value={base_pct_lance_ofertado} onChange={e=>setBasePctLanceOfertado(e.target.value as any)}>
+              <option value="credito">Crédito</option>
+              <option value="valor_categoria">Valor de Categoria</option>
+            </select>
+            <label className="mt-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={base_pct_lance_override} onChange={e=>setBasePctLanceOverride(e.target.checked)}/>
+              Permitir override por Tabela
+            </label>
+          </div>
+        </div>
+
+        {/* Pós-contemplação */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <Label>Limitador pós-contemplação</Label>
+            <select
+              className="w-full border rounded p-2"
+              value={limitador_ativo ? 'sim' : 'nao'}
+              onChange={(e)=>setLimitadorAtivo(e.target.value === 'sim')}
+            >
+              <option value="nao">Não</option>
+              <option value="sim">Sim</option>
+            </select>
+          </div>
+
+          {limitador_ativo && (
+            <>
+              <div>
+                <Label>Quem define?</Label>
+                <select className="w-full border rounded p-2" value={limitador_def} onChange={e=>setLimitadorDef(e.target.value as any)}>
+                  <option value="tabela">Definido por Tabela</option>
+                  <option value="adm">Padrão Adm</option>
+                </select>
+              </div>
+              {limitador_def === 'adm' && (
+                <>
+                  <div>
+                    <Label>% (humanizado)</Label>
+                    <Input type="number" step="0.1" value={limitador_pct} onChange={e=>setLimitadorPct(e.target.value === '' ? '' : Number(e.target.value))} placeholder="ex.: 2.8" />
+                  </div>
+                  <div>
+                    <Label>Base</Label>
+                    <select className="w-full border rounded p-2" value={limitador_base} onChange={e=>setLimitadorBase(e.target.value as any)}>
+                      <option value="credito">Crédito</option>
+                      <option value="valor_categoria">Valor de Categoria</option>
+                      <option value="parcela_vigente">% sobre parcela vigente</option>
+                    </select>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="pt-2">
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Salvando..." : "Salvar configuração"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

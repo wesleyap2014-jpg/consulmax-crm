@@ -468,7 +468,6 @@ useEffect(() => {
   })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []); // carregamento inicial
-  }, []); // carregamento inicial
 
   // pega telefone do usuário logado
   useEffect(() => {

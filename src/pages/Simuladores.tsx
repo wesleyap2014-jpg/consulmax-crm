@@ -348,14 +348,11 @@ const [mgrOpen, setMgrOpen] = useState(false);
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
 
-// URL: /simuladores/:adminId?setup=1
-const { adminId } = useParams();
-const { search } = useLocation();
-const openSetup = new URLSearchParams(search).get("setup") === "1";
-
-// 👉 Adicione aqui:
-const { pathname } = useLocation();
-const showTopChips = false; // ou pathname === "/simuladores"
+// URL: /simuladores/:id?setup=1
+const adminId = routeAdminId;   // reaproveita o id já lido lá em cima
+const openSetup = setup;        // reaproveita o boolean já calculado
+const { pathname: _pathname } = useLocation();
+const showTopChips = false;     // ou pathname === "/simuladores"
 
   useEffect(() => {
     (async () => {
@@ -1402,7 +1399,28 @@ type EmbraconProps = {
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
-  return (
+const [leadOpen, setLeadOpen] = useState(false);
+  const [leadQuery, setLeadQuery] = useState("");
+
+  const filteredLeads = useMemo(() => {
+    const norm = (s: string) =>
+      s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+    const qRaw = leadQuery.trim();
+    const q = norm(qRaw);
+    const qDigits = qRaw.replace(/\D/g, ""); // busca por telefone
+
+    return p.leads.filter((l) => {
+      const nome = norm(l.nome || "");
+      const tel = (l.telefone || "").replace(/\D/g, "");
+      return nome.includes(q) || (!!qDigits && tel.includes(qDigits));
+    });
+  }, [p.leads, leadQuery]);
+
+  useEffect(() => {
+    if (!leadOpen) setLeadQuery("");
+  }, [leadOpen]);  
+return (
     <div className="space-y-6">
       {/* Lead */}
       <Card>
@@ -1410,24 +1428,58 @@ function EmbraconSimulator(p: EmbraconProps) {
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <Label>Selecionar Lead</Label>
-              <select
-                className="w-full h-10 border rounded-md px-3"
-                value={p.leadId}
-                onChange={(e) => p.setLeadId(e.target.value)}
-              >
-                <option value="">Escolha um lead</option>
-                {p.leads.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.nome}
-                  </option>
-                ))}
-              </select>
-              {p.leadInfo && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-                </p>
-              )}
+             <Label>Selecionar Lead</Label>
+<Popover open={leadOpen} onOpenChange={setLeadOpen}>
+  <PopoverTrigger asChild>
+    <Button variant="outline" className="w-full justify-between h-10">
+      {p.leadInfo?.nome || "Escolher lead"}
+      <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+    </Button>
+  </PopoverTrigger>
+
+  <PopoverContent className="w-[--radix-popover-trigger-width] p-2">
+    {/* Busca */}
+    <div className="flex items-center gap-2 mb-2">
+      <Search className="h-4 w-4 opacity-60" />
+      <Input
+        placeholder="Buscar lead pelo nome..."
+        value={leadQuery}
+        onChange={(e) => setLeadQuery(e.target.value)}
+        className="h-8"
+      />
+    </div>
+
+{/* Lista */}
+<div className="max-h-64 overflow-y-auto space-y-1">
+  {filteredLeads.length > 0 ? (
+    filteredLeads.map((l) => (
+      <button
+        key={l.id}
+        type="button"
+        className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+        onClick={() => { p.setLeadId(l.id); setLeadOpen(false); setLeadQuery(""); }}
+      >
+        <div className="text-sm font-medium">{l.nome}</div>
+        {l.telefone && (
+          <div className="text-xs text-muted-foreground">{l.telefone}</div>
+        )}
+      </button>
+    ))
+  ) : (
+    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+      Nenhum lead encontrado
+    </div>
+  )}
+</div>
+</PopoverContent>
+</Popover>
+
+{p.leadInfo && (
+  <p className="text-xs text-muted-foreground mt-1">
+    {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+  </p>
+)}
+
             </div>
             <div>
               <Label>Nº do Grupo (opcional)</Label>

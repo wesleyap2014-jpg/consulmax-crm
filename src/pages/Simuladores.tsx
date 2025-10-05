@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
 import { useParams, useLocation, useSearchParams } from "react-router-dom";
 import { ChevronsUpDown, Search } from "lucide-react";
-import { Popover, PopoverButton, PopoverContent } from "@/components/ui/popover";
+import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -1448,28 +1448,32 @@ return (
     </div>
 
     {/* Lista */}
-    <div className="max-h-64 overflow-y-auto space-y-1">
-      {filteredLeads.length > 0 ? (
-        filteredLeads.map((l) => (
-          <button
-            key={l.id}
-            type="button"
-            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-            onClick={() => { p.setLeadId(l.id); setLeadOpen(false); setLeadQuery(""); }}
-          >
-            <div className="text-sm font-medium">{l.nome}</div>
-            {l.telefone && (
-              <div className="text-xs text-muted-foreground">{l.telefone}</div>
-            )}
-          </button>
-        ))
-      ) : (
-        <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-          Nenhum lead encontrado
-        </div>
-      )}
+<div className="max-h-64 overflow-y-auto space-y-1">
+  {filteredLeads.length > 0 ? (
+    filteredLeads.map((l) => (
+      <PopoverClose asChild key={l.id}>
+        <button
+          type="button"
+          className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+          onClick={() => {
+            p.setLeadId(l.id);
+            setLeadQuery(""); // limpa a busca
+          }}
+        >
+          <div className="text-sm font-medium">{l.nome}</div>
+          {l.telefone && (
+            <div className="text-xs text-muted-foreground">{l.telefone}</div>
+          )}
+        </button>
+      </PopoverClose>
+    ))
+  ) : (
+    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+      Nenhum lead encontrado
     </div>
-  </PopoverContent>
+  )}
+</div>
+</PopoverContent>
 </Popover>
 
 {p.leadInfo && (

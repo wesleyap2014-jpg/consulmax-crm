@@ -7,8 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
 import { useParams, useLocation, useSearchParams } from "react-router-dom";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { ChevronsUpDown, Search } from "lucide-react";
+import { Popover, PopoverButton, PopoverContent } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -1429,49 +1429,47 @@ return (
           <div className="grid gap-4 md:grid-cols-3">
             <div>
              <Label>Selecionar Lead</Label>
-<Popover open={leadOpen} onOpenChange={setLeadOpen}>
-  <PopoverTrigger asChild>
-    <Button variant="outline" className="w-full justify-between h-10">
-      {p.leadInfo?.nome || "Escolher lead"}
-      <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-    </Button>
-  </PopoverTrigger>
+<Popover onOpenChange={setLeadOpen}>
+  <PopoverButton className="w-full justify-between h-10">
+    {p.leadInfo?.nome || "Escolher lead"}
+    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+  </PopoverButton>
 
-  <PopoverContent className="w-[--radix-popover-trigger-width] p-2">
+  <PopoverContent className="min-w-[260px] p-2 z-50">
     {/* Busca */}
     <div className="flex items-center gap-2 mb-2">
       <Search className="h-4 w-4 opacity-60" />
       <Input
-        placeholder="Buscar lead pelo nome..."
+        placeholder="Buscar lead por nome ou telefone..."
         value={leadQuery}
         onChange={(e) => setLeadQuery(e.target.value)}
         className="h-8"
       />
     </div>
 
-{/* Lista */}
-<div className="max-h-64 overflow-y-auto space-y-1">
-  {filteredLeads.length > 0 ? (
-    filteredLeads.map((l) => (
-      <button
-        key={l.id}
-        type="button"
-        className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-        onClick={() => { p.setLeadId(l.id); setLeadOpen(false); setLeadQuery(""); }}
-      >
-        <div className="text-sm font-medium">{l.nome}</div>
-        {l.telefone && (
-          <div className="text-xs text-muted-foreground">{l.telefone}</div>
-        )}
-      </button>
-    ))
-  ) : (
-    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-      Nenhum lead encontrado
+    {/* Lista */}
+    <div className="max-h-64 overflow-y-auto space-y-1">
+      {filteredLeads.length > 0 ? (
+        filteredLeads.map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+            onClick={() => { p.setLeadId(l.id); setLeadOpen(false); setLeadQuery(""); }}
+          >
+            <div className="text-sm font-medium">{l.nome}</div>
+            {l.telefone && (
+              <div className="text-xs text-muted-foreground">{l.telefone}</div>
+            )}
+          </button>
+        ))
+      ) : (
+        <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+          Nenhum lead encontrado
+        </div>
+      )}
     </div>
-  )}
-</div>
-</PopoverContent>
+  </PopoverContent>
 </Popover>
 
 {p.leadInfo && (

@@ -313,8 +313,8 @@ export default function Simuladores() {
   const [mgrOpen, setMgrOpen] = useState(false);
 
   useEffect(() => {
-    setActiveAdminId(routeKey as string | null);
-  }, [routeKey]);
+  if (routeKey) setActiveAdminId(routeKey);
+}, [routeKey]);
 
   // carrega admin por id OU slug e decide a aba inicial
   useEffect(() => {

@@ -393,56 +393,70 @@ const Carteira: React.FC = () => {
   }, [form.produto]);
 
   useEffect(() => {
-    (async () => {
+  (async () => {
+    try {
+      setLoading(true);
+      setErr("");
+
+      // Auth
+      const { data: authData } = await supabase.auth.getUser();
+      const uid = authData.user?.id ?? "";
+      const uemail = authData.user?.email ?? "";
+      setUserId(uid);
+      setUserEmail(uemail);
+      setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
+
+      // Flag admin (tabela users)
+      let adminFlag = false;
       try {
-        setLoading(true);
-        setErr("");
-        const { data: authData } = await supabase.auth.getUser();
-        const uid = authData.user?.id ?? "";
-        const uemail = authData.user?.email ?? "";
-        setUserId(uid);
-        setUserEmail(uemail);
-        setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
+        const { data } = await supabase.from("users").select("email, role").eq("email", uemail).maybeSingle();
+        adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
+      } catch {}
+      setIsAdmin(adminFlag);
 
-        let adminFlag = false;
-        try {
-          const { data } = await supabase.from("users").select("email, role").eq("email", uemail).maybeSingle();
-          adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
-        } catch {}
-        setIsAdmin(adminFlag);
+      // Carrega listas em paralelo
+      const [{ data: lds }, { data: pend }, { data: enc }, { data: admins }, { data: tables }, { data: us }] =
+        await Promise.all([
+          supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
+          (async () => {
+            const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+            if (!adminFlag) q.eq("vendedor_id", uid); // vendedor_id nas vendas = auth_user_id
+            return (await q).data;
+          })(),
+          (async () => {
+            const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+            if (!adminFlag) q.eq("vendedor_id", uid);
+            return (await q).data;
+          })(),
+          supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+          supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
+          supabase.from("users").select("id,nome,email,role,auth_user_id").order("nome", { ascending: true }),
+        ]);
 
-        const { data: lds } = await supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true });
-        const leadsArr = lds ?? [];
-        setLeads(leadsArr);
-        setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
+      // Leads + mapa
+      const leadsArr = lds ?? [];
+      setLeads(leadsArr);
+      setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
 
-        const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-        const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
-        if (!adminFlag) {
-          pendQuery.eq("vendedor_id", uid);
-          encQuery.eq("vendedor_id", uid);
-        }
-        const [{ data: pend }, { data: enc }] = await Promise.all([pendQuery, encQuery]);
-        setPendentes(pend ?? []);
-        setEncarteiradas(enc ?? []);
+      // Vendas
+      setPendentes((pend as any[]) ?? []);
+      setEncarteiradas((enc as any[]) ?? []);
 
-        const [{ data: admins }, { data: tables }, { data: us }] = await Promise.all([
-       supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-       supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
-      supabase.from("users").select("id,nome,email,role,u.id").order("nome", { ascending: true }),
-     ]);
+      // Simuladores + Users
       setSimAdmins(admins ?? []);
       setSimTables(tables ?? []);
       setUsers((us ?? []) as AppUser[]);
 
-        setSelectedSeller(adminFlag ? "" : uid);
-      } catch (e: any) {
-        setErr(e.message || "Falha ao carregar Carteira.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+      // Ajuste chave: selectedSeller deve usar users.id (não auth_user_id)
+      const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
+      setSelectedSeller(adminFlag ? "" : (myUserRow?.id ?? ""));
+    } catch (e: any) {
+      setErr(e.message || "Falha ao carregar Carteira.");
+    } finally {
+      setLoading(false);
+    }
+  })();
+}, []);
 
   const pendentesComNome = useMemo(() => pendentes.map((v) => ({ venda: v, lead: leadMap[v.lead_id] })), [pendentes, leadMap]);
 

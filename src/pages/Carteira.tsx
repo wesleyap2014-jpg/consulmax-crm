@@ -427,13 +427,13 @@ const Carteira: React.FC = () => {
         setEncarteiradas(enc ?? []);
 
         const [{ data: admins }, { data: tables }, { data: us }] = await Promise.all([
-          supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-          supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
-          supabase.from("users").select("id,nome,email,role").order("nome", { ascending: true }),
-        ]);
-        setSimAdmins(admins ?? []);
-        setSimTables(tables ?? []);
-        setUsers(us ?? []);
+       supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+       supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
+      supabase.from("users").select("id,nome,email,role,auth_user_id").order("nome", { ascending: true }),
+     ]);
+      setSimAdmins(admins ?? []);
+      setSimTables(tables ?? []);
+      setUsers((us ?? []) as AppUser[]);
 
         setSelectedSeller(adminFlag ? "" : uid);
       } catch (e: any) {

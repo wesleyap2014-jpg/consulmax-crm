@@ -59,7 +59,7 @@ type AppUser = {
   nome: string;
   email?: string | null;
   role?: string | null;
-  auth_user_id?: string | null;
+  u.id?: string | null;
 };
 
 const PRODUTOS: Produto[] = [
@@ -429,7 +429,7 @@ const Carteira: React.FC = () => {
         const [{ data: admins }, { data: tables }, { data: us }] = await Promise.all([
        supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
        supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
-      supabase.from("users").select("id,nome,email,role,auth_user_id").order("nome", { ascending: true }),
+      supabase.from("users").select("id,nome,email,role,u.id").order("nome", { ascending: true }),
      ]);
       setSimAdmins(admins ?? []);
       setSimTables(tables ?? []);

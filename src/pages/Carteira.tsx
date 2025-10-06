@@ -753,7 +753,7 @@ const Carteira: React.FC = () => {
   useEffect(() => {
   loadMetrics(selectedSeller, selectedYear);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [selectedSeller, selectedYear]);
+}, [selectedSeller, selectedYear, users]);
 
   const donutData = useMemo(() => {
     const reached = Math.max(0, Math.min(realizadoAnual, metaAnual));

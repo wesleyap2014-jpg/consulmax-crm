@@ -870,8 +870,6 @@ const Carteira: React.FC = () => {
     </div>
   </div>
 
-  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="border rounded-2xl p-4 flex items-center justify-center relative">
             <div className="absolute top-3 left-4 text-sm text-gray-500">Meta anual: {currency(metaAnual)}</div>

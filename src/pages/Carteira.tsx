@@ -696,13 +696,13 @@ const Carteira: React.FC = () => {
 
   const base = supabase
     .from("vendas")
-    .select("valor_venda,encarteirada_em,owner_id,codigo,status")
+    .select("valor_venda,encarteirada_em,vendedor_id,codigo,status")
     .eq("status", "encarteirada")
     .eq("codigo", "00")
     .gte("encarteirada_em", `${year}-01-01`)
     .lte("encarteirada_em", `${year}-12-31T23:59:59`);
 
-  const { data: vendasOk } = sellerId ? await base.eq("owner_id", sellerId) : await base;
+  const { data: vendasOk } = sellerId ? await base.eq("vendedor_id", sellerId) : await base;
 
   const monthArr = Array(12).fill(0);
   (vendasOk ?? []).forEach((v: any) => {

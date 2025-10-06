@@ -775,10 +775,26 @@ const Carteira: React.FC = () => {
   );
 
   const handleOpenMeta = () => {
-    const baseSeller = isAdmin ? "" : userId;
-    setMetaForm({ vendedor_id: baseSeller, ano: selectedYear, m: Array.from(metaMensal) });
-    setMetaOverlay({ open: true });
-  };
+  // garante que a lista de usuários já foi carregada
+  if (!users || users.length === 0) {
+    alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
+    return;
+  }
+
+  // busca o registro do usuário logado dentro da tabela users
+  const myUserRow = users.find(
+    (u) => u.auth_user_id === userId || u.email === userEmail
+  );
+  const baseSeller = isAdmin ? "" : myUserRow?.id ?? "";
+
+  setMetaForm({
+    vendedor_id: baseSeller,
+    ano: selectedYear,
+    m: Array.from(metaMensal),
+  });
+
+  setMetaOverlay({ open: true });
+};
 
   const saveMeta = async () => {
     try {

@@ -372,7 +372,7 @@ const Carteira: React.FC = () => {
     Array<{ id: string; admin_id: string; segmento: string; nome_tabela: string; faixa_min?: number | null; faixa_max?: number | null; prazo_limite?: number | null }>
   >([]);
 
-  const [users, setUsers] = useState<UserRow[]>([]);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [metaOverlay, setMetaOverlay] = useState<{ open: boolean }>({ open: false });
   const [metaForm, setMetaForm] = useState<{ vendedor_id: string; ano: number; m: number[] }>({
     vendedor_id: "",

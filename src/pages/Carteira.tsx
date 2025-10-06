@@ -59,7 +59,7 @@ type AppUser = {
   nome: string;
   email?: string | null;
   role?: string | null;
-  u.id?: string | null;
+  auth_user_id?: string | null; // mantenha este campo
 };
 
 const PRODUTOS: Produto[] = [

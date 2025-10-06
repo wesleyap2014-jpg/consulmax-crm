@@ -54,6 +54,14 @@ type Venda = {
 
 type UserRow = { id: string; nome: string | null; email: string | null; role?: string | null };
 
+type AppUser = {
+  id: string;
+  nome: string;
+  email?: string | null;
+  role?: string | null;
+  auth_user_id?: string | null;
+};
+
 const PRODUTOS: Produto[] = [
   "Automóvel",
   "Imóvel",

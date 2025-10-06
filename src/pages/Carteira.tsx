@@ -43,7 +43,7 @@ type Venda = {
   grupo: string | null;
   cota: string | null;
   codigo: string | null;
-  data_encarteiramento: string | null;
+  encarteirada_em: string | null;
   contemplada?: boolean | null;
   data_contemplacao?: string | null;
   tabela?: string | null;

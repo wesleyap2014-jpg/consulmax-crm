@@ -833,33 +833,44 @@ const Carteira: React.FC = () => {
         </div>
       </div>
 
+      <section className="space-y-4">
+  <div className="flex items-center justify-between">
+    <h2 className="text-lg font-medium">Metas</h2>
+
+    <div className="flex items-center gap-2">
       <select
-  className="border rounded-xl px-3 py-2"
-  value={metaSeller}
-  onChange={(e) => setMetaSeller(e.target.value)}
->
-  {users.map((u) => (
-    <option key={u.id} value={u.auth_user_id ?? u.id}>
-      {u.nome || u.email || u.id}
-    </option>
-  ))}
-</select>
-            {isAdmin && (
-  <select
-    className="border rounded-xl px-3 py-2"
-    value={selectedSeller}
-    onChange={(e) => setSelectedSeller(e.target.value)}
-  >
-    <option value="">Todos (selecione um vendedor)</option>
-    {users.map((u) => (
-      <option key={u.id} value={u.auth_user_id ?? u.id}>
-        {u.nome || u.email || u.id}
-      </option>
-    ))}
-  </select>
-)}
-          </div>
-        </div>
+        className="border rounded-xl px-3 py-2"
+        value={selectedYear}
+        onChange={(e) => setSelectedYear(Number(e.target.value))}
+      >
+        {Array.from({ length: 6 }).map((_, i) => {
+          const y = new Date().getFullYear() - 1 + i;
+          return (
+            <option key={y} value={y}>
+              {y}
+            </option>
+          );
+        })}
+      </select>
+
+      {isAdmin && (
+        <select
+          className="border rounded-xl px-3 py-2"
+          value={selectedSeller}
+          onChange={(e) => setSelectedSeller(e.target.value)}
+        >
+          <option value="">Todos (selecione um vendedor)</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.auth_user_id ?? u.id}>
+              {u.nome || u.email || u.id}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  </div>
+
+  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="border rounded-2xl p-4 flex items-center justify-center relative">

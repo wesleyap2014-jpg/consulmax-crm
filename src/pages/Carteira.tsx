@@ -854,19 +854,20 @@ const Carteira: React.FC = () => {
       </select>
 
       {isAdmin && (
-        <select
-          className="border rounded-xl px-3 py-2"
-          value={selectedSeller}
-          onChange={(e) => setSelectedSeller(e.target.value)}
-        >
-          <option value="">Todos (selecione um vendedor)</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.auth_user_id ?? u.id}>
-              {u.nome || u.email || u.id}
-            </option>
-          ))}
-        </select>
-      )}
+  <select
+    className="border rounded-xl px-3 py-2"
+    value={selectedSeller}
+    onChange={(e) => setSelectedSeller(e.target.value)}
+  >
+    <option value="">Todos (selecione um vendedor)</option>
+    {users.map((u) => (
+      <option key={u.id} value={u.id}>
+        {u.nome || u.email || u.id}
+      </option>
+    ))}
+  </select>
+)}
+
     </div>
   </div>
 

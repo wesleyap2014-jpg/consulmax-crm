@@ -694,24 +694,43 @@ const Carteira: React.FC = () => {
     setMetaMensal(sum);
   }
 
-  const base = supabase
+  const ativasBase = supabase
     .from("vendas")
-    .select("valor_venda,encarteirada_em,vendedor_id,codigo,status")
+    .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
     .eq("status", "encarteirada")
     .eq("codigo", "00")
     .gte("encarteirada_em", `${year}-01-01`)
     .lte("encarteirada_em", `${year}-12-31T23:59:59`);
 
-  const { data: vendasOk } = sellerId ? await base.eq("vendedor_id", sellerId) : await base;
+  const cancBase = supabase
+    .from("vendas")
+    .select("valor_venda, cancelada_em, vendedor_id, codigo, status")
+    .eq("status", "encarteirada")
+    .neq("codigo", "00")
+    .gte("cancelada_em", `${year}-01-01`)
+    .lte("cancelada_em", `${year}-12-31T23:59:59`);
 
-  const monthArr = Array(12).fill(0);
-  (vendasOk ?? []).forEach((v: any) => {
+  const qAtivas = sellerId ? ativasBase.eq("vendedor_id", sellerId) : ativasBase;
+  const qCanc = sellerId ? cancBase.eq("vendedor_id", sellerId) : cancBase;
+
+  const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([qAtivas, qCanc]);
+
+  const vendido = Array(12).fill(0);
+  (vendasAtivas ?? []).forEach((v: any) => {
     const d = v.encarteirada_em ? new Date(v.encarteirada_em) : null;
     if (!d || isNaN(d.getTime())) return;
-    const mIdx = d.getMonth();
-    monthArr[mIdx] += Number(v.valor_venda || 0);
+    vendido[d.getMonth()] += Number(v.valor_venda || 0);
   });
-  setRealizadoMensal(monthArr);
+
+  const cancelado = Array(12).fill(0);
+  (vendasCanc ?? []).forEach((v: any) => {
+    const d = v.cancelada_em ? new Date(v.cancelada_em) : null;
+    if (!d || isNaN(d.getTime())) return;
+    cancelado[d.getMonth()] += Number(v.valor_venda || 0);
+  });
+
+  const realizado = vendido.map((v: number, i: number) => v - cancelado[i]);
+  setRealizadoMensal(realizado);
 };
 
   useEffect(() => {

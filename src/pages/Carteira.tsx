@@ -415,32 +415,34 @@ const Carteira: React.FC = () => {
       setIsAdmin(adminFlag);
 
       // Carrega listas em paralelo
-      const [{ data: lds }, { data: pend }, { data: enc }, { data: admins }, { data: tables }, { data: us }] =
-        await Promise.all([
-          supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
-          (async () => {
-            const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-            if (!adminFlag) q.eq("vendedor_id", uid); // vendedor_id nas vendas = auth_user_id
-            return (await q).data;
-          })(),
-          (async () => {
-            const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
-            if (!adminFlag) q.eq("vendedor_id", uid);
-            return (await q).data;
-          })(),
-          supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-          supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
-          supabase.from("users").select("id,nome,email,role,auth_user_id").order("nome", { ascending: true }),
-        ]);
+      const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] =
+  await Promise.all([
+    supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
+    (async () => {
+      const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!adminFlag) q.eq("vendedor_id", uid); // vendedor_id = auth_user_id
+      const { data } = await q;
+      return data; // retorna array
+    })(),
+    (async () => {
+      const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+      if (!adminFlag) q.eq("vendedor_id", uid);
+      const { data } = await q;
+      return data; // retorna array
+    })(),
+    supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+    supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
+    supabase.from("users").select("id,nome,email,role,auth_user_id").order("nome", { ascending: true }),
+  ]);
 
       // Leads + mapa
-      const leadsArr = lds ?? [];
-      setLeads(leadsArr);
-      setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
+const leadsArr = lds ?? [];
+setLeads(leadsArr);
+setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
 
-      // Vendas
-      setPendentes((pend as any[]) ?? []);
-      setEncarteiradas((enc as any[]) ?? []);
+// Vendas
+setPendentes(pend ?? []);
+setEncarteiradas(enc ?? []);
 
       // Simuladores + Users
       setSimAdmins(admins ?? []);

@@ -662,43 +662,57 @@ const Carteira: React.FC = () => {
   };
 
   const loadMetrics = async (sellerId: string, year: number) => {
-    if (!sellerId) {
-      setMetaMensal(Array(12).fill(0));
-      setRealizadoMensal(Array(12).fill(0));
-      return;
-    }
+  if (sellerId) {
     const { data: metasRow } = await supabase
       .from("metas_vendedores")
       .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
       .eq("vendedor_id", sellerId)
       .eq("ano", year)
       .maybeSingle();
+
     const m = metasRow
-      ? [metasRow.m01, metasRow.m02, metasRow.m03, metasRow.m04, metasRow.m05, metasRow.m06, metasRow.m07, metasRow.m08, metasRow.m09, metasRow.m10, metasRow.m11, metasRow.m12].map(
-          (x: any) => Number(x || 0)
-        )
+      ? [
+          metasRow.m01, metasRow.m02, metasRow.m03, metasRow.m04, metasRow.m05, metasRow.m06,
+          metasRow.m07, metasRow.m08, metasRow.m09, metasRow.m10, metasRow.m11, metasRow.m12,
+        ].map((x: any) => Number(x || 0))
       : Array(12).fill(0);
     setMetaMensal(m);
+  } else {
+    const { data: metasAll } = await supabase
+      .from("metas_vendedores")
+      .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+      .eq("ano", year);
 
-    const { data: realized } = await supabase.rpc("noop_fetch_realizados" as any).catch(() => ({ data: null })); // placeholder to avoid type issue
-    const { data: vendasOk } = await supabase
-      .from("vendas")
-      .select("valor_venda,encarteirada_em,codigo,vendedor_id")
-      .eq("status", "encarteirada")
-      .eq("codigo", "00")
-      .eq("vendedor_id", sellerId)
-      .gte("encarteirada_em", `${year}-01-01`)
-      .lte("encarteirada_em", `${year}-12-31T23:59:59`);
-
-    const monthArr = Array(12).fill(0);
-    (vendasOk ?? []).forEach((v: any) => {
-      const d = v.encarteirada_em ? new Date(v.encarteirada_em) : null;
-      if (!d || isNaN(d.getTime())) return;
-      const mIdx = d.getMonth();
-      monthArr[mIdx] += Number(v.valor_venda || 0);
+    const sum = Array(12).fill(0);
+    (metasAll ?? []).forEach((row: any) => {
+      const arr = [
+        row.m01, row.m02, row.m03, row.m04, row.m05, row.m06,
+        row.m07, row.m08, row.m09, row.m10, row.m11, row.m12,
+      ].map((x: any) => Number(x || 0));
+      for (let i = 0; i < 12; i++) sum[i] += arr[i];
     });
-    setRealizadoMensal(monthArr);
-  };
+    setMetaMensal(sum);
+  }
+
+  const base = supabase
+    .from("vendas")
+    .select("valor_venda,encarteirada_em,owner_id,codigo,status")
+    .eq("status", "encarteirada")
+    .eq("codigo", "00")
+    .gte("encarteirada_em", `${year}-01-01`)
+    .lte("encarteirada_em", `${year}-12-31T23:59:59`);
+
+  const { data: vendasOk } = sellerId ? await base.eq("owner_id", sellerId) : await base;
+
+  const monthArr = Array(12).fill(0);
+  (vendasOk ?? []).forEach((v: any) => {
+    const d = v.encarteirada_em ? new Date(v.encarteirada_em) : null;
+    if (!d || isNaN(d.getTime())) return;
+    const mIdx = d.getMonth();
+    monthArr[mIdx] += Number(v.valor_venda || 0);
+  });
+  setRealizadoMensal(monthArr);
+};
 
   useEffect(() => {
   loadMetrics(selectedSeller, selectedYear);

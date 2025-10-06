@@ -591,7 +591,7 @@ const Carteira: React.FC = () => {
       ]);
       setPendentes(pend ?? []);
       setEncarteiradas(enc ?? []);
-      await loadMetrics(selectedSeller || userId, selectedYear);
+      await loadMetrics(selectedSeller, selectedYear);
     } catch (e: any) {
       alert(e.message ?? "Erro ao encarteirar.");
     }
@@ -618,7 +618,7 @@ const Carteira: React.FC = () => {
       if (!isAdmin) encQuery.eq("vendedor_id", userId);
       const { data: enc } = await encQuery;
       setEncarteiradas(enc ?? []);
-      await loadMetrics(selectedSeller || userId, selectedYear);
+      await loadMetrics(selectedSeller, selectedYear);
     } catch (e: any) {
       alert(e.message ?? "Erro ao salvar edição.");
     }

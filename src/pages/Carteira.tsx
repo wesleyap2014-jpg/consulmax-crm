@@ -669,8 +669,10 @@ const Carteira: React.FC = () => {
     await prefillFromLead(leadId);
   };
 
-  const loadMetrics = async (sellerId: string, year: number) => {
+  const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
+  // ===== Metas (metas_vendedores) =====
   if (sellerId) {
+    // sellerId = users.id (id da tabela users)
     const { data: metasRow } = await supabase
       .from("metas_vendedores")
       .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
@@ -686,6 +688,7 @@ const Carteira: React.FC = () => {
       : Array(12).fill(0);
     setMetaMensal(m);
   } else {
+    // Soma metas de todos os vendedores no ano
     const { data: metasAll } = await supabase
       .from("metas_vendedores")
       .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
@@ -702,11 +705,12 @@ const Carteira: React.FC = () => {
     setMetaMensal(sum);
   }
 
+  // ===== Realizado (vendas encarteiradas - canceladas) =====
   const ativasBase = supabase
     .from("vendas")
     .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
     .eq("status", "encarteirada")
-    .eq("codigo", "00")
+    .eq("codigo", "00") // ativas
     .gte("encarteirada_em", `${year}-01-01`)
     .lte("encarteirada_em", `${year}-12-31T23:59:59`);
 
@@ -714,12 +718,17 @@ const Carteira: React.FC = () => {
     .from("vendas")
     .select("valor_venda, cancelada_em, vendedor_id, codigo, status")
     .eq("status", "encarteirada")
-    .neq("codigo", "00")
+    .neq("codigo", "00") // canceladas
     .gte("cancelada_em", `${year}-01-01`)
     .lte("cancelada_em", `${year}-12-31T23:59:59`);
 
-  const qAtivas = sellerId ? ativasBase.eq("vendedor_id", sellerId) : ativasBase;
-  const qCanc = sellerId ? cancBase.eq("vendedor_id", sellerId) : cancBase;
+  // sellerId é users.id, mas vendas.vendedor_id guarda auth_user_id
+  const authIdToFilter = sellerId
+    ? (users.find((u) => u.id === sellerId)?.auth_user_id || "")
+    : "";
+
+  const qAtivas = sellerId ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase;
+  const qCanc   = sellerId ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase;
 
   const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([qAtivas, qCanc]);
 

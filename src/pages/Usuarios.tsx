@@ -571,7 +571,7 @@ export default function Usuarios() {
               <option value="">Tipo da chave PIX</option>
               <option value="cpf">CPF</option>
               <option value="email">E-mail</option>
-              <option value="telefone">Telefone</option>
+              <option value="phone">Telefone</option>
             </select>
             <input
               placeholder="Chave PIX"

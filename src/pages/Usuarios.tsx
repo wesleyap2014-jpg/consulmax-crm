@@ -119,12 +119,14 @@ export default function Usuarios() {
   // carregar lista ao entrar
   useEffect(() => {
     loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadUsers() {
     const { data, error } = await supabase
       .from("users")
       .select(
+        // sem login/photo_url
         "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes"
       )
       .order("id", { ascending: false });
@@ -205,12 +207,14 @@ export default function Usuarios() {
       const numeroFinal = form.sn ? "s/n" : form.numero.trim();
       const roleForAPI = mapRoleToAPI(form.role);
 
+      // ⚠️ Compat: enviando 'telefone' junto com 'phone' até corrigirmos a trigger do banco
       const payload = {
         nome: form.nome.trim(),
         email: form.email.trim().toLowerCase(),
         role: roleForAPI, // 'admin' | 'vendedor' | 'viewer'
         cpf: cpfDigits,
         phone: onlyDigits(form.celular),
+        telefone: onlyDigits(form.celular), // <— compat
         cep: onlyDigits(form.cep),
         logradouro: form.logradouro.trim(),
         numero: numeroFinal,
@@ -308,11 +312,13 @@ export default function Usuarios() {
           ? editing.scopes
           : [];
 
+      // ⚠️ Compat: atualizar 'telefone' junto com 'phone'
       const update = {
         nome: editing.nome?.trim() || null,
         email: editing.email?.trim().toLowerCase() || null,
         role: editing.role || null,
         phone: editing.celular ? onlyDigits(editing.celular) : null,
+        telefone: editing.celular ? onlyDigits(editing.celular) : null, // <— compat
         cep: editing.cep ? onlyDigits(editing.cep) : null,
         logradouro: editing.logradouro || null,
         numero: editing.numero || null,
@@ -423,10 +429,7 @@ export default function Usuarios() {
                     : "-"}
                 </td>
                 <td style={td}>
-                  <button
-                    onClick={() => openEdit(u)}
-                    style={btnPrimary}
-                  >
+                  <button onClick={() => openEdit(u)} style={btnPrimary}>
                     Editar
                   </button>
                 </td>
@@ -462,9 +465,7 @@ export default function Usuarios() {
           <input
             placeholder="CPF"
             value={form.cpf}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))}
             style={input}
             inputMode="numeric"
           />
@@ -472,9 +473,7 @@ export default function Usuarios() {
           <input
             placeholder="Celular"
             value={form.celular}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))}
             style={input}
             inputMode="tel"
           />
@@ -482,9 +481,7 @@ export default function Usuarios() {
           <input
             placeholder="CEP"
             value={form.cep}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))}
             style={input}
             inputMode="numeric"
           />
@@ -492,9 +489,7 @@ export default function Usuarios() {
           <input
             placeholder="Logradouro"
             value={form.logradouro}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, logradouro: e.target.value }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
             style={input}
           />
 
@@ -503,9 +498,7 @@ export default function Usuarios() {
               placeholder="Número"
               value={form.sn ? "s/n" : form.numero}
               disabled={form.sn}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, numero: e.target.value }))
-              }
+              onChange={(e) => setForm((s) => ({ ...s, numero: e.target.value }))}
               style={input}
             />
             <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -527,18 +520,14 @@ export default function Usuarios() {
           <input
             placeholder="Bairro"
             value={form.bairro}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, bairro: e.target.value }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
             style={input}
           />
 
           <input
             placeholder="Cidade"
             value={form.cidade}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, cidade: e.target.value }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
             style={input}
           />
 
@@ -558,17 +547,13 @@ export default function Usuarios() {
             placeholder="E-mail"
             value={form.email}
             type="email"
-            onChange={(e) =>
-              setForm((s) => ({ ...s, email: e.target.value }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
             style={input}
           />
 
           <select
             value={form.role}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, role: e.target.value as RoleUI }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
             style={input}
           >
             <option value="admin">Admin</option>
@@ -580,9 +565,7 @@ export default function Usuarios() {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <select
               value={form.pix_type}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, pix_type: e.target.value as any }))
-              }
+              onChange={(e) => setForm((s) => ({ ...s, pix_type: e.target.value as any }))}
               style={input}
             >
               <option value="">Tipo da chave PIX</option>
@@ -593,9 +576,7 @@ export default function Usuarios() {
             <input
               placeholder="Chave PIX"
               value={form.pix_key}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, pix_key: e.target.value }))
-              }
+              onChange={(e) => setForm((s) => ({ ...s, pix_key: e.target.value }))}
               style={input}
             />
           </div>
@@ -644,11 +625,7 @@ export default function Usuarios() {
             {scopeCheckboxes}
           </div>
 
-          <button
-            onClick={onSubmit}
-            disabled={loading}
-            style={btnPrimaryFull}
-          >
+          <button onClick={onSubmit} disabled={loading} style={btnPrimaryFull}>
             {loading ? "Cadastrando..." : "Cadastrar"}
           </button>
         </div>
@@ -656,9 +633,7 @@ export default function Usuarios() {
 
       {/* TABELA DE USUÁRIOS */}
       <h2 style={{ margin: "24px 0 12px" }}>Usuários Cadastrados</h2>
-      <div style={card}>
-        {renderUsersTable()}
-      </div>
+      <div style={card}>{renderUsersTable()}</div>
 
       {/* MODAL DE EDIÇÃO */}
       {editing && (

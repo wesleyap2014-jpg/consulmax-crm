@@ -1507,141 +1507,143 @@ const rangeMPrev    = previstoInRange(mStart, mEnd);    // previsto até último
     }
   }
 
-  // Recibo por data — numeração sequencial incremental por data, contínua entre vendedores
-  async function downloadReceiptPDFPorData() {
-    const impostoPct = parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0;
-    const dataRecibo = reciboDate;
-    const vendedorSel = reciboVendor === "all" ? null : reciboVendor;
+  // Substitua toda a função por esta versão
+async function downloadReceiptPDFPorData() {
+  const impostoPct = parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0;
+  const dataRecibo = reciboDate;
 
-    const { data: flowsAllOnDate } = await supabase
-      .from("commission_flow")
-      .select("*, commission_id")
-      .eq("data_pagamento_vendedor", dataRecibo);
+  // 🔎 Usa o vendedor selecionado no topo do "Detalhamento..."
+  const vendedorSel = vendedorId !== "all" ? vendedorId : null;
 
-    if (!flowsAllOnDate || !flowsAllOnDate.length) return alert("Não há parcelas pagas na data selecionada.");
+  // 1) Buscar parcelas com pagamento nessa data
+  const { data: flowsAllOnDate, error: flowsErr } = await supabase
+    .from("commission_flow")
+    .select("*, commission_id")
+    .eq("data_pagamento_vendedor", dataRecibo);
 
-    // Obter comissões relacionadas (para filtrar por vendedor quando necessário)
-    const commIdsAll = Array.from(new Set(flowsAllOnDate.map((f: any) => f.commission_id)));
-    const { data: commsAll } = await supabase.from("commissions").select("*").in("id", commIdsAll);
+  if (flowsErr) { alert("Erro ao buscar parcelas: " + flowsErr.message); return; }
+  if (!flowsAllOnDate || !flowsAllOnDate.length) { alert("Não há parcelas pagas na data selecionada."); return; }
 
-    // Offset sequencial por vendedor (ordena por vendedor, então cada vendedor recebe uma janela sequencial)
-    const flowsWithVendor = flowsAllOnDate.map((f: any) => {
-      const c = (commsAll || []).find((co: any) => co.id === f.commission_id);
-      return { f, vendor: c?.vendedor_id || "—" };
-    }).sort((a, b) => (a.vendor > b.vendor ? 1 : a.vendor < b.vendor ? -1 : 0));
+  // 2) Comissões relacionadas e filtro por vendedor selecionado
+  const commIdsAll = Array.from(new Set(flowsAllOnDate.map((f: any) => f.commission_id)));
+  const { data: commsAll, error: commsErr } = await supabase
+    .from("commissions")
+    .select("*")
+    .in("id", commIdsAll);
 
-    // mapa vendor -> {startIndex, count}
-    const vendorCounts: Record<string, { start: number; count: number }> = {};
-    let running = 0;
-    for (const v of Array.from(new Set(flowsWithVendor.map(x => x.vendor)))) {
-      const cnt = flowsWithVendor.filter(x => x.vendor === v).length;
-      vendorCounts[v] = { start: running + 1, count: cnt };
-      running += cnt;
-    }
+  if (commsErr) { alert("Erro ao buscar comissões: " + commsErr.message); return; }
 
-    // Agora filtramos para o vendedor selecionado (ou todos)
-    const chosenFlows = vendedorSel
-      ? flowsAllOnDate.filter((f: any) => (commsAll || []).find((c: any) => c.id === f.commission_id)?.vendedor_id === vendedorSel)
-      : flowsAllOnDate;
+  const chosenFlows = vendedorSel
+    ? flowsAllOnDate.filter((f: any) => (commsAll || []).find((c: any) => c.id === f.commission_id)?.vendedor_id === vendedorSel)
+    : flowsAllOnDate;
 
-    if (!chosenFlows.length) return alert("Sem parcelas para o vendedor selecionado nessa data.");
+  if (!chosenFlows.length) { alert("Sem parcelas para o vendedor selecionado nessa data."); return; }
 
-    // Agrupar por commission_id (e deduplicar por mes)
-    const byCommission: Record<string, CommissionFlow[]> = {};
-    chosenFlows.forEach((f: any) => {
-      if (!byCommission[f.commission_id]) byCommission[f.commission_id] = [];
-      if (!byCommission[f.commission_id].some((x) => x.mes === f.mes)) byCommission[f.commission_id].push(f);
-    });
+  // 3) Agrupar por comissão (dedup por mês)
+  const byCommission: Record<string, CommissionFlow[]> = {};
+  chosenFlows.forEach((f: any) => {
+    if (!byCommission[f.commission_id]) byCommission[f.commission_id] = [];
+    if (!byCommission[f.commission_id].some((x) => x.mes === f.mes)) byCommission[f.commission_id].push(f);
+  });
 
-    const commIds = Object.keys(byCommission);
-    const { data: comms } = await supabase.from("commissions").select("*").in("id", commIds);
-    const vendaIds = Array.from(new Set((comms || []).map((c: any) => c.venda_id)));
-    const { data: vendas } = await supabase
-      .from("vendas")
-      .select("id, valor_venda, numero_proposta, cliente_lead_id, lead_id, vendedor_id")
-      .in("id", vendaIds);
+  const commIds = Object.keys(byCommission);
+  const { data: comms } = await supabase.from("commissions").select("*").in("id", commIds);
 
-    const clienteIds = Array.from(new Set((vendas || []).map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
-    const nomesCli: Record<string, string> = {};
-    if (clienteIds.length) {
-      const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clienteIds);
-      (cli || []).forEach((c: any) => { nomesCli[c.id] = c.nome || ""; });
-    }
+  const vendaIds = Array.from(new Set((comms || []).map((c: any) => c.venda_id)));
+  const { data: vendas } = await supabase
+    .from("vendas")
+    .select("id, valor_venda, numero_proposta, cliente_lead_id, lead_id, vendedor_id")
+    .in("id", vendaIds);
 
-    // Vendedor para cabeçalho (se 'all', usamos o primeiro para o doc — mas a numeração não conflita pois é global por data)
-    const vendedorUsado = vendedorSel ?? (comms || [])[0]?.vendedor_id;
-    const vendInfo = secureById[vendedorUsado] || ({} as any);
-
-    // Determinar offset sequencial base para o vendedor escolhido
-    const seqBase = vendorCounts[vendedorUsado]?.start ? (vendorCounts[vendedorUsado].start - 1) : 0;
-
-    // total de linhas do recibo (para exibição) e numeroRecibo final como dataRecibo-#### (último índice da faixa deste vendedor)
-    const linhasVendor = chosenFlows.length;
-    const numeroRecibo = `${dataRecibo.replace(/-/g, "")}-${String(seqBase + linhasVendor).padStart(4, "0")}`;
-
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-    doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text("RECIBO DE COMISSÃO", 297, 40, { align: "center" });
-    doc.setFontSize(10); doc.setFont("helvetica", "normal");
-    doc.text(`Recibo Nº: ${numeroRecibo}`, 40, 60);
-    doc.text(`Data: ${formatISODateBR(dataRecibo)}`, 40, 74);
-
-    let y = 92;
-    ["Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA. CNPJ: 57.942.043/0001-03",
-     "Endereço: Av. Menezes Filho, 3171, Casa Preta, Ji-Paraná/RO. CEP: 76907-532"].forEach((l) => { doc.text(l, 40, y); y += 14; });
-
-    const recebedor = [
-      `Nome do Recebedor: ${userLabel(vendedorUsado)}`,
-      `CPF/CNPJ: ${vendInfo?.cpf || "—"}`,
-      `Endereço: ${[vendInfo?.logradouro, vendInfo?.numero, vendInfo?.bairro, vendInfo?.cidade && `${vendInfo.cidade}/${vendInfo.uf}`].filter(Boolean).join(", ") || "—"}`,
-    ];
-    y += 10; recebedor.forEach((l) => { doc.text(l, 40, y); y += 14; });
-    y += 6; doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", 40, y); y += 16;
-
-    const head = [["CLIENTE","PROPOSTA","PARCELA","R$ VENDA","COM. BRUTA","IMPOSTOS","COM. LÍQUIDA"]];
-    const body: any[] = [];
-    let totalLiquido = 0;
-
-    // ordenar por proposta para consistência
-    const commsFiltradas = (comms || []).filter((c: any) => !vendedorSel || c.vendedor_id === vendedorSel);
-    commsFiltradas.sort((a: any, b: any) => (a.venda_id > b.venda_id ? 1 : -1));
-
-    commsFiltradas.forEach((c: any) => {
-      const v = (vendas || []).find((x) => x.id === c.venda_id);
-      const clienteId = v?.lead_id || v?.cliente_lead_id || "";
-      const clienteNome = clienteId ? nomesCli[clienteId] || "—" : "—";
-      const vendaValor = v?.valor_venda || 0;
-      const parcelas = Array.from(new Map((byCommission[c.id] || []).map((p) => [p.mes, p])).values()) as CommissionFlow[];
-      parcelas.sort((a, b) => a.mes - b.mes);
-
-      parcelas.forEach((p, idx) => {
-        const comBruta = (c.percent_aplicado || 0) * (p.percentual || 0) * vendaValor;
-        const impostos = comBruta * impostoPct;
-        const liquida = comBruta - impostos;
-        totalLiquido += liquida;
-
-        // Número sequencial por linha (global por data), se quiser exibir por linha (opcional)
-        const seqLine = seqBase + idx + 1;
-
-        body.push([
-          clienteNome,
-          v?.numero_proposta || "—",
-          `M${p.mes}`,
-          BRL(vendaValor),
-          BRL(comBruta),
-          BRL(impostos),
-          BRL(liquida)
-        ]);
-      });
-    });
-
-    autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30, 41, 63] } });
-    const endY = (doc as any).lastAutoTable.finalY + 12;
-    doc.setFont("helvetica", "bold"); doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
-    doc.setFont("helvetica", "normal"); doc.text(`Forma de Pagamento: PIX`, 40, endY + 18);
-    doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado]?.pix_key || "—"}`, 40, endY + 34);
-    const signY = endY + 100; doc.line(40, signY, 320, signY); doc.text(`${userLabel(vendedorUsado)}`, 40, signY + 14); doc.text(`${secureById[vendedorUsado]?.cpf || "—"}`, 40, signY + 28);
-    doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
+  const clienteIds = Array.from(new Set((vendas || []).map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
+  const nomesCli: Record<string, string> = {};
+  if (clienteIds.length) {
+    const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clienteIds);
+    (cli || []).forEach((c: any) => { nomesCli[c.id] = c.nome || ""; });
   }
+
+  // 4) Numeração contínua por ano (RPC com SECURITY DEFINER)
+  const year = new Date(dataRecibo).getFullYear();
+  const { data: seqData, error: seqErr } = await supabase.rpc("next_receipt_seq", { p_year: year });
+  if (seqErr) { alert("Erro ao gerar número do recibo: " + seqErr.message); return; }
+
+  const seq = Number(seqData) || 1;
+  const numeroRecibo = `${String(seq).padStart(3, "0")}/${year}`;
+
+  // 5) Vendedor para cabeçalho (usa o selecionado)
+  const vendedorUsado = vendedorSel ?? (comms || [])[0]?.vendedor_id;
+  const vendInfo = secureById[vendedorUsado] || ({} as any);
+
+  // 6) Montagem do PDF (inalterado, com o novo nº)
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+  doc.text("RECIBO DE COMISSÃO", 297, 40, { align: "center" });
+  doc.setFontSize(10); doc.setFont("helvetica", "normal");
+  doc.text(`Recibo Nº: ${numeroRecibo}`, 40, 60);
+  doc.text(`Data: ${formatISODateBR(dataRecibo)}`, 40, 74);
+
+  let y = 92;
+  [
+    "Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA. CNPJ: 57.942.043/0001-03",
+    "Endereço: Av. Menezes Filho, 3171, Casa Preta, Ji-Paraná/RO. CEP: 76907-532",
+  ].forEach((l) => { doc.text(l, 40, y); y += 14; });
+
+  const recebedor = [
+    `Nome do Recebedor: ${userLabel(vendedorUsado)}`,
+    `CPF/CNPJ: ${vendInfo?.cpf || "—"}`,
+    `Endereço: ${[vendInfo?.logradouro, vendInfo?.numero, vendInfo?.bairro, vendInfo?.cidade && `${vendInfo.cidade}/${vendInfo.uf}`].filter(Boolean).join(", ") || "—"}`,
+  ];
+  y += 10; recebedor.forEach((l) => { doc.text(l, 40, y); y += 14; });
+  y += 6; doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", 40, y); y += 16;
+
+  const head = [["CLIENTE","PROPOSTA","PARCELA","R$ VENDA","COM. BRUTA","IMPOSTOS","COM. LÍQUIDA"]];
+  const body: any[] = [];
+  let totalLiquido = 0;
+
+  const commsFiltradas = (comms || []).filter((c: any) => !vendedorSel || c.vendedor_id === vendedorSel);
+  commsFiltradas.sort((a: any, b: any) => (a.venda_id > b.venda_id ? 1 : -1));
+
+  commsFiltradas.forEach((c: any) => {
+    const v = (vendas || []).find((x) => x.id === c.venda_id);
+    const clienteId = v?.lead_id || v?.cliente_lead_id || "";
+    const clienteNome = clienteId ? nomesCli[clienteId] || "—" : "—";
+    const vendaValor = v?.valor_venda || 0;
+
+    const parcelas = Array.from(new Map((byCommission[c.id] || []).map((p) => [p.mes, p])).values()) as CommissionFlow[];
+    parcelas.sort((a, b) => a.mes - b.mes);
+
+    parcelas.forEach((p) => {
+      const comBruta = (c.percent_aplicado || 0) * (p.percentual || 0) * vendaValor;
+      const impostos = comBruta * impostoPct;
+      const liquida = comBruta - impostos;
+      totalLiquido += liquida;
+
+      body.push([
+        clienteNome,
+        v?.numero_proposta || "—",
+        `M${p.mes}`,
+        BRL(vendaValor),
+        BRL(comBruta),
+        BRL(impostos),
+        BRL(liquida),
+      ]);
+    });
+  });
+
+  autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30, 41, 63] } });
+  const endY = (doc as any).lastAutoTable.finalY + 12;
+  doc.setFont("helvetica", "bold");
+  doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Forma de Pagamento: PIX`, 40, endY + 18);
+  doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado]?.pix_key || "—"}`, 40, endY + 34);
+  const signY = endY + 100;
+  doc.line(40, signY, 320, signY);
+  doc.text(`${userLabel(vendedorUsado)}`, 40, signY + 14);
+  doc.text(`${secureById[vendedorUsado]?.cpf || "—"}`, 40, signY + 28);
+
+  doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
+}
 
   /* Listas auxiliares */
   const rowsAPagar = useMemo(() => rows.filter((r) => r.status === "a_pagar"), [rows]);

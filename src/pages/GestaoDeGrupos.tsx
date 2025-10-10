@@ -1500,9 +1500,6 @@ function EditorGrupo(props: EditorGrupoProps) {
     }
   );
 
-  // ...resto do componente
-}
-
   const isNew = !group?.id;
 
   const handleSave = async () => {
@@ -1553,6 +1550,7 @@ function EditorGrupo(props: EditorGrupoProps) {
     await onSaved();
     onClose();
   };
+}
 
   return (
     <div className="rounded-xl border p-4 space-y-3">

@@ -1472,32 +1472,32 @@ const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
    EDITOR DE GRUPO (mantido para compatibilidade — em uso)
    ========================================================= */
 
-function EditorGrupo({
-  group,
-  onClose,
-  onSaved,
-  prefill, // << adicionar
-}: {
+// coloque isso acima da função EditorGrupo
+type EditorGrupoProps = {
   group?: Grupo | null;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
-  prefill?: Partial<Grupo>; // << adicionar
-}) {
+  prefill?: Partial<Grupo>;
+};
+
+// troque a assinatura atual por esta
+function EditorGrupo(props: EditorGrupoProps) {
+  const { group, onClose, onSaved, prefill } = props;
 
   const [form, setForm] = useState<Partial<Grupo>>(
-  group || {
-    administradora: (prefill?.administradora as Administradora) ?? ("" as Administradora),
-    segmento: (prefill?.segmento as SegmentoUI) ?? ("" as SegmentoUI),
-    codigo: prefill?.codigo ?? "",
-    participantes: prefill?.participantes ?? null,
-    faixa_min: prefill?.faixa_min ?? null,
-    faixa_max: prefill?.faixa_max ?? null,
-    prox_vencimento: prefill?.prox_vencimento ?? null,
-    prox_sorteio: prefill?.prox_sorteio ?? null,
-    prox_assembleia: prefill?.prox_assembleia ?? null,
-    prazo_encerramento_meses: prefill?.prazo_encerramento_meses ?? null,
-  }
-);
+    group || {
+      administradora: (prefill?.administradora as Administradora) ?? ("" as Administradora),
+      segmento: (prefill?.segmento as SegmentoUI) ?? ("" as SegmentoUI),
+      codigo: prefill?.codigo ?? "",
+      participantes: prefill?.participantes ?? null,
+      faixa_min: prefill?.faixa_min ?? null,
+      faixa_max: prefill?.faixa_max ?? null,
+      prox_vencimento: prefill?.prox_vencimento ?? null,
+      prox_sorteio: prefill?.prox_sorteio ?? null,
+      prox_assembleia: prefill?.prox_assembleia ?? null,
+      prazo_encerramento_meses: prefill?.prazo_encerramento_meses ?? null,
+    }
+  );
 
   const isNew = !group?.id;
 

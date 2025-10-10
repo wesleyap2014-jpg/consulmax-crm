@@ -1170,6 +1170,10 @@ const rangeMPrev    = previstoInRange(mStart, mEnd);    // previsto até último
   setRuleRows(rowsOut);
 }
 
+  useEffect(() => {
+  if (openRules && ruleVendorId) fetchRulesForVendor(ruleVendorId);
+}, [openRules, ruleVendorId, simGroups]);
+
   async function saveRule() {
   if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
 

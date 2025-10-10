@@ -916,6 +916,10 @@ export default function GestaoDeGrupos() {
   const [lfOpen, setLfOpen] = useState<boolean>(false);
   const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
 
+  // abaixo dos estados asmOpen/lfOpen/ofertaOpen
+const [editorOpen, setEditorOpen] = useState<boolean>(false);
+const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
+
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
       const r = lastAsmByGroup.get(g.id);

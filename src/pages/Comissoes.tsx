@@ -1154,48 +1154,59 @@ const rangeMPrev    = previstoInRange(mStart, mEnd);    // previsto até último
   useEffect(() => { if (openRules) fetchRulesForVendor(ruleVendorId); }, [openRules, ruleVendorId]);
 
   async function saveRule() {
-    if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
+  if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
 
-    const pctPadraoPercent = parseFloat((rulePercent || "0").replace(",", "."));
-    if (!isFinite(pctPadraoPercent) || pctPadraoPercent <= 0) return alert("Informe o % Padrão corretamente.");
+  const grp = groupByKey[ruleSimTableId];
+  if (!grp) return alert("Grupo de tabela não encontrado.");
 
-    const somaFluxo = fluxoSoma;
-    const soma100 = Math.abs(somaFluxo - 1.0) < 1e-6;
-    const somaIgualPadrao = Math.abs(somaFluxo - pctPadraoPercent) < 1e-6;
+  const pctPadraoPercent = parseFloat((rulePercent || "0").replace(",", "."));
+  if (!isFinite(pctPadraoPercent) || pctPadraoPercent <= 0) {
+    return alert("Informe o % Padrão corretamente.");
+  }
 
-    if (!(soma100 || somaIgualPadrao)) {
-      return alert(`Soma do fluxo (M1..Mn) deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
-    }
+  const somaFluxo = fluxoSoma;
+  const soma100 = Math.abs(somaFluxo - 1.0) < 1e-6;
+  const somaIgualPadrao = Math.abs(somaFluxo - pctPadraoPercent) < 1e-6;
 
-    let fluxo_percentuais_frac: number[] = [];
-    if (soma100) {
-      fluxo_percentuais_frac = ruleFluxoPct.map((x) => parseFloat((x || "0").replace(",", ".")) || 0);
-    } else {
-      fluxo_percentuais_frac = ruleFluxoPct.map((x) => {
-        const v = parseFloat((x || "0").replace(",", ".")) || 0;
-        return pctPadraoPercent > 0 ? v / pctPadraoPercent : 0;
-      });
-    }
+  if (!(soma100 || somaIgualPadrao)) {
+    return alert(`Soma do fluxo (M1..Mn) deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo
+      .toFixed(2)
+      .replace(".", ",")}`);
+  }
 
-    const percent_padrao_frac = pctPadraoPercent / 100;
+  let fluxo_percentuais_frac: number[] = [];
+  if (soma100) {
+    fluxo_percentuais_frac = ruleFluxoPct.map((x) => parseFloat((x || "0").replace(",", ".")) || 0);
+  } else {
+    fluxo_percentuais_frac = ruleFluxoPct.map((x) => {
+      const v = parseFloat((x || "0").replace(",", ".")) || 0;
+      return pctPadraoPercent > 0 ? v / pctPadraoPercent : 0;
+    });
+  }
 
+  const percent_padrao_frac = pctPadraoPercent / 100;
+
+  // 🔁 Upsert para TODAS as sim_tables do grupo
+  for (const stId of grp.ids) {
     const { error } = await supabase
       .from("commission_rules")
       .upsert(
         {
           vendedor_id: ruleVendorId,
-          sim_table_id: ruleSimTableId,
+          sim_table_id: stId,
           percent_padrao: percent_padrao_frac,
           fluxo_meses: ruleMeses,
           fluxo_percentuais: fluxo_percentuais_frac,
           obs: ruleObs || null,
         },
-        { onConflict: "vendedor_id,sim_table_id" },
+        { onConflict: "vendedor_id,sim_table_id" }
       );
     if (error) return alert(error.message);
-    await fetchRulesForVendor(ruleVendorId);
-    alert("Regra salva.");
   }
+
+  await fetchRulesForVendor(ruleVendorId);
+  alert(`Regra salva para ${grp.ids.length} tabela(s) do grupo "${grp.segmento} — ${grp.nome_tabela}".`);
+}
 
   async function deleteRule(vId: string, stId: string) {
     if (!confirm("Excluir esta regra?")) return;

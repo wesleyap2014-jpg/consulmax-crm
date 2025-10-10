@@ -1454,45 +1454,50 @@ const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
         />
       )}
 
-      {/* EditorGrupo mantido, porém não utilizado */}
-      {false && (
-        <EditorGrupo
-          group={null}
-          onClose={() => {}}
-          onSaved={async () => await carregar()}
-        />
-      )}
+      {/* EditorGrupo (agora ativo em modal) */}
+{editorOpen && (
+  <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl p-4">
+      <EditorGrupo
+        group={null}
+        prefill={editorPrefill ?? {}}
+        onClose={() => { setEditorOpen(false); setEditorPrefill(null); }}
+        onSaved={async () => { await carregar(); }}
+      />
     </div>
-  );
-}
+  </div>
+)}
 
 /* =========================================================
-   EDITOR DE GRUPO (mantido para compatibilidade — não usado)
+   EDITOR DE GRUPO (mantido para compatibilidade — em uso)
    ========================================================= */
 
 function EditorGrupo({
   group,
   onClose,
   onSaved,
+  prefill, // << adicionar
 }: {
   group?: Grupo | null;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
+  prefill?: Partial<Grupo>; // << adicionar
 }) {
+
   const [form, setForm] = useState<Partial<Grupo>>(
-    group || {
-      administradora: "" as Administradora,
-      segmento: "" as SegmentoUI,
-      codigo: "",
-      participantes: null,
-      faixa_min: null,
-      faixa_max: null,
-      prox_vencimento: null,
-      prox_sorteio: null,
-      prox_assembleia: null,
-      prazo_encerramento_meses: null,
-    }
-  );
+  group || {
+    administradora: (prefill?.administradora as Administradora) ?? ("" as Administradora),
+    segmento: (prefill?.segmento as SegmentoUI) ?? ("" as SegmentoUI),
+    codigo: prefill?.codigo ?? "",
+    participantes: prefill?.participantes ?? null,
+    faixa_min: prefill?.faixa_min ?? null,
+    faixa_max: prefill?.faixa_max ?? null,
+    prox_vencimento: prefill?.prox_vencimento ?? null,
+    prox_sorteio: prefill?.prox_sorteio ?? null,
+    prox_assembleia: prefill?.prox_assembleia ?? null,
+    prazo_encerramento_meses: prefill?.prazo_encerramento_meses ?? null,
+  }
+);
 
   const isNew = !group?.id;
 

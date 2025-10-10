@@ -1225,23 +1225,42 @@ const rangeMPrev    = previstoInRange(mStart, mEnd);    // previsto até último
   alert(`Regra salva para ${grp.ids.length} tabela(s) do grupo "${grp.segmento} — ${grp.nome_tabela}".`);
 }
 
-  async function deleteRule(vId: string, stId: string) {
-    if (!confirm("Excluir esta regra?")) return;
-    const { error } = await supabase.from("commission_rules").delete().eq("vendedor_id", vId).eq("sim_table_id", stId);
-    if (error) return alert(error.message);
-    await fetchRulesForVendor(vId);
-  }
+  async function deleteRule(vId: string, stGroupKey: string) {
+  const grp = groupByKey[stGroupKey];
+  if (!grp) return alert("Grupo não encontrado.");
+  if (!confirm(`Excluir regra deste grupo para ${grp.ids.length} tabela(s)?`)) return;
 
-  function loadRuleToForm(r: CommissionRule & { segmento: string; nome_tabela: string }) {
-    setRuleVendorId(r.vendedor_id);
-    setRuleSimTableId(r.sim_table_id);
-    setRulePercent(((r.percent_padrao || 0) * 100).toFixed(2).replace(".", ","));
-    setRuleMeses(r.fluxo_meses);
-    const padraoPctPercent = (r.percent_padrao || 0) * 100;
-    const arr = r.fluxo_percentuais.map((p) => (p * padraoPctPercent).toFixed(2).replace(".", ","));
-    setRuleFluxoPct(arr);
-    setRuleObs(r.obs || "");
-  }
+  const { error } = await supabase
+    .from("commission_rules")
+    .delete()
+    .eq("vendedor_id", vId)
+    .in("sim_table_id", grp.ids);
+
+  if (error) return alert(error.message);
+  await fetchRulesForVendor(vId);
+}
+
+  function loadRuleToForm(
+  r: CommissionRule & { segmento: string; nome_tabela: string }
+) {
+  setRuleVendorId(r.vendedor_id);
+
+  // 👇 Aqui r.sim_table_id é o groupKey (segmento|nome) da linha consolidada
+  setRuleSimTableId(r.sim_table_id as any);
+
+  // Pode haver grupos “mistos” (quando detectamos divergências). Trate valores nulos/indicativos.
+  const percentPadrao = (r.percent_padrao ?? 0) * 100;
+  const meses = r.fluxo_meses && r.fluxo_meses > 0 ? r.fluxo_meses : 1;
+  const fluxos = (r.fluxo_percentuais && r.fluxo_percentuais.length
+    ? r.fluxo_percentuais
+    : Array.from({ length: meses }, () => 0)
+  ).map((p) => (p * percentPadrao).toFixed(2).replace(".", ","));
+
+  setRulePercent(percentPadrao.toFixed(2).replace(".", ",")); // ex.: "1,20"
+  setRuleMeses(meses);
+  setRuleFluxoPct(fluxos);
+  setRuleObs(r.obs || "");
+}
 
   /* ============== Garantir fluxo (regra ou 1×100%) ============== */
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {

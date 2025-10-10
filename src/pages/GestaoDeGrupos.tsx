@@ -1550,23 +1550,96 @@ function EditorGrupo(props: EditorGrupoProps) {
     await onSaved();
     onClose();
   };
-}
 
   return (
     <div className="rounded-xl border p-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div><Label>Administradora</Label><Input value={form.administradora ?? ""} onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))} placeholder="Ex.: Embracon" /></div>
-        <div><Label>Segmento</Label><Input value={form.segmento ?? ""} onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))} placeholder="Ex.: Imóvel" /></div>
-        <div><Label>Código do Grupo</Label><Input value={form.codigo ?? ""} onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))} placeholder="Ex.: 1234/5" /></div>
+        <div>
+          <Label>Administradora</Label>
+          <Input
+            value={form.administradora ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))}
+            placeholder="Ex.: Embracon"
+          />
+        </div>
+        <div>
+          <Label>Segmento</Label>
+          <Input
+            value={form.segmento ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))}
+            placeholder="Ex.: Imóvel"
+          />
+        </div>
+        <div>
+          <Label>Código do Grupo</Label>
+          <Input
+            value={form.codigo ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))}
+            placeholder="Ex.: 1234/5"
+          />
+        </div>
 
-        <div><Label>Participantes</Label><Input type="number" min={1} value={form.participantes ?? ""} onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))} /></div>
-        <div><Label>Faixa Mínima</Label><Input type="number" step="0.01" value={form.faixa_min ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))} /></div>
-        <div><Label>Faixa Máxima</Label><Input type="number" step="0.01" value={form.faixa_max ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))} /></div>
+        <div>
+          <Label>Participantes</Label>
+          <Input
+            type="number"
+            min={1}
+            value={form.participantes ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))}
+          />
+        </div>
+        <div>
+          <Label>Faixa Mínima</Label>
+          <Input
+            type="number"
+            step="0.01"
+            value={form.faixa_min ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))}
+          />
+        </div>
+        <div>
+          <Label>Faixa Máxima</Label>
+          <Input
+            type="number"
+            step="0.01"
+            value={form.faixa_max ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))}
+          />
+        </div>
 
-        <div><Label>Próx. Vencimento</Label><Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} /></div>
-        <div><Label>Próx. Sorteio</Label><Input type="date" value={form.prox_sorteio ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))} /></div>
-        <div><Label>Próx. Assembleia</Label><Input type="date" value={form.prox_assembleia ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))} /></div>
-        <div><Label>Prazo Enc. (meses)</Label><Input type="number" min={0} value={form.prazo_encerramento_meses ?? ""} onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))} /></div>
+        <div>
+          <Label>Próx. Vencimento</Label>
+          <Input
+            type="date"
+            value={form.prox_vencimento ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))}
+          />
+        </div>
+        <div>
+          <Label>Próx. Sorteio</Label>
+          <Input
+            type="date"
+            value={form.prox_sorteio ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))}
+          />
+        </div>
+        <div>
+          <Label>Próx. Assembleia</Label>
+          <Input
+            type="date"
+            value={form.prox_assembleia ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))}
+          />
+        </div>
+        <div>
+          <Label>Prazo Enc. (meses)</Label>
+          <Input
+            type="number"
+            min={0}
+            value={form.prazo_encerramento_meses ?? ""}
+            onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))}
+          />
+        </div>
       </div>
 
       <div className="flex justify-end gap-2">

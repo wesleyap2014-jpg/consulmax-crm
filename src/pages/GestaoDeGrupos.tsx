@@ -1466,10 +1466,9 @@ const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
     </div>
   </div>
 )}
-
-</div>   {/* <-- div principal da página */}
-);        {/* <-- fecha o return */}
-}         {/* <-- fecha a função GestaoDeGrupos */}
+</div>
+);
+}
 
 /* =========================================================
    EDITOR DE GRUPO (mantido para compatibilidade — em uso)

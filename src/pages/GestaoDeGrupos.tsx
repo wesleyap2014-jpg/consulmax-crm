@@ -1368,42 +1368,61 @@ const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
                     <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
 
                     {/* AÇÕES */}
-                    <td className="p-2 text-center">
-                      {isStubId(r.id) ? (
-                        <Button variant="secondary" className="gap-1" disabled title="Cadastre o grupo em 'Adicionar Grupo'">
-                          <Pencil className="h-4 w-4" /> Cadastrar
-                        </Button>
-                      ) : isEditing ? (
-                        <div className="flex items-center justify-center gap-2">
-                          <Button variant="secondary" onClick={() => { setEditingId(null); setEditDraft(null); }}>
-                            <X className="h-4 w-4 mr-1" /> Cancelar
-                          </Button>
-                          <Button onClick={() => salvarLinha(r.id)}>
-                            <Save className="h-4 w-4 mr-1" /> Salvar
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          variant="secondary"
-                          className="gap-1"
-                          onClick={() => {
-                            const g = grupos.find((x) => x.id === r.id);
-                            if (!g) return;
-                            setEditingId(r.id);
-                            setEditDraft({
-                              participantes: g.participantes,
-                              prox_vencimento: g.prox_vencimento,
-                              prox_sorteio: g.prox_sorteio,
-                              prox_assembleia: g.prox_assembleia,
-                              faixa_min: g.faixa_min,
-                              faixa_max: g.faixa_max,
-                            });
-                          }}
-                        >
-                          <Pencil className="h-4 w-4" /> Editar
-                        </Button>
-                      )}
-                    </td>
+<td className="p-2 text-center">
+  {isStubId(r.id) ? (
+    <Button
+      variant="secondary"
+      className="gap-1"
+      onClick={() => {
+        // abre o EditorGrupo com os dados do stub já preenchidos
+        setEditorPrefill({
+          administradora: r.administradora,
+          segmento: r.segmento,
+          codigo: r.codigo,
+          participantes: r.participantes,
+          faixa_min: r.faixa_min,
+          faixa_max: r.faixa_max,
+          prox_vencimento: r.prox_vencimento,
+          prox_sorteio: r.prox_sorteio,
+          prox_assembleia: r.prox_assembleia,
+          prazo_encerramento_meses: r.prazo_encerramento_meses,
+        });
+        setEditorOpen(true);
+      }}
+    >
+      <Pencil className="h-4 w-4" /> Cadastrar
+    </Button>
+  ) : isEditing ? (
+    <div className="flex items-center justify-center gap-2">
+      <Button variant="secondary" onClick={() => { setEditingId(null); setEditDraft(null); }}>
+        <X className="h-4 w-4 mr-1" /> Cancelar
+      </Button>
+      <Button onClick={() => salvarLinha(r.id)}>
+        <Save className="h-4 w-4 mr-1" /> Salvar
+      </Button>
+    </div>
+  ) : (
+    <Button
+      variant="secondary"
+      className="gap-1"
+      onClick={() => {
+        const g = grupos.find((x) => x.id === r.id);
+        if (!g) return;
+        setEditingId(r.id);
+        setEditDraft({
+          participantes: g.participantes,
+          prox_vencimento: g.prox_vencimento,
+          prox_sorteio: g.prox_sorteio,
+          prox_assembleia: g.prox_assembleia,
+          faixa_min: g.faixa_min,
+          faixa_max: g.faixa_max,
+        });
+      }}
+    >
+      <Pencil className="h-4 w-4" /> Editar
+    </Button>
+  )}
+</td>
                   </tr>
                 );
               })

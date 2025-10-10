@@ -1115,43 +1115,60 @@ const rangeMPrev    = previstoInRange(mStart, mEnd);    // previsto até último
   const fluxoSoma = useMemo(() => ruleFluxoPct.reduce((a, b) => a + (parseFloat((b || "0").replace(",", ".")) || 0), 0), [ruleFluxoPct]);
 
   async function fetchRulesForVendor(vId: string) {
-    if (!vId) { setRuleRows([]); return; }
-    const { data: rules } = await supabase
-      .from("commission_rules")
-      .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
-      .eq("vendedor_id", vId);
-    if (!rules || !rules.length) { setRuleRows([]); return; }
+  if (!vId) { setRuleRows([]); return; }
+  const { data: rules } = await supabase
+    .from("commission_rules")
+    .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
+    .eq("vendedor_id", vId);
 
-    const stIds = Array.from(new Set(rules.map((r) => r.sim_table_id)));
-    const { data: st } = await supabase.from("sim_tables").select("id, segmento, nome_tabela").in("id", stIds);
-    const bySt: Record<string, SimTable> = {}; (st || []).forEach((s) => { bySt[s.id] = s as SimTable; });
+  if (!rules || !rules.length) { setRuleRows([]); return; }
 
-    // administradora provável (heurística)
-    const tableNames = Array.from(new Set((st || []).map(s => s.nome_tabela))).filter(Boolean);
-    let adminMap: Record<string, string> = {};
-    if (tableNames.length) {
-      const { data: vendas } = await supabase
-        .from("vendas")
-        .select("segmento, tabela, administradora")
-        .in("tabela", tableNames);
-      (vendas || []).forEach(v => {
-        const key = `${v.segmento || "-"}|${v.tabela || "-"}`;
-        if (!adminMap[key] && v.administradora) adminMap[key] = v.administradora;
-      });
+  // Mapa sim_table_id -> grupo
+  const simIdToGroupKey: Record<string, string> = {};
+  simGroups.forEach(g => g.ids.forEach(id => simIdToGroupKey[id] = g.key));
+
+  // Agrupa regras por grupo (segmento|nome)
+  type Aggreg = { key: string; segmento: string; nome_tabela: string; rules: CommissionRule[] };
+  const byGroup: Record<string, Aggreg> = {};
+  rules.forEach((r: any) => {
+    const gk = simIdToGroupKey[r.sim_table_id];
+    if (!gk) return; // sim_table que não está carregada
+    if (!byGroup[gk]) {
+      const g = groupByKey[gk];
+      byGroup[gk] = { key: gk, segmento: g?.segmento || "-", nome_tabela: g?.nome_tabela || "-", rules: [] };
     }
+    byGroup[gk].rules.push(r as CommissionRule);
+  });
 
-    setRuleRows(rules.map((r) => {
-      const stInfo = bySt[r.sim_table_id];
-      const key = `${stInfo?.segmento || "-"}|${stInfo?.nome_tabela || "-"}`;
-      return {
-        ...(r as CommissionRule),
-        segmento: stInfo?.segmento || "-",
-        nome_tabela: stInfo?.nome_tabela || "-",
-        administradora: adminMap[key] || "—",
-      };
-    }));
-  }
-  useEffect(() => { if (openRules) fetchRulesForVendor(ruleVendorId); }, [openRules, ruleVendorId]);
+  // Heurística: se regras do grupo forem iguais, mostramos 1 linha “limpa”.
+  // Se houver divergências, indicamos “(múltiplas)” em fluxo/percentual.
+  const rowsOut = Object.values(byGroup).map(g => {
+    const first = g.rules[0];
+    const allSamePercent = g.rules.every(x => x.percent_padrao === first.percent_padrao);
+    const allSameFluxLen = g.rules.every(x => x.fluxo_meses === first.fluxo_meses);
+    const allSameFluxArr  = g.rules.every(x =>
+      JSON.stringify(x.fluxo_percentuais) === JSON.stringify(first.fluxo_percentuais)
+    );
+
+    const percent_padrao = allSamePercent ? first.percent_padrao : null;
+    const fluxo_meses = allSameFluxLen ? first.fluxo_meses : -1;
+    const fluxo_percentuais = allSameFluxArr ? first.fluxo_percentuais : [];
+
+    return {
+      vendedor_id: vId,
+      sim_table_id: g.key,              // 👈 guardamos o groupKey aqui para o load/delete
+      percent_padrao,
+      fluxo_meses,
+      fluxo_percentuais,
+      obs: first.obs || null,
+      segmento: g.segmento,
+      nome_tabela: g.nome_tabela,
+      administradora: "—",
+    } as any;
+  });
+
+  setRuleRows(rowsOut);
+}
 
   async function saveRule() {
   if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");

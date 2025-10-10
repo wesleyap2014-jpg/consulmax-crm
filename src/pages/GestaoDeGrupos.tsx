@@ -1454,8 +1454,7 @@ const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
         />
       )}
 
-      {/* EditorGrupo (agora ativo em modal) */}
-{editorOpen && (
+      {editorOpen && (
   <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
     <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl p-4">
       <EditorGrupo
@@ -1468,11 +1467,14 @@ const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
   </div>
 )}
 
+</div>   {/* <-- div principal da página */}
+);        {/* <-- fecha o return */}
+}         {/* <-- fecha a função GestaoDeGrupos */}
+
 /* =========================================================
    EDITOR DE GRUPO (mantido para compatibilidade — em uso)
    ========================================================= */
 
-// coloque isso acima da função EditorGrupo
 type EditorGrupoProps = {
   group?: Grupo | null;
   onClose: () => void;
@@ -1480,7 +1482,6 @@ type EditorGrupoProps = {
   prefill?: Partial<Grupo>;
 };
 
-// troque a assinatura atual por esta
 function EditorGrupo(props: EditorGrupoProps) {
   const { group, onClose, onSaved, prefill } = props;
 
@@ -1498,6 +1499,9 @@ function EditorGrupo(props: EditorGrupoProps) {
       prazo_encerramento_meses: prefill?.prazo_encerramento_meses ?? null,
     }
   );
+
+  // ...resto do componente
+}
 
   const isNew = !group?.id;
 

@@ -2230,20 +2230,20 @@ async function downloadReceiptPDFPorData() {
         </Select>
       </div>
       <div>
-        <Label>Tabela (SimTables)</Label>
-        <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Selecione..." />
-          </SelectTrigger>
-          <SelectContent className="max-h-[300px]">
-            {simTables.map((t) => (
-              <SelectItem key={t.id} value={t.id}>
-                {t.segmento} — {t.nome_tabela}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+  <Label>Tabela (SimTables)</Label>
+  <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
+    <SelectTrigger>
+      <SelectValue placeholder="Selecione..." />
+    </SelectTrigger>
+    <SelectContent className="max-h-[300px]">
+      {simGroups.map((g) => (
+        <SelectItem key={g.key} value={g.key}>
+          {g.segmento} — {g.nome_tabela} {/* unificado */}
+        </SelectItem>
+      ))}
+    </SelectContent>
+  </Select>
+</div>
       <div>
         <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
         <Input

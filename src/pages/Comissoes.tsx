@@ -885,6 +885,27 @@ export default function ComissoesPage() {
     })();
   }, []);
 
+  // Agrupa SimTables por (segmento, nome_tabela) para unificar no módulo Comissões
+const simGroups = useMemo(() => {
+  const groups: Record<string, { key: string; segmento: string; nome_tabela: string; ids: string[] }> = {};
+  simTables.forEach((t) => {
+    const seg = (t.segmento || "").trim();
+    const name = (t.nome_tabela || "").trim();
+    const key = `${normalize(seg)}|${normalize(name)}`;
+    if (!groups[key]) {
+      groups[key] = { key, segmento: seg, nome_tabela: name, ids: [] };
+    }
+    groups[key].ids.push(t.id);
+  });
+  return Object.values(groups).sort(
+    (a, b) => a.segmento.localeCompare(b.segmento) || a.nome_tabela.localeCompare(b.nome_tabela)
+  );
+}, [simTables]);
+
+// Ajuda a achar um grupo pelo "key"
+const groupByKey: Record<string, { key: string; segmento: string; nome_tabela: string; ids: string[] }> =
+  useMemo(() => Object.fromEntries(simGroups.map(g => [g.key, g])), [simGroups]);
+
   /* Fetch principal */
   async function fetchData() {
     setLoading(true);

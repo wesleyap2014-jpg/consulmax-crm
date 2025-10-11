@@ -2048,86 +2048,88 @@ async function downloadReceiptPDFPorData() {
     </CardTitle>
   </CardHeader>
   {showUnpaid && (
-    <CardContent className="overflow-x-auto">
-      <table className="min-w-[1200px] w-full text-sm">
-        <thead>
-          <tr className="bg-gray-50">
-            <th className="p-2 text-left">Data</th>
-            <th className="p-2 text-left">Vendedor</th>
-            <th className="p-2 text-left">Cliente</th>
-            <th className="p-2 text-left">Nº Proposta</th>
-            <th className="p-2 text-left">Segmento</th>
-            <th className="p-2 text-left">Tabela</th>
-            <th className="p-2 text-right">Crédito</th>
-            <th className="p-2 text-right">% Comissão</th>
-            <th className="p-2 text-right">Valor Comissão</th>
-            <th className="p-2 text-left">Status</th>
-            <th className="p-2 text-left">Pagamento</th>
-            <th className="p-2 text-left">Ações</th>
+   <CardContent>
+  <TableScroll minWidth={1200}>
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="bg-gray-50">
+          <th className="p-2 text-left">Data</th>
+          <th className="p-2 text-left">Vendedor</th>
+          <th className="p-2 text-left">Cliente</th>
+          <th className="p-2 text-left">Nº Proposta</th>
+          <th className="p-2 text-left">Segmento</th>
+          <th className="p-2 text-left">Tabela</th>
+          <th className="p-2 text-right">Crédito</th>
+          <th className="p-2 text-right">% Comissão</th>
+          <th className="p-2 text-right">Valor Comissão</th>
+          <th className="p-2 text-left">Status</th>
+          <th className="p-2 text-left">Pagamento</th>
+          <th className="p-2 text-left">Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        {loading && (
+          <tr>
+            <td colSpan={12} className="p-4">
+              <Loader2 className="animate-spin inline mr-1" /> Carregando...
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {loading && (
-            <tr>
-              <td colSpan={12} className="p-4">
-                <Loader2 className="animate-spin inline mr-2" /> Carregando...
+        )}
+        {!loading && rowsAPagar.length === 0 && (
+          <tr>
+            <td colSpan={12} className="p-4 text-gray-500">
+              Sem registros.
+            </td>
+          </tr>
+        )}
+        {!loading &&
+          rowsAPagar.map((r) => (
+            <tr key={r.id} className="border-b hover:bg-gray-50">
+              <td className="p-2">
+                {r.data_venda ? formatISODateBR(r.data_venda) : "—"}
+              </td>
+              <td className="p-2">{userLabel(r.vendedor_id)}</td>
+              <td className="p-2">{r.cliente_nome || "—"}</td>
+              <td className="p-2">{r.numero_proposta || "—"}</td>
+              <td className="p-2">{r.segmento || "—"}</td>
+              <td className="p-2">{r.tabela || "—"}</td>
+              <td className="p-2 text-right">
+                {BRL(r.valor_venda ?? r.base_calculo)}
+              </td>
+              <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
+              <td className="p-2 text-right">{BRL(r.valor_total)}</td>
+              <td className="p-2">{r.status}</td>
+              <td className="p-2">
+                {r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}
+              </td>
+              <td className="p-2">
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => openPaymentFor(r)}
+                  >
+                    <DollarSign className="w-4 h-4 mr-1" />
+                    {hasRegisteredButUnpaid(r.flow)
+                      ? "Confirmar Pagamento"
+                      : "Registrar pagamento"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => retornarComissao(r)}
+                  >
+                    <RotateCcw className="w-4 h-4 mr-1" /> Retornar
+                  </Button>
+                </div>
               </td>
             </tr>
-          )}
-          {!loading && rowsAPagar.length === 0 && (
-            <tr>
-              <td colSpan={12} className="p-4 text-gray-500">
-                Sem registros.
-              </td>
-            </tr>
-          )}
-          {!loading &&
-            rowsAPagar.map((r) => (
-              <tr key={r.id} className="border-b hover:bg-gray-50">
-                <td className="p-2">
-                  {r.data_venda ? formatISODateBR(r.data_venda) : "—"}
-                </td>
-                <td className="p-2">{userLabel(r.vendedor_id)}</td>
-                <td className="p-2">{r.cliente_nome || "—"}</td>
-                <td className="p-2">{r.numero_proposta || "—"}</td>
-                <td className="p-2">{r.segmento || "—"}</td>
-                <td className="p-2">{r.tabela || "—"}</td>
-                <td className="p-2 text-right">
-                  {BRL(r.valor_venda ?? r.base_calculo)}
-                </td>
-                <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
-                <td className="p-2 text-right">{BRL(r.valor_total)}</td>
-                <td className="p-2">{r.status}</td>
-                <td className="p-2">
-                  {r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}
-                </td>
-                <td className="p-2">
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => openPaymentFor(r)}
-                    >
-                      <DollarSign className="w-4 h-4 mr-1" />
-                      {hasRegisteredButUnpaid(r.flow)
-                        ? "Confirmar Pagamento"
-                        : "Registrar pagamento"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => retornarComissao(r)}
-                    >
-                      <RotateCcw className="w-4 h-4 mr-1" /> Retornar
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
-    </CardContent>
-  )}
+          ))}
+      </tbody>
+    </table>
+  </TableScroll>
+</CardContent>
+)}
 </Card>
 
 {/* Comissões pagas */}
@@ -2156,77 +2158,80 @@ async function downloadReceiptPDFPorData() {
     </CardTitle>
   </CardHeader>
   {showPaid && (
-    <CardContent className="overflow-x-auto">
-      <table className="min-w-[1100px] w-full text-sm">
-        <thead>
-          <tr className="bg-gray-50">
-            <th className="p-2 text-left">Data Pagto</th>
-            <th className="p-2 text-left">Vendedor</th>
-            <th className="p-2 text-left">Cliente</th>
-            <th className="p-2 text-left">Nº Proposta</th>
-            <th className="p-2 text-left">Parcela</th>
-            <th className="p-2 text-right">Valor Pago (Bruto)</th>
-            <th className="p-2 text-left">Arquivos</th>
-          </tr>
-        </thead>
-        <tbody>
-          {pagosPage.length === 0 && (
-            <tr>
-              <td colSpan={7} className="p-4 text-gray-500">
-                Nenhum pagamento encontrado.
-              </td>
+    <CardContent>
+      <TableScroll minWidth={1100}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50">
+              <th className="p-2 text-left">Data Pagto</th>
+              <th className="p-2 text-left">Vendedor</th>
+              <th className="p-2 text-left">Cliente</th>
+              <th className="p-2 text-left">Nº Proposta</th>
+              <th className="p-2 text-left">Parcela</th>
+              <th className="p-2 text-right">Valor Pago (Bruto)</th>
+              <th className="p-2 text-left">Arquivos</th>
             </tr>
-          )}
-          {pagosPage.map(({ flow, comm }) => (
-            <tr key={flow.id} className="border-b">
-              <td className="p-2">
-                {flow.data_pagamento_vendedor
-                  ? formatISODateBR(flow.data_pagamento_vendedor)
-                  : "—"}
-              </td>
-              <td className="p-2">{userLabel(comm.vendedor_id)}</td>
-              <td className="p-2">{comm.cliente_nome || "—"}</td>
-              <td className="p-2">{comm.numero_proposta || "—"}</td>
-              <td className="p-2">M{flow.mes}</td>
-              <td className="p-2 text-right">
-                {BRL(flow.valor_pago_vendedor)}
-              </td>
-              <td className="p-2">
-                <div className="flex gap-2">
-                  {flow.recibo_vendedor_url && (
-                    <a
-                      className="underline text-blue-700"
-                      href="#"
-                      onClick={async (e) => {
-                        e.preventDefault();
-                        const u = await getSignedUrl(flow.recibo_vendedor_url);
-                        if (u) window.open(u, "_blank");
-                      }}
-                    >
-                      Recibo
-                    </a>
-                  )}
-                  {flow.comprovante_pagto_url && (
-                    <a
-                      className="underline text-blue-700"
-                      href="#"
-                      onClick={async (e) => {
-                        e.preventDefault();
-                        const u = await getSignedUrl(
-                          flow.comprovante_pagto_url
-                        );
-                        if (u) window.open(u, "_blank");
-                      }}
-                    >
-                      Comprovante
-                    </a>
-                  )}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {pagosPage.length === 0 && (
+              <tr>
+                <td colSpan={7} className="p-4 text-gray-500">
+                  Nenhum pagamento encontrado.
+                </td>
+              </tr>
+            )}
+            {pagosPage.map(({ flow, comm }) => (
+              <tr key={flow.id} className="border-b">
+                <td className="p-2">
+                  {flow.data_pagamento_vendedor
+                    ? formatISODateBR(flow.data_pagamento_vendedor)
+                    : "—"}
+                </td>
+                <td className="p-2">{userLabel(comm.vendedor_id)}</td>
+                <td className="p-2">{comm.cliente_nome || "—"}</td>
+                <td className="p-2">{comm.numero_proposta || "—"}</td>
+                <td className="p-2">M{flow.mes}</td>
+                <td className="p-2 text-right">
+                  {BRL(flow.valor_pago_vendedor)}
+                </td>
+                <td className="p-2">
+                  <div className="flex gap-2">
+                    {flow.recibo_vendedor_url && (
+                      <a
+                        className="underline text-blue-700"
+                        href="#"
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          const u = await getSignedUrl(flow.recibo_vendedor_url);
+                          if (u) window.open(u, "_blank");
+                        }}
+                      >
+                        Recibo
+                      </a>
+                    )}
+                    {flow.comprovante_pagto_url && (
+                      <a
+                        className="underline text-blue-700"
+                        href="#"
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          const u = await getSignedUrl(
+                            flow.comprovante_pagto_url
+                          );
+                          if (u) window.open(u, "_blank");
+                        }}
+                      >
+                        Comprovante
+                      </a>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableScroll>
+
       <div className="flex items-center justify-end gap-3 pt-3">
         <div className="text-sm text-gray-600">
           Mostrando {pagosPage.length ? pageStart + 1 : 0}–

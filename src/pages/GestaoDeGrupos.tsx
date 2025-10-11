@@ -698,13 +698,16 @@ function OverlayOfertaLance({
         if (!g) return; // ignora venda de grupo cuja assembleia != data
 
         const asm = lastAsmByGroup.get(g.id);
-        const med = asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
+        const med =
+          asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
         const contem =
           (asm?.fixed25_deliveries || 0) +
           (asm?.fixed50_deliveries || 0) +
           (asm?.ll_deliveries || 0);
 
-        const bilhetes = g.prox_sorteio ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null : null;
+        const bilhetes = g.prox_sorteio
+          ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null
+          : null;
         const ref = referenciaPorAdministradora({
           administradora: g.administradora,
           participantes: g.participantes,
@@ -712,20 +715,22 @@ function OverlayOfertaLance({
         });
 
         // campos novos com fallback defensivo
-        const cliente = (v as any).cliente ?? v.leads_nome ?? null;
-const descricao = (v as any).descricao ?? v.vendas_descrecao ?? v.descricao ?? null;
+        const cliente = v?.cliente ?? v?.leads_nome ?? null;
+        const descricao =
+          v?.descricao ?? v?.vendas_descrecao ?? v?.vendas_descricao ?? null;
 
-out.push({
-  administradora: g.administradora,
-  grupo: normalizeGroupDigits(g.codigo),
-  cota: v.cota != null ? String(v.cota) : null,
-  referencia: ref,
-  participantes: g.participantes,
-  mediana: med,
-  contemplados: contem,
-  cliente,      // novo
-  descricao,    // novo
-});
+        out.push({
+          administradora: g.administradora,
+          grupo: normalizeGroupDigits(g.codigo),
+          cota: v.cota != null ? String(v.cota) : null,
+          referencia: ref,
+          participantes: g.participantes,
+          mediana: med,
+          contemplados: contem,
+          cliente,
+          descricao,
+        });
+      }); // << fecha o forEach
 
       // 4) ordenação estável
       out.sort((a, b) => {
@@ -818,8 +823,11 @@ out.push({
 
           <div className="text-sm text-muted-foreground">
             {dataAsm ? (
-              <>Assembleia em {formatBR(toYMD(dataAsm))} •{" "}
-                <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-foreground">{total} cotas</span>
+              <>
+                Assembleia em {formatBR(toYMD(dataAsm))} •{" "}
+                <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-foreground">
+                  {total} cotas
+                </span>
               </>
             ) : (
               <>Informe a data e clique em <b>Listar</b>.</>
@@ -833,7 +841,7 @@ out.push({
                   <th className="p-2 text-left">Administradora</th>
                   <th className="p-2 text-left">Grupo</th>
                   <th className="p-2 text-left">Cota</th>
-                  <th className="p-2 text-left">Cliente</th> {/* novo */}
+                  <th className="p-2 text-left">Cliente</th>
                   <th className="p-2 text-left">Referência</th>
                   <th className="p-2 text-left">Participantes</th>
                   <th className="p-2 text-left">Mediana</th>
@@ -861,7 +869,7 @@ out.push({
                         <td className="p-2">{o.administradora}</td>
                         <td className="p-2">{o.grupo}</td>
                         <td className="p-2">{o.cota ?? "—"}</td>
-                        <td className="p-2">{o.cliente ?? "—"}</td> {/* novo */}
+                        <td className="p-2">{o.cliente ?? "—"}</td>
                         <td className="p-2">{o.referencia ?? "—"}</td>
                         <td className="p-2">{o.participantes ?? "—"}</td>
                         <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>

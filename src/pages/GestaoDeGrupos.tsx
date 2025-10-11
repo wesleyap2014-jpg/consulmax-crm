@@ -673,6 +673,32 @@ function OverlayOfertaLance({
       // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
       const { data: vds, error } = await supabase
         .from("vendas")
+        .select("administradora, grupo, cota, status, contemplada, cliente:leads_nome, descricao:vendas_descrecao")
+        .eq("status", "encarteirada")
+        .eq("contemplada", false)
+        .in("grupo", Array.from(gruposDigits));
+
+      if (error) throw error;
+
+      // 1) grupos elegíveis (assembleia == data informada)
+      const elegiveis = gruposBase.filter((g) => !isStubId(g.id) && sameDay(g.prox_assembleia, ymd));
+      if (elegiveis.length === 0) {
+        setLinhas([]);
+        setLoading(false);
+        return;
+      }
+
+      const mapByKey = new Map<string, Grupo>();
+      const gruposDigits = new Set<string>();
+      elegiveis.forEach((g) => {
+        const k = keyDigits(g.administradora, g.codigo);
+        mapByKey.set(k, g);
+        gruposDigits.add(normalizeGroupDigits(g.codigo));
+      });
+
+      // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
+      const { data: vds, error } = await supabase
+        .from("vendas")
         .select("administradora, grupo, cota, status, contemplada")
         .eq("status", "encarteirada")
         .eq("contemplada", false)

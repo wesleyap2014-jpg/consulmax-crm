@@ -670,99 +670,70 @@ function OverlayOfertaLance({
         gruposDigits.add(normalizeGroupDigits(g.codigo));
       });
 
-    // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
-type VendasPick = {
-  administradora: string;
-  grupo: string;
-  cota: string | number | null;
-  status: string;
-  contemplada: boolean;
-  lead_id?: string | number | null;
-  cliente_id?: string | number | null;
-  vendas_descrecao?: string | null;
-  vendas_descricao?: string | null;
-};
+    // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos)
+type VendasRow = { [key: string]: any };
 
-async function trySelect(
-  leadCol: "lead_id" | "cliente_id",
-  descCol: "vendas_descrecao" | "vendas_descricao"
-) {
-  return supabase
-    .from("vendas")
-    .select(
-      [
-        "administradora",
-        "grupo",
-        "cota",
-        "status",
-        "contemplada",
-        leadCol,
-        descCol,
-      ].join(",")
-    )
-    .eq("status", "encarteirada")
-    .eq("contemplada", false)
-    .in("grupo", Array.from(gruposDigits));
-}
+const { data: vds, error } = await supabase
+  .from("vendas")
+  .select("*") // pega todas as colunas; detectamos as chaves dinamicamente
+  .eq("status", "encarteirada")
+  .eq("contemplada", false)
+  .in("grupo", Array.from(gruposDigits));
 
-// tenta combinações possíveis sem quebrar o build
-let vendasData: VendasPick[] | null = null;
-let leadKey: "lead_id" | "cliente_id" | null = null;
-let descKey: "vendas_descrecao" | "vendas_descricao" | null = null;
+if (error) throw error;
 
-const combos: Array<[ "lead_id" | "cliente_id", "vendas_descrecao" | "vendas_descricao" ]> = [
-  ["lead_id", "vendas_descrecao"],
-  ["lead_id", "vendas_descricao"],
-  ["cliente_id", "vendas_descrecao"],
-  ["cliente_id", "vendas_descricao"],
+// Detecta dinamicamente as chaves de lead e de descrição existentes na tabela
+const sample: VendasRow = (vds ?? [])[0] ?? {};
+const leadCandidates = ["lead_id", "cliente_id", "id_lead", "id_cliente", "leadId", "clienteId"];
+const descCandidates = [
+  "vendas_descrecao",
+  "vendas_descricao",
+  "descricao",
+  "descrição",
+  "descricao_venda",
+  "descricaoVenda",
+  "venda_descricao",
+  "obs",
+  "observacao",
+  "observação",
 ];
 
-for (const [lk, dk] of combos) {
-  const { data, error: err } = await trySelect(lk, dk);
-  if (!err) {
-    vendasData = (data as any) ?? [];
-    leadKey = lk;
-    descKey = dk;
-    break;
-  }
-}
+const leadKey: string | null = leadCandidates.find((k) => k in sample) ?? null;
+const descKey: string | null = descCandidates.find((k) => k in sample) ?? null;
 
-// se ainda não conseguimos, propaga erro amigável
-if (!vendasData || !leadKey || !descKey) {
-  throw new Error(
-    "Não foi possível selecionar as vendas. Verifique o nome das colunas (lead_id/cliente_id e vendas_descrecao/vendas_descricao)."
-  );
-}
-
-// 2b) resolver nomes dos leads sem relationship (join manual)
-const leadIds = Array.from(
-  new Set(
-    vendasData
-      .map((v: any) => v?.[leadKey!])
-      .filter((x: any) => x !== null && x !== undefined)
-  )
-);
-
+// 2b) resolver nomes dos leads sem relationship (join manual via IN)
 let nomesById = new Map<string, string>();
-if (leadIds.length > 0) {
-  const { data: leadsData, error: errLeads } = await supabase
-    .from("leads")
-    .select("id, nome")
-    .in("id", leadIds);
-  if (errLeads) throw errLeads;
-  (leadsData ?? []).forEach((l: any) => {
-    nomesById.set(String(l.id), l.nome ?? "");
-  });
+if (leadKey) {
+  const leadIds = Array.from(
+    new Set(
+      (vds ?? [])
+        .map((v: VendasRow) => v?.[leadKey!])
+        .filter((x: any) => x !== null && x !== undefined)
+    )
+  );
+
+  if (leadIds.length > 0) {
+    const { data: leadsData, error: errLeads } = await supabase
+      .from("leads")
+      .select("id, nome")
+      .in("id", leadIds);
+
+    if (errLeads) throw errLeads;
+
+    (leadsData ?? []).forEach((l: any) => {
+      nomesById.set(String(l.id), l.nome ?? "");
+    });
+  }
 }
 
 // 3) montar linhas por cota
 const out: OfertaRow[] = [];
-(vendasData ?? []).forEach((v: any) => {
+(vds ?? []).forEach((v: VendasRow) => {
   const adm = normalizeAdmin(v.administradora);
   const grpDigits = normalizeGroupDigits(v.grupo);
   const k = keyDigits(adm, grpDigits);
   const g = mapByKey.get(k);
-  if (!g) return;
+  if (!g) return; // ignora venda de grupo cuja assembleia != data
 
   const asm = lastAsmByGroup.get(g.id);
   const med = asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
@@ -778,10 +749,10 @@ const out: OfertaRow[] = [];
     bilhetes,
   });
 
-  const leadVal = v?.[leadKey!];
+  const leadVal = leadKey ? v?.[leadKey] : null;
   const cliente = leadVal != null ? (nomesById.get(String(leadVal)) ?? null) : null;
 
-  const descVal = v?.[descKey!];
+  const descVal = descKey ? v?.[descKey] : null;
   const descricao =
     descVal ??
     v?.vendas_descrecao ??

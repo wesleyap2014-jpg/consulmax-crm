@@ -792,44 +792,92 @@ const out: OfertaRow[] = [];
   };
 
   const exportarPDF = () => {
-    const body = document.getElementById("oferta-grid-body");
-    if (!body) return;
-    const total = linhas.length;
-    const ymd = toYMD(dataAsm);
-    const dataLegivel = formatBR(ymd);
-    const win = window.open("", "_blank", "width=1024,height=768");
-    if (!win) return;
-    const css = `<style>
-      body{font-family:Arial,sans-serif;padding:24px}
-      h1{margin:0 0 12px}
-      .meta{margin-bottom:8px;font-size:12px;color:#666}
-      table{width:100%;border-collapse:collapse;margin-top:12px}
-      th,td{border:1px solid #e5e7eb;padding:8px;font-size:12px;vertical-align:top}
-    </style>`;
-    win.document.write(
-      `<html><head><title>Oferta de Lance</title>${css}</head><body>
+  const body = document.getElementById("oferta-grid-body");
+  if (!body) return;
+
+  const total = linhas.length;
+  const ymd = toYMD(dataAsm);
+  const dataLegivel = formatBR(ymd);
+
+  const win = window.open("", "_blank", "width=1200,height=800");
+  if (!win) return;
+
+  const css = `<style>
+    /* Força orientação horizontal na impressão */
+    @page {
+      size: A4 landscape;
+      margin: 12mm;
+    }
+    @media print {
+      html, body { height: auto; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      /* Repete o thead a cada página */
+      thead { display: table-header-group; }
+      tfoot { display: table-row-group; }
+      tr { page-break-inside: avoid; }
+    }
+
+    body{font-family:Arial,Helvetica,sans-serif;padding:24px}
+    h1{margin:0 0 12px}
+    .meta{margin-bottom:8px;font-size:12px;color:#666}
+
+    table{width:100%;border-collapse:collapse;margin-top:12px;table-layout:fixed}
+    th,td{border:1px solid #e5e7eb;padding:8px;font-size:12px;vertical-align:top;word-wrap:break-word}
+    th{text-align:left}
+
+    /* Colunas um pouco mais confortáveis em landscape */
+    th:nth-child(1), td:nth-child(1) { width: 14%; } /* Administradora */
+    th:nth-child(2), td:nth-child(2) { width: 10%; } /* Grupo */
+    th:nth-child(3), td:nth-child(3) { width: 8%;  } /* Cota */
+    th:nth-child(4), td:nth-child(4) { width: 18%; } /* Cliente */
+    th:nth-child(5), td:nth-child(5) { width: 10%; } /* Referência */
+    th:nth-child(6), td:nth-child(6) { width: 10%; } /* Participantes */
+    th:nth-child(7), td:nth-child(7) { width: 10%; } /* Mediana */
+    th:nth-child(8), td:nth-child(8) { width: 10%; } /* Contemplados */
+
+    /* Linha de descrição (a segunda) ocupando a largura toda */
+    .descricao-row td { font-size: 11px; color:#444; }
+    .descricao-label { font-weight:600; color:#111; margin-right:6px; }
+  </style>`;
+
+  // Reaproveita o conteúdo do grid (thead + tbody), mantendo a linha de descrição
+  const tableHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Administradora</th>
+          <th>Grupo</th>
+          <th>Cota</th>
+          <th>Cliente</th>
+          <th>Referência</th>
+          <th>Participantes</th>
+          <th>Mediana</th>
+          <th>Contemplados</th>
+        </tr>
+      </thead>
+      <tbody>${body.innerHTML}</tbody>
+    </table>
+  `;
+
+  win.document.write(
+    `<html>
+      <head><title>Oferta de Lance</title>${css}</head>
+      <body>
         <h1>Oferta de Lance</h1>
         <div class="meta">Data da Assembleia: ${dataLegivel} • Total de cotas: ${total}</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Administradora</th>
-              <th>Grupo</th>
-              <th>Cota</th>
-              <th>Cliente</th>
-              <th>Referência</th>
-              <th>Participantes</th>
-              <th>Mediana</th>
-              <th>Contemplados</th>
-            </tr>
-          </thead>
-          <tbody>${body.innerHTML}</tbody>
-        </table>
-        <script>window.print();setTimeout(()=>window.close(),300);</script>
-      </body></html>`
-    );
-    win.document.close();
-  };
+        ${tableHTML}
+        <script>
+          // Garante que só imprime após renderizar
+          window.addEventListener('load', function () {
+            window.print();
+            setTimeout(function(){ window.close(); }, 300);
+          });
+        </script>
+      </body>
+    </html>`
+  );
+  win.document.close();
+};
 
   const total = linhas.length;
 

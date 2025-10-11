@@ -673,33 +673,15 @@ function OverlayOfertaLance({
       // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
       const { data: vds, error } = await supabase
         .from("vendas")
-        .select("administradora, grupo, cota, status, contemplada, cliente:leads_nome, descricao:vendas_descrecao")
-        .eq("status", "encarteirada")
-        .eq("contemplada", false)
-        .in("grupo", Array.from(gruposDigits));
-
-      if (error) throw error;
-
-      // 1) grupos elegíveis (assembleia == data informada)
-      const elegiveis = gruposBase.filter((g) => !isStubId(g.id) && sameDay(g.prox_assembleia, ymd));
-      if (elegiveis.length === 0) {
-        setLinhas([]);
-        setLoading(false);
-        return;
-      }
-
-      const mapByKey = new Map<string, Grupo>();
-      const gruposDigits = new Set<string>();
-      elegiveis.forEach((g) => {
-        const k = keyDigits(g.administradora, g.codigo);
-        mapByKey.set(k, g);
-        gruposDigits.add(normalizeGroupDigits(g.codigo));
-      });
-
-      // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
-      const { data: vds, error } = await supabase
-        .from("vendas")
-        .select("administradora, grupo, cota, status, contemplada")
+        .select(`
+          administradora,
+          grupo,
+          cota,
+          status,
+          contemplada,
+          cliente:leads_nome,
+          descricao:vendas_descrecao
+        `)
         .eq("status", "encarteirada")
         .eq("contemplada", false)
         .in("grupo", Array.from(gruposDigits));
@@ -729,6 +711,10 @@ function OverlayOfertaLance({
           bilhetes,
         });
 
+        // campos novos com fallback defensivo
+        const cliente = v?.cliente ?? v?.leads_nome ?? null;
+        const descricao = v?.descricao ?? v?.vendas_descrecao ?? v?.vendas_descricao ?? null;
+
         out.push({
           administradora: g.administradora,
           grupo: normalizeGroupDigits(g.codigo),
@@ -737,6 +723,8 @@ function OverlayOfertaLance({
           participantes: g.participantes,
           mediana: med,
           contemplados: contem,
+          cliente,
+          descricao,
         });
       });
 
@@ -780,7 +768,14 @@ function OverlayOfertaLance({
         <table>
           <thead>
             <tr>
-              <th>Administradora</th><th>Grupo</th><th>Cota</th><th>Referência</th><th>Participantes</th><th>Mediana</th><th>Contemplados</th>
+              <th>Administradora</th>
+              <th>Grupo</th>
+              <th>Cota</th>
+              <th>Cliente</th>
+              <th>Referência</th>
+              <th>Participantes</th>
+              <th>Mediana</th>
+              <th>Contemplados</th>
             </tr>
           </thead>
           <tbody>${body.innerHTML}</tbody>
@@ -833,12 +828,13 @@ function OverlayOfertaLance({
           </div>
 
           <div className="rounded-xl border overflow-auto">
-            <table className="min-w-[980px] w-full text-sm">
+            <table className="min-w-[1080px] w-full text-sm">
               <thead className="sticky top-0 bg-muted/60 backdrop-blur">
                 <tr>
                   <th className="p-2 text-left">Administradora</th>
                   <th className="p-2 text-left">Grupo</th>
                   <th className="p-2 text-left">Cota</th>
+                  <th className="p-2 text-left">Cliente</th> {/* novo */}
                   <th className="p-2 text-left">Referência</th>
                   <th className="p-2 text-left">Participantes</th>
                   <th className="p-2 text-left">Mediana</th>
@@ -848,28 +844,37 @@ function OverlayOfertaLance({
               <tbody id="oferta-grid-body">
                 {loading ? (
                   <tr>
-                    <td className="p-4 text-muted-foreground" colSpan={7}>
+                    <td className="p-4 text-muted-foreground" colSpan={8}>
                       <Loader2 className="h-4 w-4 inline animate-spin mr-2" />
                       Carregando…
                     </td>
                   </tr>
                 ) : total === 0 ? (
                   <tr>
-                    <td className="p-4 text-muted-foreground" colSpan={7}>
+                    <td className="p-4 text-muted-foreground" colSpan={8}>
                       {dataAsm ? "Nenhuma cota encontrada para essa assembleia." : "—"}
                     </td>
                   </tr>
                 ) : (
                   linhas.map((o, i) => (
-                    <tr key={`${o.administradora}-${o.grupo}-${o.cota}-${i}`} className="odd:bg-muted/30">
-                      <td className="p-2">{o.administradora}</td>
-                      <td className="p-2">{o.grupo}</td>
-                      <td className="p-2">{o.cota ?? "—"}</td>
-                      <td className="p-2">{o.referencia ?? "—"}</td>
-                      <td className="p-2">{o.participantes ?? "—"}</td>
-                      <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
-                      <td className="p-2">{o.contemplados ?? "—"}</td>
-                    </tr>
+                    <React.Fragment key={`${o.administradora}-${o.grupo}-${o.cota}-${i}`}>
+                      <tr className="odd:bg-muted/30">
+                        <td className="p-2">{o.administradora}</td>
+                        <td className="p-2">{o.grupo}</td>
+                        <td className="p-2">{o.cota ?? "—"}</td>
+                        <td className="p-2">{o.cliente ?? "—"}</td> {/* novo */}
+                        <td className="p-2">{o.referencia ?? "—"}</td>
+                        <td className="p-2">{o.participantes ?? "—"}</td>
+                        <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
+                        <td className="p-2">{o.contemplados ?? "—"}</td>
+                      </tr>
+                      <tr className="odd:bg-muted/30">
+                        <td className="p-2 text-xs text-muted-foreground" colSpan={8}>
+                          <span className="font-medium text-foreground">Descrição: </span>
+                          {o.descricao?.trim() ? o.descricao : "—"}
+                        </td>
+                      </tr>
+                    </React.Fragment>
                   ))
                 )}
               </tbody>

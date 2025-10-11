@@ -674,14 +674,14 @@ function OverlayOfertaLance({
       const { data: vds, error } = await supabase
         .from("vendas")
         .select(`
-          administradora,
-          grupo,
-          cota,
-          status,
-          contemplada,
-          cliente:leads_nome,
-          descricao:vendas_descrecao
-        `)
+  administradora,
+  grupo,
+  cota,
+  status,
+  contemplada,
+  vendas_descrecao,
+  leads:leads!vendas_lead_id_fkey ( nome )
+`)
         .eq("status", "encarteirada")
         .eq("contemplada", false)
         .in("grupo", Array.from(gruposDigits));

@@ -670,32 +670,76 @@ function OverlayOfertaLance({
         gruposDigits.add(normalizeGroupDigits(g.codigo));
       });
 
-     // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
-// ATENÇÃO: ajuste o nome da coluna de FK para o lead, se necessário (lead_id / cliente_id / etc.)
-// e ajuste o nome da coluna da descrição, se for "vendas_descricao".
-const { data: vds, error } = await supabase
-  .from("vendas")
-  .select(`
-    administradora,
-    grupo,
-    cota,
-    status,
-    contemplada,
-    lead_id,             -- << ajuste se o nome for diferente
-    vendas_descrecao     -- << ajuste se sua coluna for "vendas_descricao"
-  `)
-  .eq("status", "encarteirada")
-  .eq("contemplada", false)
-  .in("grupo", Array.from(gruposDigits));
+    // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
+type VendasPick = {
+  administradora: string;
+  grupo: string;
+  cota: string | number | null;
+  status: string;
+  contemplada: boolean;
+  lead_id?: string | number | null;
+  cliente_id?: string | number | null;
+  vendas_descrecao?: string | null;
+  vendas_descricao?: string | null;
+};
 
-if (error) throw error;
+async function trySelect(
+  leadCol: "lead_id" | "cliente_id",
+  descCol: "vendas_descrecao" | "vendas_descricao"
+) {
+  return supabase
+    .from("vendas")
+    .select(
+      [
+        "administradora",
+        "grupo",
+        "cota",
+        "status",
+        "contemplada",
+        leadCol,
+        descCol,
+      ].join(",")
+    )
+    .eq("status", "encarteirada")
+    .eq("contemplada", false)
+    .in("grupo", Array.from(gruposDigits));
+}
 
-// 2b) resolver nomes dos leads sem usar embed (evita exigir FK no PostgREST)
+// tenta combinações possíveis sem quebrar o build
+let vendasData: VendasPick[] | null = null;
+let leadKey: "lead_id" | "cliente_id" | null = null;
+let descKey: "vendas_descrecao" | "vendas_descricao" | null = null;
+
+const combos: Array<[ "lead_id" | "cliente_id", "vendas_descrecao" | "vendas_descricao" ]> = [
+  ["lead_id", "vendas_descrecao"],
+  ["lead_id", "vendas_descricao"],
+  ["cliente_id", "vendas_descrecao"],
+  ["cliente_id", "vendas_descricao"],
+];
+
+for (const [lk, dk] of combos) {
+  const { data, error: err } = await trySelect(lk, dk);
+  if (!err) {
+    vendasData = (data as any) ?? [];
+    leadKey = lk;
+    descKey = dk;
+    break;
+  }
+}
+
+// se ainda não conseguimos, propaga erro amigável
+if (!vendasData || !leadKey || !descKey) {
+  throw new Error(
+    "Não foi possível selecionar as vendas. Verifique o nome das colunas (lead_id/cliente_id e vendas_descrecao/vendas_descricao)."
+  );
+}
+
+// 2b) resolver nomes dos leads sem relationship (join manual)
 const leadIds = Array.from(
   new Set(
-    (vds ?? [])
-      .map((v: any) => v?.lead_id)
-      .filter((x: any) => x != null)
+    vendasData
+      .map((v: any) => v?.[leadKey!])
+      .filter((x: any) => x !== null && x !== undefined)
   )
 );
 
@@ -705,7 +749,6 @@ if (leadIds.length > 0) {
     .from("leads")
     .select("id, nome")
     .in("id", leadIds);
-
   if (errLeads) throw errLeads;
   (leadsData ?? []).forEach((l: any) => {
     nomesById.set(String(l.id), l.nome ?? "");
@@ -714,33 +757,37 @@ if (leadIds.length > 0) {
 
 // 3) montar linhas por cota
 const out: OfertaRow[] = [];
-(vds ?? []).forEach((v: any) => {
+(vendasData ?? []).forEach((v: any) => {
   const adm = normalizeAdmin(v.administradora);
   const grpDigits = normalizeGroupDigits(v.grupo);
   const k = keyDigits(adm, grpDigits);
   const g = mapByKey.get(k);
-  if (!g) return; // ignora venda de grupo cuja assembleia != data
+  if (!g) return;
 
   const asm = lastAsmByGroup.get(g.id);
-  const med =
-    asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
+  const med = asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
   const contem =
     (asm?.fixed25_deliveries || 0) +
     (asm?.fixed50_deliveries || 0) +
     (asm?.ll_deliveries || 0);
 
-  const bilhetes = g.prox_sorteio
-    ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null
-    : null;
+  const bilhetes = g.prox_sorteio ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null : null;
   const ref = referenciaPorAdministradora({
     administradora: g.administradora,
     participantes: g.participantes,
     bilhetes,
   });
 
-  // nome do cliente resolvido pelo Map; descrição direto da venda
-  const cliente = v?.lead_id != null ? (nomesById.get(String(v.lead_id)) ?? null) : null;
-  const descricao = v?.vendas_descrecao ?? v?.vendas_descricao ?? v?.descricao ?? null;
+  const leadVal = v?.[leadKey!];
+  const cliente = leadVal != null ? (nomesById.get(String(leadVal)) ?? null) : null;
+
+  const descVal = v?.[descKey!];
+  const descricao =
+    descVal ??
+    v?.vendas_descrecao ??
+    v?.vendas_descricao ??
+    v?.descricao ??
+    null;
 
   out.push({
     administradora: g.administradora,

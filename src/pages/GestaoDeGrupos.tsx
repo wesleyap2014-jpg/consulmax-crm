@@ -625,6 +625,8 @@ type OfertaRow = {
   participantes: number | null;
   mediana: number | null;
   contemplados: number | null;
+  cliente: string | null;   // novo
+  descricao: string | null; // novo
 };
 
 function OverlayOfertaLance({

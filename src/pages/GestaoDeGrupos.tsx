@@ -670,67 +670,90 @@ function OverlayOfertaLance({
         gruposDigits.add(normalizeGroupDigits(g.codigo));
       });
 
-      // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
-      const { data: vds, error } = await supabase
-        .from("vendas")
-        .select(`
-  administradora,
-  grupo,
-  cota,
-  status,
-  contemplada,
-  vendas_descrecao,
-  leads:leads!vendas_lead_id_fkey ( nome )
-`)
-        .eq("status", "encarteirada")
-        .eq("contemplada", false)
-        .in("grupo", Array.from(gruposDigits));
+     // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos
+// ATENÇÃO: ajuste o nome da coluna de FK para o lead, se necessário (lead_id / cliente_id / etc.)
+// e ajuste o nome da coluna da descrição, se for "vendas_descricao".
+const { data: vds, error } = await supabase
+  .from("vendas")
+  .select(`
+    administradora,
+    grupo,
+    cota,
+    status,
+    contemplada,
+    lead_id,             -- << ajuste se o nome for diferente
+    vendas_descrecao     -- << ajuste se sua coluna for "vendas_descricao"
+  `)
+  .eq("status", "encarteirada")
+  .eq("contemplada", false)
+  .in("grupo", Array.from(gruposDigits));
 
-      if (error) throw error;
+if (error) throw error;
 
-      // 3) montar linhas por cota
-      const out: OfertaRow[] = [];
-      (vds ?? []).forEach((v: any) => {
-        const adm = normalizeAdmin(v.administradora);
-        const grpDigits = normalizeGroupDigits(v.grupo);
-        const k = keyDigits(adm, grpDigits);
-        const g = mapByKey.get(k);
-        if (!g) return; // ignora venda de grupo cuja assembleia != data
+// 2b) resolver nomes dos leads sem usar embed (evita exigir FK no PostgREST)
+const leadIds = Array.from(
+  new Set(
+    (vds ?? [])
+      .map((v: any) => v?.lead_id)
+      .filter((x: any) => x != null)
+  )
+);
 
-        const asm = lastAsmByGroup.get(g.id);
-        const med =
-          asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
-        const contem =
-          (asm?.fixed25_deliveries || 0) +
-          (asm?.fixed50_deliveries || 0) +
-          (asm?.ll_deliveries || 0);
+let nomesById = new Map<string, string>();
+if (leadIds.length > 0) {
+  const { data: leadsData, error: errLeads } = await supabase
+    .from("leads")
+    .select("id, nome")
+    .in("id", leadIds);
 
-        const bilhetes = g.prox_sorteio
-          ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null
-          : null;
-        const ref = referenciaPorAdministradora({
-          administradora: g.administradora,
-          participantes: g.participantes,
-          bilhetes,
-        });
+  if (errLeads) throw errLeads;
+  (leadsData ?? []).forEach((l: any) => {
+    nomesById.set(String(l.id), l.nome ?? "");
+  });
+}
 
-        // campos novos com fallback defensivo
-        const cliente = v?.cliente ?? v?.leads_nome ?? null;
-        const descricao =
-          v?.descricao ?? v?.vendas_descrecao ?? v?.vendas_descricao ?? null;
+// 3) montar linhas por cota
+const out: OfertaRow[] = [];
+(vds ?? []).forEach((v: any) => {
+  const adm = normalizeAdmin(v.administradora);
+  const grpDigits = normalizeGroupDigits(v.grupo);
+  const k = keyDigits(adm, grpDigits);
+  const g = mapByKey.get(k);
+  if (!g) return; // ignora venda de grupo cuja assembleia != data
 
-        out.push({
-          administradora: g.administradora,
-          grupo: normalizeGroupDigits(g.codigo),
-          cota: v.cota != null ? String(v.cota) : null,
-          referencia: ref,
-          participantes: g.participantes,
-          mediana: med,
-          contemplados: contem,
-          cliente,
-          descricao,
-        });
-      }); // << fecha o forEach
+  const asm = lastAsmByGroup.get(g.id);
+  const med =
+    asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
+  const contem =
+    (asm?.fixed25_deliveries || 0) +
+    (asm?.fixed50_deliveries || 0) +
+    (asm?.ll_deliveries || 0);
+
+  const bilhetes = g.prox_sorteio
+    ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null
+    : null;
+  const ref = referenciaPorAdministradora({
+    administradora: g.administradora,
+    participantes: g.participantes,
+    bilhetes,
+  });
+
+  // nome do cliente resolvido pelo Map; descrição direto da venda
+  const cliente = v?.lead_id != null ? (nomesById.get(String(v.lead_id)) ?? null) : null;
+  const descricao = v?.vendas_descrecao ?? v?.vendas_descricao ?? v?.descricao ?? null;
+
+  out.push({
+    administradora: g.administradora,
+    grupo: normalizeGroupDigits(g.codigo),
+    cota: v.cota != null ? String(v.cota) : null,
+    referencia: ref,
+    participantes: g.participantes,
+    mediana: med,
+    contemplados: contem,
+    cliente,
+    descricao,
+  });
+});
 
       // 4) ordenação estável
       out.sort((a, b) => {

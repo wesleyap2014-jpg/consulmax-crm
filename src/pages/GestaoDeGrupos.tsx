@@ -1001,14 +1001,14 @@ const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
       byKey.set(keyDigits(gr.administradora, gr.codigo), gr);
     }
 
-    // 2) vendas encarteiradas e não contempladas -> apenas p/ garantir stubs
-    const { data: vend, error: vErr } = await supabase
-      .from("vendas")
-      .select("administradora, segmento, grupo, status, contemplada")
-      .eq("status", "encarteirada")
-      .eq("contemplada", false);
+   // 2) vendas (inclui encarteiradas não contempladas OU quaisquer contempladas)
+// mantém grupos na gestão mesmo se todas as cotas estiverem contempladas
+const { data: vend, error: vErr } = await supabase
+  .from("vendas")
+  .select("administradora, segmento, grupo, status, contemplada")
+  .or("and(status.eq.encarteirada,contemplada.eq.false),contemplada.eq.true");
 
-    if (vErr) console.error(vErr);
+if (vErr) console.error(vErr);
 
     const distinct = new Map<string, { administradora: string; segmento: string; grupo: string }>();
     (vend || []).forEach((v: any) => {

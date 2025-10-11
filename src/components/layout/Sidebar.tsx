@@ -18,6 +18,11 @@ import {
   BarChart3,
 } from 'lucide-react'
 
+type SidebarProps = {
+  /** Chamado ao navegar para fechar o drawer no mobile */
+  onNavigate?: () => void
+}
+
 // ordem ajustada
 const items = [
   { to: '/leads', label: 'Leads', icon: Users },
@@ -38,7 +43,7 @@ const FALLBACK_URL = '/favicon.ico?v=3'
 
 type AdminRow = { id: string; name: string; slug: string | null }
 
-export default function Sidebar() {
+export default function Sidebar({ onNavigate }: SidebarProps) {
   const location = useLocation()
   const simuladoresActive = useMemo(
     () => location.pathname.startsWith('/simuladores'),
@@ -50,9 +55,14 @@ export default function Sidebar() {
     setSimGroupOpen(simuladoresActive)
   }, [simuladoresActive])
 
+  // ✅ fecha o drawer ao mudar de rota (útil quando a navegação vem de fora do clique)
+  useEffect(() => {
+    onNavigate?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname])
+
   // ✅ lista dinâmica de administradoras
   const [admins, setAdmins] = useState<AdminRow[]>([])
-
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -78,7 +88,11 @@ export default function Sidebar() {
   return (
     <aside className="w-64 bg-white shadow h-[calc(100vh-56px)] sticky top-14 p-3">
       {/* Cabeçalho com logo */}
-      <Link to="/leads" className="flex items-center gap-3 mb-6 px-2">
+      <Link
+        to="/leads"
+        className="flex items-center gap-3 mb-6 px-2"
+        onClick={() => onNavigate?.()}
+      >
         <img
           src={LOGO_URL}
           alt="Consulmax"
@@ -140,6 +154,7 @@ export default function Sidebar() {
                                 : 'hover:bg-consulmax-neutral'
                             }`
                           }
+                          onClick={() => onNavigate?.()}
                         >
                           {ad.name}
                         </NavLink>
@@ -156,6 +171,7 @@ export default function Sidebar() {
                             : 'hover:bg-consulmax-neutral'
                         }`
                       }
+                      onClick={() => onNavigate?.()}
                     >
                       Embracon
                     </NavLink>
@@ -171,6 +187,7 @@ export default function Sidebar() {
                           : 'hover:bg-consulmax-neutral'
                       }`
                     }
+                    onClick={() => onNavigate?.()}
                   >
                     + Add Administradora
                   </NavLink>
@@ -188,6 +205,7 @@ export default function Sidebar() {
                       : 'hover:bg-consulmax-neutral'
                   }`
                 }
+                onClick={() => onNavigate?.()}
               >
                 <i.icon className="h-4 w-4" />
                 {i.label}
@@ -204,6 +222,7 @@ export default function Sidebar() {
                     : 'hover:bg-consulmax-neutral'
                 }`
               }
+              onClick={() => onNavigate?.()}
             >
               <i.icon className="h-4 w-4" />
               {i.label}

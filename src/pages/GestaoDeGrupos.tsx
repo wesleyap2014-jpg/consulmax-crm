@@ -798,49 +798,53 @@ const out: OfertaRow[] = [];
   const total = linhas.length;
   const ymd = toYMD(dataAsm);
   const dataLegivel = formatBR(ymd);
+  const geradoEm = new Date().toLocaleString("pt-BR");
 
   const win = window.open("", "_blank", "width=1200,height=800");
   if (!win) return;
 
   const css = `<style>
-    /* Força orientação horizontal na impressão */
-    @page {
-      size: A4 landscape;
-      margin: 12mm;
-    }
+    @page { size: A4 landscape; margin: 12mm; }
     @media print {
       html, body { height: auto; }
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      /* Repete o thead a cada página */
       thead { display: table-header-group; }
-      tfoot { display: table-row-group; }
       tr { page-break-inside: avoid; }
+      .footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 11px; color: #666; }
     }
 
-    body{font-family:Arial,Helvetica,sans-serif;padding:24px}
-    h1{margin:0 0 12px}
-    .meta{margin-bottom:8px;font-size:12px;color:#666}
+    body{font-family: Arial, Helvetica, sans-serif; padding: 24px}
+    h1{margin: 0 0 12px; font-size: 26px}
+    .meta{margin-bottom: 8px; font-size: 12px; color: #666}
 
-    table{width:100%;border-collapse:collapse;margin-top:12px;table-layout:fixed}
-    th,td{border:1px solid #e5e7eb;padding:8px;font-size:12px;vertical-align:top;word-wrap:break-word}
-    th{text-align:left}
+    table{width:100%; border-collapse: collapse; margin-top: 12px; table-layout: fixed}
+    th,td{border:1px solid #e6e6e6; padding: 7px 8px; font-size: 12px; vertical-align: top; word-wrap: break-word}
+    th{text-align:left; background:#fafafa; border-color:#e1e1e1}
 
-    /* Colunas um pouco mais confortáveis em landscape */
-    th:nth-child(1), td:nth-child(1) { width: 14%; } /* Administradora */
+    /* Zebra na linha principal de cada registro (1ª linha; a 2ª é a descrição) */
+    tbody tr:nth-child(4n+1),
+    tbody tr:nth-child(4n+3) { background:#fbfbfb; }
+    /* Observação: como cada cota tem 2 linhas, o padrão 2x2 mantém o par junto. */
+
+    /* Colunas: larguras e alinhamento numérico */
+    th:nth-child(1), td:nth-child(1) { width: 15%; } /* Administradora */
     th:nth-child(2), td:nth-child(2) { width: 10%; } /* Grupo */
     th:nth-child(3), td:nth-child(3) { width: 8%;  } /* Cota */
-    th:nth-child(4), td:nth-child(4) { width: 18%; } /* Cliente */
-    th:nth-child(5), td:nth-child(5) { width: 10%; } /* Referência */
-    th:nth-child(6), td:nth-child(6) { width: 10%; } /* Participantes */
-    th:nth-child(7), td:nth-child(7) { width: 10%; } /* Mediana */
-    th:nth-child(8), td:nth-child(8) { width: 10%; } /* Contemplados */
+    th:nth-child(4), td:nth-child(4) { width: 20%; } /* Cliente */
+    th:nth-child(5), td:nth-child(5) { width: 10%; text-align: right; } /* Referência */
+    th:nth-child(6), td:nth-child(6) { width: 10%; text-align: right; } /* Participantes */
+    th:nth-child(7), td:nth-child(7) { width: 10%; text-align: right; } /* Mediana */
+    th:nth-child(8), td:nth-child(8) { width: 10%; text-align: right; } /* Contemplados */
 
-    /* Linha de descrição (a segunda) ocupando a largura toda */
-    .descricao-row td { font-size: 11px; color:#444; }
+    /* Linha de descrição (segunda linha) com estilo sutil e sem borda superior pesada */
+    .descricao-row td { font-size: 11px; color:#444; border-top-color:#f0f0f0; }
     .descricao-label { font-weight:600; color:#111; margin-right:6px; }
+
+    /* Espaço extra entre blocos (após a linha de descrição) */
+    tbody tr.descricao-row td { padding-bottom: 10px; }
   </style>`;
 
-  // Reaproveita o conteúdo do grid (thead + tbody), mantendo a linha de descrição
+  // Monta a tabela reaproveitando o corpo atual
   const tableHTML = `
     <table>
       <thead>
@@ -866,8 +870,28 @@ const out: OfertaRow[] = [];
         <h1>Oferta de Lance</h1>
         <div class="meta">Data da Assembleia: ${dataLegivel} • Total de cotas: ${total}</div>
         ${tableHTML}
+        <div class="footer">Gerado em ${geradoEm}</div>
+
         <script>
-          // Garante que só imprime após renderizar
+          // 1) Marca a segunda linha (descrição) com classe p/ estilização
+          Array.from(document.querySelectorAll("tbody tr")).forEach(function(tr, idx){
+            // linha de descrição são as pares do par de cada item (no HTML atual vem exatamente assim)
+            if ((idx % 2) === 1) tr.classList.add("descricao-row");
+          });
+
+          // 2) Oculta "Descrição: —" (linhas sem conteúdo útil)
+          Array.from(document.querySelectorAll("tbody tr.descricao-row td")).forEach(function(td){
+            var txt = (td.textContent || "").trim();
+            // esconde se a célula começa com "Descrição:" e termina em "—"
+            if (/^Descrição:\\s*—\\s*$/.test(txt)) {
+              td.parentElement.style.display = "none";
+            } else {
+              // dá um destaque leve ao rótulo "Descrição:"
+              td.innerHTML = td.innerHTML.replace(/^\\s*Descrição:\\s*/,'<span class="descricao-label">Descrição:</span>');
+            }
+          });
+
+          // 3) Só imprime quando renderizado
           window.addEventListener('load', function () {
             window.print();
             setTimeout(function(){ window.close(); }, 300);

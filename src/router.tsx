@@ -1,7 +1,6 @@
 // src/router.tsx
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 
-import App from './App'
 import Login from './pages/Login'
 import Leads from './pages/Leads'
 import Oportunidades from './pages/Oportunidades'
@@ -27,6 +26,9 @@ import Comissoes from './pages/Comissoes' // 👈 NOVO
 // ✅ página real de adicionar administradora
 import AdicionarAdministradora from './pages/AdicionarAdministradora'
 
+// ✅ Layout com header móvel + drawer
+import LayoutShell from './components/layout/LayoutShell'
+
 // ====== Rotas ======
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -35,8 +37,10 @@ export const router = createBrowserRouter([
     element: <RequireAuth />,
     children: [
       { path: 'alterar-senha', element: <AlterarSenha /> },
+
+      // ⬇️ Envolvemos todas as páginas autenticadas no LayoutShell
       {
-        element: <App />,
+        element: <LayoutShell />,
         children: [
           { index: true, element: <Navigate to="/leads" replace /> },
 
@@ -50,14 +54,10 @@ export const router = createBrowserRouter([
           {
             path: 'simuladores',
             children: [
-              // índice de simuladores (pode mostrar instruções/lista)
-              { index: true, element: <Simuladores /> },              // /simuladores
-              // compatibilidade com rota fixa da Embracon
-              { path: 'embracon', element: <Simuladores /> },          // /simuladores/embracon
-              // adicionar administradora
-              { path: 'add', element: <AdicionarAdministradora /> },   // /simuladores/add
-              // ✅ dinâmica por slug **ou** id
-              { path: ':adminKey', element: <Simuladores /> },         // /simuladores/:adminKey
+              { index: true, element: <Simuladores /> },                 // /simuladores
+              { path: 'embracon', element: <Simuladores /> },             // /simuladores/embracon
+              { path: 'add', element: <AdicionarAdministradora /> },      // /simuladores/add
+              { path: ':adminKey', element: <Simuladores /> },            // /simuladores/:adminKey
             ],
           },
 

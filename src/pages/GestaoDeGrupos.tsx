@@ -712,21 +712,20 @@ function OverlayOfertaLance({
         });
 
         // campos novos com fallback defensivo
-        const cliente = v?.cliente ?? v?.leads_nome ?? null;
-        const descricao = v?.descricao ?? v?.vendas_descrecao ?? v?.vendas_descricao ?? null;
+        const cliente = (v as any).cliente ?? v.leads_nome ?? null;
+const descricao = (v as any).descricao ?? v.vendas_descrecao ?? v.descricao ?? null;
 
-        out.push({
-          administradora: g.administradora,
-          grupo: normalizeGroupDigits(g.codigo),
-          cota: v.cota != null ? String(v.cota) : null,
-          referencia: ref,
-          participantes: g.participantes,
-          mediana: med,
-          contemplados: contem,
-          cliente,
-          descricao,
-        });
-      });
+out.push({
+  administradora: g.administradora,
+  grupo: normalizeGroupDigits(g.codigo),
+  cota: v.cota != null ? String(v.cota) : null,
+  referencia: ref,
+  participantes: g.participantes,
+  mediana: med,
+  contemplados: contem,
+  cliente,      // novo
+  descricao,    // novo
+});
 
       // 4) ordenação estável
       out.sort((a, b) => {

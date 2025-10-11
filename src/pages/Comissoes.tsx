@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import TableScroll from "@/components/ui/TableScroll";
 
 /* ========================= Tipos ========================= */
 type UUID = string;

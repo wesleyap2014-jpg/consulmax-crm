@@ -774,14 +774,43 @@ const out: OfertaRow[] = [];
 });
 
       // 4) ordenação estável
-      out.sort((a, b) => {
-        const aa = a.administradora.localeCompare(b.administradora);
-        if (aa !== 0) return aa;
-        const gg = a.grupo.localeCompare(b.grupo);
-        if (gg !== 0) return gg;
-        return String(a.cota ?? "").localeCompare(String(b.cota ?? ""));
-      });
+      // 4) ordenação: 1º Cliente (A–Z), depois Administradora, Grupo, Cota
+function normName(s?: string | null) {
+  return stripAccents(String(s ?? "")).toLowerCase().trim();
+}
+function cmpNumLike(a: string | number | null, b: string | number | null) {
+  const sa = String(a ?? "");
+  const sb = String(b ?? "");
+  const na = parseInt(sa.replace(/\D+/g, ""), 10);
+  const nb = parseInt(sb.replace(/\D+/g, ""), 10);
+  const aIsNum = !Number.isNaN(na);
+  const bIsNum = !Number.isNaN(nb);
+  if (aIsNum && bIsNum && na !== nb) return na - nb;
+  return sa.localeCompare(sb);
+}
 
+out.sort((a, b) => {
+  // 1) Cliente (nomes vazios vão para o fim)
+  const ca = normName(a.cliente);
+  const cb = normName(b.cliente);
+  if (ca && cb) {
+    const c = ca.localeCompare(cb);
+    if (c !== 0) return c;
+  } else if (ca && !cb) return -1;
+  else if (!ca && cb) return 1;
+
+  // 2) Administradora
+  const adm = String(a.administradora).localeCompare(String(b.administradora));
+  if (adm !== 0) return adm;
+
+  // 3) Grupo (numérico quando possível)
+  const grp = cmpNumLike(a.grupo, b.grupo);
+  if (grp !== 0) return grp;
+
+  // 4) Cota (numérica quando possível)
+  return cmpNumLike(a.cota, b.cota);
+});
+      
       setLinhas(out);
     } catch (e: any) {
       console.error(e);

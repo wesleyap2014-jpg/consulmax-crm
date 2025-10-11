@@ -1925,63 +1925,65 @@ async function downloadReceiptPDFPorData() {
     </CardTitle>
   </CardHeader>
   {showVendasSem && (
-    <CardContent className="overflow-x-auto">
-      <table className="min-w-[1100px] w-full text-sm">
-        <thead>
-          <tr className="bg-gray-50">
-            <th className="p-2 text-left">Data</th>
-            <th className="p-2 text-left">Vendedor</th>
-            <th className="p-2 text-left">Cliente</th>
-            <th className="p-2 text-left">Nº Proposta</th>
-            <th className="p-2 text-left">Administradora</th>
-            <th className="p-2 text-left">Segmento</th>
-            <th className="p-2 text-left">Tabela</th>
-            <th className="p-2 text-right">Crédito</th>
-            <th className="p-2 text-left">Ação</th>
+   <CardContent>
+  <TableScroll minWidth={1100}>
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="bg-gray-50">
+          <th className="p-2 text-left">Data</th>
+          <th className="p-2 text-left">Vendedor</th>
+          <th className="p-2 text-left">Cliente</th>
+          <th className="p-2 text-left">Nº Proposta</th>
+          <th className="p-2 text-left">Administradora</th>
+          <th className="p-2 text-left">Segmento</th>
+          <th className="p-2 text-left">Tabela</th>
+          <th className="p-2 text-right">Crédito</th>
+          <th className="p-2 text-left">Ação</th>
+        </tr>
+      </thead>
+      <tbody>
+        {vendasSemCom.length === 0 && (
+          <tr>
+            <td colSpan={9} className="p-3 text-gray-500">
+              Sem pendências 🎉
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {vendasSemCom.length === 0 && (
-            <tr>
-              <td colSpan={9} className="p-3 text-gray-500">
-                Sem pendências 🎉
+        )}
+        {vendasSemCom.map((v) => {
+          const clienteId = v.lead_id || v.cliente_lead_id || "";
+          return (
+            <tr key={v.id} className="border-b">
+              <td className="p-2">{formatISODateBR(v.data_venda)}</td>
+              <td className="p-2">{userLabel(v.vendedor_id)}</td>
+              <td className="p-2">
+                {(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}
+              </td>
+              <td className="p-2">{v.numero_proposta || "—"}</td>
+              <td className="p-2">{v.administradora || "—"}</td>
+              <td className="p-2">{v.segmento || "—"}</td>
+              <td className="p-2">{v.tabela || "—"}</td>
+              <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
+              <td className="p-2">
+                <Button
+                  size="sm"
+                  onClick={() => gerarComissaoDeVenda(v)}
+                  disabled={genBusy === v.id}
+                >
+                  {genBusy === v.id ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <PlusCircle className="w-4 h-4 mr-1" />
+                  )}
+                  Gerar Comissão
+                </Button>
               </td>
             </tr>
-          )}
-          {vendasSemCom.map((v) => {
-            const clienteId = v.lead_id || v.cliente_lead_id || "";
-            return (
-              <tr key={v.id} className="border-b">
-                <td className="p-2">{formatISODateBR(v.data_venda)}</td>
-                <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                <td className="p-2">
-                  {(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}
-                </td>
-                <td className="p-2">{v.numero_proposta || "—"}</td>
-                <td className="p-2">{v.administradora || "—"}</td>
-                <td className="p-2">{v.segmento || "—"}</td>
-                <td className="p-2">{v.tabela || "—"}</td>
-                <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
-                <td className="p-2">
-                  <Button
-                    size="sm"
-                    onClick={() => gerarComissaoDeVenda(v)}
-                    disabled={genBusy === v.id}
-                  >
-                    {genBusy === v.id ? (
-                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                    ) : (
-                      <PlusCircle className="w-4 h-4 mr-1" />
-                    )}
-                    Gerar Comissão
-                  </Button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </CardContent>
+          );
+        })}
+      </tbody>
+    </table>
+  </TableScroll>
+</CardContent>
   )}
 </Card>
 

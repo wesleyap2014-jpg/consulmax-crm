@@ -1,9 +1,9 @@
 // src/components/layout/Sidebar.tsx
 import { NavLink, Link, useLocation } from 'react-router-dom'
-import { useMemo, useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabaseClient' // ✅ Supabase para listar administradoras
+import { useMemo, useState, useEffect, useId } from 'react'
+import { supabase } from '@/lib/supabaseClient'
 
-// 👇 Ícones do lucide-react
+// Ícones
 import {
   Users,
   UserCheck,
@@ -50,43 +50,60 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     [location.pathname]
   )
 
+  // id para aria-controls do grupo
+  const simListId = useId()
+
   const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive)
   useEffect(() => {
     setSimGroupOpen(simuladoresActive)
   }, [simuladoresActive])
 
-  // ✅ fecha o drawer ao mudar de rota (útil quando a navegação vem de fora do clique)
+  // fecha o drawer ao mudar de rota (caso a navegação venha por atalho/redirect)
   useEffect(() => {
     onNavigate?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname])
 
-  // ✅ lista dinâmica de administradoras
+  // lista dinâmica de administradoras
   const [admins, setAdmins] = useState<AdminRow[]>([])
+  const [adminsLoading, setAdminsLoading] = useState(false)
+
   useEffect(() => {
     let alive = true
     ;(async () => {
+      setAdminsLoading(true)
       const { data, error } = await supabase
         .from('sim_admins')
-        .select('id, name, slug') // ✅ pega o slug
+        .select('id, name, slug')
         .order('name', { ascending: true })
 
       if (!alive) return
       if (error) {
         console.error('Erro ao carregar administradoras:', error.message)
         setAdmins([])
-        return
+      } else {
+        setAdmins(data ?? [])
       }
-      setAdmins(data ?? [])
+      setAdminsLoading(false)
     })()
-    return () => {
-      alive = false
-    }
+    return () => { alive = false }
     // refaz a busca quando navegar dentro de simuladores (ex.: add / novo id ou slug)
   }, [location.pathname])
 
   return (
-    <aside className="w-64 bg-white shadow h-[calc(100vh-56px)] sticky top-14 p-3">
+    <aside
+      className="
+        md:w-64 w-full bg-white border-r
+        md:shadow
+        md:sticky md:top-14
+        h-[calc(100vh-56px)]
+        p-3
+        overflow-y-auto
+        pb-[max(env(safe-area-inset-bottom),theme(spacing.3))]
+      "
+      role="navigation"
+      aria-label="Navegação principal"
+    >
       {/* Cabeçalho com logo */}
       <Link
         to="/leads"
@@ -101,15 +118,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           height={40}
           loading="eager"
           className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).src = FALLBACK_URL
-          }}
+          onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_URL }}
         />
         <div className="flex flex-col leading-tight">
           <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
-          <span className="text-xs text-consulmax-secondary">
-            Maximize as suas conquistas
-          </span>
+          <span className="text-xs text-consulmax-secondary">Maximize as suas conquistas</span>
         </div>
       </Link>
 
@@ -123,24 +136,32 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
               <button
                 type="button"
                 onClick={() => setSimGroupOpen((v) => !v)}
-                className={`w-full text-left px-3 py-2 rounded-2xl transition-colors flex items-center justify-between ${
-                  simuladoresActive
-                    ? 'bg-consulmax-primary text-white'
-                    : 'hover:bg-consulmax-neutral'
-                }`}
+                className={`
+                  w-full text-left px-3 py-2.5 rounded-2xl transition-colors
+                  flex items-center justify-between
+                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                  ${simuladoresActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
+                `}
                 aria-expanded={simGroupOpen}
+                aria-controls={simListId}
               >
                 <span className="flex items-center gap-2">
                   <Calculator className="h-4 w-4" />
                   Simuladores
                 </span>
-                <span className="text-xs opacity-80">{simGroupOpen ? '▾' : '▸'}</span>
+                <span className="text-xs opacity-80" aria-hidden>
+                  {simGroupOpen ? '▾' : '▸'}
+                </span>
               </button>
 
               {simGroupOpen && (
-                <div className="ml-6 grid gap-1 mt-1">
-                  {/* ✅ Lista dinâmica de administradoras (A→Z) com slug (fallback id) */}
-                  {admins.length > 0 ? (
+                <div id={simListId} className="ml-6 grid gap-1 mt-1">
+                  {/* Lista dinâmica de administradoras (A→Z) com slug (fallback id) */}
+                  {adminsLoading && (
+                    <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>
+                  )}
+
+                  {!adminsLoading && admins.length > 0 ? (
                     admins.map((ad) => {
                       const key = ad.slug || ad.id // usa slug quando houver
                       return (
@@ -148,11 +169,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                           key={ad.id}
                           to={`/simuladores/${key}`}
                           className={({ isActive }) =>
-                            `px-3 py-2 rounded-2xl transition-colors ${
-                              isActive
-                                ? 'bg-consulmax-primary text-white'
-                                : 'hover:bg-consulmax-neutral'
-                            }`
+                            `px-3 py-2.5 rounded-2xl transition-colors
+                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                             ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                           }
                           onClick={() => onNavigate?.()}
                         >
@@ -162,30 +181,28 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     })
                   ) : (
                     // Fallback se ainda não houver nenhuma cadastrada
-                    <NavLink
-                      to="/simuladores/embracon"
-                      className={({ isActive }) =>
-                        `px-3 py-2 rounded-2xl transition-colors ${
-                          isActive
-                            ? 'bg-consulmax-primary text-white'
-                            : 'hover:bg-consulmax-neutral'
-                        }`
-                      }
-                      onClick={() => onNavigate?.()}
-                    >
-                      Embracon
-                    </NavLink>
+                    !adminsLoading && (
+                      <NavLink
+                        to="/simuladores/embracon"
+                        className={({ isActive }) =>
+                          `px-3 py-2.5 rounded-2xl transition-colors
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                           ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                        }
+                        onClick={() => onNavigate?.()}
+                      >
+                        Embracon
+                      </NavLink>
+                    )
                   )}
 
                   {/* Botão para adicionar nova administradora */}
                   <NavLink
                     to="/simuladores/add"
                     className={({ isActive }) =>
-                      `px-3 py-2 rounded-2xl transition-colors ${
-                        isActive
-                          ? 'bg-consulmax-primary text-white'
-                          : 'hover:bg-consulmax-neutral'
-                      }`
+                      `px-3 py-2.5 rounded-2xl transition-colors
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                       ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                     }
                     onClick={() => onNavigate?.()}
                   >
@@ -199,11 +216,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 key={i.to}
                 to={i.to}
                 className={({ isActive }) =>
-                  `px-3 py-2 rounded-2xl transition-colors flex items-center gap-2 ${
-                    isActive
-                      ? 'bg-consulmax-primary text-white'
-                      : 'hover:bg-consulmax-neutral'
-                  }`
+                  `px-3 py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                 }
                 onClick={() => onNavigate?.()}
               >
@@ -216,11 +231,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
               key={i.to}
               to={i.to}
               className={({ isActive }) =>
-                `px-3 py-2 rounded-2xl transition-colors flex items-center gap-2 ${
-                  isActive
-                    ? 'bg-consulmax-primary text-white'
-                    : 'hover:bg-consulmax-neutral'
-                }`
+                `px-3 py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                 ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
               }
               onClick={() => onNavigate?.()}
             >

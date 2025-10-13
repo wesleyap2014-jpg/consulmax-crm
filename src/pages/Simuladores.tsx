@@ -1043,7 +1043,6 @@ Vantagens
               }}
               tabelaId={tabelaId}
               setTabelaId={setTabelaId}
-              {/* teto do embutido resolvido por Adm/Tabela */}
               embutCapMax={embutCapMax}
               credito={credito}
               setCredito={setCredito}

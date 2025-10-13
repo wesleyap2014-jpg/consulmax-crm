@@ -1666,6 +1666,22 @@ function EmbraconSimulator(p: EmbraconProps) {
     if (!leadOpen) setLeadQuery("");
   }, [leadOpen]);
 
+  // === Formas permitidas (prioriza Tabela; fallback: rules via formsAllowed; default: true)
+  const allowCheia =
+    (p.tabelaSelecionada?.contrata_parcela_cheia ??
+      p.formsAllowed?.parcela_cheia ??
+      true);
+
+  const allowRed25 =
+    (p.tabelaSelecionada?.contrata_reduzida_25 ??
+      p.formsAllowed?.red25 ??
+      true);
+
+  const allowRed50 =
+    (p.tabelaSelecionada?.contrata_reduzida_50 ??
+      p.formsAllowed?.red50 ??
+      true);
+
   return (
     <div className="space-y-6">
       {/* Lead */}

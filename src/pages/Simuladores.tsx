@@ -5,242 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X, Settings, ChevronsUpDown, Search } from "lucide-react";
-import { useParams, useLocation, useSearchParams, useNavigate } from "react-router-dom";
+import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
+import { useParams, useLocation, useSearchParams } from "react-router-dom";
+import { ChevronsUpDown, Search } from "lucide-react";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
-
-// ====== Enums TS (alinhados com os enums do banco) ======
-type FormsMode = "adm" | "table";
-type RedutorMode = "credito" | "valor_categoria";
-type BaseMode = "credito" | "valor_categoria" | "parcela_vigente";
-type LimitMode = "adm" | "table";
-
-// ====== Config padrão por Administradora (campos novos em sim_admins) ======
-type AdminCalcConfig = {
-  slug?: string | null;
-
-  // Formas de contratação
-  forms_mode?: FormsMode; // quem define as formas (adm|table)
-  forms_adm_parcela_cheia?: boolean | null;
-  forms_adm_red25?: boolean | null;
-  forms_adm_red50?: boolean | null;
-
-  // Redutor (parcela reduzida)
-  reductor_mode?: RedutorMode; // padrão da Adm
-  reductor_allow_table_override?: boolean | null;
-
-  // Lance embutido (cap e bases)
-  embut_cap_mode?: LimitMode; // quem define o teto do embutido (adm|table)
-  embut_cap_adm_pct?: number | null; // decimal 0..1
-  embut_base?: BaseMode; // base para embutido
-  embut_base_allow_table_override?: boolean | null;
-
-  // Lance ofertado (base %)
-  ofert_base?: BaseMode;
-  ofert_base_allow_table_override?: boolean | null;
-
-  // Limitador pós-contemplação
-  limit_enabled?: boolean | null;
-  limit_mode?: LimitMode; // quem define (%)
-  limit_adm_pct?: number | null; // decimal 0..1
-  limit_adm_base?: BaseMode | null;
-};
-
-// Expande o tipo Admin (sem quebrar o existente)
-type AdminFull = Admin & AdminCalcConfig;
-
-// ====== Overrides por Tabela (campos novos em sim_tables) ======
-type SimTableOverrides = {
-  // Formas de contratação (quando forms_mode="table")
-  forms_tbl_parcela_cheia?: boolean | null;
-  forms_tbl_red25?: boolean | null;
-  forms_tbl_red50?: boolean | null;
-
-  // Redutor
-  reductor_mode_override?: RedutorMode | null;
-
-  // Lance embutido / ofertado
-  embut_cap_override_pct?: number | null; // 0..1
-  embut_base_override?: BaseMode | null;
-  ofert_base_override?: BaseMode | null;
-
-  // Limitador pós
-  limit_pct_override?: number | null; // 0..1
-  limit_base_override?: BaseMode | null;
-};
-
-// Anexa overrides ao SimTable existente (todos opcionais)
-type SimTableWithOverrides = SimTable & SimTableOverrides;
-
-/* ========== Resolver de Regras (Adm -> Tabela [-> Grupo futuramente]) ========== */
-
-// Regras resolvidas e normalizadas para o motor de cálculo
-type RuleSet = {
-  // Formas de contratação efetivamente permitidas
-  forms: {
-    parcela_cheia: boolean;
-    red25: boolean;
-    red50: boolean;
-  };
-
-  // Redutor antes da contemplação
-  redutorMode: RedutorMode; // "credito" | "valor_categoria"
-
-  // Lance embutido
-  embutCapPct: number; // 0..1
-  embutBase: Exclude<BaseMode, "parcela_vigente">; // só "credito" | "valor_categoria"
-
-  // Lance ofertado
-  ofertBase: Exclude<BaseMode, "parcela_vigente">;
-
-  // Limitador pós-contemplação
-  limit: {
-    enabled: boolean;
-    pct?: number;         // 0..1
-    base?: BaseMode;      // "credito" | "valor_categoria" | "parcela_vigente"
-  };
-};
-
-function clamp01(n: number | null | undefined) {
-  const x = typeof n === "number" ? n : 0;
-  return Math.max(0, Math.min(1, x));
-}
-
-/**
- * resolveRules: aplica precedência e devolve a configuração final para cálculo.
- * Por enquanto: Adm -> Tabela. (Grupo/Segmento podem ser encaixados depois.)
- */
-function resolveRules(
-  admin: AdminFull | null | undefined,
-  table?: SimTableWithOverrides | null
-  // , groupRule?: GroupOverrides | null   // futuramente
-): RuleSet {
-  // 1) Defaults seguros (espelham comportamento atual)
-  let forms_parcela_cheia = true;
-  let forms_red25 = true;
-  let forms_red50 = true;
-
-  let redutorMode: RedutorMode = "valor_categoria";
-
-  let embutCapPct = 0.25;
-  let embutBase: Exclude<BaseMode, "parcela_vigente"> = "credito";
-
-  let ofertBase: Exclude<BaseMode, "parcela_vigente"> = "credito";
-
-  let limitEnabled = true;
-  let limitSource: LimitMode = "table";
-  let limitPct: number | undefined = undefined;
-  let limitBase: BaseMode | undefined = undefined;
-
-  // 2) Carrega padrão da Adm (se existir)
-  if (admin) {
-    // Formas (quem define)
-    const mode = admin.forms_mode ?? "table";
-    if (mode === "adm") {
-      forms_parcela_cheia = !!admin.forms_adm_parcela_cheia;
-      forms_red25 = !!admin.forms_adm_red25;
-      forms_red50 = !!admin.forms_adm_red50;
-    }
-    // Redutor
-    redutorMode = (admin.reductor_mode ?? "valor_categoria") as RedutorMode;
-
-    // Embutido: cap e base
-    // cap: quem define? (adm/table)
-    const capMode = (admin.embut_cap_mode ?? "adm") as LimitMode;
-    if (capMode === "adm") {
-      embutCapPct = clamp01(admin.embut_cap_adm_pct ?? 0.25);
-    } else {
-      // será resolvido pela tabela (se disponível); se não houver, cai no adm
-      embutCapPct = clamp01(admin.embut_cap_adm_pct ?? 0.25);
-    }
-    embutBase = ((admin.embut_base as BaseMode) ?? "credito") === "valor_categoria" ? "valor_categoria" : "credito";
-
-    // Ofertado: base %
-    ofertBase = ((admin.ofert_base as BaseMode) ?? "credito") === "valor_categoria" ? "valor_categoria" : "credito";
-
-    // Limitador pós
-    limitEnabled = !!admin.limit_enabled;
-    limitSource = (admin.limit_mode ?? "table") as LimitMode;
-    if (limitSource === "adm") {
-      limitPct = admin.limit_adm_pct ?? undefined;
-      limitBase = (admin.limit_adm_base as BaseMode) ?? undefined;
-    }
-  }
-
-  // 3) Aplica overrides da Tabela (quando existirem)
-  if (table) {
-    // Formas por Tabela (só quando o forms_mode não é "adm")
-    if ((admin?.forms_mode ?? "table") === "table") {
-      forms_parcela_cheia = table.forms_tbl_parcela_cheia ?? forms_parcela_cheia;
-      forms_red25 = table.forms_tbl_red25 ?? forms_red25;
-      forms_red50 = table.forms_tbl_red50 ?? forms_red50;
-    }
-
-    // Redutor: só se a Adm permitir override
-    if (admin?.reductor_allow_table_override && table.reductor_mode_override) {
-      redutorMode = table.reductor_mode_override;
-    }
-
-    // Embutido: cap e base
-    const capMode = (admin?.embut_cap_mode ?? "adm") as LimitMode;
-    if (capMode === "table") {
-      if (typeof table.embut_cap_override_pct === "number") {
-        embutCapPct = clamp01(table.embut_cap_override_pct);
-      }
-    }
-    if (admin?.embut_base_allow_table_override && table.embut_base_override) {
-      embutBase = table.embut_base_override === "valor_categoria" ? "valor_categoria" : "credito";
-    }
-
-    // Ofertado: base %
-    if (admin?.ofert_base_allow_table_override && table.ofert_base_override) {
-      ofertBase = table.ofert_base_override === "valor_categoria" ? "valor_categoria" : "credito";
-    }
-
-    // Limitador pós (quando source = table)
-    if (limitSource === "table") {
-      // Se a tabela trouxe %/base, consideramos que está habilitado
-      if (typeof table.limit_pct_override === "number" && table.limit_pct_override >= 0) {
-        limitPct = clamp01(table.limit_pct_override);
-        limitBase = (table.limit_base_override as BaseMode) ?? limitBase;
-        // se a Adm não desabilitou explicitamente, ativamos
-        limitEnabled = admin?.limit_enabled === false ? false : true;
-      }
-    }
-  }
-
-  // 4) Clamp e consistências finais
-  // – Embutido nunca passa de 25% por segurança (regra do negócio atual)
-  embutCapPct = Math.min(embutCapPct, 0.25);
-
-  // – Limitador: se não houver % definido, considera disabled (a menos que adm 'adm' tenha pct/base)
-  const limitHasPct =
-    (limitSource === "adm" && typeof limitPct === "number") ||
-    (limitSource === "table" && typeof limitPct === "number");
-  const limitFinalEnabled = limitEnabled && !!limitHasPct;
-
-  const rules: RuleSet = {
-    forms: {
-      parcela_cheia: !!forms_parcela_cheia,
-      red25: !!forms_red25,
-      red50: !!forms_red50,
-    },
-    redutorMode,
-    embutCapPct: embutCapPct,
-    embutBase,
-    ofertBase,
-    limit: {
-      enabled: limitFinalEnabled,
-      pct: limitFinalEnabled ? limitPct : undefined,
-      base: limitFinalEnabled ? (limitBase as BaseMode | undefined) : undefined,
-    },
-  };
-
-  return rules;
-}
-
 type UUID = string;
 
 type Lead = { id: UUID; nome: string; telefone?: string | null };
@@ -339,7 +109,7 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
+function calcularSimulacao(i: CalcInput) {
   const {
     credito: C,
     prazoVenda,
@@ -374,37 +144,12 @@ function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-  // Parcela base (SEM seguro) — considera o modo do redutor
+  // Parcela base (SEM seguro)
   const baseMensalSemSeguro =
-    rules?.redutorMode === "valor_categoria"
-      // Reduz o total (Crédito + Taxas) = Valor de Categoria
-      ? (valorCategoria * fundoComumFactor) / prazo
-      // (padrão Embracon) Reduz só o crédito e soma taxas por fora
-      : (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
+    (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
   // Seguro mensal (só soma na parcela, não abate saldo)
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
-
-  // === Bases auxiliares conforme regras (compatível com Embracon) ===
-  // Base para LANCE EMBUTIDO
-  const embutBaseAmount =
-    rules?.embutBase === "valor_categoria" ? valorCategoria : C;
-
-  // Base para % do LANCE OFERTADO
-  const ofertBaseAmount =
-    rules?.ofertBase === "valor_categoria" ? valorCategoria : C;
-
-  // Base do LIMITADOR pós-contemplação
-  // "parcela vigente" = parcela mensal em vigor até a contemplação (sem antecipação extra da 1ª/2ª)
-  const parcelaVigenteNaContemplacao = baseMensalSemSeguro + seguroMensal;
-
-  const limitBaseMode: BaseMode = (rules?.limit?.base as BaseMode) ?? "valor_categoria";
-  const limitBaseAmount =
-    limitBaseMode === "credito"
-      ? C
-      : limitBaseMode === "valor_categoria"
-      ? valorCategoria
-      : parcelaVigenteNaContemplacao; // "parcela_vigente"
 
   // Antecipação (somada nas primeiras 1 ou 2 parcelas)
   const antecipAdicionalCada =
@@ -421,15 +166,9 @@ function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
     baseMensalSemSeguro * parcelasPagas +
     antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
 
-  // === Lances (bases e tetos pelas regras) ===
-  // aplica o teto de embutido definido pelas regras (fallback 25%)
-  const embutPctEfetivo = clamp(lanceEmbutPct, 0, rules?.embutCapPct ?? 0.25);
-
-  // calcula valores com as bases resolvidas
-  const lanceEmbutidoValor = embutBaseAmount * embutPctEfetivo;
-  const lanceOfertadoValor = ofertBaseAmount * lanceOfertPct;
-
-  // lance próprio e novo crédito seguem a lógica atual
+  // Lances
+  const lanceOfertadoValor = C * lanceOfertPct;
+  const lanceEmbutidoValor = C * lanceEmbutPct;
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
@@ -442,31 +181,9 @@ function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
   // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
 
-  /* ===== Limitador pós-contemplação (regras) =====
-     Bases possíveis:
-     - "credito"          => % aplicado sobre C
-     - "valor_categoria"  => % aplicado sobre valorCategoria (C + taxas)
-     - "parcela_vigente"  => % aplicado sobre a parcela vigente na data da contemplação (parcelaAte)
-  */
-  const temLimit =
-    !!(rules?.limit?.enabled &&
-       typeof rules?.limit?.pct === "number" &&
-       rules?.limit?.pct! > 0 &&
-       rules?.limit?.base);
-
-  let parcelaLimitante = 0;
-
-  if (temLimit) {
-    const pct = rules!.limit!.pct!; // decimal 0..1
-    const baseValor =
-      rules!.limit!.base === "credito"
-        ? C
-        : rules!.limit!.base === "valor_categoria"
-        ? valorCategoria
-        : /* "parcela_vigente" */ parcelaAte;
-
-    parcelaLimitante = baseValor * pct;
-  }
+  // LIMITADOR (sobre valor de categoria)
+  const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
+  const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
 
   // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
   const manterParcela = isServico || (isMoto && C < 20000);
@@ -476,11 +193,11 @@ function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
 
   if (!manterParcela) {
     // regra padrão: se limitador for maior que a nova parcela, aplica limitador
-    if (temLimit && parcelaLimitante > novaParcelaSemLimite) {
+    if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
       aplicouLimitador = true;
       parcelaEscolhida = parcelaLimitante;
     } else {
-      // sem limitador (ou não supera): usa a própria novaParcelaSemLimite (mantém prazo)
+      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
       parcelaEscolhida = novaParcelaSemLimite;
     }
   }
@@ -580,105 +297,17 @@ export default function Simuladores() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams(); // se usa ?setup=1
   const setup = searchParams.get("setup") === "1";
-  const config = searchParams.get("config") === "1";
   const routeAdminId = id ?? null;
-  const navigate = useNavigate();
-
+  
   const [loading, setLoading] = useState(true);
-  const [admins, setAdmins] = useState<AdminFull[]>([]);
+  const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
-
-// loader do botão Salvar
-const [savingSim, setSavingSim] = useState(false);
-
-// handler real de salvar
-async function handleSaveSimulation() {
-  if (!leadId) {
-    alert("Escolha um lead antes de salvar.");
-    return;
-  }
-
-  try {
-    setSavingSim(true);
-
-    // ============ MONTE O SNAPSHOT DA SIMULAÇÃO ============
-    // Use as variáveis que você já tem na página. Exemplo:
-    const snapshot = {
-      admin_id: activeAdminId,                 // UUID da administradora ativa
-      admin_slug: activeAdmin?.slug ?? null,   // opcional
-      lead_id: leadId,                         // lead selecionado
-      table_id: activeTable?.id ?? null,       // se você tiver a tabela escolhida
-      group_no: groupNo || null,               // se tiver “Nº do grupo”
-      inputs: {
-        // COLOQUE aqui os campos de entrada relevantes do seu simulador
-        // ex.: credito: valorCredito, prazo: prazoMeses, forma: formaContratacao, ...
-      },
-      outputs: {
-        // COLOQUE aqui o que você mostra na “Memória de Cálculo” / Resumo
-        // ex.: parcela: parcelaFinal, total: totalContrato, etc.
-      },
-      created_at: new Date().toISOString(),
-    };
-
-    // ============ PERSISTIR NO BANCO ============
-    // Ajuste o nome da tabela para a que você usa no seu backend.
-    // Se sua guia “Propostas” lê de `propostas`, salve nela.
-    const { data, error } = await supabase
-      .from("propostas") // ou "proposals", se seu schema estiver em inglês
-      .insert([
-        {
-          lead_id: snapshot.lead_id,
-          admin_id: snapshot.admin_id,
-          table_id: snapshot.table_id,
-          group_no: snapshot.group_no,
-          payload: snapshot,        // JSON completo da simulação
-        },
-      ])
-      .select("id")
-      .single();
-
-    if (error) throw error;
-
-    // navegue para a guia/lista de propostas (ajuste a rota se necessário)
-    // Se você tem rota de detalhe: navigate(`/propostas/${data.id}`)
-    navigate("/propostas");
-  } catch (e: any) {
-    alert("Falha ao salvar: " + (e?.message ?? String(e)));
-  } finally {
-    setSavingSim(false);
-  }
-}
-
-  // converte a chave da rota (uuid OU slug) para o UUID da admin
-function resolveAdminIdFromRoute(
-  key: string | null | undefined,
-  list: AdminFull[]
-): string | null {
-  if (!key) return null;
-  const k = key.toLowerCase();
-  const byId = list.find(a => a.id === key);
-  if (byId) return byId.id;
-  const bySlug = list.find(a => (a.slug ?? "").toLowerCase() === k);
-  return bySlug ? bySlug.id : null;
-}
-
-useEffect(() => {
-  if (!routeAdminId) {
-    setActiveAdminId(null);
-    return;
-  }
-  // casa por id OU por slug (case-insensitive por segurança)
-  const match = admins.find(
-    (ad) =>
-      ad.id === routeAdminId ||
-      (ad.slug && ad.slug.toLowerCase() === routeAdminId.toLowerCase())
-  );
-
-  // fixa sempre o ID real quando houver match; senão mantém a chave da rota
-  setActiveAdminId(match?.id ?? routeAdminId);
-}, [routeAdminId, admins]);
+  
+  useEffect(() => {
+  setActiveAdminId(routeAdminId);
+}, [routeAdminId]);
 
 useEffect(() => {
   if (!routeAdminId && !activeAdminId && admins.length) {
@@ -688,24 +317,6 @@ useEffect(() => {
 
 const [mgrOpen, setMgrOpen] = useState(false);
 
-// === Configuração de Administradora (modal) ===
-const [admCfgOpen, setAdmCfgOpen] = useState(false);
-const [adminCfgTarget, setAdminCfgTarget] = useState<AdminFull | null>(null);
-
-function openAdminCfg(adm: AdminFull) {
-  setAdminCfgTarget(adm);
-  setAdmCfgOpen(true);
-}
-function closeAdminCfg() {
-  setAdmCfgOpen(false);
-  setAdminCfgTarget(null);
-}
-function handleAdminCfgSaved(updated: AdminFull) {
-  setAdmins(prev =>
-    prev.map(a => (a.id === updated.id ? { ...a, ...updated } as AdminFull : a))
-  );
-  closeAdminCfg();
-}
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -747,33 +358,22 @@ const showTopChips = false;     // ou pathname === "/simuladores"
     (async () => {
       setLoading(true);
       const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
-  supabase.from("sim_admins").select(`
-    id, name,
-    slug,
-    forms_mode,
-    forms_adm_parcela_cheia, forms_adm_red25, forms_adm_red50,
-    reductor_mode, reductor_allow_table_override,
-    embut_cap_mode, embut_cap_adm_pct, embut_base, embut_base_allow_table_override,
-    ofert_base, ofert_base_allow_table_override,
-    limit_enabled, limit_mode, limit_adm_pct, limit_adm_base
-  `).order("name", { ascending: true }),
-  supabase.from("sim_tables").select("*"),
-  supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
-]);
-
-setAdmins((a ?? []) as AdminFull[]);
+        supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+        supabase.from("sim_tables").select("*"),
+        supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
+      ]);
+     setAdmins(a ?? []);
 setTables(t ?? []);
 setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-// 1) Se a URL tiver um id/slug, resolva para o UUID e priorize SEMPRE ele
-let nextActiveId = resolveAdminIdFromRoute(adminId, (a ?? []) as AdminFull[]);
+// 1) padrão: Embracon > ou o primeiro da lista
+const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
+let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
 
-// 2) Se não tiver id/slug válido, tente Embracon; senão a primeira
-if (!nextActiveId) {
-  const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-  nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+// 2) se a URL tiver um adminId válido, priorize ele
+if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
+  nextActiveId = adminId as string;
 }
-
 setActiveAdminId(nextActiveId);
 
 // 3) terminou o loading
@@ -806,24 +406,6 @@ if (openSetup) {
     setLeadInfo(found ? { nome: found.nome, telefone: found.telefone } : null);
   }, [leadId, leads]);
 
-const activeAdmin = useMemo(() => {
-  const key = activeAdminId;
-  if (!key) return undefined;
-  return admins.find((a) => a.id === key || (a.slug && a.slug === key));
-}, [admins, activeAdminId]);
-const activeAdminFull = activeAdmin as AdminFull | undefined;
-
-// Abre "Configurar Administradora" só quando a ativa coincide com a da rota e ?config=1
-useEffect(() => {
-  if (loading) return;             // espere dados carregarem
-  if (!config) return;             // precisa de ?config=1
-  if (!routeAdminId) return;       // precisa ter admin na URL (id ou slug resolvido)
-  if (activeAdminId !== routeAdminId) return; // só quando ativa = rota
-  if (activeAdminFull) {
-    openAdminCfg(activeAdminFull);
-  }
-}, [loading, config, routeAdminId, activeAdminId, activeAdminFull]);
-  
   const adminTables = useMemo(
     () => tables.filter((t) => t.admin_id === activeAdminId),
     [tables, activeAdminId]
@@ -849,14 +431,6 @@ useEffect(() => {
     [tables, tabelaId]
   );
 
-  // Regras resolvidas (precedência: Adm -> Tabela)
-const rules = useMemo(() => {
-  return resolveRules(
-    activeAdminFull || null,
-    (tabelaSelecionada as SimTableWithOverrides) || null
-  );
-}, [activeAdminFull, tabelaSelecionada]);
-
   useEffect(() => {
     if (!tabelaSelecionada) return;
     setPrazoAte(tabelaSelecionada.prazo_limite);
@@ -870,14 +444,12 @@ const rules = useMemo(() => {
       setForma("Parcela Cheia");
   }, [tabelaSelecionada]); // eslint-disable-line
 
-// valida % embutido com teto resolvido (Adm/Tabela)
-const embutCapMax = rules?.embutCapPct ?? 0.25;
-const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, embutCapMax);
-useEffect(() => {
-  if (lanceEmbutPct !== lanceEmbutPctValid) {
-    setLanceEmbutPct(lanceEmbutPctValid);
-  }
-}, [lanceEmbutPct, lanceEmbutPctValid]); // eslint-disable-line
+  // valida % embutido
+  const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
+  useEffect(() => {
+    if (lanceEmbutPct !== lanceEmbutPctValid)
+      setLanceEmbutPct(lanceEmbutPctValid);
+  }, [lanceEmbutPct]); // eslint-disable-line
 
   const prazoAviso =
     prazoVenda > 0 && prazoAte > 0 && prazoVenda > prazoAte
@@ -891,97 +463,86 @@ useEffect(() => {
     parcContemplacao > 0 &&
     parcContemplacao < prazoVenda;
 
-useEffect(() => {
-  if (!tabelaSelecionada || !podeCalcular) {
-    setCalc(null);
-    return;
-  }
-
-  const inp: CalcInput = {
+  useEffect(() => {
+    if (!tabelaSelecionada || !podeCalcular) {
+      setCalc(null);
+      return;
+    }
+    const inp: CalcInput = {
+      credito,
+      prazoVenda,
+      forma,
+      seguro: seguroPrest,
+      segmento: tabelaSelecionada.segmento,
+      taxaAdmFull: tabelaSelecionada.taxa_adm_pct,
+      frPct: tabelaSelecionada.fundo_reserva_pct,
+      antecipPct: tabelaSelecionada.antecip_pct,
+      antecipParcelas: (tabelaSelecionada.antecip_parcelas as 0 | 1 | 2) ?? 0,
+      limitadorPct: tabelaSelecionada.limitador_parcela_pct,
+      seguroPrestPct: tabelaSelecionada.seguro_prest_pct,
+      lanceOfertPct,
+      lanceEmbutPct: lanceEmbutPctValid,
+      parcContemplacao,
+    };
+    setCalc(calcularSimulacao(inp));
+  }, [
+    tabelaSelecionada,
     credito,
     prazoVenda,
     forma,
-    seguro: seguroPrest,
-    segmento: tabelaSelecionada.segmento,
-    taxaAdmFull: tabelaSelecionada.taxa_adm_pct,
-    frPct: tabelaSelecionada.fundo_reserva_pct,
-    antecipPct: tabelaSelecionada.antecip_pct,
-    antecipParcelas: (tabelaSelecionada.antecip_parcelas as 0 | 1 | 2) ?? 0,
-    limitadorPct: tabelaSelecionada.limitador_parcela_pct,
-    seguroPrestPct: tabelaSelecionada.seguro_prest_pct,
+    seguroPrest,
     lanceOfertPct,
-    lanceEmbutPct: lanceEmbutPctValid,
+    lanceEmbutPctValid,
     parcContemplacao,
-  };
-
-  setCalc(calcularSimulacao(inp, rules));
-}, [
-  tabelaSelecionada,
-  podeCalcular,
-  credito,
-  prazoVenda,
-  forma,
-  seguroPrest,
-  lanceOfertPct,
-  lanceEmbutPctValid,
-  parcContemplacao,
-  rules, // importante
-]); // eslint-disable-line
+  ]); // eslint-disable-line
 
   async function salvarSimulacao() {
-  if (!tabelaSelecionada || !calc) return;
-  setSalvando(true);
+    if (!tabelaSelecionada || !calc) return;
+    setSalvando(true);
 
-  const payload = {
-    admin_id: activeAdminId,
-    table_id: tabelaSelecionada.id,
-    lead_id: leadId || null,
-    lead_nome: leadInfo?.nome || null,
-    lead_telefone: leadInfo?.telefone || null,
-    grupo: grupo || null,
-    segmento: tabelaSelecionada.segmento,
-    nome_tabela: tabelaSelecionada.nome_tabela,
-    credito,
-    prazo_venda: prazoVenda,
-    forma_contratacao: forma,
-    seguro_prestamista: seguroPrest,
-    lance_ofertado_pct: lanceOfertPct,
-    lance_embutido_pct: lanceEmbutPctValid,
-    parcela_contemplacao: parcContemplacao,
-    valor_categoria: calc.valorCategoria,
-    parcela_ate_1_ou_2: calc.parcelaAte,
-    parcela_demais: calc.parcelaDemais,
-    lance_ofertado_valor: calc.lanceOfertadoValor,
-    lance_embutido_valor: calc.lanceEmbutidoValor,
-    lance_proprio_valor: calc.lanceProprioValor,
-    lance_percebido_pct: calc.lancePercebidoPct,
-    novo_credito: calc.novoCredito,
-    nova_parcela_sem_limite: calc.novaParcelaSemLimite,
-    parcela_limitante: calc.parcelaLimitante,
-    parcela_escolhida: calc.parcelaEscolhida,
-    saldo_devedor_final: calc.saldoDevedorFinal,
-    novo_prazo: calc.novoPrazo,
-  };
+    const payload = {
+      admin_id: activeAdminId,
+      table_id: tabelaSelecionada.id,
+      lead_id: leadId || null,
+      lead_nome: leadInfo?.nome || null,
+      lead_telefone: leadInfo?.telefone || null,
+      grupo: grupo || null,
+      segmento: tabelaSelecionada.segmento,
+      nome_tabela: tabelaSelecionada.nome_tabela,
+      credito,
+      prazo_venda: prazoVenda,
+      forma_contratacao: forma,
+      seguro_prestamista: seguroPrest,
+      lance_ofertado_pct: lanceOfertPct,
+      lance_embutido_pct: lanceEmbutPctValid,
+      parcela_contemplacao: parcContemplacao,
+      valor_categoria: calc.valorCategoria,
+      parcela_ate_1_ou_2: calc.parcelaAte,
+      parcela_demais: calc.parcelaDemais,
+      lance_ofertado_valor: calc.lanceOfertadoValor,
+      lance_embutido_valor: calc.lanceEmbutidoValor,
+      lance_proprio_valor: calc.lanceProprioValor,
+      lance_percebido_pct: calc.lancePercebidoPct,
+      novo_credito: calc.novoCredito,
+      nova_parcela_sem_limite: calc.novaParcelaSemLimite,
+      parcela_limitante: calc.parcelaLimitante,
+      parcela_escolhida: calc.parcelaEscolhida,
+      saldo_devedor_final: calc.saldoDevedorFinal,
+      novo_prazo: calc.novoPrazo,
+    };
 
-  const { data, error } = await supabase
-    .from("sim_simulations")
-    .insert(payload)
-    .select("code")
-    .single();
-
-  setSalvando(false);
-
-  if (error) {
-    alert("Erro ao salvar simulação: " + error.message);
-    return;
+    const { data, error } = await supabase
+      .from("sim_simulations")
+      .insert(payload)
+      .select("code")
+      .single();
+    setSalvando(false);
+    if (error) {
+      alert("Erro ao salvar simulação: " + error.message);
+      return;
+    }
+    setSimCode(data?.code ?? null);
   }
-
-  // guarda o número (se você exibe no Simulador)
-  setSimCode(data?.code ?? null);
-
-  // ✅ comportamento antigo: vai para a guia Propostas
-  navigate("/propostas");
-}
 
   function handleTableCreatedOrUpdated(newTable: SimTable) {
     setTables((prev) => {
@@ -1142,6 +703,8 @@ Vantagens
     );
   }
 
+  const activeAdmin = admins.find((a) => a.id === activeAdminId);
+
   return (
     <div className="p-6 space-y-4">
       {/* topo: admins + botões */}
@@ -1163,263 +726,245 @@ Vantagens
   )}
 
   <div className="ml-auto flex items-center gap-2">
-  {activeAdmin && (
-    <>
-      {/* novo: abrir o modal de configuração da administradora ativa */}
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => openAdminCfg(activeAdminFull!)}
-        className="h-10 rounded-2xl px-4 whitespace-nowrap"
-      >
-        <Settings className="h-4 w-4 mr-1" />
-        Configurar {activeAdmin.name}
-      </Button>
-
-      {/* ✅ Mantido SEM depender do showTopChips */}
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => setMgrOpen(true)}
-        className="h-10 rounded-2xl px-4"
-      >
-        Gerenciar Tabelas
-      </Button>
-
-      {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
-      {showTopChips && (
+    {activeAdmin && (
+      <>
+        {/* ✅ Mantido SEM depender do showTopChips */}
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => alert("Em breve: adicionar administradora.")}
-          className="h-10 rounded-2xl px-4 whitespace-nowrap"
+          onClick={() => setMgrOpen(true)}
+          className="h-10 rounded-2xl px-4"
         >
-          <Plus className="h-4 w-4 mr-1" /> + Add Administradora
+          Gerenciar Tabelas
         </Button>
-      )}
-    </>
-  )}
-</div>
-</div>
 
-{/* layout em duas colunas */}
-<div className="grid grid-cols-12 gap-4">
-  {/* coluna esquerda: simulador */}
-  <div className="col-span-12 lg:col-span-8">
-    <Card>
-      <CardHeader>
-        <CardTitle>Simuladores</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {activeAdmin ? (
-          activeAdmin.name === "Embracon" ? (
-           <EmbraconSimulator
-  leads={leads}
-  adminTables={adminTables}
-  nomesTabelaSegmento={nomesTabelaSegmento}
-  variantesDaTabela={variantesDaTabela}
-  tabelaSelecionada={tabelaSelecionada}
-  prazoAte={prazoAte}
-  faixa={faixa}
-  leadId={leadId}
-  setLeadId={setLeadId}
-  leadInfo={leadInfo}
-  grupo={grupo}
-  setGrupo={setGrupo}
-  segmento={segmento}
-  setSegmento={(v) => {
-    setSegmento(v);
-    setNomeTabela("");
-    setTabelaId("");
-  }}
-  nomeTabela={nomeTabela}
-  setNomeTabela={(v) => {
-    setNomeTabela(v);
-    setTabelaId("");
-  }}
-  tabelaId={tabelaId}
-  setTabelaId={setTabelaId}
-  embutCapMax={embutCapMax}
-  formsAllowed={rules.forms}
-  credito={credito}
-  setCredito={setCredito}
-  prazoVenda={prazoVenda}
-  setPrazoVenda={setPrazoVenda}
-  forma={forma}
-  setForma={setForma}
-  seguroPrest={seguroPrest}
-  setSeguroPrest={setSeguroPrest}
-  lanceOfertPct={lanceOfertPct}
-  setLanceOfertPct={setLanceOfertPct}
-  lanceEmbutPct={lanceEmbutPct}
-  setLanceEmbutPct={setLanceEmbutPct}
-  parcContemplacao={parcContemplacao}
-  setParcContemplacao={setParcContemplacao}
-  prazoAviso={prazoAviso}
-  calc={calc}
-  salvar={salvarSimulacao}
-  salvando={salvando}
-  simCode={simCode}
-/>
-) : (
-  <div className="text-sm text-muted-foreground">
-    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
-  </div>
-)
-) : (
-  <div className="text-sm text-muted-foreground">
-    Nenhuma administradora encontrada.
-  </div>
-)}
-</CardContent>
-</Card>
-</div>
-
-  {/* coluna direita: memória + textos */}
-  <div className="col-span-12 lg:col-span-4 space-y-4">
-    <Card>
-      <CardHeader>
-        <CardTitle>Memória de Cálculo</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        {!tabelaSelecionada ? (
-          <div className="text-muted-foreground">
-            Selecione uma tabela para ver os detalhes.
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <div>Crédito</div>
-              <div className="text-right font-medium">
-                {brMoney(credito || 0)}
-              </div>
-              <div>Prazo da Venda</div>
-              <div className="text-right">{prazoVenda || "-"}</div>
-              <div>Forma</div>
-              <div className="text-right">{forma}</div>
-              <div>Seguro / parcela</div>
-              <div className="text-right">
-                {seguroPrest
-                  ? pctHuman(tabelaSelecionada.seguro_prest_pct)
-                  : "—"}
-              </div>
-            </div>
-            <hr className="my-2" />
-            <div className="grid grid-cols-2 gap-2">
-              <div>Fundo Comum (fator)</div>
-              <div className="text-right">
-                {calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}
-              </div>
-              <div>Taxa Adm (total)</div>
-              <div className="text-right">
-                {pctHuman(tabelaSelecionada.taxa_adm_pct)}
-              </div>
-              <div>TA efetiva</div>
-              <div className="text-right">
-                {calc ? pctHuman(calc.TA_efetiva) : "—"}
-              </div>
-              <div>Fundo Reserva</div>
-              <div className="text-right">
-                {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
-              </div>
-              <div>Antecipação Adm</div>
-              <div className="text-right">
-                {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
-                {tabelaSelecionada.antecip_parcelas}x
-              </div>
-              <div>Limitador Parcela</div>
-              <div className="text-right">
-                {pctHuman(
-                  resolveLimitadorPct(
-                    tabelaSelecionada.limitador_parcela_pct,
-                    tabelaSelecionada.segmento,
-                    credito || 0
-                  )
-                )}
-              </div>
-              <div>Valor de Categoria</div>
-              <div className="text-right">
-                {calc ? brMoney(calc.valorCategoria) : "—"}
-              </div>
-            </div>
-          </>
+        {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
+        {showTopChips && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => alert("Em breve: adicionar administradora.")}
+            className="h-10 rounded-2xl px-4 whitespace-nowrap"
+          >
+            <Plus className="h-4 w-4 mr-1" /> + Add Administradora
+          </Button>
         )}
-      </CardContent>
-    </Card>
+      </>
+    )}
+  </div>
+</div>
 
-    {/* Resumo antigo */}
-    <Card>
-      <CardHeader>
-        <CardTitle>Resumo da Proposta</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        <textarea
-          className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
-          style={{ lineHeight: "1.6" }}
-          readOnly
-          value={resumoTexto}
-          placeholder="Preencha os campos da simulação para gerar o resumo."
-        />
-        <div className="flex items-center justify-end gap-2">
-          <Button onClick={copiarResumo} disabled={!resumoTexto}>
-            Copiar
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+      {/* layout em duas colunas */}
+      <div className="grid grid-cols-12 gap-4">
+        {/* coluna esquerda: simulador */}
+        <div className="col-span-12 lg:col-span-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Simuladores</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {activeAdmin ? (
+                activeAdmin.name === "Embracon" ? (
+                  <EmbraconSimulator
+                    leads={leads}
+                    adminTables={adminTables}
+                    nomesTabelaSegmento={nomesTabelaSegmento}
+                    variantesDaTabela={variantesDaTabela}
+                    tabelaSelecionada={tabelaSelecionada}
+                    prazoAte={prazoAte}
+                    faixa={faixa}
+                    leadId={leadId}
+                    setLeadId={setLeadId}
+                    leadInfo={leadInfo}
+                    grupo={grupo}
+                    setGrupo={setGrupo}
+                    segmento={segmento}
+                    setSegmento={(v) => {
+                      setSegmento(v);
+                      setNomeTabela("");
+                      setTabelaId("");
+                    }}
+                    nomeTabela={nomeTabela}
+                    setNomeTabela={(v) => {
+                      setNomeTabela(v);
+                      setTabelaId("");
+                    }}
+                    tabelaId={tabelaId}
+                    setTabelaId={setTabelaId}
+                    credito={credito}
+                    setCredito={setCredito}
+                    prazoVenda={prazoVenda}
+                    setPrazoVenda={setPrazoVenda}
+                    forma={forma}
+                    setForma={setForma}
+                    seguroPrest={seguroPrest}
+                    setSeguroPrest={setSeguroPrest}
+                    lanceOfertPct={lanceOfertPct}
+                    setLanceOfertPct={setLanceOfertPct}
+                    lanceEmbutPct={lanceEmbutPct}
+                    setLanceEmbutPct={setLanceEmbutPct}
+                    parcContemplacao={parcContemplacao}
+                    setParcContemplacao={setParcContemplacao}
+                    prazoAviso={prazoAviso}
+                    calc={calc}
+                    salvar={salvarSimulacao}
+                    salvando={salvando}
+                    simCode={simCode}
+                  />
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
+                  </div>
+                )
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  Nenhuma administradora encontrada.
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-    {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
-    <Card>
-      <CardHeader>
-        <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <Label>Assembleia (ex.: 15/10)</Label>
-            <Input
-              value={assembleia}
-              onChange={(e) => setAssembleia(e.target.value)}
-              placeholder="dd/mm"
-            />
+          {/* Ações principais */}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
+              {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Salvar Simulação
+            </Button>
+            {simCode && (
+              <span className="text-sm">
+                ✅ Salvo como <strong>Simulação #{simCode}</strong>
+              </span>
+            )}
           </div>
         </div>
-        <textarea
-          className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
-          style={{ lineHeight: "1.6" }}
-          readOnly
-          value={propostaTexto}
-          placeholder="Preencha a simulação para gerar o texto."
-        />
-        <div className="flex items-center justify-end gap-2">
-          <Button onClick={copiarProposta} disabled={!propostaTexto}>
-            Copiar
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  </div>
-</div>
 
-      {/* Barra de ações fixa no rodapé */}
-<div className="sticky bottom-0 z-10 mt-4 bg-background/70 backdrop-blur supports-[backdrop-filter]:bg-background/50 border-t p-3 rounded-t-xl">
-  <div className="max-w-screen-xl mx-auto flex items-center justify-end gap-2">
-    <Button
-      onClick={handleSaveSimulation}
-      disabled={savingSim || !leadId}   // sem lead não salva
-      className="h-10 rounded-2xl px-5"
-    >
-      {savingSim ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Salvando…
-        </>
-      ) : (
-        "Salvar Simulação"
-      )}
-    </Button>
-  </div>
-</div>
+        {/* coluna direita: memória + textos */}
+        <div className="col-span-12 lg:col-span-4 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Memória de Cálculo</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {!tabelaSelecionada ? (
+                <div className="text-muted-foreground">
+                  Selecione uma tabela para ver os detalhes.
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>Crédito</div>
+                    <div className="text-right font-medium">
+                      {brMoney(credito || 0)}
+                    </div>
+                    <div>Prazo da Venda</div>
+                    <div className="text-right">{prazoVenda || "-"}</div>
+                    <div>Forma</div>
+                    <div className="text-right">{forma}</div>
+                    <div>Seguro / parcela</div>
+                    <div className="text-right">
+                      {seguroPrest
+                        ? pctHuman(tabelaSelecionada.seguro_prest_pct)
+                        : "—"}
+                    </div>
+                  </div>
+                  <hr className="my-2" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>Fundo Comum (fator)</div>
+                    <div className="text-right">
+                      {calc
+                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
+                        : "—"}
+                    </div>
+                    <div>Taxa Adm (total)</div>
+                    <div className="text-right">
+                      {pctHuman(tabelaSelecionada.taxa_adm_pct)}
+                    </div>
+                    <div>TA efetiva</div>
+                    <div className="text-right">
+                      {calc ? pctHuman(calc.TA_efetiva) : "—"}
+                    </div>
+                    <div>Fundo Reserva</div>
+                    <div className="text-right">
+                      {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
+                    </div>
+                    <div>Antecipação Adm</div>
+                    <div className="text-right">
+                      {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
+                      {tabelaSelecionada.antecip_parcelas}x
+                    </div>
+                    <div>Limitador Parcela</div>
+                    <div className="text-right">
+                      {pctHuman(
+                        resolveLimitadorPct(
+                          tabelaSelecionada.limitador_parcela_pct,
+                          tabelaSelecionada.segmento,
+                          credito || 0
+                        )
+                      )}
+                    </div>
+                    <div>Valor de Categoria</div>
+                    <div className="text-right">
+                      {calc ? brMoney(calc.valorCategoria) : "—"}
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Resumo antigo */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Resumo da Proposta</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <textarea
+                className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
+                style={{ lineHeight: "1.6" }}
+                readOnly
+                value={resumoTexto}
+                placeholder="Preencha os campos da simulação para gerar o resumo."
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button onClick={copiarResumo} disabled={!resumoTexto}>
+                  Copiar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <Label>Assembleia (ex.: 15/10)</Label>
+                  <Input
+                    value={assembleia}
+                    onChange={(e) => setAssembleia(e.target.value)}
+                    placeholder="dd/mm"
+                  />
+                </div>
+              </div>
+              <textarea
+                className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
+                style={{ lineHeight: "1.6" }}
+                readOnly
+                value={propostaTexto}
+                placeholder="Preencha a simulação para gerar o texto."
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button onClick={copiarProposta} disabled={!propostaTexto}>
+                  Copiar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
 
       {/* Overlay de gerenciamento de tabelas */}
       {mgrOpen && activeAdmin && (
@@ -1431,14 +976,6 @@ Vantagens
           onDeleted={handleTableDeleted}
         />
       )}
-      {/* Overlay de configuração de administradora */}
-{admCfgOpen && adminCfgTarget && (
-  <AdminConfigModal
-    admin={adminCfgTarget}
-    onClose={closeAdminCfg}
-    onSaved={handleAdminCfgSaved}
-  />
-)}   
     </div>
   );
 }
@@ -1477,407 +1014,6 @@ function ModalBase({
         {children}
       </div>
     </div>
-  );
-}
-
-// ========= AdminConfigModal.tsx =========
-type AdminConfigModalProps = {
-  admin: AdminFull;                // já carregada no parent (usa AdminFull)
-  onClose: () => void;
-  onSaved?: (updated: AdminFull) => void;
-};
-
-function toPctHuman(d?: number | null) {
-  if (d == null) return "";
-  return String(Math.round(d * 100 * 10000) / 10000); // 4 casas
-}
-function fromPctHuman(s: string) {
-  const n = Number((s || "").replace(",", "."));
-  return isFinite(n) ? n / 100 : null;
-}
-
-/* =============== Modal: Configuração da Administradora =============== */
-function AdminConfigModal({
-  admin,
-  onClose,
-  onSaved,
-}: {
-  admin: AdminFull;
-  onClose: () => void;
-  onSaved: (updated: AdminFull) => void;
-}) {
-  // helpers p/ % humano ⇄ decimal
-  const toHuman = (d?: number | null) =>
-    typeof d === "number" ? String((d * 100).toFixed(4)).replace(/\.?0+$/, "") : "";
-  const toDecimal = (s: string) => {
-    const num = Number((s || "0").toString().replace(",", "."));
-    if (Number.isNaN(num)) return null;
-    return num / 100;
-  };
-
-  // ======== ESTADO LOCAL (carregado do admin) ========
-  const [slug, setSlug] = useState(admin.slug ?? "");
-
-  // Formas
-  const [formsMode, setFormsMode] = useState<FormsMode>(admin.forms_mode ?? "table");
-  const [admCheia, setAdmCheia] = useState<boolean>(!!admin.forms_adm_parcela_cheia);
-  const [admR25, setAdmR25] = useState<boolean>(!!admin.forms_adm_red25);
-  const [admR50, setAdmR50] = useState<boolean>(!!admin.forms_adm_red50);
-
-  // Redutor
-  const [redMode, setRedMode] = useState<RedutorMode>(admin.reductor_mode ?? "valor_categoria");
-  const [redAllowTbl, setRedAllowTbl] = useState<boolean>(!!admin.reductor_allow_table_override);
-
-  // Embutido
-  const [embCapMode, setEmbCapMode] = useState<LimitMode>(admin.embut_cap_mode ?? "adm");
-  const [embCapAdmPctHuman, setEmbCapAdmPctHuman] = useState<string>(
-    toHuman(admin.embut_cap_adm_pct ?? 0.25)
-  );
-  const [embBase, setEmbBase] = useState<BaseMode>((admin.embut_base as BaseMode) ?? "credito");
-  const [embBaseAllowTbl, setEmbBaseAllowTbl] = useState<boolean>(
-    !!admin.embut_base_allow_table_override
-  );
-
-  // Ofertado
-  const [ofBase, setOfBase] = useState<BaseMode>((admin.ofert_base as BaseMode) ?? "credito");
-  const [ofBaseAllowTbl, setOfBaseAllowTbl] = useState<boolean>(
-    !!admin.ofert_base_allow_table_override
-  );
-
-  // Limitador
-  const [limitEnabled, setLimitEnabled] = useState<boolean>(admin.limit_enabled ?? true);
-  const [limitMode, setLimitMode] = useState<LimitMode>(admin.limit_mode ?? "table");
-  const [limitAdmPctHuman, setLimitAdmPctHuman] = useState<string>(
-    toHuman(admin.limit_adm_pct ?? null)
-  );
-  const [limitAdmBase, setLimitAdmBase] = useState<BaseMode | "">(admin.limit_adm_base ?? "");
-
-  // 🔧 RESETA CAMPOS QUANDO TROCA A ADMIN NO MODAL
-  useEffect(() => {
-    setSlug(admin.slug ?? "");
-
-    // Formas
-    setFormsMode(admin.forms_mode ?? "table");
-    setAdmCheia(!!admin.forms_adm_parcela_cheia);
-    setAdmR25(!!admin.forms_adm_red25);
-    setAdmR50(!!admin.forms_adm_red50);
-
-    // Redutor
-    setRedMode(admin.reductor_mode ?? "valor_categoria");
-    setRedAllowTbl(!!admin.reductor_allow_table_override);
-
-    // Embutido
-    setEmbCapMode(admin.embut_cap_mode ?? "adm");
-    setEmbCapAdmPctHuman(toHuman(admin.embut_cap_adm_pct ?? 0.25));
-    setEmbBase((admin.embut_base as BaseMode) ?? "credito");
-    setEmbBaseAllowTbl(!!admin.embut_base_allow_table_override);
-
-    // Ofertado
-    setOfBase((admin.ofert_base as BaseMode) ?? "credito");
-    setOfBaseAllowTbl(!!admin.ofert_base_allow_table_override);
-
-    // Limitador pós
-    setLimitEnabled(admin.limit_enabled ?? true);
-    setLimitMode(admin.limit_mode ?? "table");
-    setLimitAdmPctHuman(toHuman(admin.limit_adm_pct ?? null));
-    setLimitAdmBase((admin.limit_adm_base as BaseMode) ?? "");
-  }, [admin.id]); // usar admin.id evita reset a cada render de objeto novo
-
-  const [saving, setSaving] = useState(false);
-  const isEmbracon = (admin.slug ?? "").toLowerCase() === "embracon";
-
-  async function handleSave() {
-    try {
-      setSaving(true);
-
-      const updatePayload: Partial<AdminFull> = {
-        slug: slug || null,
-
-        // Formas
-        forms_mode: formsMode,
-        forms_adm_parcela_cheia: formsMode === "adm" ? !!admCheia : null,
-        forms_adm_red25: formsMode === "adm" ? !!admR25 : null,
-        forms_adm_red50: formsMode === "adm" ? !!admR50 : null,
-
-        // Redutor
-        reductor_mode: redMode,
-        reductor_allow_table_override: !!redAllowTbl,
-
-        // Embutido
-        embut_cap_mode: embCapMode,
-        embut_cap_adm_pct:
-          embCapMode === "adm"
-            ? Math.min(0.25, Math.max(0, toDecimal(embCapAdmPctHuman) ?? 0.25))
-            : null,
-        embut_base: embBase,
-        embut_base_allow_table_override: !!embBaseAllowTbl,
-
-        // Ofertado
-        ofert_base: ofBase,
-        ofert_base_allow_table_override: !!ofBaseAllowTbl,
-
-        // Limitador
-        limit_enabled: !!limitEnabled,
-        limit_mode: limitMode,
-        limit_adm_pct:
-          limitEnabled && limitMode === "adm"
-            ? Math.max(0, toDecimal(limitAdmPctHuman) ?? 0)
-            : null,
-        limit_adm_base: limitEnabled && limitMode === "adm" ? (limitAdmBase || null) : null,
-      };
-
-      const { data, error } = await supabase
-        .from("sim_admins")
-        .update(updatePayload)
-        .eq("id", admin.id)
-        .select("*")
-        .single();
-
-      if (error) throw error;
-
-      // devolve atualizado p/ o parent (mantendo o tipo AdminFull)
-      onSaved({ ...(admin as any), ...(data as any) } as AdminFull);
-    } catch (e: any) {
-      alert("Erro ao salvar: " + (e?.message ?? String(e)));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <ModalBase title={`Configurar ${admin.name}`} onClose={onClose}>
-      <div className="p-4 space-y-6">
-        {/* Identificação */}
-        <section className="space-y-2">
-          <div className="font-semibold">Identificação</div>
-          <div className="grid md:grid-cols-2 gap-3">
-            <div>
-              <Label>Slug</Label>
-              <Input
-                value={slug}
-                onChange={(e) => setSlug(e.target.value)}
-                placeholder="ex.: embracon, maggi, hs..."
-              />
-            </div>
-          </div>
-        </section>
-
-        {/* Formas */}
-        <section className="space-y-2">
-          <div className="font-semibold">Formas de Contratação</div>
-          <div className="grid md:grid-cols-3 gap-3">
-            <div>
-              <Label>Quem define</Label>
-              <select
-                className="w-full h-10 border rounded px-3"
-                value={formsMode}
-                onChange={(e) => setFormsMode(e.target.value as FormsMode)}
-                disabled={isEmbracon}
-              >
-                <option value="table">Definido por Tabela/Segmento</option>
-                <option value="adm">Padrão da Administradora</option>
-              </select>
-            </div>
-
-            {formsMode === "adm" && (
-              <div className="md:col-span-2 grid grid-cols-3 gap-3 items-end">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={admCheia}
-                    onChange={(e) => setAdmCheia(e.target.checked)}
-                    disabled={isEmbracon}
-                  />
-                  <Label>Parcela Cheia</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={admR25}
-                    onChange={(e) => setAdmR25(e.target.checked)}
-                    disabled={isEmbracon}
-                  />
-                  <Label>Reduzida 25%</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={admR50}
-                    onChange={(e) => setAdmR50(e.target.checked)}
-                    disabled={isEmbracon}
-                  />
-                  <Label>Reduzida 50%</Label>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Redutor */}
-        <section className="space-y-2">
-          <div className="font-semibold">Redutor (Parcela Reduzida)</div>
-          <div className="grid md:grid-cols-3 gap-3 items-end">
-            <div>
-              <Label>Cálculo do Redutor</Label>
-              <select
-                className="w-full h-10 border rounded px-3"
-                value={redMode}
-                onChange={(e) => setRedMode(e.target.value as RedutorMode)}
-                disabled={isEmbracon}
-              >
-                <option value="credito">Sobre o Crédito</option>
-                <option value="valor_categoria">Crédito + Taxas (Valor de Categoria)</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={redAllowTbl}
-                onChange={(e) => setRedAllowTbl(e.target.checked)}
-                disabled={isEmbracon}
-              />
-              <Label>Permitir override por Tabela</Label>
-            </div>
-          </div>
-        </section>
-
-        {/* Embutido */}
-        <section className="space-y-2">
-          <div className="font-semibold">Lance Embutido</div>
-          <div className="grid md:grid-cols-3 gap-3">
-            <div>
-              <Label>Quem define o teto</Label>
-              <select
-                className="w-full h-10 border rounded px-3"
-                value={embCapMode}
-                onChange={(e) => setEmbCapMode(e.target.value as LimitMode)}
-              >
-                <option value="adm">Padrão da Adm</option>
-                <option value="table">Definido por Tabela</option>
-              </select>
-            </div>
-            <div>
-              <Label>Teto Padrão da Adm (%)</Label>
-              <Input
-                value={embCapAdmPctHuman}
-                onChange={(e) => setEmbCapAdmPctHuman(e.target.value)}
-                disabled={embCapMode !== "adm"}
-                placeholder="ex.: 25"
-              />
-            </div>
-            <div>
-              <Label>Base do Embutido</Label>
-              <select
-                className="w-full h-10 border rounded px-3"
-                value={embBase}
-                onChange={(e) => setEmbBase(e.target.value as BaseMode)}
-              >
-                <option value="credito">Crédito</option>
-                <option value="valor_categoria">Valor de Categoria</option>
-              </select>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={embBaseAllowTbl}
-                  onChange={(e) => setEmbBaseAllowTbl(e.target.checked)}
-                />
-                <Label>Permitir override por Tabela</Label>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Ofertado */}
-        <section className="space-y-2">
-          <div className="font-semibold">Lance Ofertado</div>
-          <div className="grid md:grid-cols-2 gap-3 items-end">
-            <div>
-              <Label>Base do %</Label>
-              <select
-                className="w-full h-10 border rounded px-3"
-                value={ofBase}
-                onChange={(e) => setOfBase(e.target.value as BaseMode)}
-              >
-                <option value="credito">Crédito</option>
-                <option value="valor_categoria">Valor de Categoria</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={ofBaseAllowTbl}
-                onChange={(e) => setOfBaseAllowTbl(e.target.checked)}
-              />
-              <Label>Permitir override por Tabela</Label>
-            </div>
-          </div>
-        </section>
-
-        {/* Limitador pós */}
-        <section className="space-y-2">
-          <div className="font-semibold">Após a Contemplação (Limitador de Parcela)</div>
-          <div className="grid md:grid-cols-3 gap-3">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={limitEnabled}
-                onChange={(e) => setLimitEnabled(e.target.checked)}
-              />
-              <Label>Habilitar limitador</Label>
-            </div>
-
-            <div>
-              <Label>Quem define</Label>
-              <select
-                className="w-full h-10 border rounded px-3"
-                value={limitMode}
-                onChange={(e) => setLimitMode(e.target.value as LimitMode)}
-                disabled={!limitEnabled}
-              >
-                <option value="table">Definido por Tabela</option>
-                <option value="adm">Padrão da Adm</option>
-              </select>
-            </div>
-
-            <div>
-              <Label>% (Adm)</Label>
-              <Input
-                value={limitAdmPctHuman}
-                onChange={(e) => setLimitAdmPctHuman(e.target.value)}
-                disabled={!limitEnabled || limitMode !== "adm"}
-                placeholder="ex.: 2.8"
-              />
-            </div>
-
-            <div>
-              <Label>Base (Adm)</Label>
-              <select
-                className="w-full h-10 border rounded px-3"
-                value={limitAdmBase || ""}
-                onChange={(e) => setLimitAdmBase((e.target.value || "") as any)}
-                disabled={!limitEnabled || limitMode !== "adm"}
-              >
-                <option value="">—</option>
-                <option value="credito">Crédito</option>
-                <option value="valor_categoria">Valor de Categoria</option>
-                <option value="parcela_vigente">% sobre a parcela vigente</option>
-              </select>
-            </div>
-          </div>
-        </section>
-
-        {/* Ações */}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Cancelar
-          </Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-            Salvar
-          </Button>
-        </div>
-      </div>
-    </ModalBase>
   );
 }
 
@@ -2245,12 +1381,6 @@ type EmbraconProps = {
   nomeTabela: string; setNomeTabela: (v: string) => void;
   tabelaId: string; setTabelaId: (v: string) => void;
 
-  /** Formas permitidas resolvidas pelas regras (fallback quando a tabela não define) */
-  formsAllowed?: { parcela_cheia: boolean; red25: boolean; red50: boolean };
-
-  /* 👇 teto do lance embutido já resolvido (Adm/Tabela) */
-  embutCapMax: number;
-
   credito: number; setCredito: (v: number) => void;
   prazoVenda: number; setPrazoVenda: (v: number) => void;
   forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
@@ -2269,7 +1399,7 @@ type EmbraconProps = {
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
-  const [leadOpen, setLeadOpen] = useState(false);
+const [leadOpen, setLeadOpen] = useState(false);
   const [leadQuery, setLeadQuery] = useState("");
 
   const filteredLeads = useMemo(() => {
@@ -2289,40 +1419,8 @@ function EmbraconSimulator(p: EmbraconProps) {
 
   useEffect(() => {
     if (!leadOpen) setLeadQuery("");
-  }, [leadOpen]);
-
-  // === Formas permitidas (prioriza Tabela; fallback: rules via formsAllowed; default: true)
-  const allowCheia =
-    (p.tabelaSelecionada?.contrata_parcela_cheia ??
-      p.formsAllowed?.parcela_cheia ??
-      true);
-
-  const allowRed25 =
-    (p.tabelaSelecionada?.contrata_reduzida_25 ??
-      p.formsAllowed?.red25 ??
-      true);
-
-  const allowRed50 =
-    (p.tabelaSelecionada?.contrata_reduzida_50 ??
-      p.formsAllowed?.red50 ??
-      true);
-
-  // Corrige a forma caso fique inválida ao trocar de tabela/regras
-  useEffect(() => {
-    if (p.forma === "Parcela Cheia" && !allowCheia) {
-      if (allowRed25) p.setForma("Reduzida 25%");
-      else if (allowRed50) p.setForma("Reduzida 50%");
-    }
-    if (p.forma === "Reduzida 25%" && !allowRed25) {
-      p.setForma(allowCheia ? "Parcela Cheia" : (allowRed50 ? "Reduzida 50%" : "Parcela Cheia"));
-    }
-    if (p.forma === "Reduzida 50%" && !allowRed50) {
-      p.setForma(allowCheia ? "Parcela Cheia" : (allowRed25 ? "Reduzida 25%" : "Parcela Cheia"));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowCheia, allowRed25, allowRed50]);
-
-  return (
+  }, [leadOpen]);  
+return (
     <div className="space-y-6">
       {/* Lead */}
       <Card>
@@ -2330,61 +1428,61 @@ function EmbraconSimulator(p: EmbraconProps) {
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <Label>Selecionar Lead</Label>
-              <Popover onOpenChange={setLeadOpen}>
-                <PopoverButton className="w-full justify-between h-10">
-                  {p.leadInfo?.nome || "Escolher lead"}
-                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-                </PopoverButton>
+             <Label>Selecionar Lead</Label>
+<Popover onOpenChange={setLeadOpen}>
+  <PopoverButton className="w-full justify-between h-10">
+    {p.leadInfo?.nome || "Escolher lead"}
+    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+  </PopoverButton>
 
-                <PopoverContent className="min-w-[260px] p-2 z-50">
-                  {/* Busca */}
-                  <div className="flex items-center gap-2 mb-2">
-                    <Search className="h-4 w-4 opacity-60" />
-                    <Input
-                      placeholder="Buscar lead por nome ou telefone..."
-                      value={leadQuery}
-                      onChange={(e) => setLeadQuery(e.target.value)}
-                      className="h-8"
-                    />
-                  </div>
+  <PopoverContent className="min-w-[260px] p-2 z-50">
+    {/* Busca */}
+    <div className="flex items-center gap-2 mb-2">
+      <Search className="h-4 w-4 opacity-60" />
+      <Input
+        placeholder="Buscar lead por nome ou telefone..."
+        value={leadQuery}
+        onChange={(e) => setLeadQuery(e.target.value)}
+        className="h-8"
+      />
+    </div>
 
-                  {/* Lista */}
-                  <div className="max-h-64 overflow-y-auto space-y-1">
-                    {filteredLeads.length > 0 ? (
-                      filteredLeads.map((l) => (
-                        <PopoverClose asChild key={l.id}>
-                          <button
-                            type="button"
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-                            onClick={() => {
-                              p.setLeadId(l.id);
-                              setLeadQuery(""); // limpa a busca
-                            }}
-                          >
-                            <div className="text-sm font-medium">{l.nome}</div>
-                            {l.telefone && (
-                              <div className="text-xs text-muted-foreground">{l.telefone}</div>
-                            )}
-                          </button>
-                        </PopoverClose>
-                      ))
-                    ) : (
-                      <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-                        Nenhum lead encontrado
-                      </div>
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
+    {/* Lista */}
+<div className="max-h-64 overflow-y-auto space-y-1">
+  {filteredLeads.length > 0 ? (
+    filteredLeads.map((l) => (
+      <PopoverClose asChild key={l.id}>
+        <button
+          type="button"
+          className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+          onClick={() => {
+            p.setLeadId(l.id);
+            setLeadQuery(""); // limpa a busca
+          }}
+        >
+          <div className="text-sm font-medium">{l.nome}</div>
+          {l.telefone && (
+            <div className="text-xs text-muted-foreground">{l.telefone}</div>
+          )}
+        </button>
+      </PopoverClose>
+    ))
+  ) : (
+    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+      Nenhum lead encontrado
+    </div>
+  )}
+</div>
+</PopoverContent>
+</Popover>
 
-              {p.leadInfo && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-                </p>
-              )}
+{p.leadInfo && (
+  <p className="text-xs text-muted-foreground mt-1">
+    {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+  </p>
+)}
+
             </div>
-
             <div>
               <Label>Nº do Grupo (opcional)</Label>
               <Input
@@ -2500,9 +1598,15 @@ function EmbraconSimulator(p: EmbraconProps) {
                   onChange={(e) => p.setForma(e.target.value as any)}
                 >
                   <option value="">Selecione</option>
-                  {allowCheia && <option value="Parcela Cheia">Parcela Cheia</option>}
-                  {allowRed25 && <option value="Reduzida 25%">Reduzida 25%</option>}
-                  {allowRed50 && <option value="Reduzida 50%">Reduzida 50%</option>}
+                  {p.tabelaSelecionada?.contrata_parcela_cheia && (
+                    <option value="Parcela Cheia">Parcela Cheia</option>
+                  )}
+                  {p.tabelaSelecionada?.contrata_reduzida_25 && (
+                    <option value="Reduzida 25%">Reduzida 25%</option>
+                  )}
+                  {p.tabelaSelecionada?.contrata_reduzida_50 && (
+                    <option value="Reduzida 50%">Reduzida 50%</option>
+                  )}
                 </select>
               </div>
 
@@ -2607,14 +1711,14 @@ function EmbraconSimulator(p: EmbraconProps) {
                 <PercentInput
                   valueDecimal={p.lanceEmbutPct}
                   onChangeDecimal={(d) => {
-                    if (d > p.embutCapMax) {
-                      alert(`Lance embutido limitado a ${(p.embutCapMax * 100).toFixed(4)}% do crédito/base. Voltando para o máximo permitido.`);
-                      p.setLanceEmbutPct(p.embutCapMax);
+                    if (d > 0.25) {
+                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
+                      p.setLanceEmbutPct(0.25);
                     } else {
                       p.setLanceEmbutPct(d);
                     }
                   }}
-                  maxDecimal={p.embutCapMax}
+                  maxDecimal={0.25}
                 />
               </div>
               <div>

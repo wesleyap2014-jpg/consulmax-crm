@@ -679,14 +679,15 @@ setAdmins((a ?? []) as AdminFull[]);
 setTables(t ?? []);
 setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-// 1) padrão: Embracon > ou o primeiro da lista
-const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+// 1) Se tem id na rota, priorize SEMPRE ele
+let nextActiveId = routeAdminId;
 
-// 2) se a URL tiver um adminId válido, priorize ele
-if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
-  nextActiveId = adminId as string;
+// 2) Se não tiver id na rota, tente Embracon; senão a primeira
+if (!nextActiveId) {
+  const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
+  nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
 }
+
 setActiveAdminId(nextActiveId);
 
 // 3) terminou o loading

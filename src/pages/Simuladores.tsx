@@ -590,23 +590,60 @@ export default function Simuladores() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
 
-  // loader do botão Salvar
+// loader do botão Salvar
 const [savingSim, setSavingSim] = useState(false);
 
-// TODO: troque pelo seu salvamento real (ex.: criar proposta/sim_run)
-// Dica: mantenha o snapshot que você já exibe na “Memória de Cálculo”
+// handler real de salvar
 async function handleSaveSimulation() {
-  if (!leadId) return; // só salva se um lead estiver selecionado
+  if (!leadId) {
+    alert("Escolha um lead antes de salvar.");
+    return;
+  }
+
   try {
     setSavingSim(true);
 
-    // =======================
-    // COLE AQUI sua lógica real de salvar
-    // (ex.: supabase.from('proposals').insert({...}))
-    // =======================
+    // ============ MONTE O SNAPSHOT DA SIMULAÇÃO ============
+    // Use as variáveis que você já tem na página. Exemplo:
+    const snapshot = {
+      admin_id: activeAdminId,                 // UUID da administradora ativa
+      admin_slug: activeAdmin?.slug ?? null,   // opcional
+      lead_id: leadId,                         // lead selecionado
+      table_id: activeTable?.id ?? null,       // se você tiver a tabela escolhida
+      group_no: groupNo || null,               // se tiver “Nº do grupo”
+      inputs: {
+        // COLOQUE aqui os campos de entrada relevantes do seu simulador
+        // ex.: credito: valorCredito, prazo: prazoMeses, forma: formaContratacao, ...
+      },
+      outputs: {
+        // COLOQUE aqui o que você mostra na “Memória de Cálculo” / Resumo
+        // ex.: parcela: parcelaFinal, total: totalContrato, etc.
+      },
+      created_at: new Date().toISOString(),
+    };
 
-    // Exemplo de notificação simples:
-    alert("Simulação salva!");
+    // ============ PERSISTIR NO BANCO ============
+    // Ajuste o nome da tabela para a que você usa no seu backend.
+    // Se sua guia “Propostas” lê de `propostas`, salve nela.
+    const { data, error } = await supabase
+      .from("propostas") // ou "proposals", se seu schema estiver em inglês
+      .insert([
+        {
+          lead_id: snapshot.lead_id,
+          admin_id: snapshot.admin_id,
+          table_id: snapshot.table_id,
+          group_no: snapshot.group_no,
+          payload: snapshot,        // JSON completo da simulação
+        },
+      ])
+      .select("id")
+      .single();
+
+    if (error) throw error;
+
+    // navegue para a guia/lista de propostas (ajuste a rota se necessário)
+    // Se você tem rota de detalhe: navigate(`/propostas/${data.id}`)
+    navigate("/propostas");
   } catch (e: any) {
     alert("Falha ao salvar: " + (e?.message ?? String(e)));
   } finally {

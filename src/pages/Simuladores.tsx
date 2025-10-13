@@ -679,10 +679,16 @@ setAdmins((a ?? []) as AdminFull[]);
 setTables(t ?? []);
 setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-// 1) Se tem id na rota, priorize SEMPRE ele
-let nextActiveId = routeAdminId;
+// 1) Se tem id/slug na rota, tente casar com id OU slug e use o ID real
+let nextActiveId: string | null = null;
+if (routeAdminId) {
+  const match = (a ?? []).find(
+    (ad: any) => ad.id === routeAdminId || (ad.slug && ad.slug === routeAdminId)
+  );
+  nextActiveId = match?.id ?? null;
+}
 
-// 2) Se não tiver id na rota, tente Embracon; senão a primeira
+// 2) Se não tiver match, tente Embracon; senão a primeira
 if (!nextActiveId) {
   const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
   nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);

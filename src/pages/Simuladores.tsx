@@ -589,11 +589,21 @@ const showTopChips = false;     // ou pathname === "/simuladores"
     (async () => {
       setLoading(true);
       const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
-        supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-        supabase.from("sim_tables").select("*"),
-        supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
-      ]);
-     setAdmins(a ?? []);
+  supabase.from("sim_admins").select(`
+    id, name,
+    slug,
+    forms_mode,
+    forms_adm_parcela_cheia, forms_adm_red25, forms_adm_red50,
+    reductor_mode, reductor_allow_table_override,
+    embut_cap_mode, embut_cap_adm_pct, embut_base, embut_base_allow_table_override,
+    ofert_base, ofert_base_allow_table_override,
+    limit_enabled, limit_mode, limit_adm_pct, limit_adm_base
+  `).order("name", { ascending: true }),
+  supabase.from("sim_tables").select("*"),
+  supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
+]);
+
+setAdmins((a ?? []) as AdminFull[]);
 setTables(t ?? []);
 setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 

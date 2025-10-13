@@ -75,6 +75,173 @@ type SimTableOverrides = {
 // Anexa overrides ao SimTable existente (todos opcionais)
 type SimTableWithOverrides = SimTable & SimTableOverrides;
 
+/* ========== Resolver de Regras (Adm -> Tabela [-> Grupo futuramente]) ========== */
+
+// Regras resolvidas e normalizadas para o motor de cálculo
+type RuleSet = {
+  // Formas de contratação efetivamente permitidas
+  forms: {
+    parcela_cheia: boolean;
+    red25: boolean;
+    red50: boolean;
+  };
+
+  // Redutor antes da contemplação
+  redutorMode: RedutorMode; // "credito" | "valor_categoria"
+
+  // Lance embutido
+  embutCapPct: number; // 0..1
+  embutBase: Exclude<BaseMode, "parcela_vigente">; // só "credito" | "valor_categoria"
+
+  // Lance ofertado
+  ofertBase: Exclude<BaseMode, "parcela_vigente">;
+
+  // Limitador pós-contemplação
+  limit: {
+    enabled: boolean;
+    pct?: number;         // 0..1
+    base?: BaseMode;      // "credito" | "valor_categoria" | "parcela_vigente"
+  };
+};
+
+function clamp01(n: number | null | undefined) {
+  const x = typeof n === "number" ? n : 0;
+  return Math.max(0, Math.min(1, x));
+}
+
+/**
+ * resolveRules: aplica precedência e devolve a configuração final para cálculo.
+ * Por enquanto: Adm -> Tabela. (Grupo/Segmento podem ser encaixados depois.)
+ */
+function resolveRules(
+  admin: AdminFull | null | undefined,
+  table?: SimTableWithOverrides | null
+  // , groupRule?: GroupOverrides | null   // futuramente
+): RuleSet {
+  // 1) Defaults seguros (espelham comportamento atual)
+  let forms_parcela_cheia = true;
+  let forms_red25 = true;
+  let forms_red50 = true;
+
+  let redutorMode: RedutorMode = "valor_categoria";
+
+  let embutCapPct = 0.25;
+  let embutBase: Exclude<BaseMode, "parcela_vigente"> = "credito";
+
+  let ofertBase: Exclude<BaseMode, "parcela_vigente"> = "credito";
+
+  let limitEnabled = true;
+  let limitSource: LimitMode = "table";
+  let limitPct: number | undefined = undefined;
+  let limitBase: BaseMode | undefined = undefined;
+
+  // 2) Carrega padrão da Adm (se existir)
+  if (admin) {
+    // Formas (quem define)
+    const mode = admin.forms_mode ?? "table";
+    if (mode === "adm") {
+      forms_parcela_cheia = !!admin.forms_adm_parcela_cheia;
+      forms_red25 = !!admin.forms_adm_red25;
+      forms_red50 = !!admin.forms_adm_red50;
+    }
+    // Redutor
+    redutorMode = (admin.reductor_mode ?? "valor_categoria") as RedutorMode;
+
+    // Embutido: cap e base
+    // cap: quem define? (adm/table)
+    const capMode = (admin.embut_cap_mode ?? "adm") as LimitMode;
+    if (capMode === "adm") {
+      embutCapPct = clamp01(admin.embut_cap_adm_pct ?? 0.25);
+    } else {
+      // será resolvido pela tabela (se disponível); se não houver, cai no adm
+      embutCapPct = clamp01(admin.embut_cap_adm_pct ?? 0.25);
+    }
+    embutBase = ((admin.embut_base as BaseMode) ?? "credito") === "valor_categoria" ? "valor_categoria" : "credito";
+
+    // Ofertado: base %
+    ofertBase = ((admin.ofert_base as BaseMode) ?? "credito") === "valor_categoria" ? "valor_categoria" : "credito";
+
+    // Limitador pós
+    limitEnabled = !!admin.limit_enabled;
+    limitSource = (admin.limit_mode ?? "table") as LimitMode;
+    if (limitSource === "adm") {
+      limitPct = admin.limit_adm_pct ?? undefined;
+      limitBase = (admin.limit_adm_base as BaseMode) ?? undefined;
+    }
+  }
+
+  // 3) Aplica overrides da Tabela (quando existirem)
+  if (table) {
+    // Formas por Tabela (só quando o forms_mode não é "adm")
+    if ((admin?.forms_mode ?? "table") === "table") {
+      forms_parcela_cheia = table.forms_tbl_parcela_cheia ?? forms_parcela_cheia;
+      forms_red25 = table.forms_tbl_red25 ?? forms_red25;
+      forms_red50 = table.forms_tbl_red50 ?? forms_red50;
+    }
+
+    // Redutor: só se a Adm permitir override
+    if (admin?.reductor_allow_table_override && table.reductor_mode_override) {
+      redutorMode = table.reductor_mode_override;
+    }
+
+    // Embutido: cap e base
+    const capMode = (admin?.embut_cap_mode ?? "adm") as LimitMode;
+    if (capMode === "table") {
+      if (typeof table.embut_cap_override_pct === "number") {
+        embutCapPct = clamp01(table.embut_cap_override_pct);
+      }
+    }
+    if (admin?.embut_base_allow_table_override && table.embut_base_override) {
+      embutBase = table.embut_base_override === "valor_categoria" ? "valor_categoria" : "credito";
+    }
+
+    // Ofertado: base %
+    if (admin?.ofert_base_allow_table_override && table.ofert_base_override) {
+      ofertBase = table.ofert_base_override === "valor_categoria" ? "valor_categoria" : "credito";
+    }
+
+    // Limitador pós (quando source = table)
+    if (limitSource === "table") {
+      // Se a tabela trouxe %/base, consideramos que está habilitado
+      if (typeof table.limit_pct_override === "number" && table.limit_pct_override >= 0) {
+        limitPct = clamp01(table.limit_pct_override);
+        limitBase = (table.limit_base_override as BaseMode) ?? limitBase;
+        // se a Adm não desabilitou explicitamente, ativamos
+        limitEnabled = admin?.limit_enabled === false ? false : true;
+      }
+    }
+  }
+
+  // 4) Clamp e consistências finais
+  // – Embutido nunca passa de 25% por segurança (regra do negócio atual)
+  embutCapPct = Math.min(embutCapPct, 0.25);
+
+  // – Limitador: se não houver % definido, considera disabled (a menos que adm 'adm' tenha pct/base)
+  const limitHasPct =
+    (limitSource === "adm" && typeof limitPct === "number") ||
+    (limitSource === "table" && typeof limitPct === "number");
+  const limitFinalEnabled = limitEnabled && !!limitHasPct;
+
+  const rules: RuleSet = {
+    forms: {
+      parcela_cheia: !!forms_parcela_cheia,
+      red25: !!forms_red25,
+      red50: !!forms_red50,
+    },
+    redutorMode,
+    embutCapPct: embutCapPct,
+    embutBase,
+    ofertBase,
+    limit: {
+      enabled: limitFinalEnabled,
+      pct: limitFinalEnabled ? limitPct : undefined,
+      base: limitFinalEnabled ? (limitBase as BaseMode | undefined) : undefined,
+    },
+  };
+
+  return rules;
+}
+
 type UUID = string;
 
 type Lead = { id: UUID; nome: string; telefone?: string | null };

@@ -723,23 +723,17 @@ if (openSetup) {
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
 const activeAdminFull = activeAdmin as AdminFull | undefined;
 
-  // abre o modal "Configurar Administradora" somente quando a admin ativa
+ // abre o modal "Configurar Administradora" somente quando a admin ativa
 // já corresponde ao id da rota (?config=1)
 useEffect(() => {
+  if (loading) return;
   if (!config) return;
   if (!routeAdminId) return;
   if (activeAdminId !== routeAdminId) return;
   if (activeAdminFull) {
     openAdminCfg(activeAdminFull);
   }
-}, [config, routeAdminId, activeAdminId, activeAdminFull]);
-
-  // abre o modal "Configurar Administradora" quando acessar ?config=1
-useEffect(() => {
-  if (config && activeAdminFull) {
-    openAdminCfg(activeAdminFull);
-  }
-}, [config, activeAdminFull]); // não inclua openAdminCfg aqui
+}, [loading, config, routeAdminId, activeAdminId, activeAdminFull]);
   
   const adminTables = useMemo(
     () => tables.filter((t) => t.admin_id === activeAdminId),

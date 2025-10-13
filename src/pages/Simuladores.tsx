@@ -696,12 +696,14 @@ const rules = useMemo(() => {
       setForma("Parcela Cheia");
   }, [tabelaSelecionada]); // eslint-disable-line
 
-  // valida % embutido
-  const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
-  useEffect(() => {
-    if (lanceEmbutPct !== lanceEmbutPctValid)
-      setLanceEmbutPct(lanceEmbutPctValid);
-  }, [lanceEmbutPct]); // eslint-disable-line
+// valida % embutido com teto resolvido (Adm/Tabela)
+const embutCapMax = rules?.embutCapPct ?? 0.25;
+const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, embutCapMax);
+useEffect(() => {
+  if (lanceEmbutPct !== lanceEmbutPctValid) {
+    setLanceEmbutPct(lanceEmbutPctValid);
+  }
+}, [lanceEmbutPct, lanceEmbutPctValid]); // eslint-disable-line
 
   const prazoAviso =
     prazoVenda > 0 && prazoAte > 0 && prazoVenda > prazoAte
@@ -1005,74 +1007,78 @@ Vantagens
 </div>
 
       {/* layout em duas colunas */}
-      <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador */}
-        <div className="col-span-12 lg:col-span-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>Simuladores</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {activeAdmin ? (
-                activeAdmin.name === "Embracon" ? (
-                  <EmbraconSimulator
-                    leads={leads}
-                    adminTables={adminTables}
-                    nomesTabelaSegmento={nomesTabelaSegmento}
-                    variantesDaTabela={variantesDaTabela}
-                    tabelaSelecionada={tabelaSelecionada}
-                    prazoAte={prazoAte}
-                    faixa={faixa}
-                    leadId={leadId}
-                    setLeadId={setLeadId}
-                    leadInfo={leadInfo}
-                    grupo={grupo}
-                    setGrupo={setGrupo}
-                    segmento={segmento}
-                    setSegmento={(v) => {
-                      setSegmento(v);
-                      setNomeTabela("");
-                      setTabelaId("");
-                    }}
-                    nomeTabela={nomeTabela}
-                    setNomeTabela={(v) => {
-                      setNomeTabela(v);
-                      setTabelaId("");
-                    }}
-                    tabelaId={tabelaId}
-                    setTabelaId={setTabelaId}
-                    credito={credito}
-                    setCredito={setCredito}
-                    prazoVenda={prazoVenda}
-                    setPrazoVenda={setPrazoVenda}
-                    forma={forma}
-                    setForma={setForma}
-                    seguroPrest={seguroPrest}
-                    setSeguroPrest={setSeguroPrest}
-                    lanceOfertPct={lanceOfertPct}
-                    setLanceOfertPct={setLanceOfertPct}
-                    lanceEmbutPct={lanceEmbutPct}
-                    setLanceEmbutPct={setLanceEmbutPct}
-                    parcContemplacao={parcContemplacao}
-                    setParcContemplacao={setParcContemplacao}
-                    prazoAviso={prazoAviso}
-                    calc={calc}
-                    salvar={salvarSimulacao}
-                    salvando={salvando}
-                    simCode={simCode}
-                  />
-                ) : (
-                  <div className="text-sm text-muted-foreground">
-                    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
-                  </div>
-                )
-              ) : (
-                <div className="text-sm text-muted-foreground">
-                  Nenhuma administradora encontrada.
-                </div>
-              )}
-            </CardContent>
-          </Card>
+<div className="grid grid-cols-12 gap-4">
+  {/* coluna esquerda: simulador */}
+  <div className="col-span-12 lg:col-span-8">
+    <Card>
+      <CardHeader>
+        <CardTitle>Simuladores</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {activeAdmin ? (
+          activeAdmin.name === "Embracon" ? (
+            <EmbraconSimulator
+              leads={leads}
+              adminTables={adminTables}
+              nomesTabelaSegmento={nomesTabelaSegmento}
+              variantesDaTabela={variantesDaTabela}
+              tabelaSelecionada={tabelaSelecionada}
+              prazoAte={prazoAte}
+              faixa={faixa}
+              leadId={leadId}
+              setLeadId={setLeadId}
+              leadInfo={leadInfo}
+              grupo={grupo}
+              setGrupo={setGrupo}
+              segmento={segmento}
+              setSegmento={(v) => {
+                setSegmento(v);
+                setNomeTabela("");
+                setTabelaId("");
+              }}
+              nomeTabela={nomeTabela}
+              setNomeTabela={(v) => {
+                setNomeTabela(v);
+                setTabelaId("");
+              }}
+              tabelaId={tabelaId}
+              setTabelaId={setTabelaId}
+              {/* teto do embutido resolvido por Adm/Tabela */}
+              embutCapMax={embutCapMax}
+              credito={credito}
+              setCredito={setCredito}
+              prazoVenda={prazoVenda}
+              setPrazoVenda={setPrazoVenda}
+              forma={forma}
+              setForma={setForma}
+              seguroPrest={seguroPrest}
+              setSeguroPrest={setSeguroPrest}
+              lanceOfertPct={lanceOfertPct}
+              setLanceOfertPct={setLanceOfertPct}
+              lanceEmbutPct={lanceEmbutPct}
+              setLanceEmbutPct={setLanceEmbutPct}
+              parcContemplacao={parcContemplacao}
+              setParcContemplacao={setParcContemplacao}
+              prazoAviso={prazoAviso}
+              calc={calc}
+              salvar={salvarSimulacao}
+              salvando={salvando}
+              simCode={simCode}
+            />
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              Em breve: simulador para <strong>{activeAdmin.name}</strong>.
+            </div>
+          )
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            Nenhuma administradora encontrada.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  </div>
+</div>
 
           {/* Ações principais */}
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1631,6 +1637,9 @@ type EmbraconProps = {
   nomeTabela: string; setNomeTabela: (v: string) => void;
   tabelaId: string; setTabelaId: (v: string) => void;
 
+  /* 👇 teto do lance embutido já resolvido (Adm/Tabela) */
+  embutCapMax: number;
+
   credito: number; setCredito: (v: number) => void;
   prazoVenda: number; setPrazoVenda: (v: number) => void;
   forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
@@ -1649,7 +1658,7 @@ type EmbraconProps = {
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
-const [leadOpen, setLeadOpen] = useState(false);
+  const [leadOpen, setLeadOpen] = useState(false);
   const [leadQuery, setLeadQuery] = useState("");
 
   const filteredLeads = useMemo(() => {
@@ -1669,8 +1678,9 @@ const [leadOpen, setLeadOpen] = useState(false);
 
   useEffect(() => {
     if (!leadOpen) setLeadQuery("");
-  }, [leadOpen]);  
-return (
+  }, [leadOpen]);
+
+  return (
     <div className="space-y-6">
       {/* Lead */}
       <Card>
@@ -1678,25 +1688,25 @@ return (
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-             <Label>Selecionar Lead</Label>
-<Popover onOpenChange={setLeadOpen}>
-  <PopoverButton className="w-full justify-between h-10">
-    {p.leadInfo?.nome || "Escolher lead"}
-    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-  </PopoverButton>
+              <Label>Selecionar Lead</Label>
+              <Popover onOpenChange={setLeadOpen}>
+                <PopoverButton className="w-full justify-between h-10">
+                  {p.leadInfo?.nome || "Escolher lead"}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                </PopoverButton>
 
-  <PopoverContent className="min-w-[260px] p-2 z-50">
-    {/* Busca */}
-    <div className="flex items-center gap-2 mb-2">
-      <Search className="h-4 w-4 opacity-60" />
-      <Input
-        placeholder="Buscar lead por nome ou telefone..."
-        value={leadQuery}
-        onChange={(e) => setLeadQuery(e.target.value)}
-        className="h-8"
-      />
-    </div>
-
+                <PopoverContent className="min-w-[260px] p-2 z-50">
+                  {/* Busca */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <Search className="h-4 w-4 opacity-60" />
+                    <Input
+                      placeholder="Buscar lead por nome ou telefone..."
+                      value={leadQuery}
+                      onChange={(e) => setLeadQuery(e.target.value)}
+                      className="h-8"
+                    />
+                  </div>
+                 
     {/* Lista */}
 <div className="max-h-64 overflow-y-auto space-y-1">
   {filteredLeads.length > 0 ? (
@@ -1961,14 +1971,14 @@ return (
                 <PercentInput
                   valueDecimal={p.lanceEmbutPct}
                   onChangeDecimal={(d) => {
-                    if (d > 0.25) {
-                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
-                      p.setLanceEmbutPct(0.25);
-                    } else {
-                      p.setLanceEmbutPct(d);
-                    }
+                if (d > p.embutCapMax) {
+  alert(`Lance embutido limitado a ${(p.embutCapMax * 100).toFixed(4)}% do crédito/base. Voltando para o máximo permitido.`);
+  p.setLanceEmbutPct(p.embutCapMax);
+} else {
+  p.setLanceEmbutPct(d);
+}
                   }}
-                  maxDecimal={0.25}
+                  maxDecimal={p.embutCapMax}
                 />
               </div>
               <div>

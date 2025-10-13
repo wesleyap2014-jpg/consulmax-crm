@@ -601,6 +601,24 @@ useEffect(() => {
 
 const [mgrOpen, setMgrOpen] = useState(false);
 
+// === Configuração de Administradora (modal) ===
+const [adminCfgOpen, setAdminCfgOpen] = useState(false);
+const [adminCfgTarget, setAdminCfgTarget] = useState<AdminFull | null>(null);
+
+function openAdminCfg(adm: AdminFull) {
+  setAdminCfgTarget(adm);
+  setAdminCfgOpen(true);
+}
+function closeAdminCfg() {
+  setAdminCfgOpen(false);
+  setAdminCfgTarget(null);
+}
+function handleAdminCfgSaved(updated: AdminFull) {
+  setAdmins(prev =>
+    prev.map(a => (a.id === updated.id ? { ...a, ...updated } as AdminFull : a))
+  );
+  closeAdminCfg();
+}
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");

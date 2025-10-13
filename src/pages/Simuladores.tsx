@@ -375,37 +375,37 @@ function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-// Parcela base (SEM seguro) — considera o modo do redutor
-const baseMensalSemSeguro =
-  rules?.redutorMode === "valor_categoria"
-    // Reduz o total (Crédito + Taxas) = Valor de Categoria
-    ? (valorCategoria * fundoComumFactor) / prazo
-    // (padrão Embracon) Reduz só o crédito e soma taxas por fora
-    : (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
+  // Parcela base (SEM seguro) — considera o modo do redutor
+  const baseMensalSemSeguro =
+    rules?.redutorMode === "valor_categoria"
+      // Reduz o total (Crédito + Taxas) = Valor de Categoria
+      ? (valorCategoria * fundoComumFactor) / prazo
+      // (padrão Embracon) Reduz só o crédito e soma taxas por fora
+      : (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
   // Seguro mensal (só soma na parcela, não abate saldo)
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
   // === Bases auxiliares conforme regras (compatível com Embracon) ===
-// Base para LANCE EMBUTIDO
-const embutBaseAmount =
-  rules?.embutBase === "valor_categoria" ? valorCategoria : C;
+  // Base para LANCE EMBUTIDO
+  const embutBaseAmount =
+    rules?.embutBase === "valor_categoria" ? valorCategoria : C;
 
-// Base para % do LANCE OFERTADO
-const ofertBaseAmount =
-  rules?.ofertBase === "valor_categoria" ? valorCategoria : C;
+  // Base para % do LANCE OFERTADO
+  const ofertBaseAmount =
+    rules?.ofertBase === "valor_categoria" ? valorCategoria : C;
 
-// Base do LIMITADOR pós-contemplação
-// "parcela vigente" = parcela mensal em vigor até a contemplação (sem antecipação extra da 1ª/2ª)
-const parcelaVigenteNaContemplacao = baseMensalSemSeguro + seguroMensal;
+  // Base do LIMITADOR pós-contemplação
+  // "parcela vigente" = parcela mensal em vigor até a contemplação (sem antecipação extra da 1ª/2ª)
+  const parcelaVigenteNaContemplacao = baseMensalSemSeguro + seguroMensal;
 
-const limitBaseMode: BaseMode = (rules?.limit?.base as BaseMode) ?? "valor_categoria";
-const limitBaseAmount =
-  limitBaseMode === "credito"
-    ? C
-    : limitBaseMode === "valor_categoria"
-    ? valorCategoria
-    : parcelaVigenteNaContemplacao; // "parcela_vigente"
+  const limitBaseMode: BaseMode = (rules?.limit?.base as BaseMode) ?? "valor_categoria";
+  const limitBaseAmount =
+    limitBaseMode === "credito"
+      ? C
+      : limitBaseMode === "valor_categoria"
+      ? valorCategoria
+      : parcelaVigenteNaContemplacao; // "parcela_vigente"
 
   // Antecipação (somada nas primeiras 1 ou 2 parcelas)
   const antecipAdicionalCada =
@@ -423,16 +423,16 @@ const limitBaseAmount =
     antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
 
   // === Lances (bases e tetos pelas regras) ===
-// aplica o teto de embutido definido pelas regras (fallback 25%)
-const embutPctEfetivo = clamp(lanceEmbutPct, 0, rules?.embutCapPct ?? 0.25);
+  // aplica o teto de embutido definido pelas regras (fallback 25%)
+  const embutPctEfetivo = clamp(lanceEmbutPct, 0, rules?.embutCapPct ?? 0.25);
 
-// calcula valores com as bases resolvidas
-const lanceEmbutidoValor = embutBaseAmount * embutPctEfetivo;
-const lanceOfertadoValor = ofertBaseAmount * lanceOfertPct;
+  // calcula valores com as bases resolvidas
+  const lanceEmbutidoValor = embutBaseAmount * embutPctEfetivo;
+  const lanceOfertadoValor = ofertBaseAmount * lanceOfertPct;
 
-// lance próprio e novo crédito seguem a lógica atual
-const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
-const novoCredito = Math.max(0, C - lanceEmbutidoValor);
+  // lance próprio e novo crédito seguem a lógica atual
+  const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
+  const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
   // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
   const saldoDevedorFinal = Math.max(
@@ -443,9 +443,31 @@ const novoCredito = Math.max(0, C - lanceEmbutidoValor);
   // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
 
-  // LIMITADOR (sobre valor de categoria)
-  const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
-  const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
+  /* ===== Limitador pós-contemplação (regras) =====
+     Bases possíveis:
+     - "credito"          => % aplicado sobre C
+     - "valor_categoria"  => % aplicado sobre valorCategoria (C + taxas)
+     - "parcela_vigente"  => % aplicado sobre a parcela vigente na data da contemplação (parcelaAte)
+  */
+  const temLimit =
+    !!(rules?.limit?.enabled &&
+       typeof rules?.limit?.pct === "number" &&
+       rules?.limit?.pct! > 0 &&
+       rules?.limit?.base);
+
+  let parcelaLimitante = 0;
+
+  if (temLimit) {
+    const pct = rules!.limit!.pct!; // decimal 0..1
+    const baseValor =
+      rules!.limit!.base === "credito"
+        ? C
+        : rules!.limit!.base === "valor_categoria"
+        ? valorCategoria
+        : /* "parcela_vigente" */ parcelaAte;
+
+    parcelaLimitante = baseValor * pct;
+  }
 
   // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
   const manterParcela = isServico || (isMoto && C < 20000);
@@ -455,11 +477,11 @@ const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
   if (!manterParcela) {
     // regra padrão: se limitador for maior que a nova parcela, aplica limitador
-    if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
+    if (temLimit && parcelaLimitante > novaParcelaSemLimite) {
       aplicouLimitador = true;
       parcelaEscolhida = parcelaLimitante;
     } else {
-      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
+      // sem limitador (ou não supera): usa a própria novaParcelaSemLimite (mantém prazo)
       parcelaEscolhida = novaParcelaSemLimite;
     }
   }

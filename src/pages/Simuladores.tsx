@@ -738,7 +738,11 @@ if (openSetup) {
     setLeadInfo(found ? { nome: found.nome, telefone: found.telefone } : null);
   }, [leadId, leads]);
 
-  const activeAdmin = admins.find((a) => a.id === activeAdminId);
+const activeAdmin = useMemo(() => {
+  const key = activeAdminId;
+  if (!key) return undefined;
+  return admins.find((a) => a.id === key || (a.slug && a.slug === key));
+}, [admins, activeAdminId]);
 const activeAdminFull = activeAdmin as AdminFull | undefined;
 
  // abre o modal "Configurar Administradora" somente quando a admin ativa

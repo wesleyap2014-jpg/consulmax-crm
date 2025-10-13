@@ -672,6 +672,14 @@ if (openSetup) {
     [tables, tabelaId]
   );
 
+  // Regras resolvidas (precedência: Adm -> Tabela)
+const rules = useMemo(() => {
+  return resolveRules(
+    activeAdminFull || null,
+    (tabelaSelecionada as SimTableWithOverrides) || null
+  );
+}, [activeAdminFull, tabelaSelecionada]);
+
   useEffect(() => {
     if (!tabelaSelecionada) return;
     setPrazoAte(tabelaSelecionada.prazo_limite);

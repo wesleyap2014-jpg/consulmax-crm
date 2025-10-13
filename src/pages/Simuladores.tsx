@@ -600,17 +600,18 @@ useEffect(() => {
 }, [routeAdminId, activeAdminId, admins]);
 
 const [mgrOpen, setMgrOpen] = useState(false);
+  const [admCfgOpen, setAdmCfgOpen] = useState(false);
 
 // === Configuração de Administradora (modal) ===
-const [adminCfgOpen, setAdminCfgOpen] = useState(false);
+const [admCfgOpen, setAdmCfgOpen] = useState(false);
 const [adminCfgTarget, setAdminCfgTarget] = useState<AdminFull | null>(null);
 
 function openAdminCfg(adm: AdminFull) {
   setAdminCfgTarget(adm);
-  setAdminCfgOpen(true);
+  setAdmCfgOpen(true);
 }
 function closeAdminCfg() {
-  setAdminCfgOpen(false);
+  setAdmCfgOpen(false);
   setAdminCfgTarget(null);
 }
 function handleAdminCfgSaved(updated: AdminFull) {

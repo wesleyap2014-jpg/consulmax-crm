@@ -1053,32 +1053,43 @@ Vantagens
   )}
 
   <div className="ml-auto flex items-center gap-2">
-    {activeAdmin && (
-      <>
-        {/* ✅ Mantido SEM depender do showTopChips */}
+  {activeAdmin && (
+    <>
+      {/* novo: abrir o modal de configuração da administradora ativa */}
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => openAdminCfg(activeAdminFull!)}
+        className="h-10 rounded-2xl px-4 whitespace-nowrap"
+      >
+        <Settings className="h-4 w-4 mr-1" />
+        Configurar {activeAdmin.name}
+      </Button>
+
+      {/* ✅ Mantido SEM depender do showTopChips */}
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => setMgrOpen(true)}
+        className="h-10 rounded-2xl px-4"
+      >
+        Gerenciar Tabelas
+      </Button>
+
+      {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
+      {showTopChips && (
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => setMgrOpen(true)}
-          className="h-10 rounded-2xl px-4"
+          onClick={() => alert("Em breve: adicionar administradora.")}
+          className="h-10 rounded-2xl px-4 whitespace-nowrap"
         >
-          Gerenciar Tabelas
+          <Plus className="h-4 w-4 mr-1" /> + Add Administradora
         </Button>
-
-        {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
-        {showTopChips && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => alert("Em breve: adicionar administradora.")}
-            className="h-10 rounded-2xl px-4 whitespace-nowrap"
-          >
-            <Plus className="h-4 w-4 mr-1" /> + Add Administradora
-          </Button>
-        )}
-      </>
-    )}
-  </div>
+      )}
+    </>
+  )}
+</div>
 </div>
 
 {/* layout em duas colunas */}

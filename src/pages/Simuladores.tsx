@@ -929,52 +929,59 @@ useEffect(() => {
 ]); // eslint-disable-line
 
   async function salvarSimulacao() {
-    if (!tabelaSelecionada || !calc) return;
-    setSalvando(true);
+  if (!tabelaSelecionada || !calc) return;
+  setSalvando(true);
 
-    const payload = {
-      admin_id: activeAdminId,
-      table_id: tabelaSelecionada.id,
-      lead_id: leadId || null,
-      lead_nome: leadInfo?.nome || null,
-      lead_telefone: leadInfo?.telefone || null,
-      grupo: grupo || null,
-      segmento: tabelaSelecionada.segmento,
-      nome_tabela: tabelaSelecionada.nome_tabela,
-      credito,
-      prazo_venda: prazoVenda,
-      forma_contratacao: forma,
-      seguro_prestamista: seguroPrest,
-      lance_ofertado_pct: lanceOfertPct,
-      lance_embutido_pct: lanceEmbutPctValid,
-      parcela_contemplacao: parcContemplacao,
-      valor_categoria: calc.valorCategoria,
-      parcela_ate_1_ou_2: calc.parcelaAte,
-      parcela_demais: calc.parcelaDemais,
-      lance_ofertado_valor: calc.lanceOfertadoValor,
-      lance_embutido_valor: calc.lanceEmbutidoValor,
-      lance_proprio_valor: calc.lanceProprioValor,
-      lance_percebido_pct: calc.lancePercebidoPct,
-      novo_credito: calc.novoCredito,
-      nova_parcela_sem_limite: calc.novaParcelaSemLimite,
-      parcela_limitante: calc.parcelaLimitante,
-      parcela_escolhida: calc.parcelaEscolhida,
-      saldo_devedor_final: calc.saldoDevedorFinal,
-      novo_prazo: calc.novoPrazo,
-    };
+  const payload = {
+    admin_id: activeAdminId,
+    table_id: tabelaSelecionada.id,
+    lead_id: leadId || null,
+    lead_nome: leadInfo?.nome || null,
+    lead_telefone: leadInfo?.telefone || null,
+    grupo: grupo || null,
+    segmento: tabelaSelecionada.segmento,
+    nome_tabela: tabelaSelecionada.nome_tabela,
+    credito,
+    prazo_venda: prazoVenda,
+    forma_contratacao: forma,
+    seguro_prestamista: seguroPrest,
+    lance_ofertado_pct: lanceOfertPct,
+    lance_embutido_pct: lanceEmbutPctValid,
+    parcela_contemplacao: parcContemplacao,
+    valor_categoria: calc.valorCategoria,
+    parcela_ate_1_ou_2: calc.parcelaAte,
+    parcela_demais: calc.parcelaDemais,
+    lance_ofertado_valor: calc.lanceOfertadoValor,
+    lance_embutido_valor: calc.lanceEmbutidoValor,
+    lance_proprio_valor: calc.lanceProprioValor,
+    lance_percebido_pct: calc.lancePercebidoPct,
+    novo_credito: calc.novoCredito,
+    nova_parcela_sem_limite: calc.novaParcelaSemLimite,
+    parcela_limitante: calc.parcelaLimitante,
+    parcela_escolhida: calc.parcelaEscolhida,
+    saldo_devedor_final: calc.saldoDevedorFinal,
+    novo_prazo: calc.novoPrazo,
+  };
 
-    const { data, error } = await supabase
-      .from("sim_simulations")
-      .insert(payload)
-      .select("code")
-      .single();
-    setSalvando(false);
-    if (error) {
-      alert("Erro ao salvar simulação: " + error.message);
-      return;
-    }
-    setSimCode(data?.code ?? null);
+  const { data, error } = await supabase
+    .from("sim_simulations")
+    .insert(payload)
+    .select("code")
+    .single();
+
+  setSalvando(false);
+
+  if (error) {
+    alert("Erro ao salvar simulação: " + error.message);
+    return;
   }
+
+  // guarda o número (se você exibe no Simulador)
+  setSimCode(data?.code ?? null);
+
+  // ✅ comportamento antigo: vai para a guia Propostas
+  navigate("/propostas");
+}
 
   function handleTableCreatedOrUpdated(newTable: SimTable) {
     setTables((prev) => {

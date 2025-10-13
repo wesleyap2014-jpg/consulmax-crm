@@ -1006,7 +1006,7 @@ Vantagens
   </div>
 </div>
 
-      {/* layout em duas colunas */}
+{/* layout em duas colunas */}
 <div className="grid grid-cols-12 gap-4">
   {/* coluna esquerda: simulador */}
   <div className="col-span-12 lg:col-span-8">
@@ -1076,6 +1076,11 @@ Vantagens
         )}
       </CardContent>
     </Card>
+  </div>
+
+  {/* coluna direita: memória + textos */}
+  <div className="col-span-12 lg:col-span-4 space-y-4">
+    {/* (todo o conteúdo da coluna direita permanece como estava) */}
   </div>
 </div>
 

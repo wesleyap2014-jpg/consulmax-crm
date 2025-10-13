@@ -600,7 +600,6 @@ useEffect(() => {
 }, [routeAdminId, activeAdminId, admins]);
 
 const [mgrOpen, setMgrOpen] = useState(false);
-  const [admCfgOpen, setAdmCfgOpen] = useState(false);
 
 // === Configuração de Administradora (modal) ===
 const [admCfgOpen, setAdmCfgOpen] = useState(false);

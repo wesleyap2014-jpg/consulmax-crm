@@ -5,9 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X, Settings } from "lucide-react";
-import { useParams, useLocation, useSearchParams } from "react-router-dom";
-import { ChevronsUpDown, Search } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, X, Settings, ChevronsUpDown, Search } from "lucide-react";
+import { useParams, useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */

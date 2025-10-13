@@ -422,11 +422,17 @@ const limitBaseAmount =
     baseMensalSemSeguro * parcelasPagas +
     antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
 
-  // Lances
-  const lanceOfertadoValor = C * lanceOfertPct;
-  const lanceEmbutidoValor = C * lanceEmbutPct;
-  const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
-  const novoCredito = Math.max(0, C - lanceEmbutidoValor);
+  // === Lances (bases e tetos pelas regras) ===
+// aplica o teto de embutido definido pelas regras (fallback 25%)
+const embutPctEfetivo = clamp(lanceEmbutPct, 0, rules?.embutCapPct ?? 0.25);
+
+// calcula valores com as bases resolvidas
+const lanceEmbutidoValor = embutBaseAmount * embutPctEfetivo;
+const lanceOfertadoValor = ofertBaseAmount * lanceOfertPct;
+
+// lance próprio e novo crédito seguem a lógica atual
+const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
+const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
   // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
   const saldoDevedorFinal = Math.max(

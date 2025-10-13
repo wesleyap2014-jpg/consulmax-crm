@@ -1313,6 +1313,348 @@ function ModalBase({
   );
 }
 
+// ========= AdminConfigModal.tsx =========
+type AdminConfigModalProps = {
+  admin: AdminFull;                // já carregada no parent (usa AdminFull)
+  onClose: () => void;
+  onSaved?: (updated: AdminFull) => void;
+};
+
+function toPctHuman(d?: number | null) {
+  if (d == null) return "";
+  return String(Math.round(d * 100 * 10000) / 10000); // 4 casas
+}
+function fromPctHuman(s: string) {
+  const n = Number((s || "").replace(",", "."));
+  return isFinite(n) ? n / 100 : null;
+}
+
+function AdminConfigModal({ admin, onClose, onSaved }: AdminConfigModalProps) {
+  const [saving, setSaving] = useState(false);
+
+  // estado local (começa do admin recebido)
+  const [form, setForm] = useState<AdminFull>(() => ({
+    ...admin,
+  }));
+
+  const setF = <K extends keyof AdminFull>(k: K, v: AdminFull[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
+
+  async function handleSave() {
+    try {
+      setSaving(true);
+
+      // monta payload com os campos de configuração (somente os que criamos)
+      const payload: Partial<AdminFull> = {
+        slug: form.slug ?? null,
+
+        forms_mode: form.forms_mode ?? "table",
+        forms_adm_parcela_cheia:
+          form.forms_mode === "adm" ? !!form.forms_adm_parcela_cheia : null,
+        forms_adm_red25:
+          form.forms_mode === "adm" ? !!form.forms_adm_red25 : null,
+        forms_adm_red50:
+          form.forms_mode === "adm" ? !!form.forms_adm_red50 : null,
+
+        reductor_mode: form.reductor_mode ?? "valor_categoria",
+        reductor_allow_table_override: !!form.reductor_allow_table_override,
+
+        embut_cap_mode: form.embut_cap_mode ?? "adm",
+        embut_cap_adm_pct:
+          form.embut_cap_mode === "adm" ? form.embut_cap_adm_pct ?? 0.25 : form.embut_cap_adm_pct ?? null,
+        embut_base: form.embut_base ?? "credito",
+        embut_base_allow_table_override: !!form.embut_base_allow_table_override,
+
+        ofert_base: form.ofert_base ?? "credito",
+        ofert_base_allow_table_override: !!form.ofert_base_allow_table_override,
+
+        limit_enabled: form.limit_enabled ?? false,
+        limit_mode: form.limit_mode ?? "table",
+        limit_adm_pct:
+          form.limit_mode === "adm" ? form.limit_adm_pct ?? null : null,
+        limit_adm_base:
+          form.limit_mode === "adm" ? (form.limit_adm_base ?? "valor_categoria") : null,
+      };
+
+      // persistir
+      const { data, error } = await supabase
+        .from("sim_admins")
+        .update(payload)
+        .eq("id", admin.id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+
+      // devolve atualizado
+      onSaved?.(data as AdminFull);
+      onClose();
+    } catch (e: any) {
+      alert("Falha ao salvar: " + (e?.message || "erro desconhecido"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // UI
+  return (
+    <ModalBase title={`Configurar ${admin.name}`} onClose={onClose}>
+      <div className="p-4 space-y-6">
+        {/* 1) Identificação */}
+        <section className="space-y-2">
+          <h3 className="font-medium">Identificação</h3>
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <Label>Nome (só leitura)</Label>
+              <Input value={admin.name} readOnly />
+            </div>
+            <div>
+              <Label>Slug</Label>
+              <Input
+                placeholder="ex.: embracon"
+                value={form.slug ?? ""}
+                onChange={(e) => setF("slug", e.target.value)}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* 2) Formas de contratação */}
+        <section className="space-y-2">
+          <h3 className="font-medium">Formas de Contratação</h3>
+          <div className="grid md:grid-cols-3 gap-3">
+            <div>
+              <Label>Quem define</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={form.forms_mode ?? "table"}
+                onChange={(e) => setF("forms_mode", e.target.value as FormsMode)}
+              >
+                <option value="table">Definido pela Tabela/Segmento</option>
+                <option value="adm">Padrão Adm</option>
+              </select>
+            </div>
+
+            {form.forms_mode === "adm" && (
+              <>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!form.forms_adm_parcela_cheia}
+                    onChange={(e) =>
+                      setF("forms_adm_parcela_cheia", e.target.checked)
+                    }
+                  />
+                  <Label>Parcela Cheia</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!form.forms_adm_red25}
+                    onChange={(e) => setF("forms_adm_red25", e.target.checked)}
+                  />
+                  <Label>Reduzida 25%</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!form.forms_adm_red50}
+                    onChange={(e) => setF("forms_adm_red50", e.target.checked)}
+                  />
+                  <Label>Reduzida 50%</Label>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* 3) Redutor */}
+        <section className="space-y-2">
+          <h3 className="font-medium">Redutor (Parcela Reduzida)</h3>
+          <div className="grid md:grid-cols-3 gap-3">
+            <div>
+              <Label>Modo</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={form.reductor_mode ?? "valor_categoria"}
+                onChange={(e) =>
+                  setF("reductor_mode", e.target.value as RedutorMode)
+                }
+              >
+                <option value="credito">Sobre o Crédito</option>
+                <option value="valor_categoria">Crédito + Taxas</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!form.reductor_allow_table_override}
+                onChange={(e) =>
+                  setF("reductor_allow_table_override", e.target.checked)
+                }
+              />
+              <Label>Permitir override por Tabela</Label>
+            </div>
+          </div>
+        </section>
+
+        {/* 4) Lance Embutido */}
+        <section className="space-y-2">
+          <h3 className="font-medium">Lance Embutido</h3>
+          <div className="grid md:grid-cols-3 gap-3">
+            <div>
+              <Label>Quem define o teto</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={form.embut_cap_mode ?? "adm"}
+                onChange={(e) =>
+                  setF("embut_cap_mode", e.target.value as LimitMode)
+                }
+              >
+                <option value="adm">Padrão Adm</option>
+                <option value="table">Definido por Tabela</option>
+              </select>
+            </div>
+
+            <div>
+              <Label>Teto (Padrão Adm) %</Label>
+              <Input
+                placeholder="ex.: 25"
+                value={toPctHuman(form.embut_cap_adm_pct)}
+                onChange={(e) =>
+                  setF("embut_cap_adm_pct", fromPctHuman(e.target.value))
+                }
+                disabled={(form.embut_cap_mode ?? "adm") !== "adm"}
+              />
+            </div>
+
+            <div>
+              <Label>Base do Embutido</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={form.embut_base ?? "credito"}
+                onChange={(e) =>
+                  setF("embut_base", e.target.value as BaseMode)
+                }
+              >
+                <option value="credito">Crédito</option>
+                <option value="valor_categoria">Valor de Categoria</option>
+              </select>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!form.embut_base_allow_table_override}
+                  onChange={(e) =>
+                    setF("embut_base_allow_table_override", e.target.checked)
+                  }
+                />
+                <Label>Permitir override por Tabela</Label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* 5) Lance Ofertado */}
+        <section className="space-y-2">
+          <h3 className="font-medium">Lance Ofertado</h3>
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <Label>Base %</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={form.ofert_base ?? "credito"}
+                onChange={(e) =>
+                  setF("ofert_base", e.target.value as BaseMode)
+                }
+              >
+                <option value="credito">Crédito</option>
+                <option value="valor_categoria">Valor de Categoria</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!form.ofert_base_allow_table_override}
+                onChange={(e) =>
+                  setF("ofert_base_allow_table_override", e.target.checked)
+                }
+              />
+              <Label>Permitir override por Tabela</Label>
+            </div>
+          </div>
+        </section>
+
+        {/* 6) Após a contemplação */}
+        <section className="space-y-2">
+          <h3 className="font-medium">Após a Contemplação</h3>
+          <div className="grid md:grid-cols-3 gap-3">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!form.limit_enabled}
+                onChange={(e) => setF("limit_enabled", e.target.checked)}
+              />
+              <Label>Habilitar limitador de parcela</Label>
+            </div>
+
+            <div>
+              <Label>Quem define</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={form.limit_mode ?? "table"}
+                onChange={(e) =>
+                  setF("limit_mode", e.target.value as LimitMode)
+                }
+                disabled={!form.limit_enabled}
+              >
+                <option value="table">Definido por Tabela</option>
+                <option value="adm">Padrão Adm</option>
+              </select>
+            </div>
+
+            <div>
+              <Label>% (Padrão Adm)</Label>
+              <Input
+                placeholder="ex.: 2.8"
+                value={toPctHuman(form.limit_adm_pct)}
+                onChange={(e) =>
+                  setF("limit_adm_pct", fromPctHuman(e.target.value))
+                }
+                disabled={!form.limit_enabled || (form.limit_mode ?? "table") !== "adm"}
+              />
+            </div>
+
+            <div>
+              <Label>Base (Padrão Adm)</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={form.limit_adm_base ?? "valor_categoria"}
+                onChange={(e) =>
+                  setF("limit_adm_base", e.target.value as BaseMode)
+                }
+                disabled={!form.limit_enabled || (form.limit_mode ?? "table") !== "adm"}
+              >
+                <option value="credito">Crédito</option>
+                <option value="valor_categoria">Valor de Categoria</option>
+                <option value="parcela_vigente">% sobre parcela vigente</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Salvando..." : "Salvar"}
+          </Button>
+        </div>
+      </div>
+    </ModalBase>
+  );
+}
+
 /* ============== Modal: Gerenciar Tabelas (com paginação) ============== */
 function TableManagerModal({
   admin,

@@ -771,26 +771,39 @@ useEffect(() => {
     parcContemplacao < prazoVenda;
 
   useEffect(() => {
-    if (!tabelaSelecionada || !podeCalcular) {
-      setCalc(null);
-      return;
-    }
-    const inp: CalcInput = {
-      credito,
-      prazoVenda,
-      forma,
-      seguro: seguroPrest,
-      segmento: tabelaSelecionada.segmento,
-      taxaAdmFull: tabelaSelecionada.taxa_adm_pct,
-      frPct: tabelaSelecionada.fundo_reserva_pct,
-      antecipPct: tabelaSelecionada.antecip_pct,
-      antecipParcelas: (tabelaSelecionada.antecip_parcelas as 0 | 1 | 2) ?? 0,
-      limitadorPct: tabelaSelecionada.limitador_parcela_pct,
-      seguroPrestPct: tabelaSelecionada.seguro_prest_pct,
-      lanceOfertPct,
-      lanceEmbutPct: lanceEmbutPctValid,
-      parcContemplacao,
-    };
+  if (!tabelaSelecionada || !podeCalcular) {
+    setCalc(null);
+    return;
+  }
+  const inp: CalcInput = {
+    credito,
+    prazoVenda,
+    forma,
+    seguro: seguroPrest,
+    segmento: tabelaSelecionada.segmento,
+    taxaAdmFull: tabelaSelecionada.taxa_adm_pct,
+    frPct: tabelaSelecionada.fundo_reserva_pct,
+    antecipPct: tabelaSelecionada.antecip_pct,
+    antecipParcelas: (tabelaSelecionada.antecip_parcelas as 0 | 1 | 2) ?? 0,
+    limitadorPct: tabelaSelecionada.limitador_parcela_pct,
+    seguroPrestPct: tabelaSelecionada.seguro_prest_pct,
+    lanceOfertPct,
+    lanceEmbutPct: lanceEmbutPctValid,
+    parcContemplacao,
+  };
+  // 👇 agora o motor recebe as regras resolvidas
+  setCalc(calcularSimulacao(inp, rules));
+}, [
+  tabelaSelecionada,
+  credito,
+  prazoVenda,
+  forma,
+  seguroPrest,
+  lanceOfertPct,
+  lanceEmbutPctValid,
+  parcContemplacao,
+  rules, // 👈 adicionada às dependências
+]); // eslint-disable-line
     setCalc(calcularSimulacao(inp));
   }, [
     tabelaSelecionada,

@@ -375,9 +375,13 @@ function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-  // Parcela base (SEM seguro)
-  const baseMensalSemSeguro =
-    (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
+// Parcela base (SEM seguro) — considera o modo do redutor
+const baseMensalSemSeguro =
+  rules?.redutorMode === "valor_categoria"
+    // Reduz o total (Crédito + Taxas) = Valor de Categoria
+    ? (valorCategoria * fundoComumFactor) / prazo
+    // (padrão Embracon) Reduz só o crédito e soma taxas por fora
+    : (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
   // Seguro mensal (só soma na parcela, não abate saldo)
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;

@@ -952,8 +952,44 @@ Vantagens
     );
   }
 
-  const activeAdmin = admins.find((a) => a.id === activeAdminId);
-  const activeAdminFull = activeAdmin as AdminFull | undefined;
+  // === Admin ativa (mover para cima) ===
+const activeAdmin = useMemo(
+  () => admins.find((a) => a.id === activeAdminId),
+  [admins, activeAdminId]
+);
+const activeAdminFull = activeAdmin as AdminFull | undefined;
+
+// === Tabelas do admin (mantenha seus memos existentes) ===
+const adminTables = useMemo(
+  () => tables.filter((t) => t.admin_id === activeAdminId),
+  [tables, activeAdminId]
+);
+
+const nomesTabelaSegmento = useMemo(() => {
+  const list = adminTables
+    .filter((t) => (segmento ? t.segmento === segmento : true))
+    .map((t) => t.nome_tabela);
+  return Array.from(new Set(list));
+}, [adminTables, segmento]);
+
+const variantesDaTabela = useMemo(() => {
+  return adminTables.filter(
+    (t) => t.segmento === segmento && t.nome_tabela === nomeTabela
+  );
+}, [adminTables, segmento, nomeTabela]);
+
+const tabelaSelecionada = useMemo(
+  () => tables.find((t) => t.id === tabelaId) || null,
+  [tables, tabelaId]
+);
+
+// === Regras resolvidas (usa activeAdminFull + tabelaSelecionada) ===
+const rules = useMemo(() => {
+  return resolveRules(
+    activeAdminFull || null,
+    (tabelaSelecionada as SimTableWithOverrides) || null
+  );
+}, [activeAdminFull, tabelaSelecionada]);
 
   return (
     <div className="p-6 space-y-4">

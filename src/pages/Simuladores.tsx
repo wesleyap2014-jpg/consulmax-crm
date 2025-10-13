@@ -1017,7 +1017,7 @@ Vantagens
       <CardContent>
         {activeAdmin ? (
           activeAdmin.name === "Embracon" ? (
-            <EmbraconSimulator
+           <EmbraconSimulator
   leads={leads}
   adminTables={adminTables}
   nomesTabelaSegmento={nomesTabelaSegmento}
@@ -1044,7 +1044,6 @@ Vantagens
   tabelaId={tabelaId}
   setTabelaId={setTabelaId}
   embutCapMax={embutCapMax}
-  {/* 👇 novo: formas permitidas resolvidas pelas regras */}
   formsAllowed={rules.forms}
   credito={credito}
   setCredito={setCredito}

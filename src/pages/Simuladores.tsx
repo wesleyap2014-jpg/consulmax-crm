@@ -382,6 +382,27 @@ function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
   // Seguro mensal (só soma na parcela, não abate saldo)
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
+  // === Bases auxiliares conforme regras (compatível com Embracon) ===
+// Base para LANCE EMBUTIDO
+const embutBaseAmount =
+  rules?.embutBase === "valor_categoria" ? valorCategoria : C;
+
+// Base para % do LANCE OFERTADO
+const ofertBaseAmount =
+  rules?.ofertBase === "valor_categoria" ? valorCategoria : C;
+
+// Base do LIMITADOR pós-contemplação
+// "parcela vigente" = parcela mensal em vigor até a contemplação (sem antecipação extra da 1ª/2ª)
+const parcelaVigenteNaContemplacao = baseMensalSemSeguro + seguroMensal;
+
+const limitBaseMode: BaseMode = (rules?.limit?.base as BaseMode) ?? "valor_categoria";
+const limitBaseAmount =
+  limitBaseMode === "credito"
+    ? C
+    : limitBaseMode === "valor_categoria"
+    ? valorCategoria
+    : parcelaVigenteNaContemplacao; // "parcela_vigente"
+
   // Antecipação (somada nas primeiras 1 ou 2 parcelas)
   const antecipAdicionalCada =
     antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;

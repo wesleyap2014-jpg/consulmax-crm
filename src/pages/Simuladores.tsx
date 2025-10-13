@@ -1407,31 +1407,36 @@ function AdminConfigModal({
   // estado local (carrega do admin)
   const [slug, setSlug] = useState(admin.slug ?? "");
 
-  // formas
-  const [formsMode, setFormsMode] = useState<FormsMode>(admin.forms_mode ?? "table");
-  const [admCheia, setAdmCheia] = useState<boolean>(!!admin.forms_adm_parcela_cheia);
-  const [admR25, setAdmR25] = useState<boolean>(!!admin.forms_adm_red25);
-  const [admR50, setAdmR50] = useState<boolean>(!!admin.forms_adm_red50);
+  // sempre que a administradora (prop) mudar, ressincroniza os campos do modal
+useEffect(() => {
+  setSlug(admin.slug ?? "");
 
-  // redutor
-  const [redMode, setRedMode] = useState<RedutorMode>(admin.reductor_mode ?? "valor_categoria");
-  const [redAllowTbl, setRedAllowTbl] = useState<boolean>(!!admin.reductor_allow_table_override);
+  // Formas
+  setFormsMode(admin.forms_mode ?? "table");
+  setAdmCheia(!!admin.forms_adm_parcela_cheia);
+  setAdmR25(!!admin.forms_adm_red25);
+  setAdmR50(!!admin.forms_adm_red50);
 
-  // embutido
-  const [embCapMode, setEmbCapMode] = useState<LimitMode>(admin.embut_cap_mode ?? "adm");
-  const [embCapAdmPctHuman, setEmbCapAdmPctHuman] = useState<string>(toHuman(admin.embut_cap_adm_pct ?? 0.25));
-  const [embBase, setEmbBase] = useState<BaseMode>((admin.embut_base as BaseMode) ?? "credito");
-  const [embBaseAllowTbl, setEmbBaseAllowTbl] = useState<boolean>(!!admin.embut_base_allow_table_override);
+  // Redutor
+  setRedMode(admin.reductor_mode ?? "valor_categoria");
+  setRedAllowTbl(!!admin.reductor_allow_table_override);
 
-  // ofertado
-  const [ofBase, setOfBase] = useState<BaseMode>((admin.ofert_base as BaseMode) ?? "credito");
-  const [ofBaseAllowTbl, setOfBaseAllowTbl] = useState<boolean>(!!admin.ofert_base_allow_table_override);
+  // Embutido
+  setEmbCapMode(admin.embut_cap_mode ?? "adm");
+  setEmbCapAdmPctHuman(toHuman(admin.embut_cap_adm_pct ?? 0.25));
+  setEmbBase((admin.embut_base as BaseMode) ?? "credito");
+  setEmbBaseAllowTbl(!!admin.embut_base_allow_table_override);
 
-  // limitador
-  const [limitEnabled, setLimitEnabled] = useState<boolean>(admin.limit_enabled ?? true);
-  const [limitMode, setLimitMode] = useState<LimitMode>(admin.limit_mode ?? "table");
-  const [limitAdmPctHuman, setLimitAdmPctHuman] = useState<string>(toHuman(admin.limit_adm_pct ?? null));
-  const [limitAdmBase, setLimitAdmBase] = useState<BaseMode | "">(admin.limit_adm_base ?? "");
+  // Ofertado
+  setOfBase((admin.ofert_base as BaseMode) ?? "credito");
+  setOfBaseAllowTbl(!!admin.ofert_base_allow_table_override);
+
+  // Limitador pós
+  setLimitEnabled(admin.limit_enabled ?? true);
+  setLimitMode(admin.limit_mode ?? "table");
+  setLimitAdmPctHuman(toHuman(admin.limit_adm_pct ?? null));
+  setLimitAdmBase((admin.limit_adm_base as BaseMode) ?? "");
+}, [admin.id]); // usar admin.id evita reset a cada render de objeto novo
 
   const [saving, setSaving] = useState(false);
   const isEmbracon = (admin.slug ?? "").toLowerCase() === "embracon";

@@ -806,17 +806,6 @@ useEffect(() => {
   parcContemplacao,
   rules, // importante
 ]); // eslint-disable-line
-    setCalc(calcularSimulacao(inp));
-  }, [
-    tabelaSelecionada,
-    credito,
-    prazoVenda,
-    forma,
-    seguroPrest,
-    lanceOfertPct,
-    lanceEmbutPctValid,
-    parcContemplacao,
-  ]); // eslint-disable-line
 
   async function salvarSimulacao() {
     if (!tabelaSelecionada || !calc) return;

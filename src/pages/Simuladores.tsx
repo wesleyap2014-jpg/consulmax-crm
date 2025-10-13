@@ -589,7 +589,20 @@ export default function Simuladores() {
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
-  
+
+  // converte a chave da rota (uuid OU slug) para o UUID da admin
+function resolveAdminIdFromRoute(
+  key: string | null | undefined,
+  list: AdminFull[]
+): string | null {
+  if (!key) return null;
+  const k = key.toLowerCase();
+  const byId = list.find(a => a.id === key);
+  if (byId) return byId.id;
+  const bySlug = list.find(a => (a.slug ?? "").toLowerCase() === k);
+  return bySlug ? bySlug.id : null;
+}
+
 useEffect(() => {
   if (!routeAdminId) {
     setActiveAdminId(null);

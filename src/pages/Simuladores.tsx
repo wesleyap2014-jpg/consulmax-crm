@@ -1357,6 +1357,29 @@ Vantagens
   </div>
 </div>
 
+      {/* Barra de ações fixa no rodapé */}
+<div className="sticky bottom-0 z-10 mt-4 bg-background/70 backdrop-blur supports-[backdrop-filter]:bg-background/50 border-t p-3 rounded-t-xl">
+  <div className="max-w-screen-xl mx-auto flex items-center justify-end gap-2">
+    {/* Se você tiver um botão de reset, mantenha aqui */}
+    {/* <Button variant="secondary" onClick={handleResetAll}>Limpar</Button> */}
+
+    <Button
+      onClick={handleSaveSimulation}        // troque pelo seu handler real se existir
+      disabled={savingSim || !leadId}       // sem lead não deixa salvar
+      className="h-10 rounded-2xl px-5"
+    >
+      {savingSim ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Salvando…
+        </>
+      ) : (
+        "Salvar Simulação"
+      )}
+    </Button>
+  </div>
+</div>
+
       {/* Overlay de gerenciamento de tabelas */}
       {mgrOpen && activeAdmin && (
         <TableManagerModal

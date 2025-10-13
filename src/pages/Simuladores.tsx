@@ -1620,6 +1620,9 @@ type EmbraconProps = {
   nomeTabela: string; setNomeTabela: (v: string) => void;
   tabelaId: string; setTabelaId: (v: string) => void;
 
+  /** Formas permitidas resolvidas pelas regras (fallback quando a tabela não define) */
+  formsAllowed?: { parcela_cheia: boolean; red25: boolean; red50: boolean };
+
   /* 👇 teto do lance embutido já resolvido (Adm/Tabela) */
   embutCapMax: number;
 

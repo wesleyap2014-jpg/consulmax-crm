@@ -11,6 +11,70 @@ import { ChevronsUpDown, Search } from "lucide-react";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
+
+// ====== Enums TS (alinhados com os enums do banco) ======
+type FormsMode = "adm" | "table";
+type RedutorMode = "credito" | "valor_categoria";
+type BaseMode = "credito" | "valor_categoria" | "parcela_vigente";
+type LimitMode = "adm" | "table";
+
+// ====== Config padrão por Administradora (campos novos em sim_admins) ======
+type AdminCalcConfig = {
+  slug?: string | null;
+
+  // Formas de contratação
+  forms_mode?: FormsMode; // quem define as formas (adm|table)
+  forms_adm_parcela_cheia?: boolean | null;
+  forms_adm_red25?: boolean | null;
+  forms_adm_red50?: boolean | null;
+
+  // Redutor (parcela reduzida)
+  reductor_mode?: RedutorMode; // padrão da Adm
+  reductor_allow_table_override?: boolean | null;
+
+  // Lance embutido (cap e bases)
+  embut_cap_mode?: LimitMode; // quem define o teto do embutido (adm|table)
+  embut_cap_adm_pct?: number | null; // decimal 0..1
+  embut_base?: BaseMode; // base para embutido
+  embut_base_allow_table_override?: boolean | null;
+
+  // Lance ofertado (base %)
+  ofert_base?: BaseMode;
+  ofert_base_allow_table_override?: boolean | null;
+
+  // Limitador pós-contemplação
+  limit_enabled?: boolean | null;
+  limit_mode?: LimitMode; // quem define (%)
+  limit_adm_pct?: number | null; // decimal 0..1
+  limit_adm_base?: BaseMode | null;
+};
+
+// Expande o tipo Admin (sem quebrar o existente)
+type AdminFull = Admin & AdminCalcConfig;
+
+// ====== Overrides por Tabela (campos novos em sim_tables) ======
+type SimTableOverrides = {
+  // Formas de contratação (quando forms_mode="table")
+  forms_tbl_parcela_cheia?: boolean | null;
+  forms_tbl_red25?: boolean | null;
+  forms_tbl_red50?: boolean | null;
+
+  // Redutor
+  reductor_mode_override?: RedutorMode | null;
+
+  // Lance embutido / ofertado
+  embut_cap_override_pct?: number | null; // 0..1
+  embut_base_override?: BaseMode | null;
+  ofert_base_override?: BaseMode | null;
+
+  // Limitador pós
+  limit_pct_override?: number | null; // 0..1
+  limit_base_override?: BaseMode | null;
+};
+
+// Anexa overrides ao SimTable existente (todos opcionais)
+type SimTableWithOverrides = SimTable & SimTableOverrides;
+
 type UUID = string;
 
 type Lead = { id: UUID; nome: string; telefone?: string | null };

@@ -581,6 +581,7 @@ export default function Simuladores() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams(); // se usa ?setup=1
   const setup = searchParams.get("setup") === "1";
+  const config = searchParams.get("config") === "1";
   const routeAdminId = id ?? null;
   
   const [loading, setLoading] = useState(true);
@@ -721,6 +722,13 @@ if (openSetup) {
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
 const activeAdminFull = activeAdmin as AdminFull | undefined;
 
+  // abre o modal "Configurar Administradora" quando acessar ?config=1
+useEffect(() => {
+  if (config && activeAdminFull) {
+    openAdminCfg(activeAdminFull);
+  }
+}, [config, activeAdminFull]); // não inclua openAdminCfg aqui
+  
   const adminTables = useMemo(
     () => tables.filter((t) => t.admin_id === activeAdminId),
     [tables, activeAdminId]

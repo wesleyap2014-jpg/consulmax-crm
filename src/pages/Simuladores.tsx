@@ -945,6 +945,7 @@ Vantagens
   }
 
   const activeAdmin = admins.find((a) => a.id === activeAdminId);
+  const activeAdminFull = activeAdmin as AdminFull | undefined;
 
   return (
     <div className="p-6 space-y-4">

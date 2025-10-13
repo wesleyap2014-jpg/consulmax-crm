@@ -1305,6 +1305,21 @@ Vantagens
   );
 }
 
+{/* Overlay de configuração de administradora */}
+{admCfgOpen && admCfgAdmin && (
+  <AdminConfigModal
+    admin={admCfgAdmin}
+    onClose={() => setAdmCfgOpen(false)}
+    onSaved={(updated) => {
+      // atualiza a lista local de admins para refletir as mudanças
+      setAdmins((arr) =>
+        arr.map((a) => (a.id === updated.id ? (updated as AdminFull) : a))
+      );
+      setAdmCfgOpen(false);
+    }}
+  />
+)}
+
 /* =============== Modal: base com ESC para fechar =============== */
 function ModalBase({
   children,

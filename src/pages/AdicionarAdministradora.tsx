@@ -8,21 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 
-// helper para gerar/limpar slug
+// helper para gerar/limpar slug (robusto e cross-browser)
 function slugify(input: string): string {
   return input
     .toLowerCase()
     .normalize("NFD")
-    // remove diacríticos
-    .replace(/\p{Diacritic}/gu, "")
-    // & -> e
+    .replace(/[\u0300-\u036f]/g, "") // remove acentos
     .replace(/&/g, "e")
-    // qualquer coisa que não seja a-z 0-9 vira "-"
-    .replace(/[^a-z0-9]+/g, "-")
-    // remove "-" no começo/fim
-    .replace(/^-+|-+$/g, "")
-    // colapsa múltiplos "-"
-    .replace(/-{2,}/g, "-");
+    .replace(/[^a-z0-9]+/g, "-") // tudo que não for a-z0-9 vira "-"
+    .replace(/^-+|-+$/g, "") // remove hífen no começo/fim
+    .replace(/-{2,}/g, "-"); // colapsa múltiplos hífens
 }
 
 export default function AdicionarAdministradora() {
@@ -37,9 +32,7 @@ export default function AdicionarAdministradora() {
 
   // gera slug automaticamente a partir do nome (se o usuário ainda não mexeu no campo slug)
   useEffect(() => {
-    if (!slugTouched) {
-      setSlug(slugify(name));
-    }
+    if (!slugTouched) setSlug(slugify(name));
   }, [name, slugTouched]);
 
   function onSlugChange(v: string) {
@@ -71,58 +64,50 @@ export default function AdicionarAdministradora() {
       .select("id, slug")
       .single();
 
-    // 1a) sucesso → abre setup
+    // 1a) sucesso → abre setup SEMPRE PELO ID
     if (ins.data && !ins.error) {
       setSaving(false);
-      const key = ins.data.slug || ins.data.id;
-      navigate(`/simuladores/${key}?setup=1`, { replace: true });
+      navigate(`/simuladores/${ins.data.id}?setup=1`, { replace: true });
       return;
     }
 
-    // 1b) duplicado → tenta achar existente por nome/slug
+    // 1b) duplicado → tenta achar existente por slug ou por nome
     const isUniqueViolation =
       ins.error?.code === "23505" ||
       (ins.error?.message || "").toLowerCase().includes("duplicate key");
 
     if (isUniqueViolation) {
-      // procura por slug (se houver) primeiro
       let existingId: string | null = null;
-      let existingSlug: string | null = null;
 
+      // procura por slug (se houver) primeiro
       if (payload.slug) {
         const { data: bySlug } = await supabase
           .from("sim_admins")
-          .select("id, slug")
+          .select("id")
           .eq("slug", payload.slug)
           .maybeSingle();
-        if (bySlug?.id) {
-          existingId = bySlug.id;
-          existingSlug = bySlug.slug ?? null;
-        }
+        if (bySlug?.id) existingId = bySlug.id;
       }
 
+      // se não encontrou por slug, procura por nome
       if (!existingId) {
         const { data: byName } = await supabase
           .from("sim_admins")
-          .select("id, slug")
+          .select("id")
           .eq("name", trimmed)
           .maybeSingle();
-        if (byName?.id) {
-          existingId = byName.id;
-          existingSlug = byName.slug ?? null;
-        }
+        if (byName?.id) existingId = byName.id;
       }
 
       setSaving(false);
 
       if (existingId) {
-        // já existe → abre a existente (sem setup forçado)
-        const key = existingSlug || existingId;
-        navigate(`/simuladores/${key}`, { replace: true });
+        // já existe → abre a existente e força o setup também
+        navigate(`/simuladores/${existingId}?setup=1`, { replace: true });
         return;
       }
 
-      // se não achou por algum motivo, avisa
+      // não achou por algum motivo, avisa
       setError("Essa administradora já existe.");
       return;
     }
@@ -181,6 +166,7 @@ export default function AdicionarAdministradora() {
             <Button
               variant="secondary"
               onClick={() => navigate("/simuladores")}
+              disabled={saving}
               className="h-10 rounded-2xl px-4"
             >
               Cancelar

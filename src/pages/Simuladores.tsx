@@ -590,9 +590,21 @@ export default function Simuladores() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
   
-  useEffect(() => {
-  setActiveAdminId(routeAdminId);
-}, [routeAdminId]);
+useEffect(() => {
+  if (!routeAdminId) {
+    setActiveAdminId(null);
+    return;
+  }
+  // casa por id OU por slug (case-insensitive por segurança)
+  const match = admins.find(
+    (ad) =>
+      ad.id === routeAdminId ||
+      (ad.slug && ad.slug.toLowerCase() === routeAdminId.toLowerCase())
+  );
+
+  // fixa sempre o ID real quando houver match; senão mantém a chave da rota
+  setActiveAdminId(match?.id ?? routeAdminId);
+}, [routeAdminId, admins]);
 
 useEffect(() => {
   if (!routeAdminId && !activeAdminId && admins.length) {

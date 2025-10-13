@@ -340,7 +340,7 @@ type CalcInput = {
   parcContemplacao: number;
 };
 
-function calcularSimulacao(i: CalcInput) {
+function calcularSimulacao(i: CalcInput, rules?: RuleSet) {
   const {
     credito: C,
     prazoVenda,

@@ -590,6 +590,30 @@ export default function Simuladores() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
 
+  // loader do botão Salvar
+const [savingSim, setSavingSim] = useState(false);
+
+// TODO: troque pelo seu salvamento real (ex.: criar proposta/sim_run)
+// Dica: mantenha o snapshot que você já exibe na “Memória de Cálculo”
+async function handleSaveSimulation() {
+  if (!leadId) return; // só salva se um lead estiver selecionado
+  try {
+    setSavingSim(true);
+
+    // =======================
+    // COLE AQUI sua lógica real de salvar
+    // (ex.: supabase.from('proposals').insert({...}))
+    // =======================
+
+    // Exemplo de notificação simples:
+    alert("Simulação salva!");
+  } catch (e: any) {
+    alert("Falha ao salvar: " + (e?.message ?? String(e)));
+  } finally {
+    setSavingSim(false);
+  }
+}
+
   // converte a chave da rota (uuid OU slug) para o UUID da admin
 function resolveAdminIdFromRoute(
   key: string | null | undefined,

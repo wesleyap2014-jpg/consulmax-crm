@@ -752,13 +752,12 @@ const activeAdmin = useMemo(() => {
 }, [admins, activeAdminId]);
 const activeAdminFull = activeAdmin as AdminFull | undefined;
 
- // abre o modal "Configurar Administradora" somente quando a admin ativa
-// já corresponde ao id da rota (?config=1)
+// Abre "Configurar Administradora" só quando a ativa coincide com a da rota e ?config=1
 useEffect(() => {
-  if (loading) return;
-  if (!config) return;
-  if (!routeAdminId) return;
-  if (activeAdminId !== routeAdminId) return;
+  if (loading) return;             // espere dados carregarem
+  if (!config) return;             // precisa de ?config=1
+  if (!routeAdminId) return;       // precisa ter admin na URL (id ou slug resolvido)
+  if (activeAdminId !== routeAdminId) return; // só quando ativa = rota
   if (activeAdminFull) {
     openAdminCfg(activeAdminFull);
   }

@@ -16,7 +16,7 @@ function slugify(input: string): string {
     .replace(/[\u0300-\u036f]/g, "") // remove acentos
     .replace(/&/g, "e")
     .replace(/[^a-z0-9]+/g, "-") // tudo que não for a-z0-9 vira "-"
-    .replace(/^-+|-+$/g, "") // remove hífen no começo/fim
+    .replace(/^-+|-+$/g, "") // remove hífen do começo/fim
     .replace(/-{2,}/g, "-"); // colapsa múltiplos hífens
 }
 
@@ -48,7 +48,6 @@ export default function AdicionarAdministradora() {
       return;
     }
 
-    // normaliza slug (se o usuário limpou, vira null)
     const normalizedSlug = slugify(slug.trim());
     const payload: { name: string; slug: string | null } = {
       name: trimmed,
@@ -61,17 +60,17 @@ export default function AdicionarAdministradora() {
     const ins = await supabase
       .from("sim_admins")
       .insert(payload)
-      .select("id, slug")
+      .select("id")
       .single();
 
-    // 1a) sucesso → abre setup SEMPRE PELO ID
+    // 1a) sucesso → abre tela de CONFIG da nova admin (sempre por ID)
     if (ins.data && !ins.error) {
       setSaving(false);
-      navigate(`/simuladores/${ins.data.id}?setup=1`, { replace: true });
+      navigate(`/simuladores/${ins.data.id}?config=1`, { replace: true });
       return;
     }
 
-    // 1b) duplicado → tenta achar existente por slug ou por nome
+    // 1b) duplicado → achar existente por slug ou por nome e abrir CONFIG
     const isUniqueViolation =
       ins.error?.code === "23505" ||
       (ins.error?.message || "").toLowerCase().includes("duplicate key");
@@ -79,7 +78,6 @@ export default function AdicionarAdministradora() {
     if (isUniqueViolation) {
       let existingId: string | null = null;
 
-      // procura por slug (se houver) primeiro
       if (payload.slug) {
         const { data: bySlug } = await supabase
           .from("sim_admins")
@@ -89,7 +87,6 @@ export default function AdicionarAdministradora() {
         if (bySlug?.id) existingId = bySlug.id;
       }
 
-      // se não encontrou por slug, procura por nome
       if (!existingId) {
         const { data: byName } = await supabase
           .from("sim_admins")
@@ -102,12 +99,11 @@ export default function AdicionarAdministradora() {
       setSaving(false);
 
       if (existingId) {
-        // já existe → abre a existente e força o setup também
-        navigate(`/simuladores/${existingId}?setup=1`, { replace: true });
+        // já existe → abre a existente e força a tela de CONFIG
+        navigate(`/simuladores/${existingId}?config=1`, { replace: true });
         return;
       }
 
-      // não achou por algum motivo, avisa
       setError("Essa administradora já existe.");
       return;
     }
@@ -174,7 +170,7 @@ export default function AdicionarAdministradora() {
           </div>
 
           <div className="text-xs text-muted-foreground">
-            Dica: após salvar, você será levado à tela da administradora para configurar o simulador.
+            Dica: após salvar, você será levado à tela de configuração da administradora.
           </div>
         </CardContent>
       </Card>

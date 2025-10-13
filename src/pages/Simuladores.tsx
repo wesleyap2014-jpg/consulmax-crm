@@ -582,7 +582,8 @@ export default function Simuladores() {
   const setup = searchParams.get("setup") === "1";
   const config = searchParams.get("config") === "1";
   const routeAdminId = id ?? null;
-  
+  const navigate = useNavigate();
+
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<AdminFull[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);

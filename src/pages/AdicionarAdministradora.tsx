@@ -13,11 +13,11 @@ function slugify(input: string): string {
   return input
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .replace(/[\u0300-\u036f]/g, "")      // remove acentos
     .replace(/&/g, "e")
-    .replace(/[^a-z0-9]+/g, "-") // tudo que não for a-z0-9 vira "-"
-    .replace(/^-+|-+$/g, "") // remove hífen do começo/fim
-    .replace(/-{2,}/g, "-"); // colapsa múltiplos hífens
+    .replace(/[^a-z0-9]+/g, "-")          // não a-z0-9 => "-"
+    .replace(/^-+|-+$/g, "")              // tira hífen no começo/fim
+    .replace(/-{2,}/g, "-");              // colapsa múltiplos hífens
 }
 
 export default function AdicionarAdministradora() {
@@ -42,6 +42,7 @@ export default function AdicionarAdministradora() {
 
   async function handleSave() {
     setError(null);
+
     const trimmed = name.trim();
     if (!trimmed) {
       setError("Informe o nome da administradora.");
@@ -82,7 +83,7 @@ export default function AdicionarAdministradora() {
         const { data: bySlug } = await supabase
           .from("sim_admins")
           .select("id")
-          .eq("slug", payload.slug)
+          .eq("slug", payload.slug) // slug é salvo minúsculo; eq funciona
           .maybeSingle();
         if (bySlug?.id) existingId = bySlug.id;
       }

@@ -1404,39 +1404,73 @@ function AdminConfigModal({
     return num / 100;
   };
 
-  // estado local (carrega do admin)
+  // ======== ESTADO LOCAL (carregado do admin) ========
   const [slug, setSlug] = useState(admin.slug ?? "");
 
-  // sempre que a administradora (prop) mudar, ressincroniza os campos do modal
-useEffect(() => {
-  setSlug(admin.slug ?? "");
-
   // Formas
-  setFormsMode(admin.forms_mode ?? "table");
-  setAdmCheia(!!admin.forms_adm_parcela_cheia);
-  setAdmR25(!!admin.forms_adm_red25);
-  setAdmR50(!!admin.forms_adm_red50);
+  const [formsMode, setFormsMode] = useState<FormsMode>(admin.forms_mode ?? "table");
+  const [admCheia, setAdmCheia] = useState<boolean>(!!admin.forms_adm_parcela_cheia);
+  const [admR25, setAdmR25] = useState<boolean>(!!admin.forms_adm_red25);
+  const [admR50, setAdmR50] = useState<boolean>(!!admin.forms_adm_red50);
 
   // Redutor
-  setRedMode(admin.reductor_mode ?? "valor_categoria");
-  setRedAllowTbl(!!admin.reductor_allow_table_override);
+  const [redMode, setRedMode] = useState<RedutorMode>(admin.reductor_mode ?? "valor_categoria");
+  const [redAllowTbl, setRedAllowTbl] = useState<boolean>(!!admin.reductor_allow_table_override);
 
   // Embutido
-  setEmbCapMode(admin.embut_cap_mode ?? "adm");
-  setEmbCapAdmPctHuman(toHuman(admin.embut_cap_adm_pct ?? 0.25));
-  setEmbBase((admin.embut_base as BaseMode) ?? "credito");
-  setEmbBaseAllowTbl(!!admin.embut_base_allow_table_override);
+  const [embCapMode, setEmbCapMode] = useState<LimitMode>(admin.embut_cap_mode ?? "adm");
+  const [embCapAdmPctHuman, setEmbCapAdmPctHuman] = useState<string>(
+    toHuman(admin.embut_cap_adm_pct ?? 0.25)
+  );
+  const [embBase, setEmbBase] = useState<BaseMode>((admin.embut_base as BaseMode) ?? "credito");
+  const [embBaseAllowTbl, setEmbBaseAllowTbl] = useState<boolean>(
+    !!admin.embut_base_allow_table_override
+  );
 
   // Ofertado
-  setOfBase((admin.ofert_base as BaseMode) ?? "credito");
-  setOfBaseAllowTbl(!!admin.ofert_base_allow_table_override);
+  const [ofBase, setOfBase] = useState<BaseMode>((admin.ofert_base as BaseMode) ?? "credito");
+  const [ofBaseAllowTbl, setOfBaseAllowTbl] = useState<boolean>(
+    !!admin.ofert_base_allow_table_override
+  );
 
-  // Limitador pós
-  setLimitEnabled(admin.limit_enabled ?? true);
-  setLimitMode(admin.limit_mode ?? "table");
-  setLimitAdmPctHuman(toHuman(admin.limit_adm_pct ?? null));
-  setLimitAdmBase((admin.limit_adm_base as BaseMode) ?? "");
-}, [admin.id]); // usar admin.id evita reset a cada render de objeto novo
+  // Limitador
+  const [limitEnabled, setLimitEnabled] = useState<boolean>(admin.limit_enabled ?? true);
+  const [limitMode, setLimitMode] = useState<LimitMode>(admin.limit_mode ?? "table");
+  const [limitAdmPctHuman, setLimitAdmPctHuman] = useState<string>(
+    toHuman(admin.limit_adm_pct ?? null)
+  );
+  const [limitAdmBase, setLimitAdmBase] = useState<BaseMode | "">(admin.limit_adm_base ?? "");
+
+  // 🔧 RESETA CAMPOS QUANDO TROCA A ADMIN NO MODAL
+  useEffect(() => {
+    setSlug(admin.slug ?? "");
+
+    // Formas
+    setFormsMode(admin.forms_mode ?? "table");
+    setAdmCheia(!!admin.forms_adm_parcela_cheia);
+    setAdmR25(!!admin.forms_adm_red25);
+    setAdmR50(!!admin.forms_adm_red50);
+
+    // Redutor
+    setRedMode(admin.reductor_mode ?? "valor_categoria");
+    setRedAllowTbl(!!admin.reductor_allow_table_override);
+
+    // Embutido
+    setEmbCapMode(admin.embut_cap_mode ?? "adm");
+    setEmbCapAdmPctHuman(toHuman(admin.embut_cap_adm_pct ?? 0.25));
+    setEmbBase((admin.embut_base as BaseMode) ?? "credito");
+    setEmbBaseAllowTbl(!!admin.embut_base_allow_table_override);
+
+    // Ofertado
+    setOfBase((admin.ofert_base as BaseMode) ?? "credito");
+    setOfBaseAllowTbl(!!admin.ofert_base_allow_table_override);
+
+    // Limitador pós
+    setLimitEnabled(admin.limit_enabled ?? true);
+    setLimitMode(admin.limit_mode ?? "table");
+    setLimitAdmPctHuman(toHuman(admin.limit_adm_pct ?? null));
+    setLimitAdmBase((admin.limit_adm_base as BaseMode) ?? "");
+  }, [admin.id]); // usar admin.id evita reset a cada render de objeto novo
 
   const [saving, setSaving] = useState(false);
   const isEmbracon = (admin.slug ?? "").toLowerCase() === "embracon";
@@ -1448,36 +1482,37 @@ useEffect(() => {
       const updatePayload: Partial<AdminFull> = {
         slug: slug || null,
 
-        // formas
+        // Formas
         forms_mode: formsMode,
         forms_adm_parcela_cheia: formsMode === "adm" ? !!admCheia : null,
         forms_adm_red25: formsMode === "adm" ? !!admR25 : null,
         forms_adm_red50: formsMode === "adm" ? !!admR50 : null,
 
-        // redutor
+        // Redutor
         reductor_mode: redMode,
         reductor_allow_table_override: !!redAllowTbl,
 
-        // embutido
+        // Embutido
         embut_cap_mode: embCapMode,
         embut_cap_adm_pct:
-          embCapMode === "adm" ? Math.min(0.25, Math.max(0, toDecimal(embCapAdmPctHuman) ?? 0.25)) : null,
+          embCapMode === "adm"
+            ? Math.min(0.25, Math.max(0, toDecimal(embCapAdmPctHuman) ?? 0.25))
+            : null,
         embut_base: embBase,
         embut_base_allow_table_override: !!embBaseAllowTbl,
 
-        // ofertado
+        // Ofertado
         ofert_base: ofBase,
         ofert_base_allow_table_override: !!ofBaseAllowTbl,
 
-        // limitador
+        // Limitador
         limit_enabled: !!limitEnabled,
         limit_mode: limitMode,
         limit_adm_pct:
           limitEnabled && limitMode === "adm"
             ? Math.max(0, toDecimal(limitAdmPctHuman) ?? 0)
             : null,
-        limit_adm_base:
-          limitEnabled && limitMode === "adm" ? (limitAdmBase || null) : null,
+        limit_adm_base: limitEnabled && limitMode === "adm" ? (limitAdmBase || null) : null,
       };
 
       const { data, error } = await supabase

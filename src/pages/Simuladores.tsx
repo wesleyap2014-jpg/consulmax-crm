@@ -531,7 +531,7 @@ export default function Simuladores() {
   const routeAdminId = id ?? null;
   
   const [loading, setLoading] = useState(true);
-  const [admins, setAdmins] = useState<Admin[]>([]);
+  const [admins, setAdmins] = useState<AdminFull[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);

@@ -1682,6 +1682,21 @@ function EmbraconSimulator(p: EmbraconProps) {
       p.formsAllowed?.red50 ??
       true);
 
+  // Corrige a forma caso fique inválida ao trocar de tabela/regras
+  useEffect(() => {
+    if (p.forma === "Parcela Cheia" && !allowCheia) {
+      if (allowRed25) p.setForma("Reduzida 25%");
+      else if (allowRed50) p.setForma("Reduzida 50%");
+    }
+    if (p.forma === "Reduzida 25%" && !allowRed25) {
+      p.setForma(allowCheia ? "Parcela Cheia" : (allowRed50 ? "Reduzida 50%" : "Parcela Cheia"));
+    }
+    if (p.forma === "Reduzida 50%" && !allowRed50) {
+      p.setForma(allowCheia ? "Parcela Cheia" : (allowRed25 ? "Reduzida 25%" : "Parcela Cheia"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowCheia, allowRed25, allowRed50]);
+
   return (
     <div className="space-y-6">
       {/* Lead */}
@@ -1708,43 +1723,43 @@ function EmbraconSimulator(p: EmbraconProps) {
                       className="h-8"
                     />
                   </div>
-                 
-    {/* Lista */}
-<div className="max-h-64 overflow-y-auto space-y-1">
-  {filteredLeads.length > 0 ? (
-    filteredLeads.map((l) => (
-      <PopoverClose asChild key={l.id}>
-        <button
-          type="button"
-          className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-          onClick={() => {
-            p.setLeadId(l.id);
-            setLeadQuery(""); // limpa a busca
-          }}
-        >
-          <div className="text-sm font-medium">{l.nome}</div>
-          {l.telefone && (
-            <div className="text-xs text-muted-foreground">{l.telefone}</div>
-          )}
-        </button>
-      </PopoverClose>
-    ))
-  ) : (
-    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-      Nenhum lead encontrado
-    </div>
-  )}
-</div>
-</PopoverContent>
-</Popover>
 
-{p.leadInfo && (
-  <p className="text-xs text-muted-foreground mt-1">
-    {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-  </p>
-)}
+                  {/* Lista */}
+                  <div className="max-h-64 overflow-y-auto space-y-1">
+                    {filteredLeads.length > 0 ? (
+                      filteredLeads.map((l) => (
+                        <PopoverClose asChild key={l.id}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+                            onClick={() => {
+                              p.setLeadId(l.id);
+                              setLeadQuery(""); // limpa a busca
+                            }}
+                          >
+                            <div className="text-sm font-medium">{l.nome}</div>
+                            {l.telefone && (
+                              <div className="text-xs text-muted-foreground">{l.telefone}</div>
+                            )}
+                          </button>
+                        </PopoverClose>
+                      ))
+                    ) : (
+                      <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+                        Nenhum lead encontrado
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
 
+              {p.leadInfo && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+                </p>
+              )}
             </div>
+
             <div>
               <Label>Nº do Grupo (opcional)</Label>
               <Input
@@ -1860,15 +1875,9 @@ function EmbraconSimulator(p: EmbraconProps) {
                   onChange={(e) => p.setForma(e.target.value as any)}
                 >
                   <option value="">Selecione</option>
-                  {p.tabelaSelecionada?.contrata_parcela_cheia && (
-                    <option value="Parcela Cheia">Parcela Cheia</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_25 && (
-                    <option value="Reduzida 25%">Reduzida 25%</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_50 && (
-                    <option value="Reduzida 50%">Reduzida 50%</option>
-                  )}
+                  {allowCheia && <option value="Parcela Cheia">Parcela Cheia</option>}
+                  {allowRed25 && <option value="Reduzida 25%">Reduzida 25%</option>}
+                  {allowRed50 && <option value="Reduzida 50%">Reduzida 50%</option>}
                 </select>
               </div>
 
@@ -1973,12 +1982,12 @@ function EmbraconSimulator(p: EmbraconProps) {
                 <PercentInput
                   valueDecimal={p.lanceEmbutPct}
                   onChangeDecimal={(d) => {
-                if (d > p.embutCapMax) {
-  alert(`Lance embutido limitado a ${(p.embutCapMax * 100).toFixed(4)}% do crédito/base. Voltando para o máximo permitido.`);
-  p.setLanceEmbutPct(p.embutCapMax);
-} else {
-  p.setLanceEmbutPct(d);
-}
+                    if (d > p.embutCapMax) {
+                      alert(`Lance embutido limitado a ${(p.embutCapMax * 100).toFixed(4)}% do crédito/base. Voltando para o máximo permitido.`);
+                      p.setLanceEmbutPct(p.embutCapMax);
+                    } else {
+                      p.setLanceEmbutPct(d);
+                    }
                   }}
                   maxDecimal={p.embutCapMax}
                 />

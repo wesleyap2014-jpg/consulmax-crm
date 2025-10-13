@@ -770,11 +770,12 @@ useEffect(() => {
     parcContemplacao > 0 &&
     parcContemplacao < prazoVenda;
 
-  useEffect(() => {
+useEffect(() => {
   if (!tabelaSelecionada || !podeCalcular) {
     setCalc(null);
     return;
   }
+
   const inp: CalcInput = {
     credito,
     prazoVenda,
@@ -791,10 +792,11 @@ useEffect(() => {
     lanceEmbutPct: lanceEmbutPctValid,
     parcContemplacao,
   };
-  // 👇 agora o motor recebe as regras resolvidas
+
   setCalc(calcularSimulacao(inp, rules));
 }, [
   tabelaSelecionada,
+  podeCalcular,
   credito,
   prazoVenda,
   forma,
@@ -802,7 +804,7 @@ useEffect(() => {
   lanceOfertPct,
   lanceEmbutPctValid,
   parcContemplacao,
-  rules, // 👈 adicionada às dependências
+  rules, // importante
 ]); // eslint-disable-line
     setCalc(calcularSimulacao(inp));
   }, [

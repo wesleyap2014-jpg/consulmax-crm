@@ -764,65 +764,65 @@ Vantagens
               <CardTitle>Simuladores</CardTitle>
             </CardHeader>
             <CardContent>
-              {activeAdmin ? (
-                activeAdmin.name === "Embracon" ? (
-                  <EmbraconSimulator
-                    leads={leads}
-                    adminTables={adminTables}
-                    nomesTabelaSegmento={nomesTabelaSegmento}
-                    variantesDaTabela={variantesDaTabela}
-                    tabelaSelecionada={tabelaSelecionada}
-                    prazoAte={prazoAte}
-                    faixa={faixa}
-                    leadId={leadId}
-                    setLeadId={setLeadId}
-                    leadInfo={leadInfo}
-                    grupo={grupo}
-                    setGrupo={setGrupo}
-                    segmento={segmento}
-                    setSegmento={(v) => {
-                      setSegmento(v);
-                      setNomeTabela("");
-                      setTabelaId("");
-                    }}
-                    nomeTabela={nomeTabela}
-                    setNomeTabela={(v) => {
-                      setNomeTabela(v);
-                      setTabelaId("");
-                    }}
-                    tabelaId={tabelaId}
-                    setTabelaId={setTabelaId}
-                    credito={credito}
-                    setCredito={setCredito}
-                    prazoVenda={prazoVenda}
-                    setPrazoVenda={setPrazoVenda}
-                    forma={forma}
-                    setForma={setForma}
-                    seguroPrest={seguroPrest}
-                    setSeguroPrest={setSeguroPrest}
-                    lanceOfertPct={lanceOfertPct}
-                    setLanceOfertPct={setLanceOfertPct}
-                    lanceEmbutPct={lanceEmbutPct}
-                    setLanceEmbutPct={setLanceEmbutPct}
-                    parcContemplacao={parcContemplacao}
-                    setParcContemplacao={setParcContemplacao}
-                    prazoAviso={prazoAviso}
-                    calc={calc}
-                    salvar={salvarSimulacao}
-                    salvando={salvando}
-                    simCode={simCode}
-                  />
-                ) : (
-                  <div className="text-sm text-muted-foreground">
-                    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
-                  </div>
-                )
-              ) : (
-                <div className="text-sm text-muted-foreground">
-                  Nenhuma administradora encontrada.
-                </div>
-              )}
-            </CardContent>
+  {!activeAdmin ? (
+    <div className="text-sm text-muted-foreground">
+      Nenhuma administradora encontrada.
+    </div>
+  ) : activeAdmin.name === "Embracon" ? (
+    <EmbraconSimulator
+      leads={leads}
+      adminTables={adminTables}
+      nomesTabelaSegmento={nomesTabelaSegmento}
+      variantesDaTabela={variantesDaTabela}
+      tabelaSelecionada={tabelaSelecionada}
+      prazoAte={prazoAte}
+      faixa={faixa}
+      leadId={leadId}
+      setLeadId={setLeadId}
+      leadInfo={leadInfo}
+      grupo={grupo}
+      setGrupo={setGrupo}
+      segmento={segmento}
+      setSegmento={(v) => {
+        setSegmento(v);
+        setNomeTabela("");
+        setTabelaId("");
+      }}
+      nomeTabela={nomeTabela}
+      setNomeTabela={(v) => {
+        setNomeTabela(v);
+        setTabelaId("");
+      }}
+      tabelaId={tabelaId}
+      setTabelaId={setTabelaId}
+      credito={credito}
+      setCredito={setCredito}
+      prazoVenda={prazoVenda}
+      setPrazoVenda={setPrazoVenda}
+      forma={forma}
+      setForma={setForma}
+      seguroPrest={seguroPrest}
+      setSeguroPrest={setSeguroPrest}
+      lanceOfertPct={lanceOfertPct}
+      setLanceOfertPct={setLanceOfertPct}
+      lanceEmbutPct={lanceEmbutPct}
+      setLanceEmbutPct={setLanceEmbutPct}
+      parcContemplacao={parcContemplacao}
+      setParcContemplacao={setParcContemplacao}
+      prazoAviso={prazoAviso}
+      calc={calc}
+      salvar={salvarSimulacao}
+      salvando={salvando}
+      simCode={simCode}
+    />
+  ) : (
+    <GenericSimulator
+      admin={activeAdmin}
+      leads={leads}
+      adminTables={adminTables}
+    />
+  )}
+</CardContent>
           </Card>
 
           {/* Ações principais */}

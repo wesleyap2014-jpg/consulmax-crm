@@ -317,6 +317,28 @@ useEffect(() => {
   if (match) setActiveAdminId(match.id);
 }, [adminKey, admins]);
 
+  // recarrega as tabelas sempre que a administradora ativa mudar
+useEffect(() => {
+  async function loadTables(aid: string) {
+    const { data, error } = await supabase
+      .from("sim_tables")
+      .select("*")
+      .eq("admin_id", aid)                       // 🔴 filtra pela admin ativa
+      .order("segmento", { ascending: true })
+      .order("nome", { ascending: true });
+
+    if (error) {
+      console.error("Erro ao carregar tabelas:", error.message);
+      setTables([]);                             // evita vazar tabelas antigas
+      return;
+    }
+    setTables(data ?? []);
+  }
+
+  if (activeAdminId) loadTables(activeAdminId);
+  else setTables([]);                            // sem admin → lista vazia
+}, [activeAdminId]);
+
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);

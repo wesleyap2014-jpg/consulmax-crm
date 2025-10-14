@@ -373,10 +373,9 @@ if (adminKey) {
   nextActiveId = byParam?.id ?? null;
 }
 
-// 2) fallback: Embracon -> primeiro da lista
+// 2) fallback: apenas o primeiro da lista (sem forçar "Embracon")
 if (!nextActiveId) {
-  const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-  nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+  nextActiveId = a?.[0]?.id ?? null;
 }
 
 setActiveAdminId(nextActiveId);

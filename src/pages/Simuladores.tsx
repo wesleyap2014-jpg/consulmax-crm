@@ -348,8 +348,6 @@ useEffect(() => {
   const [assembleia, setAssembleia] = useState<string>("15/10");
 
 // URL: /simuladores/:id?setup=1
-const adminId = routeAdminId;   // reaproveita o id já lido lá em cima
-const openSetup = setup;        // reaproveita o boolean já calculado
 const { pathname: _pathname } = useLocation();
 const showTopChips = false;     // ou pathname === "/simuladores"
 
@@ -711,8 +709,6 @@ Vantagens
       </div>
     );
   }
-
-  const activeAdmin = admins.find((a) => a.id === activeAdminId);
 
   return (
     <div className="p-6 space-y-4">

@@ -317,6 +317,12 @@ useEffect(() => {
   if (match) setActiveAdminId(match.id);
 }, [adminKey, admins]);
 
+  // objeto completo da administradora ativa a partir do activeAdminId
+const activeAdmin = useMemo(
+  () => admins.find((a) => a.id === activeAdminId) || null,
+  [admins, activeAdminId]
+);
+  
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
@@ -363,16 +369,20 @@ const showTopChips = false;     // ou pathname === "/simuladores"
 setTables(t ?? []);
 setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-// 1) padrão: Embracon > primeiro da lista
-const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-let nextActiveId: string | null = embr?.id ?? (a?.[0]?.id ?? null);
+// 1) tenta bater o admin vindo na URL por id OU por slug
+let nextActiveId: string | null = null;
 
-// 2) se a URL tiver um adminKey (id ou slug), priorize ele
 if (adminKey) {
-  const match = (a ?? []).find(
+  const byParam = (a ?? []).find(
     (ad: any) => ad.id === adminKey || (ad.slug && ad.slug === adminKey)
   );
-  if (match) nextActiveId = match.id;
+  nextActiveId = byParam?.id ?? null;
+}
+
+// 2) fallback: Embracon -> primeiro da lista
+if (!nextActiveId) {
+  const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
+  nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
 }
 
 setActiveAdminId(nextActiveId);

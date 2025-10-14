@@ -1,14 +1,31 @@
 // src/pages/Simuladores.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useLocation, useParams, useSearchParams } from "react-router-dom";
+
 import { supabase } from "@/lib/supabaseClient";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
-import { useParams, useLocation, useSearchParams } from "react-router-dom";
-import { ChevronsUpDown, Search } from "lucide-react";
-import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverButton,
+  PopoverContent,
+  PopoverClose,
+} from "@/components/ui/popover";
+
+import {
+  Loader2,
+  Plus,
+  Pencil,
+  Trash2,
+  X,
+  ChevronsUpDown,
+  Search,
+} from "lucide-react";
+
+import GenericSimulator from "./GenericSimulator";
 
 /* ========================= Tipos ========================= */
 type UUID = string;

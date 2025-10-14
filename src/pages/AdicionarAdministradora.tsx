@@ -43,7 +43,7 @@ type Rules = {
     existe: boolean;
     base?: "credito" | "categoria" | "parcela_pct";
     pct_origem?: "tabela" | "adm";
-    pct_padrao_adm?: number; // decimal (ex.: 0.02565)
+    pct_padrao_adm?: number;
   };
   redutor_pre_contratacao: {
     permite: boolean;
@@ -87,7 +87,7 @@ export default function AdicionarAdministradora() {
     formatPctInputFromDecimal(defaultRules.limitador_parcela.pct_padrao_adm ?? 0)
   );
 
-  // Estados
+  // Estado
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,7 +96,7 @@ export default function AdicionarAdministradora() {
     if (!slugTouched) setSlug(slugify(name));
   }, [name, slugTouched]);
 
-  // sincronia do % do limitador (quando origem = adm)
+  // sincroniza % padrão adm (quando origem = adm)
   useEffect(() => {
     const d = parsePctInputToDecimal(limitPctHuman);
     setRules((r) => ({
@@ -117,13 +117,14 @@ export default function AdicionarAdministradora() {
 
   async function handleSave() {
     setError(null);
+
     const trimmed = name.trim();
     if (!trimmed) {
       setError("Informe o nome da administradora.");
       return;
     }
 
-    // ajustes automáticos das regras
+    // normaliza regras antes de salvar
     const normalizedRules: Rules = {
       ...rules,
       lance: {
@@ -153,7 +154,6 @@ export default function AdicionarAdministradora() {
 
     setSaving(true);
 
-    // insert
     const { data, error: insErr } = await supabase
       .from("sim_admins")
       .insert(payload as any)
@@ -163,25 +163,28 @@ export default function AdicionarAdministradora() {
     setSaving(false);
 
     if (!insErr && data?.id) {
-      // ✅ vai direto para o setup das tabelas
+      // sucesso → abre gerenciador de tabelas
       navigate(`/simuladores/${data.id}?setup=1`, { replace: true });
       return;
     }
 
-    // colisão única → tenta localizar existente por slug/name e abrir
+    // colisão de unique → abre existente por slug|nome
     const isUniqueViolation =
       insErr?.code === "23505" || (insErr?.message || "").toLowerCase().includes("duplicate key");
+
     if (isUniqueViolation) {
       let existingId: string | null = null;
 
-      if (payload.slug) {
+      const normalizedSlug = payload.slug;
+      if (normalizedSlug) {
         const { data: bySlug } = await supabase
           .from("sim_admins")
           .select("id")
-          .eq("slug", payload.slug)
+          .eq("slug", normalizedSlug)
           .maybeSingle();
         if (bySlug?.id) existingId = bySlug.id;
       }
+
       if (!existingId) {
         const { data: byName } = await supabase
           .from("sim_admins")
@@ -190,6 +193,7 @@ export default function AdicionarAdministradora() {
           .maybeSingle();
         if (byName?.id) existingId = byName.id;
       }
+
       if (existingId) {
         navigate(`/simuladores/${existingId}?setup=1`, { replace: true });
         return;
@@ -292,8 +296,8 @@ export default function AdicionarAdministradora() {
                   </select>
                   {needPrazoOriginal && (
                     <div className="text-xs text-muted-foreground mt-1">
-                      Ao simular, será exigido o{" "}
-                      <strong>prazo original do grupo</strong> para calcular a parcela termo.
+                      Ao simular, será exigido o <strong>prazo original do grupo</strong> para
+                      calcular a parcela termo.
                     </div>
                   )}
                 </div>
@@ -326,10 +330,7 @@ export default function AdicionarAdministradora() {
                 onChange={(e) =>
                   setRules((r) => ({
                     ...r,
-                    limitador_parcela: {
-                      ...r.limitador_parcela,
-                      existe: e.target.value === "sim",
-                    },
+                    limitador_parcela: { ...r.limitador_parcela, existe: e.target.value === "sim" },
                   }))
                 }
               >
@@ -451,11 +452,7 @@ export default function AdicionarAdministradora() {
           {error && <div className="text-sm text-red-600">{error}</div>}
 
           <div className="flex items-center gap-2">
-            <Button
-              onClick={handleSave}
-              disabled={saving || !name.trim()}
-              className="h-10 rounded-2xl px-4"
-            >
+            <Button onClick={handleSave} disabled={saving || !name.trim()} className="h-10 rounded-2xl px-4">
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar
             </Button>
@@ -470,8 +467,8 @@ export default function AdicionarAdministradora() {
           </div>
 
           <div className="text-xs text-muted-foreground">
-            Após salvar, você será levado a <strong>Simuladores</strong> &rarr;{" "}
-            <strong>Gerenciar Tabelas</strong> da nova administradora.
+            Após salvar, você será levado a <strong>Simuladores</strong> → <strong>Gerenciar Tabelas</strong> da
+            nova administradora.
           </div>
         </CardContent>
       </Card>

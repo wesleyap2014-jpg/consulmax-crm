@@ -755,23 +755,23 @@ Vantagens
           Gerenciar Tabelas
         </Button>
 
-        {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
-        {showTopChips && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => alert("Em breve: adicionar administradora.")}
-            className="h-10 rounded-2xl px-4 whitespace-nowrap"
-          >
-            <Plus className="h-4 w-4 mr-1" /> + Add Administradora
-          </Button>
-        )}
-      </>
-    )}
-  </div>
+{/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
+{showTopChips && (
+  <Button
+    variant="secondary"
+    size="sm"
+    onClick={() => alert("Em breve: adicionar administradora.")}
+    className="h-10 rounded-2xl px-4 whitespace-nowrap"
+  >
+    <Plus className="h-4 w-4 mr-1" /> + Add Administradora
+  </Button>
+)}
+</>
+)}
+</div>
 </div>
 
-     {/* layout em duas colunas */}
+{/* layout em duas colunas */}
 <div className="grid grid-cols-12 gap-4">
   {/* coluna esquerda: simulador */}
   <div className="col-span-12 lg:col-span-8">
@@ -851,7 +851,7 @@ Vantagens
         })()}
       </CardContent>
     </Card>
-    
+
     {/* Ações principais */}
     <div className="mt-4 flex flex-wrap items-center gap-3">
       <Button
@@ -942,7 +942,7 @@ Vantagens
       </CardContent>
     </Card>
 
-    {/* Resumo antigo */}
+    {/* Resumo da Proposta */}
     <Card>
       <CardHeader>
         <CardTitle>Resumo da Proposta</CardTitle>
@@ -963,7 +963,7 @@ Vantagens
       </CardContent>
     </Card>
 
-    {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+    {/* OPORTUNIDADE / PROPOSTA EMBRACON */}
     <Card>
       <CardHeader>
         <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>

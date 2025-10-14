@@ -295,29 +295,27 @@ function PercentInput({
 
 /* ========================= Página ======================== */
 export default function Simuladores() {
-  const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams(); // se usa ?setup=1
-  const setup = searchParams.get("setup") === "1";
-  const routeAdminId = id ?? null;
-  
-  const [loading, setLoading] = useState(true);
-  const [admins, setAdmins] = useState<Admin[]>([]);
-  const [tables, setTables] = useState<SimTable[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
-  
-  useEffect(() => {
-  setActiveAdminId(routeAdminId);
-}, [routeAdminId]);
+const { adminKey } = useParams<{ adminKey?: string }>();
+const [searchParams] = useSearchParams(); // se usa ?setup=1
+const openSetup = searchParams.get("setup") === "1";
 
-useEffect(() => {
-  if (!routeAdminId && !activeAdminId && admins.length) {
-    setActiveAdminId(admins[0].id);
-  }
-}, [routeAdminId, activeAdminId, admins]);
-
+const [loading, setLoading] = useState(true);
+const [admins, setAdmins] = useState<Admin[]>([]);
+const [tables, setTables] = useState<SimTable[]>([]);
+const [leads, setLeads] = useState<Lead[]>([]);
+const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
 const [mgrOpen, setMgrOpen] = useState(false);
 
+  // quando mudar adminKey na URL após carregar admins, atualiza activeAdminId
+useEffect(() => {
+  if (!admins.length) return;
+  if (!adminKey) return;
+
+  const match = admins.find(
+    (ad) => ad.id === adminKey || (ad.slug && ad.slug === adminKey)
+  );
+  if (match) setActiveAdminId(match.id);
+}, [adminKey, admins]);
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -367,20 +365,24 @@ const showTopChips = false;     // ou pathname === "/simuladores"
 setTables(t ?? []);
 setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-// 1) padrão: Embracon > ou o primeiro da lista
+// 1) padrão: Embracon > primeiro da lista
 const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+let nextActiveId: string | null = embr?.id ?? (a?.[0]?.id ?? null);
 
-// 2) se a URL tiver um adminId válido, priorize ele
-if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
-  nextActiveId = adminId as string;
+// 2) se a URL tiver um adminKey (id ou slug), priorize ele
+if (adminKey) {
+  const match = (a ?? []).find(
+    (ad: any) => ad.id === adminKey || (ad.slug && ad.slug === adminKey)
+  );
+  if (match) nextActiveId = match.id;
 }
+
 setActiveAdminId(nextActiveId);
 
-// 3) terminou o loading
+// terminou o loading
 setLoading(false);
 
-// 4) se a URL tiver ?setup=1, abre o modal de tabelas
+// se a URL tiver ?setup=1, abre o modal de tabelas
 if (openSetup) {
   setTimeout(() => setMgrOpen(true), 0);
 }
@@ -406,6 +408,12 @@ if (openSetup) {
     const found = leads.find((x) => x.id === leadId);
     setLeadInfo(found ? { nome: found.nome, telefone: found.telefone } : null);
   }, [leadId, leads]);
+
+  // objeto da administradora ativa (a partir do id resolvido)
+const activeAdmin = useMemo(
+  () => admins.find((a) => a.id === activeAdminId) || null,
+  [admins, activeAdminId]
+);
 
   const adminTables = useMemo(
     () => tables.filter((t) => t.admin_id === activeAdminId),

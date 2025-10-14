@@ -317,12 +317,6 @@ useEffect(() => {
   if (match) setActiveAdminId(match.id);
 }, [adminKey, admins]);
 
-  // objeto completo da administradora ativa a partir do activeAdminId
-const activeAdmin = useMemo(
-  () => admins.find((a) => a.id === activeAdminId) || null,
-  [admins, activeAdminId]
-);
-  
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);

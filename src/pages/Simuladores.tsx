@@ -779,69 +779,366 @@ Vantagens
       <CardHeader>
         <CardTitle>Simuladores</CardTitle>
       </CardHeader>
+
       <CardContent>
-        {activeAdmin ? (
-          activeAdmin.name === "Embracon" ? (
-            <EmbraconSimulator
-              leads={leads}
-              adminTables={adminTables}
-              nomesTabelaSegmento={nomesTabelaSegmento}
-              variantesDaTabela={variantesDaTabela}
-              tabelaSelecionada={tabelaSelecionada}
-              prazoAte={prazoAte}
-              faixa={faixa}
-              leadId={leadId}
-              setLeadId={setLeadId}
-              leadInfo={leadInfo}
-              grupo={grupo}
-              setGrupo={setGrupo}
-              segmento={segmento}
-              setSegmento={(v) => {
-                setSegmento(v);
-                setNomeTabela("");
-                setTabelaId("");
-              }}
-              nomeTabela={nomeTabela}
-              setNomeTabela={(v) => {
-                setNomeTabela(v);
-                setTabelaId("");
-              }}
-              tabelaId={tabelaId}
-              setTabelaId={setTabelaId}
-              credito={credito}
-              setCredito={setCredito}
-              prazoVenda={prazoVenda}
-              setPrazoVenda={setPrazoVenda}
-              forma={forma}
-              setForma={setForma}
-              seguroPrest={seguroPrest}
-              setSeguroPrest={setSeguroPrest}
-              lanceOfertPct={lanceOfertPct}
-              setLanceOfertPct={setLanceOfertPct}
-              lanceEmbutPct={lanceEmbutPct}
-              setLanceEmbutPct={setLanceEmbutPct}
-              parcContemplacao={parcContemplacao}
-              setParcContemplacao={setParcContemplacao}
-              prazoAviso={prazoAviso}
-              calc={calc}
-              salvar={salvarSimulacao}
-              salvando={salvando}
-              simCode={simCode}
-            />
-          ) : (
+        {(() => {
+          if (!activeAdmin) {
+            return (
+              <div className="text-sm text-muted-foreground">
+                Nenhuma administradora encontrada.
+              </div>
+            );
+          }
+
+          if (activeAdmin.name === "Embracon") {
+            return (
+              <EmbraconSimulator
+                leads={leads}
+                adminTables={adminTables}
+                nomesTabelaSegmento={nomesTabelaSegmento}
+                variantesDaTabela={variantesDaTabela}
+                tabelaSelecionada={tabelaSelecionada}
+                prazoAte={prazoAte}
+                faixa={faixa}
+                leadId={leadId}
+                setLeadId={setLeadId}
+                leadInfo={leadInfo}
+                grupo={grupo}
+                setGrupo={setGrupo}
+                segmento={segmento}
+                setSegmento={(v) => {
+                  setSegmento(v);
+                  setNomeTabela("");
+                  setTabelaId("");
+                }}
+                nomeTabela={nomeTabela}
+                setNomeTabela={(v) => {
+                  setNomeTabela(v);
+                  setTabelaId("");
+                }}
+                tabelaId={tabelaId}
+                setTabelaId={setTabelaId}
+                credito={credito}
+                setCredito={setCredito}
+                prazoVenda={prazoVenda}
+                setPrazoVenda={setPrazoVenda}
+                forma={forma}
+                setForma={setForma}
+                seguroPrest={seguroPrest}
+                setSeguroPrest={setSeguroPrest}
+                lanceOfertPct={lanceOfertPct}
+                setLanceOfertPct={setLanceOfertPct}
+                lanceEmbutPct={lanceEmbutPct}
+                setLanceEmbutPct={setLanceEmbutPct}
+                parcContemplacao={parcContemplacao}
+                setParcContemplacao={setParcContemplacao}
+                prazoAviso={prazoAviso}
+                calc={calc}
+                salvar={salvarSimulacao}
+                salvando={salvando}
+                simCode={simCode}
+              />
+            );
+          }
+
+          return (
             <GenericSimulator
               admin={activeAdmin}
               leads={leads}
               adminTables={adminTables}
             />
-          )
-        ) : (
-          <div className="text-sm text-muted-foreground">
-            Nenhuma administradora encontrada.
+          );
+        })()}
+      </CardContent>
+    </Card>
+
+    {/* Ações principais */}
+    <div className="mt-4 flex flex-wrap items-center gap-3">
+      <Button
+        disabled={!calc || salvando}
+        onClick={salvarSimulacao}
+        className="h-10 rounded-2xl px-4"
+      >
+        {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+        Salvar Simulação
+      </Button>
+      {simCode && (
+        <span className="text-sm">
+          ✅ Salvo como <strong>Simulação #{simCode}</strong>
+        </span>
+      )}
+    </div>
+  </div>
+
+  {/* coluna direita: memória + textos */}
+  <div className="col-span-12 lg:col-span-4 space-y-4">
+    <Card>
+      <CardHeader>
+        <CardTitle>Memória de Cálculo</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2 text-sm">
+        {!tabelaSelecionada ? (
+          <div className="text-muted-foreground">
+            Selecione uma tabela para ver os detalhes.
           </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <div>Crédito</div>
+              <div className="text-right font-medium">
+                {brMoney(credito || 0)}
+              </div>
+              <div>Prazo da Venda</div>
+              <div className="text-right">{prazoVenda || "-"}</div>
+              <div>Forma</div>
+              <div className="text-right">{forma}</div>
+              <div>Seguro / parcela</div>
+              <div className="text-right">
+                {seguroPrest
+                  ? pctHuman(tabelaSelecionada.seguro_prest_pct)
+                  : "—"}
+              </div>
+            </div>
+            <hr className="my-2" />
+            <div className="grid grid-cols-2 gap-2">
+              <div>Fundo Comum (fator)</div>
+              <div className="text-right">
+                {calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}
+              </div>
+              <div>Taxa Adm (total)</div>
+              <div className="text-right">
+                {pctHuman(tabelaSelecionada.taxa_adm_pct)}
+              </div>
+              <div>TA efetiva</div>
+              <div className="text-right">
+                {calc ? pctHuman(calc.TA_efetiva) : "—"}
+              </div>
+              <div>Fundo Reserva</div>
+              <div className="text-right">
+                {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
+              </div>
+              <div>Antecipação Adm</div>
+              <div className="text-right">
+                {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
+                {tabelaSelecionada.antecip_parcelas}x
+              </div>
+              <div>Limitador Parcela</div>
+              <div className="text-right">
+                {pctHuman(
+                  resolveLimitadorPct(
+                    tabelaSelecionada.limitador_parcela_pct,
+                    tabelaSelecionada.segmento,
+                    credito || 0
+                  )
+                )}
+              </div>
+              <div>Valor de Categoria</div>
+              <div className="text-right">
+                {calc ? brMoney(calc.valorCategoria) : "—"}
+              </div>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
+
+    {/* Resumo antigo */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Resumo da Proposta</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <textarea
+          className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
+          style={{ lineHeight: "1.6" }}
+          readOnly
+          value={resumoTexto}
+          placeholder="Preencha os campos da simulação para gerar o resumo."
+        />
+        <div className="flex items-center justify-end gap-2">
+          <Button onClick={copiarResumo} disabled={!resumoTexto}>
+            Copiar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+
+    {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <Label>Assembleia (ex.: 15/10)</Label>
+            <Input
+              value={assembleia}
+              onChange={(e) => setAssembleia(e.target.value)}
+              placeholder="dd/mm"
+            />
+          </div>
+        </div>
+        <textarea
+          className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
+          style={{ lineHeight: "1.6" }}
+          readOnly
+          value={propostaTexto}
+          placeholder="Preencha a simulação para gerar o texto."
+        />
+        <div className="flex items-center justify-end gap-2">
+          <Button onClick={copiarProposta} disabled={!propostaTexto}>
+            Copiar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  </div>
+</div>
+
+    {/* Ações principais */}
+    <div className="mt-4 flex flex-wrap items-center gap-3">
+      <Button
+        disabled={!calc || salvando}
+        onClick={salvarSimulacao}
+        className="h-10 rounded-2xl px-4"
+      >
+        {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+        Salvar Simulação
+      </Button>
+      {simCode && (
+        <span className="text-sm">
+          ✅ Salvo como <strong>Simulação #{simCode}</strong>
+        </span>
+      )}
+    </div>
+  </div>
+
+  {/* coluna direita: memória + textos */}
+  <div className="col-span-12 lg:col-span-4 space-y-4">
+    <Card>
+      <CardHeader>
+        <CardTitle>Memória de Cálculo</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2 text-sm">
+        {!tabelaSelecionada ? (
+          <div className="text-muted-foreground">
+            Selecione uma tabela para ver os detalhes.
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <div>Crédito</div>
+              <div className="text-right font-medium">
+                {brMoney(credito || 0)}
+              </div>
+              <div>Prazo da Venda</div>
+              <div className="text-right">{prazoVenda || "-"}</div>
+              <div>Forma</div>
+              <div className="text-right">{forma}</div>
+              <div>Seguro / parcela</div>
+              <div className="text-right">
+                {seguroPrest
+                  ? pctHuman(tabelaSelecionada.seguro_prest_pct)
+                  : "—"}
+              </div>
+            </div>
+            <hr className="my-2" />
+            <div className="grid grid-cols-2 gap-2">
+              <div>Fundo Comum (fator)</div>
+              <div className="text-right">
+                {calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}
+              </div>
+              <div>Taxa Adm (total)</div>
+              <div className="text-right">
+                {pctHuman(tabelaSelecionada.taxa_adm_pct)}
+              </div>
+              <div>TA efetiva</div>
+              <div className="text-right">
+                {calc ? pctHuman(calc.TA_efetiva) : "—"}
+              </div>
+              <div>Fundo Reserva</div>
+              <div className="text-right">
+                {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
+              </div>
+              <div>Antecipação Adm</div>
+              <div className="text-right">
+                {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
+                {tabelaSelecionada.antecip_parcelas}x
+              </div>
+              <div>Limitador Parcela</div>
+              <div className="text-right">
+                {pctHuman(
+                  resolveLimitadorPct(
+                    tabelaSelecionada.limitador_parcela_pct,
+                    tabelaSelecionada.segmento,
+                    credito || 0
+                  )
+                )}
+              </div>
+              <div>Valor de Categoria</div>
+              <div className="text-right">
+                {calc ? brMoney(calc.valorCategoria) : "—"}
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+
+    {/* Resumo antigo */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Resumo da Proposta</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <textarea
+          className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
+          style={{ lineHeight: "1.6" }}
+          readOnly
+          value={resumoTexto}
+          placeholder="Preencha os campos da simulação para gerar o resumo."
+        />
+        <div className="flex items-center justify-end gap-2">
+          <Button onClick={copiarResumo} disabled={!resumoTexto}>
+            Copiar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+
+    {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <Label>Assembleia (ex.: 15/10)</Label>
+            <Input
+              value={assembleia}
+              onChange={(e) => setAssembleia(e.target.value)}
+              placeholder="dd/mm"
+            />
+          </div>
+        </div>
+        <textarea
+          className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
+          style={{ lineHeight: "1.6" }}
+          readOnly
+          value={propostaTexto}
+          placeholder="Preencha a simulação para gerar o texto."
+        />
+        <div className="flex items-center justify-end gap-2">
+          <Button onClick={copiarProposta} disabled={!propostaTexto}>
+            Copiar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  </div>
+</div>
 
     {/* Ações principais */}
     <div className="mt-4 flex flex-wrap items-center gap-3">

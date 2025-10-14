@@ -997,15 +997,15 @@ Vantagens
       </div>
 
       {/* Overlay de gerenciamento de tabelas */}
-      {mgrOpen && activeAdmin && (
-        <TableManagerModal
-          admin={activeAdmin}
-          allTables={adminTables}
-          onClose={() => setMgrOpen(false)}
-          onCreatedOrUpdated={handleTableCreatedOrUpdated}
-          onDeleted={handleTableDeleted}
-        />
-      )}
+{mgrOpen && activeAdminId && (
+  <TableManagerModal
+    admin={activeAdmin}
+    allTables={tables}                       // ✅ usa a lista filtrada por admin
+    onClose={() => setMgrOpen(false)}
+    onCreatedOrUpdated={reloadTables}        // ↺ recarrega após salvar
+    onDeleted={reloadTables}                 // ↺ recarrega após excluir
+  />
+)}
     </div>
   );
 }

@@ -23,11 +23,10 @@ type SidebarProps = {
   onNavigate?: () => void
 }
 
-// ordem ajustada
 const items = [
   { to: '/leads', label: 'Leads', icon: Users },
   { to: '/oportunidades', label: 'Oportunidades', icon: Briefcase },
-  // simuladores entra logo abaixo como grupo
+  // (grupo Simuladores vem antes de Propostas)
   { to: '/propostas', label: 'Propostas', icon: FileText },
   { to: '/carteira', label: 'Carteira', icon: Wallet },
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos', icon: Layers },
@@ -50,23 +49,17 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     [location.pathname]
   )
 
-  // id para aria-controls do grupo
   const simListId = useId()
-
   const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive)
-  useEffect(() => {
-    setSimGroupOpen(simuladoresActive)
-  }, [simuladoresActive])
+  useEffect(() => { setSimGroupOpen(simuladoresActive) }, [simuladoresActive])
 
-  // fecha o drawer ao mudar de rota (caso a navegação venha por atalho/redirect)
-  useEffect(() => {
-    onNavigate?.()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname])
+  // fecha o drawer ao mudar de rota
+  useEffect(() => { onNavigate?.() }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // lista dinâmica de administradoras
   const [admins, setAdmins] = useState<AdminRow[]>([])
   const [adminsLoading, setAdminsLoading] = useState(false)
+  const [embraconId, setEmbraconId] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -81,13 +74,16 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       if (error) {
         console.error('Erro ao carregar administradoras:', error.message)
         setAdmins([])
+        setEmbraconId(null)
       } else {
-        setAdmins(data ?? [])
+        const list = data ?? []
+        setAdmins(list)
+        const embr = list.find(a => a.name?.toLowerCase() === 'embracon')
+        setEmbraconId(embr?.id ?? null)
       }
       setAdminsLoading(false)
     })()
     return () => { alive = false }
-    // refaz a busca quando navegar dentro de simuladores (ex.: add / novo id ou slug)
   }, [location.pathname])
 
   return (
@@ -130,7 +126,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       <nav className="grid gap-2">
         {items.map((i) =>
           i.to === '/propostas' ? (
-            // antes de "Propostas" insere o grupo Simuladores
             <div key="simuladores-group">
               {/* Grupo Simuladores */}
               <button
@@ -156,44 +151,39 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
               {simGroupOpen && (
                 <div id={simListId} className="ml-6 grid gap-1 mt-1">
-                  {/* Lista dinâmica de administradoras (A→Z) com slug (fallback id) */}
+                  {/* Lista dinâmica por ID (compatível com Simuladores.tsx) */}
                   {adminsLoading && (
                     <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>
                   )}
 
-                  {!adminsLoading && admins.length > 0 ? (
-                    admins.map((ad) => {
-                      const key = ad.slug || ad.id // usa slug quando houver
-                      return (
-                        <NavLink
-                          key={ad.id}
-                          to={`/simuladores/${key}`}
-                          className={({ isActive }) =>
-                            `px-3 py-2.5 rounded-2xl transition-colors
-                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                             ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                          }
-                          onClick={() => onNavigate?.()}
-                        >
-                          {ad.name}
-                        </NavLink>
-                      )
-                    })
-                  ) : (
-                    // Fallback se ainda não houver nenhuma cadastrada
-                    !adminsLoading && (
-                      <NavLink
-                        to="/simuladores/embracon"
-                        className={({ isActive }) =>
-                          `px-3 py-2.5 rounded-2xl transition-colors
-                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                           ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                        }
-                        onClick={() => onNavigate?.()}
-                      >
-                        Embracon
-                      </NavLink>
-                    )
+                  {!adminsLoading && admins.length > 0 && admins.map((ad) => (
+                    <NavLink
+                      key={ad.id}
+                      to={`/simuladores/${ad.id}`} // <-- sempre ID
+                      className={({ isActive }) =>
+                        `px-3 py-2.5 rounded-2xl transition-colors
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                         ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                      }
+                      onClick={() => onNavigate?.()}
+                    >
+                      {ad.name}
+                    </NavLink>
+                  ))}
+
+                  {/* Fallback: se não houve admins, tenta apontar para Embracon por ID; se não existe, mostra apenas o botão Add */}
+                  {!adminsLoading && admins.length === 0 && embraconId && (
+                    <NavLink
+                      to={`/simuladores/${embraconId}`}
+                      className={({ isActive }) =>
+                        `px-3 py-2.5 rounded-2xl transition-colors
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                         ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                      }
+                      onClick={() => onNavigate?.()}
+                    >
+                      Embracon
+                    </NavLink>
                   )}
 
                   {/* Botão para adicionar nova administradora */}

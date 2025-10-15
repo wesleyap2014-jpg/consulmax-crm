@@ -339,6 +339,25 @@ useEffect(() => {
   else setTables([]);                            // sem admin → lista vazia
 }, [activeAdminId]);
 
+  // função para recarregar as tabelas sob demanda (usada pelo modal)
+const reloadTables = React.useCallback(async () => {
+  if (!activeAdminId) return;
+
+  const { data, error } = await supabase
+    .from("sim_tables")
+    .select("*")
+    .eq("admin_id", activeAdminId)      // mantém o filtro pela admin ativa
+    .order("segmento", { ascending: true })
+    .order("nome", { ascending: true });
+
+  if (error) {
+    console.error("Erro ao recarregar tabelas:", error.message);
+    setTables([]);
+    return;
+  }
+  setTables(data ?? []);
+}, [activeAdminId]);
+
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);

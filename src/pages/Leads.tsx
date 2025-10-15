@@ -209,10 +209,12 @@ export default function LeadsPage() {
     }
     setLoading(true);
     try {
-      const { error } = await supabase.rpc("reassign_lead", {
-        p_lead_id: reassigning.id,
-        p_new_owner: newOwnerId,
-      });
+      // ✅ Correção: atualizar diretamente owner_id em public.leads
+      const { error } = await supabase
+        .from("leads")
+        .update({ owner_id: newOwnerId })
+        .eq("id", reassigning.id);
+
       if (error) {
         alert("Erro ao reatribuir: " + error.message);
         return;

@@ -15,7 +15,7 @@ import GenericSimulator from "./GenericSimulator";
 type UUID = string;
 
 type Lead = { id: UUID; nome: string; telefone?: string | null };
-type Admin = { id: UUID; name: string };
+type Admin = { id: UUID; name: string; slug?: string | null }; // <— slug incluído
 
 type SimTable = {
   id: UUID;
@@ -130,86 +130,68 @@ function calcularSimulacao(i: CalcInput) {
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
-  // Flags de categoria
   const segLower = (segmento || "").toLowerCase();
   const isServico = segLower.includes("serv");
   const isMoto = segLower.includes("moto");
 
-  // TA efetiva (parte que vai para as parcelas mensais)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
 
-  // Valor de categoria (base para saldo + limitador + seguro)
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
-  // Fator do Fundo Comum conforme contratação
   const fundoComumFactor =
     forma === "Parcela Cheia" ? 1 : forma === "Reduzida 25%" ? 0.75 : 0.5;
 
-  // Parcela base (SEM seguro)
   const baseMensalSemSeguro =
     (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
-  // Seguro mensal (só soma na parcela, não abate saldo)
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
-  // Antecipação (somada nas primeiras 1 ou 2 parcelas)
   const antecipAdicionalCada =
     antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
 
-  // Exibição até a contemplação
   const parcelaAte =
     (baseMensalSemSeguro + (antecipParcelas > 0 ? antecipAdicionalCada : 0)) +
     seguroMensal;
   const parcelaDemais = baseMensalSemSeguro + seguroMensal;
 
-  // TOTAL PAGO ATÉ A CONTEMPLAÇÃO (SEM seguro)
   const totalPagoSemSeguro =
     baseMensalSemSeguro * parcelasPagas +
     antecipAdicionalCada * Math.min(parcelasPagas, antecipParcelas);
 
-  // Lances
   const lanceOfertadoValor = C * lanceOfertPct;
   const lanceEmbutidoValor = C * lanceEmbutPct;
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
-  // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
   const saldoDevedorFinal = Math.max(
     0,
     valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
   );
 
-  // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
 
-  // LIMITADOR (sobre valor de categoria)
   const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
   const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
 
-  // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
   const manterParcela = isServico || (isMoto && C < 20000);
 
   let aplicouLimitador = false;
-  let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
+  let parcelaEscolhida = baseMensalSemSeguro;
 
   if (!manterParcela) {
-    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
     if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
       aplicouLimitador = true;
       parcelaEscolhida = parcelaLimitante;
     } else {
-      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
       parcelaEscolhida = novaParcelaSemLimite;
     }
   }
 
-  // Caso especial: antecipação em 2x e contemplação na 1ª parcela
   const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
+    ? parcelaEscolhida + antecipAdicionalCada
     : null;
 
-  // NOVO PRAZO
   const parcelasIguais =
     Math.abs(parcelaEscolhida - novaParcelaSemLimite) < 0.005;
 
@@ -233,9 +215,9 @@ function calcularSimulacao(i: CalcInput) {
     lanceProprioValor,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
-    novaParcelaSemLimite, // (SEM seguro)
-    parcelaLimitante,     // (SEM seguro)
-    parcelaEscolhida,     // (SEM seguro)
+    novaParcelaSemLimite,
+    parcelaLimitante,
+    parcelaEscolhida,
     saldoDevedorFinal,
     novoPrazo,
     TA_efetiva,
@@ -295,69 +277,130 @@ function PercentInput({
 
 /* ========================= Página ======================== */
 export default function Simuladores() {
-const { adminKey } = useParams<{ adminKey?: string }>();
-const [searchParams] = useSearchParams(); // se usa ?setup=1
-const openSetup = searchParams.get("setup") === "1";
+  const { adminKey } = useParams<{ adminKey?: string }>();
+  const [searchParams] = useSearchParams(); // ?setup=1
+  const openSetup = searchParams.get("setup") === "1";
 
-const [loading, setLoading] = useState(true);
-const [admins, setAdmins] = useState<Admin[]>([]);
-const [tables, setTables] = useState<SimTable[]>([]);
-const [leads, setLeads] = useState<Lead[]>([]);
-const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
-const [mgrOpen, setMgrOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [admins, setAdmins] = useState<Admin[]>([]);
+  const [tables, setTables] = useState<SimTable[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [activeAdminId, setActiveAdminId] = useState<string | null>(null);
+  const [mgrOpen, setMgrOpen] = useState(false);
+
+  // ===== DEBUG: status rápido
+  const debugBox = (
+    <div className="text-xs text-muted-foreground bg-muted/40 px-2 py-1 rounded">
+      <div>adminKey: <b>{String(adminKey ?? "")}</b></div>
+      <div>activeAdminId: <b>{String(activeAdminId ?? "")}</b></div>
+      <div>activeAdmin: <b>{(admins.find(a=>a.id===activeAdminId)?.name) ?? "-"}</b></div>
+      <div>tabelas (todas/origem do estado): <b>{tables.length}</b></div>
+      <div>tabelas (filtradas p/ admin): <b>{tables.filter(t=>t.admin_id===activeAdminId).length}</b></div>
+    </div>
+  );
 
   // quando mudar adminKey na URL após carregar admins, atualiza activeAdminId
-useEffect(() => {
-  if (!admins.length) return;
-  if (!adminKey) return;
+  useEffect(() => {
+    if (!admins.length) return;
 
-  const match = admins.find(
-    (ad) => ad.id === adminKey || (ad.slug && ad.slug === adminKey)
-  );
-  if (match) setActiveAdminId(match.id);
-}, [adminKey, admins]);
+    let next: string | null = null;
+
+    if (adminKey) {
+      const key = decodeURIComponent(adminKey);
+      const m = admins.find(ad => ad.id === key || (ad.slug ?? "") === key);
+      next = m?.id ?? null;
+    } else {
+      // fallback neutro: primeira da lista
+      next = admins[0]?.id ?? null;
+    }
+
+    setActiveAdminId(next);
+  }, [adminKey, admins]);
 
   // recarrega as tabelas sempre que a administradora ativa mudar
-useEffect(() => {
-  async function loadTables(aid: string) {
+  useEffect(() => {
+    async function loadTables(aid: string) {
+      const { data, error } = await supabase
+        .from("sim_tables")
+        .select("*")
+        .eq("admin_id", aid)
+        .order("segmento", { ascending: true })
+        .order("nome", { ascending: true });
+
+      if (error) {
+        console.error("Erro ao carregar tabelas:", error.message);
+        setTables([]); // evita vazar dados de outra admin
+        return;
+      }
+      setTables(data ?? []);
+    }
+
+    if (activeAdminId) loadTables(activeAdminId);
+    else setTables([]);
+  }, [activeAdminId]);
+
+  // função para recarregar as tabelas sob demanda (modal)
+  const reloadTables = React.useCallback(async () => {
+    if (!activeAdminId) return;
     const { data, error } = await supabase
       .from("sim_tables")
       .select("*")
-      .eq("admin_id", aid)                       // 🔴 filtra pela admin ativa
+      .eq("admin_id", activeAdminId)
       .order("segmento", { ascending: true })
       .order("nome", { ascending: true });
 
     if (error) {
-      console.error("Erro ao carregar tabelas:", error.message);
-      setTables([]);                             // evita vazar tabelas antigas
+      console.error("Erro ao recarregar tabelas:", error.message);
+      setTables([]);
       return;
     }
     setTables(data ?? []);
-  }
+  }, [activeAdminId]);
 
-  if (activeAdminId) loadTables(activeAdminId);
-  else setTables([]);                            // sem admin → lista vazia
-}, [activeAdminId]);
+  // URL: /simuladores/:id?setup=1
+  const { pathname: _pathname } = useLocation();
+  const showTopChips = false;
 
-  // função para recarregar as tabelas sob demanda (usada pelo modal)
-const reloadTables = React.useCallback(async () => {
-  if (!activeAdminId) return;
-  const { data, error } = await supabase
-    .from("sim_tables")
-    .select("*")
-    .eq("admin_id", activeAdminId)
-    .order("segmento", { ascending: true })
-    .order("nome", { ascending: true });
+  // Carregamento inicial: admins (com slug), leads
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const [{ data: a }, { data: l }] = await Promise.all([
+        supabase.from("sim_admins").select("id,name,slug").order("name", { ascending: true }), // <- slug incluído
+        supabase
+          .from("leads")
+          .select("id, nome, telefone")
+          .limit(200)
+          .order("created_at", { ascending: false }),
+      ]);
 
-  if (error) {
-    console.error("Erro ao recarregar tabelas:", error.message);
-    setTables([]);
-    return;
-  }
-  setTables(data ?? []);
-}, [activeAdminId]);
+      setAdmins(a ?? []);
+      setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-  // seleção Embracon
+      setLoading(false);
+
+      // se a URL tiver ?setup=1, abre o modal de tabelas
+      if (openSetup) setTimeout(() => setMgrOpen(true), 0);
+    })();
+  }, [openSetup]);
+
+  // telefone do usuário logado
+  const [userPhone, setUserPhone] = useState<string>("");
+  useEffect(() => {
+    (async () => {
+      const { data: userRes } = await supabase.auth.getUser();
+      const uid = userRes?.user?.id;
+      if (!uid) return;
+      const { data } = await supabase
+        .from("users")
+        .select("phone")
+        .eq("auth_user_id", uid)
+        .maybeSingle();
+      setUserPhone((data?.phone || "").toString());
+    })();
+  }, []);
+
+  // ======= Embracon states / simulação
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
   const [grupo, setGrupo] = useState<string>("");
@@ -381,68 +424,7 @@ const reloadTables = React.useCallback(async () => {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // telefone do usuário logado (para o Resumo / Proposta)
-  const [userPhone, setUserPhone] = useState<string>("");
-
-  // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
-
-// URL: /simuladores/:id?setup=1
-const { pathname: _pathname } = useLocation();
-const showTopChips = false;     // ou pathname === "/simuladores"
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
-        supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-        supabase.from("sim_tables").select("*"),
-        supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
-      ]);
-     setAdmins(a ?? []);
-setTables(t ?? []);
-setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
-
-// 1) tenta bater o admin vindo na URL por id OU por slug
-let nextActiveId: string | null = null;
-
-if (adminKey) {
-  const key = decodeURIComponent(adminKey);
-  const byParam = (a ?? []).find(
-    (ad: any) => ad.id === key || ((ad.slug ?? "") === key)
-  );
-  if (byParam) nextActiveId = byParam.id;
-} else {
-  // 2) fallback: apenas o primeiro da lista (sem forçar "Embracon")
-  nextActiveId = a?.[0]?.id ?? null;
-}
-
-if (nextActiveId) setActiveAdminId(nextActiveId);
-
-// terminou o loading
-setLoading(false);
-
-// se a URL tiver ?setup=1, abre o modal de tabelas
-if (openSetup) {
-  setTimeout(() => setMgrOpen(true), 0);
-}
-    })();
-  }, []);
-
-  // pega telefone do usuário logado
-  useEffect(() => {
-    (async () => {
-      const { data: userRes } = await supabase.auth.getUser();
-      const uid = userRes?.user?.id;
-      if (!uid) return;
-      const { data } = await supabase
-        .from("users")
-        .select("phone")
-        .eq("auth_user_id", uid)
-        .maybeSingle();
-      setUserPhone((data?.phone || "").toString());
-    })();
-  }, []);
 
   useEffect(() => {
     const found = leads.find((x) => x.id === leadId);
@@ -450,11 +432,12 @@ if (openSetup) {
   }, [leadId, leads]);
 
   // objeto completo da administradora ativa (sempre derivado do activeAdminId)
-const activeAdmin = useMemo(
-  () => admins.find((a) => a.id === activeAdminId) ?? null,
-  [admins, activeAdminId]
-);
+  const activeAdmin = useMemo(
+    () => admins.find((a) => a.id === activeAdminId) ?? null,
+    [admins, activeAdminId]
+  );
 
+  // tabelas filtradas (sempre pelo id ativo)
   const adminTables = useMemo(
     () => tables.filter((t) => t.admin_id === activeAdminId),
     [tables, activeAdminId]
@@ -605,7 +588,7 @@ const activeAdmin = useMemo(
     setTables((prev) => prev.filter((t) => t.id !== id));
   }
 
-  // ===== Resumo da Proposta (texto copiável) =====
+  // ===== Resumo da Proposta (texto copiável)
   const resumoTexto = useMemo(() => {
     if (!tabelaSelecionada || !calc || !podeCalcular) return "";
 
@@ -672,7 +655,7 @@ ${wa}`
     }
   }
 
-  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
+  // ===== OPORTUNIDADE / PROPOSTA EMBRACON
   function normalizarSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
     if (s.includes("imó")) return "Imóvel";
@@ -754,52 +737,52 @@ Vantagens
 
   return (
     <div className="p-6 space-y-4">
+      {/* DEBUG (pode remover quando terminar) */}
+      {debugBox}
+
       {/* topo: admins + botões */}
-<div className="flex flex-wrap items-center gap-2">
-  {/* Chips de administradoras (escondidos quando showTopChips === false) */}
-  {showTopChips && (
-    <div className="flex flex-wrap gap-2">
-      {admins.map((a) => (
-        <Button
-          key={a.id}
-          variant={activeAdminId === a.id ? "default" : "secondary"}
-          onClick={() => setActiveAdminId(a.id)}
-          className="h-10 rounded-2xl px-4"
-        >
-          {a.name}
-        </Button>
-      ))}
-    </div>
-  )}
-
-  <div className="ml-auto flex items-center gap-2">
-    {activeAdmin && (
-      <>
-        {/* ✅ Mantido SEM depender do showTopChips */}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setMgrOpen(true)}
-          className="h-10 rounded-2xl px-4"
-        >
-          Gerenciar Tabelas
-        </Button>
-
-        {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
+      <div className="flex flex-wrap items-center gap-2">
         {showTopChips && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => alert("Em breve: adicionar administradora.")}
-            className="h-10 rounded-2xl px-4 whitespace-nowrap"
-          >
-            <Plus className="h-4 w-4 mr-1" /> + Add Administradora
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {admins.map((a) => (
+              <Button
+                key={a.id}
+                variant={activeAdminId === a.id ? "default" : "secondary"}
+                onClick={() => setActiveAdminId(a.id)}
+                className="h-10 rounded-2xl px-4"
+              >
+                {a.name}
+              </Button>
+            ))}
+          </div>
         )}
-      </>
-    )}
-  </div>
-</div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {activeAdmin && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setMgrOpen(true)}
+                className="h-10 rounded-2xl px-4"
+              >
+                Gerenciar Tabelas
+              </Button>
+
+              {showTopChips && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => alert("Em breve: adicionar administradora.")}
+                  className="h-10 rounded-2xl px-4 whitespace-nowrap"
+                >
+                  <Plus className="h-4 w-4 mr-1" /> + Add Administradora
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
 
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
@@ -810,65 +793,65 @@ Vantagens
               <CardTitle>Simuladores</CardTitle>
             </CardHeader>
             <CardContent>
-  {!activeAdmin ? (
-    <div className="text-sm text-muted-foreground">
-      Nenhuma administradora encontrada.
-    </div>
-  ) : activeAdmin.name === "Embracon" ? (
-    <EmbraconSimulator
-      leads={leads}
-      adminTables={adminTables}
-      nomesTabelaSegmento={nomesTabelaSegmento}
-      variantesDaTabela={variantesDaTabela}
-      tabelaSelecionada={tabelaSelecionada}
-      prazoAte={prazoAte}
-      faixa={faixa}
-      leadId={leadId}
-      setLeadId={setLeadId}
-      leadInfo={leadInfo}
-      grupo={grupo}
-      setGrupo={setGrupo}
-      segmento={segmento}
-      setSegmento={(v) => {
-        setSegmento(v);
-        setNomeTabela("");
-        setTabelaId("");
-      }}
-      nomeTabela={nomeTabela}
-      setNomeTabela={(v) => {
-        setNomeTabela(v);
-        setTabelaId("");
-      }}
-      tabelaId={tabelaId}
-      setTabelaId={setTabelaId}
-      credito={credito}
-      setCredito={setCredito}
-      prazoVenda={prazoVenda}
-      setPrazoVenda={setPrazoVenda}
-      forma={forma}
-      setForma={setForma}
-      seguroPrest={seguroPrest}
-      setSeguroPrest={setSeguroPrest}
-      lanceOfertPct={lanceOfertPct}
-      setLanceOfertPct={setLanceOfertPct}
-      lanceEmbutPct={lanceEmbutPct}
-      setLanceEmbutPct={setLanceEmbutPct}
-      parcContemplacao={parcContemplacao}
-      setParcContemplacao={setParcContemplacao}
-      prazoAviso={prazoAviso}
-      calc={calc}
-      salvar={salvarSimulacao}
-      salvando={salvando}
-      simCode={simCode}
-    />
-  ) : (
-    <GenericSimulator
-      admin={activeAdmin}
-      leads={leads}
-      adminTables={adminTables}
-    />
-  )}
-</CardContent>
+              {!activeAdmin ? (
+                <div className="text-sm text-muted-foreground">
+                  Nenhuma administradora encontrada.
+                </div>
+              ) : activeAdmin.name === "Embracon" ? (
+                <EmbraconSimulator
+                  leads={leads}
+                  adminTables={adminTables}
+                  nomesTabelaSegmento={nomesTabelaSegmento}
+                  variantesDaTabela={variantesDaTabela}
+                  tabelaSelecionada={tabelaSelecionada}
+                  prazoAte={prazoAte}
+                  faixa={faixa}
+                  leadId={leadId}
+                  setLeadId={setLeadId}
+                  leadInfo={leadInfo}
+                  grupo={grupo}
+                  setGrupo={setGrupo}
+                  segmento={segmento}
+                  setSegmento={(v) => {
+                    setSegmento(v);
+                    setNomeTabela("");
+                    setTabelaId("");
+                  }}
+                  nomeTabela={nomeTabela}
+                  setNomeTabela={(v) => {
+                    setNomeTabela(v);
+                    setTabelaId("");
+                  }}
+                  tabelaId={tabelaId}
+                  setTabelaId={setTabelaId}
+                  credito={credito}
+                  setCredito={setCredito}
+                  prazoVenda={prazoVenda}
+                  setPrazoVenda={setPrazoVenda}
+                  forma={forma}
+                  setForma={setForma}
+                  seguroPrest={seguroPrest}
+                  setSeguroPrest={setSeguroPrest}
+                  lanceOfertPct={lanceOfertPct}
+                  setLanceOfertPct={setLanceOfertPct}
+                  lanceEmbutPct={lanceEmbutPct}
+                  setLanceEmbutPct={setLanceEmbutPct}
+                  parcContemplacao={parcContemplacao}
+                  setParcContemplacao={setParcContemplacao}
+                  prazoAviso={prazoAviso}
+                  calc={calc}
+                  salvar={salvarSimulacao}
+                  salvando={salvando}
+                  simCode={simCode}
+                />
+              ) : (
+                <GenericSimulator
+                  admin={activeAdmin}
+                  leads={leads}
+                  adminTables={adminTables}
+                />
+              )}
+            </CardContent>
           </Card>
 
           {/* Ações principais */}
@@ -1014,15 +997,15 @@ Vantagens
       </div>
 
       {/* Overlay de gerenciamento de tabelas */}
-{mgrOpen && activeAdminId && (
-  <TableManagerModal
-    admin={activeAdmin}          // mostra nome certo
-    allTables={tables}           // TABELAS já filtradas por admin_id
-    onClose={() => setMgrOpen(false)}
-    onCreatedOrUpdated={reloadTables}
-    onDeleted={reloadTables}
-  />
-)}
+      {mgrOpen && activeAdminId && (
+        <TableManagerModal
+          admin={activeAdmin as Admin}   // nome correto
+          allTables={adminTables}        // listas já filtradas
+          onClose={() => setMgrOpen(false)}
+          onCreatedOrUpdated={reloadTables}
+          onDeleted={reloadTables}
+        />
+      )}
     </div>
   );
 }
@@ -1084,7 +1067,6 @@ function TableManagerModal({
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
-  // reset página quando muda a lista
   useEffect(() => setPage(1), [allTables.length]);
 
   const grouped = useMemo(() => {
@@ -1105,7 +1087,6 @@ function TableManagerModal({
     if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
     setBusyId(id);
 
-    // 1) Exclui simulações dependentes (evita erro de FK)
     const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
     if (delSims.error) {
       setBusyId(null);
@@ -1113,7 +1094,6 @@ function TableManagerModal({
       return;
     }
 
-    // 2) Exclui a tabela
     const { error } = await supabase.from("sim_tables").delete().eq("id", id);
     setBusyId(null);
     if (error) {
@@ -1190,7 +1170,7 @@ function TableManagerModal({
                         className="h-9 rounded-xl px-3"
                       >
                         {busyId === t.id ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         ) : (
                           <Trash2 className="h-4 w-4 mr-1" />
                         )}
@@ -1303,7 +1283,6 @@ function TableFormOverlay({
 
   const [saving, setSaving] = useState(false);
 
-  // ESC para fechar
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -1328,7 +1307,6 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
-      permite_livre: perLivre as any, // compat
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1446,7 +1424,7 @@ type EmbraconProps = {
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
-const [leadOpen, setLeadOpen] = useState(false);
+  const [leadOpen, setLeadOpen] = useState(false);
   const [leadQuery, setLeadQuery] = useState("");
 
   const filteredLeads = useMemo(() => {
@@ -1455,7 +1433,7 @@ const [leadOpen, setLeadOpen] = useState(false);
 
     const qRaw = leadQuery.trim();
     const q = norm(qRaw);
-    const qDigits = qRaw.replace(/\D/g, ""); // busca por telefone
+    const qDigits = qRaw.replace(/\D/g, "");
 
     return p.leads.filter((l) => {
       const nome = norm(l.nome || "");
@@ -1466,8 +1444,9 @@ const [leadOpen, setLeadOpen] = useState(false);
 
   useEffect(() => {
     if (!leadOpen) setLeadQuery("");
-  }, [leadOpen]);  
-return (
+  }, [leadOpen]);
+
+  return (
     <div className="space-y-6">
       {/* Lead */}
       <Card>
@@ -1475,61 +1454,59 @@ return (
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-             <Label>Selecionar Lead</Label>
-<Popover onOpenChange={setLeadOpen}>
-  <PopoverButton className="w-full justify-between h-10">
-    {p.leadInfo?.nome || "Escolher lead"}
-    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-  </PopoverButton>
+              <Label>Selecionar Lead</Label>
+              <Popover onOpenChange={setLeadOpen}>
+                <PopoverButton className="w-full justify-between h-10">
+                  {p.leadInfo?.nome || "Escolher lead"}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                </PopoverButton>
 
-  <PopoverContent className="min-w-[260px] p-2 z-50">
-    {/* Busca */}
-    <div className="flex items-center gap-2 mb-2">
-      <Search className="h-4 w-4 opacity-60" />
-      <Input
-        placeholder="Buscar lead por nome ou telefone..."
-        value={leadQuery}
-        onChange={(e) => setLeadQuery(e.target.value)}
-        className="h-8"
-      />
-    </div>
+                <PopoverContent className="min-w-[260px] p-2 z-50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Search className="h-4 w-4 opacity-60" />
+                    <Input
+                      placeholder="Buscar lead por nome ou telefone..."
+                      value={leadQuery}
+                      onChange={(e) => setLeadQuery(e.target.value)}
+                      className="h-8"
+                    />
+                  </div>
 
-    {/* Lista */}
-<div className="max-h-64 overflow-y-auto space-y-1">
-  {filteredLeads.length > 0 ? (
-    filteredLeads.map((l) => (
-      <PopoverClose asChild key={l.id}>
-        <button
-          type="button"
-          className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-          onClick={() => {
-            p.setLeadId(l.id);
-            setLeadQuery(""); // limpa a busca
-          }}
-        >
-          <div className="text-sm font-medium">{l.nome}</div>
-          {l.telefone && (
-            <div className="text-xs text-muted-foreground">{l.telefone}</div>
-          )}
-        </button>
-      </PopoverClose>
-    ))
-  ) : (
-    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-      Nenhum lead encontrado
-    </div>
-  )}
-</div>
-</PopoverContent>
-</Popover>
+                  <div className="max-h-64 overflow-y-auto space-y-1">
+                    {filteredLeads.length > 0 ? (
+                      filteredLeads.map((l) => (
+                        <PopoverClose asChild key={l.id}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+                            onClick={() => {
+                              p.setLeadId(l.id);
+                              setLeadQuery("");
+                            }}
+                          >
+                            <div className="text-sm font-medium">{l.nome}</div>
+                            {l.telefone && (
+                              <div className="text-xs text-muted-foreground">{l.telefone}</div>
+                            )}
+                          </button>
+                        </PopoverClose>
+                      ))
+                    ) : (
+                      <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+                        Nenhum lead encontrado
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
 
-{p.leadInfo && (
-  <p className="text-xs text-muted-foreground mt-1">
-    {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-  </p>
-)}
-
+              {p.leadInfo && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+                </p>
+              )}
             </div>
+
             <div>
               <Label>Nº do Grupo (opcional)</Label>
               <Input
@@ -1542,9 +1519,9 @@ return (
         </CardContent>
       </Card>
 
-      {/* Plano */}
       {p.leadId ? (
         <>
+          {/* Plano */}
           <Card>
             <CardHeader><CardTitle>Configurações do Plano</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
@@ -1740,7 +1717,7 @@ return (
             </CardContent>
           </Card>
 
-          {/* === Configurações do Lance (RESTAURADO) === */}
+          {/* Lances */}
           <Card>
             <CardHeader>
               <CardTitle>Configurações do Lance</CardTitle>

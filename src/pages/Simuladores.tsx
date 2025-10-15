@@ -342,11 +342,10 @@ useEffect(() => {
   // função para recarregar as tabelas sob demanda (usada pelo modal)
 const reloadTables = React.useCallback(async () => {
   if (!activeAdminId) return;
-
   const { data, error } = await supabase
     .from("sim_tables")
     .select("*")
-    .eq("admin_id", activeAdminId)      // mantém o filtro pela admin ativa
+    .eq("admin_id", activeAdminId)
     .order("segmento", { ascending: true })
     .order("nome", { ascending: true });
 
@@ -408,18 +407,17 @@ setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefo
 let nextActiveId: string | null = null;
 
 if (adminKey) {
+  const key = decodeURIComponent(adminKey);
   const byParam = (a ?? []).find(
-    (ad: any) => ad.id === adminKey || (ad.slug && ad.slug === adminKey)
+    (ad: any) => ad.id === key || ((ad.slug ?? "") === key)
   );
-  nextActiveId = byParam?.id ?? null;
-}
-
-// 2) fallback: apenas o primeiro da lista (sem forçar "Embracon")
-if (!nextActiveId) {
+  if (byParam) nextActiveId = byParam.id;
+} else {
+  // 2) fallback: apenas o primeiro da lista (sem forçar "Embracon")
   nextActiveId = a?.[0]?.id ?? null;
 }
 
-setActiveAdminId(nextActiveId);
+if (nextActiveId) setActiveAdminId(nextActiveId);
 
 // terminou o loading
 setLoading(false);
@@ -451,9 +449,9 @@ if (openSetup) {
     setLeadInfo(found ? { nome: found.nome, telefone: found.telefone } : null);
   }, [leadId, leads]);
 
-  // objeto da administradora ativa (a partir do id resolvido)
+  // objeto completo da administradora ativa (sempre derivado do activeAdminId)
 const activeAdmin = useMemo(
-  () => admins.find((a) => a.id === activeAdminId) || null,
+  () => admins.find((a) => a.id === activeAdminId) ?? null,
   [admins, activeAdminId]
 );
 
@@ -1018,11 +1016,11 @@ Vantagens
       {/* Overlay de gerenciamento de tabelas */}
 {mgrOpen && activeAdminId && (
   <TableManagerModal
-    admin={activeAdmin}
-    allTables={tables}                       // ✅ usa a lista filtrada por admin
+    admin={activeAdmin}          // mostra nome certo
+    allTables={tables}           // TABELAS já filtradas por admin_id
     onClose={() => setMgrOpen(false)}
-    onCreatedOrUpdated={reloadTables}        // ↺ recarrega após salvar
-    onDeleted={reloadTables}                 // ↺ recarrega após excluir
+    onCreatedOrUpdated={reloadTables}
+    onDeleted={reloadTables}
   />
 )}
     </div>

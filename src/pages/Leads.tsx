@@ -115,7 +115,7 @@ export default function LeadsPage() {
         )
         .order("created_at", { ascending: false });
 
-      // filtro de não-admin (por segurança adicional — RLS já cobre)
+      // filtro de não-admin (RLS já cobre; aqui é só otimização)
       if (me?.id && me.role !== "admin") query = query.eq("owner_id", me.id);
 
       if (term) {
@@ -209,19 +209,26 @@ export default function LeadsPage() {
     }
     setLoading(true);
     try {
-      // ✅ Correção: atualizar diretamente owner_id em public.leads
-      const { error } = await supabase
+      // 1) Atualiza o dono do LEAD
+      const { error: e1 } = await supabase
         .from("leads")
         .update({ owner_id: newOwnerId })
         .eq("id", reassigning.id);
+      if (e1) throw e1;
 
-      if (error) {
-        alert("Erro ao reatribuir: " + error.message);
-        return;
-      }
+      // 2) Garante a propagação nas OPORTUNIDADES do lead
+      const { error: e2 } = await supabase
+        .from("opportunities")
+        .update({ owner_id: newOwnerId })
+        .eq("lead_id", reassigning.id);
+      if (e2) throw e2;
+
       closeReassignModal();
       await loadLeads(page);
-      alert("Lead reatribuído!");
+      alert("Lead e oportunidades reatribuídos!");
+    } catch (err: any) {
+      console.error(err);
+      alert("Erro ao reatribuir: " + (err?.message ?? "desconhecido"));
     } finally {
       setLoading(false);
     }

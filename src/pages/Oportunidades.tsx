@@ -2,554 +2,537 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/** ------------- Tipos ------------- */
-type Lead = { id: string; nome: string; owner_id: string; telefone?: string | null };
-type Vendedor = { auth_user_id: string; nome: string };
+/** ------------ Tipos ------------ */
+type Lead = {
+  id: string;
+  nome: string;
+  telefone?: string | null;
+  email?: string | null;
+  origem?: string | null;
+  descricao?: string | null;
+  owner_id?: string | null;
+};
 
-type StageUI =
-  | "novo"
-  | "qualificando"
-  | "proposta"
-  | "negociacao"
-  | "fechado_ganho"
-  | "fechado_perdido";
+type Vendedor = { auth_user_id: string; nome: string; role?: string };
 
-type EstagioDB =
-  | "Novo"
-  | "Qualificando"
-  | "Proposta"
-  | "Negociação"
-  | "Fechado (Ganho)"
-  | "Fechado (Perdido)";
+type StageUI = "novo" | "qualificando" | "proposta" | "negociacao";
+type EstagioDB = "Novo" | "Qualificando" | "Proposta" | "Negociação" | "Fechado (Ganho)" | "Fechado (Perdido)";
 
 type Oportunidade = {
   id: string;
   lead_id: string;
-  // legado (pode existir em alguns registros):
-  vendedor_id?: string | null;
-  // atual:
-  owner_id?: string | null;
+  owner_id?: string | null;      // verdade
+  vendedor_id?: string | null;   // legado (compat)
   segmento: string;
   valor_credito: number;
   observacao: string | null;
   score: number;
-  estagio: EstagioDB | string; // pode vir legado
+  estagio: EstagioDB | string;
   expected_close_at: string | null;
   created_at: string;
 };
 
-/** ------------- Helpers ------------- */
-const segmentos = [
-  "Automóvel",
-  "Imóvel",
-  "Motocicleta",
-  "Serviços",
-  "Pesados",
-  "Imóvel Estendido",
-] as const;
+/** ------------ Consts/Helpers ------------ */
+const STAGES: { id: StageUI; label: EstagioDB }[] = [
+  { id: "novo",          label: "Novo" },
+  { id: "qualificando",  label: "Qualificando" },
+  { id: "proposta",      label: "Proposta" },
+  { id: "negociacao",    label: "Negociação" },
+];
 
+const SEGMENTOS = ["Automóvel","Imóvel","Motocicleta","Serviços","Pesados","Imóvel Estendido"] as const;
+
+const dbToUI: Partial<Record<string, StageUI>> = {
+  "Novo": "novo",
+  "Qualificando": "qualificando",
+  "Qualificação": "qualificando",
+  "Qualificacao": "qualificando",
+  "Proposta": "proposta",
+  "Negociação": "negociacao",
+  "Negociacao": "negociacao",
+};
 const uiToDB: Record<StageUI, EstagioDB> = {
   novo: "Novo",
   qualificando: "Qualificando",
   proposta: "Proposta",
   negociacao: "Negociação",
-  fechado_ganho: "Fechado (Ganho)",
-  fechado_perdido: "Fechado (Perdido)",
 };
 
-const dbToUI: Partial<Record<string, StageUI>> = {
-  Novo: "novo",
-  Qualificando: "qualificando",
-  Qualificação: "qualificando",
-  Qualificacao: "qualificando",
-  Proposta: "proposta",
-  Negociação: "negociacao",
-  Negociacao: "negociacao",
-  "Fechado (Ganho)": "fechado_ganho",
-  "Fechado (Perdido)": "fechado_perdido",
-};
-
-function moedaParaNumeroBR(valor: string) {
-  const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
-  return Number(limpo || 0);
-}
-function fmtBRL(n: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n || 0);
-}
-function normalizeEstagioDB(label: string): EstagioDB {
-  const v = (label || "").toLowerCase();
-  if (v.includes("fechado") && v.includes("ganho")) return "Fechado (Ganho)";
-  if (v.includes("fechado") && v.includes("perdido")) return "Fechado (Perdido)";
-  if (v.startsWith("qualifica")) return "Qualificando";
-  if (v.startsWith("proposta")) return "Proposta";
-  if (v.startsWith("negocia")) return "Negociação";
-  if (v.startsWith("novo")) return "Novo";
-  return "Novo";
-}
-
-/** Telefone helpers */
-function onlyDigits(s?: string | null) {
-  return (s || "").replace(/\D+/g, "");
-}
-function normalizePhoneToWa(telefone?: string | null) {
+const fmtBRL = (n: number) => new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(n||0);
+const onlyDigits = (s?: string | null) => (s || "").replace(/\D+/g, "");
+const normalizePhoneToWa = (telefone?: string | null) => {
   const d = onlyDigits(telefone);
   if (!d) return null;
-  if (d.startsWith("55")) return d; // já tem DDI
-  if (d.length >= 10 && d.length <= 11) return "55" + d; // BR sem DDI
-  if (d.length >= 12 && !d.startsWith("55")) return "55" + d; // fallback
+  if (d.startsWith("55")) return d;
+  if (d.length>=10 && d.length<=11) return "55"+d;
+  if (d.length>=12 && !d.startsWith("55")) return "55"+d;
   return null;
-}
-function formatPhoneBR(telefone?: string | null) {
-  const d = onlyDigits(telefone);
-  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return telefone || "";
-}
+};
+const telHref = (tel?: string | null) => {
+  const d = onlyDigits(tel);
+  return d ? `tel:${d}` : null;
+};
+const mailHref = (email?: string | null) => (email ? `mailto:${email}` : null);
+const moedaParaNumeroBR = (v: string) => Number(v.replace(/[^\d,.-]/g,"").replace(/\./g,"").replace(",",".") || 0);
 
-/** ------------- Página ------------- */
+/** ------------ Component ------------ */
 export default function Oportunidades() {
+  /** sessão/usuário para permissões e owner padrão */
+  const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+
+  /** dados */
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [lista, setLista] = useState<Oportunidade[]>([]);
-  const [search, setSearch] = useState<string>("");
 
-  // modal "Tratar Lead"
-  const [editing, setEditing] = useState<Oportunidade | null>(null);
+  /** filtros/UX */
+  const [search, setSearch] = useState("");
+  const [sellerFilter, setSellerFilter] = useState<string>(""); // “Selecionar vendedor”
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 15;
+
+  /** modais */
+  const [editingOpp, setEditingOpp] = useState<Oportunidade | null>(null);
   const [newNote, setNewNote] = useState("");
-
-  // modal "Nova oportunidade"
-  const [createOpen, setCreateOpen] = useState(false);
-  const [leadId, setLeadId] = useState("");
-  const [vendId, setVendId] = useState("");
-  const [segmento, setSegmento] = useState<string>("Automóvel");
-  const [valor, setValor] = useState("");
-  const [obs, setObs] = useState("");
-  const [score, setScore] = useState(1);
-  const [stageUI, setStageUI] = useState<StageUI>("novo");
-  const [expectedDate, setExpectedDate] = useState<string>("");
+  const [createOppOpen, setCreateOppOpen] = useState(false);
+  const [leadForOpp, setLeadForOpp] = useState("");
+  const [vendForOpp, setVendForOpp] = useState("");
+  const [segmentoOpp, setSegmentoOpp] = useState("Automóvel");
+  const [valorOpp, setValorOpp] = useState("");
+  const [scoreOpp, setScoreOpp] = useState(1);
+  const [stageOpp, setStageOpp] = useState<StageUI>("novo");
+  const [expectedOpp, setExpectedOpp] = useState("");
   const [loading, setLoading] = useState(false);
 
-  /** Carregar listas iniciais */
+  // modal Novo Lead
+  const [leadOpen, setLeadOpen] = useState(false);
+  const [leadNome, setLeadNome] = useState("");
+  const [leadTel, setLeadTel] = useState("");
+  const [leadEmail, setLeadEmail] = useState("");
+  const [leadOrigem, setLeadOrigem] = useState("Site");
+  const [leadDesc, setLeadDesc] = useState("");
+
+  // modal Edit Lead
+  const [editLeadOpen, setEditLeadOpen] = useState<Lead | null>(null);
+
+  // modal Reassign
+  const [reassignLead, setReassignLead] = useState<Lead | null>(null);
+  const [newOwnerId, setNewOwnerId] = useState("");
+
+  const isAdmin = me?.role === "admin";
+
+  /** bootstrap */
   useEffect(() => {
     (async () => {
+      const { data: u } = await supabase.auth.getUser();
+      const user = u?.user;
+      const role = (user?.app_metadata as any)?.role || "viewer";
+      if (user) setMe({ id: user.id, role });
+
       const { data: l } = await supabase
         .from("leads")
-        .select("id, nome, owner_id, telefone")
-        .order("created_at", { ascending: false });
+        .select("id,nome,telefone,email,origem,descricao,owner_id")
+        .order("created_at",{ascending:false});
       setLeads(l || []);
 
-      // mantém o seu RPC existente
       const { data: v } = await supabase.rpc("listar_vendedores");
       setVendedores((v || []) as Vendedor[]);
 
-      // leitura padronizada da tabela unificada + compat (owner_id e vendedor_id)
       const { data: o } = await supabase
         .from("opportunities")
-        .select(
-          "id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
-        )
-        .order("created_at", { ascending: false });
-
+        .select("id,lead_id,owner_id,vendedor_id,segmento,valor_credito,observacao,score,estagio,expected_close_at,created_at")
+        .order("created_at",{ascending:false});
       setLista((o || []) as Oportunidade[]);
     })();
   }, []);
 
-  /** KPI por estágio */
-  const kpi = useMemo(() => {
-    const base: Record<StageUI, { qtd: number; total: number }> = {
-      novo: { qtd: 0, total: 0 },
-      qualificando: { qtd: 0, total: 0 },
-      proposta: { qtd: 0, total: 0 },
-      negociacao: { qtd: 0, total: 0 },
-      fechado_ganho: { qtd: 0, total: 0 },
-      fechado_perdido: { qtd: 0, total: 0 },
-    };
-    for (const o of lista || []) {
-      const k = dbToUI[o.estagio as string] ?? "novo";
-      base[k].qtd += 1;
-      base[k].total += Number(o.valor_credito || 0);
-    }
-    return base;
-  }, [lista]);
-
-  /** Busca (lead | vendedor | estágio | telefone) */
-  const visiveis = useMemo(() => {
+  /** buscar/filtrar/paginar */
+  const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return lista;
-
-    const match = (o: Oportunidade) => {
-      const lead = leads.find((l) => l.id === o.lead_id);
-      const leadNome = lead?.nome?.toLowerCase() || "";
-
+    return (lista || []).filter(o => {
+      // filtro por vendedor selecionado
       const sellerId = (o.owner_id || o.vendedor_id || "") as string;
-      const vendNome =
-        vendedores.find((v) => v.auth_user_id === sellerId)?.nome?.toLowerCase() || "";
+      if (sellerFilter && sellerId !== sellerFilter) return false;
 
-      const uiStage = dbToUI[o.estagio as string] ?? "novo";
-      const stageLabel = {
-        novo: "novo",
-        qualificando: "qualificando",
-        proposta: "proposta",
-        negociacao: "negociação",
-        fechado_ganho: "fechado (ganho)",
-        fechado_perdido: "fechado (perdido)",
-      }[uiStage];
+      if (!q) return true;
+      const lead = leads.find(l => l.id === o.lead_id);
+      const vname = vendedores.find(v => v.auth_user_id === sellerId)?.nome?.toLowerCase() || "";
+      const lname = (lead?.nome || "").toLowerCase();
+      const stage = String(o.estagio).toLowerCase();
+      const tel = lead?.telefone ? onlyDigits(lead.telefone) : "";
+      return lname.includes(q) || vname.includes(q) || stage.includes(q) || tel.includes(q);
+    });
+  }, [lista, leads, vendedores, search, sellerFilter]);
 
-      return (
-        leadNome.includes(q) ||
-        vendNome.includes(q) ||
-        String(o.estagio).toLowerCase().includes(q) ||
-        stageLabel.includes(q) ||
-        (lead?.telefone ? formatPhoneBR(lead.telefone).toLowerCase().includes(q) : false)
-      );
-    };
+  const openByStage = useMemo(() => {
+    const map: Record<StageUI, Oportunidade[]> = { novo:[], qualificando:[], proposta:[], negociacao:[] };
+    for (const o of filtered) {
+      const s = dbToUI[o.estagio as string];
+      if (!s || !(s in map)) continue; // ignora fechados aqui
+      map[s as StageUI].push(o);
+    }
+    return map;
+  }, [filtered]);
 
-    return lista.filter(match);
-  }, [lista, leads, vendedores, search]);
+  // KPIs dos quatro estágios
+  const kpi = useMemo(() => {
+    const r = {
+      novo: {qtd:0,total:0},
+      qualificando: {qtd:0,total:0},
+      proposta: {qtd:0,total:0},
+      negociacao: {qtd:0,total:0},
+    } as Record<StageUI,{qtd:number,total:number}>;
+    for (const s of STAGES) {
+      for (const o of openByStage[s.id]) {
+        r[s.id].qtd++;
+        r[s.id].total += Number(o.valor_credito || 0);
+      }
+    }
+    return r;
+  }, [openByStage]);
 
-  /** Criar oportunidade */
+  // donuts de finalizados por segmento
+  const donuts = useMemo(() => {
+    const ganho: Record<string, number> = {};
+    const perdido: Record<string, number> = {};
+    for (const o of filtered) {
+      if (o.estagio === "Fechado (Ganho)") ganho[o.segmento] = (ganho[o.segmento]||0) + 1;
+      if (o.estagio === "Fechado (Perdido)") perdido[o.segmento] = (perdido[o.segmento]||0) + 1;
+    }
+    return { ganho, perdido };
+  }, [filtered]);
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)), [filtered.length]);
+  const pageSlice = useMemo(() => {
+    const from = (page-1)*PAGE_SIZE;
+    return filtered.slice(from, from+PAGE_SIZE);
+  }, [filtered, page]);
+
+  /** Ações: criar oportunidade */
   async function criarOportunidade() {
-    if (!leadId) return alert("Selecione um Lead.");
-    if (!vendId) return alert("Selecione um Vendedor.");
-    const valorNum = moedaParaNumeroBR(valor);
+    if (!leadForOpp) return alert("Selecione um Lead.");
+    if (!vendForOpp) return alert("Selecione um Vendedor.");
+    const valorNum = moedaParaNumeroBR(valorOpp);
     if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
 
-    // dd/mm/aaaa -> yyyy-mm-dd
-    let isoDate: string | null = null;
-    if (expectedDate) {
-      const [d, m, y] = expectedDate.split("/");
-      if (d && m && y) isoDate = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    let expected: string | null = null;
+    if (expectedOpp) {
+      const [d,m,y] = expectedOpp.split("/");
+      if (d && m && y) expected = `${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;
     }
 
     setLoading(true);
     const payload: any = {
-      lead_id: leadId,
-      // compat: mantém vendedor_id se a coluna existir no schema
-      vendedor_id: vendId,
-      // verdade: owner_id é o responsável
-      owner_id: vendId,
-      segmento,
+      lead_id: leadForOpp,
+      owner_id: vendForOpp,
+      vendedor_id: vendForOpp, // compat
+      segmento: segmentoOpp,
       valor_credito: valorNum,
-      observacao: obs ? `[${new Date().toLocaleString("pt-BR")}]\n${obs}` : null,
-      score,
-      estagio: uiToDB[stageUI] as EstagioDB,
-      expected_close_at: isoDate,
+      score: scoreOpp,
+      estagio: uiToDB[stageOpp],
+      expected_close_at: expected,
+      observacao: null,
     };
+    const { data, error } = await supabase.from("opportunities").insert([payload]).select().single();
+    setLoading(false);
+    if (error) return alert("Erro ao criar oportunidade: " + error.message);
+    setLista(s => [data as Oportunidade, ...s]);
+    setCreateOppOpen(false);
+    setLeadForOpp(""); setVendForOpp(""); setSegmentoOpp("Automóvel"); setValorOpp(""); setScoreOpp(1); setStageOpp("novo"); setExpectedOpp("");
+  }
 
-    const { data, error } = await supabase
-      .from("opportunities")
-      .insert([payload])
-      .select()
-      .single();
+  /** Ações: tratar oportunidade (update campos de negócio) */
+  async function salvarTratamento() {
+    if (!editingOpp) return;
+    const historico =
+      (editingOpp.observacao ? editingOpp.observacao + "\n\n" : "") +
+      (newNote ? `[${new Date().toLocaleString("pt-BR")}]\n${newNote}` : "");
+    const payload = {
+      segmento: editingOpp.segmento,
+      valor_credito: editingOpp.valor_credito,
+      score: editingOpp.score,
+      estagio: ((): EstagioDB => {
+        const label = String(editingOpp.estagio).toLowerCase();
+        if (label.startsWith("prop")) return "Proposta";
+        if (label.startsWith("nego")) return "Negociação";
+        if (label.startsWith("qual")) return "Qualificando";
+        return "Novo";
+      })(),
+      expected_close_at: editingOpp.expected_close_at?.trim() || null,
+      observacao: historico || editingOpp.observacao || null,
+    };
+    const { data, error } = await supabase.from("opportunities").update(payload).eq("id", editingOpp.id).select().single();
+    if (error) return alert("Falha ao salvar: " + error.message);
+    setLista(s => s.map(x => x.id === editingOpp.id ? (data as Oportunidade) : x));
+    setEditingOpp(null); setNewNote("");
+  }
+
+  /** Ações: criar novo lead (overlay) + criar oportunidade "Novo" imediatamente */
+  async function criarLeadENovaOpp() {
+    if (!leadNome.trim()) return alert("Informe o nome.");
+    setLoading(true);
+    // 1) cria o lead
+    const insertLead = {
+      nome: leadNome.trim(),
+      telefone: onlyDigits(leadTel) || null,
+      email: (leadEmail||"").trim().toLowerCase() || null,
+      origem: leadOrigem || null,
+      descricao: leadDesc?.trim() || null,
+    };
+    const { data: ld, error: eLead } = await supabase.from("leads").insert([insertLead]).select().single();
+    if (eLead) { setLoading(false); return alert("Erro ao criar lead: " + eLead.message); }
+    const newLead = ld as Lead;
+
+    // 2) cria oportunidade estágio "Novo" com owner = usuário atual
+    const owner = me?.id || (newLead.owner_id || "");
+    const { data: o, error: eOpp } = await supabase.from("opportunities").insert([{
+      lead_id: newLead.id,
+      owner_id: owner,
+      vendedor_id: owner, // compat
+      segmento: "Automóvel",
+      valor_credito: 0,
+      score: 1,
+      estagio: "Novo" as EstagioDB,
+      expected_close_at: null,
+      observacao: null,
+    }]).select().single();
 
     setLoading(false);
 
-    if (error) {
-      console.error(error);
-      alert("Erro ao criar oportunidade: " + error.message);
-      return;
-    }
+    if (eOpp) return alert("Lead criado, mas falhou ao criar a oportunidade: "+eOpp.message);
 
-    setLista((s) => [data as Oportunidade, ...s]);
+    // atualiza listas locais
+    setLeads(s => [newLead, ...s]);
+    setLista(s => [o as Oportunidade, ...s]);
 
-    // reset do form e fechar modal
-    setLeadId("");
-    setVendId("");
-    setSegmento("Automóvel");
-    setValor("");
-    setObs("");
-    setScore(1);
-    setStageUI("novo");
-    setExpectedDate("");
-    setCreateOpen(false);
-    alert("Oportunidade criada!");
+    // limpa/fecha modal
+    setLeadOpen(false);
+    setLeadNome(""); setLeadTel(""); setLeadEmail(""); setLeadOrigem("Site"); setLeadDesc("");
   }
 
-  /** Abrir/Salvar modal Tratar Lead */
-  function openEdit(o: Oportunidade) {
-    setEditing(o);
-    setNewNote("");
-  }
-  function closeEdit() {
-    setEditing(null);
-    setNewNote("");
-  }
-  async function saveEdit() {
-    if (!editing) return;
-
-    const historico =
-      (editing.observacao ? editing.observacao + "\n\n" : "") +
-      (newNote ? `[${new Date().toLocaleString("pt-BR")}]\n${newNote}` : "");
-
+  /** Ações: editar lead */
+  async function salvarLeadEdit() {
+    if (!editLeadOpen) return;
     const payload = {
-      segmento: editing.segmento,
-      valor_credito: editing.valor_credito,
-      score: editing.score,
-      estagio: normalizeEstagioDB(String(editing.estagio)),
-      expected_close_at: editing.expected_close_at?.trim() ? editing.expected_close_at : null,
-      observacao: historico || editing.observacao || null,
-      // NÃO alterar owner_id aqui ao tratar estágio/anotações
+      nome: editLeadOpen.nome?.trim(),
+      telefone: onlyDigits(editLeadOpen.telefone) || null,
+      email: (editLeadOpen.email||"").trim().toLowerCase() || null,
+      origem: editLeadOpen.origem || null,
+      descricao: editLeadOpen.descricao || null,
     };
-
-    const { error, data } = await supabase
-      .from("opportunities")
-      .update(payload)
-      .eq("id", editing.id)
-      .select()
-      .single();
-
-    if (error) {
-      alert("Falha ao salvar: " + error.message);
-      return;
-    }
-
-    setLista((s) => s.map((x) => (x.id === editing.id ? (data as Oportunidade) : x)));
-    closeEdit();
+    const { data, error } = await supabase.from("leads").update(payload).eq("id", editLeadOpen.id).select().single();
+    if (error) return alert("Falha ao salvar: "+error.message);
+    setLeads(s => s.map(l => l.id === editLeadOpen.id ? (data as Lead) : l));
+    setEditLeadOpen(null);
   }
 
-  /** ------------- UI: Ícone e Botão WhatsApp ------------- */
+  /** Ações: reatribuir (admin) */
+  async function reatribuirLead() {
+    if (!reassignLead || !newOwnerId) return;
+    const { error } = await supabase.from("leads").update({ owner_id: newOwnerId }).eq("id", reassignLead.id);
+    if (error) return alert("Erro ao reatribuir: "+error.message);
+    setLeads(s => s.map(l => l.id === reassignLead.id ? {...l, owner_id: newOwnerId} : l));
+    setReassignLead(null); setNewOwnerId("");
+  }
 
-  const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill={muted ? "none" : "currentColor"}
-      stroke={muted ? "currentColor" : "none"}
-      strokeWidth="1.2"
-      style={{ display: "inline-block", verticalAlign: "text-bottom" }}
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <path d="M12.04 0C5.44 0 .1 5.34.1 11.94c0 2.06.54 4.08 1.57 5.87L0 24l6.39-1.8a12 12 0 0 0 5.65 1.4C18.64 23.6 24 18.26 24 11.96 24 5.36 18.64 0 12.04 0Zm0 21.2c-1.77 0-3.48-.46-4.97-1.34l-.36-.21-3.78 1.06 1.05-3.69-.22-.38A9.17 9.17 0 1 1 21.2 11.96c0 5.06-4.1 9.24-9.16 9.24Zm5.18-6.91c-.29-.15-1.72-.85-1.99-.95-.27-.1-.46-.15-.66.15-.19.29-.76.94-.93 1.13-.17.19-.34.21-.63.07-.29-.15-1.22-.44-2.33-1.42-.86-.76-1.44-1.69-1.61-1.98-.17-.29-.02-.45.13-.6.13-.12.29-.34.43-.51.14-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.57-.9-2.15-.24-.57-.49-.49-.66-.5h-.57c-.19 0-.5.07-.76.37-.26.3-1 1-1 2.41s1.03 2.8 1.17 3.01c.14.2 2 3.18 4.84 4.34 2.39.94 2.88.76 3.4.71.52-.05 1.68-.69 1.93-1.36.25-.67.25-1.23.17-1.36-.07-.13-.26-.2-.55-.35Z" />
-    </svg>
+  /** ---------- UI helpers ---------- */
+  const SellerName = (o: Oportunidade) => {
+    const sid = (o.owner_id || o.vendedor_id || "") as string;
+    return vendedores.find(v => v.auth_user_id === sid)?.nome || "-";
+  };
+
+  const ActionBar: React.FC<{ lead: Lead; opp: Oportunidade }> = ({ lead, opp }) => {
+    const tel = telHref(lead.telefone);
+    const wa = normalizePhoneToWa(lead.telefone);
+    const mail = mailHref(lead.email);
+
+    const iconBtn: React.CSSProperties = { display:"inline-flex", alignItems:"center", justifyContent:"center", width:28, height:28, border:"1px solid #e5e7eb", borderRadius:8, background:"#fff", color:"#1E293F", cursor:"pointer" };
+    const iconMute: React.CSSProperties = { opacity:.45, cursor:"not-allowed" };
+
+    return (
+      <div style={{ display:"flex", gap:6 }}>
+        {/* Telefone */}
+        {tel ? (
+          <a title="Ligar" href={tel} style={iconBtn}>📞</a>
+        ) : (
+          <span title="Sem telefone" style={{...iconBtn, ...iconMute}}>📞</span>
+        )}
+        {/* WhatsApp */}
+        {wa ? (
+          <a title="WhatsApp" href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" style={iconBtn}>🟢</a>
+        ) : (
+          <span title="Sem WhatsApp" style={{...iconBtn, ...iconMute}}>🟢</span>
+        )}
+        {/* E-mail */}
+        {mail ? (
+          <a title="E-mail" href={mail} style={iconBtn}>✉️</a>
+        ) : (
+          <span title="Sem e-mail" style={{...iconBtn, ...iconMute}} onClick={() => alert("Este lead não possui e-mail cadastrado.")}>✉️</span>
+        )}
+        {/* Editar Lead */}
+        <button title="Editar Lead" style={iconBtn} onClick={() => setEditLeadOpen(lead)}>✏️</button>
+        {/* Reatribuir (admin) */}
+        {isAdmin ? (
+          <button title="Reatribuir" style={iconBtn} onClick={() => { setReassignLead(lead); setNewOwnerId(""); }}>↔️</button>
+        ) : null}
+        {/* Tratar (oportunidade) */}
+        <button title="Tratar" style={iconBtn} onClick={() => setEditingOpp(opp)}>🧰</button>
+      </div>
+    );
+  };
+
+  const Column: React.FC<{ stage: StageUI; items: Oportunidade[] }> = ({ stage, items }) => (
+    <div style={{ display:"grid", gap:10 }}>
+      {items.map(opp => {
+        const lead = leads.find(l => l.id === opp.lead_id);
+        return (
+          <div key={opp.id} style={{ background:"#fff", borderRadius:12, padding:12, boxShadow:"0 2px 10px rgba(0,0,0,.06)" }}>
+            <div style={{ fontWeight:800, marginBottom:6 }}>{lead?.nome || "-"}</div>
+            <div style={{ color:"#475569", fontSize:12, marginBottom:4 }}>Segmento: <strong style={{ color:"#0f172a" }}>{opp.segmento}</strong></div>
+            <div style={{ color:"#475569", fontSize:12, marginBottom:8 }}>Valor: <strong style={{ color:"#0f172a" }}>{fmtBRL(opp.valor_credito)}</strong></div>
+            <ActionBar lead={lead as Lead} opp={opp} />
+          </div>
+        );
+      })}
+      {!items.length && <div style={{ color:"#94a3b8", fontSize:12 }}>Sem itens</div>}
+    </div>
   );
 
-  const WaButton: React.FC<{ phone?: string | null; name?: string }> = ({ phone, name }) => {
-    const wa = normalizePhoneToWa(phone);
-    const [hover, setHover] = React.useState(false);
-
-    if (!wa) {
-      return (
-        <span title="Sem telefone" style={{ ...waBtn, ...waBtnDisabled }}>
-          <WhatsappIcon muted />
-        </span>
-      );
-    }
-
+  const Donut: React.FC<{ data: Record<string, number>; title: string }> = ({ data, title }) => {
+    const entries = Object.entries(data);
+    const total = entries.reduce((s, [,v]) => s+v, 0) || 1;
+    let acc = 0;
+    const radius = 48;
+    const c = 2*Math.PI*radius;
     return (
-      <a
-        href={`https://wa.me/${wa}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={`Conversar com ${name || "o lead"} no WhatsApp`}
-        aria-label={`Abrir WhatsApp para ${name || "lead"}`}
-        style={{ ...waBtn, ...(hover ? waBtnHover : {}) }}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-      >
-        <WhatsappIcon />
-      </a>
-    );
-  };
-
-  /** ------------- UI ------------- */
-
-  // Cards KPI
-  const CardsKPI = () => {
-    const ORDER: { id: StageUI; label: string }[] = [
-      { id: "novo", label: "Novo" },
-      { id: "qualificando", label: "Qualificando" },
-      { id: "proposta", label: "Proposta" },
-      { id: "negociacao", label: "Negociação" },
-      { id: "fechado_ganho", label: "Fechado (Ganho)" },
-      { id: "fechado_perdido", label: "Fechado (Perdido)" },
-    ];
-    return (
-      <div style={{ marginBottom: 16 }}>
-        <div style={sectionTitle}>Pipeline por estágio</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 16 }}>
-          {ORDER.map(({ id, label }) => {
-            const safe = kpi[id] ?? { qtd: 0, total: 0 };
-            return (
-              <div
-                key={id}
-                style={{
-                  background: "#fff",
-                  borderRadius: 14,
-                  boxShadow: "0 2px 10px rgba(0,0,0,.06)",
-                  padding: 14,
-                }}
-              >
-                <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{label}</div>
-                <div style={{ color: "#1f2937" }}>Qtd: {safe.qtd}</div>
-                <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(safe.total)}</div>
-              </div>
-            );
-          })}
+      <div style={{ background:"#fff", borderRadius:12, padding:16, boxShadow:"0 2px 10px rgba(0,0,0,.06)" }}>
+        <div style={{ fontWeight:800, marginBottom:8 }}>{title}</div>
+        <svg width="140" height="140" viewBox="0 0 140 140">
+          <g transform="translate(70,70)">
+            <circle r={radius} fill="none" stroke="#e5e7eb" strokeWidth="18" />
+            {entries.map(([k,v], idx) => {
+              const frac = v/total;
+              const dash = c*frac;
+              const gap = c - dash;
+              const rot = (acc/total)*360;
+              acc += v;
+              return (
+                <circle
+                  key={k}
+                  r={radius}
+                  fill="none"
+                  strokeWidth="18"
+                  stroke={["#A11C27","#6366F1","#10B981","#F59E0B","#0EA5E9","#EF4444"][idx%6]}
+                  strokeDasharray={`${dash} ${gap}`}
+                  transform={`rotate(${rot-90})`}
+                />
+              );
+            })}
+          </g>
+        </svg>
+        <div style={{ marginTop:8, fontSize:12, color:"#475569", display:"grid", gap:4 }}>
+          {entries.map(([k,v], idx)=>(
+            <div key={k} style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ width:10, height:10, borderRadius:2, background: ["#A11C27","#6366F1","#10B981","#F59E0B","#0EA5E9","#EF4444"][idx%6] }} />
+              <span style={{ flex:1 }}>{k}</span>
+              <strong>{v}</strong>
+            </div>
+          ))}
+          {!entries.length && <span>Sem dados</span>}
         </div>
       </div>
     );
   };
 
-  const ListaOportunidades = () => {
-    // Esconde fechados (ganho/perdido)
-    const rows = visiveis.filter((o) => {
-      const st = dbToUI[o.estagio as string];
-      return st !== "fechado_ganho" && st !== "fechado_perdido";
-    });
-
-    return (
-      <div style={card}>
-        <h3 style={{ marginTop: 0 }}>Oportunidades</h3>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-            <thead>
-              <tr>
-                <th style={th}>Lead</th>
-                <th style={th}>Vendedor</th>
-                <th style={th}>Segmento</th>
-                <th style={th}>Valor</th>
-                <th style={th}>Prob.</th>
-                <th style={th}>Estágio</th>
-                <th style={th}>Previsão</th>
-                <th style={th}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((o) => {
-                const lead = leads.find((l) => l.id === o.lead_id);
-                const sellerId = (o.owner_id || o.vendedor_id || "") as string;
-                const vendedorNome =
-                  vendedores.find((v) => v.auth_user_id === sellerId)?.nome || "-";
-
-                return (
-                  <tr key={o.id}>
-                    <td style={td}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span>{lead?.nome || "-"}</span>
-                        <WaButton phone={lead?.telefone} name={lead?.nome || undefined} />
-                      </div>
-                    </td>
-                    <td style={td}>{vendedorNome}</td>
-                    <td style={td}>{o.segmento}</td>
-                    <td style={td}>{fmtBRL(o.valor_credito)}</td>
-                    <td style={td}>{"★".repeat(Math.max(1, Math.min(5, o.score)))}</td>
-                    <td style={td}>{String(o.estagio)}</td>
-                    <td style={td}>
-                      {o.expected_close_at
-                        ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")
-                        : "-"}
-                    </td>
-                    <td style={td}>
-                      <button onClick={() => openEdit(o)} style={btnSmallPrimary}>
-                        Tratar
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {!rows.length && (
-                <tr>
-                  <td style={td} colSpan={8}>
-                    Nenhuma oportunidade encontrada.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
+  /** -------------- Render -------------- */
   return (
-    <div
-      style={{
-        maxWidth: 1200,
-        margin: "24px auto",
-        padding: "0 16px",
-        fontFamily: "Inter, system-ui, Arial",
-      }}
-    >
-      {/* Topbar: busca + botão nova oportunidade */}
-      <div
-        style={{
-          background: "#fff",
-          padding: 12,
-          borderRadius: 12,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-          marginBottom: 16,
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-        }}
-      >
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ ...input, margin: 0, flex: 1 }}
-          placeholder="Buscar por lead, vendedor, estágio ou telefone"
-        />
-        <button onClick={() => setCreateOpen(true)} style={btnPrimary}>
-          + Nova Oportunidade
-        </button>
+    <div style={{ maxWidth: 1280, margin: "24px auto", padding: "0 16px" }}>
+      {/* Top bar */}
+      <div style={{ background:"#fff", padding:12, borderRadius:12, boxShadow:"0 2px 12px rgba(0,0,0,.06)", marginBottom:16, display:"grid", gridTemplateColumns:"240px 1fr auto auto", gap:12, alignItems:"center" }}>
+        {/* Selecionar vendedor */}
+        <select value={sellerFilter} onChange={e=>{ setSellerFilter(e.target.value); setPage(1); }} style={input}>
+          <option value="">Clique para Selecionar um vendedor</option>
+          {vendedores.map(v=>(
+            <option key={v.auth_user_id} value={v.auth_user_id}>{v.nome}</option>
+          ))}
+        </select>
+
+        {/* Busca */}
+        <input value={search} onChange={e=>{ setSearch(e.target.value); setPage(1); }} style={input} placeholder="Buscar por lead, vendedor, estágio ou telefone" />
+
+        {/* Nova Oportunidade */}
+        <button onClick={()=>setCreateOppOpen(true)} style={btnPrimary}>+ Nova Oportunidade</button>
+        {/* Novo Lead */}
+        <button onClick={()=>setLeadOpen(true)} style={btnGhost}>+ Novo Lead</button>
       </div>
 
-      <CardsKPI />
-      <ListaOportunidades />
+      {/* Pipeline por Estágio (4 cards) */}
+      <div style={{ marginBottom:16 }}>
+        <div style={sectionTitle}>Pipeline por estágio</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,minmax(0,1fr))", gap:16 }}>
+          {STAGES.map(s=>(
+            <div key={s.id} style={{ background:"#fff", borderRadius:14, boxShadow:"0 2px 10px rgba(0,0,0,.06)", padding:14 }}>
+              <div style={{ fontWeight:800, color:"#0f172a", marginBottom:8 }}>{s.label}</div>
+              <div style={{ color:"#1f2937" }}>Qtd: {kpi[s.id].qtd}</div>
+              <div style={{ color:"#1f2937" }}>Valor: {fmtBRL(kpi[s.id].total)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      {/* Modal: Tratar Lead */}
-      {editing && (
+      {/* Oportunidades em 4 colunas */}
+      <div style={card}>
+        <h3 style={{ marginTop:0 }}>Oportunidades</h3>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,minmax(0,1fr))", gap:16 }}>
+          {STAGES.map(s=>(
+            <div key={s.id}>
+              <div style={{ fontWeight:800, marginBottom:10 }}>{s.label}</div>
+              <Column stage={s.id} items={openByStage[s.id]} />
+            </div>
+          ))}
+        </div>
+
+        {/* paginação */}
+        <div style={{ display:"flex", gap:8, alignItems:"center", justifyContent:"flex-end", marginTop:12 }}>
+          <button style={btnSecondary} disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>‹ Anterior</button>
+          <span style={{ fontSize:12, color:"#475569" }}>página {page} de {totalPages}</span>
+          <button style={btnSecondary} disabled={page>=totalPages} onClick={()=>setPage(p=>Math.min(totalPages,p+1))}>Próxima ›</button>
+        </div>
+      </div>
+
+      {/* Finalizados (donuts) */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+        <Donut data={donuts.ganho} title="Fechado (Ganho) por Segmento" />
+        <Donut data={donuts.perdido} title="Fechado (Perdido) por Segmento" />
+      </div>
+
+      {/* -------- Modais -------- */}
+
+      {/* Tratar Oportunidade */}
+      {editingOpp && (
         <div style={modalBackdrop}>
           <div style={modalCard}>
-            <h3 style={{ marginTop: 0 }}>Tratar Lead</h3>
+            <h3 style={{ marginTop:0 }}>Tratar Lead</h3>
             <div style={grid2}>
               <div>
                 <label style={label}>Segmento</label>
-                <select
-                  value={editing.segmento}
-                  onChange={(e) => setEditing({ ...editing, segmento: e.target.value })}
-                  style={input}
-                >
-                  {segmentos.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
+                <select value={editingOpp.segmento} onChange={e=>setEditingOpp({...editingOpp, segmento: e.target.value})} style={input}>
+                  {SEGMENTOS.map(s=><option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
                 <label style={label}>Valor do crédito (R$)</label>
-                <input
-                  value={String(editing.valor_credito)}
-                  onChange={(e) =>
-                    setEditing({ ...editing, valor_credito: moedaParaNumeroBR(e.target.value) })
-                  }
-                  style={input}
-                />
+                <input value={String(editingOpp.valor_credito)} onChange={e=>setEditingOpp({...editingOpp, valor_credito: moedaParaNumeroBR(e.target.value)})} style={input}/>
               </div>
               <div>
                 <label style={label}>Probabilidade</label>
-                <select
-                  value={String(editing.score)}
-                  onChange={(e) => setEditing({ ...editing, score: Number(e.target.value) })}
-                  style={input}
-                >
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <option key={n} value={n}>
-                      {"★".repeat(n)}
-                    </option>
-                  ))}
+                <select value={String(editingOpp.score)} onChange={e=>setEditingOpp({...editingOpp, score: Number(e.target.value)})} style={input}>
+                  {[1,2,3,4,5].map(n=> <option key={n} value={n}>{"★".repeat(n)}</option>)}
                 </select>
               </div>
               <div>
                 <label style={label}>Estágio</label>
-                <select
-                  value={String(editing.estagio)}
-                  onChange={(e) => setEditing({ ...editing, estagio: e.target.value })}
-                  style={input}
-                >
+                <select value={String(editingOpp.estagio)} onChange={e=>setEditingOpp({...editingOpp, estagio: e.target.value})} style={input}>
                   <option value="Novo">Novo</option>
                   <option value="Qualificando">Qualificando</option>
                   <option value="Proposta">Proposta</option>
@@ -560,169 +543,169 @@ export default function Oportunidades() {
               </div>
               <div>
                 <label style={label}>Previsão (aaaa-mm-dd)</label>
-                <input
-                  value={editing.expected_close_at || ""}
-                  onChange={(e) =>
-                    setEditing({
-                      ...editing,
-                      expected_close_at: e.target.value,
-                    })
-                  }
-                  style={input}
-                  placeholder="2025-09-20"
-                />
+                <input value={editingOpp.expected_close_at || ""} onChange={e=>setEditingOpp({...editingOpp, expected_close_at: e.target.value})} style={input} placeholder="2025-10-15" />
               </div>
-              <div style={{ gridColumn: "1 / span 2" }}>
+              <div style={{ gridColumn:"1 / span 2" }}>
                 <label style={label}>Adicionar observação</label>
-                <textarea
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  style={{ ...input, minHeight: 90 }}
-                  placeholder="Escreva uma nova observação. O histórico anterior será mantido."
-                />
-                <div style={{ marginTop: 8, color: "#64748b", fontSize: 12 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Histórico</div>
-                  <pre
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      background: "#f8fafc",
-                      border: "1px solid #e5e7eb",
-                      borderRadius: 8,
-                      padding: 8,
-                      maxHeight: 180,
-                      overflowY: "auto",
-                    }}
-                  >
-                    {editing.observacao || "(sem anotações)"}
+                <textarea value={newNote} onChange={e=>setNewNote(e.target.value)} style={{ ...input, minHeight: 90 }} placeholder="Escreva uma nova observação." />
+                <div style={{ marginTop:8, color:"#64748b", fontSize:12 }}>
+                  <div style={{ fontWeight:700, marginBottom:4 }}>Histórico</div>
+                  <pre style={{ whiteSpace:"pre-wrap", background:"#f8fafc", border:"1px solid #e5e7eb", borderRadius:8, padding:8, maxHeight:180, overflowY:"auto" }}>
+                    {editingOpp.observacao || "(sem anotações)"}
                   </pre>
                 </div>
               </div>
             </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={saveEdit} style={btnPrimary}>
-                Salvar alterações
-              </button>
-              <button onClick={closeEdit} style={btnGhost}>
-                Cancelar
-              </button>
+            <div style={{ display:"flex", gap:8, marginTop:12 }}>
+              <button onClick={salvarTratamento} style={btnPrimary}>Salvar alterações</button>
+              <button onClick={()=>{ setEditingOpp(null); setNewNote(""); }} style={btnGhost}>Cancelar</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Nova oportunidade */}
-      {createOpen && (
+      {/* Nova Oportunidade */}
+      {createOppOpen && (
         <div style={modalBackdrop}>
           <div style={modalCard}>
-            <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
+            <h3 style={{ marginTop:0 }}>Nova oportunidade</h3>
             <div style={grid2}>
               <div>
                 <label style={label}>Selecionar um Lead</label>
-                <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={input}>
+                <select value={leadForOpp} onChange={e=>setLeadForOpp(e.target.value)} style={input}>
                   <option value="">Selecione um Lead</option>
-                  {leads.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.nome} {l.telefone ? `— ${formatPhoneBR(l.telefone)}` : ""}
-                    </option>
-                  ))}
+                  {leads.map(l=> <option key={l.id} value={l.id}>{l.nome}</option>)}
                 </select>
               </div>
-
               <div>
                 <label style={label}>Selecione um Vendedor</label>
-                <select value={vendId} onChange={(e) => setVendId(e.target.value)} style={input}>
+                <select value={vendForOpp} onChange={e=>setVendForOpp(e.target.value)} style={input}>
                   <option value="">Selecione um Vendedor</option>
-                  {vendedores.map((v) => (
-                    <option key={v.auth_user_id} value={v.auth_user_id}>
-                      {v.nome}
-                    </option>
-                  ))}
+                  {vendedores.map(v=> <option key={v.auth_user_id} value={v.auth_user_id}>{v.nome}</option>)}
                 </select>
               </div>
-
               <div>
-                <label style={label}>Selecione um Segmento</label>
-                <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={input}>
-                  {segmentos.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
+                <label style={label}>Segmento</label>
+                <select value={segmentoOpp} onChange={e=>setSegmentoOpp(e.target.value)} style={input}>
+                  {SEGMENTOS.map(s=> <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-
               <div>
                 <label style={label}>Valor do crédito (R$)</label>
-                <input
-                  value={valor}
-                  onChange={(e) => setValor(e.target.value)}
-                  style={input}
-                  placeholder="Ex.: 80.000,00"
-                />
+                <input value={valorOpp} onChange={e=>setValorOpp(e.target.value)} style={input} placeholder="Ex.: 80.000,00" />
               </div>
-
               <div>
-                <label style={label}>Observações</label>
-                <input
-                  value={obs}
-                  onChange={(e) => setObs(e.target.value)}
-                  style={input}
-                  placeholder="Observação inicial (opcional)"
-                />
-              </div>
-
-              <div>
-                <label style={label}>Probabilidade de fechamento</label>
-                <select
-                  value={String(score)}
-                  onChange={(e) => setScore(Number(e.target.value))}
-                  style={input}
-                >
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <option key={n} value={n}>
-                      {"★".repeat(n)}
-                    </option>
-                  ))}
+                <label style={label}>Probabilidade</label>
+                <select value={String(scoreOpp)} onChange={e=>setScoreOpp(Number(e.target.value))} style={input}>
+                  {[1,2,3,4,5].map(n=> <option key={n} value={n}>{"★".repeat(n)}</option>)}
                 </select>
               </div>
-
               <div>
                 <label style={label}>Estágio</label>
-                <select
-                  value={stageUI}
-                  onChange={(e) => setStageUI(e.target.value as StageUI)}
-                  style={input}
-                >
-                  <option value="novo">Novo</option>
-                  <option value="qualificando">Qualificando</option>
-                  <option value="proposta">Proposta</option>
-                  <option value="negociacao">Negociação</option>
-                  <option value="fechado_ganho">Fechado (Ganho)</option>
-                  <option value="fechado_perdido">Fechado (Perdido)</option>
+                <select value={stageOpp} onChange={e=>setStageOpp(e.target.value as StageUI)} style={input}>
+                  {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
                 </select>
               </div>
-
               <div>
                 <label style={label}>Data prevista (dd/mm/aaaa)</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="dd/mm/aaaa"
-                  value={expectedDate}
-                  onChange={(e) => setExpectedDate(e.target.value)}
-                  style={input}
-                />
+                <input value={expectedOpp} onChange={e=>setExpectedOpp(e.target.value)} style={input} placeholder="dd/mm/aaaa" />
               </div>
             </div>
+            <div style={{ display:"flex", gap:8, marginTop:12 }}>
+              <button onClick={criarOportunidade} disabled={loading} style={btnPrimary}>{loading ? "Criando..." : "Criar oportunidade"}</button>
+              <button onClick={()=>setCreateOppOpen(false)} style={btnGhost}>Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={criarOportunidade} disabled={loading} style={btnPrimary}>
-                {loading ? "Criando..." : "Criar oportunidade"}
-              </button>
-              <button onClick={() => setCreateOpen(false)} style={btnGhost}>
-                Fechar
-              </button>
+      {/* Novo Lead (overlay) */}
+      {leadOpen && (
+        <div style={modalBackdrop}>
+          <div style={modalCard}>
+            <h3 style={{ marginTop:0 }}>Novo Lead</h3>
+            <div style={grid2}>
+              <div>
+                <label style={label}>Nome</label>
+                <input value={leadNome} onChange={e=>setLeadNome(e.target.value)} style={input} />
+              </div>
+              <div>
+                <label style={label}>Telefone</label>
+                <input value={leadTel} onChange={e=>setLeadTel(e.target.value)} style={input} />
+              </div>
+              <div>
+                <label style={label}>E-mail</label>
+                <input type="email" value={leadEmail} onChange={e=>setLeadEmail(e.target.value)} style={input} />
+              </div>
+              <div>
+                <label style={label}>Origem</label>
+                <select value={leadOrigem} onChange={e=>setLeadOrigem(e.target.value)} style={input}>
+                  {["Site","Redes Sociais","Indicação","Whatsapp","Parceria","Relacionamento"].map(o=> <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              <div style={{ gridColumn:"1 / span 2" }}>
+                <label style={label}>Descrição</label>
+                <input value={leadDesc} onChange={e=>setLeadDesc(e.target.value)} style={input} />
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:12 }}>
+              <button onClick={criarLeadENovaOpp} disabled={loading} style={btnPrimary}>{loading ? "Salvando..." : "Salvar e criar oportunidade (Novo)"}</button>
+              <button onClick={()=>setLeadOpen(false)} style={btnGhost}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Editar Lead */}
+      {editLeadOpen && (
+        <div style={modalBackdrop}>
+          <div style={modalCard}>
+            <h3 style={{ marginTop:0 }}>Editar Lead</h3>
+            <div style={grid2}>
+              <div>
+                <label style={label}>Nome</label>
+                <input value={editLeadOpen.nome || ""} onChange={e=>setEditLeadOpen({...editLeadOpen, nome:e.target.value})} style={input}/>
+              </div>
+              <div>
+                <label style={label}>Telefone</label>
+                <input value={editLeadOpen.telefone || ""} onChange={e=>setEditLeadOpen({...editLeadOpen, telefone:e.target.value})} style={input}/>
+              </div>
+              <div>
+                <label style={label}>E-mail</label>
+                <input value={editLeadOpen.email || ""} onChange={e=>setEditLeadOpen({...editLeadOpen, email:e.target.value})} style={input}/>
+              </div>
+              <div>
+                <label style={label}>Origem</label>
+                <input value={editLeadOpen.origem || ""} onChange={e=>setEditLeadOpen({...editLeadOpen, origem:e.target.value})} style={input}/>
+              </div>
+              <div style={{ gridColumn:"1 / span 2" }}>
+                <label style={label}>Descrição</label>
+                <input value={editLeadOpen.descricao || ""} onChange={e=>setEditLeadOpen({...editLeadOpen, descricao:e.target.value})} style={input}/>
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:12 }}>
+              <button onClick={salvarLeadEdit} style={btnPrimary}>Salvar</button>
+              <button onClick={()=>setEditLeadOpen(null)} style={btnGhost}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reatribuir Lead (admin) */}
+      {reassignLead && isAdmin && (
+        <div style={modalBackdrop}>
+          <div style={modalCard}>
+            <h3 style={{ marginTop:0 }}>Reatribuir Lead</h3>
+            <p style={{ marginTop:0, marginBottom:8, color:"#475569" }}><strong>Lead:</strong> {reassignLead.nome}</p>
+            <select value={newOwnerId} onChange={e=>setNewOwnerId(e.target.value)} style={input}>
+              <option value="">Selecionar usuário…</option>
+              {vendedores.map(u=>(
+                <option key={u.auth_user_id} value={u.auth_user_id}>{u.nome}</option>
+              ))}
+            </select>
+            <div style={{ display:"flex", gap:8, marginTop:12, justifyContent:"flex-end" }}>
+              <button style={btnGhost} onClick={()=>{ setReassignLead(null); setNewOwnerId(""); }}>Cancelar</button>
+              <button style={btnPrimary} onClick={reatribuirLead} disabled={!newOwnerId}>Salvar</button>
             </div>
           </div>
         </div>
@@ -731,7 +714,7 @@ export default function Oportunidades() {
   );
 }
 
-/** ------------- estilos ------------- */
+/** ------------ estilos ------------ */
 const sectionTitle: React.CSSProperties = {
   fontSize: 14,
   fontWeight: 800,
@@ -748,93 +731,12 @@ const card: React.CSSProperties = {
   padding: 16,
   marginBottom: 16,
 };
-const grid2: React.CSSProperties = {
-  display: "grid",
-  gap: 12,
-  gridTemplateColumns: "1fr 1fr",
-};
-const input: React.CSSProperties = {
-  width: "100%",
-  padding: 10,
-  borderRadius: 12,
-  border: "1px solid #e5e7eb",
-  outline: "none",
-};
-const label: React.CSSProperties = {
-  display: "block",
-  fontSize: 12,
-  fontWeight: 700,
-  color: "#475569",
-  marginBottom: 6,
-};
-const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
-const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
-const btnPrimary: React.CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 12,
-  background: "#A11C27",
-  color: "#fff",
-  border: 0,
-  cursor: "pointer",
-  fontWeight: 700,
-};
-const btnSmallPrimary: React.CSSProperties = {
-  padding: "6px 10px",
-  borderRadius: 10,
-  background: "#A11C27",
-  color: "#fff",
-  border: 0,
-  cursor: "pointer",
-  fontWeight: 600,
-  whiteSpace: "nowrap",
-};
-const btnGhost: React.CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 12,
-  background: "#fff",
-  color: "#1E293F",
-  border: "1px solid #e5e7eb",
-  cursor: "pointer",
-  fontWeight: 700,
-};
-/* WhatsApp button styles */
-const waBtn: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 28,
-  height: 28,
-  borderRadius: 8,
-  border: "1px solid #e5e7eb",
-  background: "#fff",
-  color: "#64748b",
-  textDecoration: "none",
-  cursor: "pointer",
-  transition: "all .15s ease-in-out",
-};
-const waBtnHover: React.CSSProperties = {
-  background: "#f8fafc",
-  borderColor: "#cbd5e1",
-  color: "#1E293F",
-  transform: "translateY(-1px)",
-  boxShadow: "0 2px 6px rgba(0,0,0,.06)",
-};
-const waBtnDisabled: React.CSSProperties = {
-  opacity: 0.45,
-  cursor: "not-allowed",
-};
-const modalBackdrop: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(0,0,0,.3)",
-  display: "grid",
-  placeItems: "center",
-  zIndex: 50,
-};
-const modalCard: React.CSSProperties = {
-  width: "min(980px, 94vw)",
-  background: "#fff",
-  padding: 16,
-  borderRadius: 16,
-  boxShadow: "0 20px 60px rgba(0,0,0,.3)",
-};
+
+const grid2: React.CSSProperties = { display:"grid", gap:12, gridTemplateColumns:"1fr 1fr" };
+const input: React.CSSProperties = { width:"100%", padding:10, borderRadius:12, border:"1px solid #e5e7eb", outline:"none" };
+const label: React.CSSProperties = { display:"block", fontSize:12, fontWeight:700, color:"#475569", marginBottom:6 };
+const btnPrimary: React.CSSProperties = { padding:"10px 14px", borderRadius:12, background:"#A11C27", color:"#fff", border:0, cursor:"pointer", fontWeight:700 };
+const btnGhost: React.CSSProperties = { padding:"10px 14px", borderRadius:12, background:"#fff", color:"#1E293F", border:"1px solid #e5e7eb", cursor:"pointer", fontWeight:700 };
+const btnSecondary: React.CSSProperties = { padding:"8px 12px", borderRadius:10, background:"#f1f5f9", color:"#0f172a", border:"1px solid #e2e8f0", fontWeight:600, cursor:"pointer" };
+const modalBackdrop: React.CSSProperties = { position:"fixed", inset:0, background:"rgba(0,0,0,.3)", display:"grid", placeItems:"center", zIndex:50 };
+const modalCard: React.CSSProperties = { width:"min(980px, 94vw)", background:"#fff", padding:16, borderRadius:16, boxShadow:"0 20px 60px rgba(0,0,0,.3)" };

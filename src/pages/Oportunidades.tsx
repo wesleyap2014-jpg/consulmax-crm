@@ -25,7 +25,9 @@ type EstagioDB =
 type Oportunidade = {
   id: string;
   lead_id: string;
-  vendedor_id: string;
+  // legado (pode existir em alguns registros):
+  vendedor_id?: string | null;
+  // atual:
   owner_id?: string | null;
   segmento: string;
   valor_credito: number;
@@ -136,9 +138,11 @@ export default function Oportunidades() {
         .order("created_at", { ascending: false });
       setLeads(l || []);
 
+      // mantém o seu RPC existente
       const { data: v } = await supabase.rpc("listar_vendedores");
       setVendedores((v || []) as Vendedor[]);
 
+      // leitura padronizada da tabela unificada + compat (owner_id e vendedor_id)
       const { data: o } = await supabase
         .from("opportunities")
         .select(
@@ -176,8 +180,11 @@ export default function Oportunidades() {
     const match = (o: Oportunidade) => {
       const lead = leads.find((l) => l.id === o.lead_id);
       const leadNome = lead?.nome?.toLowerCase() || "";
+
+      const sellerId = (o.owner_id || o.vendedor_id || "") as string;
       const vendNome =
-        vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome?.toLowerCase() || "";
+        vendedores.find((v) => v.auth_user_id === sellerId)?.nome?.toLowerCase() || "";
+
       const uiStage = dbToUI[o.estagio as string] ?? "novo";
       const stageLabel = {
         novo: "novo",
@@ -215,9 +222,11 @@ export default function Oportunidades() {
     }
 
     setLoading(true);
-    const payload = {
+    const payload: any = {
       lead_id: leadId,
+      // compat: mantém vendedor_id se a coluna existir no schema
       vendedor_id: vendId,
+      // verdade: owner_id é o responsável
       owner_id: vendId,
       segmento,
       valor_credito: valorNum,
@@ -279,6 +288,7 @@ export default function Oportunidades() {
       estagio: normalizeEstagioDB(String(editing.estagio)),
       expected_close_at: editing.expected_close_at?.trim() ? editing.expected_close_at : null,
       observacao: historico || editing.observacao || null,
+      // NÃO alterar owner_id aqui ao tratar estágio/anotações
     };
 
     const { error, data } = await supabase
@@ -409,6 +419,10 @@ export default function Oportunidades() {
             <tbody>
               {rows.map((o) => {
                 const lead = leads.find((l) => l.id === o.lead_id);
+                const sellerId = (o.owner_id || o.vendedor_id || "") as string;
+                const vendedorNome =
+                  vendedores.find((v) => v.auth_user_id === sellerId)?.nome || "-";
+
                 return (
                   <tr key={o.id}>
                     <td style={td}>
@@ -417,9 +431,7 @@ export default function Oportunidades() {
                         <WaButton phone={lead?.telefone} name={lead?.nome || undefined} />
                       </div>
                     </td>
-                    <td style={td}>
-                      {vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-"}
-                    </td>
+                    <td style={td}>{vendedorNome}</td>
                     <td style={td}>{o.segmento}</td>
                     <td style={td}>{fmtBRL(o.valor_credito)}</td>
                     <td style={td}>{"★".repeat(Math.max(1, Math.min(5, o.score)))}</td>

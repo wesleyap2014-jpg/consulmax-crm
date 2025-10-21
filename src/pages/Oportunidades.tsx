@@ -454,26 +454,48 @@ export default function Oportunidades() {
     setEditLead(null);
   }
 
-  // Reatribuir Lead (com botão salvar)
-  const [newOwnerId, setNewOwnerId] = useState<string>("");
-  useEffect(() => {
-    if (reassignLead) setNewOwnerId(reassignLead.owner_id || "");
-  }, [reassignLead]);
-
-  async function doReassign() {
-    if (!reassignLead || !newOwnerId) {
-      alert("Selecione o novo responsável.");
-      return;
-    }
-    const { error } = await supabase.from("leads").update({ owner_id: newOwnerId }).eq("id", reassignLead.id);
-    if (error) {
-      alert("Erro ao reatribuir: " + error.message);
-      return;
-    }
-    setLeads((s) => s.map((l) => (l.id === reassignLead.id ? { ...l, owner_id: newOwnerId } : l)));
-    setReassignLead(null);
-    alert("Lead reatribuído!");
+// Reatribuir Lead (com botão salvar)
+async function doReassign() {
+  if (!reassignLead || !newOwnerId) {
+    alert("Selecione o novo responsável.");
+    return;
   }
+
+  // 1) Atualiza o owner do lead
+  const { error: e1 } = await supabase
+    .from("leads")
+    .update({ owner_id: newOwnerId })
+    .eq("id", reassignLead.id);
+
+  if (e1) {
+    alert("Erro ao reatribuir o lead: " + e1.message);
+    return;
+  }
+
+  // 2) Atualiza TODAS as oportunidades do lead para o novo vendedor/owner
+  const { error: e2 } = await supabase
+    .from("opportunities")
+    .update({ vendedor_id: newOwnerId, owner_id: newOwnerId })
+    .eq("lead_id", reassignLead.id);
+
+  if (e2) {
+    alert("Lead atualizado, mas falhou ao reatribuir oportunidades: " + e2.message);
+    // mesmo assim seguimos, pois o Lead já está correto
+  }
+
+  // 3) Atualização otimista no estado local
+  setLeads((prev) =>
+    prev.map((l) => (l.id === reassignLead.id ? { ...l, owner_id: newOwnerId } : l))
+  );
+  setLista((prev) =>
+    prev.map((o) =>
+      o.lead_id === reassignLead.id ? { ...o, vendedor_id: newOwnerId, owner_id: newOwnerId } : o
+    )
+  );
+
+  setReassignLead(null);
+  alert("Lead reatribuído!");
+}
 
   /** ===================== UI Aux ===================== */
   const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (

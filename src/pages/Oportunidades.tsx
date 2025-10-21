@@ -163,6 +163,10 @@ export default function Oportunidades() {
 const [newOwnerId, setNewOwnerId] = useState<string>("");
 
   useEffect(() => {
+  if (reassignLead) setNewOwnerId(reassignLead.owner_id || "");
+}, [reassignLead]);
+
+  useEffect(() => {
     (async () => {
       const { data: u } = await supabase.auth.getUser();
       if (u?.user?.id) setMeId(u.user.id);

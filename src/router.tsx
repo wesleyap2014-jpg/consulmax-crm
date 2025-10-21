@@ -5,9 +5,9 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import RequireAuth from './components/auth/RequireAuth';
 import App from './App';
 
-// ===== Lazy pages (ok para desktop também) =====
+// ===== Lazy pages =====
 const Login                   = React.lazy(() => import('./pages/Login'));
-const Leads                   = React.lazy(() => import('./pages/Leads'));
+// const Leads               = React.lazy(() => import('./pages/Leads')); // ❌ removido
 const Clientes                = React.lazy(() => import('./pages/Clientes'));
 const Oportunidades           = React.lazy(() => import('./pages/Oportunidades'));
 const Agenda                  = React.lazy(() => import('./pages/Agenda'));
@@ -32,28 +32,33 @@ function withSuspense(node: React.ReactNode) {
 
 export const router = createBrowserRouter([
   { path: '/login', element: withSuspense(<Login />) },
+
   {
     path: '/',
     element: <RequireAuth />,
     children: [
       { path: 'alterar-senha', element: withSuspense(<AlterarSenha />) },
+
       {
         element: <App />, // layout principal
         children: [
-          { index: true, element: <Navigate to="/leads" replace /> },
+          // Home agora é Oportunidades
+          { index: true, element: <Navigate to="/oportunidades" replace /> },
 
-          { path: 'leads',            element: withSuspense(<Leads />) },
-          { path: 'clientes',         element: withSuspense(<Clientes />) },
+          // 🔁 Redirect legacy: /leads -> /oportunidades
+          { path: 'leads', element: <Navigate to="/oportunidades" replace /> },
+
           { path: 'oportunidades',    element: withSuspense(<Oportunidades />) },
+          { path: 'clientes',         element: withSuspense(<Clientes />) },
           { path: 'agenda',           element: withSuspense(<Agenda />) },
 
           {
             path: 'simuladores',
             children: [
-              { index: true,   element: withSuspense(<Simuladores />) },
-              { path: 'embracon', element: withSuspense(<Simuladores />) }, // opcional: atalho legacy
-              { path: 'add',   element: withSuspense(<AdicionarAdministradora />) },
-              { path: ':id',   element: withSuspense(<Simuladores />) },    // <- ajustado para :id
+              { index: true,      element: withSuspense(<Simuladores />) },
+              { path: 'embracon', element: withSuspense(<Simuladores />) }, // atalho legado (opcional)
+              { path: 'add',      element: withSuspense(<AdicionarAdministradora />) },
+              { path: ':id',      element: withSuspense(<Simuladores />) },
             ],
           },
 
@@ -65,10 +70,13 @@ export const router = createBrowserRouter([
           { path: 'parametros',        element: withSuspense(<Parametros />) },
           { path: 'lgpd',              element: withSuspense(<TermsLGPD />) },
 
-          { path: '*', element: <Navigate to="/leads" replace /> },
+          // Qualquer rota desconhecida logada volta para Oportunidades
+          { path: '*', element: <Navigate to="/oportunidades" replace /> },
         ],
       },
     ],
   },
+
+  // Fallback global para público
   { path: '*', element: <Navigate to="/login" replace /> },
 ]);

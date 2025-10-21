@@ -160,11 +160,14 @@ export default function Oportunidades() {
   const [hoverLost, setHoverLost] = useState<string | null>(null);
 
   // Reatribuir Lead
-const [newOwnerId, setNewOwnerId] = useState<string>("");
+  const [newOwnerId, setNewOwnerId] = useState<string>("");
+
+  // Drag & Drop: qual coluna está com "drag over"
+  const [dragOverStage, setDragOverStage] = useState<StageUI | null>(null);
 
   useEffect(() => {
-  if (reassignLead) setNewOwnerId(reassignLead.owner_id || "");
-}, [reassignLead]);
+    if (reassignLead) setNewOwnerId(reassignLead.owner_id || "");
+  }, [reassignLead]);
 
   useEffect(() => {
     (async () => {
@@ -461,49 +464,97 @@ const [newOwnerId, setNewOwnerId] = useState<string>("");
     setEditLead(null);
   }
 
-  // Reatribuir Lead (com botão salvar) — SUBSTITUA apenas esta função
-async function doReassign() {
-  if (!reassignLead || !newOwnerId) {
-    alert("Selecione o novo responsável.");
-    return;
+  // Reatribuir Lead (com botão salvar)
+  async function doReassign() {
+    if (!reassignLead || !newOwnerId) {
+      alert("Selecione o novo responsável.");
+      return;
+    }
+
+    // 1) Atualiza o lead
+    const { error: e1 } = await supabase.from("leads").update({ owner_id: newOwnerId }).eq("id", reassignLead.id);
+
+    if (e1) {
+      alert("Erro ao reatribuir: " + e1.message);
+      return;
+    }
+
+    // 2) Atualiza TODAS as oportunidades do lead (vendedor_id e owner_id)
+    const { error: e2 } = await supabase
+      .from("opportunities")
+      .update({ vendedor_id: newOwnerId, owner_id: newOwnerId })
+      .eq("lead_id", reassignLead.id);
+
+    if (e2) {
+      // Mesmo se der erro aqui, o lead já foi reatribuído.
+      alert("Lead atualizado, mas falhou ao reatribuir oportunidades: " + e2.message);
+    }
+
+    // 3) Atualização otimista no estado
+    setLeads((prev) => prev.map((l) => (l.id === reassignLead.id ? { ...l, owner_id: newOwnerId } : l)));
+    setLista((prev) =>
+      prev.map((o) => (o.lead_id === reassignLead.id ? { ...o, vendedor_id: newOwnerId, owner_id: newOwnerId } : o))
+    );
+
+    setReassignLead(null);
+    setNewOwnerId("");
+    alert("Lead reatribuído!");
   }
 
-  // 1) Atualiza o lead
-  const { error: e1 } = await supabase
-    .from("leads")
-    .update({ owner_id: newOwnerId })
-    .eq("id", reassignLead.id);
+  /** ===================== Drag & Drop ===================== */
+  const getUIStageForOpp = (o: Oportunidade): StageUI => dbToUI[o.estagio as string] ?? "novo";
 
-  if (e1) {
-    alert("Erro ao reatribuir: " + e1.message);
-    return;
+  function onCardDragStart(e: React.DragEvent<HTMLDivElement>, oppId: string) {
+    e.dataTransfer.setData("text/plain", oppId);
+    // efeito visual padrão
+    e.dataTransfer.effectAllowed = "move";
   }
 
-  // 2) Atualiza TODAS as oportunidades do lead (vendedor_id e owner_id)
-  const { error: e2 } = await supabase
-    .from("opportunities")
-    .update({ vendedor_id: newOwnerId, owner_id: newOwnerId })
-    .eq("lead_id", reassignLead.id);
-
-  if (e2) {
-    // Mesmo se der erro aqui, o lead já foi reatribuído.
-    alert("Lead atualizado, mas falhou ao reatribuir oportunidades: " + e2.message);
+  function onColumnDragOver(e: React.DragEvent<HTMLDivElement>, target: StageUI) {
+    // permitir drop
+    e.preventDefault();
+    setDragOverStage(target);
   }
 
-  // 3) Atualização otimista no estado
-  setLeads((prev) =>
-    prev.map((l) => (l.id === reassignLead.id ? { ...l, owner_id: newOwnerId } : l))
-  );
-  setLista((prev) =>
-    prev.map((o) =>
-      o.lead_id === reassignLead.id ? { ...o, vendedor_id: newOwnerId, owner_id: newOwnerId } : o
-    )
-  );
+  function onColumnDragLeave() {
+    setDragOverStage(null);
+  }
 
-  setReassignLead(null);
-  setNewOwnerId("");
-  alert("Lead reatribuído!");
-}
+  async function onColumnDrop(e: React.DragEvent<HTMLDivElement>, target: StageUI) {
+    e.preventDefault();
+    const oppId = e.dataTransfer.getData("text/plain");
+    setDragOverStage(null);
+    if (!oppId) return;
+
+    const opp = lista.find((o) => o.id === oppId);
+    if (!opp) return;
+
+    const fromStage = getUIStageForOpp(opp);
+    if (fromStage === target) return; // nada a fazer
+
+    // Otimista: atualiza localmente
+    const prevLista = [...lista];
+    const nextLista = lista.map((o) => (o.id === oppId ? { ...o, estagio: uiToDB[target] } : o));
+    setLista(nextLista);
+
+    // Persistir
+    const { error, data } = await supabase
+      .from("opportunities")
+      .update({ estagio: uiToDB[target] })
+      .eq("id", oppId)
+      .select()
+      .single();
+
+    if (error) {
+      // rollback
+      setLista(prevLista);
+      alert("Não foi possível mover a oportunidade: " + error.message);
+      return;
+    }
+
+    // Ajuste fino com o registro retornado (ex.: triggers/normalização)
+    setLista((s) => s.map((o) => (o.id === oppId ? (data as Oportunidade) : o)));
+  }
 
   /** ===================== UI Aux ===================== */
   const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (
@@ -534,13 +585,16 @@ async function doReassign() {
 
   /** ===================== Donuts ===================== */
   const sumBySegment = (items: Oportunidade[]) => {
-    const m = new Map<string, number>();
+    theMap.clear();
+    const m = theMap; // micro otimização p/ GC
     for (const o of items) {
       const seg = o.segmento || "Outros";
       m.set(seg, (m.get(seg) || 0) + Number(o.valor_credito || 0));
     }
     return Array.from(m.entries()); // [segmento, total]
   };
+  // Reuso de Map pra reduzir alocações
+  const theMap = useMemo(() => new Map<string, number>(), []);
 
   const wonPairs = useMemo(
     () => sumBySegment(lista.filter((o) => dbToUI[o.estagio as string] === "fechado_ganho")),
@@ -671,7 +725,13 @@ async function doReassign() {
     })();
 
     return (
-      <div key={o.id} style={cardRow}>
+      <div
+        key={o.id}
+        style={cardRow}
+        draggable
+        onDragStart={(e) => onCardDragStart(e, o.id)}
+        title="Arraste para mudar de coluna"
+      >
         <div style={{ fontWeight: 700, color: CONS.ink, marginBottom: 4 }}>{lead?.nome || "-"}</div>
         <div style={{ fontSize: 12, color: "#475569", marginBottom: 2 }}>
           <strong>Vendedor:</strong> {vend?.nome || "-"}
@@ -703,11 +763,7 @@ async function doReassign() {
             <WhatsappIcon />
           </IconBtn>
           {/* Email */}
-          <IconBtn
-            title={lead?.email ? "E-mail" : "Sem e-mail"}
-            disabled={!lead?.email}
-            href={lead?.email ? `mailto:${lead.email}` : undefined}
-          >
+          <IconBtn title={lead?.email ? "E-mail" : "Sem e-mail"} disabled={!lead?.email} href={lead?.email ? `mailto:${lead.email}` : undefined}>
             ✉️
           </IconBtn>
           {/* Editar lead */}
@@ -733,10 +789,18 @@ async function doReassign() {
     );
   };
 
-  const Column = ({ title, items }: { title: string; items: Oportunidade[] }) => (
-    <div style={stageCol}>
+  const Column = ({ title, items, stageUIKey }: { title: string; items: Oportunidade[]; stageUIKey: StageUI }) => (
+    <div
+      style={{
+        ...stageCol,
+        ...(dragOverStage === stageUIKey ? stageColActive : {}),
+      }}
+      onDragOver={(e) => onColumnDragOver(e, stageUIKey)}
+      onDragLeave={onColumnDragLeave}
+      onDrop={(e) => onColumnDrop(e, stageUIKey)}
+    >
       <div style={stageTitle}>{title}</div>
-      <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "grid", gap: 10, minHeight: 40 }}>
         {items.length ? items.map((o) => <Card key={o.id} {...o} />) : <div style={emptyCol}>—</div>}
       </div>
     </div>
@@ -778,10 +842,10 @@ async function doReassign() {
       <div style={card}>
         <div style={{ ...sectionTitle, marginTop: 0, marginBottom: 14 }}>Oportunidades</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
-          <Column title="Novo" items={colNovo} />
-          <Column title="Qualificando" items={colQualificando} />
-          <Column title="Propostas" items={colPropostas} />
-          <Column title="Negociação" items={colNegociacao} />
+          <Column title="Novo" items={colNovo} stageUIKey="novo" />
+          <Column title="Qualificando" items={colQualificando} stageUIKey="qualificando" />
+          <Column title="Propostas" items={colPropostas} stageUIKey="proposta" />
+          <Column title="Negociação" items={colNegociacao} stageUIKey="negociacao" />
         </div>
 
         {/* paginação única */}
@@ -1138,11 +1202,7 @@ async function doReassign() {
             <p style={{ margin: "0 0 8px", color: "#475569" }}>
               <strong>Lead:</strong> {reassignLead.nome}
             </p>
-            <select
-              style={input}
-              value={newOwnerId}
-              onChange={(e) => setNewOwnerId(e.target.value)}
-            >
+            <select style={input} value={newOwnerId} onChange={(e) => setNewOwnerId(e.target.value)}>
               <option value="">Selecionar usuário…</option>
               {vendedores.map((u) => (
                 <option key={u.auth_user_id} value={u.auth_user_id}>
@@ -1202,6 +1262,12 @@ const stageCol: React.CSSProperties = {
   borderRadius: 12,
   padding: 12,
   minHeight: 120,
+  border: "1px solid transparent",
+  transition: "border-color .12s ease, background-color .12s ease",
+};
+const stageColActive: React.CSSProperties = {
+  border: `1px dashed ${CONS.tan}`,
+  background: "#f8fafc",
 };
 const stageTitle: React.CSSProperties = {
   fontWeight: 800,
@@ -1275,7 +1341,7 @@ const btnGhost: React.CSSProperties = {
 const btnSecondary: React.CSSProperties = {
   padding: "8px 12px",
   borderRadius: 10,
-  background: "#f1f5f9",
+  background: "#f1f59",
   color: "#0f172a",
   border: "1px solid #e2e8f0",
   fontWeight: 600,
@@ -1330,7 +1396,7 @@ const modalCardSmall: React.CSSProperties = {
 };
 const tagDanger: React.CSSProperties = {
   background: "#fee2e2",
-  border: "1px solid #fecaca",
+  border: "1px solid "#fecaca",
   color: "#991b1b",
   padding: "2px 8px",
   borderRadius: 999,

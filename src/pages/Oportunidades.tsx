@@ -506,13 +506,11 @@ export default function Oportunidades() {
 
   function onCardDragStart(e: React.DragEvent<HTMLDivElement>, oppId: string) {
     e.dataTransfer.setData("text/plain", oppId);
-    // efeito visual padrão
     e.dataTransfer.effectAllowed = "move";
   }
 
   function onColumnDragOver(e: React.DragEvent<HTMLDivElement>, target: StageUI) {
-    // permitir drop
-    e.preventDefault();
+    e.preventDefault(); // permite drop
     setDragOverStage(target);
   }
 
@@ -530,9 +528,9 @@ export default function Oportunidades() {
     if (!opp) return;
 
     const fromStage = getUIStageForOpp(opp);
-    if (fromStage === target) return; // nada a fazer
+    if (fromStage === target) return;
 
-    // Otimista: atualiza localmente
+    // Otimista
     const prevLista = [...lista];
     const nextLista = lista.map((o) => (o.id === oppId ? { ...o, estagio: uiToDB[target] } : o));
     setLista(nextLista);
@@ -546,19 +544,26 @@ export default function Oportunidades() {
       .single();
 
     if (error) {
-      // rollback
-      setLista(prevLista);
+      setLista(prevLista); // rollback
       alert("Não foi possível mover a oportunidade: " + error.message);
       return;
     }
 
-    // Ajuste fino com o registro retornado (ex.: triggers/normalização)
+    // Confirmar com retorno do banco (caso exista trigger/normalização)
     setLista((s) => s.map((o) => (o.id === oppId ? (data as Oportunidade) : o)));
   }
 
   /** ===================== UI Aux ===================== */
   const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill={muted ? "none" : "currentColor"} stroke={muted ? "currentColor" : "none"} strokeWidth="1.2" aria-hidden="true">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill={muted ? "none" : "currentColor"}
+      stroke={muted ? "currentColor" : "none"}
+      strokeWidth="1.2"
+      aria-hidden="true"
+    >
       <path d="M12.04 0C5.44 0 .1 5.34.1 11.94c0 2.06.54 4.08 1.57 5.87L0 24l6.39-1.8a12 12 0 0 0 5.65 1.4C18.64 23.6 24 18.26 24 11.96 24 5.36 18.64 0 12.04 0Zm0 21.2c-1.77 0-3.48-.46-4.97-1.34l-.36-.21-3.78 1.06 1.05-3.69-.22-.38A9.17 9.17 0 1 1 21.2 11.96c0 5.06-4.1 9.24-9.16 9.24Zm5.18-6.91c-.29-.15-1.72-.85-1.99-.95-.27-.1-.46-.15-.66.15-.19.29-.76.94-.93 1.13-.17.19-.34.21-.63.07-.29-.15-1.22-.44-2.33-1.42-.86-.76-1.44-1.69-1.61-1.98-.17-.29-.02-.45.13-.6.13-.12.29-.34.43-.51.14-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.57-.9-2.15-.24-.57-.49-.49-.66-.5h-.57c-.19 0-.5.07-.76.37-.26.3-1 1-1 2.41s1.03 2.8 1.17 3.01c.14.2 2 3.18 4.84 4.34 2.39.94 2.88.76 3.4.71.52-.05 1.68-.69 1.93-1.36.25-.67.25-1.23.17-1.36-.07-.13-.26-.2-.55-.35Z" />
     </svg>
   );
@@ -585,16 +590,13 @@ export default function Oportunidades() {
 
   /** ===================== Donuts ===================== */
   const sumBySegment = (items: Oportunidade[]) => {
-    theMap.clear();
-    const m = theMap; // micro otimização p/ GC
+    const m = new Map<string, number>();
     for (const o of items) {
       const seg = o.segmento || "Outros";
       m.set(seg, (m.get(seg) || 0) + Number(o.valor_credito || 0));
     }
     return Array.from(m.entries()); // [segmento, total]
   };
-  // Reuso de Map pra reduzir alocações
-  const theMap = useMemo(() => new Map<string, number>(), []);
 
   const wonPairs = useMemo(
     () => sumBySegment(lista.filter((o) => dbToUI[o.estagio as string] === "fechado_ganho")),
@@ -1341,7 +1343,7 @@ const btnGhost: React.CSSProperties = {
 const btnSecondary: React.CSSProperties = {
   padding: "8px 12px",
   borderRadius: 10,
-  background: "#f1f59",
+  background: "#f1f5f9", // corrigido
   color: "#0f172a",
   border: "1px solid #e2e8f0",
   fontWeight: 600,
@@ -1396,7 +1398,7 @@ const modalCardSmall: React.CSSProperties = {
 };
 const tagDanger: React.CSSProperties = {
   background: "#fee2e2",
-  border: "1px solid "#fecaca",
+  border: "1px solid #fecaca", // corrigido
   color: "#991b1b",
   padding: "2px 8px",
   borderRadius: 999,

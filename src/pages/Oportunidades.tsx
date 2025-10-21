@@ -2,62 +2,119 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/* ===================== Tipos ===================== */
+/* =========================================================
+   Tipos
+========================================================= */
 type Lead = {
   id: string;
   nome: string;
   owner_id: string | null;
   telefone?: string | null;
   email?: string | null;
-  origem?: string | null;
-  descricao?: string | null;
 };
 
 type Vendedor = { auth_user_id: string; nome: string };
 
 type StageUI = "novo" | "qualificando" | "proposta" | "negociacao";
-type EstagioDB =
-  | "Novo"
-  | "Qualificando"
-  | "Proposta"
-  | "Negociação"
-  | "Fechado (Ganho)"
-  | "Fechado (Perdido)";
+type EstagioDB = "Novo" | "Qualificando" | "Proposta" | "Negociação" | "Fechado (Ganho)" | "Fechado (Perdido)";
 
-type Opportunity = {
+type Oportunidade = {
   id: string;
   lead_id: string;
-  vendedor_id: string; // compat
-  owner_id?: string | null; // atual
+  vendedor_id: string;
+  owner_id?: string | null;
   segmento: string;
   valor_credito: number;
   observacao: string | null;
-  score: number; // 1..5
+  score: number;
   estagio: EstagioDB | string;
-  expected_close_at: string | null; // yyyy-mm-dd
+  expected_close_at: string | null; // ISO (YYYY-MM-DD) ou null
   created_at: string;
 };
 
-type Me = { id: string; role: string } | null;
+/* =========================================================
+   Constantes / Cores
+========================================================= */
+const COLORS = {
+  brand: "#A11C27",
+  brandSoft: "#EED5D8",
+  bg: "#F5F5F5",
+  ink: "#1E293F",
+  gold: "#B5A573",
+  sand: "#E0CE8C",
+  ok: "#16a34a",
+  warn: "#f59e0b",
+  danger: "#dc2626",
+  neutral: "#64748b",
+};
 
-/* ===================== Helpers ===================== */
-const SEGMENTOS = [
-  "Automóvel",
-  "Imóvel",
-  "Motocicleta",
-  "Serviços",
-  "Pesados",
-  "Imóvel Estendido",
-] as const;
+const BTN = {
+  base: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    color: COLORS.ink,
+    cursor: "pointer",
+    fontWeight: 700,
+  } as React.CSSProperties,
+  primary: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: 0,
+    background: COLORS.brand,
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 700,
+  } as React.CSSProperties,
+  ghost: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    color: COLORS.ink,
+    cursor: "pointer",
+    fontWeight: 700,
+  } as React.CSSProperties,
+  secondary: {
+    padding: "8px 12px",
+    borderRadius: 10,
+    background: "#f1f5f9",
+    color: COLORS.ink,
+    border: "1px solid #e2e8f0",
+    fontWeight: 600,
+    cursor: "pointer",
+  } as React.CSSProperties,
+};
 
-const toDB: Record<StageUI, EstagioDB> = {
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: 10,
+  borderRadius: 12,
+  border: "1px solid #e5e7eb",
+  outline: "none",
+  background: "#fff",
+};
+
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: 12,
+  fontWeight: 700,
+  color: "#475569",
+  marginBottom: 6,
+};
+
+/* =========================================================
+   Helpers
+========================================================= */
+const uiToDB: Record<StageUI, EstagioDB> = {
   novo: "Novo",
   qualificando: "Qualificando",
   proposta: "Proposta",
   negociacao: "Negociação",
 };
 
-const toUI: Partial<Record<string, StageUI>> = {
+const dbToUI: Partial<Record<string, StageUI>> = {
   Novo: "novo",
   Qualificando: "qualificando",
   Qualificação: "qualificando",
@@ -67,140 +124,234 @@ const toUI: Partial<Record<string, StageUI>> = {
   Negociacao: "negociacao",
 };
 
-const fmtBRL = (n?: number) =>
-  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(n || 0));
+const segmentos = ["Automóvel", "Imóvel", "Motocicleta", "Serviços", "Pesados", "Imóvel Estendido"] as const;
 
-const soDigitos = (s?: string | null) => (s || "").replace(/\D+/g, "");
-const toWa = (tel?: string | null) => {
-  const d = soDigitos(tel);
-  if (!d) return null;
-  return d.startsWith("55") ? d : `55${d}`;
-};
-const telHref = (tel?: string | null) => {
-  const d = soDigitos(tel);
-  if (!d) return null;
-  return `tel:${d}`;
-};
-const fmtTel = (tel?: string | null) => {
-  const d = soDigitos(tel);
+const onlyDigits = (s?: string | null) => (s || "").replace(/\D+/g, "");
+const formatPhoneBR = (telefone?: string | null) => {
+  const d = onlyDigits(telefone);
   if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
   if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return tel || "";
+  return telefone || "";
+};
+const normalizePhoneToWa = (telefone?: string | null) => {
+  const d = onlyDigits(telefone);
+  if (!d) return null;
+  if (d.startsWith("55")) return d;
+  if (d.length >= 10 && d.length <= 11) return "55" + d;
+  if (d.length >= 12 && !d.startsWith("55")) return "55" + d;
+  return null;
 };
 
-const BRtoISO = (ddmmaa?: string) => {
-  const v = (ddmmaa || "").trim();
-  if (!v) return null;
-  const [d, m, y] = v.split("/");
-  if (!d || !m || !y) return null;
-  return `${y.padStart(4, "0")}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
-};
-const ISOtoBR = (iso?: string | null) => {
-  if (!iso) return "";
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return "";
-  return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`;
-};
+const fmtBRL = (n: number) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(n || 0);
 
-const parseBRMoeda = (valor: string) => {
-  const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
-  return Number(limpo || 0);
-};
-
-// valores compactos: 1,2 K / 10,2 Mi / 150,5 Mi / 1,2 Bi
-function fmtCompactBR(n: number) {
+// notação curta: 10,2 Mi / 1,2 Bi
+const shortMoney = (n: number) => {
   const abs = Math.abs(n);
-  const sign = n < 0 ? "-" : "";
-  const f = (v: number, suf: string) =>
-    `${sign}${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} ${suf}`;
-  if (abs >= 1_000_000_000) return f(abs / 1_000_000_000, "Bi");
-  if (abs >= 1_000_000) return f(abs / 1_000_000, "Mi");
-  if (abs >= 1_000) return f(abs / 1_000, "K");
-  return n.toLocaleString("pt-BR");
-}
+  if (abs >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1).replace(".", ",")} Bi`;
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(".", ",")} Mi`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1).replace(".", ",")} mil`;
+  return fmtBRL(n);
+};
 
-/* ===================== Componente ===================== */
+// status por data de previsão
+const dateStatus = (iso?: string | null): "overdue" | "today" | "soon" | null => {
+  if (!iso) return null;
+  const today = new Date();
+  const d = new Date(iso + "T00:00:00");
+  const diffDays = Math.floor((d.getTime() - new Date(today.toDateString()).getTime()) / 86400000);
+  if (diffDays < 0) return "overdue";
+  if (diffDays === 0) return "today";
+  if (diffDays > 0 && diffDays <= 5) return "soon";
+  return null;
+};
+
+// Ordenação por previsão: mais atrasado primeiro, sem data no fim
+const tsOrInf = (iso?: string | null) => (iso ? new Date(iso + "T00:00:00").getTime() : Number.POSITIVE_INFINITY);
+
+// Datas BR <-> ISO para máscara
+const maskDateBR = (s: string) => {
+  const d = s.replace(/\D/g, "").slice(0, 8);
+  if (d.length <= 2) return d;
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+};
+const isoToBR = (iso?: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "");
+const brToISO = (br: string) => {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(br);
+  if (!m) return null;
+  return `${m[3]}-${m[2]}-${m[1]}`;
+};
+
+/* =========================================================
+   Componentes pequenos (ícones / botões)
+========================================================= */
+const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill={muted ? "none" : "currentColor"} stroke={muted ? "currentColor" : "none"} strokeWidth="1.2" aria-hidden="true">
+    <path d="M12.04 0C5.44 0 .1 5.34.1 11.94c0 2.06.54 4.08 1.57 5.87L0 24l6.39-1.8a12 12 0 0 0 5.65 1.4C18.64 23.6 24 18.26 24 11.96 24 5.36 18.64 0 12.04 0Zm0 21.2c-1.77 0-3.48-.46-4.97-1.34l-.36-.21-3.78 1.06 1.05-3.69-.22-.38A9.17 9.17 0 1 1 21.2 11.96c0 5.06-4.1 9.24-9.16 9.24Zm5.18-6.91c-.29-.15-1.72-.85-1.99-.95-.27-.1-.46-.15-.66.15-.19.29-.76.94-.93 1.13-.17.19-.34.21-.63.07-.29-.15-1.22-.44-2.33-1.42-.86-.76-1.44-1.69-1.61-1.98-.17-.29-.02-.45.13-.6.13-.12.29-.34.43-.51.14-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.57-.9-2.15-.24-.57-.49-.49-.66-.5h-.57c-.19 0-.5.07-.76.37-.26.3-1 1-1 2.41s1.03 2.8 1.17 3.01c.14.2 2 3.18 4.84 4.34 2.39.94 2.88.76 3.4.71.52-.05 1.68-.69 1.93-1.36.25-.67.25-1.23.17-1.36-.07-.13-.26-.2-.55-.35Z" />
+  </svg>
+);
+
+const IconPhone = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M6.62 10.79a15.05 15.05 0 006.59 6.59l2.2-2.2a1 1 0 011.01-.24 11.36 11.36 0 003.55.57 1 1 0 011 1V21a1 1 0 01-1 1A17 17 0 013 5a1 1 0 011-1h3.5a1 1 0 011 1c0 1.21.2 2.41.57 3.55a1 1 0 01-.24 1.01l-2.2 2.23z" />
+  </svg>
+);
+
+const IconMail = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M2 6a2 2 0 012-2h16a2 2 0 012 2v.72l-10 6.25L2 6.72V6zm0 2.98V18a2 2 0 002 2h16a2 2 0 002-2V8.98l-9.38 5.86a2 2 0 01-2.24 0L2 8.98z" />
+  </svg>
+);
+
+const IconEdit = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M3 17.25V21h3.75l11-11.03-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+  </svg>
+);
+
+const IconSwap = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M7 10l-5 5h3v4h4v-4h3l-5-5zm10-6v4h-3l5 5 5-5h-3V4h-4z" />
+  </svg>
+);
+
+const Tag = ({ kind, children }: { kind: "overdue" | "today" | "soon"; children: React.ReactNode }) => {
+  const map = {
+    overdue: { bg: "#fee2e2", bd: "#fecaca", fg: COLORS.danger, label: "Atrasado" },
+    today: { bg: "#dcfce7", bd: "#bbf7d0", fg: COLORS.ok, label: "Hoje" },
+    soon: { bg: "#fff7ed", bd: "#ffedd5", fg: COLORS.warn, label: "Breve" },
+  } as const;
+  const c = map[kind];
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 700,
+        background: c.bg,
+        color: c.fg,
+        border: `1px solid ${c.bd}`,
+      }}
+      title={c.label}
+    >
+      {children}
+    </span>
+  );
+};
+
+/* =========================================================
+   Página
+========================================================= */
 export default function Oportunidades() {
-  const [me, setMe] = useState<Me>(null);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [vendedores, setVendedores] = useState<Vendedor[]>([]);
-  const [lista, setLista] = useState<Opportunity[]>([]);
+  const PAGE_COL = 5; // até 5 por coluna
+  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
-  // editar oportunidade (Tratar)
-  const [editOpp, setEditOpp] = useState<Opportunity | null>(null);
-  const [editNote, setEditNote] = useState("");
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+  const [lista, setLista] = useState<Oportunidade[]>([]);
 
-  // nova oportunidade
-  const [newOppOpen, setNewOppOpen] = useState(false);
-  const [newOppLeadId, setNewOppLeadId] = useState("");
-  const [newOppVend, setNewOppVend] = useState("");
-  const [newOppSegmento, setNewOppSegmento] = useState<string>("Automóvel");
-  const [newOppValor, setNewOppValor] = useState("");
-  const [newOppObs, setNewOppObs] = useState("");
-  const [newOppScore, setNewOppScore] = useState(1);
-  const [newOppStage, setNewOppStage] = useState<StageUI>("novo");
-  const [newOppDateBR, setNewOppDateBR] = useState("");
-
-  // novo lead (overlay)
-  const [newLeadOpen, setNewLeadOpen] = useState(false);
-  const [leadNome, setLeadNome] = useState("");
-  const [leadTel, setLeadTel] = useState("");
-  const [leadEmail, setLeadEmail] = useState("");
-  const [leadOrigem, setLeadOrigem] = useState("Site");
-  const [leadDescricao, setLeadDescricao] = useState("");
-
-  // reatribuir
-  const [reassignOpen, setReassignOpen] = useState<Opportunity | null>(null);
-  const [newOwnerId, setNewOwnerId] = useState("");
-
-  // editar lead inline (novo)
-  const [editLeadOpen, setEditLeadOpen] = useState<Lead | null>(null);
-  const [editLeadNome, setEditLeadNome] = useState("");
-  const [editLeadTel, setEditLeadTel] = useState("");
-  const [editLeadEmail, setEditLeadEmail] = useState("");
-  const [editLeadOrigem, setEditLeadOrigem] = useState("Site");
-  const [editLeadDesc, setEditLeadDesc] = useState("");
-
-  const [loading, setLoading] = useState(false);
-
-  // paginação única (5 por coluna)
-  const PER_STAGE = 5;
+  // paginação única
   const [page, setPage] = useState(1);
 
-  /* ---- usuário atual ---- */
+  // modal "Tratar Lead"
+  const [editing, setEditing] = useState<Oportunidade | null>(null);
+  const [newNote, setNewNote] = useState("");
+  const [editDateBR, setEditDateBR] = useState("");
+
+  // modal "Nova oportunidade"
+  const [createOpen, setCreateOpen] = useState(false);
+  const [leadId, setLeadId] = useState("");
+  const [vendId, setVendId] = useState("");
+  const [segmento, setSegmento] = useState<string>("Automóvel");
+  const [valor, setValor] = useState("");
+  const [obs, setObs] = useState("");
+  const [score, setScore] = useState(1);
+  const [stageUI, setStageUI] = useState<StageUI>("novo");
+  const [expectedDateBR, setExpectedDateBR] = useState("");
+
+  // carregar dados
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      const user = data?.user;
-      const role = (user?.app_metadata as any)?.role || "viewer";
-      if (user) setMe({ id: user.id, role });
+      setLoading(true);
+      try {
+        const { data: l } = await supabase.from("leads").select("id, nome, owner_id, telefone, email").order("created_at", { ascending: false });
+        setLeads(l || []);
+
+        const { data: v } = await supabase.rpc("listar_vendedores");
+        setVendedores((v || []) as Vendedor[]);
+
+        const { data: o } = await supabase
+          .from("opportunities")
+          .select(
+            "id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
+          )
+          .order("created_at", { ascending: false });
+
+        setLista((o || []) as Oportunidade[]);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
-  /* ---- carga inicial ---- */
-  useEffect(() => {
-    (async () => {
-      const { data: l } = await supabase
-        .from("leads")
-        .select("id, nome, owner_id, telefone, email, origem, descricao")
-        .order("created_at", { ascending: false });
-      setLeads(l || []);
+  // filtro de busca
+  const visiveis = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return lista;
 
-      const { data: v } = await supabase.rpc("listar_vendedores");
-      setVendedores((v || []) as Vendedor[]);
+    const match = (o: Oportunidade) => {
+      const lead = leads.find((l) => l.id === o.lead_id);
+      const vendedor = vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome?.toLowerCase() || "";
+      const leadNome = lead?.nome?.toLowerCase() || "";
+      const est = String(o.estagio).toLowerCase();
+      const phone = lead?.telefone ? formatPhoneBR(lead.telefone).toLowerCase() : "";
 
-      const { data: o } = await supabase
-        .from("opportunities")
-        .select(
-          "id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
-        )
-        .order("created_at", { ascending: false });
-      setLista((o || []) as Opportunity[]);
-    })();
-  }, []);
+      return leadNome.includes(q) || vendedor.includes(q) || est.includes(q) || phone.includes(q);
+    };
+    return lista.filter(match);
+  }, [lista, leads, vendedores, search]);
 
-  /* ---- KPI + filtros ---- */
+  // listas por estágio + ordenação (mais atrasado primeiro; sem data no fim)
+  const colNovo = useMemo(
+    () =>
+      visiveis
+        .filter((o) => (dbToUI[o.estagio as string] ?? "novo") === "novo")
+        .sort((a, b) => tsOrInf(a.expected_close_at) - tsOrInf(b.expected_close_at)),
+    [visiveis]
+  );
+  const colQualificando = useMemo(
+    () =>
+      visiveis
+        .filter((o) => (dbToUI[o.estagio as string] ?? "novo") === "qualificando")
+        .sort((a, b) => tsOrInf(a.expected_close_at) - tsOrInf(b.expected_close_at)),
+    [visiveis]
+  );
+  const colPropostas = useMemo(
+    () =>
+      visiveis
+        .filter((o) => (dbToUI[o.estagio as string] ?? "novo") === "proposta")
+        .sort((a, b) => tsOrInf(a.expected_close_at) - tsOrInf(b.expected_close_at)),
+    [visiveis]
+  );
+  const colNegociacao = useMemo(
+    () =>
+      visiveis
+        .filter((o) => (dbToUI[o.estagio as string] ?? "novo") === "negociacao")
+        .sort((a, b) => tsOrInf(a.expected_close_at) - tsOrInf(b.expected_close_at)),
+    [visiveis]
+  );
+
+  // total de páginas (única) baseado na maior coluna
+  const totalPages = useMemo(() => {
+    const maxLen = Math.max(colNovo.length, colQualificando.length, colPropostas.length, colNegociacao.length, 1);
+    return Math.max(1, Math.ceil(maxLen / PAGE_COL));
+  }, [colNovo.length, colQualificando.length, colPropostas.length, colNegociacao.length]);
+
+  // KPI por estágio (apenas 4 boxes)
   const kpi = useMemo(() => {
     const base: Record<StageUI, { qtd: number; total: number }> = {
       novo: { qtd: 0, total: 0 },
@@ -208,661 +359,537 @@ export default function Oportunidades() {
       proposta: { qtd: 0, total: 0 },
       negociacao: { qtd: 0, total: 0 },
     };
-    for (const o of lista) {
-      const ui = toUI[o.estagio as string];
-      if (ui && ui in base) {
-        base[ui].qtd += 1;
-        base[ui].total += Number(o.valor_credito || 0);
+    for (const o of visiveis) {
+      const k = dbToUI[o.estagio as string] ?? "novo";
+      if (k in base) {
+        base[k as StageUI].qtd += 1;
+        base[k as StageUI].total += Number(o.valor_credito || 0);
       }
     }
     return base;
-  }, [lista]);
-
-  const visiveis = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return lista;
-    return lista.filter((o) => {
-      const lead = leads.find((l) => l.id === o.lead_id);
-      const leadNome = lead?.nome?.toLowerCase() || "";
-      const vendNome =
-        vendedores.find((v) => v.auth_user_id === (o.owner_id || o.vendedor_id))?.nome?.toLowerCase() ||
-        "";
-      const estagio = String(o.estagio).toLowerCase();
-      const tel = lead?.telefone ? fmtTel(lead.telefone).toLowerCase() : "";
-      return leadNome.includes(q) || vendNome.includes(q) || estagio.includes(q) || tel.includes(q);
-    });
-  }, [lista, leads, vendedores, search]);
-
-  const grupos = useMemo(() => {
-    const out: Record<StageUI, Opportunity[]> = {
-      novo: [],
-      qualificando: [],
-      proposta: [],
-      negociacao: [],
-    };
-    for (const o of visiveis) {
-      const ui = toUI[o.estagio as string];
-      if (!ui) continue;
-      if (ui in out) out[ui as StageUI].push(o);
-    }
-    return out;
   }, [visiveis]);
 
-  // páginas totais = maior número de páginas entre as 4 colunas
-  const totalPages = useMemo(() => {
-    const counts = ["novo", "qualificando", "proposta", "negociacao"].map(
-      (k) => Math.ceil((grupos[k as StageUI]?.length || 0) / PER_STAGE) || 1
-    );
-    return Math.max(...counts, 1);
-  }, [grupos]);
+  /* ==================== Actions ==================== */
+  function openEdit(o: Oportunidade) {
+    setEditing(o);
+    setNewNote("");
+    setEditDateBR(isoToBR(o.expected_close_at)); // máscara BR
+  }
+  function closeEdit() {
+    setEditing(null);
+    setNewNote("");
+    setEditDateBR("");
+  }
 
-  /* ---- ações ---- */
+  async function saveEdit() {
+    if (!editing) return;
 
-  // criar oportunidade
+    const historico =
+      (editing.observacao ? editing.observacao + "\n\n" : "") +
+      (newNote ? `[${new Date().toLocaleString("pt-BR")}]\n${newNote}` : "");
+
+    const payload = {
+      segmento: editing.segmento,
+      valor_credito: editing.valor_credito,
+      score: editing.score,
+      estagio: ((): EstagioDB => {
+        const s = String(editing.estagio);
+        if (s === "Fechado (Ganho)" || s === "Fechado (Perdido)" || s === "Negociação" || s === "Proposta" || s === "Qualificando" || s === "Novo") {
+          return s as EstagioDB;
+        }
+        // normaliza se veio "negociacao"/etc.
+        const mapBack: Record<string, EstagioDB> = {
+          negociacao: "Negociação",
+          proposta: "Proposta",
+          qualificando: "Qualificando",
+          novo: "Novo",
+        };
+        return (mapBack[s] || "Novo") as EstagioDB;
+      })(),
+      expected_close_at: editDateBR ? brToISO(editDateBR) : null, // salva ISO
+      observacao: historico || editing.observacao || null,
+    };
+
+    const { error, data } = await supabase.from("opportunities").update(payload).eq("id", editing.id).select().single();
+    if (error) {
+      alert("Falha ao salvar: " + error.message);
+      return;
+    }
+    setLista((s) => s.map((x) => (x.id === editing.id ? (data as Oportunidade) : x)));
+    closeEdit();
+  }
+
   async function criarOportunidade() {
-    if (!newOppLeadId) return alert("Selecione um Lead.");
-    const valorNum = parseBRMoeda(newOppValor);
+    if (!leadId) return alert("Selecione um Lead.");
+    if (!vendId) return alert("Selecione um Vendedor.");
+    const valorNum = Number((valor || "0").replace(/[^\d]/g, "")) || 0;
     if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
 
-    const iso = BRtoISO(newOppDateBR);
+    const iso = expectedDateBR ? brToISO(expectedDateBR) : null;
 
-    setLoading(true);
     const payload = {
-      lead_id: newOppLeadId,
-      vendedor_id: newOppVend || (me?.id as string),
-      owner_id: newOppVend || (me?.id as string),
-      segmento: newOppSegmento,
+      lead_id: leadId,
+      vendedor_id: vendId,
+      owner_id: vendId,
+      segmento,
       valor_credito: valorNum,
-      observacao: newOppObs ? `[${new Date().toLocaleString("pt-BR")}]\n${newOppObs}` : null,
-      score: newOppScore,
-      estagio: toDB[newOppStage] as EstagioDB,
+      observacao: obs ? `[${new Date().toLocaleString("pt-BR")}]\n${obs}` : null,
+      score,
+      estagio: uiToDB[stageUI] as EstagioDB,
       expected_close_at: iso,
     };
 
-    const { data, error } = await supabase
-      .from("opportunities")
-      .insert([payload])
-      .select()
-      .single();
-
-    setLoading(false);
-
+    const { data, error } = await supabase.from("opportunities").insert([payload]).select().single();
     if (error) {
       alert("Erro ao criar oportunidade: " + error.message);
       return;
     }
-
-    setLista((s) => [data as Opportunity, ...s]);
-    setNewOppOpen(false);
+    setLista((s) => [data as Oportunidade, ...s]);
     // reset
-    setNewOppLeadId("");
-    setNewOppVend("");
-    setNewOppSegmento("Automóvel");
-    setNewOppValor("");
-    setNewOppObs("");
-    setNewOppScore(1);
-    setNewOppStage("novo");
-    setNewOppDateBR("");
-    alert("Oportunidade criada!");
+    setCreateOpen(false);
+    setLeadId("");
+    setVendId("");
+    setSegmento("Automóvel");
+    setValor("");
+    setObs("");
+    setScore(1);
+    setStageUI("novo");
+    setExpectedDateBR("");
   }
 
-  // editar oportunidade
-  function openEdit(o: Opportunity) {
-    setEditOpp(o);
-    setEditNote("");
-  }
-  function closeEdit() {
-    setEditOpp(null);
-    setEditNote("");
-  }
-  async function saveEdit() {
-    if (!editOpp) return;
+  /* ==================== UI Helpers ==================== */
+  const CardActions: React.FC<{ lead?: Lead; onEditLead?: () => void; onReassign?: () => void; onTratar?: () => void }> = ({
+    lead,
+    onEditLead,
+    onReassign,
+    onTratar,
+  }) => {
+    const wa = normalizePhoneToWa(lead?.telefone);
+    const hasMail = !!lead?.email;
+    const telHref = lead?.telefone ? `tel:${onlyDigits(lead.telefone)}` : undefined;
+    return (
+      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+        <a
+          href={telHref}
+          onClick={(e) => {
+            if (!telHref) e.preventDefault();
+          }}
+          style={{
+            ...BTN.secondary,
+            padding: "6px 10px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            color: COLORS.ink,
+          }}
+          title={lead?.telefone ? `Ligar para ${formatPhoneBR(lead?.telefone)}` : "Sem telefone"}
+        >
+          <IconPhone /> Ligar
+        </a>
 
-    const hist =
-      (editOpp.observacao ? editOpp.observacao + "\n\n" : "") +
-      (editNote ? `[${new Date().toLocaleString("pt-BR")}]\n${editNote}` : "");
+        <a
+          href={wa ? `https://wa.me/${wa}` : undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            if (!wa) e.preventDefault();
+          }}
+          style={{
+            ...BTN.secondary,
+            padding: "6px 10px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            color: COLORS.ink,
+          }}
+          title={wa ? "Abrir WhatsApp" : "Sem telefone"}
+        >
+          <WhatsappIcon muted={!wa} /> WhatsApp
+        </a>
 
-    const payload = {
-      segmento: editOpp.segmento,
-      valor_credito: Number(editOpp.valor_credito || 0),
-      score: Number(editOpp.score || 1),
-      estagio: normalizeEstagioDB(String(editOpp.estagio)),
-      // agora o estado já guarda ISO — não reconverta de novo
-      expected_close_at: editOpp.expected_close_at,
-      observacao: hist || editOpp.observacao || null,
-    };
+        <a
+          href={hasMail ? `mailto:${lead?.email}` : undefined}
+          onClick={(e) => {
+            if (!hasMail) e.preventDefault();
+          }}
+          style={{
+            ...BTN.secondary,
+            padding: "6px 10px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            color: hasMail ? COLORS.ink : COLORS.neutral,
+            opacity: hasMail ? 1 : 0.5,
+          }}
+          title={hasMail ? "Enviar e-mail" : "Sem e-mail"}
+        >
+          <IconMail /> E-mail
+        </a>
 
-    const { error, data } = await supabase
-      .from("opportunities")
-      .update(payload)
-      .eq("id", editOpp.id)
-      .select()
-      .single();
+        <button
+          style={{ ...BTN.secondary, padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 6 }}
+          onClick={onEditLead}
+          title="Editar Lead"
+        >
+          <IconEdit /> Editar
+        </button>
 
-    if (error) {
-      alert("Falha ao salvar: " + error.message);
-      return;
-    }
-    setLista((s) => s.map((x) => (x.id === editOpp.id ? (data as Opportunity) : x)));
-    closeEdit();
-  }
+        <button
+          style={{ ...BTN.secondary, padding: "6px 10px", display: "inline-flex", alignItems: "center", gap: 6 }}
+          onClick={onReassign}
+          title="Reatribuir"
+        >
+          <IconSwap /> Reatribuir
+        </button>
 
-  // novo lead -> cria opp em "Novo"
-  async function criarLeadENovaOpp() {
-    const nome = leadNome.trim();
-    const telefone = soDigitos(leadTel);
-    const email = (leadEmail || "").trim().toLowerCase() || null;
-    if (!nome) return alert("Informe o nome.");
-
-    setLoading(true);
-    const { data: insLead, error: e1 } = await supabase
-      .from("leads")
-      .insert([
-        {
-          nome,
-          telefone: telefone || null,
-          email,
-          origem: leadOrigem,
-          descricao: leadDescricao ? leadDescricao.trim() : null,
-        },
-      ])
-      .select("id, owner_id, nome, telefone, email, origem, descricao")
-      .single();
-
-    if (e1 || !insLead) {
-      setLoading(false);
-      alert("Não foi possível criar o lead: " + (e1?.message || ""));
-      return;
-    }
-
-    // adiciona o lead localmente para aparecer nas listas
-    setLeads((s) => [insLead as Lead, ...s]);
-
-    // cria oportunidade automática
-    const { error: e2, data: opp } = await supabase
-      .from("opportunities")
-      .insert([
-        {
-          lead_id: insLead.id,
-          vendedor_id: (me?.id as string),
-          owner_id: (me?.id as string),
-          segmento: "Automóvel",
-          valor_credito: 0,
-          observacao: null,
-          score: 1,
-          estagio: "Novo" as EstagioDB,
-          expected_close_at: null,
-        },
-      ])
-      .select()
-      .single();
-
-    setLoading(false);
-
-    if (e2) {
-      alert("Lead criado, mas falhou ao criar oportunidade: " + e2.message);
-    } else if (opp) {
-      setLista((s) => [opp as Opportunity, ...s]);
-    }
-
-    // reset + fechar
-    setLeadNome("");
-    setLeadTel("");
-    setLeadEmail("");
-    setLeadOrigem("Site");
-    setLeadDescricao("");
-    setNewLeadOpen(false);
-  }
-
-  // reatribuir
-  async function doReassign() {
-    if (!reassignOpen || !newOwnerId) return;
-    const { error, data } = await supabase
-      .from("opportunities")
-      .update({ owner_id: newOwnerId, vendedor_id: newOwnerId })
-      .eq("id", reassignOpen.id)
-      .select()
-      .single();
-    if (error) {
-      alert("Falha ao reatribuir: " + error.message);
-      return;
-    }
-    setLista((s) => s.map((x) => (x.id === reassignOpen.id ? (data as Opportunity) : x)));
-    setReassignOpen(null);
-    setNewOwnerId("");
-  }
-
-  // editar lead inline
-  function openEditLead(lead: Lead | undefined) {
-    if (!lead) return;
-    setEditLeadOpen(lead);
-    setEditLeadNome(lead.nome || "");
-    setEditLeadTel(lead.telefone || "");
-    setEditLeadEmail(lead.email || "");
-    setEditLeadOrigem(lead.origem || "Site");
-    setEditLeadDesc(lead.descricao || "");
-  }
-  async function saveEditLead() {
-    if (!editLeadOpen) return;
-    const payload = {
-      nome: editLeadNome.trim(),
-      telefone: soDigitos(editLeadTel) || null,
-      email: editLeadEmail.trim().toLowerCase() || null,
-      origem: editLeadOrigem || null,
-      descricao: editLeadDesc.trim() || null,
-    };
-    if (!payload.nome) return alert("Informe o nome do lead.");
-
-    const { error, data } = await supabase
-      .from("leads")
-      .update(payload)
-      .eq("id", editLeadOpen.id)
-      .select()
-      .single();
-    if (error) {
-      alert("Falha ao salvar: " + error.message);
-      return;
-    }
-    // atualiza lista local
-    setLeads((s) => s.map((l) => (l.id === editLeadOpen.id ? (data as Lead) : l)));
-    setEditLeadOpen(null);
-  }
-
-  // status de data (atrasado / hoje / breve)
-  function dateBadge(iso?: string | null) {
-    if (!iso) return null;
-    const today = new Date();
-    const dt = new Date(iso + "T00:00:00");
-    const diff = Math.floor((dt.getTime() - new Date(today.toDateString()).getTime()) / 86400000);
-    if (diff < 0) return <Badge color="#dc2626">Atrasado</Badge>;
-    if (diff === 0) return <Badge color="#0ea5e9">Hoje</Badge>;
-    if (diff > 0 && diff <= 5) return <Badge color="#B5A573">Breve</Badge>;
-    return null;
-  }
-
-  /* ===================== UI ===================== */
-
-  /* ---- Ícones ---- */
-  const PhoneIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6.62 10.79a15.05 15.05 0 006.59 6.59l2.2-2.2a1 1 0 011.01-.24 11.36 11.36 0 003.56.57 1 1 0 011 1V21a1 1 0 01-1 1C10.4 22 2 13.6 2 3a1 1 0 011-1h3.5a1 1 0 011 1 11.36 11.36 0 00.57 3.56 1 1 0 01-.24 1.01l-2.2 2.2z" />
-    </svg>
-  );
-  const WhatsappIcon = ({ muted = false }: { muted?: boolean }) => (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill={muted ? "none" : "currentColor"}
-      stroke={muted ? "currentColor" : "none"}
-      strokeWidth="1.2"
-      aria-hidden="true"
-    >
-      <path d="M12.04 0C5.44 0 .1 5.34.1 11.94c0 2.06.54 4.08 1.57 5.87L0 24l6.39-1.8a12 12 0 0 0 5.65 1.4C18.64 23.6 24 18.26 24 11.96 24 5.36 18.64 0 12.04 0Zm5.18 14.29c-.29-.15-1.72-.85-1.99-.95-.27-.1-.46-.15-.66.15-.19.29-.76.94-.93 1.13-.17.19-.34.21-.63.07-.29-.15-1.22-.44-2.33-1.42-.86-.76-1.44-1.69-1.61-1.98-.17-.29-.02-.45.13-.6.13-.12.29-.34.43-.51.14-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.57-.9-2.15-.24-.57-.49-.49-.66-.5h-.57c-.19 0-.5.07-.76.37-.26.3-1 1-1 2.41s1.03 2.8 1.17 3.01c.14.2 2 3.18 4.84 4.34 2.39.94 2.88.76 3.4.71.52-.05 1.68-.69 1.93-1.36.25-.67.25-1.23.17-1.36-.07-.13-.26-.2-.55-.35Z" />
-    </svg>
-  );
-  const MailIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M2 6a2 2 0 012-2h16a2 2 0 012 2v.2l-10 6.25L2 6.2V6zm0 2.55V18a2 2 0 002 2h16a2 2 0 002-2V8.55l-9.38 5.86a2 2 0 01-2.24 0L2 8.55z" />
-    </svg>
-  );
-  const EditIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM21.41 6.34a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-    </svg>
-  );
-  const SwapIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 7h11l-4-4 1.4-1.4L22.8 8l-7.4 6.4L14 13l4-4H7V7zm10 10H6l4 4-1.4 1.4L1.2 16l7.4-6.4L10 11l-4 4h11v2z" />
-    </svg>
-  );
-  const TreatIcon = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h12v2H3v-2z" />
-    </svg>
-  );
-
-  /* ---- Donut com paleta Consulmax + highlight ---- */
-  const BRAND = {
-    primary: "#A11C27",
-    grayBg: "#F5F5F5",
-    gold: "#B5A573",
-    navy: "#1E293F",
-    sand: "#E0CE8C",
+        <button style={{ ...BTN.primary, padding: "6px 10px" }} onClick={onTratar}>
+          Tratar
+        </button>
+      </div>
+    );
   };
-  const DONUT_COLORS = [
-    BRAND.primary,
-    BRAND.gold,
-    BRAND.navy,
-    "#C24A54",
-    "#8C7A3F",
-    "#334155",
-    "#D7C57A",
-  ];
 
-  const Donut: React.FC<{
-    title: string;
-    data: { label: string; value: number }[];
-  }> = ({ title, data }) => {
-    const total = data.reduce((s, d) => s + d.value, 0);
-    const [hover, setHover] = useState<number | null>(null);
-    let acc = 0;
+  const LeadInlineEdit: React.FC<{ lead: Lead; onSaved: (lead: Lead) => void }> = ({ lead, onSaved }) => {
+    const [nome, setNome] = useState(lead.nome);
+    const [telefone, setTelefone] = useState(lead.telefone || "");
+    const [email, setEmail] = useState(lead.email || "");
+    const [saving, setSaving] = useState(false);
+
+    const save = async () => {
+      setSaving(true);
+      try {
+        const payload = {
+          nome: nome.trim(),
+          telefone: onlyDigits(telefone) || null,
+          email: email.trim().toLowerCase() || null,
+        };
+        const { data, error } = await supabase.from("leads").update(payload).eq("id", lead.id).select().single();
+        if (error) {
+          alert("Erro ao salvar lead: " + error.message);
+          return;
+        }
+        onSaved(data as Lead);
+      } finally {
+        setSaving(false);
+      }
+    };
 
     return (
-      <div style={card}>
-        <div style={{ fontWeight: 800, marginBottom: 10 }}>{title}</div>
-        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          <svg width="160" height="160" viewBox="0 0 42 42" role="img" aria-label={title}>
-            <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#e5e7eb" strokeWidth="8" />
-            {data.map((d, i) => {
-              const pct = total ? (d.value / total) * 100 : 0;
-              const dash = `${pct} ${100 - pct}`;
-              const rot = (acc / 100) * 360;
-              acc += pct;
-              const col = DONUT_COLORS[i % DONUT_COLORS.length];
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr 1fr auto" }}>
+        <input value={nome} onChange={(e) => setNome(e.target.value)} style={inputStyle} />
+        <input value={telefone} onChange={(e) => setTelefone(e.target.value)} style={inputStyle} placeholder="Telefone" />
+        <input value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} placeholder="E-mail" />
+        <button style={BTN.primary} onClick={save} disabled={saving}>
+          {saving ? "Salvando..." : "Salvar"}
+        </button>
+      </div>
+    );
+  };
+
+  /* ==================== Donut simples (SVG) ==================== */
+  const Donut: React.FC<{ title: string; segments: { label: string; value: number; color: string }[] }> = ({ title, segments }) => {
+    const total = segments.reduce((a, b) => a + b.value, 0);
+    let acc = 0;
+
+    const [hover, setHover] = useState<number | null>(null);
+
+    return (
+      <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", padding: 16 }}>
+        <div style={{ fontWeight: 800, color: COLORS.ink, marginBottom: 12 }}>{title}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 16, alignItems: "center" }}>
+          <svg width="180" height="180" viewBox="0 0 42 42" style={{ overflow: "visible" }}>
+            <circle cx="21" cy="21" r="15.9155" fill="#fff" stroke="#e5e7eb" strokeWidth="6" />
+            {segments.map((s, i) => {
+              const val = total > 0 ? s.value / total : 0;
+              const dash = `${(val * 100).toFixed(2)} ${100 - val * 100}`;
+              const rotate = (acc / total) * 360;
+              acc += s.value;
+              const isHover = hover === i;
               return (
                 <circle
                   key={i}
                   cx="21"
                   cy="21"
-                  r="15.915"
+                  r="15.9155"
                   fill="transparent"
-                  stroke={hover === i ? BRAND.primary : col}
-                  strokeWidth={hover === i ? 9 : 8}
+                  stroke={s.color}
+                  strokeWidth={isHover ? 7 : 6}
                   strokeDasharray={dash}
                   strokeDashoffset="25"
-                  transform={`rotate(${rot} 21 21)`}
+                  transform={`rotate(${rotate} 21 21)`}
                   onMouseEnter={() => setHover(i)}
                   onMouseLeave={() => setHover(null)}
-                  style={{ cursor: "pointer", transition: "all .15s ease" }}
+                  style={{ transition: "all .15s" }}
                 />
               );
             })}
-            <text
-              x="50%"
-              y="50%"
-              dominantBaseline="middle"
-              textAnchor="middle"
-              fontSize="5"
-              fill={BRAND.navy}
-              fontWeight={800}
-            >
-              R$ {fmtCompactBR(total)}
-            </text>
           </svg>
-
           <div style={{ display: "grid", gap: 6 }}>
-            {data.map((d, i) => {
-              const col = DONUT_COLORS[i % DONUT_COLORS.length];
-              return (
-                <div
-                  key={i}
-                  onMouseEnter={() => setHover(i)}
-                  onMouseLeave={() => setHover(null)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 8px",
-                    borderRadius: 8,
-                    background: hover === i ? BRAND.grayBg : "transparent",
-                    cursor: "default",
-                  }}
-                >
-                  <div style={{ width: 10, height: 10, borderRadius: 2, background: col }} />
-                  <div style={{ color: BRAND.navy, minWidth: 160 }}>{d.label}</div>
-                  <div style={{ color: "#334155", fontWeight: 700 }}>{fmtBRL(d.value)}</div>
-                </div>
-              );
-            })}
+            {segments.map((s, i) => (
+              <div
+                key={i}
+                onMouseEnter={() => setHover(i)}
+                onMouseLeave={() => setHover(null)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 13,
+                  background: hover === i ? "#f8fafc" : "transparent",
+                  padding: "4px 6px",
+                  borderRadius: 8,
+                }}
+              >
+                <span style={{ width: 10, height: 10, background: s.color, borderRadius: 2 }} />
+                <span style={{ color: COLORS.ink, fontWeight: 700 }}>{s.label}</span>
+                <span style={{ color: COLORS.neutral, marginLeft: "auto" }}>{shortMoney(s.value)}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
     );
   };
 
-  /* ---- KPIs ---- */
-  const CardsKPI = () => {
-    const ORDER: { id: StageUI; title: string }[] = [
-      { id: "novo", title: "Novo" },
-      { id: "qualificando", title: "Qualificando" },
-      { id: "proposta", title: "Propostas" },
-      { id: "negociacao", title: "Negociação" },
-    ];
-    return (
-      <div style={{ marginBottom: 16 }}>
-        <div style={sectionTitle}>Pipeline por estágio</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
-          {ORDER.map(({ id, title }) => (
-            <div key={id} style={kpiCard}>
-              <div style={{ fontWeight: 800, color: BRAND.navy, marginBottom: 8 }}>{title}</div>
-              <div style={{ color: "#1f2937" }}>Qtd: {kpi[id]?.qtd || 0}</div>
-              <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(kpi[id]?.total || 0)}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  /* ---- Coluna de oportunidades (respeita paginação única) ---- */
-  const Coluna = ({ id, title }: { id: StageUI; title: string }) => {
-    const items = grupos[id] || [];
-    const offset = (page - 1) * PER_STAGE;
-    const rows = items.slice(offset, offset + PER_STAGE); // se não tiver, mostra vazio
+  /* ==================== Render ==================== */
+  const renderCol = (title: string, items: Oportunidade[]) => {
+    const sliceFrom = (page - 1) * PAGE_COL;
+    const sliceTo = sliceFrom + PAGE_COL;
+    const rows = items.slice(sliceFrom, sliceTo);
 
     return (
-      <div style={card}>
-        <div style={{ fontWeight: 800, marginBottom: 10 }}>{title}</div>
-        <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", padding: 14, minHeight: 360 }}>
+        <div style={{ fontWeight: 800, color: COLORS.ink, marginBottom: 10 }}>{title}</div>
+        <div style={{ display: "grid", gap: 10 }}>
           {rows.map((o) => {
             const lead = leads.find((l) => l.id === o.lead_id);
-            const vendedor =
-              vendedores.find((v) => v.auth_user_id === (o.owner_id || o.vendedor_id))?.nome || "-";
+            const vendedor = vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "-";
+            const st = dateStatus(o.expected_close_at);
             return (
-              <div key={o.id} style={itemCard}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ fontWeight: 700, color: BRAND.navy }}>{lead?.nome || "-"}</div>
-                  <div style={{ color: "#334155", fontSize: 12 }}>{vendedor}</div>
+              <div key={o.id} style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 800, color: COLORS.ink }}>{lead?.nome || "-"}</div>
+                  {st === "overdue" && <Tag kind="overdue">Atrasado</Tag>}
+                  {st === "today" && <Tag kind="today">Hoje</Tag>}
+                  {st === "soon" && <Tag kind="soon">Breve</Tag>}
+                  <div style={{ marginLeft: "auto", fontSize: 12, color: COLORS.neutral }}>Vendedor: <strong style={{ color: COLORS.ink }}>{vendedor}</strong></div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={{ display: "grid", gap: 6, gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
                   <div>
-                    <span style={muted}>Segmento</span>
-                    <div>{o.segmento || "-"}</div>
+                    <div style={{ color: COLORS.neutral, fontSize: 12 }}>Segmento</div>
+                    <div style={{ color: COLORS.ink }}>{o.segmento}</div>
                   </div>
                   <div>
-                    <span style={muted}>Valor</span>
-                    <div>{fmtBRL(o.valor_credito)}</div>
+                    <div style={{ color: COLORS.neutral, fontSize: 12 }}>Valor</div>
+                    <div style={{ color: COLORS.ink }}>{fmtBRL(o.valor_credito)}</div>
                   </div>
                   <div>
-                    <span style={muted}>Probabilidade</span>
-                    <div>{"★".repeat(Math.max(1, Math.min(5, o.score || 1)))}</div>
+                    <div style={{ color: COLORS.neutral, fontSize: 12 }}>Prob.</div>
+                    <div style={{ color: COLORS.ink }}>{"★".repeat(Math.max(1, Math.min(5, o.score)))}</div>
                   </div>
                   <div>
-                    <span style={muted}>Previsão</span>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      {o.expected_close_at ? ISOtoBR(o.expected_close_at) : "-"}
-                      {dateBadge(o.expected_close_at)}
+                    <div style={{ color: COLORS.neutral, fontSize: 12 }}>Previsão</div>
+                    <div style={{ color: COLORS.ink }}>
+                      {o.expected_close_at ? new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR") : "-"}
                     </div>
                   </div>
                 </div>
 
-                <div style={iconBar}>
-                  {telHref(lead?.telefone) ? (
-                    <a href={telHref(lead?.telefone) as string} title="Ligar" style={{ ...iconBtn, color: BRAND.navy }}>
-                      <PhoneIcon />
-                    </a>
-                  ) : (
-                    <span title="Sem telefone" style={{ ...iconBtn, ...iconDisabled }}>
-                      <PhoneIcon />
-                    </span>
-                  )}
-
-                  {toWa(lead?.telefone) ? (
-                    <a
-                      href={`https://wa.me/${toWa(lead?.telefone)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="WhatsApp"
-                      style={{ ...iconBtn, color: BRAND.primary }}
-                    >
-                      <WhatsappIcon />
-                    </a>
-                  ) : (
-                    <span title="Sem WhatsApp" style={{ ...iconBtn, ...iconDisabled }}>
-                      <WhatsappIcon muted />
-                    </span>
-                  )}
-
-                  {lead?.email ? (
-                    <a href={`mailto:${lead.email}`} title="E-mail" style={{ ...iconBtn, color: BRAND.gold }}>
-                      <MailIcon />
-                    </a>
-                  ) : (
-                    <span
-                      title="Cadastrar e-mail"
-                      onClick={() => openEditLead(lead)}
-                      style={{ ...iconBtn, ...iconDisabled, cursor: "pointer" }}
-                    >
-                      <MailIcon />
-                    </span>
-                  )}
-
-                  <button title="Editar Lead" style={{ ...iconBtn, color: BRAND.navy }} onClick={() => openEditLead(lead)}>
-                    <EditIcon />
-                  </button>
-
-                  {me?.role === "admin" && (
-                    <button title="Reatribuir" style={{ ...iconBtn, color: BRAND.gold }} onClick={() => setReassignOpen(o)}>
-                      <SwapIcon />
-                    </button>
-                  )}
-
-                  <button title="Tratar Lead" style={{ ...iconBtn, color: BRAND.primary }} onClick={() => openEdit(o)}>
-                    <TreatIcon />
-                  </button>
-                </div>
+                <CardActions
+                  lead={lead}
+                  onEditLead={() => {
+                    if (!lead) return;
+                    const after = (updated: Lead) => {
+                      setLeads((ls) => ls.map((x) => (x.id === updated.id ? updated : x)));
+                    };
+                    // inline editor simples
+                    const host = document.createElement("div");
+                    const row = document.getElementById(`row_${o.id}`);
+                    (row || document.body).appendChild(host);
+                    const unmount = () => {
+                      if (host.parentNode) host.parentNode.removeChild(host);
+                    };
+                    const Inline = () => {
+                      const [open, setOpen] = useState(true);
+                      if (!open) return null;
+                      return (
+                        <div style={{ marginTop: 10 }}>
+                          <LeadInlineEdit
+                            lead={lead}
+                            onSaved={(upd) => {
+                              after(upd);
+                              setOpen(false);
+                              unmount();
+                            }}
+                          />
+                        </div>
+                      );
+                    };
+                    // render inline imperativamente
+                    // (opção simples sem libs externas)
+                    // @ts-ignore
+                    ReactDOM.render(<Inline />, host);
+                  }}
+                  onReassign={() => {
+                    alert("Para reatribuir por enquanto use a tela de Leads. (Podemos plugar um modal aqui se quiser.)");
+                  }}
+                  onTratar={() => openEdit(o)}
+                />
               </div>
             );
           })}
 
-          {!rows.length && <div style={muted}>Nenhuma oportunidade nesta página.</div>}
+          {!rows.length && (
+            <div style={{ color: COLORS.neutral, fontSize: 13 }}>Sem itens nesta página.</div>
+          )}
         </div>
       </div>
     );
   };
 
-  /* ---- dados dos donuts ---- */
-  const donutsData = useMemo(() => {
-    const ganhos = lista.filter((o) => String(o.estagio) === "Fechado (Ganho)");
-    const perdidos = lista.filter((o) => String(o.estagio) === "Fechado (Perdido)");
+  // valores dos donuts (exemplo simples a partir de visiveis)
+  const sumBy = (pred: (o: Oportunidade) => boolean) => visiveis.filter(pred).reduce((a, b) => a + (b.valor_credito || 0), 0);
 
-    const sumBySeg = (arr: Opportunity[]) => {
-      const m = new Map<string, number>();
-      for (const o of arr) {
-        m.set(o.segmento, (m.get(o.segmento) || 0) + Number(o.valor_credito || 0));
-      }
-      return Array.from(m.entries()).map(([label, value]) => ({ label, value }));
-    };
+  const donutGanho = [
+    { label: "Automóvel", value: sumBy((o) => o.estagio === "Fechado (Ganho)" && o.segmento === "Automóvel"), color: COLORS.brand },
+    { label: "Imóvel", value: sumBy((o) => o.estagio === "Fechado (Ganho)" && o.segmento === "Imóvel"), color: COLORS.gold },
+    { label: "Motocicleta", value: sumBy((o) => o.estagio === "Fechado (Ganho)" && o.segmento === "Motocicleta"), color: COLORS.ink },
+    { label: "Outros", value: sumBy((o) => o.estagio === "Fechado (Ganho)" && !["Automóvel", "Imóvel", "Motocicleta"].includes(o.segmento)), color: COLORS.sand },
+  ];
+  const donutPerdido = [
+    { label: "Automóvel", value: sumBy((o) => o.estagio === "Fechado (Perdido)" && o.segmento === "Automóvel"), color: COLORS.brandSoft },
+    { label: "Imóvel", value: sumBy((o) => o.estagio === "Fechado (Perdido)" && o.segmento === "Imóvel"), color: COLORS.gold },
+    { label: "Motocicleta", value: sumBy((o) => o.estagio === "Fechado (Perdido)" && o.segmento === "Motocicleta"), color: COLORS.ink },
+    { label: "Outros", value: sumBy((o) => o.estagio === "Fechado (Perdido)" && !["Automóvel", "Imóvel", "Motocicleta"].includes(o.segmento)), color: COLORS.sand },
+  ];
 
-    return {
-      ganhos: sumBySeg(ganhos),
-      perdidos: sumBySeg(perdidos),
-    };
-  }, [lista]);
-
+  /* ==================== JSX ==================== */
   return (
-    <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
+    <div style={{ maxWidth: 1300, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
       {/* Topbar */}
-      <div style={{ ...card, display: "flex", gap: 12, alignItems: "center" }}>
+      <div
+        style={{
+          background: "#fff",
+          padding: 12,
+          borderRadius: 12,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          marginBottom: 16,
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ ...input, margin: 0, flex: 1 }}
+          style={{ ...inputStyle, margin: 0, flex: 1 }}
           placeholder="Buscar por lead, vendedor, estágio ou telefone"
         />
-        <button onClick={() => setNewOppOpen(true)} style={btnPrimary}>
+        <button onClick={() => setCreateOpen(true)} style={BTN.primary}>
           + Nova Oportunidade
         </button>
-        <button onClick={() => setNewLeadOpen(true)} style={btnGhost}>
-          + Novo Lead
+      </div>
+
+      {/* Pipeline por estágio */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: COLORS.ink, marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.2 }}>
+          Pipeline por estágio
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
+          {(
+            [
+              { id: "novo", label: "Novo" },
+              { id: "qualificando", label: "Qualificando" },
+              { id: "proposta", label: "Proposta" },
+              { id: "negociacao", label: "Negociação" },
+            ] as { id: StageUI; label: string }[]
+          ).map(({ id, label }) => (
+            <div key={id} style={{ background: "#fff", borderRadius: 14, boxShadow: "0 2px 10px rgba(0,0,0,.06)", padding: 14 }}>
+              <div style={{ fontWeight: 800, color: COLORS.ink, marginBottom: 6 }}>{label}</div>
+              <div style={{ color: COLORS.ink }}>Qtd: {kpi[id].qtd}</div>
+              <div style={{ color: COLORS.ink }}>Valor: {shortMoney(kpi[id].total)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Oportunidades (4 colunas) */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
+        {renderCol("Novo", colNovo)}
+        {renderCol("Qualificando", colQualificando)}
+        {renderCol("Propostas", colPropostas)}
+        {renderCol("Negociação", colNegociacao)}
+      </div>
+
+      {/* Paginação única */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", marginTop: 12 }}>
+        <button
+          style={{ ...BTN.secondary, opacity: page <= 1 ? 0.5 : 1 }}
+          disabled={page <= 1}
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+        >
+          ‹ Anterior
+        </button>
+        <span style={{ fontSize: 12, color: "#475569" }}>
+          Página {page} de {totalPages}
+        </span>
+        <button
+          style={{ ...BTN.secondary, opacity: page >= totalPages ? 0.5 : 1 }}
+          disabled={page >= totalPages}
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+        >
+          Próxima ›
         </button>
       </div>
 
-      <CardsKPI />
-
-      {/* Grade por estágio com paginação única */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
-        <Coluna id="novo" title="Novo" />
-        <Coluna id="qualificando" title="Qualificando" />
-        <Coluna id="proposta" title="Propostas" />
-        <Coluna id="negociacao" title="Negociação" />
-      </div>
-
-      {/* Paginação (única) */}
-<div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", marginTop: 12 }}>
-  <button
-    style={{ ...btnSecondary, opacity: page <= 1 ? 0.5 : 1 }}
-    disabled={page <= 1}
-    onClick={() => setPage((p) => Math.max(1, p - 1))}  // <-- removido o parêntese extra
-  >
-    ‹ Anterior
-  </button>
-
-  <span style={{ fontSize: 12, color: "#475569" }}>
-    Página {page} de {totalPages}
-  </span>
-
-  <button
-    style={{ ...btnSecondary, opacity: page >= totalPages ? 0.5 : 1 }}
-    disabled={page >= totalPages}
-    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-  >
-    Próxima ›
-  </button>
-</div>
-
-      {/* Finalizados (donuts) */}
-      <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <Donut title="Fechado (Ganho)" data={donutsData.ganhos} />
-        <Donut title="Fechado (Perdido)" data={donutsData.perdidos} />
+      {/* Donuts Finalizados */}
+      <div style={{ marginTop: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: COLORS.ink, marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.2 }}>
+          Finalizados
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <Donut title="Fechado (Ganho)" segments={donutGanho} />
+          <Donut title="Fechado (Perdido)" segments={donutPerdido} />
+        </div>
       </div>
 
       {/* Modal: Tratar Lead */}
-      {editOpp && (
-        <div style={modalBackdrop} onClick={closeEdit}>
-          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+      {editing && (
+        <div style={modalBackdrop}>
+          <div style={modalCard}>
             <h3 style={{ marginTop: 0 }}>Tratar Lead</h3>
             <div style={grid2}>
               <div>
                 <label style={labelStyle}>Segmento</label>
                 <select
-                  value={editOpp.segmento}
-                  onChange={(e) => setEditOpp({ ...editOpp, segmento: e.target.value })}
-                  style={input}
+                  value={editing.segmento}
+                  onChange={(e) => setEditing({ ...editing, segmento: e.target.value })}
+                  style={inputStyle}
                 >
-                  {SEGMENTOS.map((s) => (
+                  {segmentos.map((s) => (
                     <option key={s} value={s}>
                       {s}
                     </option>
                   ))}
                 </select>
               </div>
+
               <div>
                 <label style={labelStyle}>Valor do crédito (R$)</label>
                 <input
-                  value={String(editOpp.valor_credito ?? 0)}
-                  onChange={(e) => setEditOpp({ ...editOpp, valor_credito: parseBRMoeda(e.target.value) })}
-                  style={input}
+                  value={String(editing.valor_credito)}
+                  onChange={(e) => setEditing({ ...editing, valor_credito: Number(e.target.value.replace(/[^\d]/g, "")) || 0 })}
+                  style={inputStyle}
                 />
               </div>
+
               <div>
                 <label style={labelStyle}>Probabilidade</label>
                 <select
-                  value={String(editOpp.score)}
-                  onChange={(e) => setEditOpp({ ...editOpp, score: Number(e.target.value) })}
-                  style={input}
+                  value={String(editing.score)}
+                  onChange={(e) => setEditing({ ...editing, score: Number(e.target.value) })}
+                  style={inputStyle}
                 >
                   {[1, 2, 3, 4, 5].map((n) => (
                     <option key={n} value={n}>
@@ -871,12 +898,13 @@ export default function Oportunidades() {
                   ))}
                 </select>
               </div>
+
               <div>
                 <label style={labelStyle}>Estágio</label>
                 <select
-                  value={String(editOpp.estagio)}
-                  onChange={(e) => setEditOpp({ ...editOpp, estagio: e.target.value })}
-                  style={input}
+                  value={String(editing.estagio)}
+                  onChange={(e) => setEditing({ ...editing, estagio: e.target.value })}
+                  style={inputStyle}
                 >
                   <option value="Novo">Novo</option>
                   <option value="Qualificando">Qualificando</option>
@@ -886,26 +914,25 @@ export default function Oportunidades() {
                   <option value="Fechado (Perdido)">Fechado (Perdido)</option>
                 </select>
               </div>
+
               <div>
                 <label style={labelStyle}>Previsão (dd/mm/aaaa)</label>
                 <input
-                  value={ISOtoBR(editOpp.expected_close_at)}
-                  onChange={(e) =>
-                    setEditOpp({
-                      ...editOpp,
-                      expected_close_at: BRtoISO(e.target.value),
-                    })
-                  }
-                  style={input}
+                  type="text"
+                  inputMode="numeric"
                   placeholder="dd/mm/aaaa"
+                  value={editDateBR}
+                  onChange={(e) => setEditDateBR(maskDateBR(e.target.value))}
+                  style={inputStyle}
                 />
               </div>
+
               <div style={{ gridColumn: "1 / span 2" }}>
                 <label style={labelStyle}>Adicionar observação</label>
                 <textarea
-                  value={editNote}
-                  onChange={(e) => setEditNote(e.target.value)}
-                  style={{ ...input, minHeight: 90 }}
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  style={{ ...inputStyle, minHeight: 90 }}
                   placeholder="Escreva uma nova observação. O histórico anterior será mantido."
                 />
                 <div style={{ marginTop: 8, color: "#64748b", fontSize: 12 }}>
@@ -921,17 +948,17 @@ export default function Oportunidades() {
                       overflowY: "auto",
                     }}
                   >
-                    {editOpp.observacao || "(sem anotações)"}
+                    {editing.observacao || "(sem anotações)"}
                   </pre>
                 </div>
               </div>
             </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={saveEdit} style={btnPrimary}>
+              <button onClick={saveEdit} style={BTN.primary}>
                 Salvar alterações
               </button>
-              <button onClick={closeEdit} style={btnGhost}>
+              <button onClick={closeEdit} style={BTN.ghost}>
                 Cancelar
               </button>
             </div>
@@ -940,18 +967,18 @@ export default function Oportunidades() {
       )}
 
       {/* Modal: Nova oportunidade */}
-      {newOppOpen && (
-        <div style={modalBackdrop} onClick={() => setNewOppOpen(false)}>
-          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+      {createOpen && (
+        <div style={modalBackdrop}>
+          <div style={modalCard}>
             <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
             <div style={grid2}>
               <div>
                 <label style={labelStyle}>Selecionar um Lead</label>
-                <select value={newOppLeadId} onChange={(e) => setNewOppLeadId(e.target.value)} style={input}>
+                <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={inputStyle}>
                   <option value="">Selecione um Lead</option>
                   {leads.map((l) => (
                     <option key={l.id} value={l.id}>
-                      {l.nome} {l.telefone ? `— ${fmtTel(l.telefone)}` : ""}
+                      {l.nome} {l.telefone ? `— ${formatPhoneBR(l.telefone)}` : ""}
                     </option>
                   ))}
                 </select>
@@ -959,8 +986,8 @@ export default function Oportunidades() {
 
               <div>
                 <label style={labelStyle}>Selecione um Vendedor</label>
-                <select value={newOppVend} onChange={(e) => setNewOppVend(e.target.value)} style={input}>
-                  <option value="">(você)</option>
+                <select value={vendId} onChange={(e) => setVendId(e.target.value)} style={inputStyle}>
+                  <option value="">Selecione um Vendedor</option>
                   {vendedores.map((v) => (
                     <option key={v.auth_user_id} value={v.auth_user_id}>
                       {v.nome}
@@ -970,9 +997,9 @@ export default function Oportunidades() {
               </div>
 
               <div>
-                <label style={labelStyle}>Segmento</label>
-                <select value={newOppSegmento} onChange={(e) => setNewOppSegmento(e.target.value)} style={input}>
-                  {SEGMENTOS.map((s) => (
+                <label style={labelStyle}>Selecione um Segmento</label>
+                <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={inputStyle}>
+                  {segmentos.map((s) => (
                     <option key={s} value={s}>
                       {s}
                     </option>
@@ -982,27 +1009,17 @@ export default function Oportunidades() {
 
               <div>
                 <label style={labelStyle}>Valor do crédito (R$)</label>
-                <input
-                  value={newOppValor}
-                  onChange={(e) => setNewOppValor(e.target.value)}
-                  style={input}
-                  placeholder="Ex.: 80.000,00"
-                />
+                <input value={valor} onChange={(e) => setValor(e.target.value)} style={inputStyle} placeholder="Ex.: 80.000" />
               </div>
 
               <div>
                 <label style={labelStyle}>Observações</label>
-                <input
-                  value={newOppObs}
-                  onChange={(e) => setNewOppObs(e.target.value)}
-                  style={input}
-                  placeholder="Observação inicial (opcional)"
-                />
+                <input value={obs} onChange={(e) => setObs(e.target.value)} style={inputStyle} placeholder="Observação inicial (opcional)" />
               </div>
 
               <div>
-                <label style={labelStyle}>Probabilidade</label>
-                <select value={String(newOppScore)} onChange={(e) => setNewOppScore(Number(e.target.value))} style={input}>
+                <label style={labelStyle}>Probabilidade de fechamento</label>
+                <select value={String(score)} onChange={(e) => setScore(Number(e.target.value))} style={inputStyle}>
                   {[1, 2, 3, 4, 5].map((n) => (
                     <option key={n} value={n}>
                       {"★".repeat(n)}
@@ -1013,7 +1030,7 @@ export default function Oportunidades() {
 
               <div>
                 <label style={labelStyle}>Estágio</label>
-                <select value={newOppStage} onChange={(e) => setNewOppStage(e.target.value as StageUI)} style={input}>
+                <select value={stageUI} onChange={(e) => setStageUI(e.target.value as StageUI)} style={inputStyle}>
                   <option value="novo">Novo</option>
                   <option value="qualificando">Qualificando</option>
                   <option value="proposta">Proposta</option>
@@ -1027,146 +1044,19 @@ export default function Oportunidades() {
                   type="text"
                   inputMode="numeric"
                   placeholder="dd/mm/aaaa"
-                  value={newOppDateBR}
-                  onChange={(e) => setNewOppDateBR(e.target.value)}
-                  style={input}
+                  value={expectedDateBR}
+                  onChange={(e) => setExpectedDateBR(maskDateBR(e.target.value))}
+                  style={inputStyle}
                 />
               </div>
             </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={criarOportunidade} disabled={loading} style={btnPrimary}>
+              <button onClick={criarOportunidade} disabled={loading} style={BTN.primary}>
                 {loading ? "Criando..." : "Criar oportunidade"}
               </button>
-              <button onClick={() => setNewOppOpen(false)} style={btnGhost}>
+              <button onClick={() => setCreateOpen(false)} style={BTN.ghost}>
                 Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Novo Lead */}
-      {newLeadOpen && (
-        <div style={modalBackdrop} onClick={() => setNewLeadOpen(false)}>
-          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0 }}>Novo Lead</h3>
-            <div style={grid2}>
-              <div style={{ gridColumn: "1 / span 2" }}>
-                <label style={labelStyle}>Nome</label>
-                <input value={leadNome} onChange={(e) => setLeadNome(e.target.value)} style={input} autoFocus />
-              </div>
-
-              <div>
-                <label style={labelStyle}>Telefone</label>
-                <input value={leadTel} onChange={(e) => setLeadTel(e.target.value)} style={input} />
-              </div>
-
-              <div>
-                <label style={labelStyle}>E-mail</label>
-                <input type="email" value={leadEmail} onChange={(e) => setLeadEmail(e.target.value)} style={input} />
-              </div>
-
-              <div>
-                <label style={labelStyle}>Origem</label>
-                <select value={leadOrigem} onChange={(e) => setLeadOrigem(e.target.value)} style={input}>
-                  <option value="Site">Site</option>
-                  <option value="Redes Sociais">Redes Sociais</option>
-                  <option value="Indicação">Indicação</option>
-                  <option value="Whatsapp">Whatsapp</option>
-                  <option value="Parceria">Parceria</option>
-                  <option value="Relacionamento">Relacionamento</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={labelStyle}>Descrição</label>
-                <input value={leadDescricao} onChange={(e) => setLeadDescricao(e.target.value)} style={input} />
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={criarLeadENovaOpp} disabled={loading} style={btnPrimary}>
-                {loading ? "Salvando..." : "Criar Lead + Oportunidade"}
-              </button>
-              <button onClick={() => setNewLeadOpen(false)} style={btnGhost}>
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Reatribuir */}
-      {reassignOpen && (
-        <div style={modalBackdrop} onClick={() => setReassignOpen(null)}>
-          <div style={modalSmall} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0 }}>Reatribuir Oportunidade</h3>
-            <p style={{ margin: "4px 0 12px", color: "#475569" }}>
-              <strong>Lead:</strong>{" "}
-              {leads.find((l) => l.id === reassignOpen.lead_id)?.nome || "(desconhecido)"}
-            </p>
-            <select value={newOwnerId} onChange={(e) => setNewOwnerId(e.target.value)} style={input}>
-              <option value="">Selecionar usuário…</option>
-              {vendedores.map((u) => (
-                <option key={u.auth_user_id} value={u.auth_user_id}>
-                  {u.nome}
-                </option>
-              ))}
-            </select>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-              <button style={btnSecondary} onClick={() => setReassignOpen(null)}>
-                Cancelar
-              </button>
-              <button style={btnPrimary} onClick={doReassign} disabled={!newOwnerId}>
-                Salvar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Editar Lead inline */}
-      {editLeadOpen && (
-        <div style={modalBackdrop} onClick={() => setEditLeadOpen(null)}>
-          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0 }}>Editar Lead</h3>
-            <div style={grid2}>
-              <div style={{ gridColumn: "1 / span 2" }}>
-                <label style={labelStyle}>Nome</label>
-                <input value={editLeadNome} onChange={(e) => setEditLeadNome(e.target.value)} style={input} autoFocus />
-              </div>
-              <div>
-                <label style={labelStyle}>Telefone</label>
-                <input value={editLeadTel} onChange={(e) => setEditLeadTel(e.target.value)} style={input} />
-              </div>
-              <div>
-                <label style={labelStyle}>E-mail</label>
-                <input value={editLeadEmail} onChange={(e) => setEditLeadEmail(e.target.value)} style={input} />
-              </div>
-              <div>
-                <label style={labelStyle}>Origem</label>
-                <select value={editLeadOrigem} onChange={(e) => setEditLeadOrigem(e.target.value)} style={input}>
-                  <option value="Site">Site</option>
-                  <option value="Redes Sociais">Redes Sociais</option>
-                  <option value="Indicação">Indicação</option>
-                  <option value="Whatsapp">Whatsapp</option>
-                  <option value="Parceria">Parceria</option>
-                  <option value="Relacionamento">Relacionamento</option>
-                </select>
-              </div>
-              <div style={{ gridColumn: "1 / span 2" }}>
-                <label style={labelStyle}>Descrição</label>
-                <textarea value={editLeadDesc} onChange={(e) => setEditLeadDesc(e.target.value)} style={{ ...input, minHeight: 80 }} />
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={saveEditLead} style={btnPrimary}>
-                Salvar
-              </button>
-              <button onClick={() => setEditLeadOpen(null)} style={btnGhost}>
-                Cancelar
               </button>
             </div>
           </div>
@@ -1176,107 +1066,18 @@ export default function Oportunidades() {
   );
 }
 
-/* ===================== Estilos ===================== */
-const sectionTitle: React.CSSProperties = {
-  fontSize: 14,
-  fontWeight: 800,
-  color: "#1E293F",
-  marginBottom: 10,
-  letterSpacing: 0.2,
-  textTransform: "uppercase",
-};
-const card: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 16,
-  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
-  padding: 16,
-  marginBottom: 16,
-};
-const kpiCard: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 14,
-  boxShadow: "0 2px 10px rgba(0,0,0,.06)",
-  padding: 14,
-};
-const itemCard: React.CSSProperties = {
-  border: "1px solid #e5e7eb",
-  borderRadius: 12,
-  padding: 12,
-  display: "grid",
-  gap: 8,
-};
-const muted: React.CSSProperties = { color: "#64748b", fontSize: 12 };
-const iconBar: React.CSSProperties = { display: "flex", gap: 8, alignItems: "center", marginTop: 6 };
-const iconBtn: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 30,
-  height: 30,
-  borderRadius: 8,
-  border: "1px solid #e5e7eb",
-  background: "#fff",
-  cursor: "pointer",
-};
-const iconDisabled: React.CSSProperties = { opacity: 0.5 };
-const pager: React.CSSProperties = {
-  display: "flex",
-  gap: 8,
-  alignItems: "center",
-  justifyContent: "flex-end",
-  margin: "8px 0 16px",
-};
-const input: React.CSSProperties = {
-  width: "100%",
-  padding: 10,
-  borderRadius: 12,
-  border: "1px solid #e5e7eb",
-  outline: "none",
-  background: "#fff",
-};
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: 12,
-  fontWeight: 700,
-  color: "#475569",
-  marginBottom: 6,
-};
-const grid2: React.CSSProperties = { display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" };
-const btnPrimary: React.CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 12,
-  background: "#A11C27",
-  color: "#fff",
-  border: 0,
-  cursor: "pointer",
-  fontWeight: 700,
-};
-const btnSecondary: React.CSSProperties = {
-  padding: "8px 12px",
-  borderRadius: 10,
-  background: "#f1f5f9",
-  color: "#0f172a",
-  border: "1px solid #e2e8f0",
-  fontWeight: 600,
-  cursor: "pointer",
-};
-const btnGhost: React.CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 12,
-  background: "#fff",
-  color: "#1E293F",
-  border: "1px solid #e5e7eb",
-  cursor: "pointer",
-  fontWeight: 700,
-};
+/* =========================================================
+   estilos locais
+========================================================= */
 const modalBackdrop: React.CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,.35)",
+  background: "rgba(0,0,0,.3)",
   display: "grid",
   placeItems: "center",
   zIndex: 50,
 };
+
 const modalCard: React.CSSProperties = {
   width: "min(980px, 94vw)",
   background: "#fff",
@@ -1284,36 +1085,9 @@ const modalCard: React.CSSProperties = {
   borderRadius: 16,
   boxShadow: "0 20px 60px rgba(0,0,0,.3)",
 };
-const modalSmall: React.CSSProperties = {
-  width: "min(460px, 92vw)",
-  background: "#fff",
-  padding: 16,
-  borderRadius: 16,
-  boxShadow: "0 20px 60px rgba(0,0,0,.3)",
-};
-const Badge: React.FC<{ color: string; children: React.ReactNode }> = ({ color, children }) => (
-  <span
-    style={{
-      fontSize: 11,
-      color: "#fff",
-      background: color,
-      borderRadius: 999,
-      padding: "2px 8px",
-      fontWeight: 700,
-    }}
-  >
-    {children}
-  </span>
-);
 
-/* ---- helper ---- */
-function normalizeEstagioDB(label: string): EstagioDB {
-  const v = (label || "").toLowerCase();
-  if (v.includes("fechado") && v.includes("ganho")) return "Fechado (Ganho)";
-  if (v.includes("fechado") && v.includes("perdido")) return "Fechado (Perdido)";
-  if (v.startsWith("qualifica")) return "Qualificando";
-  if (v.startsWith("proposta")) return "Proposta";
-  if (v.startsWith("negocia")) return "Negociação";
-  if (v.startsWith("novo")) return "Novo";
-  return "Novo";
-}
+const grid2: React.CSSProperties = {
+  display: "grid",
+  gap: 12,
+  gridTemplateColumns: "1fr 1fr",
+};

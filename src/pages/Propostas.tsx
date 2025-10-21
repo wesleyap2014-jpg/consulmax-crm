@@ -43,7 +43,7 @@ type SimRow = {
   parcela_demais: number | null;
   lance_proprio_valor: number | null;
 
-  // Novas colunas (fração 0–1)
+  // Schema: frações (0–1)
   adm_tax_pct?: number | null;
   fr_tax_pct?: number | null;
   lance_ofertado_pct?: number | null;
@@ -132,7 +132,6 @@ async function fetchAsDataURL(url: string): Promise<string | null> {
 
 /* ============ Percent helpers (humanizado) ============== */
 function parsePercentInput(raw: string): number {
-  // "7%" -> 0.07, "7" -> 0.07, "0,07" -> 0.07, "0.07" -> 0.07
   const s = (raw || "").toString().trim().replace(/\s+/g, "");
   if (!s) return 0;
   const hasPercent = s.endsWith("%");
@@ -253,12 +252,10 @@ export default function Propostas() {
   }
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     const t = setTimeout(() => load(), 350);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, dateFrom, dateTo]);
 
   /* ---------- Textos de ação ---------- */
@@ -395,26 +392,22 @@ Grupo: ${r.grupo || "—"}`;
     });
   }
 
-  /* ---------- Parâmetros (com conversões automáticas) ---------- */
+  /* ---------- Parâmetros (sem defaults de ADM/FR) ---------- */
   type Params = {
     // Indicadores
-    cdi_anual: number;   // fração
-    ipca12m: number;     // fração (12m)
-    igpm12m: number;     // fração
-    incc12m: number;     // fração
+    cdi_anual: number;
+    ipca12m: number;
+    igpm12m: number;
+    incc12m: number;
 
     // Financiamento
-    fin_veic_mensal: number; // fração ao mês direto
-    fin_imob_anual: number;  // fração ao ano (composto -> mês)
+    fin_veic_mensal: number; // a.m.
+    fin_imob_anual: number;  // a.a. (composto -> mês)
 
-    // Padrões para quando não houver ADM/FR na simulação
-    default_adm_pct: number; // fração
-    default_fr_pct: number;  // fração
-
-    // Outros
-    aluguel_mensal_pct: number; // fração (%)
-    reforco_pct: number;        // fração
-    cresc_patr_pct: number;     // fração
+    // Outros (%)
+    aluguel_mensal_pct: number;
+    reforco_pct: number;
+    cresc_patr_pct: number;
   };
   const DEFAULT_PARAMS: Params = {
     cdi_anual: 0.13,
@@ -423,9 +416,7 @@ Grupo: ${r.grupo || "—"}`;
     incc12m: 0.05,
     fin_veic_mensal: 0.021,
     fin_imob_anual: 0.11,
-    default_adm_pct: 0.20,
-    default_fr_pct: 0.03,
-    aluguel_mensal_pct: 0.0, // agora em %
+    aluguel_mensal_pct: 0.0,
     reforco_pct: 0.05,
     cresc_patr_pct: 0.06,
   };
@@ -445,7 +436,7 @@ Grupo: ${r.grupo || "—"}`;
     setParamOpen(false);
   }
 
-  // Derivados (somente exibição)
+  // Derivados
   const cdiMensal = useMemo(() => annualToMonthlyCompound(params.cdi_anual), [params.cdi_anual]);
   const ipcaMensal = useMemo(() => (params.ipca12m || 0) / 12, [params.ipca12m]);
   const igpmMensal = useMemo(() => (params.igpm12m || 0) / 12, [params.igpm12m]);
@@ -502,7 +493,6 @@ Grupo: ${r.grupo || "—"}`;
     if (!addOpen) return;
     const t = setTimeout(() => loadModal(), 300);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addOpen, modalQ]);
 
   function toggleModalSel(code: number) {
@@ -562,7 +552,7 @@ Grupo: ${r.grupo || "—"}`;
   function gerarPDFDirecionada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-    // Capa — só primeiro nome, sem "Lead:"
+    // Capa — apenas primeiro nome
     const nome = firstName(sim.lead_nome);
     addHeaderBand(doc, `Plano estratégico e personalizado para ${nome}`);
     addWatermark(doc);
@@ -576,12 +566,12 @@ Grupo: ${r.grupo || "—"}`;
     const pageW = doc.internal.pageSize.getWidth();
     const marginX = 40;
 
-    // Subtítulo com grupo (se houver) + frase fixa
+    // Intro + grupo + frase
     const introY = 140;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.setTextColor(0, 0, 0);
-    doc.text(`${nome}`, marginX, introY); // apenas primeiro nome
+    doc.text(`${nome}`, marginX, introY); // só o primeiro nome
     doc.setFont("helvetica", "normal");
     doc.setFontSize(12);
     if (sim.grupo) {
@@ -595,15 +585,19 @@ Grupo: ${r.grupo || "—"}`;
 
     // ===== Especificações =====
     const C = sim.credito ?? 0;
-    // Fallback pros % caso não existam no sim: usa parâmetros padrão
-    const adm = sim.adm_tax_pct ?? params.default_adm_pct ?? 0;
-    const fr = sim.fr_tax_pct ?? params.default_fr_pct ?? 0;
 
-    const valorCategoria = C * (1 + adm + fr);
-    const totalEncargos = C * (adm + fr);
+    // Adm/FR: apenas o que vier no schema (sem defaults)
+    const adm = sim.adm_tax_pct;
+    const fr = sim.fr_tax_pct;
+
+    const hasAF = typeof adm === "number" && typeof fr === "number";
+
+    const valorCategoria = hasAF ? C * (1 + (adm as number) + (fr as number)) : null;
+    const totalEncargos = hasAF ? C * ((adm as number) + (fr as number)) : null;
 
     const prazo = sim.novo_prazo ?? 0;
-    const taxaTotalMensalizada = prazo > 0 ? (adm + fr) / prazo : 0;
+    const taxaTotalMensalizada =
+      hasAF && prazo > 0 ? (((adm as number) + (fr as number)) / prazo) : null;
 
     (doc as any).autoTable({
       startY: 220,
@@ -611,10 +605,10 @@ Grupo: ${r.grupo || "—"}`;
       body: [
         ["Crédito Total", brMoney(C)],
         ["Prazo", prazo ? `${prazo} meses` : "—"],
-        ["Taxa de adm total", adm ? formatPercentFraction(adm) : "—"],
-        ["Fundo Reserva", fr ? formatPercentFraction(fr) : "—"],
-        ["Total de Encargos", adm || fr ? brMoney(totalEncargos) : "—"],
-        ["Taxa total mensalizada", prazo ? formatPercentFraction(taxaTotalMensalizada) : "—"],
+        ["Taxa de adm total", typeof adm === "number" ? formatPercentFraction(adm) : "—"],
+        ["Fundo Reserva", typeof fr === "number" ? formatPercentFraction(fr) : "—"],
+        ["Total de Encargos", totalEncargos !== null ? brMoney(totalEncargos) : "—"],
+        ["Taxa total mensalizada", taxaTotalMensalizada !== null ? formatPercentFraction(taxaTotalMensalizada) : "—"],
       ],
       styles: { font: "helvetica", fontSize: 10, halign: "left" },
       headStyles: { fillColor: brand.primary, textColor: "#FFFFFF" },
@@ -688,7 +682,11 @@ Grupo: ${r.grupo || "—"}`;
         ["Parcela após o lance", brMoney(sim.parcela_escolhida)],
         ["Prazo após o lance", sim.novo_prazo ? `${sim.novo_prazo} meses` : "—"],
         ["Crédito Recebido", brMoney(sim.novo_credito)],
-        ["Custo Final (C × (1 + adm + FR))", adm || fr ? brMoney(valorCategoria) : "—"],
+        // Custo Final: Valor de Categoria - Lance Embutido
+        [
+          "Custo Final (Consórcio)",
+          hasAF && valorCategoria !== null ? brMoney(valorCategoria - embutidoValor) : "—",
+        ],
       ],
       styles: { font: "helvetica", fontSize: 10, halign: "left" },
       headStyles: { fillColor: brand.primary, textColor: "#FFFFFF" },
@@ -699,15 +697,21 @@ Grupo: ${r.grupo || "—"}`;
 
     // ===== Comparativo Consórcio x Financiamento =====
     const y4 = (doc as any).lastAutoTable?.finalY ?? y3 + 36;
-    const taxaConsorcioMensal = prazo > 0 ? (adm + fr) / prazo : 0;
+    const taxaConsorcioMensal =
+      hasAF && prazo > 0 ? (((adm as number) + (fr as number)) / prazo) : null;
 
     const isImob = normalizeSegment(sim.segmento).toLowerCase().includes("imó");
     const rFinMensal = isImob ? annualToMonthlyCompound(params.fin_imob_anual) : params.fin_veic_mensal;
 
-    // *** Crédito base do FINANCIAMENTO = crédito – lance embutido ***
+    // Crédito base do financiamento = C - embutido
     const pvFin = Math.max(0, C - embutidoValor);
     const nFin = prazo || 60;
     const pmtFin = pmtMonthly(rFinMensal, nFin, pvFin);
+    const custoFinalFin = pmtFin * nFin;
+
+    // Custo Final Consórcio (para comparar)
+    const custoFinalCons = hasAF && valorCategoria !== null ? (valorCategoria - embutidoValor) : null;
+    const economia = (custoFinalCons !== null) ? (custoFinalFin - custoFinalCons) : null;
 
     (doc as any).autoTable({
       startY: y4 + 18,
@@ -715,12 +719,22 @@ Grupo: ${r.grupo || "—"}`;
       body: [
         [
           "Taxa mensal (aprox.)",
-          taxaConsorcioMensal ? formatPercentFraction(taxaConsorcioMensal) : "—",
+          taxaConsorcioMensal !== null ? formatPercentFraction(taxaConsorcioMensal) : "—",
           rFinMensal ? formatPercentFraction(rFinMensal) : "—",
         ],
         ["Prazo considerado", prazo ? `${prazo} meses` : "—", `${nFin} meses`],
         ["Parcela (aprox.)", brMoney(sim.parcela_escolhida), brMoney(pmtFin)],
         ["Crédito base", brMoney(C), brMoney(pvFin)],
+        [
+          "Custo Final (desembolso total)",
+          custoFinalCons !== null ? brMoney(custoFinalCons) : "—",
+          brMoney(custoFinalFin),
+        ],
+        [
+          "Economia ao optar pelo Consórcio",
+          economia !== null ? brMoney(economia) : "—",
+          "—",
+        ],
       ],
       styles: { font: "helvetica", fontSize: 10, halign: "left" },
       headStyles: { fillColor: brand.accent, textColor: "#FFFFFF" },
@@ -749,7 +763,6 @@ Grupo: ${r.grupo || "—"}`;
     });
 
     // ===== Resumo =====
-    const totalPlano = adm || fr ? valorCategoria : 0;
     const y6 = y + 6;
     (doc as any).autoTable({
       startY: y6,
@@ -758,9 +771,22 @@ Grupo: ${r.grupo || "—"}`;
         ["Crédito", brMoney(C)],
         ["Parcela 1", brMoney(sim.parcela_ate_1_ou_2)],
         ["Demais", `${brMoney(sim.parcela_demais)} (Até a contemplação)`],
-        ["Taxa de adm total", adm ? `${formatPercentFraction(adm)} (${brMoney(adm * C)})` : "—"],
-        ["Fundo de Reserva", fr ? `${formatPercentFraction(fr)} (${brMoney(fr * C)})` : "—"],
-        ["Total do Plano", adm || fr ? brMoney(totalPlano) : "—"],
+        [
+          "Taxa de adm total",
+          typeof adm === "number" ? `${formatPercentFraction(adm)} (${brMoney((adm as number) * C)})` : "—",
+        ],
+        [
+          "Fundo de Reserva",
+          typeof fr === "number" ? `${formatPercentFraction(fr)} (${brMoney((fr as number) * C)})` : "—",
+        ],
+        [
+          "Total do Plano (Valor de Categoria)",
+          valorCategoria !== null ? brMoney(valorCategoria) : "—",
+        ],
+        [
+          "Custo Final (Consórcio)",
+          custoFinalCons !== null ? brMoney(custoFinalCons) : "—",
+        ],
         ["Lance Sugerido", brMoney(lanceOfertadoValor)],
         ["Crédito sem embutido", brMoney(C)],
         ["Crédito com embutido", brMoney(sim.novo_credito)],
@@ -784,7 +810,7 @@ Grupo: ${r.grupo || "—"}`;
     doc.save(`Proposta_Direcionada_${sim.code}.pdf`);
   }
 
-  // Mantém outros modelos
+  // Mantém outros modelos com fallback simples
   async function gerarPDFInvest(modelKey: ModelKey, sims: SimRow[]) {
     if (sims.length === 0) {
       alert("Selecione pelo menos uma simulação.");
@@ -1036,7 +1062,6 @@ Grupo: ${r.grupo || "—"}`;
           <CardTitle>Propostas de Investimento</CardTitle>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* Parâmetros */}
             <Button
               variant="secondary"
               className="rounded-2xl h-10 px-4"
@@ -1188,7 +1213,7 @@ Grupo: ${r.grupo || "—"}`;
               </button>
             </div>
 
-            <div className="p-4 space-y-3 max-h-[80vh] overflow-y-auto">
+            <div className="p-4 space-y-3 max-h={[`80vh`]} overflow-y-auto">
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="md:col-span-3">
                   <Label>Buscar por nome ou telefone</Label>
@@ -1296,7 +1321,7 @@ Grupo: ${r.grupo || "—"}`;
         </div>
       )}
 
-      {/* MODAL: Parâmetros (com conversões automáticas) */}
+      {/* MODAL: Parâmetros */}
       {paramOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-3xl shadow-lg overflow-hidden">
@@ -1404,33 +1429,7 @@ Grupo: ${r.grupo || "—"}`;
                 </div>
               </div>
 
-              {/* Padrões Adm/FR */}
-              <div>
-                <Label>Taxa de adm total (padrão)</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.default_adm_pct)}
-                  placeholder="ex.: 20% ou 0,20"
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, default_adm_pct: v }));
-                  }}
-                />
-              </div>
-              <div>
-                <Label>Fundo de Reserva (padrão)</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.default_fr_pct)}
-                  placeholder="ex.: 3% ou 0,03"
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, default_fr_pct: v }));
-                  }}
-                />
-              </div>
-
-              {/* Outros (percentuais) */}
+              {/* Outros (% / não entram em cálculos deste PDF ainda) */}
               <div>
                 <Label>Aluguel Mensal (%)</Label>
                 <Input

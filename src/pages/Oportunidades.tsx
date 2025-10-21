@@ -159,6 +159,9 @@ export default function Oportunidades() {
   const [hoverWon, setHoverWon] = useState<string | null>(null);
   const [hoverLost, setHoverLost] = useState<string | null>(null);
 
+  // Reatribuir Lead
+const [newOwnerId, setNewOwnerId] = useState<string>("");
+
   useEffect(() => {
     (async () => {
       const { data: u } = await supabase.auth.getUser();

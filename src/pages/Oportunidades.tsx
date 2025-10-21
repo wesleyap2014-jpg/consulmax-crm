@@ -800,26 +800,28 @@ export default function Oportunidades() {
         <Coluna id="negociacao" title="Negociação" />
       </div>
 
-      {/* Paginação única */}
-      <div style={pager}>
-        <button
-          style={{ ...btnSecondary, opacity: page <= 1 ? 0.5 : 1 }}
-          disabled={page <= 1}
-          onClick={() => setPage((p) => Math.max(1, p - 1)))}
-        >
-          ‹ Anterior
-        </button>
-        <span style={{ color: "#475569", fontSize: 12 }}>
-          Página {page} de {totalPages}
-        </span>
-        <button
-          style={{ ...btnSecondary, opacity: page >= totalPages ? 0.5 : 1 }}
-          disabled={page >= totalPages}
-          onClick={() => setPage((p) => Math.min(totalPages, p + 1)))}
-        >
-          Próxima ›
-        </button>
-      </div>
+      {/* Paginação (única) */}
+<div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", marginTop: 12 }}>
+  <button
+    style={{ ...btnSecondary, opacity: page <= 1 ? 0.5 : 1 }}
+    disabled={page <= 1}
+    onClick={() => setPage((p) => Math.max(1, p - 1))}  // <-- removido o parêntese extra
+  >
+    ‹ Anterior
+  </button>
+
+  <span style={{ fontSize: 12, color: "#475569" }}>
+    Página {page} de {totalPages}
+  </span>
+
+  <button
+    style={{ ...btnSecondary, opacity: page >= totalPages ? 0.5 : 1 }}
+    disabled={page >= totalPages}
+    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+  >
+    Próxima ›
+  </button>
+</div>
 
       {/* Finalizados (donuts) */}
       <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>

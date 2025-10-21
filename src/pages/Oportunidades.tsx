@@ -46,6 +46,8 @@ const CONS = {
   sand: "#E0CE8C",
   tan: "#B5A573",
   grayBg: "#F5F5F5",
+  // paleta para os donuts (derivada das cores oficiais)
+  donut: ["#A11C27", "#B5A573", "#1E293F", "#E0CE8C", "#8B1F2A", "#9C8B58", "#2B3B5A", "#F5E9B6"],
 };
 
 const segmentos = ["Automóvel", "Imóvel", "Motocicleta", "Serviços", "Pesados", "Imóvel Estendido"] as const;
@@ -72,6 +74,9 @@ const dbToUI: Partial<Record<string, StageUI>> = {
 
 const fmtBRL = (n: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(n || 0);
+
+const fmtCompact = (n: number) =>
+  new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(n || 0);
 
 const onlyDigits = (s?: string | null) => (s || "").replace(/\D+/g, "");
 const formatPhoneBR = (telefone?: string | null) => {
@@ -110,6 +115,9 @@ export default function Oportunidades() {
   const PAGE_BLOCK = 5; // até 5 por coluna
   const [page, setPage] = useState(1);
 
+  // usuário atual
+  const [meId, setMeId] = useState<string | null>(null);
+
   // dados
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
@@ -119,7 +127,7 @@ export default function Oportunidades() {
   const [search, setSearch] = useState("");
 
   // modais
-  const [createOpen, setCreateOpen] = useState(false); // novo lead + oportunidade na sequência
+  const [newLeadOpen, setNewLeadOpen] = useState(false); // modal Novo Lead
   const [editLead, setEditLead] = useState<Lead | null>(null);
   const [reassignLead, setReassignLead] = useState<Lead | null>(null);
 
@@ -135,7 +143,8 @@ export default function Oportunidades() {
   const [nlOrigem, setNlOrigem] = useState<string>("Site");
   const [nlDesc, setNlDesc] = useState("");
 
-  // criar oportunidade (select lead + vendedor)
+  // criar oportunidade (modal próprio)
+  const [newOppOpen, setNewOppOpen] = useState(false);
   const [leadId, setLeadId] = useState("");
   const [vendId, setVendId] = useState("");
   const [segmento, setSegmento] = useState<string>("Automóvel");
@@ -146,8 +155,15 @@ export default function Oportunidades() {
   const [obs, setObs] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // donuts hover state
+  const [hoverWon, setHoverWon] = useState<string | null>(null);
+  const [hoverLost, setHoverLost] = useState<string | null>(null);
+
   useEffect(() => {
     (async () => {
+      const { data: u } = await supabase.auth.getUser();
+      if (u?.user?.id) setMeId(u.user.id);
+
       const { data: l } = await supabase
         .from("leads")
         .select("id, nome, owner_id, telefone, email, origem, descricao, created_at")
@@ -159,8 +175,8 @@ export default function Oportunidades() {
       if (!rpc.error && rpc.data?.length) {
         setVendedores((rpc.data || []) as Vendedor[]);
       } else {
-        const u = await supabase.from("users").select("auth_user_id, nome").order("nome");
-        setVendedores((u.data || []) as Vendedor[]);
+        const users = await supabase.from("users").select("auth_user_id, nome").order("nome");
+        setVendedores((users.data || []) as Vendedor[]);
       }
 
       const { data: o } = await supabase
@@ -258,7 +274,6 @@ export default function Oportunidades() {
     const from = (page - 1) * PAGE_BLOCK;
     const to = from + PAGE_BLOCK;
     return arr.slice(from, to);
-    // se a coluna tiver menos de 5 nesta página, ela fica menor — é esperado.
   };
 
   const colNovo = sliceByPage(colNovoAll);
@@ -267,42 +282,83 @@ export default function Oportunidades() {
   const colNegociacao = sliceByPage(colNegAll);
 
   /** ===================== Ações ===================== */
-  // Novo Lead (overlay)
-  async function criarLeadENaSequencia() {
-    const payload = {
+  // Novo Lead → cria oportunidade “Novo” automaticamente
+  async function criarLead() {
+    const payloadLead = {
       nome: nlNome.trim(),
       telefone: onlyDigits(nlTel) || null,
       email: nlEmail.trim().toLowerCase() || null,
       origem: nlOrigem || null,
       descricao: nlDesc.trim() || null,
     };
-    if (!payload.nome) return alert("Informe o nome do lead.");
+    if (!payloadLead.nome) return alert("Informe o nome do lead.");
 
     setLoading(true);
-    const { data, error } = await supabase.from("leads").insert([payload]).select().single();
-    setLoading(false);
-    if (error) {
-      alert("Erro ao criar lead: " + error.message);
+    const { data: lead, error: e1 } = await supabase.from("leads").insert([payloadLead]).select().single();
+    if (e1) {
+      setLoading(false);
+      alert("Erro ao criar lead: " + e1.message);
       return;
     }
-    // seleciona para criar oportunidade rapidamente
-    setLeadId(data.id);
-    setVendId("");
-    setCreateOpen(false);
-    alert("Lead criado! Agora selecione o vendedor e crie a oportunidade.");
+
+    // cria oportunidade automaticamente no estágio "Novo"
+    const payloadOpp = {
+      lead_id: lead.id,
+      vendedor_id: meId as string,
+      owner_id: meId as string,
+      segmento: "Automóvel",
+      valor_credito: 0,
+      observacao: null,
+      score: 1,
+      estagio: "Novo" as EstagioDB,
+      expected_close_at: null,
+    };
+
+    const { data: opp, error: e2 } = await supabase.from("opportunities").insert([payloadOpp]).select().single();
+    setLoading(false);
+    if (e2) {
+      alert("Lead criado, mas falhou ao criar oportunidade: " + e2.message);
+    } else {
+      setLista((s) => [opp as Oportunidade, ...s]);
+    }
+
+    // atualizar leads (responsável pode ser o próprio)
+    setLeads((s) => [lead as Lead, ...s]);
+
+    // reset
+    setNlNome("");
+    setNlTel("");
+    setNlEmail("");
+    setNlOrigem("Site");
+    setNlDesc("");
+    setNewLeadOpen(false);
+    alert("Lead criado e oportunidade adicionada ao estágio 'Novo'.");
   }
 
-  // Criar oportunidade
+  // Modal Nova Oportunidade
+  function abrirModalNovaOpp() {
+    setLeadId("");
+    setVendId("");
+    setSegmento("Automóvel");
+    setValor("");
+    setScore(1);
+    setStageUI("novo");
+    setExpectedDate("");
+    setObs("");
+    setNewOppOpen(true);
+  }
+
   function moedaParaNumeroBR(valor: string) {
     const limpo = valor.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
     return Number(limpo || 0);
   }
+
   async function criarOportunidade() {
     if (!leadId) return alert("Selecione um Lead.");
     if (!vendId) return alert("Selecione um Vendedor.");
 
     const valorNum = moedaParaNumeroBR(valor);
-    if (!valorNum || valorNum <= 0) return alert("Informe o valor do crédito.");
+    if (isNaN(valorNum)) return alert("Valor inválido.");
 
     let isoDate: string | null = null;
     if (expectedDate) {
@@ -316,7 +372,7 @@ export default function Oportunidades() {
       vendedor_id: vendId,
       owner_id: vendId,
       segmento,
-      valor_credito: valorNum,
+      valor_credito: valorNum || 0,
       observacao: obs ? `[${new Date().toLocaleString("pt-BR")}]\n${obs}` : null,
       score,
       estagio: uiToDB[stageUI] as EstagioDB,
@@ -329,14 +385,7 @@ export default function Oportunidades() {
       return;
     }
     setLista((s) => [data as Oportunidade, ...s]);
-    setLeadId("");
-    setVendId("");
-    setSegmento("Automóvel");
-    setValor("");
-    setObs("");
-    setScore(1);
-    setStageUI("novo");
-    setExpectedDate("");
+    setNewOppOpen(false);
     alert("Oportunidade criada!");
   }
 
@@ -405,9 +454,17 @@ export default function Oportunidades() {
     setEditLead(null);
   }
 
-  // Reatribuir Lead (admin simples)
-  async function doReassign(newOwnerId: string) {
-    if (!reassignLead || !newOwnerId) return;
+  // Reatribuir Lead (com botão salvar)
+  const [newOwnerId, setNewOwnerId] = useState<string>("");
+  useEffect(() => {
+    if (reassignLead) setNewOwnerId(reassignLead.owner_id || "");
+  }, [reassignLead]);
+
+  async function doReassign() {
+    if (!reassignLead || !newOwnerId) {
+      alert("Selecione o novo responsável.");
+      return;
+    }
     const { error } = await supabase.from("leads").update({ owner_id: newOwnerId }).eq("id", reassignLead.id);
     if (error) {
       alert("Erro ao reatribuir: " + error.message);
@@ -415,6 +472,7 @@ export default function Oportunidades() {
     }
     setLeads((s) => s.map((l) => (l.id === reassignLead.id ? { ...l, owner_id: newOwnerId } : l)));
     setReassignLead(null);
+    alert("Lead reatribuído!");
   }
 
   /** ===================== UI Aux ===================== */
@@ -444,8 +502,121 @@ export default function Oportunidades() {
       </button>
     );
 
+  /** ===================== Donuts ===================== */
+  const sumBySegment = (items: Oportunidade[]) => {
+    const m = new Map<string, number>();
+    for (const o of items) {
+      const seg = o.segmento || "Outros";
+      m.set(seg, (m.get(seg) || 0) + Number(o.valor_credito || 0));
+    }
+    return Array.from(m.entries()); // [segmento, total]
+  };
+
+  const wonPairs = useMemo(
+    () => sumBySegment(lista.filter((o) => dbToUI[o.estagio as string] === "fechado_ganho")),
+    [lista]
+  );
+  const lostPairs = useMemo(
+    () => sumBySegment(lista.filter((o) => dbToUI[o.estagio as string] === "fechado_perdido")),
+    [lista]
+  );
+
+  const Donut: React.FC<{
+    data: [string, number][];
+    title: string;
+    hoverKey: string | null;
+    setHover: (s: string | null) => void;
+  }> = ({ data, title, hoverKey, setHover }) => {
+    const total = data.reduce((a, [, v]) => a + v, 0);
+    const cx = 80,
+      cy = 80,
+      r = 58,
+      circ = 2 * Math.PI * r;
+
+    let acc = 0;
+    return (
+      <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", padding: 12 }}>
+        <div style={{ fontWeight: 800, color: CONS.ink, marginBottom: 6 }}>{title}</div>
+        <svg width="160" height="160" viewBox="0 0 160 160" style={{ display: "block", margin: "0 auto" }}>
+          {/* fundo */}
+          <circle cx={cx} cy={cy} r={r} stroke="#eee" strokeWidth="18" fill="none" />
+          {data.map(([label, value], i) => {
+            const frac = total ? value / total : 0;
+            const len = frac * circ;
+            const dasharray = `${len} ${circ - len}`;
+            const dashoffset = -acc * circ;
+            acc += frac;
+
+            const color = CONS.donut[i % CONS.donut.length];
+            const isHover = hoverKey === label;
+
+            return (
+              <g key={label}>
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={r}
+                  stroke={color}
+                  strokeWidth={isHover ? 22 : 18}
+                  strokeDasharray={dasharray}
+                  strokeDashoffset={dashoffset}
+                  strokeLinecap="butt"
+                  fill="none"
+                  onMouseEnter={() => setHover(label)}
+                  onMouseLeave={() => setHover(null)}
+                  style={{ transition: "all .15s ease" }}
+                />
+              </g>
+            );
+          })}
+          {/* centro */}
+          <text x="80" y="86" textAnchor="middle" fontSize="14" fill={CONS.ink} fontWeight={800}>
+            {fmtCompact(total)}
+          </text>
+        </svg>
+
+        {/* legenda */}
+        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+          {data.map(([label, value], i) => {
+            const color = CONS.donut[i % CONS.donut.length];
+            const isHover = hoverKey === label;
+            return (
+              <div
+                key={label}
+                onMouseEnter={() => setHover(label)}
+                onMouseLeave={() => setHover(null)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: isHover ? "#f8fafc" : "transparent",
+                  borderRadius: 8,
+                  padding: "4px 6px",
+                  cursor: "default",
+                }}
+              >
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 2,
+                    background: color,
+                    display: "inline-block",
+                  }}
+                />
+                <span style={{ flex: 1, color: CONS.ink, fontWeight: 700 }}>{label}</span>
+                <span style={{ color: "#475569" }}>{fmtCompact(value)}</span>
+              </div>
+            );
+          })}
+          {!data.length && <div style={{ color: "#94a3b8", fontSize: 12 }}>Sem dados</div>}
+        </div>
+      </div>
+    );
+  };
+
   /** ===================== Render ===================== */
-  const StageCard = ({ id, label, qtd, total }: { id: StageUI; label: string; qtd: number; total: number }) => (
+  const StageCard = ({ label, qtd, total }: { label: string; qtd: number; total: number }) => (
     <div style={kpiCard}>
       <div style={{ fontWeight: 800, color: CONS.ink, marginBottom: 8 }}>{label}</div>
       <div style={{ color: "#1f2937" }}>Qtd: {qtd}</div>
@@ -554,22 +725,22 @@ export default function Oportunidades() {
           style={{ ...input, margin: 0, flex: 1 }}
           placeholder="Buscar por lead, vendedor, estágio ou telefone"
         />
-        <button onClick={() => setCreateOpen(true)} style={btnPrimary}>
+        <button onClick={() => setNewLeadOpen(true)} style={btnPrimary}>
           + Novo Lead
         </button>
-        <button onClick={criarOportunidade} style={btnGhost}>
+        <button onClick={abrirModalNovaOpp} style={btnGhost}>
           + Nova Oportunidade
         </button>
       </div>
 
-      {/* Pipeline por estágio (apenas 4 colunas) */}
+      {/* Pipeline por estágio (4 colunas) */}
       <div style={{ marginBottom: 16 }}>
         <div style={sectionTitle}>Pipeline por estágio</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
-          <StageCard id="novo" label="Novo" qtd={kpi.novo.qtd} total={kpi.novo.total} />
-          <StageCard id="qualificando" label="Qualificando" qtd={kpi.qualificando.qtd} total={kpi.qualificando.total} />
-          <StageCard id="proposta" label="Propostas" qtd={kpi.proposta.qtd} total={kpi.proposta.total} />
-          <StageCard id="negociacao" label="Negociação" qtd={kpi.negociacao.qtd} total={kpi.negociacao.total} />
+          <StageCard label="Novo" qtd={kpi.novo.qtd} total={kpi.novo.total} />
+          <StageCard label="Qualificando" qtd={kpi.qualificando.qtd} total={kpi.qualificando.total} />
+          <StageCard label="Propostas" qtd={kpi.proposta.qtd} total={kpi.proposta.total} />
+          <StageCard label="Negociação" qtd={kpi.negociacao.qtd} total={kpi.negociacao.total} />
         </div>
       </div>
 
@@ -603,6 +774,12 @@ export default function Oportunidades() {
             Próxima ›
           </button>
         </div>
+      </div>
+
+      {/* Finalizados – Donuts */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <Donut data={wonPairs} title="Fechado (Ganho)" hoverKey={hoverWon} setHover={setHoverWon} />
+        <Donut data={lostPairs} title="Fechado (Perdido)" hoverKey={hoverLost} setHover={setHoverLost} />
       </div>
 
       {/* ===== Modal: Tratar ===== */}
@@ -713,7 +890,7 @@ export default function Oportunidades() {
       )}
 
       {/* ===== Modal: Novo Lead ===== */}
-      {createOpen && (
+      {newLeadOpen && (
         <div style={modalBackdrop}>
           <div style={modalCard}>
             <h3 style={{ marginTop: 0 }}>Novo Lead</h3>
@@ -747,10 +924,109 @@ export default function Oportunidades() {
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={criarLeadENaSequencia} disabled={loading} style={btnPrimary}>
+              <button onClick={criarLead} disabled={loading} style={btnPrimary}>
                 {loading ? "Salvando..." : "Salvar lead"}
               </button>
-              <button onClick={() => setCreateOpen(false)} style={btnGhost}>
+              <button onClick={() => setNewLeadOpen(false)} style={btnGhost}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal: Nova Oportunidade ===== */}
+      {newOppOpen && (
+        <div style={modalBackdrop}>
+          <div style={modalCard}>
+            <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
+            <div style={grid2}>
+              <div>
+                <label style={label}>Selecionar um Lead</label>
+                <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={input}>
+                  <option value="">Selecione um Lead</option>
+                  {leads.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.nome} {l.telefone ? `— ${formatPhoneBR(l.telefone)}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Selecione um Vendedor</label>
+                <select value={vendId} onChange={(e) => setVendId(e.target.value)} style={input}>
+                  <option value="">Selecione um Vendedor</option>
+                  {vendedores.map((v) => (
+                    <option key={v.auth_user_id} value={v.auth_user_id}>
+                      {v.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Segmento</label>
+                <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={input}>
+                  {segmentos.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Valor do crédito (R$)</label>
+                <input value={valor} onChange={(e) => setValor(e.target.value)} style={input} placeholder="Ex.: 80.000,00" />
+              </div>
+
+              <div>
+                <label style={label}>Observações</label>
+                <input value={obs} onChange={(e) => setObs(e.target.value)} style={input} placeholder="Observação (opcional)" />
+              </div>
+
+              <div>
+                <label style={label}>Probabilidade</label>
+                <select value={String(score)} onChange={(e) => setScore(Number(e.target.value))} style={input}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {"★".repeat(n)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Estágio</label>
+                <select value={stageUI} onChange={(e) => setStageUI(e.target.value as StageUI)} style={input}>
+                  <option value="novo">Novo</option>
+                  <option value="qualificando">Qualificando</option>
+                  <option value="proposta">Proposta</option>
+                  <option value="negociacao">Negociação</option>
+                  <option value="fechado_ganho">Fechado (Ganho)</option>
+                  <option value="fechado_perdido">Fechado (Perdido)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>Data prevista (dd/mm/aaaa)</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="dd/mm/aaaa"
+                  value={expectedDate}
+                  onChange={(e) => setExpectedDate(maskDateBR(e.target.value))}
+                  style={input}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={criarOportunidade} disabled={loading} style={btnPrimary}>
+                {loading ? "Criando..." : "Criar oportunidade"}
+              </button>
+              <button onClick={() => setNewOppOpen(false)} style={btnGhost}>
                 Fechar
               </button>
             </div>
@@ -834,8 +1110,8 @@ export default function Oportunidades() {
             </p>
             <select
               style={input}
-              defaultValue={reassignLead.owner_id || ""}
-              onChange={(e) => doReassign(e.target.value)}
+              value={newOwnerId}
+              onChange={(e) => setNewOwnerId(e.target.value)}
             >
               <option value="">Selecionar usuário…</option>
               {vendedores.map((u) => (
@@ -844,9 +1120,12 @@ export default function Oportunidades() {
                 </option>
               ))}
             </select>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-              <button onClick={() => setReassignLead(null)} style={btnSecondary}>
-                Fechar
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10 }}>
+              <button onClick={() => setReassignLead(null)} style={btnGhost}>
+                Cancelar
+              </button>
+              <button onClick={doReassign} style={btnPrimary}>
+                Salvar
               </button>
             </div>
           </div>

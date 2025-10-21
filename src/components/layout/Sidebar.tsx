@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabaseClient'
 
 // Ícones
 import {
-  Users,
+  // Users, // removido (não há mais item Leads)
   UserCheck,
   Briefcase,
   Calendar,
@@ -23,8 +23,8 @@ type SidebarProps = {
   onNavigate?: () => void
 }
 
+// ❗ Removido o item /leads
 const items = [
-  { to: '/leads', label: 'Leads', icon: Users },
   { to: '/oportunidades', label: 'Oportunidades', icon: Briefcase },
   // (grupo Simuladores vem antes de Propostas)
   { to: '/propostas', label: 'Propostas', icon: FileText },
@@ -102,7 +102,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     >
       {/* Cabeçalho com logo */}
       <Link
-        to="/leads"
+        to="/oportunidades" {/* <- antes era /leads */}
         className="flex items-center gap-3 mb-6 px-2"
         onClick={() => onNavigate?.()}
       >
@@ -151,7 +151,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
               {simGroupOpen && (
                 <div id={simListId} className="ml-6 grid gap-1 mt-1">
-                  {/* Lista dinâmica por ID (compatível com Simuladores.tsx) */}
                   {adminsLoading && (
                     <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>
                   )}
@@ -159,7 +158,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   {!adminsLoading && admins.length > 0 && admins.map((ad) => (
                     <NavLink
                       key={ad.id}
-                      to={`/simuladores/${ad.id}`} // <-- sempre ID
+                      to={`/simuladores/${ad.id}`} // sempre ID
                       className={({ isActive }) =>
                         `px-3 py-2.5 rounded-2xl transition-colors
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
@@ -171,7 +170,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     </NavLink>
                   ))}
 
-                  {/* Fallback: se não houve admins, tenta apontar para Embracon por ID; se não existe, mostra apenas o botão Add */}
                   {!adminsLoading && admins.length === 0 && embraconId && (
                     <NavLink
                       to={`/simuladores/${embraconId}`}
@@ -186,7 +184,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     </NavLink>
                   )}
 
-                  {/* Botão para adicionar nova administradora */}
                   <NavLink
                     to="/simuladores/add"
                     className={({ isActive }) =>

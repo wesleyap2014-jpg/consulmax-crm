@@ -23,7 +23,7 @@ type SidebarProps = {
   onNavigate?: () => void
 }
 
-// ❗ Removido o item /leads
+// Removido o item /leads
 const items = [
   { to: '/oportunidades', label: 'Oportunidades', icon: Briefcase },
   // (grupo Simuladores vem antes de Propostas)
@@ -102,7 +102,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     >
       {/* Cabeçalho com logo */}
       <Link
-        to="/oportunidades" {/* <- antes era /leads */}
+        to="/oportunidades"
         className="flex items-center gap-3 mb-6 px-2"
         onClick={() => onNavigate?.()}
       >

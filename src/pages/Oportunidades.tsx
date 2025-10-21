@@ -2,15 +2,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/* =========================================
-   Tipos
-========================================= */
+/* ===================== Tipos ===================== */
 type Lead = {
   id: string;
   nome: string;
   owner_id: string | null;
   telefone?: string | null;
   email?: string | null;
+  origem?: string | null;
+  descricao?: string | null;
 };
 
 type Vendedor = { auth_user_id: string; nome: string };
@@ -40,9 +40,7 @@ type Opportunity = {
 
 type Me = { id: string; role: string } | null;
 
-/* =========================================
-   Constantes + helpers
-========================================= */
+/* ===================== Helpers ===================== */
 const SEGMENTOS = [
   "Automóvel",
   "Imóvel",
@@ -67,8 +65,6 @@ const toUI: Partial<Record<string, StageUI>> = {
   Proposta: "proposta",
   Negociação: "negociacao",
   Negociacao: "negociacao",
-  "Fechado (Ganho)": "fechado_ganho" as any,
-  "Fechado (Perdido)": "fechado_perdido" as any,
 };
 
 const fmtBRL = (n?: number) =>
@@ -99,7 +95,6 @@ const BRtoISO = (ddmmaa?: string) => {
   if (!d || !m || !y) return null;
   return `${y.padStart(4, "0")}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
 };
-
 const ISOtoBR = (iso?: string | null) => {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
@@ -112,21 +107,31 @@ const parseBRMoeda = (valor: string) => {
   return Number(limpo || 0);
 };
 
-/* =========================================
-   Component
-========================================= */
+// valores compactos: 1,2 K / 10,2 Mi / 150,5 Mi / 1,2 Bi
+function fmtCompactBR(n: number) {
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  const f = (v: number, suf: string) =>
+    `${sign}${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} ${suf}`;
+  if (abs >= 1_000_000_000) return f(abs / 1_000_000_000, "Bi");
+  if (abs >= 1_000_000) return f(abs / 1_000_000, "Mi");
+  if (abs >= 1_000) return f(abs / 1_000, "K");
+  return n.toLocaleString("pt-BR");
+}
+
+/* ===================== Componente ===================== */
 export default function Oportunidades() {
-  /* ---- estado base ---- */
   const [me, setMe] = useState<Me>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [lista, setLista] = useState<Opportunity[]>([]);
   const [search, setSearch] = useState("");
 
-  // modais
+  // editar oportunidade (Tratar)
   const [editOpp, setEditOpp] = useState<Opportunity | null>(null);
   const [editNote, setEditNote] = useState("");
 
+  // nova oportunidade
   const [newOppOpen, setNewOppOpen] = useState(false);
   const [newOppLeadId, setNewOppLeadId] = useState("");
   const [newOppVend, setNewOppVend] = useState("");
@@ -136,8 +141,8 @@ export default function Oportunidades() {
   const [newOppScore, setNewOppScore] = useState(1);
   const [newOppStage, setNewOppStage] = useState<StageUI>("novo");
   const [newOppDateBR, setNewOppDateBR] = useState("");
-  const [loading, setLoading] = useState(false);
 
+  // novo lead (overlay)
   const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [leadNome, setLeadNome] = useState("");
   const [leadTel, setLeadTel] = useState("");
@@ -145,18 +150,23 @@ export default function Oportunidades() {
   const [leadOrigem, setLeadOrigem] = useState("Site");
   const [leadDescricao, setLeadDescricao] = useState("");
 
-  // reatribuição
+  // reatribuir
   const [reassignOpen, setReassignOpen] = useState<Opportunity | null>(null);
   const [newOwnerId, setNewOwnerId] = useState("");
 
-  // paginação por coluna (5 por página)
-  const PAGE = 5;
-  const [pageByStage, setPageByStage] = useState<Record<StageUI, number>>({
-    novo: 1,
-    qualificando: 1,
-    proposta: 1,
-    negociacao: 1,
-  });
+  // editar lead inline (novo)
+  const [editLeadOpen, setEditLeadOpen] = useState<Lead | null>(null);
+  const [editLeadNome, setEditLeadNome] = useState("");
+  const [editLeadTel, setEditLeadTel] = useState("");
+  const [editLeadEmail, setEditLeadEmail] = useState("");
+  const [editLeadOrigem, setEditLeadOrigem] = useState("Site");
+  const [editLeadDesc, setEditLeadDesc] = useState("");
+
+  const [loading, setLoading] = useState(false);
+
+  // paginação única (5 por coluna)
+  const PER_STAGE = 5;
+  const [page, setPage] = useState(1);
 
   /* ---- usuário atual ---- */
   useEffect(() => {
@@ -173,7 +183,7 @@ export default function Oportunidades() {
     (async () => {
       const { data: l } = await supabase
         .from("leads")
-        .select("id, nome, owner_id, telefone, email")
+        .select("id, nome, owner_id, telefone, email, origem, descricao")
         .order("created_at", { ascending: false });
       setLeads(l || []);
 
@@ -190,9 +200,8 @@ export default function Oportunidades() {
     })();
   }, []);
 
-  /* ---- derive: KPI + filtros + grupos ---- */
+  /* ---- KPI + filtros ---- */
   const kpi = useMemo(() => {
-    const stages: StageUI[] = ["novo", "qualificando", "proposta", "negociacao"];
     const base: Record<StageUI, { qtd: number; total: number }> = {
       novo: { qtd: 0, total: 0 },
       qualificando: { qtd: 0, total: 0 },
@@ -201,7 +210,7 @@ export default function Oportunidades() {
     };
     for (const o of lista) {
       const ui = toUI[o.estagio as string];
-      if (ui && stages.includes(ui)) {
+      if (ui && ui in base) {
         base[ui].qtd += 1;
         base[ui].total += Number(o.valor_credito || 0);
       }
@@ -238,6 +247,14 @@ export default function Oportunidades() {
     }
     return out;
   }, [visiveis]);
+
+  // páginas totais = maior número de páginas entre as 4 colunas
+  const totalPages = useMemo(() => {
+    const counts = ["novo", "qualificando", "proposta", "negociacao"].map(
+      (k) => Math.ceil((grupos[k as StageUI]?.length || 0) / PER_STAGE) || 1
+    );
+    return Math.max(...counts, 1);
+  }, [grupos]);
 
   /* ---- ações ---- */
 
@@ -310,7 +327,8 @@ export default function Oportunidades() {
       valor_credito: Number(editOpp.valor_credito || 0),
       score: Number(editOpp.score || 1),
       estagio: normalizeEstagioDB(String(editOpp.estagio)),
-      expected_close_at: BRtoISO(ISOtoBR(editOpp.expected_close_at)),
+      // agora o estado já guarda ISO — não reconverta de novo
+      expected_close_at: editOpp.expected_close_at,
       observacao: hist || editOpp.observacao || null,
     };
 
@@ -329,7 +347,7 @@ export default function Oportunidades() {
     closeEdit();
   }
 
-  // novo lead -> já cria opportunity em "Novo"
+  // novo lead -> cria opp em "Novo"
   async function criarLeadENovaOpp() {
     const nome = leadNome.trim();
     const telefone = soDigitos(leadTel);
@@ -337,7 +355,6 @@ export default function Oportunidades() {
     if (!nome) return alert("Informe o nome.");
 
     setLoading(true);
-    // cria lead
     const { data: insLead, error: e1 } = await supabase
       .from("leads")
       .insert([
@@ -349,7 +366,7 @@ export default function Oportunidades() {
           descricao: leadDescricao ? leadDescricao.trim() : null,
         },
       ])
-      .select("id, owner_id")
+      .select("id, owner_id, nome, telefone, email, origem, descricao")
       .single();
 
     if (e1 || !insLead) {
@@ -357,6 +374,9 @@ export default function Oportunidades() {
       alert("Não foi possível criar o lead: " + (e1?.message || ""));
       return;
     }
+
+    // adiciona o lead localmente para aparecer nas listas
+    setLeads((s) => [insLead as Lead, ...s]);
 
     // cria oportunidade automática
     const { error: e2, data: opp } = await supabase
@@ -412,7 +432,43 @@ export default function Oportunidades() {
     setNewOwnerId("");
   }
 
-  // util: status de data (atrasado / hoje / próximos 5 dias)
+  // editar lead inline
+  function openEditLead(lead: Lead | undefined) {
+    if (!lead) return;
+    setEditLeadOpen(lead);
+    setEditLeadNome(lead.nome || "");
+    setEditLeadTel(lead.telefone || "");
+    setEditLeadEmail(lead.email || "");
+    setEditLeadOrigem(lead.origem || "Site");
+    setEditLeadDesc(lead.descricao || "");
+  }
+  async function saveEditLead() {
+    if (!editLeadOpen) return;
+    const payload = {
+      nome: editLeadNome.trim(),
+      telefone: soDigitos(editLeadTel) || null,
+      email: editLeadEmail.trim().toLowerCase() || null,
+      origem: editLeadOrigem || null,
+      descricao: editLeadDesc.trim() || null,
+    };
+    if (!payload.nome) return alert("Informe o nome do lead.");
+
+    const { error, data } = await supabase
+      .from("leads")
+      .update(payload)
+      .eq("id", editLeadOpen.id)
+      .select()
+      .single();
+    if (error) {
+      alert("Falha ao salvar: " + error.message);
+      return;
+    }
+    // atualiza lista local
+    setLeads((s) => s.map((l) => (l.id === editLeadOpen.id ? (data as Lead) : l)));
+    setEditLeadOpen(null);
+  }
+
+  // status de data (atrasado / hoje / breve)
   function dateBadge(iso?: string | null) {
     if (!iso) return null;
     const today = new Date();
@@ -420,15 +476,13 @@ export default function Oportunidades() {
     const diff = Math.floor((dt.getTime() - new Date(today.toDateString()).getTime()) / 86400000);
     if (diff < 0) return <Badge color="#dc2626">Atrasado</Badge>;
     if (diff === 0) return <Badge color="#0ea5e9">Hoje</Badge>;
-    if (diff > 0 && diff <= 5) return <Badge color="#f59e0b">Próx. 5 dias</Badge>;
+    if (diff > 0 && diff <= 5) return <Badge color="#B5A573">Breve</Badge>;
     return null;
   }
 
-  /* =========================================
-     UI
-  ========================================= */
+  /* ===================== UI ===================== */
 
-  /* ---------- Ícones simples (SVG inline) ---------- */
+  /* ---- Ícones ---- */
   const PhoneIcon = () => (
     <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M6.62 10.79a15.05 15.05 0 006.59 6.59l2.2-2.2a1 1 0 011.01-.24 11.36 11.36 0 003.56.57 1 1 0 011 1V21a1 1 0 01-1 1C10.4 22 2 13.6 2 3a1 1 0 011-1h3.5a1 1 0 011 1 11.36 11.36 0 00.57 3.56 1 1 0 01-.24 1.01l-2.2 2.2z" />
@@ -468,7 +522,24 @@ export default function Oportunidades() {
     </svg>
   );
 
-  /* ---------- Donuts simples com tooltip ---------- */
+  /* ---- Donut com paleta Consulmax + highlight ---- */
+  const BRAND = {
+    primary: "#A11C27",
+    grayBg: "#F5F5F5",
+    gold: "#B5A573",
+    navy: "#1E293F",
+    sand: "#E0CE8C",
+  };
+  const DONUT_COLORS = [
+    BRAND.primary,
+    BRAND.gold,
+    BRAND.navy,
+    "#C24A54",
+    "#8C7A3F",
+    "#334155",
+    "#D7C57A",
+  ];
+
   const Donut: React.FC<{
     title: string;
     data: { label: string; value: number }[];
@@ -488,6 +559,7 @@ export default function Oportunidades() {
               const dash = `${pct} ${100 - pct}`;
               const rot = (acc / 100) * 360;
               acc += pct;
+              const col = DONUT_COLORS[i % DONUT_COLORS.length];
               return (
                 <circle
                   key={i}
@@ -495,7 +567,7 @@ export default function Oportunidades() {
                   cy="21"
                   r="15.915"
                   fill="transparent"
-                  stroke={hover === i ? "#A11C27" : "#94a3b8"}
+                  stroke={hover === i ? BRAND.primary : col}
                   strokeWidth={hover === i ? 9 : 8}
                   strokeDasharray={dash}
                   strokeDashoffset="25"
@@ -506,41 +578,50 @@ export default function Oportunidades() {
                 />
               );
             })}
-            <text x="50%" y="50%" dominantBaseline="middle" textAnchor="middle" fontSize="6" fill="#0f172a">
-              {fmtBRL(total)}
+            <text
+              x="50%"
+              y="50%"
+              dominantBaseline="middle"
+              textAnchor="middle"
+              fontSize="5"
+              fill={BRAND.navy}
+              fontWeight={800}
+            >
+              R$ {fmtCompactBR(total)}
             </text>
           </svg>
 
           <div style={{ display: "grid", gap: 6 }}>
-            {data.map((d, i) => (
-              <div
-                key={i}
-                onMouseEnter={() => setHover(i)}
-                onMouseLeave={() => setHover(null)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "6px 8px",
-                  borderRadius: 8,
-                  background: hover === i ? "#f1f5f9" : "transparent",
-                  cursor: "default",
-                }}
-              >
+            {data.map((d, i) => {
+              const col = DONUT_COLORS[i % DONUT_COLORS.length];
+              return (
                 <div
-                  style={{ width: 10, height: 10, borderRadius: 2, background: hover === i ? "#A11C27" : "#94a3b8" }}
-                />
-                <div style={{ color: "#0f172a", minWidth: 160 }}>{d.label}</div>
-                <div style={{ color: "#334155", fontWeight: 700 }}>{fmtBRL(d.value)}</div>
-              </div>
-            ))}
+                  key={i}
+                  onMouseEnter={() => setHover(i)}
+                  onMouseLeave={() => setHover(null)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 8px",
+                    borderRadius: 8,
+                    background: hover === i ? BRAND.grayBg : "transparent",
+                    cursor: "default",
+                  }}
+                >
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: col }} />
+                  <div style={{ color: BRAND.navy, minWidth: 160 }}>{d.label}</div>
+                  <div style={{ color: "#334155", fontWeight: 700 }}>{fmtBRL(d.value)}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
     );
   };
 
-  /* ---------- Cabeçalho / KPIs ---------- */
+  /* ---- KPIs ---- */
   const CardsKPI = () => {
     const ORDER: { id: StageUI; title: string }[] = [
       { id: "novo", title: "Novo" },
@@ -554,7 +635,7 @@ export default function Oportunidades() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
           {ORDER.map(({ id, title }) => (
             <div key={id} style={kpiCard}>
-              <div style={{ fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>{title}</div>
+              <div style={{ fontWeight: 800, color: BRAND.navy, marginBottom: 8 }}>{title}</div>
               <div style={{ color: "#1f2937" }}>Qtd: {kpi[id]?.qtd || 0}</div>
               <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(kpi[id]?.total || 0)}</div>
             </div>
@@ -564,17 +645,11 @@ export default function Oportunidades() {
     );
   };
 
-  /* ---------- Coluna de oportunidades (com paginação) ---------- */
+  /* ---- Coluna de oportunidades (respeita paginação única) ---- */
   const Coluna = ({ id, title }: { id: StageUI; title: string }) => {
     const items = grupos[id] || [];
-    const page = pageByStage[id] || 1;
-    const pages = Math.max(1, Math.ceil(items.length / PAGE));
-    const from = (page - 1) * PAGE;
-    const rows = items.slice(from, from + PAGE);
-
-    function goto(p: number) {
-      setPageByStage((s) => ({ ...s, [id]: Math.min(Math.max(1, p), pages) }));
-    }
+    const offset = (page - 1) * PER_STAGE;
+    const rows = items.slice(offset, offset + PER_STAGE); // se não tiver, mostra vazio
 
     return (
       <div style={card}>
@@ -587,7 +662,7 @@ export default function Oportunidades() {
             return (
               <div key={o.id} style={itemCard}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ fontWeight: 700, color: "#0f172a" }}>{lead?.nome || "-"}</div>
+                  <div style={{ fontWeight: 700, color: BRAND.navy }}>{lead?.nome || "-"}</div>
                   <div style={{ color: "#334155", fontSize: 12 }}>{vendedor}</div>
                 </div>
 
@@ -614,9 +689,8 @@ export default function Oportunidades() {
                 </div>
 
                 <div style={iconBar}>
-                  {/* Telefone */}
                   {telHref(lead?.telefone) ? (
-                    <a href={telHref(lead?.telefone) as string} title="Ligar" style={iconBtn}>
+                    <a href={telHref(lead?.telefone) as string} title="Ligar" style={{ ...iconBtn, color: BRAND.navy }}>
                       <PhoneIcon />
                     </a>
                   ) : (
@@ -625,14 +699,13 @@ export default function Oportunidades() {
                     </span>
                   )}
 
-                  {/* WhatsApp */}
                   {toWa(lead?.telefone) ? (
                     <a
                       href={`https://wa.me/${toWa(lead?.telefone)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       title="WhatsApp"
-                      style={iconBtn}
+                      style={{ ...iconBtn, color: BRAND.primary }}
                     >
                       <WhatsappIcon />
                     </a>
@@ -642,39 +715,31 @@ export default function Oportunidades() {
                     </span>
                   )}
 
-                  {/* E-mail (desabilita quando não tem) */}
                   {lead?.email ? (
-                    <a href={`mailto:${lead.email}`} title="E-mail" style={iconBtn}>
+                    <a href={`mailto:${lead.email}`} title="E-mail" style={{ ...iconBtn, color: BRAND.gold }}>
                       <MailIcon />
                     </a>
                   ) : (
                     <span
                       title="Cadastrar e-mail"
-                      onClick={() => alert("Cadastre o e-mail do lead na tela de edição.")}
-                      style={{ ...iconBtn, ...iconDisabled, cursor: "not-allowed" }}
+                      onClick={() => openEditLead(lead)}
+                      style={{ ...iconBtn, ...iconDisabled, cursor: "pointer" }}
                     >
                       <MailIcon />
                     </span>
                   )}
 
-                  {/* Editar lead -> levamos para Leads ou abrimos um futuro modal; por ora, alerta */}
-                  <button
-                    title="Editar Lead"
-                    style={iconBtn}
-                    onClick={() => alert("Abra a guia Leads para editar os dados do Lead.")}
-                  >
+                  <button title="Editar Lead" style={{ ...iconBtn, color: BRAND.navy }} onClick={() => openEditLead(lead)}>
                     <EditIcon />
                   </button>
 
-                  {/* Reatribuir (apenas admin) */}
                   {me?.role === "admin" && (
-                    <button title="Reatribuir" style={iconBtn} onClick={() => setReassignOpen(o)}>
+                    <button title="Reatribuir" style={{ ...iconBtn, color: BRAND.gold }} onClick={() => setReassignOpen(o)}>
                       <SwapIcon />
                     </button>
                   )}
 
-                  {/* Tratar lead (editar opp) */}
-                  <button title="Tratar Lead" style={iconBtn} onClick={() => openEdit(o)}>
+                  <button title="Tratar Lead" style={{ ...iconBtn, color: BRAND.primary }} onClick={() => openEdit(o)}>
                     <TreatIcon />
                   </button>
                 </div>
@@ -682,36 +747,13 @@ export default function Oportunidades() {
             );
           })}
 
-          {!rows.length && <div style={muted}>Nenhuma oportunidade neste estágio.</div>}
-
-          {/* Paginação */}
-          {pages > 1 && (
-            <div style={pager}>
-              <button
-                style={{ ...btnSecondary, opacity: page <= 1 ? 0.5 : 1 }}
-                disabled={page <= 1}
-                onClick={() => goto(page - 1)}
-              >
-                ‹ Anterior
-              </button>
-              <span style={{ color: "#475569", fontSize: 12 }}>
-                Página {page} de {pages}
-              </span>
-              <button
-                style={{ ...btnSecondary, opacity: page >= pages ? 0.5 : 1 }}
-                disabled={page >= pages}
-                onClick={() => goto(page + 1)}
-              >
-                Próxima ›
-              </button>
-            </div>
-          )}
+          {!rows.length && <div style={muted}>Nenhuma oportunidade nesta página.</div>}
         </div>
       </div>
     );
   };
 
-  /* ---------- dados dos donuts ---------- */
+  /* ---- dados dos donuts ---- */
   const donutsData = useMemo(() => {
     const ganhos = lista.filter((o) => String(o.estagio) === "Fechado (Ganho)");
     const perdidos = lista.filter((o) => String(o.estagio) === "Fechado (Perdido)");
@@ -730,7 +772,6 @@ export default function Oportunidades() {
     };
   }, [lista]);
 
-  /* ---------- render ---------- */
   return (
     <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
       {/* Topbar */}
@@ -751,12 +792,33 @@ export default function Oportunidades() {
 
       <CardsKPI />
 
-      {/* Grade de oportunidades por estágio */}
+      {/* Grade por estágio com paginação única */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
         <Coluna id="novo" title="Novo" />
         <Coluna id="qualificando" title="Qualificando" />
         <Coluna id="proposta" title="Propostas" />
         <Coluna id="negociacao" title="Negociação" />
+      </div>
+
+      {/* Paginação única */}
+      <div style={pager}>
+        <button
+          style={{ ...btnSecondary, opacity: page <= 1 ? 0.5 : 1 }}
+          disabled={page <= 1}
+          onClick={() => setPage((p) => Math.max(1, p - 1)))}
+        >
+          ‹ Anterior
+        </button>
+        <span style={{ color: "#475569", fontSize: 12 }}>
+          Página {page} de {totalPages}
+        </span>
+        <button
+          style={{ ...btnSecondary, opacity: page >= totalPages ? 0.5 : 1 }}
+          disabled={page >= totalPages}
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1)))}
+        >
+          Próxima ›
+        </button>
       </div>
 
       {/* Finalizados (donuts) */}
@@ -765,7 +827,7 @@ export default function Oportunidades() {
         <Donut title="Fechado (Perdido)" data={donutsData.perdidos} />
       </div>
 
-      {/* Modal: Tratar Lead (editar opp) */}
+      {/* Modal: Tratar Lead */}
       {editOpp && (
         <div style={modalBackdrop} onClick={closeEdit}>
           <div style={modalCard} onClick={(e) => e.stopPropagation()}>
@@ -982,7 +1044,7 @@ export default function Oportunidades() {
         </div>
       )}
 
-      {/* Modal: Novo Lead (que já cria oportunidade em Novo) */}
+      {/* Modal: Novo Lead */}
       {newLeadOpen && (
         <div style={modalBackdrop} onClick={() => setNewLeadOpen(false)}>
           <div style={modalCard} onClick={(e) => e.stopPropagation()}>
@@ -1061,13 +1123,58 @@ export default function Oportunidades() {
           </div>
         </div>
       )}
+
+      {/* Modal: Editar Lead inline */}
+      {editLeadOpen && (
+        <div style={modalBackdrop} onClick={() => setEditLeadOpen(null)}>
+          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>Editar Lead</h3>
+            <div style={grid2}>
+              <div style={{ gridColumn: "1 / span 2" }}>
+                <label style={labelStyle}>Nome</label>
+                <input value={editLeadNome} onChange={(e) => setEditLeadNome(e.target.value)} style={input} autoFocus />
+              </div>
+              <div>
+                <label style={labelStyle}>Telefone</label>
+                <input value={editLeadTel} onChange={(e) => setEditLeadTel(e.target.value)} style={input} />
+              </div>
+              <div>
+                <label style={labelStyle}>E-mail</label>
+                <input value={editLeadEmail} onChange={(e) => setEditLeadEmail(e.target.value)} style={input} />
+              </div>
+              <div>
+                <label style={labelStyle}>Origem</label>
+                <select value={editLeadOrigem} onChange={(e) => setEditLeadOrigem(e.target.value)} style={input}>
+                  <option value="Site">Site</option>
+                  <option value="Redes Sociais">Redes Sociais</option>
+                  <option value="Indicação">Indicação</option>
+                  <option value="Whatsapp">Whatsapp</option>
+                  <option value="Parceria">Parceria</option>
+                  <option value="Relacionamento">Relacionamento</option>
+                </select>
+              </div>
+              <div style={{ gridColumn: "1 / span 2" }}>
+                <label style={labelStyle}>Descrição</label>
+                <textarea value={editLeadDesc} onChange={(e) => setEditLeadDesc(e.target.value)} style={{ ...input, minHeight: 80 }} />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={saveEditLead} style={btnPrimary}>
+                Salvar
+              </button>
+              <button onClick={() => setEditLeadOpen(null)} style={btnGhost}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/* =========================================
-   Estilos
-========================================= */
+/* ===================== Estilos ===================== */
 const sectionTitle: React.CSSProperties = {
   fontSize: 14,
   fontWeight: 800,
@@ -1076,7 +1183,6 @@ const sectionTitle: React.CSSProperties = {
   letterSpacing: 0.2,
   textTransform: "uppercase",
 };
-
 const card: React.CSSProperties = {
   background: "#fff",
   borderRadius: 16,
@@ -1084,14 +1190,12 @@ const card: React.CSSProperties = {
   padding: 16,
   marginBottom: 16,
 };
-
 const kpiCard: React.CSSProperties = {
   background: "#fff",
   borderRadius: 14,
   boxShadow: "0 2px 10px rgba(0,0,0,.06)",
   padding: 14,
 };
-
 const itemCard: React.CSSProperties = {
   border: "1px solid #e5e7eb",
   borderRadius: 12,
@@ -1099,15 +1203,8 @@ const itemCard: React.CSSProperties = {
   display: "grid",
   gap: 8,
 };
-
 const muted: React.CSSProperties = { color: "#64748b", fontSize: 12 };
-
-const iconBar: React.CSSProperties = {
-  display: "flex",
-  gap: 8,
-  alignItems: "center",
-  marginTop: 6,
-};
+const iconBar: React.CSSProperties = { display: "flex", gap: 8, alignItems: "center", marginTop: 6 };
 const iconBtn: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -1117,18 +1214,16 @@ const iconBtn: React.CSSProperties = {
   borderRadius: 8,
   border: "1px solid #e5e7eb",
   background: "#fff",
-  color: "#334155",
   cursor: "pointer",
 };
 const iconDisabled: React.CSSProperties = { opacity: 0.5 };
-
 const pager: React.CSSProperties = {
   display: "flex",
   gap: 8,
   alignItems: "center",
   justifyContent: "flex-end",
+  margin: "8px 0 16px",
 };
-
 const input: React.CSSProperties = {
   width: "100%",
   padding: 10,
@@ -1137,7 +1232,6 @@ const input: React.CSSProperties = {
   outline: "none",
   background: "#fff",
 };
-
 const labelStyle: React.CSSProperties = {
   display: "block",
   fontSize: 12,
@@ -1145,13 +1239,7 @@ const labelStyle: React.CSSProperties = {
   color: "#475569",
   marginBottom: 6,
 };
-
-const grid2: React.CSSProperties = {
-  display: "grid",
-  gap: 12,
-  gridTemplateColumns: "1fr 1fr",
-};
-
+const grid2: React.CSSProperties = { display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" };
 const btnPrimary: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
@@ -1179,7 +1267,6 @@ const btnGhost: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 700,
 };
-
 const modalBackdrop: React.CSSProperties = {
   position: "fixed",
   inset: 0,
@@ -1202,7 +1289,6 @@ const modalSmall: React.CSSProperties = {
   borderRadius: 16,
   boxShadow: "0 20px 60px rgba(0,0,0,.3)",
 };
-
 const Badge: React.FC<{ color: string; children: React.ReactNode }> = ({ color, children }) => (
   <span
     style={{
@@ -1218,7 +1304,7 @@ const Badge: React.FC<{ color: string; children: React.ReactNode }> = ({ color, 
   </span>
 );
 
-/* ---------- helpers locais ---------- */
+/* ---- helper ---- */
 function normalizeEstagioDB(label: string): EstagioDB {
   const v = (label || "").toLowerCase();
   if (v.includes("fechado") && v.includes("ganho")) return "Fechado (Ganho)";

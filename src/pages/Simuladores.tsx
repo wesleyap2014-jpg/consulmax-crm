@@ -306,17 +306,16 @@ export default function Simuladores() {
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
   
   useEffect(() => {
-  setActiveAdminId(routeAdminId);
-}, [routeAdminId]);
+    setActiveAdminId(routeAdminId);
+  }, [routeAdminId]);
 
-useEffect(() => {
-  if (!routeAdminId && !activeAdminId && admins.length) {
-    setActiveAdminId(admins[0].id);
-  }
-}, [routeAdminId, activeAdminId, admins]);
+  useEffect(() => {
+    if (!routeAdminId && !activeAdminId && admins.length) {
+      setActiveAdminId(admins[0].id);
+    }
+  }, [routeAdminId, activeAdminId, admins]);
 
-const [mgrOpen, setMgrOpen] = useState(false);
-
+  const [mgrOpen, setMgrOpen] = useState(false);
 
   // seleção Embracon
   const [leadId, setLeadId] = useState<string>("");
@@ -348,11 +347,11 @@ const [mgrOpen, setMgrOpen] = useState(false);
   // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
 
-// URL: /simuladores/:id?setup=1
-const adminId = routeAdminId;   // reaproveita o id já lido lá em cima
-const openSetup = setup;        // reaproveita o boolean já calculado
-const { pathname: _pathname } = useLocation();
-const showTopChips = false;     // ou pathname === "/simuladores"
+  // URL: /simuladores/:id?setup=1
+  const adminId = routeAdminId;   // reaproveita o id já lido lá em cima
+  const openSetup = setup;        // reaproveita o boolean já calculado
+  const { pathname: _pathname } = useLocation();
+  const showTopChips = false;     // ou pathname === "/simuladores"
 
   useEffect(() => {
     (async () => {
@@ -362,27 +361,27 @@ const showTopChips = false;     // ou pathname === "/simuladores"
         supabase.from("sim_tables").select("*"),
         supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
-     setAdmins(a ?? []);
-setTables(t ?? []);
-setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
+      setAdmins(a ?? []);
+      setTables(t ?? []);
+      setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-// 1) padrão: Embracon > ou o primeiro da lista
-const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
-let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
+      // 1) padrão: Embracon > ou o primeiro da lista
+      const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
+      let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
 
-// 2) se a URL tiver um adminId válido, priorize ele
-if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
-  nextActiveId = adminId as string;
-}
-setActiveAdminId(nextActiveId);
+      // 2) se a URL tiver um adminId válido, priorize ele
+      if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
+        nextActiveId = adminId as string;
+      }
+      setActiveAdminId(nextActiveId);
 
-// 3) terminou o loading
-setLoading(false);
+      // 3) terminou o loading
+      setLoading(false);
 
-// 4) se a URL tiver ?setup=1, abre o modal de tabelas
-if (openSetup) {
-  setTimeout(() => setMgrOpen(true), 0);
-}
+      // 4) se a URL tiver ?setup=1, abre o modal de tabelas
+      if (openSetup) {
+        setTimeout(() => setMgrOpen(true), 0);
+      }
     })();
   }, []);
 
@@ -516,6 +515,8 @@ if (openSetup) {
       lance_ofertado_pct: lanceOfertPct,
       lance_embutido_pct: lanceEmbutPctValid,
       parcela_contemplacao: parcContemplacao,
+
+      // ====== valores calculados ======
       valor_categoria: calc.valorCategoria,
       parcela_ate_1_ou_2: calc.parcelaAte,
       parcela_demais: calc.parcelaDemais,
@@ -529,6 +530,10 @@ if (openSetup) {
       parcela_escolhida: calc.parcelaEscolhida,
       saldo_devedor_final: calc.saldoDevedorFinal,
       novo_prazo: calc.novoPrazo,
+
+      // ====== NOVO: persistir ADM/FR usados (fração 0–1) ======
+      adm_tax_pct: tabelaSelecionada.taxa_adm_pct,
+      fr_tax_pct: tabelaSelecionada.fundo_reserva_pct,
     };
 
     const { data, error } = await supabase
@@ -708,51 +713,51 @@ Vantagens
   return (
     <div className="p-6 space-y-4">
       {/* topo: admins + botões */}
-<div className="flex flex-wrap items-center gap-2">
-  {/* Chips de administradoras (escondidos quando showTopChips === false) */}
-  {showTopChips && (
-    <div className="flex flex-wrap gap-2">
-      {admins.map((a) => (
-        <Button
-          key={a.id}
-          variant={activeAdminId === a.id ? "default" : "secondary"}
-          onClick={() => setActiveAdminId(a.id)}
-          className="h-10 rounded-2xl px-4"
-        >
-          {a.name}
-        </Button>
-      ))}
-    </div>
-  )}
-
-  <div className="ml-auto flex items-center gap-2">
-    {activeAdmin && (
-      <>
-        {/* ✅ Mantido SEM depender do showTopChips */}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setMgrOpen(true)}
-          className="h-10 rounded-2xl px-4"
-        >
-          Gerenciar Tabelas
-        </Button>
-
-        {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
-        {showTopChips && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => alert("Em breve: adicionar administradora.")}
-            className="h-10 rounded-2xl px-4 whitespace-nowrap"
-          >
-            <Plus className="h-4 w-4 mr-1" /> + Add Administradora
-          </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Chips de administradoras (escondidos quando showTopChips === false) */}
+        {false && (
+          <div className="flex flex-wrap gap-2">
+            {admins.map((a) => (
+              <Button
+                key={a.id}
+                variant={activeAdminId === a.id ? "default" : "secondary"}
+                onClick={() => setActiveAdminId(a.id)}
+                className="h-10 rounded-2xl px-4"
+              >
+                {a.name}
+              </Button>
+            ))}
+          </div>
         )}
-      </>
-    )}
-  </div>
-</div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {activeAdmin && (
+            <>
+              {/* ✅ Mantido SEM depender do showTopChips */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setMgrOpen(true)}
+                className="h-10 rounded-2xl px-4"
+              >
+                Gerenciar Tabelas
+              </Button>
+
+              {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
+              {false && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => alert("Em breve: adicionar administradora.")}
+                  className="h-10 rounded-2xl px-4 whitespace-nowrap"
+                >
+                  <Plus className="h-4 w-4 mr-1" /> + Add Administradora
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
 
       {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
@@ -1301,7 +1306,7 @@ function TableFormOverlay({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/50 z={[`60`]} flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{initial ? "Editar Tabela" : "Nova Tabela"}</div>
@@ -1399,7 +1404,7 @@ type EmbraconProps = {
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
-const [leadOpen, setLeadOpen] = useState(false);
+  const [leadOpen, setLeadOpen] = useState(false);
   const [leadQuery, setLeadQuery] = useState("");
 
   const filteredLeads = useMemo(() => {
@@ -1419,8 +1424,9 @@ const [leadOpen, setLeadOpen] = useState(false);
 
   useEffect(() => {
     if (!leadOpen) setLeadQuery("");
-  }, [leadOpen]);  
-return (
+  }, [leadOpen]);
+
+  return (
     <div className="space-y-6">
       {/* Lead */}
       <Card>
@@ -1428,60 +1434,59 @@ return (
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-             <Label>Selecionar Lead</Label>
-<Popover onOpenChange={setLeadOpen}>
-  <PopoverButton className="w-full justify-between h-10">
-    {p.leadInfo?.nome || "Escolher lead"}
-    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-  </PopoverButton>
+              <Label>Selecionar Lead</Label>
+              <Popover onOpenChange={setLeadOpen}>
+                <PopoverButton className="w-full justify-between h-10">
+                  {p.leadInfo?.nome || "Escolher lead"}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                </PopoverButton>
 
-  <PopoverContent className="min-w-[260px] p-2 z-50">
-    {/* Busca */}
-    <div className="flex items-center gap-2 mb-2">
-      <Search className="h-4 w-4 opacity-60" />
-      <Input
-        placeholder="Buscar lead por nome ou telefone..."
-        value={leadQuery}
-        onChange={(e) => setLeadQuery(e.target.value)}
-        className="h-8"
-      />
-    </div>
+                <PopoverContent className="min-w-[260px] p-2 z-50">
+                  {/* Busca */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <Search className="h-4 w-4 opacity-60" />
+                    <Input
+                      placeholder="Buscar lead por nome ou telefone..."
+                      value={leadQuery}
+                      onChange={(e) => setLeadQuery(e.target.value)}
+                      className="h-8"
+                    />
+                  </div>
 
-    {/* Lista */}
-<div className="max-h-64 overflow-y-auto space-y-1">
-  {filteredLeads.length > 0 ? (
-    filteredLeads.map((l) => (
-      <PopoverClose asChild key={l.id}>
-        <button
-          type="button"
-          className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-          onClick={() => {
-            p.setLeadId(l.id);
-            setLeadQuery(""); // limpa a busca
-          }}
-        >
-          <div className="text-sm font-medium">{l.nome}</div>
-          {l.telefone && (
-            <div className="text-xs text-muted-foreground">{l.telefone}</div>
-          )}
-        </button>
-      </PopoverClose>
-    ))
-  ) : (
-    <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-      Nenhum lead encontrado
-    </div>
-  )}
-</div>
-</PopoverContent>
-</Popover>
+                  {/* Lista */}
+                  <div className="max-h-64 overflow-y-auto space-y-1">
+                    {filteredLeads.length > 0 ? (
+                      filteredLeads.map((l) => (
+                        <PopoverClose asChild key={l.id}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+                            onClick={() => {
+                              p.setLeadId(l.id);
+                              setLeadQuery(""); // limpa a busca
+                            }}
+                          >
+                            <div className="text-sm font-medium">{l.nome}</div>
+                            {l.telefone && (
+                              <div className="text-xs text-muted-foreground">{l.telefone}</div>
+                            )}
+                          </button>
+                        </PopoverClose>
+                      ))
+                    ) : (
+                      <div className="text-sm text-muted-foreground px-2 py-6 text-center">
+                        Nenhum lead encontrado
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
 
-{p.leadInfo && (
-  <p className="text-xs text-muted-foreground mt-1">
-    {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
-  </p>
-)}
-
+              {p.leadInfo && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
+                </p>
+              )}
             </div>
             <div>
               <Label>Nº do Grupo (opcional)</Label>

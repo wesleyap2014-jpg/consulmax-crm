@@ -13,6 +13,10 @@ import {
   UserPlus,
 } from "lucide-react";
 
+/* ========================= Views existentes ========================= */
+const SCHEMA_CLIENTES_VIEW = "v_clientes_list";     // public.v_clientes_list
+const SCHEMA_VENDAS_VIEW   = "v_vendas_cliente";    // public.v_vendas_cliente
+
 /* ========================= Tipos ========================= */
 type Cliente = {
   id: string;
@@ -23,6 +27,8 @@ type Cliente = {
   data_nascimento?: string | null; // YYYY-MM-DD
   observacoes?: string | null;
   created_at?: string | null;
+  _source?: "clientes" | "vendas";
+  _source_id?: string | null;
 };
 
 /* ========================= Utils ========================= */
@@ -104,13 +110,13 @@ const isBirthdayThisMonth = (iso?: string | null) => {
 };
 
 const isBirthdayThisWeek = (iso?: string | null) => {
-  // semana sex→qui (Consulmax)
+  // semana sex→qui
   if (!iso) return false;
   const now = new Date();
   const toUTC0 = (x: Date) =>
     new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()));
   const today = toUTC0(now);
-  const weekday = today.getUTCDay(); // 0..6
+  const weekday = today.getUTCDay();
   const offsetToFri = ((weekday - 5 + 7) % 7);
   const start = new Date(today.getTime() - offsetToFri * 86400000);
   const end = new Date(start.getTime() + 6 * 86400000);
@@ -119,10 +125,8 @@ const isBirthdayThisWeek = (iso?: string | null) => {
   return thisYear >= start && thisYear <= end;
 };
 
-function copyToClipboard(text: string) {
-  try {
-    navigator.clipboard?.writeText(text);
-  } catch { /* ignore */ }
+function normalizeString(s?: string | null) {
+  return (s || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 }
 
 /* ========================= Componente ========================= */
@@ -175,7 +179,7 @@ export default function ClientesPage() {
 
   /* ========================= Effects ========================= */
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 400);
+    const t = setTimeout(() => setDebounced(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
 
@@ -188,29 +192,100 @@ export default function ClientesPage() {
     loadIncompletos();
   }, []);
 
+  /* ========================= Mapeamentos ========================= */
+  function mapFromClientesView(r: any): Cliente {
+    // Campos usuais da v_clientes_list
+    const cpf_dig =
+      r.cpf_dig ??
+      (r.cpf ? String(r.cpf).replace(/\D/g, "") : null);
+    return {
+      id: r.id,
+      nome: r.nome ?? "",
+      cpf_dig,
+      telefone: r.telefone ?? null,
+      email: r.email ?? null,
+      data_nascimento: r.data_nascimento ?? null,
+      observacoes: r.observacoes ?? null,
+      created_at: r.created_at ?? null,
+      _source: "clientes",
+      _source_id: r.id ?? null,
+    };
+  }
+
+  function mapFromVendasView(r: any): Cliente {
+    // Tentamos diferentes convenções de colunas comuns nessa view
+    const nome = r.nome ?? r.cliente_nome ?? r.lead_nome ?? "";
+    const tel  = r.telefone ?? r.phone ?? r.celular ?? null;
+    const mail = r.email ?? r.lead_email ?? null;
+    const cpf  =
+      r.cpf_dig ??
+      (r.cpf ? String(r.cpf).replace(/\D/g, "") : null) ??
+      (r.cpf_cnpj ? String(r.cpf_cnpj).replace(/\D/g, "") : null);
+
+    return {
+      id: r.id, // id da venda como id provisório na listagem
+      nome,
+      cpf_dig: cpf,
+      telefone: tel,
+      email: mail,
+      data_nascimento: r.data_nascimento ?? r.nascimento ?? null,
+      observacoes: r.observacoes ?? r.descricao ?? null,
+      created_at: r.created_at ?? r.encarteirada_em ?? null,
+      _source: "vendas",
+      _source_id: r.id ?? null,
+    };
+  }
+
+  function dedupePreferClientes(rows: Cliente[]): Cliente[] {
+    // Prioridade: clientes > vendas
+    const byKey = new Map<string, Cliente>();
+
+    const keyFor = (c: Cliente) => {
+      if (c.cpf_dig) return `CPF:${c.cpf_dig}`;
+      const nn = normalizeString(c.nome);
+      const ph = onlyDigits(c.telefone || "");
+      const em = (c.email || "").toLowerCase();
+      return `NF:${nn}|${ph}|${em}`;
+    };
+
+    for (const row of rows) {
+      const k = keyFor(row);
+      const existing = byKey.get(k);
+      if (!existing) {
+        byKey.set(k, row);
+        continue;
+      }
+      const score = (c: Cliente) => (c._source === "clientes" ? 2 : 1);
+      byKey.set(k, score(row) >= score(existing) ? row : existing);
+    }
+    return Array.from(byKey.values());
+  }
+
   /* ========================= Loads ========================= */
   async function loadIncompletos() {
     try {
-      const { data, error } = await supabase
-        .from("v_clientes_all")
-        .select("*")
-        .or("email.is.null,telefone.is.null,observacoes.is.null")
-        .order("created_at", { ascending: false })
-        .limit(8);
-      if (error) throw error;
+      // Trazemos um pouco de cada fonte e filtramos client-side por faltantes
+      const [{ data: dc }, { data: dv }] = await Promise.all([
+        supabase.from(SCHEMA_CLIENTES_VIEW).select("*").range(0, 199),
+        supabase.from(SCHEMA_VENDAS_VIEW).select("*").range(0, 199),
+      ]);
 
-      setIncompletos(
-        (data || []).map((r: any) => ({
-          id: r.id,
-          nome: r.nome,
-          cpf_dig: r.cpf_dig ?? null,
-          telefone: r.telefone,
-          email: r.email,
-          data_nascimento: r.data_nascimento,
-          observacoes: r.observacoes ?? null,
-          created_at: r.created_at ?? null,
-        }))
+      let rows: Cliente[] = [];
+      rows.push(...(dc || []).map(mapFromClientesView));
+      rows.push(...(dv || []).map(mapFromVendasView));
+
+      rows = dedupePreferClientes(rows);
+
+      const faltantes = rows.filter(
+        (c) => !c.telefone || !c.email || !c.observacoes
       );
+
+      // Ordena por mais recentes
+      faltantes.sort((a, b) =>
+        (b.created_at || "").localeCompare(a.created_at || "")
+      );
+
+      setIncompletos(faltantes.slice(0, 8));
     } catch (e: any) {
       pushToast("error", "Erro ao buscar novos clientes: " + (e?.message || e));
     }
@@ -219,91 +294,53 @@ export default function ClientesPage() {
   async function load(target = 1, term = "") {
     setLoading(true);
     try {
-      const from = (target - 1) * PAGE;
-      const to = from + PAGE - 1;
+      // Carrega lote “largo” e filtra/ordena no cliente (evita depender dos nomes de colunas de cada view)
+      const [{ data: dc, error: ec }, { data: dv, error: ev }] = await Promise.all([
+        supabase.from(SCHEMA_CLIENTES_VIEW).select("*").range(0, 999),
+        supabase.from(SCHEMA_VENDAS_VIEW).select("*").range(0, 999),
+      ]);
+      if (ec) throw ec;
+      if (ev) throw ev;
 
-      let q = supabase
-        .from("v_clientes_all")
-        .select("*", { count: "exact" });
+      let rows: Cliente[] = [];
+      rows.push(...(dc || []).map(mapFromClientesView));
+      rows.push(...(dv || []).map(mapFromVendasView));
 
-      // Busca **somente por nome**
+      // Busca por NOME (somente)
       if (term) {
-        q = q.ilike("nome", `%${term}%`);
+        const nterm = normalizeString(term);
+        rows = rows.filter((r) => normalizeString(r.nome).includes(nterm));
       }
 
-      // filtros de aniversário
-      if (filterWeek || filterMonth || sortBy === "aniversario") {
-        const { data, error } = await q.range(0, 999);
-        if (error) throw error;
-        let rows = (data || []) as any[];
+      // Filtros de aniversário (client-side)
+      if (filterWeek) rows = rows.filter((r) => isBirthdayThisWeek(r.data_nascimento));
+      if (filterMonth) rows = rows.filter((r) => isBirthdayThisMonth(r.data_nascimento));
 
-        if (filterWeek) rows = rows.filter((r) => isBirthdayThisWeek(r.data_nascimento));
-        if (filterMonth) rows = rows.filter((r) => isBirthdayThisMonth(r.data_nascimento));
+      // Dedupe (clientes > vendas)
+      rows = dedupePreferClientes(rows);
 
-        rows = rows.map((r) => ({
-          id: r.id,
-          nome: r.nome,
-          cpf_dig: r.cpf_dig ?? null,
-          telefone: r.telefone,
-          email: r.email,
-          data_nascimento: r.data_nascimento,
-          observacoes: r.observacoes ?? null,
-          created_at: r.created_at ?? null,
-        }));
-
-        if (sortBy === "aniversario") {
-          rows.sort(
-            (a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento)
-          );
-        } else if (sortBy === "nomeDesc") {
-          rows.sort((a, b) => (b.nome || "").localeCompare(a.nome || "", "pt-BR"));
-        } else {
-          rows.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
-        }
-
-        setTotal(rows.length);
-        setClientes(rows.slice(from, to + 1));
-        setPage(target);
-      } else {
-        // ordenação simples no server por nome
-        if (sortBy === "nomeAsc") q = q.order("nome", { ascending: true });
-        if (sortBy === "nomeDesc") q = q.order("nome", { ascending: false });
-
-        const { data, error, count } = await q.range(from, to);
-        if (error) throw error;
-
-        setClientes(
-          (data || []).map((r: any) => ({
-            id: r.id,
-            nome: r.nome,
-            cpf_dig: r.cpf_dig ?? null,
-            telefone: r.telefone,
-            email: r.email,
-            data_nascimento: r.data_nascimento,
-            observacoes: r.observacoes ?? null,
-            created_at: r.created_at ?? null,
-          }))
+      // Ordenação
+      if (sortBy === "aniversario") {
+        rows.sort(
+          (a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento)
         );
-        setTotal(count || 0);
-        setPage(target);
+      } else if (sortBy === "nomeDesc") {
+        rows.sort((a, b) => (b.nome || "").localeCompare(a.nome || "", "pt-BR"));
+      } else {
+        rows.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
       }
+
+      // Paginação client-side
+      const from = (target - 1) * PAGE;
+      const to = from + PAGE;
+      setTotal(rows.length);
+      setClientes(rows.slice(from, to));
+      setPage(target);
     } catch (e: any) {
       pushToast("error", e.message || "Erro ao listar clientes.");
     } finally {
       setLoading(false);
     }
-  }
-
-  function sortRows(rows: Cliente[]) {
-    if (sortBy === "aniversario") {
-      return [...rows].sort(
-        (a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento)
-      );
-    }
-    if (sortBy === "nomeDesc") {
-      return [...rows].sort((a, b) => (b.nome || "").localeCompare(a.nome || "", "pt-BR"));
-    }
-    return [...rows].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
   }
 
   /* ========================= Create / Edit ========================= */
@@ -325,17 +362,17 @@ export default function ClientesPage() {
     try {
       setLoading(true);
 
-      // Verifica existência por CPF na view unificada (já pega clientes/leads/vendas)
+      // Checa duplicidade por CPF na view de clientes (oficial). Se quiser, dá para olhar também em vendas.
       const { data: exists, error: exErr } = await supabase
-        .from("v_clientes_all")
-        .select("id, nome")
+        .from(SCHEMA_CLIENTES_VIEW)
+        .select("id, nome, cpf_dig")
         .eq("cpf_dig", cpf)
         .limit(1);
       if (exErr) throw exErr;
       if (exists && exists.length) {
         const c = exists[0];
-        pushToast("info", `Já existe um registro com este CPF: ${c.nome}. Abrindo para edição…`);
-        openEdit({ id: c.id, nome: c.nome, cpf_dig: cpf, telefone: "", email: "", data_nascimento: null, observacoes: null });
+        pushToast("info", `Já existe um cliente com este CPF: ${c.nome}. Abrindo para edição…`);
+        openEdit({ id: c.id, nome: c.nome, cpf_dig: cpf });
         return;
       }
 
@@ -389,6 +426,7 @@ export default function ClientesPage() {
     setEditing(null);
   }
 
+  // ViaCEP quando CEP completo
   useEffect(() => {
     const d = onlyDigits(editCEP);
     if (editing && d.length === 8) {
@@ -424,7 +462,7 @@ export default function ClientesPage() {
         data_nascimento: editBirth || null,
         observacoes: editObs.trim() || null,
       };
-      // Se você criar colunas de endereço em "clientes", descomente:
+      // Se criar colunas de endereço em "clientes", descomente:
       // update.cep        = onlyDigits(editCEP) || null;
       // update.logradouro = editLogr || null;
       // update.numero     = editNumero || null;
@@ -646,10 +684,17 @@ export default function ClientesPage() {
                 const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
                 const contatoStr = `${c.nome} | ${phone || "s/ telefone"} | ${c.email || "s/ e-mail"}`;
                 return (
-                  <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
+                  <tr key={`${c._source || ""}-${c.id}`} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
                     <td className="p-2">
                       <div className="font-medium">{c.nome}</div>
-                      <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
+                      <div className="text-xs text-slate-500">
+                        CPF: {c.cpf_dig || "—"}
+                        {c._source === "vendas" && (
+                          <span className="ml-2 inline-block rounded-full border px-2 py-0.5 text-[10px] uppercase opacity-70">
+                            Vendas
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="p-2">
                       <div className="flex items-center gap-2">
@@ -672,11 +717,7 @@ export default function ClientesPage() {
                     <td className="p-2">{formatBRDate(c.data_nascimento)}</td>
                     <td className="p-2">
                       <div className="flex items-center justify-center gap-2">
-                        <button
-                          className="icon-btn"
-                          title="Editar"
-                          onClick={() => openEdit(c)}
-                        >
+                        <button className="icon-btn" title="Editar" onClick={() => openEdit(c)}>
                           <Pencil className="h-4 w-4" />
                         </button>
                         <button
@@ -739,52 +780,17 @@ export default function ClientesPage() {
           <div className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(900px,92vw)] bg-white rounded-2xl shadow-xl p-4">
             <h3 className="font-semibold mb-2">Editar Cliente</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <input
-                className="input"
-                placeholder="Nome"
-                value={editNome}
-                onChange={(e) => setEditNome(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="E-mail"
-                value={editEmail}
-                onChange={(e) => setEditEmail(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Telefone"
-                value={editPhone}
-                onChange={(e) => setEditPhone(e.target.value)}
-              />
-
-              <input
-                type="date"
-                className="input"
-                value={editBirth}
-                onChange={(e) => setEditBirth(e.target.value)}
-                placeholder="Data de Nascimento"
-              />
-
-              {/* Endereço opcional */}
+              <input className="input" placeholder="Nome" value={editNome} onChange={(e) => setEditNome(e.target.value)} />
+              <input className="input" placeholder="E-mail" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
+              <input className="input" placeholder="Telefone" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} />
+              <input type="date" className="input" value={editBirth} onChange={(e) => setEditBirth(e.target.value)} placeholder="Data de Nascimento" />
               <input className="input" placeholder="CEP" value={editCEP} onChange={(e) => setEditCEP(e.target.value)} />
               <input className="input" placeholder="Logradouro" value={editLogr} onChange={(e) => setEditLogr(e.target.value)} />
               <input className="input" placeholder="Número" value={editNumero} onChange={(e) => setEditNumero(e.target.value)} />
               <input className="input" placeholder="Bairro" value={editBairro} onChange={(e) => setEditBairro(e.target.value)} />
               <input className="input" placeholder="Cidade" value={editCidade} onChange={(e) => setEditCidade(e.target.value)} />
-              <input
-                className="input"
-                placeholder="UF"
-                value={editUF}
-                onChange={(e) => setEditUF(e.target.value.toUpperCase().slice(0, 2))}
-              />
-
-              <input
-                className="input md:col-span-3"
-                placeholder="Observações"
-                value={editObs}
-                onChange={(e) => setEditObs(e.target.value)}
-              />
+              <input className="input" placeholder="UF" value={editUF} onChange={(e) => setEditUF(e.target.value.toUpperCase().slice(0, 2))} />
+              <input className="input md:col-span-3" placeholder="Observações" value={editObs} onChange={(e) => setEditObs(e.target.value)} />
             </div>
             <div className="mt-3 flex gap-2 justify-end">
               <button className="btn" onClick={closeEdit}>Cancelar</button>

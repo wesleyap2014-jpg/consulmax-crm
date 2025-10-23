@@ -22,6 +22,9 @@ const TermsLGPD               = React.lazy(() => import('./pages/TermsLGPD'));
 const AlterarSenha            = React.lazy(() => import('./pages/AlterarSenha'));
 const AdicionarAdministradora = React.lazy(() => import('./pages/AdicionarAdministradora'));
 
+// ✅ NOVO: Links Úteis
+const LinksUteis             = React.lazy(() => import('./pages/LinksUteis'));
+
 function withSuspense(node: React.ReactNode) {
   return (
     <React.Suspense fallback={<div className="p-4 text-sm text-gray-600">Carregando…</div>}>
@@ -69,6 +72,13 @@ export const router = createBrowserRouter([
           { path: 'gestao-de-grupos',  element: withSuspense(<GestaoDeGrupos />) },
           { path: 'parametros',        element: withSuspense(<Parametros />) },
           { path: 'lgpd',              element: withSuspense(<TermsLGPD />) },
+
+          // ✅ NOVO: Links Úteis
+          { path: 'links',             element: withSuspense(<LinksUteis />) },
+
+          // 🔁 Redirects legados opcionais para a nova guia
+          { path: 'links-uteis',       element: <Navigate to="/links" replace /> },
+          { path: 'linksuteis',        element: <Navigate to="/links" replace /> },
 
           // Qualquer rota desconhecida logada volta para Oportunidades
           { path: '*', element: <Navigate to="/oportunidades" replace /> },

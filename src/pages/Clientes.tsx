@@ -14,8 +14,8 @@ import {
 } from "lucide-react";
 
 /* ========================= Views existentes ========================= */
-const SCHEMA_CLIENTES_VIEW = "v_clientes_list";     // public.v_clientes_list
-const SCHEMA_VENDAS_VIEW   = "v_vendas_cliente";    // public.v_vendas_cliente
+const SCHEMA_CLIENTES_VIEW = "v_clientes_list";   // public.v_clientes_list
+const SCHEMA_VENDAS_VIEW   = "v_vendas_cliente";  // public.v_vendas_cliente
 
 /* ========================= Tipos ========================= */
 type Cliente = {
@@ -29,6 +29,8 @@ type Cliente = {
   created_at?: string | null;
   _source?: "clientes" | "vendas";
   _source_id?: string | null;
+  // campos auxiliares possíveis (não exibidos)
+  lead_id?: string | null;
 };
 
 /* ========================= Utils ========================= */
@@ -60,6 +62,12 @@ const maskCPF = (v: string) => {
   if (p3) out += (out ? "." : "") + p3;
   if (p4) out += (out ? "-" : "") + p4;
   return out;
+};
+
+const maskCPFDisplay = (cpfDig?: string | null) => {
+  const s = (cpfDig || "").replace(/\D/g, "");
+  if (s.length !== 11) return "";
+  return `${s.slice(0,3)}.${"*".repeat(3)}.${"*".repeat(3)}-${s.slice(9,11)}`;
 };
 
 const isValidCPF = (raw: string) => {
@@ -124,6 +132,12 @@ const isBirthdayThisWeek = (iso?: string | null) => {
   const thisYear = new Date(Date.UTC(today.getUTCFullYear(), birth.getUTCMonth(), birth.getUTCDate()));
   return thisYear >= start && thisYear <= end;
 };
+
+function copyToClipboard(text: string) {
+  try {
+    navigator.clipboard?.writeText(text);
+  } catch { /* ignore */ }
+}
 
 function normalizeString(s?: string | null) {
   return (s || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
@@ -194,12 +208,11 @@ export default function ClientesPage() {
 
   /* ========================= Mapeamentos ========================= */
   function mapFromClientesView(r: any): Cliente {
-    // Campos usuais da v_clientes_list
     const cpf_dig =
       r.cpf_dig ??
       (r.cpf ? String(r.cpf).replace(/\D/g, "") : null);
     return {
-      id: r.id,
+      id: String(r.id),
       nome: r.nome ?? "",
       cpf_dig,
       telefone: r.telefone ?? null,
@@ -208,63 +221,129 @@ export default function ClientesPage() {
       observacoes: r.observacoes ?? null,
       created_at: r.created_at ?? null,
       _source: "clientes",
-      _source_id: r.id ?? null,
+      _source_id: String(r.id ?? ""),
     };
   }
 
   function mapFromVendasView(r: any): Cliente {
-    // Tentamos diferentes convenções de colunas comuns nessa view
-    const nome = r.nome ?? r.cliente_nome ?? r.lead_nome ?? "";
-    const tel  = r.telefone ?? r.phone ?? r.celular ?? null;
-    const mail = r.email ?? r.lead_email ?? null;
-    const cpf  =
+    // Nome pode vir em várias colunas; pegamos o mais rico
+    const candidatesNome = [
+      r.nome, r.cliente_nome, r.lead_nome, r.nome_cliente, r.nome_lead,
+    ].filter(Boolean) as string[];
+    const nome =
+      candidatesNome.sort((a, b) => (b || "").length - (a || "").length)[0] || "";
+
+    // CPF pode estar em colunas diferentes
+    const rawCpf =
       r.cpf_dig ??
-      (r.cpf ? String(r.cpf).replace(/\D/g, "") : null) ??
-      (r.cpf_cnpj ? String(r.cpf_cnpj).replace(/\D/g, "") : null);
+      r.cpf ??
+      r.cpf_cnpj ??
+      r.cpfcnpj ??
+      null;
+    const cpf_dig = rawCpf ? String(rawCpf).replace(/\D/g, "") : null;
+
+    const telefone = r.telefone ?? r.celular ?? r.phone ?? null;
+    const email = r.email ?? r.lead_email ?? r.contato_email ?? null;
+
+    const data_nascimento = r.data_nascimento ?? r.nascimento ?? null;
+    const observacoes = r.observacoes ?? r.descricao ?? null;
+
+    const created_at =
+      r.created_at ??
+      r.encarteirada_em ??
+      r.data_venda ??
+      null;
+
+    const lead_id = r.lead_id ?? r.cliente_lead_id ?? null;
 
     return {
-      id: r.id, // id da venda como id provisório na listagem
+      id: String(r.id), // id da VENDA como id provisório
       nome,
-      cpf_dig: cpf,
-      telefone: tel,
-      email: mail,
-      data_nascimento: r.data_nascimento ?? r.nascimento ?? null,
-      observacoes: r.observacoes ?? r.descricao ?? null,
-      created_at: r.created_at ?? r.encarteirada_em ?? null,
+      cpf_dig,
+      telefone,
+      email,
+      data_nascimento,
+      observacoes,
+      created_at,
       _source: "vendas",
-      _source_id: r.id ?? null,
+      _source_id: String(r.id ?? ""),
+      lead_id: lead_id ? String(lead_id) : null,
     };
   }
 
-  function dedupePreferClientes(rows: Cliente[]): Cliente[] {
-    // Prioridade: clientes > vendas
-    const byKey = new Map<string, Cliente>();
+  function betterRecord(a: Cliente, b: Cliente): Cliente {
+    const srcScore = (c: Cliente) => (c._source === "clientes" ? 3 : 2);
+    const sa = srcScore(a), sb = srcScore(b);
+    if (sa !== sb) return sa > sb ? a : b;
 
+    const nameA = (a.nome || "").trim();
+    const nameB = (b.nome || "").trim();
+    if (!!nameA !== !!nameB) return nameA ? a : b;
+    if (nameA.length !== nameB.length) return nameA.length > nameB.length ? a : b;
+
+    const ca = a.created_at || "";
+    const cb = b.created_at || "";
+    if (ca !== cb) return ca > cb ? a : b;
+
+    return a;
+  }
+
+  function dedupePreferClientes(rows: Cliente[]): Cliente[] {
+    // chave: CPF > lead_id (vendas) > nome+fone+email
     const keyFor = (c: Cliente) => {
       if (c.cpf_dig) return `CPF:${c.cpf_dig}`;
+      if (c._source === "vendas" && c.lead_id) return `LEAD:${c.lead_id}`;
       const nn = normalizeString(c.nome);
       const ph = onlyDigits(c.telefone || "");
       const em = (c.email || "").toLowerCase();
       return `NF:${nn}|${ph}|${em}`;
     };
 
+    const map = new Map<string, Cliente>();
     for (const row of rows) {
       const k = keyFor(row);
-      const existing = byKey.get(k);
-      if (!existing) {
-        byKey.set(k, row);
-        continue;
-      }
-      const score = (c: Cliente) => (c._source === "clientes" ? 2 : 1);
-      byKey.set(k, score(row) >= score(existing) ? row : existing);
+      const curr = map.get(k);
+      map.set(k, curr ? betterRecord(curr, row) : row);
     }
-    return Array.from(byKey.values());
+
+    // Backfill por CPF (nome/contatos do melhor do grupo)
+    const byCpf = new Map<string, Cliente[]>();
+    for (const r of map.values()) {
+      if (r.cpf_dig) {
+        const arr = byCpf.get(r.cpf_dig) || [];
+        arr.push(r);
+        byCpf.set(r.cpf_dig, arr);
+      }
+    }
+    for (const group of byCpf.values()) {
+      const bestName =
+        group.map((g) => (g.nome || "").trim())
+             .sort((a, b) => (b || "").length - (a || "").length)[0] || "";
+      const bestPhone = group.map((g) => g.telefone).find(Boolean) || null;
+      const bestEmail = group.map((g) => g.email).find(Boolean) || null;
+      const bestObs   = group.map((g) => g.observacoes).find(Boolean) || null;
+
+      for (const g of group) {
+        if (!g.nome && bestName) g.nome = bestName;
+        if (!g.telefone && bestPhone) g.telefone = bestPhone;
+        if (!g.email && bestEmail) g.email = bestEmail;
+        if (!g.observacoes && bestObs) g.observacoes = bestObs;
+      }
+    }
+
+    // Placeholder para nome vazio com CPF
+    for (const r of map.values()) {
+      if (!(r.nome || "").trim() && r.cpf_dig) {
+        r.nome = `CPF ${maskCPFDisplay(r.cpf_dig)}`;
+      }
+    }
+
+    return Array.from(map.values());
   }
 
   /* ========================= Loads ========================= */
   async function loadIncompletos() {
     try {
-      // Trazemos um pouco de cada fonte e filtramos client-side por faltantes
       const [{ data: dc }, { data: dv }] = await Promise.all([
         supabase.from(SCHEMA_CLIENTES_VIEW).select("*").range(0, 199),
         supabase.from(SCHEMA_VENDAS_VIEW).select("*").range(0, 199),
@@ -280,7 +359,7 @@ export default function ClientesPage() {
         (c) => !c.telefone || !c.email || !c.observacoes
       );
 
-      // Ordena por mais recentes
+      // mais recentes primeiro
       faltantes.sort((a, b) =>
         (b.created_at || "").localeCompare(a.created_at || "")
       );
@@ -294,30 +373,26 @@ export default function ClientesPage() {
   async function load(target = 1, term = "") {
     setLoading(true);
     try {
-      // Carrega lote “largo” e filtra/ordena no cliente (evita depender dos nomes de colunas de cada view)
-      const [{ data: dc, error: ec }, { data: dv, error: ev }] = await Promise.all([
+      const [{ data: dc }, { data: dv }] = await Promise.all([
         supabase.from(SCHEMA_CLIENTES_VIEW).select("*").range(0, 999),
         supabase.from(SCHEMA_VENDAS_VIEW).select("*").range(0, 999),
       ]);
-      if (ec) throw ec;
-      if (ev) throw ev;
 
       let rows: Cliente[] = [];
       rows.push(...(dc || []).map(mapFromClientesView));
       rows.push(...(dv || []).map(mapFromVendasView));
 
-      // Busca por NOME (somente)
+      rows = dedupePreferClientes(rows);
+
+      // Busca por NOME (somente) – case/acentuação insensitive
       if (term) {
         const nterm = normalizeString(term);
         rows = rows.filter((r) => normalizeString(r.nome).includes(nterm));
       }
 
-      // Filtros de aniversário (client-side)
+      // Filtros aniversário
       if (filterWeek) rows = rows.filter((r) => isBirthdayThisWeek(r.data_nascimento));
       if (filterMonth) rows = rows.filter((r) => isBirthdayThisMonth(r.data_nascimento));
-
-      // Dedupe (clientes > vendas)
-      rows = dedupePreferClientes(rows);
 
       // Ordenação
       if (sortBy === "aniversario") {
@@ -362,7 +437,7 @@ export default function ClientesPage() {
     try {
       setLoading(true);
 
-      // Checa duplicidade por CPF na view de clientes (oficial). Se quiser, dá para olhar também em vendas.
+      // duplicidade por CPF (olhando primeiro a view oficial de clientes)
       const { data: exists, error: exErr } = await supabase
         .from(SCHEMA_CLIENTES_VIEW)
         .select("id, nome, cpf_dig")
@@ -462,7 +537,7 @@ export default function ClientesPage() {
         data_nascimento: editBirth || null,
         observacoes: editObs.trim() || null,
       };
-      // Se criar colunas de endereço em "clientes", descomente:
+      // Se houver colunas de endereço em "clientes", descomente:
       // update.cep        = onlyDigits(editCEP) || null;
       // update.logradouro = editLogr || null;
       // update.numero     = editNumero || null;
@@ -508,7 +583,7 @@ export default function ClientesPage() {
               if (!c.email) missing.push("e-mail");
               if (!c.observacoes) missing.push("observações");
               return (
-                <div key={c.id} className="rounded-xl border p-3">
+                <div key={`${c._source || ""}-${c.id}`} className="rounded-xl border p-3">
                   <div className="font-semibold">{c.nome}</div>
                   <div className="text-xs text-slate-500 mb-1">CPF: {c.cpf_dig || "—"}</div>
                   <div className="text-sm mb-1">📞 {phone || "—"}</div>
@@ -784,6 +859,7 @@ export default function ClientesPage() {
               <input className="input" placeholder="E-mail" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
               <input className="input" placeholder="Telefone" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} />
               <input type="date" className="input" value={editBirth} onChange={(e) => setEditBirth(e.target.value)} placeholder="Data de Nascimento" />
+              {/* Endereço opcional */}
               <input className="input" placeholder="CEP" value={editCEP} onChange={(e) => setEditCEP(e.target.value)} />
               <input className="input" placeholder="Logradouro" value={editLogr} onChange={(e) => setEditLogr(e.target.value)} />
               <input className="input" placeholder="Número" value={editNumero} onChange={(e) => setEditNumero(e.target.value)} />

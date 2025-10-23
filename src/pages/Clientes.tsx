@@ -17,13 +17,12 @@ import {
 type Cliente = {
   id: string;
   nome: string;
-  cpf_dig?: string | null;          // vindo da view (só dígitos)
-  cpf?: string | null;              // fallback se buscar direto da tabela
+  cpf_dig?: string | null;
   telefone?: string | null;
   email?: string | null;
-  data_nascimento?: string | null;  // YYYY-MM-DD
-  observacoes?: string | null;      // <- nome correto no banco
-  created_at?: string | null;       // se existir na tabela/view
+  data_nascimento?: string | null; // YYYY-MM-DD
+  observacoes?: string | null;
+  created_at?: string | null;
 };
 
 /* ========================= Utils ========================= */
@@ -63,9 +62,7 @@ const isValidCPF = (raw: string) => {
   if (/^(\d)\1{10}$/.test(s)) return false;
   const calc = (base: string, factor: number) => {
     let sum = 0;
-    for (let i = 0; i < base.length; i++) {
-      sum += parseInt(base[i], 10) * factor--;
-    }
+    for (let i = 0; i < base.length; i++) sum += parseInt(base[i], 10) * factor--;
     const mod = (sum * 10) % 11;
     return mod === 10 ? 0 : mod;
   };
@@ -86,14 +83,12 @@ const formatBRDate = (iso?: string | null) => {
 };
 
 const upcomingBirthdaySortKey = (iso?: string | null) => {
-  // retorna quantos dias faltam pro aniversário neste ano (0 = hoje)
-  if (!iso) return 366; // empurra pro fim
+  if (!iso) return 366;
   const ref = new Date();
   const d = new Date(iso);
   if (isNaN(d.getTime())) return 366;
   const month = d.getUTCMonth();
   const day = d.getUTCDate();
-
   const thisYear = new Date(Date.UTC(ref.getUTCFullYear(), month, day));
   const nextYear = new Date(Date.UTC(ref.getUTCFullYear() + 1, month, day));
   const target = thisYear < ref ? nextYear : thisYear;
@@ -109,29 +104,25 @@ const isBirthdayThisMonth = (iso?: string | null) => {
 };
 
 const isBirthdayThisWeek = (iso?: string | null) => {
-  // semana sex→qui (seguindo o padrão Consulmax das projeções)
+  // semana sex→qui (Consulmax)
   if (!iso) return false;
   const now = new Date();
-  // Normaliza date UTC zero-hora
   const toUTC0 = (x: Date) =>
     new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()));
   const today = toUTC0(now);
-  const weekday = today.getUTCDay(); // 0=dom..6=sab
-  // definimos sexta como início (5) → então vamos recuar até sexta
+  const weekday = today.getUTCDay(); // 0..6
   const offsetToFri = ((weekday - 5 + 7) % 7);
   const start = new Date(today.getTime() - offsetToFri * 86400000);
-  const end = new Date(start.getTime() + 6 * 86400000); // sex→qui = 7 dias
-
+  const end = new Date(start.getTime() + 6 * 86400000);
   const birth = new Date(iso);
   const thisYear = new Date(Date.UTC(today.getUTCFullYear(), birth.getUTCMonth(), birth.getUTCDate()));
-  const inRange = thisYear >= start && thisYear <= end;
-  return inRange;
+  return thisYear >= start && thisYear <= end;
 };
 
 function copyToClipboard(text: string) {
   try {
     navigator.clipboard?.writeText(text);
-  } catch {/* ignore */}
+  } catch { /* ignore */ }
 }
 
 /* ========================= Componente ========================= */
@@ -155,7 +146,7 @@ export default function ClientesPage() {
   const [editNome, setEditNome] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPhone, setEditPhone] = useState("");
-  const [editBirth, setEditBirth] = useState<string>(""); // YYYY-MM-DD
+  const [editBirth, setEditBirth] = useState<string>("");
   const [editObs, setEditObs] = useState("");
   const [editCEP, setEditCEP] = useState("");
   const [editLogr, setEditLogr] = useState("");
@@ -172,7 +163,7 @@ export default function ClientesPage() {
   const [formBirth, setFormBirth] = useState<string>("");
   const [formObs, setFormObs] = useState("");
 
-  // fila de "novos para complementar"
+  // fila de incompletos
   const [incompletos, setIncompletos] = useState<Cliente[]>([]);
 
   // toasts
@@ -182,6 +173,7 @@ export default function ClientesPage() {
     setTimeout(() => setToast(null), 3800);
   };
 
+  /* ========================= Effects ========================= */
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 400);
     return () => clearTimeout(t);
@@ -192,40 +184,26 @@ export default function ClientesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced, filterWeek, filterMonth, sortBy]);
 
-  // também carrega a fila de incompletos (independente da busca/paginação)
   useEffect(() => {
     loadIncompletos();
   }, []);
 
+  /* ========================= Loads ========================= */
   async function loadIncompletos() {
     try {
-      // Critério: e-mail vazio OU telefone vazio OU observações vazias
-      // Tenta usar a view primeiro; se não tiver as colunas, buscamos a tabela.
-      let q = supabase
-        .from("v_clientes_list")
+      const { data, error } = await supabase
+        .from("v_clientes_all")
         .select("*")
         .or("email.is.null,telefone.is.null,observacoes.is.null")
         .order("created_at", { ascending: false })
         .limit(8);
-
-      let { data, error } = await q;
-      if (error) {
-        // fallback: tenta na tabela clientes
-        const fb = await supabase
-          .from("clientes")
-          .select("*")
-          .or("email.is.null,telefone.is.null,observacoes.is.null")
-          .order("created_at", { ascending: false })
-          .limit(8);
-        if (fb.error) throw fb.error;
-        data = fb.data as any;
-      }
+      if (error) throw error;
 
       setIncompletos(
         (data || []).map((r: any) => ({
           id: r.id,
           nome: r.nome,
-          cpf_dig: r.cpf_dig ?? r.cpf ?? null,
+          cpf_dig: r.cpf_dig ?? null,
           telefone: r.telefone,
           email: r.email,
           data_nascimento: r.data_nascimento,
@@ -244,39 +222,28 @@ export default function ClientesPage() {
       const from = (target - 1) * PAGE;
       const to = from + PAGE - 1;
 
-      // priorizamos a view v_clientes_list (já filtra quem tem CPF)
       let q = supabase
-        .from("v_clientes_list")
+        .from("v_clientes_all")
         .select("*", { count: "exact" });
 
-      // busca
+      // Busca **somente por nome**
       if (term) {
-        q = q.or(
-          `nome.ilike.%${term}%,email.ilike.%${term}%,telefone.ilike.%${onlyDigits(
-            term
-          )}%`
-        );
+        q = q.ilike("nome", `%${term}%`);
       }
 
-      // filtros aniversários
-      if (filterWeek || filterMonth) {
-        // como é complexo filtrar na query, filtramos no client após carregar página maior (overfetch)
-        // para não perder paginação, aumentamos o range e filtramos
-        const { data, error, count } = await q.range(0, 999); // puxa bastante e filtra
+      // filtros de aniversário
+      if (filterWeek || filterMonth || sortBy === "aniversario") {
+        const { data, error } = await q.range(0, 999);
         if (error) throw error;
         let rows = (data || []) as any[];
 
-        rows = rows.filter((r) => {
-          const iso = r.data_nascimento as string | null | undefined;
-          if (filterWeek && !isBirthdayThisWeek(iso)) return false;
-          if (filterMonth && !isBirthdayThisMonth(iso)) return false;
-          return true;
-        });
+        if (filterWeek) rows = rows.filter((r) => isBirthdayThisWeek(r.data_nascimento));
+        if (filterMonth) rows = rows.filter((r) => isBirthdayThisMonth(r.data_nascimento));
 
         rows = rows.map((r) => ({
           id: r.id,
           nome: r.nome,
-          cpf_dig: r.cpf_dig ?? r.cpf ?? null,
+          cpf_dig: r.cpf_dig ?? null,
           telefone: r.telefone,
           email: r.email,
           data_nascimento: r.data_nascimento,
@@ -284,53 +251,41 @@ export default function ClientesPage() {
           created_at: r.created_at ?? null,
         }));
 
-        // ordenação
-        rows = sortRows(rows);
+        if (sortBy === "aniversario") {
+          rows.sort(
+            (a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento)
+          );
+        } else if (sortBy === "nomeDesc") {
+          rows.sort((a, b) => (b.nome || "").localeCompare(a.nome || "", "pt-BR"));
+        } else {
+          rows.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
+        }
 
-        // paginação client-side para o filtro
         setTotal(rows.length);
         setClientes(rows.slice(from, to + 1));
         setPage(target);
       } else {
-        // sem filtro pesado → podemos ordenar server-side por nome; aniversário ordenaremos client-side
+        // ordenação simples no server por nome
         if (sortBy === "nomeAsc") q = q.order("nome", { ascending: true });
         if (sortBy === "nomeDesc") q = q.order("nome", { ascending: false });
-        if (sortBy === "aniversario") {
-          // pega página maior e ordena client-side por proximidade de aniversário
-          const { data, error, count } = await q.range(0, 999);
-          if (error) throw error;
-          let rows = (data || []).map((r: any) => ({
+
+        const { data, error, count } = await q.range(from, to);
+        if (error) throw error;
+
+        setClientes(
+          (data || []).map((r: any) => ({
             id: r.id,
             nome: r.nome,
-            cpf_dig: r.cpf_dig ?? r.cpf ?? null,
+            cpf_dig: r.cpf_dig ?? null,
             telefone: r.telefone,
             email: r.email,
             data_nascimento: r.data_nascimento,
             observacoes: r.observacoes ?? null,
             created_at: r.created_at ?? null,
-          }));
-          rows = sortRows(rows);
-          setTotal(rows.length);
-          setClientes(rows.slice(from, to + 1));
-          setPage(target);
-        } else {
-          const { data, error, count } = await q.range(from, to);
-          if (error) throw error;
-          setClientes(
-            (data || []).map((r: any) => ({
-              id: r.id,
-              nome: r.nome,
-              cpf_dig: r.cpf_dig ?? r.cpf ?? null,
-              telefone: r.telefone,
-              email: r.email,
-              data_nascimento: r.data_nascimento,
-              observacoes: r.observacoes ?? null,
-              created_at: r.created_at ?? null,
-            }))
-          );
-          setTotal(count || 0);
-          setPage(target);
-        }
+          }))
+        );
+        setTotal(count || 0);
+        setPage(target);
       }
     } catch (e: any) {
       pushToast("error", e.message || "Erro ao listar clientes.");
@@ -348,11 +303,10 @@ export default function ClientesPage() {
     if (sortBy === "nomeDesc") {
       return [...rows].sort((a, b) => (b.nome || "").localeCompare(a.nome || "", "pt-BR"));
     }
-    // nomeAsc
     return [...rows].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
   }
 
-  // criar cliente manual (com validação + duplicidade)
+  /* ========================= Create / Edit ========================= */
   async function createCliente() {
     const nome = formNome.trim();
     const cpf = onlyDigits(formCPF);
@@ -371,16 +325,16 @@ export default function ClientesPage() {
     try {
       setLoading(true);
 
-      // checa duplicidade por CPF
-      const { data: existsData, error: existsError } = await supabase
-        .from("clientes")
+      // Verifica existência por CPF na view unificada (já pega clientes/leads/vendas)
+      const { data: exists, error: exErr } = await supabase
+        .from("v_clientes_all")
         .select("id, nome")
-        .eq("cpf", cpf)
+        .eq("cpf_dig", cpf)
         .limit(1);
-      if (existsError) throw existsError;
-      if (existsData && existsData.length) {
-        const c = existsData[0];
-        pushToast("info", `Já existe um cliente com este CPF: ${c.nome}. Abrindo para edição…`);
+      if (exErr) throw exErr;
+      if (exists && exists.length) {
+        const c = exists[0];
+        pushToast("info", `Já existe um registro com este CPF: ${c.nome}. Abrindo para edição…`);
         openEdit({ id: c.id, nome: c.nome, cpf_dig: cpf, telefone: "", email: "", data_nascimento: null, observacoes: null });
         return;
       }
@@ -399,10 +353,8 @@ export default function ClientesPage() {
         .single();
       if (error) throw error;
 
-      // cria/atualiza aniversário automático
       await supabase.rpc("upsert_birthday_event", { p_cliente: data!.id });
 
-      // limpa form
       setFormNome("");
       setFormCPF("");
       setFormPhone("");
@@ -419,7 +371,6 @@ export default function ClientesPage() {
     }
   }
 
-  // abrir modal edição
   function openEdit(c: Cliente) {
     setEditing(c);
     setEditNome(c.nome || "");
@@ -427,7 +378,6 @@ export default function ClientesPage() {
     setEditPhone(c.telefone ? maskPhone(c.telefone) : "");
     setEditBirth(c.data_nascimento || "");
     setEditObs(c.observacoes || "");
-    // endereço (opcional)
     setEditCEP("");
     setEditLogr("");
     setEditNumero("");
@@ -439,7 +389,6 @@ export default function ClientesPage() {
     setEditing(null);
   }
 
-  // ViaCEP quando CEP completo
   useEffect(() => {
     const d = onlyDigits(editCEP);
     if (editing && d.length === 8) {
@@ -453,17 +402,13 @@ export default function ClientesPage() {
             setEditCidade((v) => v || data.localidade || "");
             setEditUF((v) => v || data.uf || "");
           }
-        } catch {
-          /* ignore */
-        }
+        } catch { /* ignore */ }
       })();
     }
   }, [editCEP, editing]);
 
   async function saveEdit() {
     if (!editing) return;
-
-    // validações leves
     if (!editNome.trim()) return pushToast("error", "Nome é obrigatório.");
     const phoneDigits = onlyDigits(editPhone);
     if (phoneDigits && !(phoneDigits.length === 10 || phoneDigits.length === 11)) {
@@ -479,8 +424,7 @@ export default function ClientesPage() {
         data_nascimento: editBirth || null,
         observacoes: editObs.trim() || null,
       };
-
-      // se já tiver colunas de endereço em clientes, descomente:
+      // Se você criar colunas de endereço em "clientes", descomente:
       // update.cep        = onlyDigits(editCEP) || null;
       // update.logradouro = editLogr || null;
       // update.numero     = editNumero || null;
@@ -491,7 +435,6 @@ export default function ClientesPage() {
       const { error } = await supabase.from("clientes").update(update).eq("id", editing.id);
       if (error) throw error;
 
-      // sincroniza/atualiza aniversário automático
       await supabase.rpc("upsert_birthday_event", { p_cliente: editing.id });
 
       await Promise.all([load(page), loadIncompletos()]);
@@ -509,6 +452,7 @@ export default function ClientesPage() {
     [total]
   );
 
+  /* ========================= UI ========================= */
   return (
     <div className="space-y-4">
       {/* ====== Novos clientes para complementar ====== */}
@@ -622,7 +566,7 @@ export default function ClientesPage() {
             <div className="relative">
               <input
                 className="input pl-9 w-80"
-                placeholder="Buscar por nome, telefone ou e-mail"
+                placeholder="Buscar por nome"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -702,15 +646,10 @@ export default function ClientesPage() {
                 const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
                 const contatoStr = `${c.nome} | ${phone || "s/ telefone"} | ${c.email || "s/ e-mail"}`;
                 return (
-                  <tr
-                    key={c.id}
-                    className={i % 2 ? "bg-slate-50/60" : "bg-white"}
-                  >
+                  <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
                     <td className="p-2">
                       <div className="font-medium">{c.nome}</div>
-                      <div className="text-xs text-slate-500">
-                        CPF: {c.cpf_dig || "—"}
-                      </div>
+                      <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
                     </td>
                     <td className="p-2">
                       <div className="flex items-center gap-2">
@@ -781,21 +720,13 @@ export default function ClientesPage() {
 
         {/* paginação */}
         <div className="mt-3 flex items-center justify-end gap-2">
-          <button
-            className="btn"
-            disabled={page <= 1 || loading}
-            onClick={() => load(page - 1)}
-          >
+          <button className="btn" disabled={page <= 1 || loading} onClick={() => load(page - 1)}>
             ‹ Anterior
           </button>
           <span className="text-xs text-slate-600">
             Página {page} de {totalPages}
           </span>
-          <button
-            className="btn"
-            disabled={page >= totalPages || loading}
-            onClick={() => load(page + 1)}
-          >
+          <button className="btn" disabled={page >= totalPages || loading} onClick={() => load(page + 1)}>
             Próxima ›
           </button>
         </div>
@@ -827,7 +758,6 @@ export default function ClientesPage() {
                 onChange={(e) => setEditPhone(e.target.value)}
               />
 
-              {/* Data de nascimento */}
               <input
                 type="date"
                 className="input"
@@ -837,43 +767,16 @@ export default function ClientesPage() {
               />
 
               {/* Endereço opcional */}
-              <input
-                className="input"
-                placeholder="CEP"
-                value={editCEP}
-                onChange={(e) => setEditCEP(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Logradouro"
-                value={editLogr}
-                onChange={(e) => setEditLogr(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Número"
-                value={editNumero}
-                onChange={(e) => setEditNumero(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Bairro"
-                value={editBairro}
-                onChange={(e) => setEditBairro(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Cidade"
-                value={editCidade}
-                onChange={(e) => setEditCidade(e.target.value)}
-              />
+              <input className="input" placeholder="CEP" value={editCEP} onChange={(e) => setEditCEP(e.target.value)} />
+              <input className="input" placeholder="Logradouro" value={editLogr} onChange={(e) => setEditLogr(e.target.value)} />
+              <input className="input" placeholder="Número" value={editNumero} onChange={(e) => setEditNumero(e.target.value)} />
+              <input className="input" placeholder="Bairro" value={editBairro} onChange={(e) => setEditBairro(e.target.value)} />
+              <input className="input" placeholder="Cidade" value={editCidade} onChange={(e) => setEditCidade(e.target.value)} />
               <input
                 className="input"
                 placeholder="UF"
                 value={editUF}
-                onChange={(e) =>
-                  setEditUF(e.target.value.toUpperCase().slice(0, 2))
-                }
+                onChange={(e) => setEditUF(e.target.value.toUpperCase().slice(0, 2))}
               />
 
               <input
@@ -884,14 +787,8 @@ export default function ClientesPage() {
               />
             </div>
             <div className="mt-3 flex gap-2 justify-end">
-              <button className="btn" onClick={closeEdit}>
-                Cancelar
-              </button>
-              <button
-                className="btn-primary"
-                onClick={saveEdit}
-                disabled={loading}
-              >
+              <button className="btn" onClick={closeEdit}>Cancelar</button>
+              <button className="btn-primary" onClick={saveEdit} disabled={loading}>
                 {loading ? "Salvando..." : "Salvar alterações"}
               </button>
             </div>

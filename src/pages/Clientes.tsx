@@ -7,12 +7,12 @@ type Cliente = {
   id: string;                 // lead_id
   lead_id: string;
   nome: string;
-  cpf_dig?: string | null;    // da venda mais recente (se houver campo cpf TEXT)
+  cpf_dig?: string | null;    // da venda mais recente (se existir cpf TEXT)
   telefone?: string | null;   // do lead
   email?: string | null;      // do lead
   data_nascimento?: string | null; // vendas.nascimento (YYYY-MM-DD)
   observacoes?: string | null;     // vendas.descricao
-  vendas_ids?: string[];      // ids das vendas do lead (ordem: mais recente primeiro)
+  vendas_ids?: string[];      // ids das vendas do lead (mais recente primeiro)
 };
 
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
@@ -82,6 +82,7 @@ export default function ClientesPage() {
    * Lista 1 linha por LEAD
    * - Busca por nome (em leads)
    * - Agrega vendas por lead_id
+   * - Só inclui leads com alguma venda que tenha cpf OU cpf_cnpj preenchido
    * - Usa a venda mais recente para nascimento/observações/CPF
    */
   async function load(target = 1, term = "") {
@@ -110,8 +111,7 @@ export default function ClientesPage() {
       }
 
       // 2) VENDAS desses leads
-      // OBS: alguns bancos têm `cpf` (text), outros `cpf_cnpj` (bytea).
-      // Seleciono ambos; usaremos `cpf` se existir.
+      // Seleciona cpf (text) e cpf_cnpj (bytea) — usaremos ambos só para filtrar.
       let vendasQ = supabase
         .from("vendas")
         .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at")
@@ -127,7 +127,8 @@ export default function ClientesPage() {
         created_at: string | null;
         nasc?: string | null;
         obs?: string | null;
-        cpf?: string | null;
+        cpf?: string | null;      // cpf (text) já só com dígitos
+        hasCpfCnpj?: boolean;     // true se houver cpf_cnpj (bytea) preenchido
       };
 
       const vendasByLead = new Map<string, VendaLite[]>();
@@ -135,23 +136,30 @@ export default function ClientesPage() {
         const lid = v.lead_id ? String(v.lead_id) : "";
         if (!lid) return;
         if (!vendasByLead.has(lid)) vendasByLead.set(lid, []);
-        const cpfText = v.cpf ? String(v.cpf) : null; // ignoramos cpf_cnpj (bytea) aqui
+        const cpfText = v.cpf ? onlyDigits(String(v.cpf)) : null;
+        const hasCpfCnpj = v.cpf_cnpj != null; // bytea preenchido
         vendasByLead.get(lid)!.push({
           id: String(v.id),
           created_at: v.created_at ?? null,
-          nasc: v.nascimento ?? null,       // <- campo real na tabela
-          obs: v.descricao ?? null,         // <- campo real na tabela
-          cpf: cpfText ? onlyDigits(cpfText) : null,
+          nasc: v.nascimento ?? null,     // coluna real
+          obs: v.descricao ?? null,       // coluna real
+          cpf: cpfText,
+          hasCpfCnpj,
         });
       });
 
-      // 4) Monta a lista (1 por lead)
+      // 4) Monta a lista (1 por lead), MAS só inclui quem tem alguma venda com cpf OU cpf_cnpj
       let list: Cliente[] = [];
       for (const l of leads || []) {
         const lid = String(l.id);
         const arr = (vendasByLead.get(lid) || []).sort((a, b) =>
           (b.created_at || "").localeCompare(a.created_at || "")
         );
+
+        // regra: só entra se houver pelo menos 1 venda com cpf (text) OU cpf_cnpj (bytea)
+        const temCpfEmAlgumaVenda = arr.some((x) => (x.cpf && x.cpf.length > 0) || x.hasCpfCnpj);
+        if (!temCpfEmAlgumaVenda) continue;
+
         const latest = arr[0];
 
         list.push({
@@ -162,7 +170,7 @@ export default function ClientesPage() {
           email: l.email || null,
           data_nascimento: latest?.nasc || null, // vendas.nascimento
           observacoes: latest?.obs || null,       // vendas.descricao
-          cpf_dig: latest?.cpf || null,
+          cpf_dig: latest?.cpf || null,           // mostramos apenas se vier cpf TEXT
           vendas_ids: arr.map((x) => x.id),
         });
       }
@@ -181,7 +189,7 @@ export default function ClientesPage() {
     }
   }
 
-  // criar cliente manual (mantido, caso você ainda use a tabela clientes)
+  // criar cliente manual (mantido, se você usa a tabela clientes)
   async function createCliente() {
     const payload = {
       nome: (form.nome || "").trim(),

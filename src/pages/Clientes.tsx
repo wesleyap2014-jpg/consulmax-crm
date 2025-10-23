@@ -4,15 +4,15 @@ import { supabase } from "@/lib/supabaseClient";
 import { Pencil, CalendarPlus, Eye, Send } from "lucide-react";
 
 type Cliente = {
-  id: string;                     // = lead_id (chave da linha)
-  lead_id: string;                // redundante, mas explícito
+  id: string;                 // lead_id
+  lead_id: string;
   nome: string;
-  cpf_dig?: string | null;        // cpf da venda mais recente (só dígitos)
-  telefone?: string | null;       // do lead
-  email?: string | null;          // do lead
-  data_nascimento?: string | null; // da venda mais recente (YYYY-MM-DD)
-  observacoes?: string | null;     // da venda mais recente
-  vendas_ids?: string[];           // vendas do lead (mais recente primeiro)
+  cpf_dig?: string | null;    // da venda mais recente (se houver campo cpf TEXT)
+  telefone?: string | null;   // do lead
+  email?: string | null;      // do lead
+  data_nascimento?: string | null; // vendas.nascimento (YYYY-MM-DD)
+  observacoes?: string | null;     // vendas.descricao
+  vendas_ids?: string[];      // ids das vendas do lead (ordem: mais recente primeiro)
 };
 
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
@@ -79,15 +79,15 @@ export default function ClientesPage() {
   }, [debounced]);
 
   /**
-   * LISTA por LEAD:
-   * - Busca leads pelo nome (se houver termo).
-   * - Traz TODAS as vendas e agrega por lead_id.
-   * - Usa a venda mais recente do lead para nascimento/obs/cpf.
+   * Lista 1 linha por LEAD
+   * - Busca por nome (em leads)
+   * - Agrega vendas por lead_id
+   * - Usa a venda mais recente para nascimento/observações/CPF
    */
   async function load(target = 1, term = "") {
     setLoading(true);
     try {
-      // 1) Leva o filtro para o SELECT de leads (somente por NOME)
+      // 1) LEADS (filtra por nome)
       let leadsQ = supabase
         .from("leads")
         .select("id,nome,telefone,email")
@@ -97,29 +97,11 @@ export default function ClientesPage() {
         leadsQ = leadsQ.ilike("nome", `%${term}%`);
       }
 
-      // Carrega todos os leads relevantes
       const { data: leads, error: errL } = await leadsQ.range(0, 5000);
       if (errL) throw errL;
 
       const leadIds = (leads || []).map((l: any) => String(l.id));
-      const leadMap = new Map<string, { id: string; nome: string; telefone?: string | null; email?: string | null }>(
-        (leads || []).map((l: any) => [
-          String(l.id),
-          { id: String(l.id), nome: l.nome || "", telefone: l.telefone || null, email: l.email || null },
-        ])
-      );
-
-      // 2) Vendas desses leads (uma batida só; se não filtrar, pode ficar pesado)
-      let vendasQ = supabase
-        .from("vendas")
-        .select("id,lead_id,cpf,data_nascimento,descricao,created_at")
-        .order("created_at", { ascending: false });
-
-      // filtra pelas leads carregadas; se não houver leads, nenhuma venda
-      if (leadIds.length > 0) {
-        vendasQ = vendasQ.in("lead_id", leadIds);
-      } else {
-        // evita trazer tudo quando a busca não retornou leads
+      if (leadIds.length === 0) {
         setClientes([]);
         setTotal(0);
         setPage(1);
@@ -127,26 +109,43 @@ export default function ClientesPage() {
         return;
       }
 
+      // 2) VENDAS desses leads
+      // OBS: alguns bancos têm `cpf` (text), outros `cpf_cnpj` (bytea).
+      // Seleciono ambos; usaremos `cpf` se existir.
+      let vendasQ = supabase
+        .from("vendas")
+        .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at")
+        .in("lead_id", leadIds)
+        .order("created_at", { ascending: false });
+
       const { data: vendas, error: errV } = await vendasQ.range(0, 20000);
       if (errV) throw errV;
 
       // 3) Agrega por lead_id
-      type VendaLite = { id: string; created_at: string | null; nasc?: string | null; obs?: string | null; cpf?: string | null };
+      type VendaLite = {
+        id: string;
+        created_at: string | null;
+        nasc?: string | null;
+        obs?: string | null;
+        cpf?: string | null;
+      };
+
       const vendasByLead = new Map<string, VendaLite[]>();
       (vendas || []).forEach((v: any) => {
         const lid = v.lead_id ? String(v.lead_id) : "";
-        if (!lid) return; // ignorar vendas sem lead (não aparecem na lista por design)
+        if (!lid) return;
         if (!vendasByLead.has(lid)) vendasByLead.set(lid, []);
+        const cpfText = v.cpf ? String(v.cpf) : null; // ignoramos cpf_cnpj (bytea) aqui
         vendasByLead.get(lid)!.push({
           id: String(v.id),
           created_at: v.created_at ?? null,
-          nasc: v.data_nascimento ?? null,
-          obs: v.descricao ?? null,
-          cpf: v.cpf ? onlyDigits(String(v.cpf)) : null,
+          nasc: v.nascimento ?? null,       // <- campo real na tabela
+          obs: v.descricao ?? null,         // <- campo real na tabela
+          cpf: cpfText ? onlyDigits(cpfText) : null,
         });
       });
 
-      // 4) Monta os clientes (um por lead)
+      // 4) Monta a lista (1 por lead)
       let list: Cliente[] = [];
       for (const l of leads || []) {
         const lid = String(l.id);
@@ -161,14 +160,14 @@ export default function ClientesPage() {
           nome: l.nome || "(Sem nome)",
           telefone: l.telefone || null,
           email: l.email || null,
-          data_nascimento: latest?.nasc || null,
-          observacoes: latest?.obs || null,
+          data_nascimento: latest?.nasc || null, // vendas.nascimento
+          observacoes: latest?.obs || null,       // vendas.descricao
           cpf_dig: latest?.cpf || null,
           vendas_ids: arr.map((x) => x.id),
         });
       }
 
-      // 5) Ordena por nome e pagina client-side
+      // 5) Ordena + pagina client-side
       list.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
       const from = (target - 1) * PAGE;
       const to = from + PAGE;
@@ -182,7 +181,7 @@ export default function ClientesPage() {
     }
   }
 
-  // criar cliente manual (tabela clientes — mantém como estava)
+  // criar cliente manual (mantido, caso você ainda use a tabela clientes)
   async function createCliente() {
     const payload = {
       nome: (form.nome || "").trim(),
@@ -230,8 +229,8 @@ export default function ClientesPage() {
     setEditNome(c.nome || "");
     setEditEmail(c.email || "");
     setEditPhone(c.telefone ? maskPhone(c.telefone) : "");
-    setEditBirth(c.data_nascimento || "");
-    setEditObs(c.observacoes || "");
+    setEditBirth(c.data_nascimento || ""); // vendas.nascimento
+    setEditObs(c.observacoes || "");       // vendas.descricao
     // endereço (opcional)
     setEditCEP("");
     setEditLogr("");
@@ -244,7 +243,7 @@ export default function ClientesPage() {
     setEditing(null);
   }
 
-  // ViaCEP quando CEP completo (opcional)
+  // ViaCEP (opcional)
   useEffect(() => {
     const d = onlyDigits(editCEP);
     if (editing && d.length === 8) {
@@ -266,16 +265,16 @@ export default function ClientesPage() {
   }, [editCEP, editing]);
 
   /**
-   * Salva edição:
+   * Salva:
    * - LEAD: nome/telefone/email
-   * - VENDA mais recente do lead: nascimento/observações
+   * - VENDA mais recente do lead: nascimento/descricao (campos reais)
    */
   async function saveEdit() {
     if (!editing) return;
     try {
       setLoading(true);
 
-      // atualiza lead
+      // Atualiza lead
       const { error: eLead } = await supabase
         .from("leads")
         .update({
@@ -286,13 +285,13 @@ export default function ClientesPage() {
         .eq("id", editing.lead_id);
       if (eLead) throw eLead;
 
-      // atualiza venda mais recente (se existir)
+      // Atualiza venda mais recente
       const latestVendaId = editing.vendas_ids?.[0];
       if (latestVendaId) {
         const { error: eVenda } = await supabase
           .from("vendas")
           .update({
-            data_nascimento: editBirth || null,
+            nascimento: editBirth || null,  // <- coluna correta
             descricao: editObs.trim() || null,
           })
           .eq("id", latestVendaId);
@@ -467,9 +466,11 @@ export default function ClientesPage() {
                         <button
                           className="icon-btn"
                           title="+ Evento na Agenda"
-                          onClick={async () => {
-                            alert("Aniversário é gerenciado pelas vendas (venda mais recente do lead).");
-                          }}
+                          onClick={() =>
+                            alert(
+                              "Aniversário é exibido a partir de vendas (campo 'nascimento' da venda mais recente do lead)."
+                            )
+                          }
                         >
                           <CalendarPlus className="h-4 w-4" />
                         </button>
@@ -532,7 +533,7 @@ export default function ClientesPage() {
                 value={editPhone}
                 onChange={(e) => setEditPhone(e.target.value)}
               />
-              {/* Data de nascimento (da venda mais recente) */}
+              {/* vendas.nascimento */}
               <input
                 type="date"
                 className="input"
@@ -541,43 +542,16 @@ export default function ClientesPage() {
                 placeholder="Data de Nascimento"
               />
               {/* Endereço opcional */}
-              <input
-                className="input"
-                placeholder="CEP"
-                value={editCEP}
-                onChange={(e) => setEditCEP(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Logradouro"
-                value={editLogr}
-                onChange={(e) => setEditLogr(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Número"
-                value={editNumero}
-                onChange={(e) => setEditNumero(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Bairro"
-                value={editBairro}
-                onChange={(e) => setEditBairro(e.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Cidade"
-                value={editCidade}
-                onChange={(e) => setEditCidade(e.target.value)}
-              />
+              <input className="input" placeholder="CEP" value={editCEP} onChange={(e) => setEditCEP(e.target.value)} />
+              <input className="input" placeholder="Logradouro" value={editLogr} onChange={(e) => setEditLogr(e.target.value)} />
+              <input className="input" placeholder="Número" value={editNumero} onChange={(e) => setEditNumero(e.target.value)} />
+              <input className="input" placeholder="Bairro" value={editBairro} onChange={(e) => setEditBairro(e.target.value)} />
+              <input className="input" placeholder="Cidade" value={editCidade} onChange={(e) => setEditCidade(e.target.value)} />
               <input
                 className="input"
                 placeholder="UF"
                 value={editUF}
-                onChange={(e) =>
-                  setEditUF(e.target.value.toUpperCase().slice(0, 2))
-                }
+                onChange={(e) => setEditUF(e.target.value.toUpperCase().slice(0, 2))}
               />
               <input
                 className="input md:col-span-3"
@@ -590,11 +564,7 @@ export default function ClientesPage() {
               <button className="btn" onClick={closeEdit}>
                 Cancelar
               </button>
-              <button
-                className="btn-primary"
-                onClick={saveEdit}
-                disabled={loading}
-              >
+              <button className="btn-primary" onClick={saveEdit} disabled={loading}>
                 {loading ? "Salvando..." : "Salvar alterações"}
               </button>
             </div>
@@ -607,7 +577,7 @@ export default function ClientesPage() {
         .input{padding:10px;border-radius:12px;border:1px solid #e5e7eb;outline:none}
         .btn{padding:8px 12px;border-radius:10px;background:#f1f5f9;border:1px solid #e2e8f0;font-weight:600}
         .btn-primary{padding:10px 16px;border-radius:12px;background:#A11C27;color:#fff;font-weight:800}
-        .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc}
+        .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid #e2e8f0;background:#f8fafc;border-radius:10px}
         .icon-btn:hover{background:#eef2ff}
       `}</style>
     </div>

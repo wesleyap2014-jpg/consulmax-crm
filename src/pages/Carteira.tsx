@@ -3,41 +3,39 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Pencil, Eye, Send, Filter, SortAsc, SortDesc, Copy } from "lucide-react";
 
-/** Tipos baseados apenas em vendas + leads */
+/* ========================= Tipos ========================= */
 type Lead = { id: string; nome: string; telefone?: string | null; email?: string | null };
+
 type VendaLite = {
   id: string;
-  lead_id: string;
+  lead_id: string | null;
   cpf: string | null;
-  data_nascimento?: string | null; // YYYY-MM-DD (na venda!)
+  data_nascimento?: string | null; // na venda!
   descricao?: string | null;
   created_at?: string | null;
-  status?: string | null;
 };
 
 type ClienteVM = {
-  key: string;              // chave única (CPF:xxx ou LEAD:yyy)
+  key: string;                 // "CPF:<11>" ou "LEAD:<id>"
   lead_id: string | null;
-  nome: string;             // sempre do lead
-  cpf_dig?: string | null;  // da venda
-  telefone?: string | null; // do lead
-  email?: string | null;    // do lead
-  data_nascimento?: string | null; // da venda (última disponível)
-  observacoes?: string | null;     // descrição da venda mais recente
-  created_at?: string | null;      // para ordenação
-  vendas_ids?: string[];           // para edições em lote se quiser
+  cpf_dig?: string | null;
+  nome: string;                // SEMPRE do Lead
+  telefone?: string | null;    // do Lead
+  email?: string | null;       // do Lead
+  data_nascimento?: string | null; // da venda mais recente
+  observacoes?: string | null;     // da venda mais recente
+  created_at?: string | null;      // data da venda mais recente
+  vendas_ids: string[];            // p/ salvar no último registro
 };
 
+/* ========================= Utils ========================= */
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
 const normalize = (s?: string | null) =>
   (s || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 
 const maskPhone = (v: string) => {
   const d = onlyDigits(v).slice(0, 11);
-  const p1 = d.slice(0, 2);
-  const p2 = d.slice(2, 3);
-  const p3 = d.slice(3, 7);
-  const p4 = d.slice(7, 11);
+  const p1 = d.slice(0, 2), p2 = d.slice(2, 3), p3 = d.slice(3, 7), p4 = d.slice(7, 11);
   let out = "";
   if (p1) out += `(${p1}) `;
   if (p2) out += p2 + (p3 ? " " : "");
@@ -72,11 +70,9 @@ const upcomingBirthdaySortKey = (iso?: string | null) => {
 
 const isBirthdayThisMonth = (iso?: string | null) => {
   if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
+  const d = new Date(iso), now = new Date();
   return d.getUTCMonth() === now.getUTCMonth();
 };
-
 const isBirthdayThisWeek = (iso?: string | null) => {
   if (!iso) return false;
   const now = new Date();
@@ -92,21 +88,19 @@ const isBirthdayThisWeek = (iso?: string | null) => {
   return thisYear >= start && thisYear <= end;
 };
 
-function pickLatest<T extends { created_at?: string | null }>(arr: T[]): T | undefined {
-  return arr
-    .filter(Boolean)
-    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0];
-}
+const pickLatest = <T extends { created_at?: string | null }>(arr: T[]): T | undefined =>
+  arr.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0];
 
-function copyToClipboard(text: string) {
+const copyToClipboard = (text: string) => {
   try { navigator.clipboard?.writeText(text); } catch {}
-}
+};
 
+/* ========================= Página ========================= */
 export default function ClientesPage() {
   const PAGE = 10;
 
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState<ClienteVM[]>([]);
+  const [clientes, setClientes] = useState<ClienteVM[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
@@ -133,117 +127,180 @@ export default function ClientesPage() {
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
   const pushToast = (type: "success" | "error" | "info", text: string) => {
     setToast({ type, text });
-    setTimeout(() => setToast(null), 3500);
+    setTimeout(() => setToast(null), 3400);
   };
 
+  /* Debounce da busca */
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
 
+  /* Load geral */
   useEffect(() => {
     load(1, debounced);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced, filterWeek, filterMonth, sortBy]);
 
-  /** Carrega de vendas + leads e unifica */
+  /* ========================= Load unificado (VENDAS + LEADS) ========================= */
   async function load(target = 1, term = "") {
     setLoading(true);
     try {
-      // 1) Traz um lote de vendas e leads
       const [{ data: vds }, { data: lds }] = await Promise.all([
         supabase
           .from("vendas")
-          .select("id,lead_id,cpf,data_nascimento,descricao,created_at,status")
+          .select("id,lead_id,cpf,data_nascimento,descricao,created_at")
           .order("created_at", { ascending: false })
-          .range(0, 1999),
-        supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }).range(0, 1999),
+          .range(0, 3999),
+        supabase
+          .from("leads")
+          .select("id,nome,telefone,email")
+          .order("nome", { ascending: true })
+          .range(0, 3999),
       ]);
 
-      const leadMap = new Map<string, Lead>((lds || []).map((l: any) => [String(l.id), {
-        id: String(l.id),
-        nome: l.nome ?? "",
-        telefone: l.telefone ?? null,
-        email: l.email ?? null,
-      }]));
+      const leadMap = new Map<string, Lead>(
+        (lds || []).map((l: any) => [
+          String(l.id),
+          { id: String(l.id), nome: l.nome ?? "", telefone: l.telefone ?? null, email: l.email ?? null },
+        ])
+      );
 
-      // 2) Agrupa vendas por CPF, se houver; senão, por lead_id
-      const byKey = new Map<string, { vendas: VendaLite[]; lead?: Lead }>();
+      // maps para garantir MESCLA LEAD<->CPF
+      const mapByKey = new Map<string, { vendas: VendaLite[]; lead?: Lead }>();
+      const keyByCpf = new Map<string, string>();   // cpf -> key (CPF:xxx)
+      const keyByLead = new Map<string, string>();  // lead_id -> key (CPF:xxx | LEAD:yyy)
+
+      const ensureKeyFor = (leadId: string | null, cpf: string | null): string => {
+        const cleanCpf = cpf ? onlyDigits(cpf) : null;
+        const leadKey = leadId ? keyByLead.get(leadId) : undefined;
+        const cpfKey = cleanCpf ? keyByCpf.get(cleanCpf) : undefined;
+
+        // 1) Já temos cpfKey → usar ele; se havia leadKey diferente, MERGE no cpfKey
+        if (cpfKey) {
+          if (leadId && leadKey && leadKey !== cpfKey) {
+            // migrar registros do leadKey para cpfKey
+            const from = mapByKey.get(leadKey);
+            const to = mapByKey.get(cpfKey);
+            if (from && to) {
+              to.vendas.push(...from.vendas);
+              if (!to.lead && from.lead) to.lead = from.lead;
+              mapByKey.delete(leadKey);
+            }
+            keyByLead.set(leadId, cpfKey);
+          } else if (leadId && !leadKey) {
+            keyByLead.set(leadId, cpfKey);
+          }
+          return cpfKey;
+        }
+
+        // 2) Não temos cpfKey
+        if (leadId && leadKey) {
+          // existe um grupo do lead; se agora temos CPF, transforma esse grupo em CPF
+          if (cleanCpf) {
+            const newKey = `CPF:${cleanCpf}`;
+            const group = mapByKey.get(leadKey);
+            mapByKey.delete(leadKey);
+            mapByKey.set(newKey, group || { vendas: [], lead: leadMap.get(leadId) });
+            keyByCpf.set(cleanCpf, newKey);
+            keyByLead.set(leadId, newKey);
+            return newKey;
+          }
+          // sem CPF, mantém grupo do lead
+          return leadKey;
+        }
+
+        // 3) Nem leadKey nem cpfKey → criar
+        if (cleanCpf) {
+          const newKey = `CPF:${cleanCpf}`;
+          keyByCpf.set(cleanCpf, newKey);
+          if (leadId) keyByLead.set(leadId, newKey);
+          mapByKey.set(newKey, { vendas: [], lead: leadId ? leadMap.get(leadId) : undefined });
+          return newKey;
+        } else if (leadId) {
+          const newKey = `LEAD:${leadId}`;
+          keyByLead.set(leadId, newKey);
+          mapByKey.set(newKey, { vendas: [], lead: leadMap.get(leadId) });
+          return newKey;
+        } else {
+          // venda sem lead e sem cpf – chave sintética por id
+          const newKey = `ROW:${Math.random().toString(36).slice(2)}`;
+          mapByKey.set(newKey, { vendas: [], lead: undefined });
+          return newKey;
+        }
+      };
+
       (vds || []).forEach((r: any) => {
         const venda: VendaLite = {
           id: String(r.id),
-          lead_id: String(r.lead_id || ""),
+          lead_id: r.lead_id ? String(r.lead_id) : null,
           cpf: r.cpf ? String(r.cpf) : null,
           data_nascimento: r.data_nascimento ?? null,
           descricao: r.descricao ?? null,
           created_at: r.created_at ?? null,
-          status: r.status ?? null,
         };
-        const lead = leadMap.get(venda.lead_id);
-        const key = venda.cpf ? `CPF:${onlyDigits(venda.cpf)}` : `LEAD:${venda.lead_id}`;
-        const curr = byKey.get(key) || { vendas: [], lead };
-        curr.vendas.push(venda);
-        curr.lead = curr.lead || lead;
-        byKey.set(key, curr);
+        const key = ensureKeyFor(venda.lead_id, venda.cpf);
+        const bucket = mapByKey.get(key)!;
+        if (!bucket.lead && venda.lead_id) bucket.lead = leadMap.get(venda.lead_id);
+        bucket.vendas.push(venda);
       });
 
-      // 3) Constrói a VM (nome SEMPRE do lead, nascimento da VENDA mais recente)
+      // Monta a VM
       let all: ClienteVM[] = [];
-      for (const [key, { vendas, lead }] of byKey.entries()) {
-        const latest = pickLatest(vendas);
-        const nome = (lead?.nome || "").trim() || "(Sem nome no Lead)";
-        const telefone = lead?.telefone || null;
-        const email = lead?.email || null;
-
-        const cpf = latest?.cpf ? onlyDigits(latest.cpf) : null;
-        const nasc = latest?.data_nascimento || null;
-        const obs = latest?.descricao || null;
+      for (const [key, bucket] of mapByKey.entries()) {
+        const latest = pickLatest(bucket.vendas);
+        const lead = bucket.lead;
+        const nome = (lead?.nome || "").trim() || (latest?.cpf ? `CPF ${onlyDigits(latest.cpf).slice(0,3)}.***.***-${onlyDigits(latest.cpf).slice(-2)}` : "(Sem nome)");
+        const telefone = lead?.telefone ?? null;
+        const email = lead?.email ?? null;
+        const cpfDig = latest?.cpf ? onlyDigits(latest.cpf) : null;
 
         all.push({
           key,
-          lead_id: lead?.id || (latest?.lead_id ?? null),
+          lead_id: lead?.id ?? (latest?.lead_id ?? null),
+          cpf_dig: cpfDig,
           nome,
-          cpf_dig: cpf,
           telefone,
           email,
-          data_nascimento: nasc,
-          observacoes: obs,
-          created_at: latest?.created_at || null,
-          vendas_ids: vendas.map((v) => v.id),
+          data_nascimento: latest?.data_nascimento ?? null,
+          observacoes: latest?.descricao ?? null,
+          created_at: latest?.created_at ?? null,
+          vendas_ids: bucket.vendas
+            .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+            .map((v) => v.id),
         });
       }
 
-      // 4) Busca por NOME (somente, via lead)
+      // Busca por nome (Lead)
       if (term) {
         const t = normalize(term);
         all = all.filter((r) => normalize(r.nome).includes(t));
       }
 
-      // 5) Filtros de aniversário
+      // Filtros aniversário
       if (filterWeek) all = all.filter((r) => isBirthdayThisWeek(r.data_nascimento));
       if (filterMonth) all = all.filter((r) => isBirthdayThisMonth(r.data_nascimento));
 
-      // 6) Ordenação
+      // Ordenação
       if (sortBy === "aniversario") {
-        all.sort(
-          (a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento)
-        );
+        all.sort((a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento));
       } else if (sortBy === "nomeDesc") {
         all.sort((a, b) => (b.nome || "").localeCompare(a.nome || "", "pt-BR"));
       } else {
         all.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
       }
 
-      // 7) Paginação client-side
+      // Paginação (client-side)
       const from = (target - 1) * PAGE;
       const to = from + PAGE;
       setTotal(all.length);
-      setRows(all.slice(from, to));
+      setClientes(all.slice(from, to));
       setPage(target);
 
-      // 8) Novos para complementar (faltando tel/email do lead ou nascimento na venda)
-      const faltantes = all.filter((c) => !c.telefone || !c.email || !c.data_nascimento);
-      faltantes.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+      // Incompletos
+      const faltantes = all
+        .filter((c) => !c.telefone || !c.email || !c.data_nascimento)
+        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
       setIncompletos(faltantes.slice(0, 8));
     } catch (e: any) {
       pushToast("error", e.message || "Erro ao carregar clientes.");
@@ -252,7 +309,7 @@ export default function ClientesPage() {
     }
   }
 
-  /** Abrir edição – nome/contato editam LEAD; nascimento/obs editam VENDA (mais recente) */
+  /* ========================= Edição ========================= */
   function openEdit(c: ClienteVM) {
     setEditing(c);
     setEditNome(c.nome || "");
@@ -267,7 +324,8 @@ export default function ClientesPage() {
     if (!editing) return;
     try {
       setLoading(true);
-      // Atualiza o lead
+
+      // Atualiza o LEAD (contatos + nome)
       if (editing.lead_id) {
         const { error: eLead } = await supabase
           .from("leads")
@@ -280,14 +338,16 @@ export default function ClientesPage() {
         if (eLead) throw eLead;
       }
 
-      // Atualiza a venda mais recente desse grupo (onde está a data_nascimento/descricao)
-      const latestVendaId = editing.vendas_ids?.[0]; // já vem ordenado por created_at desc
+      // Atualiza a VENDA mais recente do grupo (nascimento + obs)
+      const latestVendaId = editing.vendas_ids[0];
       if (latestVendaId) {
-        const patch: any = {
-          data_nascimento: editBirth || null,
-          descricao: editObs.trim() || null,
-        };
-        const { error: eVenda } = await supabase.from("vendas").update(patch).eq("id", latestVendaId);
+        const { error: eVenda } = await supabase
+          .from("vendas")
+          .update({
+            data_nascimento: editBirth || null,
+            descricao: editObs.trim() || null,
+          })
+          .eq("id", latestVendaId);
         if (eVenda) throw eVenda;
       }
 
@@ -303,6 +363,7 @@ export default function ClientesPage() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / PAGE)), [total]);
 
+  /* ========================= UI ========================= */
   return (
     <div className="space-y-4">
       {/* Novos para complementar */}
@@ -333,13 +394,7 @@ export default function ClientesPage() {
                   <div className="mt-2 flex gap-2">
                     <button className="btn-primary" onClick={() => openEdit(c)}>Completar</button>
                     {c.telefone && (
-                      <a
-                        className="btn"
-                        title="Abrir WhatsApp"
-                        href={`https://wa.me/55${onlyDigits(c.telefone)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
+                      <a className="btn" href={`https://wa.me/55${onlyDigits(c.telefone)}`} target="_blank" rel="noreferrer">
                         <Send className="h-4 w-4 mr-1" /> WhatsApp
                       </a>
                     )}
@@ -351,45 +406,28 @@ export default function ClientesPage() {
         </div>
       )}
 
-      {/* Barra superior */}
+      {/* Lista */}
       <div className="rounded-2xl bg-white p-4 shadow">
         <div className="mb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-          <h3 className="m-0 font-semibold">Lista de Clientes (de Vendas + Leads)</h3>
+          <h3 className="m-0 font-semibold">Lista de Clientes</h3>
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
               <input
                 className="input pl-9 w-80"
-                placeholder="Buscar por nome (Lead)"
+                placeholder="Buscar por nome"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
               <span className="absolute left-3 top-2.5 opacity-60">🔎</span>
             </div>
-
-            {/* Filtros */}
-            <button
-              className={`chip ${filterWeek ? "chip-on" : ""}`}
-              onClick={() => { setFilterWeek((v) => !v); setPage(1); }}
-              title="Aniversaria nesta semana (sex→qui)"
-            >
+            <button className={`chip ${filterWeek ? "chip-on" : ""}`} onClick={() => { setFilterWeek((v) => !v); setPage(1); }}>
               <Filter className="h-3.5 w-3.5" /> Semana
             </button>
-            <button
-              className={`chip ${filterMonth ? "chip-on" : ""}`}
-              onClick={() => { setFilterMonth((v) => !v); setPage(1); }}
-              title="Aniversaria neste mês"
-            >
+            <button className={`chip ${filterMonth ? "chip-on" : ""}`} onClick={() => { setFilterMonth((v) => !v); setPage(1); }}>
               <Filter className="h-3.5 w-3.5" /> Mês
             </button>
-
-            {/* Ordenação */}
             <div className="relative">
-              <select
-                className="input pr-8"
-                value={sortBy}
-                onChange={(e) => { setSortBy(e.target.value as any); setPage(1); }}
-                title="Ordenar por"
-              >
+              <select className="input pr-8" value={sortBy} onChange={(e) => { setSortBy(e.target.value as any); setPage(1); }}>
                 <option value="nomeAsc">Nome (A→Z)</option>
                 <option value="nomeDesc">Nome (Z→A)</option>
                 <option value="aniversario">Próximos aniversários</option>
@@ -398,14 +436,12 @@ export default function ClientesPage() {
                 {sortBy === "nomeDesc" ? <SortDesc className="h-4 w-4" /> : <SortAsc className="h-4 w-4" />}
               </span>
             </div>
-
             <small className="text-slate-500">
-              Mostrando {rows.length ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} de {total}
+              Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} de {total}
             </small>
           </div>
         </div>
 
-        {/* Tabela */}
         <div className="rounded-xl border overflow-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 sticky top-0">
@@ -413,18 +449,14 @@ export default function ClientesPage() {
                 <th className="p-2 text-left">Nome</th>
                 <th className="p-2 text-left">Telefone</th>
                 <th className="p-2 text-left">E-mail</th>
-                <th className="p-2 text-left">Nascimento (da venda)</th>
+                <th className="p-2 text-left">Nascimento</th>
                 <th className="p-2 text-center">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {loading && (
-                <tr><td className="p-4 text-slate-500" colSpan={5}>Carregando…</td></tr>
-              )}
-              {!loading && rows.length === 0 && (
-                <tr><td className="p-4 text-slate-500" colSpan={5}>Nenhum cliente encontrado.</td></tr>
-              )}
-              {rows.map((c, i) => {
+              {loading && <tr><td className="p-4 text-slate-500" colSpan={5}>Carregando…</td></tr>}
+              {!loading && clientes.length === 0 && <tr><td className="p-4 text-slate-500" colSpan={5}>Nenhum cliente encontrado.</td></tr>}
+              {clientes.map((c, i) => {
                 const phone = c.telefone ? maskPhone(c.telefone) : "";
                 const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
                 const contatoStr = `${c.nome} | ${phone || "s/ telefone"} | ${c.email || "s/ e-mail"}`;
@@ -438,13 +470,7 @@ export default function ClientesPage() {
                       <div className="flex items-center gap-2">
                         {phone || "—"}
                         {wa && (
-                          <a
-                            href={wa}
-                            target="_blank"
-                            rel="noreferrer"
-                            title="Abrir WhatsApp"
-                            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs hover:bg-green-50"
-                          >
+                          <a href={wa} target="_blank" rel="noreferrer" title="Abrir WhatsApp" className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs hover:bg-green-50">
                             <Send className="h-3.5 w-3.5" />
                             WhatsApp
                           </a>
@@ -455,19 +481,11 @@ export default function ClientesPage() {
                     <td className="p-2">{formatBRDate(c.data_nascimento)}</td>
                     <td className="p-2">
                       <div className="flex items-center justify-center gap-2">
-                        <button className="icon-btn" title="Editar" onClick={() => openEdit(c)}>
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          className="icon-btn"
-                          title="Copiar contato"
-                          onClick={() => { copyToClipboard(contatoStr); pushToast("info", "Contato copiado!"); }}
-                        >
+                        <button className="icon-btn" title="Editar" onClick={() => openEdit(c)}><Pencil className="h-4 w-4" /></button>
+                        <button className="icon-btn" title="Copiar contato" onClick={() => { copyToClipboard(contatoStr); pushToast("info", "Contato copiado!"); }}>
                           <Copy className="h-4 w-4" />
                         </button>
-                        <a className="icon-btn" title="Ver Vendas" href="/carteira">
-                          <Eye className="h-4 w-4" />
-                        </a>
+                        <a className="icon-btn" title="Ver Vendas" href="/carteira"><Eye className="h-4 w-4" /></a>
                       </div>
                     </td>
                   </tr>
@@ -510,13 +528,10 @@ export default function ClientesPage() {
 
       {/* Toast */}
       {toast && (
-        <div
-          className={`fixed bottom-5 right-5 z-[60] rounded-xl px-4 py-3 shadow-lg text-sm ${
-            toast.type === "success" ? "bg-emerald-600 text-white"
-            : toast.type === "error" ? "bg-rose-600 text-white"
-            : "bg-slate-800 text-white"
-          }`}
-        >
+        <div className={`fixed bottom-5 right-5 z-[60] rounded-xl px-4 py-3 shadow-lg text-sm ${
+          toast.type === "success" ? "bg-emerald-600 text-white" :
+          toast.type === "error" ? "bg-rose-600 text-white" : "bg-slate-800 text-white"
+        }`}>
           {toast.text}
         </div>
       )}

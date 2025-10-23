@@ -1,39 +1,20 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import {
-  Pencil,
-  CalendarPlus,
-  Eye,
-  Send,
-  Filter,
-  SortAsc,
-  SortDesc,
-  Copy,
-  UserPlus,
-} from "lucide-react";
+import { Pencil, CalendarPlus, Eye, Send } from "lucide-react";
 
-/* ========================= Views existentes ========================= */
-const SCHEMA_CLIENTES_VIEW = "v_clientes_list";   // public.v_clientes_list
-const SCHEMA_VENDAS_VIEW   = "v_vendas_cliente";  // public.v_vendas_cliente
-
-/* ========================= Tipos ========================= */
 type Cliente = {
-  id: string;
+  id: string;                     // = lead_id (chave da linha)
+  lead_id: string;                // redundante, mas explícito
   nome: string;
-  cpf_dig?: string | null;
-  telefone?: string | null;
-  email?: string | null;
-  data_nascimento?: string | null; // YYYY-MM-DD
-  observacoes?: string | null;
-  created_at?: string | null;
-  _source?: "clientes" | "vendas";
-  _source_id?: string | null;
-  // campos auxiliares possíveis (não exibidos)
-  lead_id?: string | null;
+  cpf_dig?: string | null;        // cpf da venda mais recente (só dígitos)
+  telefone?: string | null;       // do lead
+  email?: string | null;          // do lead
+  data_nascimento?: string | null; // da venda mais recente (YYYY-MM-DD)
+  observacoes?: string | null;     // da venda mais recente
+  vendas_ids?: string[];           // vendas do lead (mais recente primeiro)
 };
 
-/* ========================= Utils ========================= */
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
 
 const maskPhone = (v: string) => {
@@ -50,42 +31,6 @@ const maskPhone = (v: string) => {
   return out.trim();
 };
 
-const maskCPF = (v: string) => {
-  const d = onlyDigits(v).slice(0, 11);
-  const p1 = d.slice(0, 3);
-  const p2 = d.slice(3, 6);
-  const p3 = d.slice(6, 9);
-  const p4 = d.slice(9, 11);
-  let out = "";
-  if (p1) out += p1;
-  if (p2) out += (out ? "." : "") + p2;
-  if (p3) out += (out ? "." : "") + p3;
-  if (p4) out += (out ? "-" : "") + p4;
-  return out;
-};
-
-const maskCPFDisplay = (cpfDig?: string | null) => {
-  const s = (cpfDig || "").replace(/\D/g, "");
-  if (s.length !== 11) return "";
-  return `${s.slice(0,3)}.${"*".repeat(3)}.${"*".repeat(3)}-${s.slice(9,11)}`;
-};
-
-const isValidCPF = (raw: string) => {
-  const s = onlyDigits(raw);
-  if (s.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(s)) return false;
-  const calc = (base: string, factor: number) => {
-    let sum = 0;
-    for (let i = 0; i < base.length; i++) sum += parseInt(base[i], 10) * factor--;
-    const mod = (sum * 10) % 11;
-    return mod === 10 ? 0 : mod;
-  };
-  const dv1 = calc(s.slice(0, 9), 10);
-  if (dv1 !== parseInt(s[9], 10)) return false;
-  const dv2 = calc(s.slice(0, 10), 11);
-  return dv2 === parseInt(s[10], 10);
-};
-
 const formatBRDate = (iso?: string | null) => {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -96,54 +41,6 @@ const formatBRDate = (iso?: string | null) => {
   return `${dd}/${mm}/${yyyy}`;
 };
 
-const upcomingBirthdaySortKey = (iso?: string | null) => {
-  if (!iso) return 366;
-  const ref = new Date();
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return 366;
-  const month = d.getUTCMonth();
-  const day = d.getUTCDate();
-  const thisYear = new Date(Date.UTC(ref.getUTCFullYear(), month, day));
-  const nextYear = new Date(Date.UTC(ref.getUTCFullYear() + 1, month, day));
-  const target = thisYear < ref ? nextYear : thisYear;
-  const diffMs = target.getTime() - ref.getTime();
-  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-};
-
-const isBirthdayThisMonth = (iso?: string | null) => {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return d.getUTCMonth() === now.getUTCMonth();
-};
-
-const isBirthdayThisWeek = (iso?: string | null) => {
-  // semana sex→qui
-  if (!iso) return false;
-  const now = new Date();
-  const toUTC0 = (x: Date) =>
-    new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()));
-  const today = toUTC0(now);
-  const weekday = today.getUTCDay();
-  const offsetToFri = ((weekday - 5 + 7) % 7);
-  const start = new Date(today.getTime() - offsetToFri * 86400000);
-  const end = new Date(start.getTime() + 6 * 86400000);
-  const birth = new Date(iso);
-  const thisYear = new Date(Date.UTC(today.getUTCFullYear(), birth.getUTCMonth(), birth.getUTCDate()));
-  return thisYear >= start && thisYear <= end;
-};
-
-function copyToClipboard(text: string) {
-  try {
-    navigator.clipboard?.writeText(text);
-  } catch { /* ignore */ }
-}
-
-function normalizeString(s?: string | null) {
-  return (s || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
-}
-
-/* ========================= Componente ========================= */
 export default function ClientesPage() {
   const PAGE = 10;
 
@@ -154,17 +51,12 @@ export default function ClientesPage() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
 
-  // filtros/ordenação
-  const [filterWeek, setFilterWeek] = useState(false);
-  const [filterMonth, setFilterMonth] = useState(false);
-  const [sortBy, setSortBy] = useState<"nomeAsc" | "nomeDesc" | "aniversario">("nomeAsc");
-
   // modal edição
   const [editing, setEditing] = useState<Cliente | null>(null);
   const [editNome, setEditNome] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPhone, setEditPhone] = useState("");
-  const [editBirth, setEditBirth] = useState<string>("");
+  const [editBirth, setEditBirth] = useState<string>(""); // YYYY-MM-DD
   const [editObs, setEditObs] = useState("");
   const [editCEP, setEditCEP] = useState("");
   const [editLogr, setEditLogr] = useState("");
@@ -173,293 +65,148 @@ export default function ClientesPage() {
   const [editCidade, setEditCidade] = useState("");
   const [editUF, setEditUF] = useState("");
 
-  // form novo cliente
-  const [formNome, setFormNome] = useState("");
-  const [formCPF, setFormCPF] = useState("");
-  const [formPhone, setFormPhone] = useState("");
-  const [formEmail, setFormEmail] = useState("");
-  const [formBirth, setFormBirth] = useState<string>("");
-  const [formObs, setFormObs] = useState("");
+  // form novo cliente (tabela clientes — opcional/independente)
+  const [form, setForm] = useState<Partial<Cliente>>({});
 
-  // fila de incompletos
-  const [incompletos, setIncompletos] = useState<Cliente[]>([]);
-
-  // toasts
-  const [toast, setToast] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
-  const pushToast = (type: "success" | "error" | "info", text: string) => {
-    setToast({ type, text });
-    setTimeout(() => setToast(null), 3800);
-  };
-
-  /* ========================= Effects ========================= */
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 300);
+    const t = setTimeout(() => setDebounced(search.trim()), 400);
     return () => clearTimeout(t);
   }, [search]);
 
   useEffect(() => {
     load(1, debounced);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debounced, filterWeek, filterMonth, sortBy]);
+  }, [debounced]);
 
-  useEffect(() => {
-    loadIncompletos();
-  }, []);
-
-  /* ========================= Mapeamentos ========================= */
-  function mapFromClientesView(r: any): Cliente {
-    const cpf_dig =
-      r.cpf_dig ??
-      (r.cpf ? String(r.cpf).replace(/\D/g, "") : null);
-    return {
-      id: String(r.id),
-      nome: r.nome ?? "",
-      cpf_dig,
-      telefone: r.telefone ?? null,
-      email: r.email ?? null,
-      data_nascimento: r.data_nascimento ?? null,
-      observacoes: r.observacoes ?? null,
-      created_at: r.created_at ?? null,
-      _source: "clientes",
-      _source_id: String(r.id ?? ""),
-    };
-  }
-
-  function mapFromVendasView(r: any): Cliente {
-    // Nome pode vir em várias colunas; pegamos o mais rico
-    const candidatesNome = [
-      r.nome, r.cliente_nome, r.lead_nome, r.nome_cliente, r.nome_lead,
-    ].filter(Boolean) as string[];
-    const nome =
-      candidatesNome.sort((a, b) => (b || "").length - (a || "").length)[0] || "";
-
-    // CPF pode estar em colunas diferentes
-    const rawCpf =
-      r.cpf_dig ??
-      r.cpf ??
-      r.cpf_cnpj ??
-      r.cpfcnpj ??
-      null;
-    const cpf_dig = rawCpf ? String(rawCpf).replace(/\D/g, "") : null;
-
-    const telefone = r.telefone ?? r.celular ?? r.phone ?? null;
-    const email = r.email ?? r.lead_email ?? r.contato_email ?? null;
-
-    const data_nascimento = r.data_nascimento ?? r.nascimento ?? null;
-    const observacoes = r.observacoes ?? r.descricao ?? null;
-
-    const created_at =
-      r.created_at ??
-      r.encarteirada_em ??
-      r.data_venda ??
-      null;
-
-    const lead_id = r.lead_id ?? r.cliente_lead_id ?? null;
-
-    return {
-      id: String(r.id), // id da VENDA como id provisório
-      nome,
-      cpf_dig,
-      telefone,
-      email,
-      data_nascimento,
-      observacoes,
-      created_at,
-      _source: "vendas",
-      _source_id: String(r.id ?? ""),
-      lead_id: lead_id ? String(lead_id) : null,
-    };
-  }
-
-  function betterRecord(a: Cliente, b: Cliente): Cliente {
-    const srcScore = (c: Cliente) => (c._source === "clientes" ? 3 : 2);
-    const sa = srcScore(a), sb = srcScore(b);
-    if (sa !== sb) return sa > sb ? a : b;
-
-    const nameA = (a.nome || "").trim();
-    const nameB = (b.nome || "").trim();
-    if (!!nameA !== !!nameB) return nameA ? a : b;
-    if (nameA.length !== nameB.length) return nameA.length > nameB.length ? a : b;
-
-    const ca = a.created_at || "";
-    const cb = b.created_at || "";
-    if (ca !== cb) return ca > cb ? a : b;
-
-    return a;
-  }
-
-  function dedupePreferClientes(rows: Cliente[]): Cliente[] {
-    // chave: CPF > lead_id (vendas) > nome+fone+email
-    const keyFor = (c: Cliente) => {
-      if (c.cpf_dig) return `CPF:${c.cpf_dig}`;
-      if (c._source === "vendas" && c.lead_id) return `LEAD:${c.lead_id}`;
-      const nn = normalizeString(c.nome);
-      const ph = onlyDigits(c.telefone || "");
-      const em = (c.email || "").toLowerCase();
-      return `NF:${nn}|${ph}|${em}`;
-    };
-
-    const map = new Map<string, Cliente>();
-    for (const row of rows) {
-      const k = keyFor(row);
-      const curr = map.get(k);
-      map.set(k, curr ? betterRecord(curr, row) : row);
-    }
-
-    // Backfill por CPF (nome/contatos do melhor do grupo)
-    const byCpf = new Map<string, Cliente[]>();
-    for (const r of map.values()) {
-      if (r.cpf_dig) {
-        const arr = byCpf.get(r.cpf_dig) || [];
-        arr.push(r);
-        byCpf.set(r.cpf_dig, arr);
-      }
-    }
-    for (const group of byCpf.values()) {
-      const bestName =
-        group.map((g) => (g.nome || "").trim())
-             .sort((a, b) => (b || "").length - (a || "").length)[0] || "";
-      const bestPhone = group.map((g) => g.telefone).find(Boolean) || null;
-      const bestEmail = group.map((g) => g.email).find(Boolean) || null;
-      const bestObs   = group.map((g) => g.observacoes).find(Boolean) || null;
-
-      for (const g of group) {
-        if (!g.nome && bestName) g.nome = bestName;
-        if (!g.telefone && bestPhone) g.telefone = bestPhone;
-        if (!g.email && bestEmail) g.email = bestEmail;
-        if (!g.observacoes && bestObs) g.observacoes = bestObs;
-      }
-    }
-
-    // Placeholder para nome vazio com CPF
-    for (const r of map.values()) {
-      if (!(r.nome || "").trim() && r.cpf_dig) {
-        r.nome = `CPF ${maskCPFDisplay(r.cpf_dig)}`;
-      }
-    }
-
-    return Array.from(map.values());
-  }
-
-  /* ========================= Loads ========================= */
-  async function loadIncompletos() {
-    try {
-      const [{ data: dc }, { data: dv }] = await Promise.all([
-        supabase.from(SCHEMA_CLIENTES_VIEW).select("*").range(0, 199),
-        supabase.from(SCHEMA_VENDAS_VIEW).select("*").range(0, 199),
-      ]);
-
-      let rows: Cliente[] = [];
-      rows.push(...(dc || []).map(mapFromClientesView));
-      rows.push(...(dv || []).map(mapFromVendasView));
-
-      rows = dedupePreferClientes(rows);
-
-      const faltantes = rows.filter(
-        (c) => !c.telefone || !c.email || !c.observacoes
-      );
-
-      // mais recentes primeiro
-      faltantes.sort((a, b) =>
-        (b.created_at || "").localeCompare(a.created_at || "")
-      );
-
-      setIncompletos(faltantes.slice(0, 8));
-    } catch (e: any) {
-      pushToast("error", "Erro ao buscar novos clientes: " + (e?.message || e));
-    }
-  }
-
+  /**
+   * LISTA por LEAD:
+   * - Busca leads pelo nome (se houver termo).
+   * - Traz TODAS as vendas e agrega por lead_id.
+   * - Usa a venda mais recente do lead para nascimento/obs/cpf.
+   */
   async function load(target = 1, term = "") {
     setLoading(true);
     try {
-      const [{ data: dc }, { data: dv }] = await Promise.all([
-        supabase.from(SCHEMA_CLIENTES_VIEW).select("*").range(0, 999),
-        supabase.from(SCHEMA_VENDAS_VIEW).select("*").range(0, 999),
-      ]);
+      // 1) Leva o filtro para o SELECT de leads (somente por NOME)
+      let leadsQ = supabase
+        .from("leads")
+        .select("id,nome,telefone,email")
+        .order("nome", { ascending: true });
 
-      let rows: Cliente[] = [];
-      rows.push(...(dc || []).map(mapFromClientesView));
-      rows.push(...(dv || []).map(mapFromVendasView));
-
-      rows = dedupePreferClientes(rows);
-
-      // Busca por NOME (somente) – case/acentuação insensitive
       if (term) {
-        const nterm = normalizeString(term);
-        rows = rows.filter((r) => normalizeString(r.nome).includes(nterm));
+        leadsQ = leadsQ.ilike("nome", `%${term}%`);
       }
 
-      // Filtros aniversário
-      if (filterWeek) rows = rows.filter((r) => isBirthdayThisWeek(r.data_nascimento));
-      if (filterMonth) rows = rows.filter((r) => isBirthdayThisMonth(r.data_nascimento));
+      // Carrega todos os leads relevantes
+      const { data: leads, error: errL } = await leadsQ.range(0, 5000);
+      if (errL) throw errL;
 
-      // Ordenação
-      if (sortBy === "aniversario") {
-        rows.sort(
-          (a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento)
-        );
-      } else if (sortBy === "nomeDesc") {
-        rows.sort((a, b) => (b.nome || "").localeCompare(a.nome || "", "pt-BR"));
+      const leadIds = (leads || []).map((l: any) => String(l.id));
+      const leadMap = new Map<string, { id: string; nome: string; telefone?: string | null; email?: string | null }>(
+        (leads || []).map((l: any) => [
+          String(l.id),
+          { id: String(l.id), nome: l.nome || "", telefone: l.telefone || null, email: l.email || null },
+        ])
+      );
+
+      // 2) Vendas desses leads (uma batida só; se não filtrar, pode ficar pesado)
+      let vendasQ = supabase
+        .from("vendas")
+        .select("id,lead_id,cpf,data_nascimento,descricao,created_at")
+        .order("created_at", { ascending: false });
+
+      // filtra pelas leads carregadas; se não houver leads, nenhuma venda
+      if (leadIds.length > 0) {
+        vendasQ = vendasQ.in("lead_id", leadIds);
       } else {
-        rows.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
+        // evita trazer tudo quando a busca não retornou leads
+        setClientes([]);
+        setTotal(0);
+        setPage(1);
+        setLoading(false);
+        return;
       }
 
-      // Paginação client-side
+      const { data: vendas, error: errV } = await vendasQ.range(0, 20000);
+      if (errV) throw errV;
+
+      // 3) Agrega por lead_id
+      type VendaLite = { id: string; created_at: string | null; nasc?: string | null; obs?: string | null; cpf?: string | null };
+      const vendasByLead = new Map<string, VendaLite[]>();
+      (vendas || []).forEach((v: any) => {
+        const lid = v.lead_id ? String(v.lead_id) : "";
+        if (!lid) return; // ignorar vendas sem lead (não aparecem na lista por design)
+        if (!vendasByLead.has(lid)) vendasByLead.set(lid, []);
+        vendasByLead.get(lid)!.push({
+          id: String(v.id),
+          created_at: v.created_at ?? null,
+          nasc: v.data_nascimento ?? null,
+          obs: v.descricao ?? null,
+          cpf: v.cpf ? onlyDigits(String(v.cpf)) : null,
+        });
+      });
+
+      // 4) Monta os clientes (um por lead)
+      let list: Cliente[] = [];
+      for (const l of leads || []) {
+        const lid = String(l.id);
+        const arr = (vendasByLead.get(lid) || []).sort((a, b) =>
+          (b.created_at || "").localeCompare(a.created_at || "")
+        );
+        const latest = arr[0];
+
+        list.push({
+          id: lid,
+          lead_id: lid,
+          nome: l.nome || "(Sem nome)",
+          telefone: l.telefone || null,
+          email: l.email || null,
+          data_nascimento: latest?.nasc || null,
+          observacoes: latest?.obs || null,
+          cpf_dig: latest?.cpf || null,
+          vendas_ids: arr.map((x) => x.id),
+        });
+      }
+
+      // 5) Ordena por nome e pagina client-side
+      list.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
       const from = (target - 1) * PAGE;
       const to = from + PAGE;
-      setTotal(rows.length);
-      setClientes(rows.slice(from, to));
+      setTotal(list.length);
+      setClientes(list.slice(from, to));
       setPage(target);
     } catch (e: any) {
-      pushToast("error", e.message || "Erro ao listar clientes.");
+      alert(e.message || "Erro ao listar clientes.");
     } finally {
       setLoading(false);
     }
   }
 
-  /* ========================= Create / Edit ========================= */
+  // criar cliente manual (tabela clientes — mantém como estava)
   async function createCliente() {
-    const nome = formNome.trim();
-    const cpf = onlyDigits(formCPF);
-    const telefone = onlyDigits(formPhone);
-    const email = formEmail.trim() || null;
-    const data_nascimento = formBirth || null;
-    const observacoes = formObs.trim() || null;
-
-    if (!nome) return pushToast("error", "Informe o nome.");
-    if (!cpf) return pushToast("error", "Informe o CPF.");
-    if (!isValidCPF(cpf)) return pushToast("error", "CPF inválido.");
-    if (telefone && !(telefone.length === 10 || telefone.length === 11)) {
-      return pushToast("error", "Telefone deve ter 10 ou 11 dígitos.");
-    }
+    const payload = {
+      nome: (form.nome || "").trim(),
+      cpf: onlyDigits((form as any).cpf || ""),
+      telefone: onlyDigits(form.telefone || ""),
+      email: (form.email || "").trim() || null,
+      data_nascimento:
+        (form.data_nascimento || "") === "" ? null : form.data_nascimento!,
+      observacoes: (form.observacoes || "").trim() || null,
+    };
+    if (!payload.nome) return alert("Informe o nome.");
+    if (!payload.cpf) return alert("Informe o CPF.");
 
     try {
       setLoading(true);
-
-      // duplicidade por CPF (olhando primeiro a view oficial de clientes)
-      const { data: exists, error: exErr } = await supabase
-        .from(SCHEMA_CLIENTES_VIEW)
-        .select("id, nome, cpf_dig")
-        .eq("cpf_dig", cpf)
-        .limit(1);
-      if (exErr) throw exErr;
-      if (exists && exists.length) {
-        const c = exists[0];
-        pushToast("info", `Já existe um cliente com este CPF: ${c.nome}. Abrindo para edição…`);
-        openEdit({ id: c.id, nome: c.nome, cpf_dig: cpf });
-        return;
-      }
-
       const { error, data } = await supabase
         .from("clientes")
         .insert({
-          nome,
-          cpf,
-          telefone: telefone || null,
-          email,
-          data_nascimento,
-          observacoes,
+          nome: payload.nome,
+          cpf: payload.cpf,
+          telefone: payload.telefone || null,
+          email: payload.email,
+          data_nascimento: payload.data_nascimento,
+          observacoes: payload.observacoes,
         })
         .select("id")
         .single();
@@ -467,22 +214,17 @@ export default function ClientesPage() {
 
       await supabase.rpc("upsert_birthday_event", { p_cliente: data!.id });
 
-      setFormNome("");
-      setFormCPF("");
-      setFormPhone("");
-      setFormEmail("");
-      setFormBirth("");
-      setFormObs("");
-
-      await Promise.all([load(1), loadIncompletos()]);
-      pushToast("success", "Cliente criado com sucesso!");
+      setForm({});
+      await load(1);
+      alert("Cliente criado!");
     } catch (e: any) {
-      pushToast("error", "Não foi possível salvar: " + (e?.message || e));
+      alert("Não foi possível salvar: " + (e?.message || e));
     } finally {
       setLoading(false);
     }
   }
 
+  // abrir modal edição
   function openEdit(c: Cliente) {
     setEditing(c);
     setEditNome(c.nome || "");
@@ -490,6 +232,7 @@ export default function ClientesPage() {
     setEditPhone(c.telefone ? maskPhone(c.telefone) : "");
     setEditBirth(c.data_nascimento || "");
     setEditObs(c.observacoes || "");
+    // endereço (opcional)
     setEditCEP("");
     setEditLogr("");
     setEditNumero("");
@@ -501,7 +244,7 @@ export default function ClientesPage() {
     setEditing(null);
   }
 
-  // ViaCEP quando CEP completo
+  // ViaCEP quando CEP completo (opcional)
   useEffect(() => {
     const d = onlyDigits(editCEP);
     if (editing && d.length === 8) {
@@ -515,46 +258,52 @@ export default function ClientesPage() {
             setEditCidade((v) => v || data.localidade || "");
             setEditUF((v) => v || data.uf || "");
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       })();
     }
   }, [editCEP, editing]);
 
+  /**
+   * Salva edição:
+   * - LEAD: nome/telefone/email
+   * - VENDA mais recente do lead: nascimento/observações
+   */
   async function saveEdit() {
     if (!editing) return;
-    if (!editNome.trim()) return pushToast("error", "Nome é obrigatório.");
-    const phoneDigits = onlyDigits(editPhone);
-    if (phoneDigits && !(phoneDigits.length === 10 || phoneDigits.length === 11)) {
-      return pushToast("error", "Telefone deve ter 10 ou 11 dígitos.");
-    }
-
     try {
       setLoading(true);
-      const update: any = {
-        nome: editNome.trim() || null,
-        email: editEmail.trim() || null,
-        telefone: phoneDigits || null,
-        data_nascimento: editBirth || null,
-        observacoes: editObs.trim() || null,
-      };
-      // Se houver colunas de endereço em "clientes", descomente:
-      // update.cep        = onlyDigits(editCEP) || null;
-      // update.logradouro = editLogr || null;
-      // update.numero     = editNumero || null;
-      // update.bairro     = editBairro || null;
-      // update.cidade     = editCidade || null;
-      // update.uf         = editUF || null;
 
-      const { error } = await supabase.from("clientes").update(update).eq("id", editing.id);
-      if (error) throw error;
+      // atualiza lead
+      const { error: eLead } = await supabase
+        .from("leads")
+        .update({
+          nome: editNome.trim() || editing.nome,
+          telefone: onlyDigits(editPhone) || null,
+          email: editEmail.trim() || null,
+        })
+        .eq("id", editing.lead_id);
+      if (eLead) throw eLead;
 
-      await supabase.rpc("upsert_birthday_event", { p_cliente: editing.id });
+      // atualiza venda mais recente (se existir)
+      const latestVendaId = editing.vendas_ids?.[0];
+      if (latestVendaId) {
+        const { error: eVenda } = await supabase
+          .from("vendas")
+          .update({
+            data_nascimento: editBirth || null,
+            descricao: editObs.trim() || null,
+          })
+          .eq("id", latestVendaId);
+        if (eVenda) throw eVenda;
+      }
 
-      await Promise.all([load(page), loadIncompletos()]);
+      await load(page, debounced);
       closeEdit();
-      pushToast("success", "Cliente atualizado!");
+      alert("Cliente atualizado!");
     } catch (e: any) {
-      pushToast("error", "Erro ao salvar: " + (e?.message || e));
+      alert("Erro ao salvar: " + (e?.message || e));
     } finally {
       setLoading(false);
     }
@@ -565,117 +314,70 @@ export default function ClientesPage() {
     [total]
   );
 
-  /* ========================= UI ========================= */
   return (
     <div className="space-y-4">
-      {/* ====== Novos clientes para complementar ====== */}
-      {incompletos.length > 0 && (
-        <div className="rounded-2xl bg-white p-4 shadow border">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="m-0 font-semibold">Novos clientes para complementar</h3>
-            <button className="btn" onClick={loadIncompletos}>Atualizar</button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {incompletos.map((c) => {
-              const phone = c.telefone ? maskPhone(c.telefone) : "";
-              const missing: string[] = [];
-              if (!c.telefone) missing.push("telefone");
-              if (!c.email) missing.push("e-mail");
-              if (!c.observacoes) missing.push("observações");
-              return (
-                <div key={`${c._source || ""}-${c.id}`} className="rounded-xl border p-3">
-                  <div className="font-semibold">{c.nome}</div>
-                  <div className="text-xs text-slate-500 mb-1">CPF: {c.cpf_dig || "—"}</div>
-                  <div className="text-sm mb-1">📞 {phone || "—"}</div>
-                  <div className="text-sm mb-2">✉️ {c.email || "—"}</div>
-                  {missing.length > 0 && (
-                    <div className="text-xs bg-yellow-50 border border-yellow-200 text-yellow-800 rounded px-2 py-1 inline-block">
-                      Faltando: {missing.join(", ")}
-                    </div>
-                  )}
-                  <div className="mt-2 flex gap-2">
-                    <button className="btn-primary" onClick={() => openEdit(c)}>Completar</button>
-                    <a
-                      className="btn"
-                      title="Abrir WhatsApp"
-                      href={c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : undefined}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <Send className="h-4 w-4 mr-1" /> WhatsApp
-                    </a>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ====== Novo cliente ====== */}
+      {/* Novo cliente */}
       <div className="rounded-2xl bg-white p-4 shadow">
         <h3 className="mb-2 font-semibold">Novo Cliente</h3>
         <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
           <input
             placeholder="Nome"
             className="input"
-            value={formNome}
-            onChange={(e) => setFormNome(e.target.value)}
+            value={form.nome || ""}
+            onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
           />
           <input
             placeholder="CPF"
             className="input"
-            value={maskCPF(formCPF)}
-            onChange={(e) => setFormCPF(e.target.value)}
-            onBlur={(e) => {
-              const v = e.target.value;
-              if (v && !isValidCPF(v)) pushToast("error", "CPF inválido.");
-            }}
+            value={(form as any).cpf || ""}
+            onChange={(e) => setForm((s: any) => ({ ...s, cpf: e.target.value }))}
           />
           <input
             placeholder="Telefone"
             className="input"
-            value={maskPhone(formPhone)}
-            onChange={(e) => setFormPhone(e.target.value)}
+            value={form.telefone || ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, telefone: e.target.value }))
+            }
           />
           <input
             placeholder="E-mail"
             className="input"
-            value={formEmail}
-            onChange={(e) => setFormEmail(e.target.value)}
+            value={form.email || ""}
+            onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
           />
           <input
             type="date"
             className="input"
-            value={formBirth}
-            onChange={(e) => setFormBirth(e.target.value)}
+            value={form.data_nascimento || ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, data_nascimento: e.target.value }))
+            }
             placeholder="Data de Nascimento"
           />
           <input
             placeholder="Observações"
             className="input md:col-span-2"
-            value={formObs}
-            onChange={(e) => setFormObs(e.target.value)}
+            value={form.observacoes || ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, observacoes: e.target.value }))
+            }
           />
           <button
             className="btn-primary md:col-span-2"
             onClick={createCliente}
             disabled={loading}
-            title="Criar e adicionar à base"
           >
-            {loading ? "Salvando..." : <><UserPlus className="h-4 w-4 mr-1 inline" /> Criar Cliente</>}
+            {loading ? "Salvando..." : "Criar Cliente"}
           </button>
-        </div>
-        <div className="mt-2 text-xs text-slate-500">
-          Dica: informe CPF e Telefone para evitar duplicidades e acelerar contatos.
         </div>
       </div>
 
-      {/* ====== Lista ====== */}
+      {/* Lista */}
       <div className="rounded-2xl bg-white p-4 shadow">
-        <div className="mb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+        <div className="mb-3 flex items-center justify-between gap-2">
           <h3 className="m-0 font-semibold">Lista de Clientes</h3>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
             <div className="relative">
               <input
                 className="input pl-9 w-80"
@@ -685,46 +387,10 @@ export default function ClientesPage() {
               />
               <span className="absolute left-3 top-2.5 opacity-60">🔎</span>
             </div>
-
-            {/* Filtros */}
-            <div className="flex items-center gap-2">
-              <button
-                className={`chip ${filterWeek ? "chip-on" : ""}`}
-                onClick={() => { setFilterWeek((v) => !v); setPage(1); }}
-                title="Aniversaria nesta semana (sex→qui)"
-              >
-                <Filter className="h-3.5 w-3.5" /> Semana
-              </button>
-              <button
-                className={`chip ${filterMonth ? "chip-on" : ""}`}
-                onClick={() => { setFilterMonth((v) => !v); setPage(1); }}
-                title="Aniversaria neste mês"
-              >
-                <Filter className="h-3.5 w-3.5" /> Mês
-              </button>
-
-              {/* Ordenação */}
-              <div className="relative">
-                <select
-                  className="input pr-8"
-                  value={sortBy}
-                  onChange={(e) => { setSortBy(e.target.value as any); setPage(1); }}
-                  title="Ordenar por"
-                >
-                  <option value="nomeAsc">Nome (A→Z)</option>
-                  <option value="nomeDesc">Nome (Z→A)</option>
-                  <option value="aniversario">Próximos aniversários</option>
-                </select>
-                <span className="absolute right-2 top-2.5 opacity-60">
-                  {sortBy === "nomeDesc" ? <SortDesc className="h-4 w-4" /> : <SortAsc className="h-4 w-4" />}
-                </span>
-              </div>
-
-              <small className="text-slate-500">
-                Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-
-                {Math.min(page * PAGE, total)} de {total}
-              </small>
-            </div>
+            <small className="text-slate-500">
+              Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-
+              {Math.min(page * PAGE, total)} de {total}
+            </small>
           </div>
         </div>
 
@@ -756,19 +422,18 @@ export default function ClientesPage() {
               )}
               {clientes.map((c, i) => {
                 const phone = c.telefone ? maskPhone(c.telefone) : "";
-                const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
-                const contatoStr = `${c.nome} | ${phone || "s/ telefone"} | ${c.email || "s/ e-mail"}`;
+                const wa = c.telefone
+                  ? `https://wa.me/55${onlyDigits(c.telefone)}`
+                  : "";
                 return (
-                  <tr key={`${c._source || ""}-${c.id}`} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
+                  <tr
+                    key={c.id}
+                    className={i % 2 ? "bg-slate-50/60" : "bg-white"}
+                  >
                     <td className="p-2">
                       <div className="font-medium">{c.nome}</div>
                       <div className="text-xs text-slate-500">
                         CPF: {c.cpf_dig || "—"}
-                        {c._source === "vendas" && (
-                          <span className="ml-2 inline-block rounded-full border px-2 py-0.5 text-[10px] uppercase opacity-70">
-                            Vendas
-                          </span>
-                        )}
                       </div>
                     </td>
                     <td className="p-2">
@@ -792,38 +457,24 @@ export default function ClientesPage() {
                     <td className="p-2">{formatBRDate(c.data_nascimento)}</td>
                     <td className="p-2">
                       <div className="flex items-center justify-center gap-2">
-                        <button className="icon-btn" title="Editar" onClick={() => openEdit(c)}>
-                          <Pencil className="h-4 w-4" />
-                        </button>
                         <button
                           className="icon-btn"
-                          title="Copiar contato"
-                          onClick={() => {
-                            copyToClipboard(contatoStr);
-                            pushToast("info", "Contato copiado!");
-                          }}
+                          title="Editar"
+                          onClick={() => openEdit(c)}
                         >
-                          <Copy className="h-4 w-4" />
+                          <Pencil className="h-4 w-4" />
                         </button>
                         <button
                           className="icon-btn"
                           title="+ Evento na Agenda"
                           onClick={async () => {
-                            await supabase.rpc("upsert_birthday_event", { p_cliente: c.id });
-                            pushToast("success", "Evento atualizado/gerado na Agenda.");
+                            alert("Aniversário é gerenciado pelas vendas (venda mais recente do lead).");
                           }}
                         >
                           <CalendarPlus className="h-4 w-4" />
                         </button>
                         <a className="icon-btn" title="Ver na Agenda" href="/agenda">
                           <Eye className="h-4 w-4" />
-                        </a>
-                        <a
-                          className="icon-btn"
-                          title="Criar oportunidade"
-                          href={`/oportunidades?cliente=${encodeURIComponent(c.id)}`}
-                        >
-                          <UserPlus className="h-4 w-4" />
                         </a>
                       </div>
                     </td>
@@ -836,41 +487,114 @@ export default function ClientesPage() {
 
         {/* paginação */}
         <div className="mt-3 flex items-center justify-end gap-2">
-          <button className="btn" disabled={page <= 1 || loading} onClick={() => load(page - 1)}>
+          <button
+            className="btn"
+            disabled={page <= 1 || loading}
+            onClick={() => load(page - 1, debounced)}
+          >
             ‹ Anterior
           </button>
           <span className="text-xs text-slate-600">
             Página {page} de {totalPages}
           </span>
-          <button className="btn" disabled={page >= totalPages || loading} onClick={() => load(page + 1)}>
+          <button
+            className="btn"
+            disabled={page >= totalPages || loading}
+            onClick={() => load(page + 1, debounced)}
+          >
             Próxima ›
           </button>
         </div>
       </div>
 
-      {/* ====== Modal edição ====== */}
+      {/* Modal edição */}
       {editing && (
         <>
           <div className="fixed inset-0 bg-black/40 z-40" onClick={closeEdit} />
           <div className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(900px,92vw)] bg-white rounded-2xl shadow-xl p-4">
             <h3 className="font-semibold mb-2">Editar Cliente</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <input className="input" placeholder="Nome" value={editNome} onChange={(e) => setEditNome(e.target.value)} />
-              <input className="input" placeholder="E-mail" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
-              <input className="input" placeholder="Telefone" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} />
-              <input type="date" className="input" value={editBirth} onChange={(e) => setEditBirth(e.target.value)} placeholder="Data de Nascimento" />
+              <input
+                className="input"
+                placeholder="Nome"
+                value={editNome}
+                onChange={(e) => setEditNome(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="E-mail"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Telefone"
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+              />
+              {/* Data de nascimento (da venda mais recente) */}
+              <input
+                type="date"
+                className="input"
+                value={editBirth}
+                onChange={(e) => setEditBirth(e.target.value)}
+                placeholder="Data de Nascimento"
+              />
               {/* Endereço opcional */}
-              <input className="input" placeholder="CEP" value={editCEP} onChange={(e) => setEditCEP(e.target.value)} />
-              <input className="input" placeholder="Logradouro" value={editLogr} onChange={(e) => setEditLogr(e.target.value)} />
-              <input className="input" placeholder="Número" value={editNumero} onChange={(e) => setEditNumero(e.target.value)} />
-              <input className="input" placeholder="Bairro" value={editBairro} onChange={(e) => setEditBairro(e.target.value)} />
-              <input className="input" placeholder="Cidade" value={editCidade} onChange={(e) => setEditCidade(e.target.value)} />
-              <input className="input" placeholder="UF" value={editUF} onChange={(e) => setEditUF(e.target.value.toUpperCase().slice(0, 2))} />
-              <input className="input md:col-span-3" placeholder="Observações" value={editObs} onChange={(e) => setEditObs(e.target.value)} />
+              <input
+                className="input"
+                placeholder="CEP"
+                value={editCEP}
+                onChange={(e) => setEditCEP(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Logradouro"
+                value={editLogr}
+                onChange={(e) => setEditLogr(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Número"
+                value={editNumero}
+                onChange={(e) => setEditNumero(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Bairro"
+                value={editBairro}
+                onChange={(e) => setEditBairro(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Cidade"
+                value={editCidade}
+                onChange={(e) => setEditCidade(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="UF"
+                value={editUF}
+                onChange={(e) =>
+                  setEditUF(e.target.value.toUpperCase().slice(0, 2))
+                }
+              />
+              <input
+                className="input md:col-span-3"
+                placeholder="Observações"
+                value={editObs}
+                onChange={(e) => setEditObs(e.target.value)}
+              />
             </div>
             <div className="mt-3 flex gap-2 justify-end">
-              <button className="btn" onClick={closeEdit}>Cancelar</button>
-              <button className="btn-primary" onClick={saveEdit} disabled={loading}>
+              <button className="btn" onClick={closeEdit}>
+                Cancelar
+              </button>
+              <button
+                className="btn-primary"
+                onClick={saveEdit}
+                disabled={loading}
+              >
                 {loading ? "Salvando..." : "Salvar alterações"}
               </button>
             </div>
@@ -878,30 +602,13 @@ export default function ClientesPage() {
         </>
       )}
 
-      {/* ====== Toast ====== */}
-      {toast && (
-        <div
-          className={`fixed bottom-5 right-5 z-[60] rounded-xl px-4 py-3 shadow-lg text-sm ${
-            toast.type === "success"
-              ? "bg-emerald-600 text-white"
-              : toast.type === "error"
-              ? "bg-rose-600 text-white"
-              : "bg-slate-800 text-white"
-          }`}
-        >
-          {toast.text}
-        </div>
-      )}
-
-      {/* ====== estilos locais ====== */}
+      {/* estilos locais */}
       <style>{`
-        .input{padding:10px;border-radius:12px;border:1px solid #e5e7eb;outline:none;background:#fff}
+        .input{padding:10px;border-radius:12px;border:1px solid #e5e7eb;outline:none}
         .btn{padding:8px 12px;border-radius:10px;background:#f1f5f9;border:1px solid #e2e8f0;font-weight:600}
         .btn-primary{padding:10px 16px;border-radius:12px;background:#A11C27;color:#fff;font-weight:800}
         .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc}
         .icon-btn:hover{background:#eef2ff}
-        .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid #e2e8f0;background:#f8fafc;font-size:12px}
-        .chip-on{background:#1E293F;color:#fff;border-color:#1E293F}
       `}</style>
     </div>
   );

@@ -16,6 +16,7 @@ import {
   UserCog,
   SlidersHorizontal,
   BarChart3,
+  Link as LinkIcon, // ✅ novo ícone para "Links Úteis"
 } from 'lucide-react'
 
 type SidebarProps = {
@@ -24,17 +25,19 @@ type SidebarProps = {
 }
 
 // Removido o item /leads
+// ✅ Adicionado "Links Úteis" (rota /links)
 const items = [
-  { to: '/oportunidades', label: 'Oportunidades', icon: Briefcase },
+  { to: '/oportunidades',   label: 'Oportunidades',    icon: Briefcase },
   // (grupo Simuladores vem antes de Propostas)
-  { to: '/propostas', label: 'Propostas', icon: FileText },
-  { to: '/carteira', label: 'Carteira', icon: Wallet },
+  { to: '/propostas',        label: 'Propostas',        icon: FileText },
+  { to: '/carteira',         label: 'Carteira',         icon: Wallet },
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos', icon: Layers },
-  { to: '/clientes', label: 'Clientes', icon: UserCheck },
-  { to: '/agenda', label: 'Agenda', icon: Calendar },
-  { to: '/comissoes', label: 'Comissões', icon: BarChart3 },
-  { to: '/usuarios', label: 'Usuários', icon: UserCog },
-  { to: '/parametros', label: 'Parâmetros', icon: SlidersHorizontal },
+  { to: '/clientes',         label: 'Clientes',         icon: UserCheck },
+  { to: '/agenda',           label: 'Agenda',           icon: Calendar },
+  { to: '/comissoes',        label: 'Comissões',        icon: BarChart3 },
+  { to: '/usuarios',         label: 'Usuários',         icon: UserCog },
+  { to: '/parametros',       label: 'Parâmetros',       icon: SlidersHorizontal },
+  { to: '/links',            label: 'Links Úteis',      icon: LinkIcon }, // ✅ novo item
 ]
 
 const LOGO_URL = '/logo-consulmax.png?v=3'

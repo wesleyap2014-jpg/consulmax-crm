@@ -17,15 +17,15 @@ type VendaLite = {
 
 type ClienteVM = {
   key: string;                 // "CPF:<11>" ou "LEAD:<id>"
-  lead_id: string | null;
-  cpf_dig?: string | null;
-  nome: string;                // SEMPRE do Lead
-  telefone?: string | null;    // do Lead
-  email?: string | null;       // do Lead
+  lead_id: string | null;      // lead preferencial do grupo (com melhor nome)
+  cpf_dig?: string | null;     // somente dígitos
+  nome: string;                // SEMPRE de algum Lead do grupo
+  telefone?: string | null;    // do Lead (melhor disponível)
+  email?: string | null;       // do Lead (melhor disponível)
   data_nascimento?: string | null; // da venda mais recente
   observacoes?: string | null;     // da venda mais recente
   created_at?: string | null;      // data da venda mais recente
-  vendas_ids: string[];            // p/ salvar no último registro
+  vendas_ids: string[];            // ordenadas desc por created_at
 };
 
 /* ========================= Utils ========================= */
@@ -95,6 +95,12 @@ const copyToClipboard = (text: string) => {
   try { navigator.clipboard?.writeText(text); } catch {}
 };
 
+const maskCpfName = (cpf?: string | null) => {
+  const d = onlyDigits(cpf || "");
+  if (d.length !== 11) return "CPF —";
+  return `CPF ${d.slice(0,3)}.${d.slice(3,6)}.***-${d.slice(9,11)}`;
+};
+
 /* ========================= Página ========================= */
 export default function ClientesPage() {
   const PAGE = 10;
@@ -151,14 +157,15 @@ export default function ClientesPage() {
           .from("vendas")
           .select("id,lead_id,cpf,data_nascimento,descricao,created_at")
           .order("created_at", { ascending: false })
-          .range(0, 3999),
+          .range(0, 9999),
         supabase
           .from("leads")
           .select("id,nome,telefone,email")
           .order("nome", { ascending: true })
-          .range(0, 3999),
+          .range(0, 9999),
       ]);
 
+      // Maps de leads
       const leadMap = new Map<string, Lead>(
         (lds || []).map((l: any) => [
           String(l.id),
@@ -166,70 +173,58 @@ export default function ClientesPage() {
         ])
       );
 
-      // maps para garantir MESCLA LEAD<->CPF
-      const mapByKey = new Map<string, { vendas: VendaLite[]; lead?: Lead }>();
+      // Buckets primários
+      type Bucket = { vendas: VendaLite[]; leads: Lead[]; cpf?: string | null };
+      const mapByKey = new Map<string, Bucket>();
       const keyByCpf = new Map<string, string>();   // cpf -> key (CPF:xxx)
       const keyByLead = new Map<string, string>();  // lead_id -> key (CPF:xxx | LEAD:yyy)
 
-      const ensureKeyFor = (leadId: string | null, cpf: string | null): string => {
-        const cleanCpf = cpf ? onlyDigits(cpf) : null;
+      // cria/resolve chave para (lead, cpf) com MERGE automático lead->cpf
+      const ensureKeyFor = (leadId: string | null, rawCpf: string | null): string => {
+        const cpf = rawCpf ? onlyDigits(rawCpf) : null;
         const leadKey = leadId ? keyByLead.get(leadId) : undefined;
-        const cpfKey = cleanCpf ? keyByCpf.get(cleanCpf) : undefined;
+        const cpfKey = cpf ? keyByCpf.get(cpf) : undefined;
 
-        // 1) Já temos cpfKey → usar ele; se havia leadKey diferente, MERGE no cpfKey
         if (cpfKey) {
-          if (leadId && leadKey && leadKey !== cpfKey) {
-            // migrar registros do leadKey para cpfKey
-            const from = mapByKey.get(leadKey);
-            const to = mapByKey.get(cpfKey);
-            if (from && to) {
-              to.vendas.push(...from.vendas);
-              if (!to.lead && from.lead) to.lead = from.lead;
-              mapByKey.delete(leadKey);
-            }
-            keyByLead.set(leadId, cpfKey);
-          } else if (leadId && !leadKey) {
-            keyByLead.set(leadId, cpfKey);
-          }
+          // já existe um bucket de CPF — garanta que o lead aponte pra ele
+          if (leadId) keyByLead.set(leadId, cpfKey);
           return cpfKey;
         }
 
-        // 2) Não temos cpfKey
-        if (leadId && leadKey) {
-          // existe um grupo do lead; se agora temos CPF, transforma esse grupo em CPF
-          if (cleanCpf) {
-            const newKey = `CPF:${cleanCpf}`;
-            const group = mapByKey.get(leadKey);
+        if (leadKey) {
+          // há bucket de LEAD; se chegou um CPF agora, converte para CPF
+          if (cpf) {
+            const newKey = `CPF:${cpf}`;
+            const from = mapByKey.get(leadKey);
             mapByKey.delete(leadKey);
-            mapByKey.set(newKey, group || { vendas: [], lead: leadMap.get(leadId) });
-            keyByCpf.set(cleanCpf, newKey);
-            keyByLead.set(leadId, newKey);
+            mapByKey.set(newKey, from || { vendas: [], leads: [] , cpf });
+            keyByCpf.set(cpf, newKey);
+            if (leadId) keyByLead.set(leadId, newKey);
             return newKey;
           }
-          // sem CPF, mantém grupo do lead
           return leadKey;
         }
 
-        // 3) Nem leadKey nem cpfKey → criar
-        if (cleanCpf) {
-          const newKey = `CPF:${cleanCpf}`;
-          keyByCpf.set(cleanCpf, newKey);
+        // criar novo
+        if (cpf) {
+          const newKey = `CPF:${cpf}`;
+          keyByCpf.set(cpf, newKey);
           if (leadId) keyByLead.set(leadId, newKey);
-          mapByKey.set(newKey, { vendas: [], lead: leadId ? leadMap.get(leadId) : undefined });
+          mapByKey.set(newKey, { vendas: [], leads: [], cpf });
           return newKey;
         } else if (leadId) {
           const newKey = `LEAD:${leadId}`;
           keyByLead.set(leadId, newKey);
-          mapByKey.set(newKey, { vendas: [], lead: leadMap.get(leadId) });
+          mapByKey.set(newKey, { vendas: [], leads: [] });
           return newKey;
         } else {
-          // venda sem lead e sem cpf – chave sintética por id
           const newKey = `ROW:${Math.random().toString(36).slice(2)}`;
-          mapByKey.set(newKey, { vendas: [], lead: undefined });
+          mapByKey.set(newKey, { vendas: [], leads: [] });
           return newKey;
         }
       };
 
+      // 1) Alimenta buckets
       (vds || []).forEach((r: any) => {
         const venda: VendaLite = {
           id: String(r.id),
@@ -241,47 +236,96 @@ export default function ClientesPage() {
         };
         const key = ensureKeyFor(venda.lead_id, venda.cpf);
         const bucket = mapByKey.get(key)!;
-        if (!bucket.lead && venda.lead_id) bucket.lead = leadMap.get(venda.lead_id);
         bucket.vendas.push(venda);
+        if (venda.lead_id) {
+          const L = leadMap.get(venda.lead_id);
+          if (L && !bucket.leads.find((x) => x.id === L.id)) bucket.leads.push(L);
+        }
       });
 
-      // Monta a VM
+      // 2) ÍNDICES dos buckets por CPF (para casar com buckets SEM CPF)
+      const cpfBuckets = Array.from(mapByKey.entries()).filter(([k]) => k.startsWith("CPF:"));
+      const indexByPhone = new Map<string, string>(); // phoneDigits -> cpfKey
+      const indexByEmail = new Map<string, string>(); // emailLower  -> cpfKey
+      const indexByName  = new Map<string, string>(); // normName    -> cpfKey
+      for (const [key, b] of cpfBuckets) {
+        const lead = b.leads[0];
+        if (lead?.telefone) indexByPhone.set(onlyDigits(lead.telefone), key);
+        if (lead?.email) indexByEmail.set((lead.email || "").toLowerCase(), key);
+        if (lead?.nome) indexByName.set(normalize(lead.nome), key);
+      }
+
+      // 3) MESCLA buckets SEM CPF com buckets POR CPF por telefone/e-mail/nome
+      for (const [key, bucket] of Array.from(mapByKey.entries())) {
+        if (!key.startsWith("LEAD:")) continue; // só sem CPF
+        const lead = bucket.leads[0];
+        const phone = lead?.telefone ? onlyDigits(lead.telefone) : "";
+        const email = (lead?.email || "").toLowerCase();
+        const nameN = normalize(lead?.nome || "");
+
+        const cpfKey =
+          (phone && indexByPhone.get(phone)) ||
+          (email && indexByEmail.get(email)) ||
+          (nameN && indexByName.get(nameN));
+
+        if (cpfKey && mapByKey.has(cpfKey)) {
+          const target = mapByKey.get(cpfKey)!;
+          // mescla vendas
+          target.vendas.push(...bucket.vendas);
+          // mescla leads (mantendo únicos)
+          for (const L of bucket.leads) {
+            if (!target.leads.find((x) => x.id === L.id)) target.leads.push(L);
+          }
+          // remove o antigo
+          mapByKey.delete(key);
+        }
+      }
+
+      // 4) Monta a VM
       let all: ClienteVM[] = [];
       for (const [key, bucket] of mapByKey.entries()) {
-        const latest = pickLatest(bucket.vendas);
-        const lead = bucket.lead;
-        const nome = (lead?.nome || "").trim() || (latest?.cpf ? `CPF ${onlyDigits(latest.cpf).slice(0,3)}.***.***-${onlyDigits(latest.cpf).slice(-2)}` : "(Sem nome)");
-        const telefone = lead?.telefone ?? null;
-        const email = lead?.email ?? null;
-        const cpfDig = latest?.cpf ? onlyDigits(latest.cpf) : null;
+        // ordena vendas desc e pega a mais recente p/ nascimento/obs
+        const vendasOrd = bucket.vendas
+          .slice()
+          .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+        const latest = vendasOrd[0];
+
+        // escolhe o melhor lead (com nome válido)
+        const leadPref =
+          bucket.leads.find((l) => (l.nome || "").trim().length > 0) ||
+          bucket.leads[0];
+
+        // monta campos
+        const cpfDig = (bucket.cpf && onlyDigits(bucket.cpf)) || (latest?.cpf && onlyDigits(latest.cpf)) || null;
+        const nome =
+          (leadPref?.nome || "").trim() ||
+          (cpfDig ? maskCpfName(cpfDig) : "(Sem nome)");
 
         all.push({
           key,
-          lead_id: lead?.id ?? (latest?.lead_id ?? null),
+          lead_id: leadPref?.id ?? (latest?.lead_id ?? null),
           cpf_dig: cpfDig,
           nome,
-          telefone,
-          email,
+          telefone: leadPref?.telefone ?? null,
+          email: leadPref?.email ?? null,
           data_nascimento: latest?.data_nascimento ?? null,
           observacoes: latest?.descricao ?? null,
           created_at: latest?.created_at ?? null,
-          vendas_ids: bucket.vendas
-            .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
-            .map((v) => v.id),
+          vendas_ids: vendasOrd.map((v) => v.id),
         });
       }
 
-      // Busca por nome (Lead)
+      // 5) Busca por nome (Lead)
       if (term) {
         const t = normalize(term);
         all = all.filter((r) => normalize(r.nome).includes(t));
       }
 
-      // Filtros aniversário
+      // 6) Filtros aniversário
       if (filterWeek) all = all.filter((r) => isBirthdayThisWeek(r.data_nascimento));
       if (filterMonth) all = all.filter((r) => isBirthdayThisMonth(r.data_nascimento));
 
-      // Ordenação
+      // 7) Ordenação
       if (sortBy === "aniversario") {
         all.sort((a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento));
       } else if (sortBy === "nomeDesc") {
@@ -290,14 +334,14 @@ export default function ClientesPage() {
         all.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
       }
 
-      // Paginação (client-side)
+      // 8) Paginação (client-side)
       const from = (target - 1) * PAGE;
       const to = from + PAGE;
       setTotal(all.length);
       setClientes(all.slice(from, to));
       setPage(target);
 
-      // Incompletos
+      // 9) Incompletos
       const faltantes = all
         .filter((c) => !c.telefone || !c.email || !c.data_nascimento)
         .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));

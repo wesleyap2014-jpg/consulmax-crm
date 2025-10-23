@@ -4,21 +4,17 @@ import { supabase } from "@/lib/supabaseClient";
 import { Pencil, CalendarPlus, Eye, Send } from "lucide-react";
 
 type Cliente = {
-  id: string;                       // chave interna da lista (CPF:* ou LEAD:*)
-  lead_id?: string | null;          // lead preferencial (de onde veio o nome/contato)
-  vendas_ids?: string[];            // vendas do grupo, mais recente primeiro
+  id: string;
   nome: string;
-  cpf_dig?: string | null;          // dígitos do CPF do grupo
-  cpf?: string | null;
+  cpf_dig?: string | null;          // vindo da view (só dígitos)
+  cpf?: string | null;              // fallback se buscar direto da tabela
   telefone?: string | null;
   email?: string | null;
-  data_nascimento?: string | null;  // YYYY-MM-DD (da venda mais recente)
-  observacoes?: string | null;      // descrição da venda mais recente
+  data_nascimento?: string | null;  // YYYY-MM-DD
+  observacoes?: string | null;      // <- nome correto no banco
 };
 
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
-const normalize = (s?: string | null) =>
-  (s || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 
 const maskPhone = (v: string) => {
   const d = onlyDigits(v).slice(0, 11);
@@ -42,13 +38,6 @@ const formatBRDate = (iso?: string | null) => {
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const yyyy = d.getUTCFullYear();
   return `${dd}/${mm}/${yyyy}`;
-};
-
-// nome "mascarado" se não houver lead com nome
-const maskCpfName = (cpf?: string | null) => {
-  const d = onlyDigits(cpf || "");
-  if (d.length !== 11) return "CPF —";
-  return `CPF ${d.slice(0, 3)}.${d.slice(3, 6)}.***-${d.slice(9, 11)}`;
 };
 
 export default function ClientesPage() {
@@ -75,7 +64,7 @@ export default function ClientesPage() {
   const [editCidade, setEditCidade] = useState("");
   const [editUF, setEditUF] = useState("");
 
-  // form novo cliente (continua, caso você ainda use a tabela clientes manualmente)
+  // form novo cliente
   const [form, setForm] = useState<Partial<Cliente>>({});
 
   useEffect(() => {
@@ -88,129 +77,41 @@ export default function ClientesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced]);
 
-  /**
-   * Carrega SOMENTE de public.vendas + public.leads
-   * - Agrupa por CPF (um cliente por CPF)
-   * - Nome/telefone/email vêm do lead (preferindo lead com nome)
-   * - Nascimento/observações vêm da venda mais recente do grupo
-   * - Busca apenas por nome
-   */
   async function load(target = 1, term = "") {
     setLoading(true);
     try {
-      // trazemos bastante linha e paginamos no client (simples e confiável)
-      const [{ data: vendas }, { data: leads }] = await Promise.all([
-        supabase
-          .from("vendas")
-          .select("id, lead_id, cpf, data_nascimento, descricao, created_at")
-          .order("created_at", { ascending: false })
-          .range(0, 5000),
-        supabase
-          .from("leads")
-          .select("id, nome, telefone, email")
-          .order("nome", { ascending: true })
-          .range(0, 5000),
-      ]);
-
-      const leadMap = new Map<string, { id: string; nome: string; telefone?: string | null; email?: string | null }>(
-        (leads || []).map((l: any) => [
-          String(l.id),
-          { id: String(l.id), nome: l.nome || "", telefone: l.telefone || null, email: l.email || null },
-        ])
-      );
-
-      // Agrupa por CPF
-      type Bucket = {
-        cpf: string | null;
-        vendas: Array<{ id: string; lead_id: string | null; created_at: string | null; nasc?: string | null; obs?: string | null }>;
-        leads: Array<{ id: string; nome: string; telefone?: string | null; email?: string | null }>;
-      };
-
-      const buckets = new Map<string, Bucket>();
-
-      (vendas || []).forEach((v: any) => {
-        const cpf_dig = v.cpf ? onlyDigits(String(v.cpf)) : "";
-        const key = cpf_dig ? `CPF:${cpf_dig}` : `LEAD:${v.lead_id || v.id}`;
-        if (!buckets.has(key)) {
-          buckets.set(key, { cpf: cpf_dig || null, vendas: [], leads: [] });
-        }
-        const b = buckets.get(key)!;
-        b.vendas.push({
-          id: String(v.id),
-          lead_id: v.lead_id ? String(v.lead_id) : null,
-          created_at: v.created_at ?? null,
-          nasc: v.data_nascimento ?? null,
-          obs: v.descricao ?? null,
-        });
-        if (v.lead_id && leadMap.has(String(v.lead_id))) {
-          const L = leadMap.get(String(v.lead_id))!;
-          if (!b.leads.find((x) => x.id === L.id)) b.leads.push(L);
-        }
-      });
-
-      // Se há bucket LEAD sem CPF e existir outro bucket CPF
-      // com mesmo telefone/e-mail/nome, mescla para o CPF
-      const cpfKeys = Array.from(buckets.keys()).filter((k) => k.startsWith("CPF:"));
-      const indexByPhone = new Map<string, string>();
-      const indexByEmail = new Map<string, string>();
-      const indexByName = new Map<string, string>();
-      for (const k of cpfKeys) {
-        const b = buckets.get(k)!;
-        const L = b.leads[0];
-        if (L?.telefone) indexByPhone.set(onlyDigits(L.telefone), k);
-        if (L?.email) indexByEmail.set((L.email || "").toLowerCase(), k);
-        if (L?.nome) indexByName.set(normalize(L.nome), k);
-      }
-
-      for (const [k, b] of Array.from(buckets.entries())) {
-        if (!k.startsWith("LEAD:")) continue;
-        const L = b.leads[0];
-        const phone = L?.telefone ? onlyDigits(L.telefone) : "";
-        const email = (L?.email || "").toLowerCase();
-        const nname = normalize(L?.nome || "");
-        const cpfKey = (phone && indexByPhone.get(phone)) || (email && indexByEmail.get(email)) || (nname && indexByName.get(nname));
-        if (cpfKey && buckets.has(cpfKey)) {
-          const tgt = buckets.get(cpfKey)!;
-          tgt.vendas.push(...b.vendas);
-          for (const ld of b.leads) if (!tgt.leads.find((x) => x.id === ld.id)) tgt.leads.push(ld);
-          buckets.delete(k);
-        }
-      }
-
-      // Monta view model
-      let all: Cliente[] = [];
-      for (const [k, b] of buckets.entries()) {
-        // ordena vendas por created_at desc
-        const ord = b.vendas.slice().sort((a, c) => (c.created_at || "").localeCompare(a.created_at || ""));
-        const latest = ord[0];
-        // escolhe lead com nome válido
-        const prefLead = b.leads.find((x) => (x.nome || "").trim().length > 0) || b.leads[0];
-        const nome = (prefLead?.nome || "").trim() || maskCpfName(b.cpf || "");
-        all.push({
-          id: k,
-          lead_id: prefLead?.id ?? (latest?.lead_id ?? null),
-          vendas_ids: ord.map((x) => x.id),
-          nome,
-          cpf_dig: b.cpf,
-          telefone: prefLead?.telefone ?? null,
-          email: prefLead?.email ?? null,
-          data_nascimento: latest?.nasc ?? null,
-          observacoes: latest?.obs ?? null,
-        });
-      }
-
-      // Busca apenas por NOME
-      if (term) {
-        const t = normalize(term);
-        all = all.filter((c) => normalize(c.nome).includes(t));
-      }
-
-      // ordena por nome e pagina
-      all.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
       const from = (target - 1) * PAGE;
-      const to = from + PAGE;
-      setTotal(all.length);
-      setClientes(all.slice(from, to));
+      const to = from + PAGE - 1;
+
+      // priorizamos a view v_clientes_list (já filtra quem tem CPF)
+      let q = supabase
+        .from("v_clientes_list")
+        .select("*", { count: "exact" })
+        .order("nome", { ascending: true });
+
+      if (term) {
+        q = q.or(
+          `nome.ilike.%${term}%,email.ilike.%${term}%,telefone.ilike.%${onlyDigits(
+            term
+          )}%`
+        );
+      }
+
+      const { data, error, count } = await q.range(from, to);
+      if (error) throw error;
+
+      setClientes(
+        (data || []).map((r: any) => ({
+          id: r.id,
+          nome: r.nome,
+          cpf_dig: r.cpf_dig,
+          telefone: r.telefone,
+          email: r.email,
+          data_nascimento: r.data_nascimento,
+          observacoes: r.observacoes, // <- mapeia da view se existir
+        }))
+      );
+      setTotal(count || 0);
       setPage(target);
     } catch (e: any) {
       alert(e.message || "Erro ao listar clientes.");
@@ -219,7 +120,7 @@ export default function ClientesPage() {
     }
   }
 
-  // criar cliente manual (mantido caso você ainda use a tabela clientes)
+  // criar cliente manual
   async function createCliente() {
     const payload = {
       nome: (form.nome || "").trim(),
@@ -249,6 +150,7 @@ export default function ClientesPage() {
         .single();
       if (error) throw error;
 
+      // cria/atualiza aniversário automático
       await supabase.rpc("upsert_birthday_event", { p_cliente: data!.id });
 
       setForm({});
@@ -269,6 +171,7 @@ export default function ClientesPage() {
     setEditPhone(c.telefone ? maskPhone(c.telefone) : "");
     setEditBirth(c.data_nascimento || "");
     setEditObs(c.observacoes || "");
+    // endereço (opcional)
     setEditCEP("");
     setEditLogr("");
     setEditNumero("");
@@ -280,7 +183,7 @@ export default function ClientesPage() {
     setEditing(null);
   }
 
-  // ViaCEP quando CEP completo (mantido, opcional)
+  // ViaCEP quando CEP completo
   useEffect(() => {
     const d = onlyDigits(editCEP);
     if (editing && d.length === 8) {
@@ -301,43 +204,36 @@ export default function ClientesPage() {
     }
   }, [editCEP, editing]);
 
-  /**
-   * Salvar edição
-   * - Atualiza LEAD (nome/telefone/email)
-   * - Atualiza VENDA mais recente do grupo (nascimento/observações)
-   */
   async function saveEdit() {
     if (!editing) return;
     try {
       setLoading(true);
+      const update: any = {
+        nome: editNome.trim() || null,
+        email: editEmail.trim() || null,
+        telefone: onlyDigits(editPhone) || null,
+        data_nascimento: editBirth || null,
+        observacoes: editObs.trim() || null, // <- usa coluna correta
+      };
 
-      // Atualiza Lead
-      if (editing.lead_id) {
-        const { error: eLead } = await supabase
-          .from("leads")
-          .update({
-            nome: editNome.trim() || editing.nome,
-            telefone: onlyDigits(editPhone) || null,
-            email: editEmail.trim() || null,
-          })
-          .eq("id", editing.lead_id);
-        if (eLead) throw eLead;
-      }
+      // se já tiver colunas de endereço em clientes, descomente:
+      // update.cep        = onlyDigits(editCEP) || null;
+      // update.logradouro = editLogr || null;
+      // update.numero     = editNumero || null;
+      // update.bairro     = editBairro || null;
+      // update.cidade     = editCidade || null;
+      // update.uf         = editUF || null;
 
-      // Atualiza venda mais recente do grupo
-      const vendaId = editing.vendas_ids?.[0];
-      if (vendaId) {
-        const { error: eVenda } = await supabase
-          .from("vendas")
-          .update({
-            data_nascimento: editBirth || null,
-            descricao: editObs.trim() || null,
-          })
-          .eq("id", vendaId);
-        if (eVenda) throw eVenda;
-      }
+      const { error } = await supabase
+        .from("clientes")
+        .update(update)
+        .eq("id", editing.id);
+      if (error) throw error;
 
-      await load(page, debounced);
+      // sincroniza/atualiza aniversário automático
+      await supabase.rpc("upsert_birthday_event", { p_cliente: editing.id });
+
+      await load(page);
       closeEdit();
       alert("Cliente atualizado!");
     } catch (e: any) {
@@ -354,7 +250,7 @@ export default function ClientesPage() {
 
   return (
     <div className="space-y-4">
-      {/* Novo cliente (manual) */}
+      {/* Novo cliente */}
       <div className="rounded-2xl bg-white p-4 shadow">
         <h3 className="mb-2 font-semibold">Novo Cliente</h3>
         <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
@@ -419,7 +315,7 @@ export default function ClientesPage() {
             <div className="relative">
               <input
                 className="input pl-9 w-80"
-                placeholder="Buscar por nome"
+                placeholder="Buscar por nome, telefone ou e-mail"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -506,8 +402,10 @@ export default function ClientesPage() {
                           className="icon-btn"
                           title="+ Evento na Agenda"
                           onClick={async () => {
-                            // caso você tenha criado clientes manualmente, o RPC funciona só com clientes.id
-                            alert("Aniversário é atualizado automaticamente pelas vendas. (RPC mantido apenas para clientes manuais)");
+                            await supabase.rpc("upsert_birthday_event", {
+                              p_cliente: c.id,
+                            });
+                            alert("Evento atualizado/gerado na Agenda.");
                           }}
                         >
                           <CalendarPlus className="h-4 w-4" />
@@ -529,7 +427,7 @@ export default function ClientesPage() {
           <button
             className="btn"
             disabled={page <= 1 || loading}
-            onClick={() => load(page - 1, debounced)}
+            onClick={() => load(page - 1)}
           >
             ‹ Anterior
           </button>
@@ -539,7 +437,7 @@ export default function ClientesPage() {
           <button
             className="btn"
             disabled={page >= totalPages || loading}
-            onClick={() => load(page + 1, debounced)}
+            onClick={() => load(page + 1)}
           >
             Próxima ›
           </button>
@@ -571,6 +469,8 @@ export default function ClientesPage() {
                 value={editPhone}
                 onChange={(e) => setEditPhone(e.target.value)}
               />
+
+              {/* Data de nascimento */}
               <input
                 type="date"
                 className="input"
@@ -578,18 +478,47 @@ export default function ClientesPage() {
                 onChange={(e) => setEditBirth(e.target.value)}
                 placeholder="Data de Nascimento"
               />
+
               {/* Endereço opcional */}
-              <input className="input" placeholder="CEP" value={editCEP} onChange={(e) => setEditCEP(e.target.value)} />
-              <input className="input" placeholder="Logradouro" value={editLogr} onChange={(e) => setEditLogr(e.target.value)} />
-              <input className="input" placeholder="Número" value={editNumero} onChange={(e) => setEditNumero(e.target.value)} />
-              <input className="input" placeholder="Bairro" value={editBairro} onChange={(e) => setEditBairro(e.target.value)} />
-              <input className="input" placeholder="Cidade" value={editCidade} onChange={(e) => setEditCidade(e.target.value)} />
+              <input
+                className="input"
+                placeholder="CEP"
+                value={editCEP}
+                onChange={(e) => setEditCEP(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Logradouro"
+                value={editLogr}
+                onChange={(e) => setEditLogr(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Número"
+                value={editNumero}
+                onChange={(e) => setEditNumero(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Bairro"
+                value={editBairro}
+                onChange={(e) => setEditBairro(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Cidade"
+                value={editCidade}
+                onChange={(e) => setEditCidade(e.target.value)}
+              />
               <input
                 className="input"
                 placeholder="UF"
                 value={editUF}
-                onChange={(e) => setEditUF(e.target.value.toUpperCase().slice(0, 2))}
+                onChange={(e) =>
+                  setEditUF(e.target.value.toUpperCase().slice(0, 2))
+                }
               />
+
               <input
                 className="input md:col-span-3"
                 placeholder="Observações"
@@ -601,7 +530,11 @@ export default function ClientesPage() {
               <button className="btn" onClick={closeEdit}>
                 Cancelar
               </button>
-              <button className="btn-primary" onClick={saveEdit} disabled={loading}>
+              <button
+                className="btn-primary"
+                onClick={saveEdit}
+                disabled={loading}
+              >
                 {loading ? "Salvando..." : "Salvar alterações"}
               </button>
             </div>

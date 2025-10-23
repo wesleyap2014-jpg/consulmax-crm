@@ -1,8 +1,19 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { Pencil, CalendarPlus, Eye, Send } from "lucide-react";
+import {
+  Pencil,
+  CalendarPlus,
+  Eye,
+  Send,
+  Filter,
+  SortAsc,
+  SortDesc,
+  Copy,
+  UserPlus,
+} from "lucide-react";
 
+/* ========================= Tipos ========================= */
 type Cliente = {
   id: string;
   nome: string;
@@ -12,8 +23,10 @@ type Cliente = {
   email?: string | null;
   data_nascimento?: string | null;  // YYYY-MM-DD
   observacoes?: string | null;      // <- nome correto no banco
+  created_at?: string | null;       // se existir na tabela/view
 };
 
+/* ========================= Utils ========================= */
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
 
 const maskPhone = (v: string) => {
@@ -30,6 +43,38 @@ const maskPhone = (v: string) => {
   return out.trim();
 };
 
+const maskCPF = (v: string) => {
+  const d = onlyDigits(v).slice(0, 11);
+  const p1 = d.slice(0, 3);
+  const p2 = d.slice(3, 6);
+  const p3 = d.slice(6, 9);
+  const p4 = d.slice(9, 11);
+  let out = "";
+  if (p1) out += p1;
+  if (p2) out += (out ? "." : "") + p2;
+  if (p3) out += (out ? "." : "") + p3;
+  if (p4) out += (out ? "-" : "") + p4;
+  return out;
+};
+
+const isValidCPF = (raw: string) => {
+  const s = onlyDigits(raw);
+  if (s.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(s)) return false;
+  const calc = (base: string, factor: number) => {
+    let sum = 0;
+    for (let i = 0; i < base.length; i++) {
+      sum += parseInt(base[i], 10) * factor--;
+    }
+    const mod = (sum * 10) % 11;
+    return mod === 10 ? 0 : mod;
+  };
+  const dv1 = calc(s.slice(0, 9), 10);
+  if (dv1 !== parseInt(s[9], 10)) return false;
+  const dv2 = calc(s.slice(0, 10), 11);
+  return dv2 === parseInt(s[10], 10);
+};
+
 const formatBRDate = (iso?: string | null) => {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -40,6 +85,56 @@ const formatBRDate = (iso?: string | null) => {
   return `${dd}/${mm}/${yyyy}`;
 };
 
+const upcomingBirthdaySortKey = (iso?: string | null) => {
+  // retorna quantos dias faltam pro aniversário neste ano (0 = hoje)
+  if (!iso) return 366; // empurra pro fim
+  const ref = new Date();
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 366;
+  const month = d.getUTCMonth();
+  const day = d.getUTCDate();
+
+  const thisYear = new Date(Date.UTC(ref.getUTCFullYear(), month, day));
+  const nextYear = new Date(Date.UTC(ref.getUTCFullYear() + 1, month, day));
+  const target = thisYear < ref ? nextYear : thisYear;
+  const diffMs = target.getTime() - ref.getTime();
+  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+};
+
+const isBirthdayThisMonth = (iso?: string | null) => {
+  if (!iso) return false;
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getUTCMonth() === now.getUTCMonth();
+};
+
+const isBirthdayThisWeek = (iso?: string | null) => {
+  // semana sex→qui (seguindo o padrão Consulmax das projeções)
+  if (!iso) return false;
+  const now = new Date();
+  // Normaliza date UTC zero-hora
+  const toUTC0 = (x: Date) =>
+    new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()));
+  const today = toUTC0(now);
+  const weekday = today.getUTCDay(); // 0=dom..6=sab
+  // definimos sexta como início (5) → então vamos recuar até sexta
+  const offsetToFri = ((weekday - 5 + 7) % 7);
+  const start = new Date(today.getTime() - offsetToFri * 86400000);
+  const end = new Date(start.getTime() + 6 * 86400000); // sex→qui = 7 dias
+
+  const birth = new Date(iso);
+  const thisYear = new Date(Date.UTC(today.getUTCFullYear(), birth.getUTCMonth(), birth.getUTCDate()));
+  const inRange = thisYear >= start && thisYear <= end;
+  return inRange;
+};
+
+function copyToClipboard(text: string) {
+  try {
+    navigator.clipboard?.writeText(text);
+  } catch {/* ignore */}
+}
+
+/* ========================= Componente ========================= */
 export default function ClientesPage() {
   const PAGE = 10;
 
@@ -49,6 +144,11 @@ export default function ClientesPage() {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
+
+  // filtros/ordenação
+  const [filterWeek, setFilterWeek] = useState(false);
+  const [filterMonth, setFilterMonth] = useState(false);
+  const [sortBy, setSortBy] = useState<"nomeAsc" | "nomeDesc" | "aniversario">("nomeAsc");
 
   // modal edição
   const [editing, setEditing] = useState<Cliente | null>(null);
@@ -65,7 +165,22 @@ export default function ClientesPage() {
   const [editUF, setEditUF] = useState("");
 
   // form novo cliente
-  const [form, setForm] = useState<Partial<Cliente>>({});
+  const [formNome, setFormNome] = useState("");
+  const [formCPF, setFormCPF] = useState("");
+  const [formPhone, setFormPhone] = useState("");
+  const [formEmail, setFormEmail] = useState("");
+  const [formBirth, setFormBirth] = useState<string>("");
+  const [formObs, setFormObs] = useState("");
+
+  // fila de "novos para complementar"
+  const [incompletos, setIncompletos] = useState<Cliente[]>([]);
+
+  // toasts
+  const [toast, setToast] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const pushToast = (type: "success" | "error" | "info", text: string) => {
+    setToast({ type, text });
+    setTimeout(() => setToast(null), 3800);
+  };
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 400);
@@ -75,7 +190,53 @@ export default function ClientesPage() {
   useEffect(() => {
     load(1, debounced);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debounced]);
+  }, [debounced, filterWeek, filterMonth, sortBy]);
+
+  // também carrega a fila de incompletos (independente da busca/paginação)
+  useEffect(() => {
+    loadIncompletos();
+  }, []);
+
+  async function loadIncompletos() {
+    try {
+      // Critério: e-mail vazio OU telefone vazio OU observações vazias
+      // Tenta usar a view primeiro; se não tiver as colunas, buscamos a tabela.
+      let q = supabase
+        .from("v_clientes_list")
+        .select("*")
+        .or("email.is.null,telefone.is.null,observacoes.is.null")
+        .order("created_at", { ascending: false })
+        .limit(8);
+
+      let { data, error } = await q;
+      if (error) {
+        // fallback: tenta na tabela clientes
+        const fb = await supabase
+          .from("clientes")
+          .select("*")
+          .or("email.is.null,telefone.is.null,observacoes.is.null")
+          .order("created_at", { ascending: false })
+          .limit(8);
+        if (fb.error) throw fb.error;
+        data = fb.data as any;
+      }
+
+      setIncompletos(
+        (data || []).map((r: any) => ({
+          id: r.id,
+          nome: r.nome,
+          cpf_dig: r.cpf_dig ?? r.cpf ?? null,
+          telefone: r.telefone,
+          email: r.email,
+          data_nascimento: r.data_nascimento,
+          observacoes: r.observacoes ?? null,
+          created_at: r.created_at ?? null,
+        }))
+      );
+    } catch (e: any) {
+      pushToast("error", "Erro ao buscar novos clientes: " + (e?.message || e));
+    }
+  }
 
   async function load(target = 1, term = "") {
     setLoading(true);
@@ -86,9 +247,9 @@ export default function ClientesPage() {
       // priorizamos a view v_clientes_list (já filtra quem tem CPF)
       let q = supabase
         .from("v_clientes_list")
-        .select("*", { count: "exact" })
-        .order("nome", { ascending: true });
+        .select("*", { count: "exact" });
 
+      // busca
       if (term) {
         q = q.or(
           `nome.ilike.%${term}%,email.ilike.%${term}%,telefone.ilike.%${onlyDigits(
@@ -97,54 +258,142 @@ export default function ClientesPage() {
         );
       }
 
-      const { data, error, count } = await q.range(from, to);
-      if (error) throw error;
+      // filtros aniversários
+      if (filterWeek || filterMonth) {
+        // como é complexo filtrar na query, filtramos no client após carregar página maior (overfetch)
+        // para não perder paginação, aumentamos o range e filtramos
+        const { data, error, count } = await q.range(0, 999); // puxa bastante e filtra
+        if (error) throw error;
+        let rows = (data || []) as any[];
 
-      setClientes(
-        (data || []).map((r: any) => ({
+        rows = rows.filter((r) => {
+          const iso = r.data_nascimento as string | null | undefined;
+          if (filterWeek && !isBirthdayThisWeek(iso)) return false;
+          if (filterMonth && !isBirthdayThisMonth(iso)) return false;
+          return true;
+        });
+
+        rows = rows.map((r) => ({
           id: r.id,
           nome: r.nome,
-          cpf_dig: r.cpf_dig,
+          cpf_dig: r.cpf_dig ?? r.cpf ?? null,
           telefone: r.telefone,
           email: r.email,
           data_nascimento: r.data_nascimento,
-          observacoes: r.observacoes, // <- mapeia da view se existir
-        }))
-      );
-      setTotal(count || 0);
-      setPage(target);
+          observacoes: r.observacoes ?? null,
+          created_at: r.created_at ?? null,
+        }));
+
+        // ordenação
+        rows = sortRows(rows);
+
+        // paginação client-side para o filtro
+        setTotal(rows.length);
+        setClientes(rows.slice(from, to + 1));
+        setPage(target);
+      } else {
+        // sem filtro pesado → podemos ordenar server-side por nome; aniversário ordenaremos client-side
+        if (sortBy === "nomeAsc") q = q.order("nome", { ascending: true });
+        if (sortBy === "nomeDesc") q = q.order("nome", { ascending: false });
+        if (sortBy === "aniversario") {
+          // pega página maior e ordena client-side por proximidade de aniversário
+          const { data, error, count } = await q.range(0, 999);
+          if (error) throw error;
+          let rows = (data || []).map((r: any) => ({
+            id: r.id,
+            nome: r.nome,
+            cpf_dig: r.cpf_dig ?? r.cpf ?? null,
+            telefone: r.telefone,
+            email: r.email,
+            data_nascimento: r.data_nascimento,
+            observacoes: r.observacoes ?? null,
+            created_at: r.created_at ?? null,
+          }));
+          rows = sortRows(rows);
+          setTotal(rows.length);
+          setClientes(rows.slice(from, to + 1));
+          setPage(target);
+        } else {
+          const { data, error, count } = await q.range(from, to);
+          if (error) throw error;
+          setClientes(
+            (data || []).map((r: any) => ({
+              id: r.id,
+              nome: r.nome,
+              cpf_dig: r.cpf_dig ?? r.cpf ?? null,
+              telefone: r.telefone,
+              email: r.email,
+              data_nascimento: r.data_nascimento,
+              observacoes: r.observacoes ?? null,
+              created_at: r.created_at ?? null,
+            }))
+          );
+          setTotal(count || 0);
+          setPage(target);
+        }
+      }
     } catch (e: any) {
-      alert(e.message || "Erro ao listar clientes.");
+      pushToast("error", e.message || "Erro ao listar clientes.");
     } finally {
       setLoading(false);
     }
   }
 
-  // criar cliente manual
+  function sortRows(rows: Cliente[]) {
+    if (sortBy === "aniversario") {
+      return [...rows].sort(
+        (a, b) => upcomingBirthdaySortKey(a.data_nascimento) - upcomingBirthdaySortKey(b.data_nascimento)
+      );
+    }
+    if (sortBy === "nomeDesc") {
+      return [...rows].sort((a, b) => (b.nome || "").localeCompare(a.nome || "", "pt-BR"));
+    }
+    // nomeAsc
+    return [...rows].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
+  }
+
+  // criar cliente manual (com validação + duplicidade)
   async function createCliente() {
-    const payload = {
-      nome: (form.nome || "").trim(),
-      cpf: onlyDigits((form as any).cpf || ""),
-      telefone: onlyDigits(form.telefone || ""),
-      email: (form.email || "").trim() || null,
-      data_nascimento:
-        (form.data_nascimento || "") === "" ? null : form.data_nascimento!,
-      observacoes: (form.observacoes || "").trim() || null,
-    };
-    if (!payload.nome) return alert("Informe o nome.");
-    if (!payload.cpf) return alert("Informe o CPF.");
+    const nome = formNome.trim();
+    const cpf = onlyDigits(formCPF);
+    const telefone = onlyDigits(formPhone);
+    const email = formEmail.trim() || null;
+    const data_nascimento = formBirth || null;
+    const observacoes = formObs.trim() || null;
+
+    if (!nome) return pushToast("error", "Informe o nome.");
+    if (!cpf) return pushToast("error", "Informe o CPF.");
+    if (!isValidCPF(cpf)) return pushToast("error", "CPF inválido.");
+    if (telefone && !(telefone.length === 10 || telefone.length === 11)) {
+      return pushToast("error", "Telefone deve ter 10 ou 11 dígitos.");
+    }
 
     try {
       setLoading(true);
+
+      // checa duplicidade por CPF
+      const { data: existsData, error: existsError } = await supabase
+        .from("clientes")
+        .select("id, nome")
+        .eq("cpf", cpf)
+        .limit(1);
+      if (existsError) throw existsError;
+      if (existsData && existsData.length) {
+        const c = existsData[0];
+        pushToast("info", `Já existe um cliente com este CPF: ${c.nome}. Abrindo para edição…`);
+        openEdit({ id: c.id, nome: c.nome, cpf_dig: cpf, telefone: "", email: "", data_nascimento: null, observacoes: null });
+        return;
+      }
+
       const { error, data } = await supabase
         .from("clientes")
         .insert({
-          nome: payload.nome,
-          cpf: payload.cpf,
-          telefone: payload.telefone || null,
-          email: payload.email,
-          data_nascimento: payload.data_nascimento,
-          observacoes: payload.observacoes,
+          nome,
+          cpf,
+          telefone: telefone || null,
+          email,
+          data_nascimento,
+          observacoes,
         })
         .select("id")
         .single();
@@ -153,11 +402,18 @@ export default function ClientesPage() {
       // cria/atualiza aniversário automático
       await supabase.rpc("upsert_birthday_event", { p_cliente: data!.id });
 
-      setForm({});
-      await load(1);
-      alert("Cliente criado!");
+      // limpa form
+      setFormNome("");
+      setFormCPF("");
+      setFormPhone("");
+      setFormEmail("");
+      setFormBirth("");
+      setFormObs("");
+
+      await Promise.all([load(1), loadIncompletos()]);
+      pushToast("success", "Cliente criado com sucesso!");
     } catch (e: any) {
-      alert("Não foi possível salvar: " + (e?.message || e));
+      pushToast("error", "Não foi possível salvar: " + (e?.message || e));
     } finally {
       setLoading(false);
     }
@@ -206,14 +462,22 @@ export default function ClientesPage() {
 
   async function saveEdit() {
     if (!editing) return;
+
+    // validações leves
+    if (!editNome.trim()) return pushToast("error", "Nome é obrigatório.");
+    const phoneDigits = onlyDigits(editPhone);
+    if (phoneDigits && !(phoneDigits.length === 10 || phoneDigits.length === 11)) {
+      return pushToast("error", "Telefone deve ter 10 ou 11 dígitos.");
+    }
+
     try {
       setLoading(true);
       const update: any = {
         nome: editNome.trim() || null,
         email: editEmail.trim() || null,
-        telefone: onlyDigits(editPhone) || null,
+        telefone: phoneDigits || null,
         data_nascimento: editBirth || null,
-        observacoes: editObs.trim() || null, // <- usa coluna correta
+        observacoes: editObs.trim() || null,
       };
 
       // se já tiver colunas de endereço em clientes, descomente:
@@ -224,20 +488,17 @@ export default function ClientesPage() {
       // update.cidade     = editCidade || null;
       // update.uf         = editUF || null;
 
-      const { error } = await supabase
-        .from("clientes")
-        .update(update)
-        .eq("id", editing.id);
+      const { error } = await supabase.from("clientes").update(update).eq("id", editing.id);
       if (error) throw error;
 
       // sincroniza/atualiza aniversário automático
       await supabase.rpc("upsert_birthday_event", { p_cliente: editing.id });
 
-      await load(page);
+      await Promise.all([load(page), loadIncompletos()]);
       closeEdit();
-      alert("Cliente atualizado!");
+      pushToast("success", "Cliente atualizado!");
     } catch (e: any) {
-      alert("Erro ao salvar: " + (e?.message || e));
+      pushToast("error", "Erro ao salvar: " + (e?.message || e));
     } finally {
       setLoading(false);
     }
@@ -250,68 +511,114 @@ export default function ClientesPage() {
 
   return (
     <div className="space-y-4">
-      {/* Novo cliente */}
+      {/* ====== Novos clientes para complementar ====== */}
+      {incompletos.length > 0 && (
+        <div className="rounded-2xl bg-white p-4 shadow border">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="m-0 font-semibold">Novos clientes para complementar</h3>
+            <button className="btn" onClick={loadIncompletos}>Atualizar</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {incompletos.map((c) => {
+              const phone = c.telefone ? maskPhone(c.telefone) : "";
+              const missing: string[] = [];
+              if (!c.telefone) missing.push("telefone");
+              if (!c.email) missing.push("e-mail");
+              if (!c.observacoes) missing.push("observações");
+              return (
+                <div key={c.id} className="rounded-xl border p-3">
+                  <div className="font-semibold">{c.nome}</div>
+                  <div className="text-xs text-slate-500 mb-1">CPF: {c.cpf_dig || "—"}</div>
+                  <div className="text-sm mb-1">📞 {phone || "—"}</div>
+                  <div className="text-sm mb-2">✉️ {c.email || "—"}</div>
+                  {missing.length > 0 && (
+                    <div className="text-xs bg-yellow-50 border border-yellow-200 text-yellow-800 rounded px-2 py-1 inline-block">
+                      Faltando: {missing.join(", ")}
+                    </div>
+                  )}
+                  <div className="mt-2 flex gap-2">
+                    <button className="btn-primary" onClick={() => openEdit(c)}>Completar</button>
+                    <a
+                      className="btn"
+                      title="Abrir WhatsApp"
+                      href={c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <Send className="h-4 w-4 mr-1" /> WhatsApp
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ====== Novo cliente ====== */}
       <div className="rounded-2xl bg-white p-4 shadow">
         <h3 className="mb-2 font-semibold">Novo Cliente</h3>
         <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
           <input
             placeholder="Nome"
             className="input"
-            value={form.nome || ""}
-            onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
+            value={formNome}
+            onChange={(e) => setFormNome(e.target.value)}
           />
           <input
             placeholder="CPF"
             className="input"
-            value={(form as any).cpf || ""}
-            onChange={(e) => setForm((s: any) => ({ ...s, cpf: e.target.value }))}
+            value={maskCPF(formCPF)}
+            onChange={(e) => setFormCPF(e.target.value)}
+            onBlur={(e) => {
+              const v = e.target.value;
+              if (v && !isValidCPF(v)) pushToast("error", "CPF inválido.");
+            }}
           />
           <input
             placeholder="Telefone"
             className="input"
-            value={form.telefone || ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, telefone: e.target.value }))
-            }
+            value={maskPhone(formPhone)}
+            onChange={(e) => setFormPhone(e.target.value)}
           />
           <input
             placeholder="E-mail"
             className="input"
-            value={form.email || ""}
-            onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+            value={formEmail}
+            onChange={(e) => setFormEmail(e.target.value)}
           />
           <input
             type="date"
             className="input"
-            value={form.data_nascimento || ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, data_nascimento: e.target.value }))
-            }
+            value={formBirth}
+            onChange={(e) => setFormBirth(e.target.value)}
             placeholder="Data de Nascimento"
           />
           <input
             placeholder="Observações"
             className="input md:col-span-2"
-            value={form.observacoes || ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, observacoes: e.target.value }))
-            }
+            value={formObs}
+            onChange={(e) => setFormObs(e.target.value)}
           />
           <button
             className="btn-primary md:col-span-2"
             onClick={createCliente}
             disabled={loading}
+            title="Criar e adicionar à base"
           >
-            {loading ? "Salvando..." : "Criar Cliente"}
+            {loading ? "Salvando..." : <><UserPlus className="h-4 w-4 mr-1 inline" /> Criar Cliente</>}
           </button>
+        </div>
+        <div className="mt-2 text-xs text-slate-500">
+          Dica: informe CPF e Telefone para evitar duplicidades e acelerar contatos.
         </div>
       </div>
 
-      {/* Lista */}
+      {/* ====== Lista ====== */}
       <div className="rounded-2xl bg-white p-4 shadow">
-        <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="mb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
           <h3 className="m-0 font-semibold">Lista de Clientes</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
               <input
                 className="input pl-9 w-80"
@@ -321,10 +628,46 @@ export default function ClientesPage() {
               />
               <span className="absolute left-3 top-2.5 opacity-60">🔎</span>
             </div>
-            <small className="text-slate-500">
-              Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-
-              {Math.min(page * PAGE, total)} de {total}
-            </small>
+
+            {/* Filtros */}
+            <div className="flex items-center gap-2">
+              <button
+                className={`chip ${filterWeek ? "chip-on" : ""}`}
+                onClick={() => { setFilterWeek((v) => !v); setPage(1); }}
+                title="Aniversaria nesta semana (sex→qui)"
+              >
+                <Filter className="h-3.5 w-3.5" /> Semana
+              </button>
+              <button
+                className={`chip ${filterMonth ? "chip-on" : ""}`}
+                onClick={() => { setFilterMonth((v) => !v); setPage(1); }}
+                title="Aniversaria neste mês"
+              >
+                <Filter className="h-3.5 w-3.5" /> Mês
+              </button>
+
+              {/* Ordenação */}
+              <div className="relative">
+                <select
+                  className="input pr-8"
+                  value={sortBy}
+                  onChange={(e) => { setSortBy(e.target.value as any); setPage(1); }}
+                  title="Ordenar por"
+                >
+                  <option value="nomeAsc">Nome (A→Z)</option>
+                  <option value="nomeDesc">Nome (Z→A)</option>
+                  <option value="aniversario">Próximos aniversários</option>
+                </select>
+                <span className="absolute right-2 top-2.5 opacity-60">
+                  {sortBy === "nomeDesc" ? <SortDesc className="h-4 w-4" /> : <SortAsc className="h-4 w-4" />}
+                </span>
+              </div>
+
+              <small className="text-slate-500">
+                Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-
+                {Math.min(page * PAGE, total)} de {total}
+              </small>
+            </div>
           </div>
         </div>
 
@@ -356,9 +699,8 @@ export default function ClientesPage() {
               )}
               {clientes.map((c, i) => {
                 const phone = c.telefone ? maskPhone(c.telefone) : "";
-                const wa = c.telefone
-                  ? `https://wa.me/55${onlyDigits(c.telefone)}`
-                  : "";
+                const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
+                const contatoStr = `${c.nome} | ${phone || "s/ telefone"} | ${c.email || "s/ e-mail"}`;
                 return (
                   <tr
                     key={c.id}
@@ -400,18 +742,33 @@ export default function ClientesPage() {
                         </button>
                         <button
                           className="icon-btn"
+                          title="Copiar contato"
+                          onClick={() => {
+                            copyToClipboard(contatoStr);
+                            pushToast("info", "Contato copiado!");
+                          }}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </button>
+                        <button
+                          className="icon-btn"
                           title="+ Evento na Agenda"
                           onClick={async () => {
-                            await supabase.rpc("upsert_birthday_event", {
-                              p_cliente: c.id,
-                            });
-                            alert("Evento atualizado/gerado na Agenda.");
+                            await supabase.rpc("upsert_birthday_event", { p_cliente: c.id });
+                            pushToast("success", "Evento atualizado/gerado na Agenda.");
                           }}
                         >
                           <CalendarPlus className="h-4 w-4" />
                         </button>
                         <a className="icon-btn" title="Ver na Agenda" href="/agenda">
                           <Eye className="h-4 w-4" />
+                        </a>
+                        <a
+                          className="icon-btn"
+                          title="Criar oportunidade"
+                          href={`/oportunidades?cliente=${encodeURIComponent(c.id)}`}
+                        >
+                          <UserPlus className="h-4 w-4" />
                         </a>
                       </div>
                     </td>
@@ -444,7 +801,7 @@ export default function ClientesPage() {
         </div>
       </div>
 
-      {/* Modal edição */}
+      {/* ====== Modal edição ====== */}
       {editing && (
         <>
           <div className="fixed inset-0 bg-black/40 z-40" onClick={closeEdit} />
@@ -542,13 +899,30 @@ export default function ClientesPage() {
         </>
       )}
 
-      {/* estilos locais */}
+      {/* ====== Toast ====== */}
+      {toast && (
+        <div
+          className={`fixed bottom-5 right-5 z-[60] rounded-xl px-4 py-3 shadow-lg text-sm ${
+            toast.type === "success"
+              ? "bg-emerald-600 text-white"
+              : toast.type === "error"
+              ? "bg-rose-600 text-white"
+              : "bg-slate-800 text-white"
+          }`}
+        >
+          {toast.text}
+        </div>
+      )}
+
+      {/* ====== estilos locais ====== */}
       <style>{`
-        .input{padding:10px;border-radius:12px;border:1px solid #e5e7eb;outline:none}
+        .input{padding:10px;border-radius:12px;border:1px solid #e5e7eb;outline:none;background:#fff}
         .btn{padding:8px 12px;border-radius:10px;background:#f1f5f9;border:1px solid #e2e8f0;font-weight:600}
         .btn-primary{padding:10px 16px;border-radius:12px;background:#A11C27;color:#fff;font-weight:800}
         .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;border:1px solid #e2e8f0;background:#f8fafc}
         .icon-btn:hover{background:#eef2ff}
+        .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid #e2e8f0;background:#f8fafc;font-size:12px}
+        .chip-on{background:#1E293F;color:#fff;border-color:#1E293F}
       `}</style>
     </div>
   );

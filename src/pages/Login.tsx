@@ -168,7 +168,7 @@ export default function Login() {
   if (bootLoading) {
     return (
       <div style={styles.page}>
-        <style>{cssShapes}</style>
+        <style>{cssBackground}</style>
         <div style={styles.card}>Carregando…</div>
       </div>
     );
@@ -176,11 +176,9 @@ export default function Login() {
 
   return (
     <div style={styles.page}>
-      <style>{cssShapes}</style>
+      <style>{cssBackground}</style>
 
-      {/* Formas de fundo (painéis curvos + brilhos), com animação sutil */}
-      <div className="bg-sheet sheet-a" aria-hidden />
-      <div className="bg-sheet sheet-b" aria-hidden />
+      {/* Brilhos e partículas */}
       <div className="bg-glow glow-a" aria-hidden />
       <div className="bg-glow glow-b" aria-hidden />
       <div className="particles" aria-hidden />
@@ -191,7 +189,7 @@ export default function Login() {
           <img
             src="/logo-consulmax.png"
             alt="Consulmax Consórcios"
-            style={{ height: 80, width: "auto" }}
+            style={{ height: 96, width: "auto" }}
           />
         </div>
 
@@ -337,79 +335,42 @@ export default function Login() {
   );
 }
 
-/** CSS das formas ao fundo (painéis curvos + brilhos + partículas) */
-const cssShapes = `
-  /* painéis curvos translúcidos */
-  .bg-sheet {
-    position: absolute;
-    inset: auto;
-    pointer-events: none;
-    border-radius: 40px;
-    filter: blur(2px);
-    opacity: .85;
-    animation: sheetFloat 16s ease-in-out infinite;
-    will-change: transform;
-    background: linear-gradient(180deg, rgba(255,255,255,.75), rgba(255,255,255,.45));
-    box-shadow: 0 20px 60px rgba(0,0,0,.08), inset 0 1px 1px rgba(255,255,255,.6);
-    backdrop-filter: blur(6px) saturate(140%);
-  }
-  .sheet-a {
-    width: 880px; height: 360px;
-    left: -140px; top: -60px;
-    transform: rotate(-8deg);
-  }
-  .sheet-b {
-    width: 740px; height: 300px;
-    right: -120px; bottom: -40px;
-    transform: rotate(10deg);
-    animation-delay: 2.5s;
-  }
-
-  /* brilhos suaves (glows) */
+/** CSS do fundo com brilhos e partículas */
+const cssBackground = `
   .bg-glow {
     position: absolute;
     border-radius: 50%;
-    filter: blur(48px);
-    opacity: .55;
+    filter: blur(50px);
+    opacity: 0.5;
     pointer-events: none;
     animation: glowFloat 12s ease-in-out infinite;
-    will-change: transform;
   }
   .glow-a {
     width: 520px; height: 520px;
     top: -120px; left: -140px;
-    background: radial-gradient(50% 50% at 50% 50%, rgba(161,28,39,.20), transparent 60%);
+    background: radial-gradient(50% 50% at 50% 50%, rgba(161,28,39,0.22), transparent 60%);
   }
   .glow-b {
     width: 520px; height: 520px;
     right: -160px; bottom: -120px;
-    background: radial-gradient(50% 50% at 50% 50%, rgba(30,41,63,.22), transparent 60%);
+    background: radial-gradient(50% 50% at 50% 50%, rgba(30,41,63,0.24), transparent 60%);
     animation-delay: 1.8s;
   }
-
-  /* partículas discretas */
   .particles {
     position: absolute;
     inset: 0;
     pointer-events: none;
     background-image:
-      radial-gradient(rgba(255,255,255,.6) 1px, transparent 1px),
-      radial-gradient(rgba(255,255,255,.35) 1px, transparent 1px);
+      radial-gradient(rgba(255,255,255,.5) 1px, transparent 1px),
+      radial-gradient(rgba(255,255,255,.25) 1px, transparent 1px);
     background-position: 0 0, 12px 12px;
     background-size: 24px 24px, 24px 24px;
     opacity: .35;
-    filter: blur(.2px);
   }
-
   @keyframes glowFloat {
     0%   { transform: translate3d(0,0,0) scale(1); }
-    50%  { transform: translate3d(0,8px,0) scale(1.03); }
+    50%  { transform: translate3d(0,10px,0) scale(1.03); }
     100% { transform: translate3d(0,0,0) scale(1); }
-  }
-  @keyframes sheetFloat {
-    0%   { transform: translate3d(0,0,0) rotate(var(--rot, 0deg)); }
-    50%  { transform: translate3d(0,6px,0) rotate(calc(var(--rot, 0deg) + .6deg)); }
-    100% { transform: translate3d(0,0,0) rotate(var(--rot, 0deg)); }
   }
 `;
 

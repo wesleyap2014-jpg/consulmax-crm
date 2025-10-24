@@ -64,11 +64,8 @@ export default function Login() {
           const mustChange =
             data.session.user?.user_metadata?.must_change_password === true ||
             data.session.user?.user_metadata?.require_password_change === true;
-          if (mustChange) {
-            setMode("reset");
-          } else {
-            navigate("/", { replace: true });
-          }
+          if (mustChange) setMode("reset");
+          else navigate("/", { replace: true });
         }
         if (mounted) setBootLoading(false);
 
@@ -171,7 +168,7 @@ export default function Login() {
   if (bootLoading) {
     return (
       <div style={styles.page}>
-        <style>{css}</style>
+        <style>{cssShapes}</style>
         <div style={styles.card}>Carregando…</div>
       </div>
     );
@@ -179,19 +176,22 @@ export default function Login() {
 
   return (
     <div style={styles.page}>
-      <style>{css}</style>
+      <style>{cssShapes}</style>
 
-      {/* Blobs animados (Liquid Glass) */}
-      <div className="blob blob-a" aria-hidden />
-      <div className="blob blob-b" aria-hidden />
+      {/* Formas de fundo (painéis curvos + brilhos), com animação sutil */}
+      <div className="bg-sheet sheet-a" aria-hidden />
+      <div className="bg-sheet sheet-b" aria-hidden />
+      <div className="bg-glow glow-a" aria-hidden />
+      <div className="bg-glow glow-b" aria-hidden />
+      <div className="particles" aria-hidden />
 
       <div style={styles.card}>
         {/* Logo maior */}
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
           <img
             src="/logo-consulmax.png"
             alt="Consulmax Consórcios"
-            style={{ height: 64, width: "auto" }}
+            style={{ height: 80, width: "auto" }}
           />
         </div>
 
@@ -337,32 +337,79 @@ export default function Login() {
   );
 }
 
-/** CSS inlined para animações e “liquid glass” */
-const css = `
-  .blob {
+/** CSS das formas ao fundo (painéis curvos + brilhos + partículas) */
+const cssShapes = `
+  /* painéis curvos translúcidos */
+  .bg-sheet {
+    position: absolute;
+    inset: auto;
+    pointer-events: none;
+    border-radius: 40px;
+    filter: blur(2px);
+    opacity: .85;
+    animation: sheetFloat 16s ease-in-out infinite;
+    will-change: transform;
+    background: linear-gradient(180deg, rgba(255,255,255,.75), rgba(255,255,255,.45));
+    box-shadow: 0 20px 60px rgba(0,0,0,.08), inset 0 1px 1px rgba(255,255,255,.6);
+    backdrop-filter: blur(6px) saturate(140%);
+  }
+  .sheet-a {
+    width: 880px; height: 360px;
+    left: -140px; top: -60px;
+    transform: rotate(-8deg);
+  }
+  .sheet-b {
+    width: 740px; height: 300px;
+    right: -120px; bottom: -40px;
+    transform: rotate(10deg);
+    animation-delay: 2.5s;
+  }
+
+  /* brilhos suaves (glows) */
+  .bg-glow {
     position: absolute;
     border-radius: 50%;
-    filter: blur(40px);
-    opacity: 0.6;
+    filter: blur(48px);
+    opacity: .55;
     pointer-events: none;
-    animation: floaty 12s ease-in-out infinite;
+    animation: glowFloat 12s ease-in-out infinite;
     will-change: transform;
   }
-  .blob-a {
-    width: 540px; height: 540px;
-    top: -160px; left: -120px;
-    background: radial-gradient(50% 50% at 50% 50%, rgba(161,28,39,0.22), transparent 60%);
-  }
-  .blob-b {
+  .glow-a {
     width: 520px; height: 520px;
-    right: -140px; bottom: -160px;
-    background: radial-gradient(50% 50% at 50% 50%, rgba(30,41,63,0.24), transparent 60%);
-    animation-delay: 2.4s;
+    top: -120px; left: -140px;
+    background: radial-gradient(50% 50% at 50% 50%, rgba(161,28,39,.20), transparent 60%);
   }
-  @keyframes floaty {
+  .glow-b {
+    width: 520px; height: 520px;
+    right: -160px; bottom: -120px;
+    background: radial-gradient(50% 50% at 50% 50%, rgba(30,41,63,.22), transparent 60%);
+    animation-delay: 1.8s;
+  }
+
+  /* partículas discretas */
+  .particles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      radial-gradient(rgba(255,255,255,.6) 1px, transparent 1px),
+      radial-gradient(rgba(255,255,255,.35) 1px, transparent 1px);
+    background-position: 0 0, 12px 12px;
+    background-size: 24px 24px, 24px 24px;
+    opacity: .35;
+    filter: blur(.2px);
+  }
+
+  @keyframes glowFloat {
     0%   { transform: translate3d(0,0,0) scale(1); }
-    50%  { transform: translate3d(0,10px,0) scale(1.04); }
+    50%  { transform: translate3d(0,8px,0) scale(1.03); }
     100% { transform: translate3d(0,0,0) scale(1); }
+  }
+  @keyframes sheetFloat {
+    0%   { transform: translate3d(0,0,0) rotate(var(--rot, 0deg)); }
+    50%  { transform: translate3d(0,6px,0) rotate(calc(var(--rot, 0deg) + .6deg)); }
+    100% { transform: translate3d(0,0,0) rotate(var(--rot, 0deg)); }
   }
 `;
 
@@ -373,9 +420,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "grid",
     placeItems: "center",
     background:
-      "radial-gradient(1200px 600px at 20% -10%, rgba(161,28,39,0.08), transparent 60%)," +
-      "radial-gradient(1000px 600px at 120% 110%, rgba(30,41,63,0.10), transparent 60%)," +
-      "#f6f7f9",
+      "linear-gradient(180deg, #f7f8fb 0%, #f3f5f8 60%, #f1f4f7 100%)",
     padding: 16,
     fontFamily: "Inter, system-ui, Arial",
     color: "#1f2937",
@@ -383,10 +428,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   card: {
     width: "100%",
-    maxWidth: 420,
-    background: "rgba(255,255,255,0.85)",
+    maxWidth: 440,
+    background: "rgba(255,255,255,0.88)",
     borderRadius: 18,
-    padding: 22,
+    padding: 24,
     boxShadow: "0 28px 60px rgba(0,0,0,0.12)",
     backdropFilter: "saturate(150%) blur(8px)",
     WebkitBackdropFilter: "saturate(150%) blur(8px)",
@@ -398,7 +443,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #e5e7eb",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.92)",
+    background: "rgba(255,255,255,0.95)",
   },
   button: {
     padding: "12px 14px",
@@ -452,7 +497,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   modal: {
     width: "100%",
-    maxWidth: 420,
+    maxWidth: 440,
     background: "#fff",
     borderRadius: 12,
     padding: 18,

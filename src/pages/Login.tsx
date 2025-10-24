@@ -8,99 +8,82 @@ type Mode = "login" | "reset";
 export default function Login() {
   const navigate = useNavigate();
 
-  // ====== estado comum ======
+  // ===== estado geral =====
   const [mode, setMode] = useState<Mode>("login");
-  const [loadingScreen, setLoadingScreen] = useState(true); // loading de boot (detecta code/session)
+  const [bootLoading, setBootLoading] = useState(true);
 
-  // ====== login form ======
+  // ===== login =====
   const [email, setEmail] = useState("");
   const [password, setPwd] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ====== forgot modal ======
+  // ===== forgot (modal) =====
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
 
-  // ====== reset form ======
+  // ===== reset form =====
   const [newPwd, setNewPwd] = useState("");
   const [newPwd2, setNewPwd2] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
   const [resetMsg, setResetMsg] = useState<string | null>(null);
 
-  // ========= BOOTSTRAP =========
+  // ===== bootstrap: detecta ?code= / PASSWORD_RECOVERY / sessão =====
   useEffect(() => {
     let mounted = true;
-    const url = new URL(window.location.href);
-    const code = url.searchParams.get("code"); // fluxo PKCE: .../login?code=...
-
     (async () => {
       try {
-        // 1) Se veio ?code=, troca por sessão e vai para modo reset
+        const url = new URL(window.location.href);
+        const code = url.searchParams.get("code");
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (!mounted) return;
           if (error) {
-            console.warn("exchangeCodeForSession error:", error.message);
-            if (mounted) {
-              setMode("login");
-              setLoadingScreen(false);
-            }
+            console.warn("exchangeCodeForSession:", error.message);
+            setMode("login");
+            setBootLoading(false);
             return;
           }
-          if (mounted) {
-            setMode("reset");
-            setLoadingScreen(false);
-          }
+          setMode("reset");
+          setBootLoading(false);
           return;
         }
 
-        // 2) Já tem sessão? (pode ser retorno via #access_token= também)
         const { data } = await supabase.auth.getSession();
 
-        // Se a sessão veio de um link de recuperação, alguns provedores
-        // disparam o evento PASSWORD_RECOVERY.
         const { data: sub } = supabase.auth.onAuthStateChange((evt) => {
+          if (!mounted) return;
           if (evt === "PASSWORD_RECOVERY") {
-            if (mounted) {
-              setMode("reset");
-              setLoadingScreen(false);
-            }
+            setMode("reset");
+            setBootLoading(false);
           }
         });
 
-        // Se já logado e não está em reset, manda pra home
-        if (data.session && mode !== "reset") {
-          // checa metadados must_change_password
+        if (data.session) {
           const mustChange =
             data.session.user?.user_metadata?.must_change_password === true ||
             data.session.user?.user_metadata?.require_password_change === true;
-
           if (mustChange) {
-            if (mounted) setMode("reset");
+            setMode("reset");
           } else {
             navigate("/", { replace: true });
           }
         }
+        if (mounted) setBootLoading(false);
 
-        if (mounted) setLoadingScreen(false);
-
-        return () => {
-          sub.subscription.unsubscribe();
-        };
-      } catch (err) {
-        console.warn(err);
-        if (mounted) setLoadingScreen(false);
+        return () => sub.subscription.unsubscribe();
+      } catch (e) {
+        console.warn(e);
+        if (mounted) setBootLoading(false);
       }
     })();
-
     return () => {
       mounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
-  // ========= AÇÕES =========
+  // ===== actions =====
   async function onSubmitLogin(e: React.FormEvent) {
     e.preventDefault();
     if (!email || !password) {
@@ -113,7 +96,6 @@ export default function Login() {
         email: email.trim().toLowerCase(),
         password,
       });
-
       if (error) {
         const msg = String(error.message || "").toLowerCase();
         if (msg.includes("email not confirmed")) {
@@ -125,17 +107,12 @@ export default function Login() {
         }
         return;
       }
-
       const user = data?.user;
       const mustChange =
         user?.user_metadata?.must_change_password === true ||
         user?.user_metadata?.require_password_change === true;
-
-      if (mustChange) {
-        setMode("reset");
-      } else {
-        navigate("/", { replace: true });
-      }
+      if (mustChange) setMode("reset");
+      else navigate("/", { replace: true });
     } catch (err: any) {
       alert("Erro inesperado no login: " + (err?.message || String(err)));
     } finally {
@@ -146,11 +123,10 @@ export default function Login() {
   async function onSubmitForgot(e: React.FormEvent) {
     e.preventDefault();
     if (!forgotEmail) return;
-
     try {
       setForgotLoading(true);
       setForgotMsg(null);
-      // Redireciona de volta para /login. O componente detecta e entra no modo reset.
+      // volta para /login; o componente reconhecerá e entrará no modo reset
       const { error } = await supabase.auth.resetPasswordForEmail(
         forgotEmail.trim().toLowerCase(),
         { redirectTo: `${window.location.origin}/login` }
@@ -167,7 +143,6 @@ export default function Login() {
   async function onSubmitReset(e: React.FormEvent) {
     e.preventDefault();
     setResetMsg(null);
-
     if (!newPwd || newPwd.length < 8) {
       setResetMsg("A nova senha deve ter pelo menos 8 caracteres.");
       return;
@@ -176,7 +151,6 @@ export default function Login() {
       setResetMsg("As senhas não coincidem.");
       return;
     }
-
     try {
       setResetLoading(true);
       const { error } = await supabase.auth.updateUser({ password: newPwd });
@@ -193,27 +167,32 @@ export default function Login() {
     }
   }
 
-  // ========= UI =========
-  if (loadingScreen) {
+  // ===== UI =====
+  if (bootLoading) {
     return (
       <div style={styles.page}>
-        <div style={styles.card}>
-          Carregando…
-        </div>
+        <style>{css}</style>
+        <div style={styles.card}>Carregando…</div>
       </div>
     );
   }
 
   return (
     <div style={styles.page}>
-      {/* blobs (liquid glass) */}
-      <div style={styles.blobA} aria-hidden />
-      <div style={styles.blobB} aria-hidden />
+      <style>{css}</style>
+
+      {/* Blobs animados (Liquid Glass) */}
+      <div className="blob blob-a" aria-hidden />
+      <div className="blob blob-b" aria-hidden />
 
       <div style={styles.card}>
-        {/* Logo topo (maior) */}
+        {/* Logo maior */}
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}>
-          <img src="/logo-consulmax.png" alt="Consulmax Consórcios" style={{ height: 44 }} />
+          <img
+            src="/logo-consulmax.png"
+            alt="Consulmax Consórcios"
+            style={{ height: 64, width: "auto" }}
+          />
         </div>
 
         {mode === "login" ? (
@@ -295,9 +274,7 @@ export default function Login() {
                 style={styles.input}
               />
 
-              {resetMsg ? (
-                <p style={{ color: "#6b7280", fontSize: 13, margin: 0 }}>{resetMsg}</p>
-              ) : null}
+              {resetMsg ? <p style={{ color: "#6b7280", fontSize: 13, margin: 0 }}>{resetMsg}</p> : null}
 
               <button
                 type="submit"
@@ -307,11 +284,7 @@ export default function Login() {
                 {resetLoading ? "Atualizando..." : "Atualizar senha"}
               </button>
 
-              <button
-                type="button"
-                style={styles.buttonGhost}
-                onClick={() => setMode("login")}
-              >
+              <button type="button" style={styles.buttonGhost} onClick={() => setMode("login")}>
                 Voltar para login
               </button>
             </form>
@@ -319,7 +292,7 @@ export default function Login() {
         )}
       </div>
 
-      {/* Modal "Esqueci minha senha" */}
+      {/* Modal de recuperação */}
       {forgotOpen && (
         <div style={styles.modalBackdrop} onClick={() => setForgotOpen(false)}>
           <div
@@ -346,9 +319,7 @@ export default function Login() {
                 style={styles.input}
               />
 
-              {forgotMsg ? (
-                <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>{forgotMsg}</p>
-              ) : null}
+              {forgotMsg ? <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>{forgotMsg}</p> : null}
 
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
                 <button type="button" onClick={() => setForgotOpen(false)} style={styles.buttonGhost}>
@@ -366,6 +337,35 @@ export default function Login() {
   );
 }
 
+/** CSS inlined para animações e “liquid glass” */
+const css = `
+  .blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(40px);
+    opacity: 0.6;
+    pointer-events: none;
+    animation: floaty 12s ease-in-out infinite;
+    will-change: transform;
+  }
+  .blob-a {
+    width: 540px; height: 540px;
+    top: -160px; left: -120px;
+    background: radial-gradient(50% 50% at 50% 50%, rgba(161,28,39,0.22), transparent 60%);
+  }
+  .blob-b {
+    width: 520px; height: 520px;
+    right: -140px; bottom: -160px;
+    background: radial-gradient(50% 50% at 50% 50%, rgba(30,41,63,0.24), transparent 60%);
+    animation-delay: 2.4s;
+  }
+  @keyframes floaty {
+    0%   { transform: translate3d(0,0,0) scale(1); }
+    50%  { transform: translate3d(0,10px,0) scale(1.04); }
+    100% { transform: translate3d(0,0,0) scale(1); }
+  }
+`;
+
 const styles: Record<string, React.CSSProperties> = {
   page: {
     position: "relative",
@@ -381,38 +381,16 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#1f2937",
     overflow: "hidden",
   },
-  blobA: {
-    position: "absolute",
-    width: 520,
-    height: 520,
-    top: -140,
-    left: -100,
-    background: "radial-gradient(50% 50% at 50% 50%, rgba(161,28,39,0.20), transparent 60%)",
-    filter: "blur(40px)",
-    opacity: 0.6,
-    pointerEvents: "none",
-  },
-  blobB: {
-    position: "absolute",
-    width: 520,
-    height: 520,
-    bottom: -160,
-    right: -120,
-    background: "radial-gradient(50% 50% at 50% 50%, rgba(30,41,63,0.22), transparent 60%)",
-    filter: "blur(46px)",
-    opacity: 0.55,
-    pointerEvents: "none",
-  },
   card: {
     width: "100%",
     maxWidth: 420,
     background: "rgba(255,255,255,0.85)",
-    borderRadius: 16,
-    padding: 20,
-    boxShadow: "0 20px 60px rgba(0,0,0,0.10)",
-    backdropFilter: "saturate(140%) blur(6px)",
-    WebkitBackdropFilter: "saturate(140%) blur(6px)",
-    border: "1px solid rgba(255,255,255,0.6)",
+    borderRadius: 18,
+    padding: 22,
+    boxShadow: "0 28px 60px rgba(0,0,0,0.12)",
+    backdropFilter: "saturate(150%) blur(8px)",
+    WebkitBackdropFilter: "saturate(150%) blur(8px)",
+    border: "1px solid rgba(255,255,255,0.65)",
   },
   input: {
     padding: "12px 14px",
@@ -420,7 +398,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #e5e7eb",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.9)",
+    background: "rgba(255,255,255,0.92)",
   },
   button: {
     padding: "12px 14px",

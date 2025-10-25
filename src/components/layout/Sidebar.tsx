@@ -45,6 +45,89 @@ const FALLBACK_URL = '/favicon.ico?v=3'
 
 type AdminRow = { id: string; name: string; slug: string | null }
 
+/** ================= Liquid Glass Helpers (Sidebar) ================= */
+const glassSidebarBase: React.CSSProperties = {
+  position: 'relative',
+  background: 'rgba(255,255,255,.55)',
+  borderRight: '1px solid rgba(255,255,255,.35)',
+  backdropFilter: 'saturate(160%) blur(10px)',
+  WebkitBackdropFilter: 'saturate(160%) blur(10px)',
+  boxShadow: 'inset -8px 0 30px rgba(181,165,115,.10)', // brilho dourado sutil (B5A573)
+}
+
+const activePillStyle: React.CSSProperties = {
+  // mantém a cor rubi das suas classes; aqui só acrescentamos “vidro/brilho”
+  background: 'linear-gradient(180deg, rgba(161,28,39,1) 0%, rgba(161,28,39,.96) 100%)',
+  border: '1px solid rgba(255,255,255,.18)',
+  boxShadow: '0 6px 18px rgba(161,28,39,.25), inset 0 -8px 20px rgba(255,255,255,.12)',
+}
+
+const glassHoverPill: React.CSSProperties = {
+  background: 'rgba(255,255,255,.58)',
+  border: '1px solid rgba(255,255,255,.35)',
+  boxShadow: 'inset 0 1px 2px rgba(0,0,0,.04)',
+  backdropFilter: 'blur(6px)',
+  WebkitBackdropFilter: 'blur(6px)',
+}
+
+const SidebarLiquidBG: React.FC = () => (
+  <div style={sbLiquidCanvas}>
+    <style>{sbLiquidKeyframes}</style>
+    <span style={{ ...sbBlob, ...sbBlob1 }} />
+    <span style={{ ...sbBlob, ...sbBlob2 }} />
+    <span style={{ ...sbGoldGlow }} />
+  </div>
+)
+
+const sbLiquidCanvas: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  zIndex: 0,
+  overflow: 'hidden',
+  pointerEvents: 'none',
+}
+
+const sbBlob: React.CSSProperties = {
+  position: 'absolute',
+  width: 280,
+  height: 280,
+  borderRadius: '50%',
+  filter: 'blur(40px)',
+  opacity: 0.55,
+}
+
+const sbBlob1: React.CSSProperties = {
+  left: -80,
+  top: -60,
+  background: 'radial-gradient(closest-side, #A11C27, rgba(161,28,39,0))',
+  animation: 'sbFloat1 26s ease-in-out infinite',
+}
+
+const sbBlob2: React.CSSProperties = {
+  right: -90,
+  bottom: -60,
+  background: 'radial-gradient(closest-side, #1E293F, rgba(30,41,63,0))',
+  animation: 'sbFloat2 30s ease-in-out infinite',
+}
+
+const sbGoldGlow: React.CSSProperties = {
+  position: 'absolute',
+  right: -60,
+  top: '45%',
+  width: 180,
+  height: 180,
+  borderRadius: '50%',
+  background: 'radial-gradient(closest-side, rgba(181,165,115,.35), rgba(181,165,115,0))',
+  filter: 'blur(30px)',
+  opacity: 0.6,
+}
+
+const sbLiquidKeyframes = `
+@keyframes sbFloat1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(18px,14px) scale(1.06)} 100%{transform:translate(0,0) scale(1)} }
+@keyframes sbFloat2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-16px,-10px) scale(1.05)} 100%{transform:translate(0,0) scale(1)} }
+`
+
+/** =============================== Component =============================== */
 export default function Sidebar({ onNavigate }: SidebarProps) {
   const location = useLocation()
   const simuladoresActive = useMemo(
@@ -92,7 +175,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   return (
     <aside
       className="
-        md:w-64 w-full bg-white border-r
+        md:w-64 w-full border-r
         md:shadow
         md:sticky md:top-14
         h-[calc(100vh-56px)]
@@ -100,13 +183,17 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         overflow-y-auto
         pb-[max(env(safe-area-inset-bottom),theme(spacing.3))]
       "
+      style={glassSidebarBase}
       role="navigation"
       aria-label="Navegação principal"
     >
+      {/* camada líquida (fica por baixo do conteúdo) */}
+      <SidebarLiquidBG />
+
       {/* Cabeçalho com logo */}
       <Link
         to="/oportunidades"
-        className="flex items-center gap-3 mb-6 px-2"
+        className="relative z-[1] flex items-center gap-3 mb-6 px-2"
         onClick={() => onNavigate?.()}
       >
         <img
@@ -126,7 +213,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       </Link>
 
       {/* Navegação */}
-      <nav className="grid gap-2">
+      <nav className="relative z-[1] grid gap-2">
         {items.map((i) =>
           i.to === '/propostas' ? (
             <div key="simuladores-group">
@@ -140,6 +227,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                   ${simuladoresActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
                 `}
+                style={simuladoresActive ? activePillStyle : glassHoverPill}
                 aria-expanded={simGroupOpen}
                 aria-controls={simListId}
               >
@@ -167,6 +255,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                          ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                       }
+                      style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                       onClick={() => onNavigate?.()}
                     >
                       {ad.name}
@@ -181,6 +270,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                          ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                       }
+                      style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                       onClick={() => onNavigate?.()}
                     >
                       Embracon
@@ -194,6 +284,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                        ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                     }
+                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill))}
                     onClick={() => onNavigate?.()}
                   >
                     + Add Administradora
@@ -210,6 +301,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                    ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                 }
+                style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                 onClick={() => onNavigate?.()}
               >
                 <i.icon className="h-4 w-4" />
@@ -225,6 +317,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                  ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
               }
+              style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
               onClick={() => onNavigate?.()}
             >
               <i.icon className="h-4 w-4" />

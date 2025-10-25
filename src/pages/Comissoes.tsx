@@ -262,8 +262,9 @@ function Donut({
 
   const [hover, setHover] = useState<"paid" | "pend" | null>(null);
 
-  const navy = "#1E293F";
-  const red = "#A11C27";
+  // Consulmax palette
+  const navy = "#1E293F";   // pago
+  const red = "#A11C27";    // pendente/previsto
 
   const radius = 56;
   const circumference = 2 * Math.PI * radius;
@@ -326,7 +327,7 @@ function Donut({
   );
 }
 
-/* ========================= LineChart ========================= */
+/* ========================= LineChart (SVG + hover fix viewBox) ========================= */
 function LineChart({
   labels,
   series,
@@ -350,7 +351,7 @@ function LineChart({
     return Math.ceil(m / pow) * pow;
   }, [series]);
 
-  const width = 720;
+  const width = 720; // viewBox width
   const innerW = width - pad.left - pad.right;
   const innerH = height - pad.top - pad.bottom;
   const xStep = innerW / Math.max(1, labels.length - 1);
@@ -387,6 +388,7 @@ function LineChart({
   return (
     <div className="relative rounded-lg border bg-white p-3">
       <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="block w-full" onMouseLeave={() => setHoverX(null)}>
+        {/* grid + eixo Y */}
         <g>
           {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
             const y = pad.top + innerH * (1 - t);
@@ -411,6 +413,7 @@ function LineChart({
           })}
         </g>
 
+        {/* linhas */}
         {series.map((s, si) => {
           const pts = pointsFor(s.data);
           const d = pts.map(([x, y], i) => (i === 0 ? `M ${x},${y}` : `L ${x},${y}`)).join(" ");
@@ -445,6 +448,7 @@ function LineChart({
         )}
       </svg>
 
+      {/* legenda */}
       <div className="mt-2 flex flex-wrap gap-3">
         {series.map((s, si) => (
           <div className="flex items-center gap-2 text-sm" key={si}>
@@ -454,6 +458,7 @@ function LineChart({
         ))}
       </div>
 
+      {/* tooltip */}
       {hovered && (
         <div className="pointer-events-none absolute rounded-md border bg-white px-3 py-2 text-xs shadow" style={{ left: 10, top: 10 }}>
           <div className="mb-1 font-semibold text-gray-800">{hovered.label}</div>
@@ -472,8 +477,18 @@ function LineChart({
 }
 
 /* ========================= Helpers de projeção p/ gráficos (revisto) ========================= */
+
+/** Último dia do mês (local) */
 const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
+/**
+ * Data esperada da parcela M(n) (versão defensiva):
+ * - M1/M2: previstas apenas se tiverem data registrada (a sua âncora).
+ * - M3+: só projetar se M2 tiver data; projeção a cada 30 dias desde M2.
+ *
+ * Obs.: mantemos a assinatura compatível; o primeiro parâmetro não é usado,
+ *       então prefixamos com "_" para evitar warning de TS/ESLint.
+ */
 function expectedDateForParcel(
   _saleDateISO: string | null | undefined,
   flow: CommissionFlow[] | undefined,
@@ -481,6 +496,7 @@ function expectedDateForParcel(
 ): Date | null {
   const safeFlow = Array.isArray(flow) ? flow : [];
 
+  // Âncora: data de M2 (se existir)
   const m2 = safeFlow.find(f => f.mes === 2);
   const m2Date = m2?.data_pagamento_vendedor
     ? localDateFromISO(m2.data_pagamento_vendedor)
@@ -502,12 +518,14 @@ function expectedDateForParcel(
   return expected;
 }
 
+/** Intervalos semanais agora são: SEXTA → QUINTA */
 function getWeeklyIntervalsFriToThu(
   year: number,
   month: number
 ): Array<{ start: Date; end: Date; label: string }> {
   const eom = endOfMonth(new Date(year, month, 1));
 
+  // primeira SEXTA do mês
   let d = new Date(year, month, 1);
   while (d.getDay() !== 5) d = new Date(year, month, d.getDate() + 1);
 
@@ -531,6 +549,7 @@ function getWeeklyIntervalsFriToThu(
 
 type ProjSeries = { labels: string[]; previstoBruto: number[]; pagoBruto: number[] };
 
+/** Série anual (5 anos): apenas pagos */
 function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries {
   const now = new Date();
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 4 + i);
@@ -552,6 +571,7 @@ function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
   return { labels: years.map(String), previstoBruto: previsto, pagoBruto: pagos };
 }
 
+/** Série mensal de um ano específico */
 function projectMonthlyFlows(
   rows: Array<Commission & { flow?: CommissionFlow[] }>,
   year: number,
@@ -586,6 +606,7 @@ function projectMonthlyFlows(
   return { labels, previstoBruto: previsto, pagoBruto: pagos };
 }
 
+/** Série semanal do mês atual (sex→qui) */
 function projectWeeklyFlows(
   rows: Array<Commission & { flow?: CommissionFlow[] }>
 ): ProjSeries & { labels: string[] } {
@@ -624,6 +645,7 @@ function projectWeeklyFlows(
   return { labels, previstoBruto: previsto, pagoBruto: pagos };
 }
 
+/** Backward-compat */
 function extractProjectedDates(
   saleDateISO: string | null | undefined,
   flow: CommissionFlow[] | undefined,
@@ -632,9 +654,8 @@ function extractProjectedDates(
   return expectedDateForParcel(saleDateISO, flow, mes);
 }
 
-/* ======================== Normalizador de Projeções ========================= */
+/* ======================== Normalizador ========================= */
 type ProjectionLike = Partial<Record<"projected" | "paid" | "previsto" | "pago", number>> & Record<string, any>;
-
 const normalizeProjection = (p?: ProjectionLike | null) => ({
   projected: 0,
   paid: 0,
@@ -643,7 +664,7 @@ const normalizeProjection = (p?: ProjectionLike | null) => ({
   ...(p ?? {}),
 });
 
-/* ===== Série diária do Mês Atual (01 → último dia) ===== */
+/* ===== Série diária do Mês Atual ===== */
 function buildDailyMonthSeries(
   rows: Array<Commission & { flow?: CommissionFlow[] }>,
   impostoFrac: number
@@ -694,6 +715,7 @@ function buildDailyMonthSeries(
 
 /* ========================= Página ========================= */
 
+/* Mini line chart (usado no “Mês Atual”) */
 type LineSeries = { name: string; data: number[] };
 
 function SimpleLineChart({
@@ -807,8 +829,8 @@ export default function ComissoesPage() {
   const [showVendasSem, setShowVendasSem] = useState(true);
 
   /* Busca/Paginação (comissões pagas) */
-  const [paidSearch, setPaidSearch] = useState("");
-  the const [paidPage, setPaidPage] = useState(1);
+  const [paidSearch, setPaidSearch] = useState<string>("");
+  const [paidPage, setPaidPage] = useState<number>(1);
   const pageSize = 15;
 
   /* Bases */
@@ -828,6 +850,7 @@ export default function ComissoesPage() {
     })();
   }, []);
 
+  // Agrupa SimTables por (segmento, nome_tabela) para unificar no módulo Comissões
   const simGroups = useMemo(() => {
     const groups: Record<string, { key: string; segmento: string; nome_tabela: string; ids: string[] }> = {};
     simTables.forEach((t) => {
@@ -844,6 +867,7 @@ export default function ComissoesPage() {
     );
   }, [simTables]);
 
+  // Ajuda a achar um grupo pelo "key"
   const groupByKey: Record<string, { key: string; segmento: string; nome_tabela: string; ids: string[] }> =
     useMemo(() => Object.fromEntries(simGroups.map(g => [g.key, g])), [simGroups]);
 
@@ -851,6 +875,7 @@ export default function ComissoesPage() {
   async function fetchData() {
     setLoading(true);
     try {
+      // commissions (sem período)
       let qb = supabase.from("commissions").select("*");
       if (status !== "all") qb = qb.eq("status", status);
       if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
@@ -871,6 +896,7 @@ export default function ComissoesPage() {
         if (!flowBy[f.commission_id].some((x) => x.mes === f.mes)) flowBy[f.commission_id].push(f as CommissionFlow);
       });
 
+      // clientes extras
       let vendasExtras: Record<string, { clienteId?: string; numero_proposta?: string | null; cliente_nome?: string | null }> = {};
       if (comms && comms.length) {
         const { data: vendas } = await supabase
@@ -898,6 +924,7 @@ export default function ComissoesPage() {
         })),
       );
 
+      // vendas sem comissão
       const { data: vendasPeriodo } = await supabase
         .from("vendas")
         .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id")
@@ -925,6 +952,7 @@ export default function ComissoesPage() {
         setClientesMap(map);
       } else setClientesMap({});
 
+      // reconcile status por parcelas
       try {
         setRows(prev => {
           const withFix = prev.map(r => {
@@ -951,6 +979,7 @@ export default function ComissoesPage() {
   }
   useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [vendedorId, status, segmento, tabela]);
 
+  /* Totais/KPIs com novas regras */
   const now = new Date();
   const yStart = new Date(now.getFullYear(), 0, 1);
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -958,6 +987,7 @@ export default function ComissoesPage() {
 
   const impostoFrac = useMemo(() => (parseFloat(reciboImpostoPct.replace(",", ".")) || 0) / 100, [reciboImpostoPct]);
 
+  // Paid líquido no período (fluxos), ignorando comissões com status 'estorno'
   function paidInRangeLiquid(s: Date, e: Date) {
     const validRows = rows.filter(r => r.status !== "estorno");
     const valor = sum(
@@ -970,6 +1000,7 @@ export default function ComissoesPage() {
     return valor;
   }
 
+  // Previsto no período (usando regras novas)
   function previstoInRange(s: Date, e: Date) {
     let total = 0;
     for (const r of rows) {
@@ -992,6 +1023,7 @@ export default function ComissoesPage() {
     return total;
   }
 
+  // KPIs
   const kpi = useMemo(() => {
     const comBruta = sum(rows.map((r) => r.valor_total));
     const comLiquida = comBruta * (1 - impostoFrac);
@@ -1005,6 +1037,7 @@ export default function ComissoesPage() {
     return { vendasTotal, comBruta, comLiquida, comPaga: pagoLiquido, comPendente };
   }, [rows, impostoFrac]);
 
+  // Donuts
   const pyStart = new Date(now.getFullYear() - 1, 0, 1);
   const pyEnd   = new Date(now.getFullYear() - 1, 11, 31);
   const yEnd    = new Date(now.getFullYear(), 11, 31);
@@ -1019,12 +1052,14 @@ export default function ComissoesPage() {
 
   const vendedorAtual = useMemo(() => userLabel(vendedorId === "all" ? null : vendedorId), [usersById, usersByAuth, vendedorId]);
 
+  /* Projeções p/ gráficos */
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
   const monthlyPrev = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1, false), [rows]);
   const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
   const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
   const dailyMonth = useMemo(() => buildDailyMonthSeries(rows, impostoFrac), [rows, impostoFrac]);
 
+  /* Regras — utilitários */
   function onChangeMeses(n: number) {
     setRuleMeses(n);
     const arr = [...ruleFluxoPct];
@@ -1171,12 +1206,13 @@ export default function ComissoesPage() {
       : Array.from({ length: meses }, () => 0)
     ).map((p) => (p * percentPadrao).toFixed(2).replace(".", ","));
 
-    setRulePercent(percentPadrao.toFixed(2).replace(".", ",")); 
+    setRulePercent(percentPadrao.toFixed(2).replace(".", ",")); // ex.: "1,20"
     setRuleMeses(meses);
     setRuleFluxoPct(fluxos);
     setRuleObs(r.obs || "");
   }
 
+  /* Garantir fluxo (regra ou 1×100%) */
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
     const { data: existing } = await supabase
       .from("commission_flow")
@@ -1232,6 +1268,7 @@ export default function ComissoesPage() {
     return (created || []) as CommissionFlow[];
   }
 
+  /* Pagamento (sem pré-seleção automática) */
   async function openPaymentFor(c: Commission) {
     setPayCommissionId(c.id);
 
@@ -1255,6 +1292,7 @@ export default function ComissoesPage() {
     const finalArr = Array.from(uniq.values());
 
     setPayFlow(finalArr);
+
     setPaySelected({});
 
     const registered = hasRegisteredButUnpaid(finalArr);
@@ -1365,6 +1403,7 @@ export default function ComissoesPage() {
     fetchData();
   }
 
+  /* Estorno */
   function openRefundFor(flow: CommissionFlow, comm: Commission) {
     setRefundFlow({ flow, comm });
     setRefundValue(String(flow.valor_pago_vendedor || 0).replace(".", ","));
@@ -1399,6 +1438,7 @@ export default function ComissoesPage() {
     setRefundFlow(null);
   }
 
+  /* Gerar / Retornar / PDF */
   async function gerarComissaoDeVenda(venda: Venda) {
     try {
       setGenBusy(venda.id);
@@ -1477,9 +1517,11 @@ export default function ComissoesPage() {
     }
   }
 
+  // Recibo por data (numeração contínua)
   async function downloadReceiptPDFPorData() {
     const impostoPct = parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0;
     const dataRecibo = reciboDate;
+
     const vendedorSel = vendedorId !== "all" ? vendedorId : null;
 
     const { data: flowsAllOnDate, error: flowsErr } = await supabase
@@ -1606,6 +1648,7 @@ export default function ComissoesPage() {
     doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
   }
 
+  /* Listas auxiliares */
   const rowsAPagar = useMemo(() => rows.filter((r) => r.status === "a_pagar"), [rows]);
   const pagosFlat = useMemo(() => {
     const list: Array<{ flow: CommissionFlow; comm: Commission }> = [];
@@ -1631,16 +1674,16 @@ export default function ComissoesPage() {
 
   /* ========================= Render ========================= */
   return (
-    <section className="relative isolate">
-      {/* fundo líquido */}
+    <div className="relative p-4 space-y-4 isolate">
+      {/* Liquid background (fica atrás do conteúdo) */}
       <div className="liquid-bg">
         <span className="blob b1" />
         <span className="blob b2" />
         <span className="gold" />
       </div>
 
-      {/* CONTEÚDO ORIGINAL, intacto */}
-      <div className="relative z-[1] p-4 space-y-4">
+      {/* Conteúdo acima do fundo */}
+      <div className="relative z-[1]">
         {/* Filtros topo */}
         <Card>
           <CardHeader className="pb-2">
@@ -1706,7 +1749,7 @@ export default function ComissoesPage() {
 
         {/* ===== Dashboards ===== */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-3">
-          {/* 5 anos */}
+          {/* 5 anos (apenas pagos) */}
           <Card>
             <CardHeader className="pb-1"><CardTitle>Nos últimos 5 anos — {vendedorAtual}</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -1728,7 +1771,7 @@ export default function ComissoesPage() {
             </CardContent>
           </Card>
 
-          {/* Ano anterior */}
+          {/* Ano anterior (apenas pagos) */}
           <Card>
             <CardHeader className="pb-1"><CardTitle>Ano anterior — {new Date().getFullYear() - 1}</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -1750,7 +1793,7 @@ export default function ComissoesPage() {
             </CardContent>
           </Card>
 
-          {/* Ano atual */}
+          {/* Ano atual: Pago + Previsto */}
           <Card>
             <CardHeader className="pb-1"><CardTitle>Ano atual — {new Date().getFullYear()}</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -1771,7 +1814,7 @@ export default function ComissoesPage() {
             </CardContent>
           </Card>
 
-          {/* Mês atual */}
+          {/* Mês atual: Pago + Previsto (semanas sex→qui) */}
           <Card>
             <CardHeader className="pb-1"><CardTitle>Mês atual (semanas sex→qui)</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -1803,19 +1846,12 @@ export default function ComissoesPage() {
         </div>
 
         {/* Vendas sem comissão */}
-        {/* ... (SEU BLOCO INTACTO A PARTIR DAQUI) ... */}
-
-        {/* --- Vendas sem comissão (como no seu código) --- */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center justify-between">
               <span>Vendas sem comissão (todos os registros + filtros)</span>
               <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setShowVendasSem((v) => !v)}
-                >
+                <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>
                   {showVendasSem ? "Ocultar" : "Expandir"}
                 </Button>
               </div>
@@ -1883,13 +1919,587 @@ export default function ComissoesPage() {
         </Card>
 
         {/* Detalhamento — a pagar */}
-        {/* ... mantém todo o conteúdo seguinte exatamente igual ao seu (detalhamento, pagas, dialogs, etc.) ... */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center justify-between">
+              <span>Detalhamento de Comissões (a pagar)</span>
+              <div className="flex items-center gap-3">
+                <div>
+                  <Label>Vendedor</Label>
+                  <Select value={vendedorId} onValueChange={setVendedorId}>
+                    <SelectTrigger className="w-[220px]">
+                      <SelectValue placeholder="Todos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      {users.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.nome?.trim() || u.email?.trim() || u.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-        {/* Detalhamento — a pagar */}
-        {/* (TODO o restante do JSX do seu arquivo continua aqui, INALTERADO) */}
-        {/* Para não duplicar centenas de linhas, mantive acima os trechos principais e o wrapper aplicado. */}
+                <div className="flex items-center gap-2">
+                  <div>
+                    <Label>Data do Recibo</Label>
+                    <Input
+                      type="date"
+                      value={reciboDate}
+                      onChange={(e) => setReciboDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label>Imposto (%)</Label>
+                    <Input
+                      value={reciboImpostoPct}
+                      onChange={(e) => setReciboImpostoPct(e.target.value)}
+                      className="w-24"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-end gap-2">
+                  <Button onClick={downloadReceiptPDFPorData}>
+                    <FileText className="w-4 h-4 mr-1" /> Recibo
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowUnpaid((v) => !v)}
+                  >
+                    {showUnpaid ? "Ocultar" : "Expandir"}
+                  </Button>
+                </div>
+              </div>
+            </CardTitle>
+          </CardHeader>
+          {showUnpaid && (
+            <CardContent className="overflow-x-auto">
+              <table className="min-w-[1200px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Data</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-left">Cliente</th>
+                    <th className="p-2 text-left">Nº Proposta</th>
+                    <th className="p-2 text-left">Segmento</th>
+                    <th className="p-2 text-left">Tabela</th>
+                    <th className="p-2 text-right">Crédito</th>
+                    <th className="p-2 text-right">% Comissão</th>
+                    <th className="p-2 text-right">Valor Comissão</th>
+                    <th className="p-2 text-left">Status</th>
+                    <th className="p-2 text-left">Pagamento</th>
+                    <th className="p-2 text-left">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading && (
+                    <tr>
+                      <td colSpan={12} className="p-4">
+                        <Loader2 className="animate-spin inline mr-2" /> Carregando...
+                      </td>
+                    </tr>
+                  )}
+                  {!loading && rowsAPagar.length === 0 && (
+                    <tr>
+                      <td colSpan={12} className="p-4 text-gray-500">
+                        Sem registros.
+                      </td>
+                    </tr>
+                  )}
+                  {!loading &&
+                    rowsAPagar.map((r) => (
+                      <tr key={r.id} className="border-b hover:bg-gray-50">
+                        <td className="p-2">
+                          {r.data_venda ? formatISODateBR(r.data_venda) : "—"}
+                        </td>
+                        <td className="p-2">{userLabel(r.vendedor_id)}</td>
+                        <td className="p-2">{r.cliente_nome || "—"}</td>
+                        <td className="p-2">{r.numero_proposta || "—"}</td>
+                        <td className="p-2">{r.segmento || "—"}</td>
+                        <td className="p-2">{r.tabela || "—"}</td>
+                        <td className="p-2 text-right">
+                          {BRL(r.valor_venda ?? r.base_calculo)}
+                        </td>
+                        <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
+                        <td className="p-2 text-right">{BRL(r.valor_total)}</td>
+                        <td className="p-2">{r.status}</td>
+                        <td className="p-2">
+                          {r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}
+                        </td>
+                        <td className="p-2">
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => openPaymentFor(r)}
+                            >
+                              <DollarSign className="w-4 h-4 mr-1" />
+                              {hasRegisteredButUnpaid(r.flow)
+                                ? "Confirmar Pagamento"
+                                : "Registrar pagamento"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => retornarComissao(r)}
+                            >
+                              <RotateCcw className="w-4 h-4 mr-1" /> Retornar
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </CardContent>
+          )}
+        </Card>
+
+        {/* Comissões pagas */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center justify-between">
+              <span>Comissões pagas</span>
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="Buscar por cliente ou nº proposta"
+                  value={paidSearch}
+                  onChange={(e) => {
+                    setPaidSearch(e.target.value);
+                    setPaidPage(1);
+                  }}
+                  className="w-[280px]"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowPaid((v) => !v)}
+                >
+                  {showPaid ? "Ocultar" : "Expandir"}
+                </Button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+          {showPaid && (
+            <CardContent className="overflow-x-auto">
+              <table className="min-w-[1100px] w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">Data Pagto</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-left">Cliente</th>
+                    <th className="p-2 text-left">Nº Proposta</th>
+                    <th className="p-2 text-left">Parcela</th>
+                    <th className="p-2 text-right">Valor Pago (Bruto)</th>
+                    <th className="p-2 text-left">Arquivos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagosPage.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-4 text-gray-500">
+                        Nenhum pagamento encontrado.
+                      </td>
+                    </tr>
+                  )}
+                  {pagosPage.map(({ flow, comm }) => (
+                    <tr key={flow.id} className="border-b">
+                      <td className="p-2">
+                        {flow.data_pagamento_vendedor
+                          ? formatISODateBR(flow.data_pagamento_vendedor)
+                          : "—"}
+                      </td>
+                      <td className="p-2">{userLabel(comm.vendedor_id)}</td>
+                      <td className="p-2">{comm.cliente_nome || "—"}</td>
+                      <td className="p-2">{comm.numero_proposta || "—"}</td>
+                      <td className="p-2">M{flow.mes}</td>
+                      <td className="p-2 text-right">
+                        {BRL(flow.valor_pago_vendedor)}
+                      </td>
+                      <td className="p-2">
+                        <div className="flex gap-2">
+                          {flow.recibo_vendedor_url && (
+                            <a
+                              className="underline text-blue-700"
+                              href="#"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                const u = await getSignedUrl(flow.recibo_vendedor_url);
+                                if (u) window.open(u, "_blank");
+                              }}
+                            >
+                              Recibo
+                            </a>
+                          )}
+                          {flow.comprovante_pagto_url && (
+                            <a
+                              className="underline text-blue-700"
+                              href="#"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                const u = await getSignedUrl(
+                                  flow.comprovante_pagto_url
+                                );
+                                if (u) window.open(u, "_blank");
+                              }}
+                            >
+                              Comprovante
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="flex items-center justify-end gap-3 pt-3">
+                <div className="text-sm text-gray-600">
+                  Mostrando {pagosPage.length ? pageStart + 1 : 0}–
+                  {Math.min(pageStart + pageSize, pagosFiltered.length)} de{" "}
+                  {pagosFiltered.length}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPaidPage((p) => Math.max(1, p - 1))}
+                  disabled={paidPage <= 1}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPaidPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={paidPage >= totalPages}
+                >
+                  Próxima
+                </Button>
+              </div>
+            </CardContent>
+          )}
+        </Card>
+
+        {/* Regras (overlay) */}
+        <Dialog open={openRules} onOpenChange={setOpenRules}>
+          <DialogContent className="max-w-6xl">
+            <DialogHeader>
+              <DialogTitle>Regras de Comissão</DialogTitle>
+            </DialogHeader>
+
+            {/* Cabeçalho do formulário */}
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              <div>
+                <Label>Vendedor</Label>
+                <Select
+                  value={ruleVendorId}
+                  onValueChange={(v) => {
+                    setRuleVendorId(v);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.nome?.trim() || u.email?.trim() || u.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Tabela (SimTables)</Label>
+                <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {simGroups.map((g) => (
+                      <SelectItem key={g.key} value={g.key}>
+                        {g.segmento} — {g.nome_tabela}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
+                <Input
+                  value={rulePercent}
+                  onChange={(e) => setRulePercent(e.target.value)}
+                  placeholder="1,20"
+                />
+              </div>
+              <div>
+                <Label>Nº de meses do fluxo</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={36}
+                  value={ruleMeses}
+                  onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
+                />
+              </div>
+            </div>
+
+            <hr className="my-4" />
+
+            {/* Fluxo */}
+            <div className="space-y-2">
+              <Label>
+                Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total <b>ou</b>{" "}
+                a soma igual ao % Padrão
+              </Label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-3 border rounded-md bg-white">
+                {Array.from({ length: ruleMeses }).map((_, i) => (
+                  <Input
+                    key={i}
+                    value={ruleFluxoPct[i] || "0,00"}
+                    onChange={(e) => {
+                      const arr = [...ruleFluxoPct];
+                      arr[i] = e.target.value;
+                      setRuleFluxoPct(arr);
+                    }}
+                    placeholder="0,33"
+                  />
+                ))}
+              </div>
+              <div className="text-xs text-gray-600 mt-1">
+                Soma do fluxo:{" "}
+                <b>
+                  {fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão{" "}
+                  {rulePercent || "0,00"})
+                </b>
+              </div>
+            </div>
+
+            <hr className="my-4" />
+
+            {/* Observações + Ações */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end">
+              <div className="lg:col-span-2">
+                <Label>Observações</Label>
+                <Input
+                  value={ruleObs}
+                  onChange={(e) => setRuleObs(e.target.value)}
+                  placeholder="Opcional"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={saveRule}>
+                  <Save className="w-4 h-4 mr-1" /> Salvar Regra
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setRuleSimTableId("");
+                    setRulePercent("1,20");
+                    setRuleMeses(1);
+                    setRuleFluxoPct(["100,00"]);
+                    setRuleObs("");
+                  }}
+                >
+                  Limpar
+                </Button>
+              </div>
+            </div>
+
+            <hr className="my-4" />
+
+            {/* Lista de regras */}
+            <div className="border rounded-md max-h-[45vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left">Segmento</th>
+                    <th className="p-2 text-left">Administradora</th>
+                    <th className="p-2 text-left">Tabela</th>
+                    <th className="p-2 text-right">% Padrão</th>
+                    <th className="p-2 text-left">Fluxo</th>
+                    <th className="p-2 text-left">Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(!ruleRows || ruleRows.length === 0) && (
+                    <tr>
+                      <td colSpan={6} className="p-3 text-gray-500">
+                        Nenhuma regra cadastrada para o vendedor selecionado.
+                      </td>
+                    </tr>
+                  )}
+                  {ruleRows.map((r) => (
+                    <tr key={`${r.vendedor_id}-${r.sim_table_id}`} className="border-t">
+                      <td className="p-2">{r.segmento || "—"}</td>
+                      <td className="p-2">{r.administradora || "—"}</td>
+                      <td className="p-2">{r.nome_tabela}</td>
+                      <td className="p-2 text-right">{pct100(r.percent_padrao)}</td>
+                      <td className="p-2">{r.fluxo_meses} Pgtos</td>
+                      <td className="p-2">
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => loadRuleToForm(r)}
+                          >
+                            <Pencil className="w-4 h-4 mr-1" /> Editar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => deleteRule(r.vendedor_id, r.sim_table_id)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-1" /> Excluir
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <DialogFooter>
+              <Button variant="secondary" onClick={() => setOpenRules(false)}>
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Pagamento (overlay largo) */}
+        <Dialog open={openPay} onOpenChange={setOpenPay}>
+          <DialogContent className="w-[98vw] max-w-[1400px]">
+            <DialogHeader>
+              <DialogTitle>Registrar pagamento ao vendedor</DialogTitle>
+            </DialogHeader>
+            <Tabs defaultValue={payDefaultTab}>
+              <TabsList className="mb-3">
+                <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>
+                <TabsTrigger value="arquivos">Arquivos</TabsTrigger>
+              </TabsList>
+              <TabsContent value="selecionar" className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div>
+                    <Label>Data do pagamento</Label>
+                    <Input
+                      type="date"
+                      value={payDate}
+                      onChange={(e) => setPayDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label>Valor pago ao vendedor (opcional)</Label>
+                    <Input
+                      placeholder="Ex.: 1.974,00"
+                      value={payValue}
+                      onChange={(e) => setPayValue(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={() =>
+                        paySelectedParcels({
+                          data_pagamento_vendedor: payDate,
+                          valor_pago_vendedor: payValue
+                            ? parseFloat(payValue.replace(/\./g, "").replace(",", "."))
+                            : undefined,
+                          recibo_file: null,
+                          comprovante_file: null,
+                        })
+                      }
+                    >
+                      <Save className="w-4 h-4 mr-1" /> Salvar
+                    </Button>
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const pend = Object.fromEntries(
+                          payFlow
+                            .filter(
+                              (f) =>
+                                !f.data_pagamento_vendedor &&
+                                (f.valor_pago_vendedor ?? 0) === 0
+                            )
+                            .map((f) => [f.id, true])
+                        );
+                        setPaySelected(pend);
+                      }}
+                    >
+                      Selecionar tudo pendente
+                    </Button>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-[1300px] w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="p-2 text-left">Sel.</th>
+                        <th className="p-2 text-left">Mês</th>
+                        <th className="p-2 text-left">% Parcela</th>
+                        <th className="p-2 text-right">Valor Previsto</th>
+                        <th className="p-2 text-right">Valor Pago</th>
+                        <th className="p-2 text-left">Data Pagto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {payFlow.map((f) => {
+                        const isLocked =
+                          (f.valor_pago_vendedor ?? 0) > 0 ||
+                          Boolean(f.recibo_vendedor_url) ||
+                          Boolean(f.comprovante_pagto_url);
+                        return (
+                          <tr
+                            key={f.id}
+                            className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}
+                          >
+                            <td className="p-2">
+                              <Checkbox
+                                checked={!!paySelected[f.id]}
+                                onCheckedChange={(v) =>
+                                  setPaySelected((s) => ({ ...s, [f.id]: !!v }))
+                                }
+                                disabled={isLocked}
+                              />
+                            </td>
+                            <td className="p-2">M{f.mes}</td>
+                            <td className="p-2">{pct100(f.percentual)}</td>
+                            <td className="p-2 text-right">
+                              {BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}
+                            </td>
+                            <td className="p-2 text-right">
+                              {BRL(f.valor_pago_vendedor)}
+                            </td>
+                            <td className="p-2">
+                              {f.data_pagamento_vendedor
+                                ? formatISODateBR(f.data_pagamento_vendedor)
+                                : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </TabsContent>
+              <TabsContent value="arquivos">
+                <UploadArea onConfirm={paySelectedParcels} />
+              </TabsContent>
+            </Tabs>
+            <DialogFooter>
+              <Button onClick={() => setOpenPay(false)} variant="secondary">
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
-    </section>
+    </div>
   );
 }
 

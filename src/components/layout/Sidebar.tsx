@@ -1,6 +1,6 @@
 // src/components/layout/Sidebar.tsx
 import { NavLink, Link, useLocation } from 'react-router-dom'
-import { useMemo, useState, useEffect, useId } from 'react'
+import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 
 // Ícones
@@ -45,7 +45,7 @@ const FALLBACK_URL = '/favicon.ico?v=3'
 type AdminRow = { id: string; name: string; slug: string | null }
 
 /** ================= Liquid Glass Helpers (Sidebar) ================= */
-const glassSidebarBase: React.CSSProperties = {
+const glassSidebarBase: CSSProperties = {
   position: 'relative',
   background: 'rgba(255,255,255,.55)',
   borderRight: '1px solid rgba(255,255,255,.35)',
@@ -54,13 +54,13 @@ const glassSidebarBase: React.CSSProperties = {
   boxShadow: 'inset -8px 0 30px rgba(181,165,115,.10)', // brilho dourado sutil (B5A573)
 }
 
-const activePillStyle: React.CSSProperties = {
+const activePillStyle: CSSProperties = {
   background: 'linear-gradient(180deg, rgba(161,28,39,1) 0%, rgba(161,28,39,.96) 100%)',
   border: '1px solid rgba(255,255,255,.18)',
   boxShadow: '0 6px 18px rgba(161,28,39,.25), inset 0 -8px 20px rgba(255,255,255,.12)',
 }
 
-const glassHoverPill: React.CSSProperties = {
+const glassHoverPill: CSSProperties = {
   background: 'rgba(255,255,255,.58)',
   border: '1px solid rgba(255,255,255,.35)',
   boxShadow: 'inset 0 1px 2px rgba(0,0,0,.04)',
@@ -68,7 +68,7 @@ const glassHoverPill: React.CSSProperties = {
   WebkitBackdropFilter: 'blur(6px)',
 }
 
-const SidebarLiquidBG: React.FC = () => (
+const SidebarLiquidBG: FC = () => (
   <div style={sbLiquidCanvas}>
     <style>{sbLiquidKeyframes}</style>
     <span style={{ ...sbBlob, ...sbBlob1 }} />
@@ -77,7 +77,7 @@ const SidebarLiquidBG: React.FC = () => (
   </div>
 )
 
-const sbLiquidCanvas: React.CSSProperties = {
+const sbLiquidCanvas: CSSProperties = {
   position: 'absolute',
   inset: 0,
   zIndex: 0,
@@ -85,7 +85,7 @@ const sbLiquidCanvas: React.CSSProperties = {
   pointerEvents: 'none',
 }
 
-const sbBlob: React.CSSProperties = {
+const sbBlob: CSSProperties = {
   position: 'absolute',
   width: 280,
   height: 280,
@@ -94,21 +94,21 @@ const sbBlob: React.CSSProperties = {
   opacity: 0.55,
 }
 
-const sbBlob1: React.CSSProperties = {
+const sbBlob1: CSSProperties = {
   left: -80,
   top: -60,
   background: 'radial-gradient(closest-side, #A11C27, rgba(161,28,39,0))',
   animation: 'sbFloat1 26s ease-in-out infinite',
 }
 
-const sbBlob2: React.CSSProperties = {
+const sbBlob2: CSSProperties = {
   right: -90,
   bottom: -60,
   background: 'radial-gradient(closest-side, #1E293F, rgba(30,41,63,0))',
   animation: 'sbFloat2 30s ease-in-out infinite',
 }
 
-const sbGoldGlow: React.CSSProperties = {
+const sbGoldGlow: CSSProperties = {
   position: 'absolute',
   right: -60,
   top: '45%',

@@ -5,7 +5,6 @@ import { supabase } from '@/lib/supabaseClient'
 
 // Ícones
 import {
-  // Users, // removido (não há mais item Leads)
   UserCheck,
   Briefcase,
   Calendar,
@@ -16,7 +15,7 @@ import {
   UserCog,
   SlidersHorizontal,
   BarChart3,
-  Link as LinkIcon, // ✅ novo ícone para "Links Úteis"
+  Link as LinkIcon,
 } from 'lucide-react'
 
 type SidebarProps = {
@@ -37,7 +36,7 @@ const items = [
   { to: '/comissoes',        label: 'Comissões',        icon: BarChart3 },
   { to: '/usuarios',         label: 'Usuários',         icon: UserCog },
   { to: '/parametros',       label: 'Parâmetros',       icon: SlidersHorizontal },
-  { to: '/links',            label: 'Links Úteis',      icon: LinkIcon }, // ✅ novo item
+  { to: '/links',            label: 'Links Úteis',      icon: LinkIcon },
 ]
 
 const LOGO_URL = '/logo-consulmax.png?v=3'
@@ -56,7 +55,6 @@ const glassSidebarBase: React.CSSProperties = {
 }
 
 const activePillStyle: React.CSSProperties = {
-  // mantém a cor rubi das suas classes; aqui só acrescentamos “vidro/brilho”
   background: 'linear-gradient(180deg, rgba(161,28,39,1) 0%, rgba(161,28,39,.96) 100%)',
   border: '1px solid rgba(255,255,255,.18)',
   boxShadow: '0 6px 18px rgba(161,28,39,.25), inset 0 -8px 20px rgba(255,255,255,.12)',
@@ -284,7 +282,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                        ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                     }
-                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill))}
+                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                     onClick={() => onNavigate?.()}
                   >
                     + Add Administradora

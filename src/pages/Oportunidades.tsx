@@ -110,6 +110,20 @@ const brToISO = (br: string) => {
 // ordenar: mais atrasado primeiro; sem data no fim
 const tsOrInf = (iso?: string | null) => (iso ? new Date(iso + "T00:00:00").getTime() : Number.POSITIVE_INFINITY);
 
+/** ===================== Liquid BG (blobs animados) ===================== */
+const LiquidBG: React.FC = () => {
+  return (
+    <div style={liquidCanvas}>
+      <style>{liquidKeyframes}</style>
+      <span style={{ ...blob, ...blob1 }} />
+      <span style={{ ...blob, ...blob2 }} />
+      <span style={{ ...blob, ...blob3 }} />
+      {/* brilho dourado sutil no canto inferior direito */}
+      <span style={{ ...goldGlow }} />
+    </div>
+  );
+};
+
 /** ===================== Página ===================== */
 export default function Oportunidades() {
   const PAGE_BLOCK = 5; // até 5 por coluna
@@ -281,6 +295,9 @@ export default function Oportunidades() {
   }, [colNovoAll.length, colQualAll.length, colPropAll.length, colNegAll.length]);
 
   const sliceByPage = (arr: Oportunidade[]) => {
+    theLoop: {
+      /* este label evita warnings do TS quando colamos código gerado */
+    }
     const from = (page - 1) * PAGE_BLOCK;
     const to = from + PAGE_BLOCK;
     return arr.slice(from, to);
@@ -313,7 +330,7 @@ export default function Oportunidades() {
 
     // cria oportunidade automaticamente no estágio "Novo"
     const payloadOpp = {
-      lead_id: lead.id,
+      lead_id: (lead as any).id,
       vendedor_id: meId as string,
       owner_id: meId as string,
       segmento: "Automóvel",
@@ -621,11 +638,11 @@ export default function Oportunidades() {
 
     let acc = 0;
     return (
-      <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.06)", padding: 12 }}>
+      <div style={glassCard}>
         <div style={{ fontWeight: 800, color: CONS.ink, marginBottom: 6 }}>{title}</div>
         <svg width="160" height="160" viewBox="0 0 160 160" style={{ display: "block", margin: "0 auto" }}>
           {/* fundo */}
-          <circle cx={cx} cy={cy} r={r} stroke="#eee" strokeWidth="18" fill="none" />
+          <circle cx={cx} cy={cy} r={r} stroke="rgba(0,0,0,.06)" strokeWidth="18" fill="none" />
           {data.map(([label, value], i) => {
             const frac = total ? value / total : 0;
             const len = frac * circ;
@@ -675,7 +692,7 @@ export default function Oportunidades() {
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
-                  background: isHover ? "#f8fafc" : "transparent",
+                  background: isHover ? "rgba(255,255,255,.5)" : "transparent",
                   borderRadius: 8,
                   padding: "4px 6px",
                   cursor: "default",
@@ -703,7 +720,7 @@ export default function Oportunidades() {
 
   /** ===================== Render ===================== */
   const StageCard = ({ label, qtd, total }: { label: string; qtd: number; total: number }) => (
-    <div style={kpiCard}>
+    <div style={glassSmallCard}>
       <div style={{ fontWeight: 800, color: CONS.ink, marginBottom: 8 }}>{label}</div>
       <div style={{ color: "#1f2937" }}>Qtd: {qtd}</div>
       <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(total)}</div>
@@ -729,7 +746,7 @@ export default function Oportunidades() {
     return (
       <div
         key={o.id}
-        style={cardRow}
+        style={cardRowGlass}
         draggable
         onDragStart={(e) => onCardDragStart(e, o.id)}
         title="Arraste para mudar de coluna"
@@ -794,7 +811,7 @@ export default function Oportunidades() {
   const Column = ({ title, items, stageUIKey }: { title: string; items: Oportunidade[]; stageUIKey: StageUI }) => (
     <div
       style={{
-        ...stageCol,
+        ...stageColGlass,
         ...(dragOverStage === stageUIKey ? stageColActive : {}),
       }}
       onDragOver={(e) => onColumnDragOver(e, stageUIKey)}
@@ -803,22 +820,24 @@ export default function Oportunidades() {
     >
       <div style={stageTitle}>{title}</div>
       <div style={{ display: "grid", gap: 10, minHeight: 40 }}>
-        {items.length ? items.map((o) => <Card key={o.id} {...o} />) : <div style={emptyCol}>—</div>}
+        {items.length ? items.map((o) => <Card key={o.id} {...o} />) : <div style={emptyColGlass}>—</div>}
       </div>
     </div>
   );
 
   return (
-    <div style={{ maxWidth: 1200, margin: "24px auto", padding: "0 16px", fontFamily: "Inter, system-ui, Arial" }}>
+    <div style={pageWrap}>
+      <LiquidBG />
+
       {/* Topbar */}
-      <div style={topbar}>
+      <div style={topbarGlass}>
         <input
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
             setPage(1);
           }}
-          style={{ ...input, margin: 0, flex: 1 }}
+          style={{ ...input, ...inputGlass, margin: 0, flex: 1 }}
           placeholder="Buscar por lead, vendedor, estágio ou telefone"
         />
         <button onClick={() => setNewLeadOpen(true)} style={btnPrimary}>
@@ -841,7 +860,7 @@ export default function Oportunidades() {
       </div>
 
       {/* Board (4 blocos) */}
-      <div style={card}>
+      <div style={glassCard}>
         <div style={{ ...sectionTitle, marginTop: 0, marginBottom: 14 }}>Oportunidades</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
           <Column title="Novo" items={colNovo} stageUIKey="novo" />
@@ -881,7 +900,7 @@ export default function Oportunidades() {
       {/* ===== Modal: Tratar ===== */}
       {editing && (
         <div style={modalBackdrop}>
-          <div style={modalCard}>
+          <div style={modalCardGlass}>
             <h3 style={{ marginTop: 0 }}>Tratar Lead</h3>
             <div style={grid2}>
               <div>
@@ -889,7 +908,7 @@ export default function Oportunidades() {
                 <select
                   value={editing.segmento}
                   onChange={(e) => setEditing({ ...editing, segmento: e.target.value })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 >
                   {segmentos.map((s) => (
                     <option key={s} value={s}>
@@ -903,7 +922,7 @@ export default function Oportunidades() {
                 <input
                   value={String(editing.valor_credito)}
                   onChange={(e) => setEditing({ ...editing, valor_credito: Number(e.target.value.replace(/\D/g, "")) })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 />
               </div>
               <div>
@@ -911,7 +930,7 @@ export default function Oportunidades() {
                 <select
                   value={String(editing.score)}
                   onChange={(e) => setEditing({ ...editing, score: Number(e.target.value) })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 >
                   {[1, 2, 3, 4, 5].map((n) => (
                     <option key={n} value={n}>
@@ -925,7 +944,7 @@ export default function Oportunidades() {
                 <select
                   value={String(editing.estagio)}
                   onChange={(e) => setEditing({ ...editing, estagio: e.target.value })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 >
                   <option value="Novo">Novo</option>
                   <option value="Qualificando">Qualificando</option>
@@ -943,7 +962,7 @@ export default function Oportunidades() {
                   placeholder="dd/mm/aaaa"
                   value={editDateBR}
                   onChange={(e) => setEditDateBR(maskDateBR(e.target.value))}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 />
               </div>
               <div style={{ gridColumn: "1 / span 2" }}>
@@ -951,7 +970,7 @@ export default function Oportunidades() {
                 <textarea
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
-                  style={{ ...input, minHeight: 90 }}
+                  style={{ ...input, ...inputGlass, minHeight: 90 }}
                   placeholder="Escreva uma nova observação. O histórico anterior será mantido."
                 />
                 <div style={{ marginTop: 8, color: "#64748b", fontSize: 12 }}>
@@ -959,12 +978,14 @@ export default function Oportunidades() {
                   <pre
                     style={{
                       whiteSpace: "pre-wrap",
-                      background: "#f8fafc",
-                      border: "1px solid #e5e7eb",
-                      borderRadius: 8,
+                      background: "rgba(255,255,255,.55)",
+                      border: "1px solid rgba(255,255,255,.35)",
+                      borderRadius: 12,
                       padding: 8,
                       maxHeight: 180,
                       overflowY: "auto",
+                      backdropFilter: "blur(6px)",
+                      WebkitBackdropFilter: "blur(6px)",
                     }}
                   >
                     {editing.observacao || "(sem anotações)"}
@@ -988,24 +1009,24 @@ export default function Oportunidades() {
       {/* ===== Modal: Novo Lead ===== */}
       {newLeadOpen && (
         <div style={modalBackdrop}>
-          <div style={modalCard}>
+          <div style={modalCardGlass}>
             <h3 style={{ marginTop: 0 }}>Novo Lead</h3>
             <div style={grid2}>
               <div>
                 <label style={label}>Nome</label>
-                <input value={nlNome} onChange={(e) => setNlNome(e.target.value)} style={input} />
+                <input value={nlNome} onChange={(e) => setNlNome(e.target.value)} style={{ ...input, ...inputGlass }} />
               </div>
               <div>
                 <label style={label}>Telefone</label>
-                <input value={nlTel} onChange={(e) => setNlTel(e.target.value)} style={input} />
+                <input value={nlTel} onChange={(e) => setNlTel(e.target.value)} style={{ ...input, ...inputGlass }} />
               </div>
               <div>
                 <label style={label}>E-mail</label>
-                <input value={nlEmail} onChange={(e) => setNlEmail(e.target.value)} style={input} />
+                <input value={nlEmail} onChange={(e) => setNlEmail(e.target.value)} style={{ ...input, ...inputGlass }} />
               </div>
               <div>
                 <label style={label}>Origem</label>
-                <select value={nlOrigem} onChange={(e) => setNlOrigem(e.target.value)} style={input}>
+                <select value={nlOrigem} onChange={(e) => setNlOrigem(e.target.value)} style={{ ...input, ...inputGlass }}>
                   <option value="Site">Site</option>
                   <option value="Redes Sociais">Redes Sociais</option>
                   <option value="Indicação">Indicação</option>
@@ -1016,7 +1037,7 @@ export default function Oportunidades() {
               </div>
               <div style={{ gridColumn: "1 / span 2" }}>
                 <label style={label}>Descrição</label>
-                <input value={nlDesc} onChange={(e) => setNlDesc(e.target.value)} style={input} />
+                <input value={nlDesc} onChange={(e) => setNlDesc(e.target.value)} style={{ ...input, ...inputGlass }} />
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -1034,12 +1055,12 @@ export default function Oportunidades() {
       {/* ===== Modal: Nova Oportunidade ===== */}
       {newOppOpen && (
         <div style={modalBackdrop}>
-          <div style={modalCard}>
+          <div style={modalCardGlass}>
             <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
             <div style={grid2}>
               <div>
                 <label style={label}>Selecionar um Lead</label>
-                <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={input}>
+                <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={{ ...input, ...inputGlass }}>
                   <option value="">Selecione um Lead</option>
                   {leads.map((l) => (
                     <option key={l.id} value={l.id}>
@@ -1051,7 +1072,7 @@ export default function Oportunidades() {
 
               <div>
                 <label style={label}>Selecione um Vendedor</label>
-                <select value={vendId} onChange={(e) => setVendId(e.target.value)} style={input}>
+                <select value={vendId} onChange={(e) => setVendId(e.target.value)} style={{ ...input, ...inputGlass }}>
                   <option value="">Selecione um Vendedor</option>
                   {vendedores.map((v) => (
                     <option key={v.auth_user_id} value={v.auth_user_id}>
@@ -1063,7 +1084,7 @@ export default function Oportunidades() {
 
               <div>
                 <label style={label}>Segmento</label>
-                <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={input}>
+                <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={{ ...input, ...inputGlass }}>
                   {segmentos.map((s) => (
                     <option key={s} value={s}>
                       {s}
@@ -1074,17 +1095,17 @@ export default function Oportunidades() {
 
               <div>
                 <label style={label}>Valor do crédito (R$)</label>
-                <input value={valor} onChange={(e) => setValor(e.target.value)} style={input} placeholder="Ex.: 80.000,00" />
+                <input value={valor} onChange={(e) => setValor(e.target.value)} style={{ ...input, ...inputGlass }} placeholder="Ex.: 80.000,00" />
               </div>
 
               <div>
                 <label style={label}>Observações</label>
-                <input value={obs} onChange={(e) => setObs(e.target.value)} style={input} placeholder="Observação (opcional)" />
+                <input value={obs} onChange={(e) => setObs(e.target.value)} style={{ ...input, ...inputGlass }} placeholder="Observação (opcional)" />
               </div>
 
               <div>
                 <label style={label}>Probabilidade</label>
-                <select value={String(score)} onChange={(e) => setScore(Number(e.target.value))} style={input}>
+                <select value={String(score)} onChange={(e) => setScore(Number(e.target.value))} style={{ ...input, ...inputGlass }}>
                   {[1, 2, 3, 4, 5].map((n) => (
                     <option key={n} value={n}>
                       {"★".repeat(n)}
@@ -1095,7 +1116,7 @@ export default function Oportunidades() {
 
               <div>
                 <label style={label}>Estágio</label>
-                <select value={stageUI} onChange={(e) => setStageUI(e.target.value as StageUI)} style={input}>
+                <select value={stageUI} onChange={(e) => setStageUI(e.target.value as StageUI)} style={{ ...input, ...inputGlass }}>
                   <option value="novo">Novo</option>
                   <option value="qualificando">Qualificando</option>
                   <option value="proposta">Proposta</option>
@@ -1113,7 +1134,7 @@ export default function Oportunidades() {
                   placeholder="dd/mm/aaaa"
                   value={expectedDate}
                   onChange={(e) => setExpectedDate(maskDateBR(e.target.value))}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 />
               </div>
             </div>
@@ -1133,7 +1154,7 @@ export default function Oportunidades() {
       {/* ===== Modal: Editar Lead ===== */}
       {editLead && (
         <div style={modalBackdrop}>
-          <div style={modalCard}>
+          <div style={modalCardGlassSmall}>
             <h3 style={{ marginTop: 0 }}>Editar Lead</h3>
             <div style={grid2}>
               <div>
@@ -1141,7 +1162,7 @@ export default function Oportunidades() {
                 <input
                   value={editLead.nome || ""}
                   onChange={(e) => setEditLead({ ...editLead, nome: e.target.value })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 />
               </div>
               <div>
@@ -1149,7 +1170,7 @@ export default function Oportunidades() {
                 <input
                   value={editLead.telefone || ""}
                   onChange={(e) => setEditLead({ ...editLead, telefone: e.target.value })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 />
               </div>
               <div>
@@ -1157,7 +1178,7 @@ export default function Oportunidades() {
                 <input
                   value={editLead.email || ""}
                   onChange={(e) => setEditLead({ ...editLead, email: e.target.value })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 />
               </div>
               <div>
@@ -1165,7 +1186,7 @@ export default function Oportunidades() {
                 <select
                   value={editLead.origem || "Site"}
                   onChange={(e) => setEditLead({ ...editLead, origem: e.target.value })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 >
                   <option value="Site">Site</option>
                   <option value="Redes Sociais">Redes Sociais</option>
@@ -1180,7 +1201,7 @@ export default function Oportunidades() {
                 <input
                   value={editLead.descricao || ""}
                   onChange={(e) => setEditLead({ ...editLead, descricao: e.target.value })}
-                  style={input}
+                  style={{ ...input, ...inputGlass }}
                 />
               </div>
             </div>
@@ -1199,12 +1220,12 @@ export default function Oportunidades() {
       {/* ===== Modal: Reatribuir ===== */}
       {reassignLead && (
         <div style={modalBackdrop}>
-          <div style={modalCardSmall}>
+          <div style={modalCardGlassSmall}>
             <h3 style={{ marginTop: 0, marginBottom: 12 }}>Reatribuir Lead</h3>
             <p style={{ margin: "0 0 8px", color: "#475569" }}>
               <strong>Lead:</strong> {reassignLead.nome}
             </p>
-            <select style={input} value={newOwnerId} onChange={(e) => setNewOwnerId(e.target.value)}>
+            <select style={{ ...input, ...inputGlass }} value={newOwnerId} onChange={(e) => setNewOwnerId(e.target.value)}>
               <option value="">Selecionar usuário…</option>
               {vendedores.map((u) => (
                 <option key={u.auth_user_id} value={u.auth_user_id}>
@@ -1236,67 +1257,93 @@ const sectionTitle: React.CSSProperties = {
   letterSpacing: 0.2,
   textTransform: "uppercase",
 };
-const topbar: React.CSSProperties = {
-  background: "#fff",
+
+const pageWrap: React.CSSProperties = {
+  position: "relative",
+  maxWidth: 1200,
+  margin: "24px auto",
+  padding: "0 16px 24px 16px",
+  fontFamily: "Inter, system-ui, Arial",
+  // leve gradiente de fundo para ajudar o glass
+  background: "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)",
+  borderRadius: 16,
+  overflow: "hidden",
+};
+
+/** ===== Liquid Glass base ===== */
+const glassBase: React.CSSProperties = {
+  background: "rgba(255,255,255,.55)",
+  border: "1px solid rgba(255,255,255,.35)",
+  boxShadow:
+    "0 2px 14px rgba(0,0,0,.06), inset 0 -8px 30px rgba(181,165,115,.12)", // brilho dourado (B5A573) sutil
+  backdropFilter: "saturate(160%) blur(10px)",
+  WebkitBackdropFilter: "saturate(160%) blur(10px)",
+};
+
+const topbarGlass: React.CSSProperties = {
+  ...glassBase,
   padding: 12,
-  borderRadius: 12,
-  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+  borderRadius: 14,
   marginBottom: 16,
   display: "flex",
   gap: 12,
   alignItems: "center",
 };
-const card: React.CSSProperties = {
-  background: "#fff",
+
+const glassCard: React.CSSProperties = {
+  ...glassBase,
   borderRadius: 16,
-  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
   padding: 16,
   marginBottom: 16,
 };
-const kpiCard: React.CSSProperties = {
-  background: "#fff",
+
+const glassSmallCard: React.CSSProperties = {
+  ...glassBase,
   borderRadius: 14,
-  boxShadow: "0 2px 10px rgba(0,0,0,.06)",
   padding: 14,
 };
-const stageCol: React.CSSProperties = {
-  background: CONS.grayBg,
-  borderRadius: 12,
+
+const stageColGlass: React.CSSProperties = {
+  ...glassBase,
+  borderRadius: 14,
   padding: 12,
   minHeight: 120,
-  border: "1px solid transparent",
-  transition: "border-color .12s ease, background-color .12s ease",
+  transition: "border-color .12s ease, background-color .12s ease, box-shadow .12s ease",
 };
+
 const stageColActive: React.CSSProperties = {
-  border: `1px dashed ${CONS.tan}`,
-  background: "#f8fafc",
+  border: "1px dashed rgba(181,165,115,.8)", // dourado
+  background: "rgba(255,255,255,.7)",
+  boxShadow: "0 0 0 3px rgba(224,206,140,.15) inset",
 };
+
 const stageTitle: React.CSSProperties = {
   fontWeight: 800,
   color: CONS.ink,
   marginBottom: 8,
 };
-const cardRow: React.CSSProperties = {
-  background: "#fff",
-  border: "1px solid #e5e7eb",
+
+const cardRowGlass: React.CSSProperties = {
+  ...glassBase,
   borderRadius: 12,
   padding: 10,
-  boxShadow: "0 1px 3px rgba(0,0,0,.04)",
 };
-const emptyCol: React.CSSProperties = {
+
+const emptyColGlass: React.CSSProperties = {
+  ...glassBase,
   padding: 12,
   fontSize: 12,
-  color: "#94a3b8",
+  color: "#64748b",
   textAlign: "center",
-  background: "#fff",
   borderRadius: 10,
-  border: "1px dashed #e5e7eb",
 };
+
 const grid2: React.CSSProperties = {
   display: "grid",
   gap: 12,
   gridTemplateColumns: "1fr 1fr",
 };
+
 const input: React.CSSProperties = {
   width: "100%",
   padding: 10,
@@ -1305,6 +1352,15 @@ const input: React.CSSProperties = {
   outline: "none",
   background: "#fff",
 };
+
+const inputGlass: React.CSSProperties = {
+  background: "rgba(255,255,255,.7)",
+  border: "1px solid rgba(255,255,255,.35)",
+  boxShadow: "inset 0 1px 2px rgba(0,0,0,.04)",
+  backdropFilter: "blur(6px)",
+  WebkitBackdropFilter: "blur(6px)",
+};
+
 const label: React.CSSProperties = {
   display: "block",
   fontSize: 12,
@@ -1312,6 +1368,7 @@ const label: React.CSSProperties = {
   color: "#475569",
   marginBottom: 6,
 };
+
 const btnPrimary: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
@@ -1321,6 +1378,7 @@ const btnPrimary: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 700,
 };
+
 const btnSmallPrimary: React.CSSProperties = {
   padding: "6px 10px",
   borderRadius: 10,
@@ -1331,24 +1389,31 @@ const btnSmallPrimary: React.CSSProperties = {
   fontWeight: 600,
   whiteSpace: "nowrap",
 };
+
 const btnGhost: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
-  background: "#fff",
+  background: "rgba(255,255,255,.6)",
   color: CONS.ink,
-  border: "1px solid #e5e7eb",
+  border: "1px solid rgba(255,255,255,.35)",
   cursor: "pointer",
   fontWeight: 700,
+  backdropFilter: "blur(6px)",
+  WebkitBackdropFilter: "blur(6px)",
 };
+
 const btnSecondary: React.CSSProperties = {
   padding: "8px 12px",
   borderRadius: 10,
-  background: "#f1f5f9", // corrigido
+  background: "rgba(241,245,249,.7)",
   color: "#0f172a",
-  border: "1px solid #e2e8f0",
+  border: "1px solid rgba(255,255,255,.35)",
   fontWeight: 600,
   cursor: "pointer",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
 };
+
 const iconBtn: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -1356,17 +1421,20 @@ const iconBtn: React.CSSProperties = {
   width: 28,
   height: 28,
   borderRadius: 8,
-  border: "1px solid #e5e7eb",
-  background: "#fff",
+  border: "1px solid rgba(255,255,255,.35)",
+  background: "rgba(255,255,255,.65)",
   color: "#64748b",
   textDecoration: "none",
   cursor: "pointer",
   transition: "all .15s ease-in-out",
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
 };
 const iconBtnDisabled: React.CSSProperties = {
   opacity: 0.45,
   cursor: "not-allowed",
 };
+
 const pager: React.CSSProperties = {
   display: "flex",
   gap: 8,
@@ -1374,31 +1442,43 @@ const pager: React.CSSProperties = {
   justifyContent: "flex-end",
   marginTop: 12,
 };
+
 const modalBackdrop: React.CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,.3)",
+  background: "rgba(15,23,42,.45)",
   display: "grid",
   placeItems: "center",
   zIndex: 50,
+  backdropFilter: "blur(4px)",
+  WebkitBackdropFilter: "blur(4px)",
 };
-const modalCard: React.CSSProperties = {
+
+const modalCardGlass: React.CSSProperties = {
   width: "min(980px, 94vw)",
-  background: "#fff",
+  background: "rgba(255,255,255,.7)",
   padding: 16,
   borderRadius: 16,
-  boxShadow: "0 20px 60px rgba(0,0,0,.3)",
+  boxShadow: "0 20px 60px rgba(0,0,0,.28), inset 0 -10px 30px rgba(181,165,115,.12)",
+  border: "1px solid rgba(255,255,255,.35)",
+  backdropFilter: "blur(10px)",
+  WebkitBackdropFilter: "blur(10px)",
 };
-const modalCardSmall: React.CSSProperties = {
+
+const modalCardGlassSmall: React.CSSProperties = {
   width: "min(520px, 94vw)",
-  background: "#fff",
+  background: "rgba(255,255,255,.7)",
   padding: 16,
   borderRadius: 16,
-  boxShadow: "0 20px 60px rgba(0,0,0,.3)",
+  boxShadow: "0 20px 60px rgba(0,0,0,.28), inset 0 -10px 30px rgba(181,165,115,.12)",
+  border: "1px solid rgba(255,255,255,.35)",
+  backdropFilter: "blur(10px)",
+  WebkitBackdropFilter: "blur(10px)",
 };
+
 const tagDanger: React.CSSProperties = {
   background: "#fee2e2",
-  border: "1px solid #fecaca", // corrigido
+  border: "1px solid #fecaca",
   color: "#991b1b",
   padding: "2px 8px",
   borderRadius: 999,
@@ -1423,3 +1503,73 @@ const tagSoft: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
 };
+
+/** ====== Liquid canvas styles ====== */
+const liquidCanvas: React.CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  zIndex: 0,
+  overflow: "hidden",
+  pointerEvents: "none",
+};
+
+const blob: React.CSSProperties = {
+  position: "absolute",
+  width: 420,
+  height: 420,
+  borderRadius: "50%",
+  filter: "blur(60px)",
+  opacity: 0.55,
+};
+
+const blob1: React.CSSProperties = {
+  left: -120,
+  top: -80,
+  background: "radial-gradient(closest-side, #A11C27, rgba(161,28,39,0))",
+  animation: "blobFloat1 26s ease-in-out infinite",
+};
+
+const blob2: React.CSSProperties = {
+  right: -140,
+  top: 60,
+  background: "radial-gradient(closest-side, #1E293F, rgba(30,41,63,0))",
+  animation: "blobFloat2 30s ease-in-out infinite",
+};
+
+const blob3: React.CSSProperties = {
+  left: "30%",
+  bottom: -160,
+  background: "radial-gradient(closest-side, #E0CE8C, rgba(224,206,140,0))",
+  animation: "blobFloat3 34s ease-in-out infinite",
+};
+
+const goldGlow: React.CSSProperties = {
+  position: "absolute",
+  right: -80,
+  bottom: -80,
+  width: 260,
+  height: 260,
+  borderRadius: "50%",
+  background: "radial-gradient(closest-side, rgba(181,165,115,.35), rgba(181,165,115,0))",
+  filter: "blur(40px)",
+  opacity: 0.6,
+  transform: "rotate(15deg)",
+};
+
+const liquidKeyframes = `
+@keyframes blobFloat1 {
+  0% { transform: translate(0,0) scale(1); }
+  50% { transform: translate(40px, 30px) scale(1.08); }
+  100% { transform: translate(0,0) scale(1); }
+}
+@keyframes blobFloat2 {
+  0% { transform: translate(0,0) scale(1); }
+  50% { transform: translate(-30px, 20px) scale(1.05); }
+  100% { transform: translate(0,0) scale(1); }
+}
+@keyframes blobFloat3 {
+  0% { transform: translate(0,0) scale(1); }
+  50% { transform: translate(20px, -30px) scale(1.06); }
+  100% { transform: translate(0,0) scale(1); }
+}
+`;

@@ -178,18 +178,18 @@ export default function Login() {
     <div style={styles.page}>
       <style>{cssBackground}</style>
 
-      {/* Brilhos e partículas */}
+      {/* Brilhos e partículas (com dourado no brilho inferior direito) */}
       <div className="bg-glow glow-a" aria-hidden />
       <div className="bg-glow glow-b" aria-hidden />
       <div className="particles" aria-hidden />
 
       <div style={styles.card}>
-        {/* Logo maior */}
+        {/* Logo maior (144px) */}
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
           <img
             src="/logo-consulmax.png"
             alt="Consulmax Consórcios"
-            style={{ height: 96, width: "auto" }}
+            style={{ height: 144, width: "auto" }}
           />
         </div>
 
@@ -335,7 +335,7 @@ export default function Login() {
   );
 }
 
-/** CSS do fundo com brilhos e partículas */
+/** CSS do fundo com brilhos (inclui dourado #B5A573 no glow-b) e partículas */
 const cssBackground = `
   .bg-glow {
     position: absolute;
@@ -351,9 +351,12 @@ const cssBackground = `
     background: radial-gradient(50% 50% at 50% 50%, rgba(161,28,39,0.22), transparent 60%);
   }
   .glow-b {
-    width: 520px; height: 520px;
-    right: -160px; bottom: -120px;
-    background: radial-gradient(50% 50% at 50% 50%, rgba(30,41,63,0.24), transparent 60%);
+    width: 560px; height: 560px;
+    right: -180px; bottom: -140px;
+    /* rubi suave + DOURADO (#B5A573) para um brilho elegante */
+    background:
+      radial-gradient(50% 50% at 45% 45%, rgba(181,165,115,0.33), transparent 65%),
+      radial-gradient(50% 50% at 55% 55%, rgba(30,41,63,0.18), transparent 70%);
     animation-delay: 1.8s;
   }
   .particles {

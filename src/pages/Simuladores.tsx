@@ -317,7 +317,7 @@ export default function Simuladores() {
 
   const [mgrOpen, setMgrOpen] = useState(false);
 
-  // seleção Embracon
+  // seleção Embracon (genérica)
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
   const [grupo, setGrupo] = useState<string>("");
@@ -531,7 +531,7 @@ export default function Simuladores() {
       saldo_devedor_final: calc.saldoDevedorFinal,
       novo_prazo: calc.novoPrazo,
 
-      // ====== NOVO: persistir ADM/FR usados (fração 0–1) ======
+      // ====== persistir ADM/FR usados (fração 0–1) ======
       adm_tax_pct: tabelaSelecionada.taxa_adm_pct,
       fr_tax_pct: tabelaSelecionada.fundo_reserva_pct,
     };
@@ -628,7 +628,7 @@ ${wa}`
     }
   }
 
-  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA EMBRACON” =====
+  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA” =====
   function normalizarSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
     if (s.includes("imó")) return "Imóvel";
@@ -647,6 +647,7 @@ ${wa}`
     return "🚗";
   }
 
+  const activeAdmin = admins.find((a) => a.id === activeAdminId);
   const propostaTexto = useMemo(() => {
     if (!calc || !podeCalcular) return "";
 
@@ -665,10 +666,12 @@ ${wa}`
     const whatsappFmt = formatPhoneBR(userPhone);
     const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
 
+    const adminNome = activeAdmin?.name || "Administrador";
+
     return (
 `🚨OPORTUNIDADE 🚨
 
-🔥 PROPOSTA EMBRACON🔥
+🔥 PROPOSTA ${adminNome.toUpperCase()} 🔥
 
 Proposta ${seg}
 
@@ -689,7 +692,7 @@ Vantagens
 ✅ Parcelas acessíveis
 ✅ Alta taxa de contemplação`
     );
-  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone]);
+  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone, activeAdmin]);
 
   async function copiarProposta() {
     try {
@@ -707,8 +710,6 @@ Vantagens
       </div>
     );
   }
-
-  const activeAdmin = admins.find((a) => a.id === activeAdminId);
 
   return (
     <div className="p-6 space-y-4">
@@ -769,58 +770,53 @@ Vantagens
             </CardHeader>
             <CardContent>
               {activeAdmin ? (
-                activeAdmin.name === "Embracon" ? (
-                  <EmbraconSimulator
-                    leads={leads}
-                    adminTables={adminTables}
-                    nomesTabelaSegmento={nomesTabelaSegmento}
-                    variantesDaTabela={variantesDaTabela}
-                    tabelaSelecionada={tabelaSelecionada}
-                    prazoAte={prazoAte}
-                    faixa={faixa}
-                    leadId={leadId}
-                    setLeadId={setLeadId}
-                    leadInfo={leadInfo}
-                    grupo={grupo}
-                    setGrupo={setGrupo}
-                    segmento={segmento}
-                    setSegmento={(v) => {
-                      setSegmento(v);
-                      setNomeTabela("");
-                      setTabelaId("");
-                    }}
-                    nomeTabela={nomeTabela}
-                    setNomeTabela={(v) => {
-                      setNomeTabela(v);
-                      setTabelaId("");
-                    }}
-                    tabelaId={tabelaId}
-                    setTabelaId={setTabelaId}
-                    credito={credito}
-                    setCredito={setCredito}
-                    prazoVenda={prazoVenda}
-                    setPrazoVenda={setPrazoVenda}
-                    forma={forma}
-                    setForma={setForma}
-                    seguroPrest={seguroPrest}
-                    setSeguroPrest={setSeguroPrest}
-                    lanceOfertPct={lanceOfertPct}
-                    setLanceOfertPct={setLanceOfertPct}
-                    lanceEmbutPct={lanceEmbutPct}
-                    setLanceEmbutPct={setLanceEmbutPct}
-                    parcContemplacao={parcContemplacao}
-                    setParcContemplacao={setParcContemplacao}
-                    prazoAviso={prazoAviso}
-                    calc={calc}
-                    salvar={salvarSimulacao}
-                    salvando={salvando}
-                    simCode={simCode}
-                  />
-                ) : (
-                  <div className="text-sm text-muted-foreground">
-                    Em breve: simulador para <strong>{activeAdmin.name}</strong>.
-                  </div>
-                )
+                <EmbraconSimulator
+                  adminName={activeAdmin.name}
+                  leads={leads}
+                  adminTables={adminTables}
+                  nomesTabelaSegmento={nomesTabelaSegmento}
+                  variantesDaTabela={variantesDaTabela}
+                  tabelaSelecionada={tabelaSelecionada}
+                  prazoAte={prazoAte}
+                  faixa={faixa}
+                  leadId={leadId}
+                  setLeadId={setLeadId}
+                  leadInfo={leadInfo}
+                  grupo={grupo}
+                  setGrupo={setGrupo}
+                  segmento={segmento}
+                  setSegmento={(v) => {
+                    setSegmento(v);
+                    setNomeTabela("");
+                    setTabelaId("");
+                  }}
+                  nomeTabela={nomeTabela}
+                  setNomeTabela={(v) => {
+                    setNomeTabela(v);
+                    setTabelaId("");
+                  }}
+                  tabelaId={tabelaId}
+                  setTabelaId={setTabelaId}
+                  credito={credito}
+                  setCredito={setCredito}
+                  prazoVenda={prazoVenda}
+                  setPrazoVenda={setPrazoVenda}
+                  forma={forma}
+                  setForma={setForma}
+                  seguroPrest={seguroPrest}
+                  setSeguroPrest={setSeguroPrest}
+                  lanceOfertPct={lanceOfertPct}
+                  setLanceOfertPct={setLanceOfertPct}
+                  lanceEmbutPct={lanceEmbutPct}
+                  setLanceEmbutPct={setLanceEmbutPct}
+                  parcContemplacao={parcContemplacao}
+                  setParcContemplacao={setParcContemplacao}
+                  prazoAviso={prazoAviso}
+                  calc={calc}
+                  salvar={salvarSimulacao}
+                  salvando={salvando}
+                  simCode={simCode}
+                />
               ) : (
                 <div className="text-sm text-muted-foreground">
                   Nenhuma administradora encontrada.
@@ -938,10 +934,10 @@ Vantagens
             </CardContent>
           </Card>
 
-          {/* NOVO: OPORTUNIDADE / PROPOSTA EMBRACON */}
+          {/* OPORTUNIDADE / PROPOSTA */}
           <Card>
             <CardHeader>
-              <CardTitle>Texto: Oportunidade / Proposta Embracon</CardTitle>
+              <CardTitle>Texto: Oportunidade / Proposta</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
@@ -1004,7 +1000,7 @@ function ModalBase({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{title}</div>
@@ -1286,7 +1282,7 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
-      // ⛔️ REMOVIDO: 'permite_livre' que não existe no schema
+      // ⛔️ removido 'permite_livre'
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1369,8 +1365,9 @@ function TableFormOverlay({
   );
 }
 
-/* ====================== Embracon UI ====================== */
+/* ====================== Embracon UI (Genérica) ====================== */
 type EmbraconProps = {
+  adminName?: string;
   leads: Lead[];
   adminTables: SimTable[];
   nomesTabelaSegmento: string[];
@@ -1430,7 +1427,7 @@ function EmbraconSimulator(p: EmbraconProps) {
     <div className="space-y-6">
       {/* Lead */}
       <Card>
-        <CardHeader><CardTitle>Embracon</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{p.adminName || "Simulador"}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <div>

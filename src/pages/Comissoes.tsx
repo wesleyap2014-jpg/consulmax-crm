@@ -20,7 +20,6 @@ import {
   RotateCcw,
   Pencil,
   Trash2,
-  Undo2,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -41,6 +40,11 @@ type User = {
   uf?: string | null;
   pix_key?: string | null;
   pix_type?: string | null;
+  login?: string | null;
+  role?: "admin" | "vendedor" | string | null;
+  scopes?: string[] | null;
+  avatar_url?: string | null;
+  pix_kind?: string | null;
 };
 type UserSecure = {
   id: UUID;
@@ -104,9 +108,9 @@ type CommissionFlow = {
 type CommissionRule = {
   vendedor_id: string;
   sim_table_id: string;
-  percent_padrao: number;        // fração (ex.: 0.012 = 1,20%)
+  percent_padrao: number;        // fração
   fluxo_meses: number;
-  fluxo_percentuais: number[];   // frações que somam 1.00
+  fluxo_percentuais: number[];   // frações somando 1.00
   obs: string | null;
 };
 
@@ -131,74 +135,7 @@ const normalize = (s?: string | null) =>
     .trim()
     .toLowerCase();
 
-/* ======================== Helpers extras (datas BR-safe, projeções) ======================== */
-const parseISODateBR = (iso?: string | null) => {
-  if (!iso) return null;
-  const [y, m, d] = iso.split("-").map(Number);
-  if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d);
-};
-
-const isBetweenBR = (iso?: string | null, s?: Date, e?: Date) => {
-  const d = parseISODateBR(iso);
-  if (!d) return false;
-  const t = d.getTime();
-  return t >= (s?.getTime() ?? -Infinity) && t <= (e?.getTime() ?? Infinity);
-};
-
-const addDaysBR = (d: Date, days: number) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate() + days);
-
-const flowAmount = (c: Commission, f: CommissionFlow) => {
-  const total =
-    c.valor_total ??
-    (c.base_calculo ?? 0) * (c.percent_aplicado ?? 0);
-  const p = Number(f.percentual) || 0;
-  return Math.max(0, total * p);
-};
-
-function getFriToThuIntervals(year: number, month: number) {
-  const first = new Date(year, month, 1);
-  const eom = new Date(year, month + 1, 0);
-
-  let d = new Date(year, month, 1);
-  while (d.getDay() !== 5) d = addDaysBR(d, 1); // 5 = sexta
-
-  const intervals: Array<{ start: Date; end: Date; label: string }> = [];
-  while (d <= eom) {
-    const start = new Date(d);
-    const end = addDaysBR(start, 6); // até quinta
-    const endClamped = end > eom ? eom : end;
-
-    const s = `${String(start.getDate()).padStart(2, "0")}/${String(
-      start.getMonth() + 1
-    ).padStart(2, "0")}`;
-    const e = `${String(endClamped.getDate()).padStart(2, "0")}/${String(
-      endClamped.getMonth() + 1
-    ).padStart(2, "0")}`;
-
-    intervals.push({
-      start,
-      end: endClamped,
-      label: `S${intervals.length + 1} (${s}–${e})`,
-    });
-
-    d = addDaysBR(start, 7);
-  }
-
-  if (!intervals.length) {
-    intervals.push({
-      start: first,
-      end: eom,
-      label: `S1 (01/${String(month + 1).padStart(2, "0")}–${String(
-        eom.getDate()
-      ).padStart(2, "0")}/${String(month + 1).padStart(2, "0")})`,
-    });
-  }
-  return intervals;
-}
-
-// Construção local de data (YYYY-MM-DD) evitando UTC.
+/* ======================== Datas / projeções ======================== */
 const localDateFromISO = (iso?: string | null) => {
   if (!iso) return null;
   const [y, m, d] = iso.split("-").map((v) => parseInt(v, 10));
@@ -213,7 +150,6 @@ const isBetweenISO = (iso?: string | null, s?: Date, e?: Date) => {
   const t = d.getTime();
   return t >= si && t <= ei;
 };
-
 function valorPorExtenso(n: number) {
   const u = ["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
   const d = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
@@ -227,18 +163,11 @@ function valorPorExtenso(n: number) {
   const ct = Math.round((n - i) * 100);
   return `${ext(i)} ${i === 1 ? "real" : "reais"}${ct ? ` e ${ext(ct)} ${ct === 1 ? "centavo" : "centavos"}` : ""}`;
 }
-
-/* ====== Helpers de estágio do pagamento (2 etapas) ====== */
 function hasRegisteredButUnpaid(flow?: CommissionFlow[]) {
   if (!flow) return false;
   return flow.some(
     (f) => (Number(f.percentual) || 0) > 0 && !!f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) === 0
   );
-}
-function isFullyPaid(flow?: CommissionFlow[]) {
-  if (!flow) return false;
-  const relevant = flow.filter((f) => (Number(f.percentual) || 0) > 0);
-  return relevant.length > 0 && relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
 }
 
 /* ========================= Donut ========================= */
@@ -259,13 +188,9 @@ function Donut({
 }) {
   const total = Math.max(0, paid + pending);
   const paidPct = total > 0 ? (paid / total) * 100 : 0;
-
   const [hover, setHover] = useState<"paid" | "pend" | null>(null);
-
-  // Consulmax palette
-  const navy = "#1E293F";   // pago
-  const red = "#A11C27";    // pendente/previsto
-
+  const navy = "#1E293F";
+  const red = "#A11C27";
   const radius = 56;
   const circumference = 2 * Math.PI * radius;
   const paidLen = (paidPct / 100) * circumference;
@@ -277,9 +202,7 @@ function Donut({
         <svg width="160" height="160" className="-rotate-90" role="img" aria-label={label}>
           <circle cx="80" cy="80" r={radius} stroke="#e5e7eb" strokeWidth="22" fill="none" />
           <circle
-            cx="80"
-            cy="80"
-            r={radius}
+            cx="80" cy="80" r={radius}
             stroke={navy}
             strokeWidth={hover === "paid" ? 26 : 22}
             fill="none"
@@ -290,9 +213,7 @@ function Donut({
             style={{ transition: "all .2s ease", filter: hover === "paid" ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none" }}
           />
           <circle
-            cx="80"
-            cy="80"
-            r={radius}
+            cx="80" cy="80" r={radius}
             stroke={red}
             strokeWidth={hover === "pend" ? 26 : 22}
             fill="none"
@@ -327,7 +248,7 @@ function Donut({
   );
 }
 
-/* ========================= LineChart (SVG + hover fix viewBox) ========================= */
+/* ========================= LineChart ========================= */
 function LineChart({
   labels,
   series,
@@ -351,7 +272,7 @@ function LineChart({
     return Math.ceil(m / pow) * pow;
   }, [series]);
 
-  const width = 720; // viewBox width
+  const width = 720;
   const innerW = width - pad.left - pad.right;
   const innerH = height - pad.top - pad.bottom;
   const xStep = innerW / Math.max(1, labels.length - 1);
@@ -388,7 +309,6 @@ function LineChart({
   return (
     <div className="relative rounded-lg border bg-white p-4">
       <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="block w-full" onMouseLeave={() => setHoverX(null)}>
-        {/* grid + eixo Y */}
         <g>
           {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
             const y = pad.top + innerH * (1 - t);
@@ -413,7 +333,6 @@ function LineChart({
           })}
         </g>
 
-        {/* linhas */}
         {series.map((s, si) => {
           const pts = pointsFor(s.data);
           const d = pts.map(([x, y], i) => (i === 0 ? `M ${x},${y}` : `L ${x},${y}`)).join(" ");
@@ -427,14 +346,7 @@ function LineChart({
           );
         })}
 
-        <rect
-          x={pad.left}
-          y={pad.top}
-          width={innerW}
-          height={innerH}
-          fill="transparent"
-          onMouseMove={onMove}
-        />
+        <rect x={pad.left} y={pad.top} width={innerW} height={innerH} fill="transparent" onMouseMove={onMove} />
 
         {hoverX != null && (
           <line
@@ -448,7 +360,6 @@ function LineChart({
         )}
       </svg>
 
-      {/* legenda */}
       <div className="mt-4 flex flex-wrap gap-4">
         {series.map((s, si) => (
           <div className="flex items-center gap-2 text-sm" key={si}>
@@ -458,12 +369,8 @@ function LineChart({
         ))}
       </div>
 
-      {/* tooltip */}
       {hovered && (
-        <div
-          className="pointer-events-none absolute rounded-md border bg-white px-3 py-2 text-xs shadow"
-          style={{ left: 16, top: 16 }}
-        >
+        <div className="pointer-events-none absolute rounded-md border bg-white px-3 py-2 text-xs shadow" style={{ left: 16, top: 16 }}>
           <div className="mb-1 font-semibold text-gray-800">{hovered.label}</div>
           <div className="space-y-1">
             {hovered.values.map((v, i) => (
@@ -479,86 +386,49 @@ function LineChart({
   );
 }
 
-/* ========================= Helpers de projeção p/ gráficos (revisto) ========================= */
-
-/** Último dia do mês (local) */
+/* ========================= Projeções (resumo) ========================= */
 const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
-
-/**
- * Data esperada da parcela M(n) (versão defensiva):
- * - M1/M2: previstas apenas se tiverem data registrada (a sua âncora).
- * - M3+: só projetar se M2 tiver data; projeção a cada 30 dias desde M2.
- *
- * Obs.: mantemos a assinatura compatível; o primeiro parâmetro não é usado,
- *       então prefixamos com "_" para evitar warning de TS/ESLint.
- */
-function expectedDateForParcel(
-  _saleDateISO: string | null | undefined,
-  flow: CommissionFlow[] | undefined,
-  mes: number
-): Date | null {
+function expectedDateForParcel(_saleDateISO: string | null | undefined, flow: CommissionFlow[] | undefined, mes: number): Date | null {
   const safeFlow = Array.isArray(flow) ? flow : [];
-
-  // Âncora: data de M2 (se existir)
   const m2 = safeFlow.find(f => f.mes === 2);
-  const m2Date = m2?.data_pagamento_vendedor
-    ? localDateFromISO(m2.data_pagamento_vendedor)
-    : null;
-
+  const m2Date = m2?.data_pagamento_vendedor ? localDateFromISO(m2.data_pagamento_vendedor) : null;
   if (mes <= 2) {
     const f = safeFlow.find(x => x.mes === mes);
-    const regDate = f?.data_pagamento_vendedor
-      ? localDateFromISO(f.data_pagamento_vendedor)
-      : null;
+    const regDate = f?.data_pagamento_vendedor ? localDateFromISO(f.data_pagamento_vendedor) : null;
     return regDate ?? null;
   }
-
   if (!m2Date) return null;
-
   const offset = mes - 2;
   const expected = new Date(m2Date.getFullYear(), m2Date.getMonth(), m2Date.getDate());
   expected.setDate(expected.getDate() + offset * 30);
   return expected;
 }
-
-/** Intervalos semanais agora são: SEXTA → QUINTA */
-function getWeeklyIntervalsFriToThu(
-  year: number,
-  month: number
-): Array<{ start: Date; end: Date; label: string }> {
-  const eom = endOfMonth(new Date(year, month, 1));
-
-  // primeira SEXTA do mês
+function getWeeklyIntervalsFriToThu(year: number, month: number) {
+  const first = new Date(year, month, 1);
+  const eom = new Date(year, month + 1, 0);
   let d = new Date(year, month, 1);
   while (d.getDay() !== 5) d = new Date(year, month, d.getDate() + 1);
-
-  const weeks: Array<{ start: Date; end: Date; label: string }> = [];
+  const intervals: Array<{ start: Date; end: Date; label: string }> = [];
   while (d <= eom) {
-    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const start = new Date(d);
     const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
-    if (end > eom) end.setTime(eom.getTime());
-    const lb = `S${weeks.length + 1} (${String(start.getDate()).padStart(2,"0")}/${String(start.getMonth()+1).padStart(2,"0")}–${String(end.getDate()).padStart(2,"0")}/${String(end.getMonth()+1).padStart(2,"0")})`;
-    weeks.push({ start, end, label: lb });
-    d = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1);
+    const endClamped = end > eom ? eom : end;
+    const s = `${String(start.getDate()).padStart(2, "0")}/${String(start.getMonth() + 1).padStart(2, "0")}`;
+    const e = `${String(endClamped.getDate()).padStart(2, "0")}/${String(endClamped.getMonth() + 1).padStart(2, "0")}`;
+    intervals.push({ start, end: endClamped, label: `S${intervals.length + 1} (${s}–${e})` });
+    d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
   }
-
-  if (weeks.length === 0) {
-    const s = new Date(year, month, 1);
-    const lb = `S1 (01/${String(month+1).padStart(2,"0")}–${String(eom.getDate()).padStart(2,"0")}/${String(month+1).padStart(2,"0")})`;
-    return [{ start: s, end: eom, label: lb }];
+  if (!intervals.length) {
+    intervals.push({ start: first, end: eom, label: `S1 (01/${String(month + 1).padStart(2, "0")}–${String(eom.getDate()).padStart(2, "0")}/${String(month + 1).padStart(2, "0")})` });
   }
-  return weeks;
+  return intervals;
 }
-
 type ProjSeries = { labels: string[]; previstoBruto: number[]; pagoBruto: number[] };
-
-/** Série anual (5 anos): apenas pagos */
 function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries {
   const now = new Date();
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 4 + i);
   const previsto = Array(years.length).fill(0);
   const pagos = Array(years.length).fill(0);
-
   for (const r of rows) {
     const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
     for (const f of flows) {
@@ -573,31 +443,19 @@ function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
   }
   return { labels: years.map(String), previstoBruto: previsto, pagoBruto: pagos };
 }
-
-/** Série mensal de um ano específico */
-function projectMonthlyFlows(
-  rows: Array<Commission & { flow?: CommissionFlow[] }>,
-  year: number,
-  includePrevisto: boolean
-): ProjSeries {
+function projectMonthlyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>, year: number, includePrevisto: boolean): ProjSeries {
   const labels = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
   const previsto = Array(12).fill(0);
   const pagos    = Array(12).fill(0);
-
   for (const r of rows) {
     const total = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
     const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
-
     for (const f of flows) {
       if (f.data_pagamento_vendedor) {
         const pd = localDateFromISO(f.data_pagamento_vendedor);
-        if (pd && pd.getFullYear() === year) {
-          pagos[pd.getMonth()] += f.valor_pago_vendedor ?? 0;
-        }
+        if (pd && pd.getFullYear() === year) pagos[pd.getMonth()] += f.valor_pago_vendedor ?? 0;
       }
-
       if (!includePrevisto) continue;
-
       const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
       if (exp && exp.getFullYear() === year) {
         const expVal = (f.valor_previsto ?? (total * (f.percentual ?? 0))) ?? 0;
@@ -608,11 +466,7 @@ function projectMonthlyFlows(
   }
   return { labels, previstoBruto: previsto, pagoBruto: pagos };
 }
-
-/** Série semanal do mês atual (sex→qui) */
-function projectWeeklyFlows(
-  rows: Array<Commission & { flow?: CommissionFlow[] }>
-): ProjSeries & { labels: string[] } {
+function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries & { labels: string[] } {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -620,11 +474,9 @@ function projectWeeklyFlows(
   const labels = intervals.map(i => i.label);
   const previsto = Array(intervals.length).fill(0);
   const pagos    = Array(intervals.length).fill(0);
-
   for (const r of rows) {
     const total = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
     const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
-
     for (const f of flows) {
       if (f.data_pagamento_vendedor) {
         const pd = localDateFromISO(f.data_pagamento_vendedor);
@@ -633,7 +485,6 @@ function projectWeeklyFlows(
           if (idx >= 0) pagos[idx] += f.valor_pago_vendedor ?? 0;
         }
       }
-
       const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
       if (exp && exp.getFullYear() === year && exp.getMonth() === month) {
         const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
@@ -648,125 +499,20 @@ function projectWeeklyFlows(
   return { labels, previstoBruto: previsto, pagoBruto: pagos };
 }
 
-/** Backward-compat */
-function extractProjectedDates(
-  saleDateISO: string | null | undefined,
-  flow: CommissionFlow[] | undefined,
-  mes: number
-): Date | null {
-  return expectedDateForParcel(saleDateISO, flow, mes);
-}
-
-/* ======================== Normalizador ========================= */
-type ProjectionLike = Partial<Record<"projected" | "paid" | "previsto" | "pago", number>> & Record<string, any>;
-const normalizeProjection = (p?: ProjectionLike | null) => ({
-  projected: 0,
-  paid: 0,
-  previsto: 0,
-  pago: 0,
-  ...(p ?? {}),
-});
-
-/* ===== Série diária do Mês Atual ===== */
-function buildDailyMonthSeries(
-  rows: Array<Commission & { flow?: CommissionFlow[] }>,
-  impostoFrac: number
-) {
-  const today  = new Date();
-  const mStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const mEnd   = endOfMonth(today);
-
-  const labels: string[] = [];
-  const days: Date[] = [];
-  for (let d = new Date(mStart); d <= mEnd; d.setDate(d.getDate() + 1)) {
-    labels.push(String(d.getDate()).padStart(2, "0"));
-    days.push(new Date(d));
-  }
-
-  const pago     = Array(labels.length).fill(0);
-  const previsto = Array(labels.length).fill(0);
-
-  for (const r of rows) {
-    const total = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
-    const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
-
-    for (const f of flows) {
-      if (f.data_pagamento_vendedor) {
-        const pd = localDateFromISO(f.data_pagamento_vendedor);
-        if (pd && pd.getFullYear() === today.getFullYear() && pd.getMonth() === today.getMonth()) {
-          const idx = pd.getDate() - 1;
-          if (idx >= 0 && idx < pago.length) pago[idx] += (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac);
-        }
-      }
-
-      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
-      if (isPaid) continue;
-
-      const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
-      if (exp && exp.getFullYear() === today.getFullYear() && exp.getMonth() === today.getMonth()) {
-        const idx = exp.getDate() - 1;
-        if (idx >= 0 && idx < previsto.length) {
-          const val = (f.valor_previsto ?? (total * (f.percentual ?? 0))) ?? 0;
-          previsto[idx] += val * (1 - impostoFrac);
-        }
-      }
-    }
-  }
-
-  return { labels, pago, previsto };
-}
-
 /* ========================= Página ========================= */
-
-/* Mini line chart (usado no “Mês Atual”) */
-type LineSeries = { name: string; data: number[] };
-
-function SimpleLineChart({
-  labels,
-  series,
-  height = 180,
-}: {
-  labels: string[];
-  series: LineSeries[];
-  height?: number;
-}) {
-  const width = Math.max(320, labels.length * 14);
-  const maxY = Math.max(
-    1,
-    ...series.flatMap(s => s.data).map(v => Number.isFinite(v) ? v : 0)
-  );
-
-  const xStep = labels.length > 1 ? width / (labels.length - 1) : width;
-  const yMap = (v: number) => height - (maxY ? (v / maxY) * height : 0);
-
-  const toPoints = (arr: number[]) =>
-    arr.map((v, i) => `${i * xStep},${yMap(v || 0)}`).join(" ");
-
-  if (!labels.length) {
-    return <div className="text-sm text-muted-foreground">Sem dados para este mês.</div>;
-  }
-
-  return (
-    <div className="w-full overflow-x-auto">
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-44">
-        <line x1="0" y1={height} x2={width} y2={height} stroke="currentColor" className="opacity-20" />
-        {series.map((s, idx) => (
-          <g key={s.name} className={idx === 0 ? "text-[#1E293F]" : "text-[#B5A573]"}>
-            <polyline
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              points={toPoints(s.data)}
-            />
-          </g>
-        ))}
-      </svg>
-    </div>
-  );
-}
-
 export default function ComissoesPage() {
-  /* Filtros (sem período) */
+  /* ===== Auth & RBAC ===== */
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      const aid = data?.user?.id ?? null;
+      setAuthUserId(aid);
+    })();
+  }, []);
+
+  /* Filtros */
   const [vendedorId, setVendedorId] = useState<string>("all");
   const [status, setStatus] = useState<"all" | "a_pagar" | "pago" | "estorno">("all");
   const [segmento, setSegmento] = useState<string>("all");
@@ -821,28 +567,34 @@ export default function ComissoesPage() {
   const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00");
   const [reciboVendor, setReciboVendor] = useState<string>("all");
 
-  /* Estorno */
-  const [openRefund, setOpenRefund] = useState(false);
-  const [refundFlow, setRefundFlow] = useState<{ flow: CommissionFlow; comm: Commission } | null>(null);
-  const [refundValue, setRefundValue] = useState<string>("");
+  /* Estorno (global em Comissões Pagas) */
+  const [openBulkRefund, setOpenBulkRefund] = useState(false);
+  const [bulkRefundProp, setBulkRefundProp] = useState<string>("");
+  const [bulkRefundFound, setBulkRefundFound] = useState<{ comm: Commission; flows: CommissionFlow[] } | null>(null);
+  const [bulkRefundDate, setBulkRefundDate] = useState<string>(() => toDateInput(new Date()));
+  const [bulkRefundGross, setBulkRefundGross] = useState<string>("");
+  const [busyRefund, setBusyRefund] = useState(false);
 
-  /* Expand/Collapse (3 blocos) */
+  /* Expand/Collapse */
   const [showPaid, setShowPaid] = useState(false);
   const [showUnpaid, setShowUnpaid] = useState(true);
   const [showVendasSem, setShowVendasSem] = useState(true);
 
-  /* Busca/Paginação (comissões pagas) */
+  /* Busca/Paginação (pagas) */
   const [paidSearch, setPaidSearch] = useState<string>("");
   const [paidPage, setPaidPage] = useState<number>(1);
   const pageSize = 15;
 
-  /* Bases */
+  /* Busca nº proposta (a pagar) */
+  const [unpaidPropSearch, setUnpaidPropSearch] = useState<string>("");
+
+  /* Carregamento de bases + RBAC */
   useEffect(() => {
     (async () => {
       const [{ data: u }, { data: st }, { data: us }] = await Promise.all([
         supabase
           .from("users")
-          .select("id, auth_user_id, nome, email, phone, cep, logradouro, numero, bairro, cidade, uf, pix_key, pix_type")
+          .select("id, auth_user_id, nome, email, phone, cep, logradouro, numero, bairro, cidade, uf, pix_key, pix_type, login, role, scopes, avatar_url, pix_kind")
           .order("nome", { ascending: true }),
         supabase.from("sim_tables").select("id, segmento, nome_tabela").order("segmento", { ascending: true }),
         supabase.from("users_secure").select("id, nome, email, logradouro, numero, bairro, cidade, uf, pix_key, cpf, cpf_mascarado"),
@@ -850,8 +602,20 @@ export default function ComissoesPage() {
       setUsers((u || []) as User[]);
       setSimTables((st || []) as SimTable[]);
       setUsersSecure((us || []) as UserSecure[]);
+
+      // define ADMIN/SCOPES
+      const current = (u || []).find((x: any) => x.auth_user_id && x.auth_user_id === (authUserId || "")) as User | undefined;
+      const admin = current?.role === "admin";
+      setIsAdmin(!!admin);
+
+      // se não for admin, trava o vendedor no próprio id
+      if (!admin && current?.id) {
+        setVendedorId(current.id);
+        setReciboVendor(current.id);
+      }
     })();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUserId]);
 
   // Agrupa SimTables por (segmento, nome_tabela) para unificar no módulo Comissões
   const simGroups = useMemo(() => {
@@ -860,17 +624,11 @@ export default function ComissoesPage() {
       const seg = (t.segmento || "").trim();
       const name = (t.nome_tabela || "").trim();
       const key = `${normalize(seg)}|${normalize(name)}`;
-      if (!groups[key]) {
-        groups[key] = { key, segmento: seg, nome_tabela: name, ids: [] };
-      }
+      if (!groups[key]) groups[key] = { key, segmento: seg, nome_tabela: name, ids: [] };
       groups[key].ids.push(t.id);
     });
-    return Object.values(groups).sort(
-      (a, b) => a.segmento.localeCompare(b.segmento) || a.nome_tabela.localeCompare(b.nome_tabela)
-    );
+    return Object.values(groups).sort((a, b) => a.segmento.localeCompare(b.segmento) || a.nome_tabela.localeCompare(b.nome_tabela));
   }, [simTables]);
-
-  // Ajuda a achar um grupo pelo "key"
   const groupByKey: Record<string, { key: string; segmento: string; nome_tabela: string; ids: string[] }> =
     useMemo(() => Object.fromEntries(simGroups.map(g => [g.key, g])), [simGroups]);
 
@@ -878,10 +636,12 @@ export default function ComissoesPage() {
   async function fetchData() {
     setLoading(true);
     try {
-      // commissions (sem período)
+      // commissions
       let qb = supabase.from("commissions").select("*");
       if (status !== "all") qb = qb.eq("status", status);
-      if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
+      // RBAC: não admin só vê as suas
+      if (!isAdmin) qb = qb.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
+      else if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
       if (segmento !== "all") qb = qb.eq("segmento", segmento);
       if (tabela !== "all") qb = qb.eq("tabela", tabela);
       const { data: comms } = await qb.order("data_venda", { ascending: false });
@@ -927,27 +687,23 @@ export default function ComissoesPage() {
         })),
       );
 
-      // vendas sem comissão
-      const { data: vendasPeriodo } = await supabase
+      // vendas sem comissão (mesmo filtro RBAC)
+      let qbV = supabase
         .from("vendas")
         .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id")
         .order("data_venda", { ascending: false });
+      if (!isAdmin) qbV = qbV.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
+      else if (vendedorId !== "all") qbV = qbV.eq("vendedor_id", vendedorId);
+      if (segmento !== "all") qbV = qbV.eq("segmento", segmento);
+      if (tabela !== "all") qbV = qbV.eq("tabela", tabela);
+      const { data: vendasPeriodo } = await qbV;
+
       const { data: commVendaIds } = await supabase.from("commissions").select("venda_id");
       const hasComm = new Set((commVendaIds || []).map((r: any) => r.venda_id));
       const vendasFiltered = (vendasPeriodo || []).filter((v) => !hasComm.has(v.id));
-      const vendasFiltered2 = vendasFiltered.filter((v) => {
-        const vendCanon = canonUserId(v.vendedor_id) || v.vendedor_id;
-        return (
-          (vendedorId === "all" || vendCanon === vendedorId) &&
-          (segmento === "all" || v.segmento === segmento) &&
-          (tabela === "all" || (v.tabela || "") === tabela)
-        );
-      });
-      setVendasSemCom(vendasFiltered2 as Venda[]);
+      setVendasSemCom(vendasFiltered as Venda[]);
 
-      const clientIds = Array.from(
-        new Set((vendasFiltered2 || []).map((v) => v.lead_id || v.cliente_lead_id).filter((x): x is string => !!x)),
-      );
+      const clientIds = Array.from(new Set((vendasFiltered || []).map((v) => v.lead_id || v.cliente_lead_id).filter((x): x is string => !!x)));
       if (clientIds.length) {
         const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clientIds);
         const map: Record<string, string> = {};
@@ -955,7 +711,7 @@ export default function ComissoesPage() {
         setClientesMap(map);
       } else setClientesMap({});
 
-      // reconcile status por parcelas
+      // reconcile status
       try {
         setRows(prev => {
           const withFix = prev.map(r => {
@@ -980,17 +736,15 @@ export default function ComissoesPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [vendedorId, status, segmento, tabela]);
+  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [vendedorId, status, segmento, tabela, isAdmin, authUserId]);
 
-  /* Totais/KPIs com novas regras */
+  /* Totais/KPIs */
   const now = new Date();
   const yStart = new Date(now.getFullYear(), 0, 1);
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const fiveYearsAgo = new Date(now.getFullYear() - 5, now.getMonth(), 1);
-
   const impostoFrac = useMemo(() => (parseFloat(reciboImpostoPct.replace(",", ".")) || 0) / 100, [reciboImpostoPct]);
 
-  // Paid líquido no período (fluxos), ignorando comissões com status 'estorno'
   function paidInRangeLiquid(s: Date, e: Date) {
     const validRows = rows.filter(r => r.status !== "estorno");
     const valor = sum(
@@ -1002,21 +756,16 @@ export default function ComissoesPage() {
     );
     return valor;
   }
-
-  // Previsto no período (usando regras novas)
   function previstoInRange(s: Date, e: Date) {
     let total = 0;
     for (const r of rows) {
       const totalComissao = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
       const flows = (r.flow || []).filter(f => (Number(f.percentual) || 0) > 0);
-
       for (const f of flows) {
         const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
         if (isPaid) continue;
-
         const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
         if (!exp) continue;
-
         if (exp.getTime() >= s.getTime() && exp.getTime() <= e.getTime()) {
           const expVal = (f.valor_previsto ?? (totalComissao * (f.percentual ?? 0))) ?? 0;
           total += expVal * (1 - impostoFrac);
@@ -1026,7 +775,6 @@ export default function ComissoesPage() {
     return total;
   }
 
-  // KPIs
   const kpi = useMemo(() => {
     const comBruta = sum(rows.map((r) => r.valor_total));
     const comLiquida = comBruta * (1 - impostoFrac);
@@ -1040,29 +788,13 @@ export default function ComissoesPage() {
     return { vendasTotal, comBruta, comLiquida, comPaga: pagoLiquido, comPendente };
   }, [rows, impostoFrac]);
 
-  // Donuts
-  const pyStart = new Date(now.getFullYear() - 1, 0, 1);
-  const pyEnd   = new Date(now.getFullYear() - 1, 11, 31);
-  const yEnd    = new Date(now.getFullYear(), 11, 31);
-  const mEnd    = endOfMonth(now);
-
-  const range5yPago   = paidInRangeLiquid(fiveYearsAgo, now);
-  const rangePrevYPago = paidInRangeLiquid(pyStart, pyEnd);
-  const rangeYPago    = paidInRangeLiquid(yStart, now);
-  const rangeYPrev    = previstoInRange(yStart, yEnd);
-  const rangeMPago    = paidInRangeLiquid(mStart, now);
-  const rangeMPrev    = previstoInRange(mStart, mEnd);
-
-  const vendedorAtual = useMemo(() => userLabel(vendedorId === "all" ? null : vendedorId), [usersById, usersByAuth, vendedorId]);
-
-  /* Projeções p/ gráficos */
+  // Projeções
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
   const monthlyPrev = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1, false), [rows]);
   const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
   const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
-  const dailyMonth = useMemo(() => buildDailyMonthSeries(rows, impostoFrac), [rows, impostoFrac]);
 
-  /* Regras — utilitários */
+  /* Regras — utilitários (mantidos) */
   function onChangeMeses(n: number) {
     setRuleMeses(n);
     const arr = [...ruleFluxoPct];
@@ -1099,9 +831,7 @@ export default function ComissoesPage() {
       const first = g.rules[0];
       const allSamePercent = g.rules.every(x => x.percent_padrao === first.percent_padrao);
       const allSameFluxLen = g.rules.every(x => x.fluxo_meses === first.fluxo_meses);
-      const allSameFluxArr  = g.rules.every(x =>
-        JSON.stringify(x.fluxo_percentuais) === JSON.stringify(first.fluxo_percentuais)
-      );
+      const allSameFluxArr  = g.rules.every(x => JSON.stringify(x.fluxo_percentuais) === JSON.stringify(first.fluxo_percentuais));
 
       const percent_padrao = allSamePercent ? first.percent_padrao : null;
       const fluxo_meses = allSameFluxLen ? first.fluxo_meses : -1;
@@ -1122,30 +852,20 @@ export default function ComissoesPage() {
 
     setRuleRows(rowsOut);
   }
-
-  useEffect(() => {
-    if (openRules && ruleVendorId) fetchRulesForVendor(ruleVendorId);
-  }, [openRules, ruleVendorId, simGroups]);
+  useEffect(() => { if (openRules && ruleVendorId) fetchRulesForVendor(ruleVendorId); }, [openRules, ruleVendorId, simGroups]);
 
   async function saveRule() {
     if (!ruleVendorId || !ruleSimTableId) return alert("Selecione vendedor e tabela.");
-
     const grp = groupByKey[ruleSimTableId];
     if (!grp) return alert("Grupo de tabela não encontrado.");
 
     const pctPadraoPercent = parseFloat((rulePercent || "0").replace(",", "."));
-    if (!isFinite(pctPadraoPercent) || pctPadraoPercent <= 0) {
-      return alert("Informe o % Padrão corretamente.");
-    }
-
+    if (!isFinite(pctPadraoPercent) || pctPadraoPercent <= 0) return alert("Informe o % Padrão corretamente.");
     const somaFluxo = fluxoSoma;
     const soma100 = Math.abs(somaFluxo - 1.0) < 1e-6;
     const somaIgualPadrao = Math.abs(somaFluxo - pctPadraoPercent) < 1e-6;
-
     if (!(soma100 || somaIgualPadrao)) {
-      return alert(`Soma do fluxo (M1..Mn) deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo
-        .toFixed(2)
-        .replace(".", ",")}`);
+      return alert(`Soma do fluxo deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
     }
 
     let fluxo_percentuais_frac: number[] = [];
@@ -1157,7 +877,6 @@ export default function ComissoesPage() {
         return pctPadraoPercent > 0 ? v / pctPadraoPercent : 0;
       });
     }
-
     const percent_padrao_frac = pctPadraoPercent / 100;
 
     for (const stId of grp.ids) {
@@ -1176,7 +895,6 @@ export default function ComissoesPage() {
         );
       if (error) return alert(error.message);
     }
-
     await fetchRulesForVendor(ruleVendorId);
     alert(`Regra salva para ${grp.ids.length} tabela(s) do grupo "${grp.segmento} — ${grp.nome_tabela}".`);
   }
@@ -1186,43 +904,27 @@ export default function ComissoesPage() {
     if (!grp) return alert("Grupo não encontrado.");
     if (!confirm(`Excluir regra deste grupo para ${grp.ids.length} tabela(s)?`)) return;
 
-    const { error } = await supabase
-      .from("commission_rules")
-      .delete()
-      .eq("vendedor_id", vId)
-      .in("sim_table_id", grp.ids);
-
+    const { error } = await supabase.from("commission_rules").delete().eq("vendedor_id", vId).in("sim_table_id", grp.ids);
     if (error) return alert(error.message);
     await fetchRulesForVendor(vId);
   }
 
-  function loadRuleToForm(
-    r: CommissionRule & { segmento: string; nome_tabela: string }
-  ) {
+  function loadRuleToForm(r: CommissionRule & { segmento: string; nome_tabela: string }) {
     setRuleVendorId(r.vendedor_id);
     setRuleSimTableId(r.sim_table_id as any);
-
     const percentPadrao = (r.percent_padrao ?? 0) * 100;
     const meses = r.fluxo_meses && r.fluxo_meses > 0 ? r.fluxo_meses : 1;
-    const fluxos = (r.fluxo_percentuais && r.fluxo_percentuais.length
-      ? r.fluxo_percentuais
-      : Array.from({ length: meses }, () => 0)
-    ).map((p) => (p * percentPadrao).toFixed(2).replace(".", ","));
-
-    setRulePercent(percentPadrao.toFixed(2).replace(".", ",")); // ex.: "1,20"
+    const fluxos = (r.fluxo_percentuais && r.fluxo_percentuais.length ? r.fluxo_percentuais : Array.from({ length: meses }, () => 0))
+      .map((p) => (p * percentPadrao).toFixed(2).replace(".", ","));
+    setRulePercent(percentPadrao.toFixed(2).replace(".", ",")); 
     setRuleMeses(meses);
     setRuleFluxoPct(fluxos);
     setRuleObs(r.obs || "");
   }
 
-  /* Garantir fluxo (regra ou 1×100%) */
+  /* Garantir/abrir pagamento (inalterado) */
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
-    const { data: existing } = await supabase
-      .from("commission_flow")
-      .select("*")
-      .eq("commission_id", c.id)
-      .order("mes", { ascending: true });
-
+    const { data: existing } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
     if (existing && existing.length > 0) return existing as CommissionFlow[];
 
     let meses = 1;
@@ -1262,45 +964,25 @@ export default function ComissoesPage() {
     const { error } = await supabase.from("commission_flow").insert(inserts as any[]);
     if (error) console.warn("[ensureFlowForCommission] erro ao inserir fluxo:", error.message);
 
-    const { data: created } = await supabase
-      .from("commission_flow")
-      .select("*")
-      .eq("commission_id", c.id)
-      .order("mes", { ascending: true });
-
+    const { data: created } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
     return (created || []) as CommissionFlow[];
   }
 
-  /* Pagamento (sem pré-seleção automática) */
   async function openPaymentFor(c: Commission) {
     setPayCommissionId(c.id);
-
-    let { data } = await supabase
-      .from("commission_flow")
-      .select("*")
-      .eq("commission_id", c.id)
-      .order("mes", { ascending: true });
+    let { data } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
     if (!data || data.length === 0) {
       const created = await ensureFlowForCommission(c);
       data = created as any;
     }
-
-    const arr = (data || []).map((f: any) => ({
-      ...f,
-      _valor_previsto_calc: (c.valor_total ?? 0) * (f.percentual ?? 0),
-    }));
-
+    const arr = (data || []).map((f: any) => ({ ...f, _valor_previsto_calc: (c.valor_total ?? 0) * (f.percentual ?? 0) }));
     const uniq = new Map<number, CommissionFlow & { _valor_previsto_calc?: number }>();
     arr.forEach((f: any) => uniq.set(f.mes, f));
     const finalArr = Array.from(uniq.values());
-
     setPayFlow(finalArr);
-
     setPaySelected({});
-
     const registered = hasRegisteredButUnpaid(finalArr);
     setPayDefaultTab(registered ? "arquivos" : "selecionar");
-
     setPayDate(toDateInput(new Date()));
     setPayValue("");
     setOpenPay(true);
@@ -1331,11 +1013,7 @@ export default function ComissoesPage() {
 
     const candidates = payFlow.filter((f) => (Number(f.percentual) || 0) > 0);
     let selected = candidates.filter((f) => paySelected[f.id]);
-
-    if (!selected.length) {
-      alert("Selecione pelo menos uma parcela para pagar.");
-      return;
-    }
+    if (!selected.length) { alert("Selecione pelo menos uma parcela para pagar."); return; }
 
     const toUpdate = selected.filter((f) => !!f.id);
     if (toUpdate.length) {
@@ -1343,14 +1021,8 @@ export default function ComissoesPage() {
         const { error } = await supabase
           .from("commission_flow")
           .update({
-            data_pagamento_vendedor:
-              payload.data_pagamento_vendedor ||
-              f.data_pagamento_vendedor ||
-              toDateInput(new Date()),
-            valor_pago_vendedor:
-              payload.valor_pago_vendedor !== undefined
-                ? payload.valor_pago_vendedor
-                : (f.valor_pago_vendedor ?? 0),
+            data_pagamento_vendedor: payload.data_pagamento_vendedor || f.data_pagamento_vendedor || toDateInput(new Date()),
+            valor_pago_vendedor: payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : (f.valor_pago_vendedor ?? 0),
             recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
             comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
           })
@@ -1359,94 +1031,112 @@ export default function ComissoesPage() {
       }
     }
 
-    const { data: fresh } = await supabase
-      .from("commission_flow")
-      .select("*")
-      .eq("commission_id", payCommissionId)
-      .order("mes", { ascending: true });
+    const { data: fresh } = await supabase.from("commission_flow").select("*").eq("commission_id", payCommissionId).order("mes", { ascending: true });
 
     const relevant = (fresh || []).filter((f) => (Number(f.percentual) || 0) > 0);
-    const isAllPaid =
-      relevant.length > 0 &&
-      relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
+    const isAllPaid = relevant.length > 0 && relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
 
     const { error: updErr } = await supabase
       .from("commissions")
-      .update({
-        status: isAllPaid ? "pago" : "a_pagar",
-        data_pagamento: isAllPaid
-          ? (payload.data_pagamento_vendedor || toDateInput(new Date()))
-          : null,
-      })
+      .update({ status: isAllPaid ? "pago" : "a_pagar", data_pagamento: isAllPaid ? (payload.data_pagamento_vendedor || toDateInput(new Date())) : null })
       .eq("id", payCommissionId);
-
-    if (updErr) {
-      console.warn("[commissions.update] falhou:", updErr.message);
-      alert("A comissão foi paga, mas não consegui atualizar o status no banco (policies/RLS?). Vou ajustar a UI mesmo assim.");
-    }
+    if (updErr) console.warn("[commissions.update] falhou:", updErr.message);
 
     const uniq = new Map<number, CommissionFlow>();
     (fresh || []).forEach((f: any) => uniq.set(f.mes, f));
     const freshArr = Array.from(uniq.values()) as CommissionFlow[];
     setPayFlow(freshArr);
-    setRows((prev) =>
-      prev.map((r) =>
-        r.id === payCommissionId
-          ? { ...r, flow: freshArr, status: isAllPaid ? "pago" : "a_pagar" }
-          : r
-      )
-    );
+    setRows((prev) => prev.map((r) => (r.id === payCommissionId ? { ...r, flow: freshArr, status: isAllPaid ? "pago" : "a_pagar" } : r)));
 
-    if (isAllPaid) {
-      setShowPaid(true);
-      setStatus("pago");
-    }
-
+    if (isAllPaid) { setShowPaid(true); setStatus("pago"); }
     setOpenPay(false);
     fetchData();
   }
 
-  /* Estorno */
-  function openRefundFor(flow: CommissionFlow, comm: Commission) {
-    setRefundFlow({ flow, comm });
-    setRefundValue(String(flow.valor_pago_vendedor || 0).replace(".", ","));
-    setOpenRefund(true);
+  /* ====== ESTORNO (GLOBAL) ====== */
+  async function searchRefundByProposal() {
+    const prop = (bulkRefundProp || "").trim();
+    if (!prop) { setBulkRefundFound(null); return; }
+
+    // localizar venda/comissão pela proposta
+    const { data: vendas } = await supabase.from("vendas").select("id, numero_proposta, vendedor_id, valor_venda").ilike("numero_proposta", `%${prop}%`);
+    if (!vendas?.length) { setBulkRefundFound(null); alert("Proposta não encontrada."); return; }
+
+    const vendaIds = vendas.map(v => v.id);
+    let qb = supabase.from("commissions").select("*").in("venda_id", vendaIds);
+    if (!isAdmin) qb = qb.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
+    const { data: comms } = await qb;
+    const comm = comms?.[0] as Commission | undefined;
+    if (!comm) { setBulkRefundFound(null); alert("Nenhuma comissão encontrada para essa proposta."); return; }
+
+    const { data: flows } = await supabase.from("commission_flow").select("*").eq("commission_id", comm.id);
+    const paid = (flows || []).filter(f => (f.valor_pago_vendedor ?? 0) > 0).sort((a,b) => (a.data_pagamento_vendedor || "").localeCompare(b.data_pagamento_vendedor || ""));
+    if (!paid.length) { setBulkRefundFound(null); alert("Esta proposta não possui parcelas pagas."); return; }
+
+    setBulkRefundFound({ comm, flows: paid });
   }
 
-  async function confirmRefund() {
-    if (!refundFlow) return;
-    const { flow, comm } = refundFlow;
-    const val = parseFloat(refundValue.replace(/\./g, "").replace(",", ".")) || 0;
+  async function confirmBulkRefund() {
+    if (!bulkRefundFound) return;
+    const gross = parseFloat(bulkRefundGross.replace(/\./g, "").replace(",", ".")) || 0;
+    if (gross <= 0) { alert("Informe o valor bruto do estorno."); return; }
 
-    const newPaid = Math.max(0, (flow.valor_pago_vendedor || 0) - val);
-    const updates: Partial<CommissionFlow> = {
-      valor_pago_vendedor: newPaid,
-      data_pagamento_vendedor: newPaid > 0 ? (flow.data_pagamento_vendedor || toDateInput(new Date())) : null,
-    };
+    setBusyRefund(true);
+    try {
+      // distribui LIFO (das últimas pagas para as primeiras)
+      let remaining = gross;
+      const ordered = [...bulkRefundFound.flows].sort((a,b) => (b.data_pagamento_vendedor || "").localeCompare(a.data_pagamento_vendedor || ""));
+      for (const f of ordered) {
+        const current = Math.max(0, f.valor_pago_vendedor ?? 0);
+        if (remaining <= 0) break;
+        const take = Math.min(current, remaining);
+        const newPaid = current - take;
+        const updates: Partial<CommissionFlow> = {
+          valor_pago_vendedor: newPaid,
+          // mantém a data original da parcela paga (para não bagunçar históricos)
+        };
+        const { error } = await supabase.from("commission_flow").update(updates as any).eq("id", f.id);
+        if (error) throw new Error(error.message);
+        remaining -= take;
 
-    const { error } = await supabase.from("commission_flow").update(updates as any).eq("id", flow.id);
-    if (error) { alert("Falha ao estornar: " + error.message); return; }
+        // tenta registrar evento (tabela opcional)
+        try {
+          const net = take * (1 - impostoFrac);
+          await supabase.from("commission_refunds").insert({
+            commission_id: f.commission_id,
+            flow_id: f.id,
+            numero_proposta: bulkRefundFound.comm.numero_proposta || null,
+            data_estorno: bulkRefundDate,
+            valor_bruto: take,
+            valor_liquido: net,
+          } as any);
+        } catch (e) {
+          // tabela pode não existir; seguimos sem travar o fluxo
+          console.warn("[commission_refunds] tabela ausente/erro ao registrar:", (e as any)?.message);
+        }
+      }
 
-    await supabase.from("commissions").update({ status: "estorno" }).eq("id", comm.id);
+      // marca comissão como estorno (rótulo)
+      await supabase.from("commissions").update({ status: "estorno" }).eq("id", bulkRefundFound.comm.id);
 
-    setRows(prev =>
-      prev.map(r => {
-        if (r.id !== comm.id) return r;
-        const newFlow = (r.flow || []).map(f => f.id === flow.id ? { ...f, ...updates } as any : f);
-        return { ...r, status: "estorno" as const, flow: newFlow };
-      })
-    );
-
-    setOpenRefund(false);
-    setRefundFlow(null);
+      setOpenBulkRefund(false);
+      setBulkRefundFound(null);
+      setBulkRefundGross("");
+      fetchData();
+      alert("Estorno registrado com sucesso.");
+    } catch (e: any) {
+      alert("Falha ao registrar estorno: " + (e?.message || e));
+    } finally {
+      setBusyRefund(false);
+    }
   }
 
-  /* Gerar / Retornar / PDF */
+  /* ====== Gerar / Retornar / Recibo ====== */
   async function gerarComissaoDeVenda(venda: Venda) {
     try {
       setGenBusy(venda.id);
       const vendedorIdCanon = canonUserId(venda.vendedor_id);
-      if (!vendedorIdCanon) { alert("Vendedor desta venda não está cadastrado em 'users' (vínculo por auth_user_id)."); return; }
+      if (!vendedorIdCanon) { alert("Vínculo do vendedor não encontrado em 'users'."); return; }
 
       let simTableId: string | null = null;
       const vendaTabNorm = normalize(venda.tabela), vendaSegNorm = normalize(venda.segmento);
@@ -1488,9 +1178,9 @@ export default function ComissoesPage() {
 
       if (error) {
         if (String(error.message || "").includes("row-level security"))
-          alert("RLS bloqueou o INSERT. Ajuste policies de 'commissions'/'commission_flow'.");
+          alert("RLS bloqueou o INSERT. Ajuste policies.");
         else if (String(error.code) === "23503")
-          alert("Não foi possível criar: verifique vendedor em 'users' e/ou a SimTable.");
+          alert("Não foi possível criar: verifique vendedor e/ou a SimTable.");
         else alert("Erro ao criar a comissão: " + error.message);
         return;
       }
@@ -1507,62 +1197,56 @@ export default function ComissoesPage() {
     try {
       const delFlow = await supabase.from("commission_flow").delete().eq("commission_id", c.id).select("id");
       if (delFlow.error) throw delFlow.error;
-      const { data: stillFlows } = await supabase.from("commission_flow").select("id", { count: "exact", head: false }).eq("commission_id", c.id);
+      const { data: stillFlows } = await supabase.from("commission_flow").select("id").eq("commission_id", c.id);
       if (stillFlows && stillFlows.length > 0) { alert("Não foi possível remover as parcelas (RLS)."); return; }
       const delComm = await supabase.from("commissions").delete().eq("id", c.id).select("id");
       if (delComm.error) throw delComm.error;
-      const { data: stillComm } = await supabase.from("commissions").select("id").eq("id", c.id).limit(1);
-      if (stillComm && stillComm.length) { alert("A comissão não pôde ser excluída (possível RLS)."); return; }
-      setRows((prev) => prev.filter((r) => r.id !== c.id)); await fetchData();
+      setRows((prev) => prev.filter((r) => r.id !== c.id));
+      await fetchData();
     } catch (err: any) {
       if (String(err?.message || "").includes("row-level security")) alert("RLS bloqueou a exclusão.");
       else alert("Falha ao retornar: " + (err?.message || err));
     }
   }
 
-  // Recibo por data (numeração contínua)
+  // Recibo por data (inclui estornos se houver tabela commission_refunds)
   async function downloadReceiptPDFPorData() {
     const impostoPct = parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0;
     const dataRecibo = reciboDate;
-
-    const vendedorSel = vendedorId !== "all" ? vendedorId : null;
+    const vendedorSel = reciboVendor !== "all" ? reciboVendor : (isAdmin ? null : (usersByAuth[authUserId || ""]?.id || null));
 
     const { data: flowsAllOnDate, error: flowsErr } = await supabase
       .from("commission_flow")
       .select("*, commission_id")
       .eq("data_pagamento_vendedor", dataRecibo);
-
     if (flowsErr) { alert("Erro ao buscar parcelas: " + flowsErr.message); return; }
-    if (!flowsAllOnDate || !flowsAllOnDate.length) { alert("Não há parcelas pagas na data selecionada."); return; }
+    if (!flowsAllOnDate || !flowsAllOnDate.length) {
+      // pode ser que só tenha estorno nessa data
+      try {
+        const { data: onlyRefunds } = await supabase.from("commission_refunds").select("id").eq("data_estorno", dataRecibo).limit(1);
+        if (!onlyRefunds?.length) { alert("Não há parcelas/estornos na data selecionada."); return; }
+      } catch {}
+    }
 
-    const commIdsAll = Array.from(new Set(flowsAllOnDate.map((f: any) => f.commission_id)));
-    const { data: commsAll, error: commsErr } = await supabase
-      .from("commissions")
-      .select("*")
-      .in("id", commIdsAll);
-
-    if (commsErr) { alert("Erro ao buscar comissões: " + commsErr.message); return; }
-
+    const commIdsAll = Array.from(new Set((flowsAllOnDate || []).map((f: any) => f.commission_id)));
+    const { data: commsAll } = await supabase.from("commissions").select("*").in("id", commIdsAll.length ? commIdsAll : ["00000000-0000-0000-0000-000000000000"]);
     const chosenFlows = vendedorSel
-      ? flowsAllOnDate.filter((f: any) => (commsAll || []).find((c: any) => c.id === f.commission_id)?.vendedor_id === vendedorSel)
-      : flowsAllOnDate;
-
-    if (!chosenFlows.length) { alert("Sem parcelas para o vendedor selecionado nessa data."); return; }
+      ? (flowsAllOnDate || []).filter((f: any) => (commsAll || []).find((c: any) => c.id === f.commission_id)?.vendedor_id === vendedorSel)
+      : (flowsAllOnDate || []);
 
     const byCommission: Record<string, CommissionFlow[]> = {};
     chosenFlows.forEach((f: any) => {
       if (!byCommission[f.commission_id]) byCommission[f.commission_id] = [];
       if (!byCommission[f.commission_id].some((x) => x.mes === f.mes)) byCommission[f.commission_id].push(f);
     });
-
     const commIds = Object.keys(byCommission);
-    const { data: comms } = await supabase.from("commissions").select("*").in("id", commIds);
+    const { data: comms } = await supabase.from("commissions").select("*").in("id", commIds.length ? commIds : ["00000000-0000-0000-0000-000000000000"]);
 
     const vendaIds = Array.from(new Set((comms || []).map((c: any) => c.venda_id)));
     const { data: vendas } = await supabase
       .from("vendas")
       .select("id, valor_venda, numero_proposta, cliente_lead_id, lead_id, vendedor_id")
-      .in("id", vendaIds);
+      .in("id", vendaIds.length ? vendaIds : ["00000000-0000-0000-0000-000000000000"]);
 
     const clienteIds = Array.from(new Set((vendas || []).map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
     const nomesCli: Record<string, string> = {};
@@ -1574,12 +1258,11 @@ export default function ComissoesPage() {
     const year = new Date(dataRecibo).getFullYear();
     const { data: seqData, error: seqErr } = await supabase.rpc("next_receipt_seq", { p_year: year });
     if (seqErr) { alert("Erro ao gerar número do recibo: " + seqErr.message); return; }
-
     const seq = Number(seqData) || 1;
     const numeroRecibo = `${String(seq).padStart(3, "0")}/${year}`;
 
-    const vendedorUsado = vendedorSel ?? (comms || [])[0]?.vendedor_id;
-    const vendInfo = secureById[vendedorUsado] || ({} as any);
+    const vendedorUsado = vendedorSel ?? (comms || [])[0]?.vendedor_id ?? (usersByAuth[authUserId || ""]?.id || null);
+    const vendInfo = vendedorUsado ? secureById[vendedorUsado] : null;
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     doc.setFont("helvetica", "bold"); doc.setFontSize(14);
@@ -1636,23 +1319,52 @@ export default function ComissoesPage() {
       });
     });
 
+    // Linhas de ESTORNO (negativas)
+    try {
+      const vendFilter = vendedorSel ? { column: "vendedor_id", value: vendedorSel } : null;
+      const { data: refunds } = await supabase
+        .from("commission_refunds")
+        .select("id, commission_id, flow_id, numero_proposta, data_estorno, valor_bruto, valor_liquido");
+      const refundsOnDate = (refunds || []).filter(r => r.data_estorno === dataRecibo && (!vendFilter || (rows.find(x => x.id === r.commission_id)?.vendedor_id === vendFilter.value)));
+      for (const rf of refundsOnDate) {
+        body.push([
+          "—",
+          rf.numero_proposta || "—",
+          "ESTORNO",
+          "—",
+          BRL(-(rf.valor_bruto || 0)),
+          BRL( (rf.valor_bruto || 0) * impostoPct ), // informativo
+          BRL(-(rf.valor_liquido || 0)),
+        ]);
+        totalLiquido -= (rf.valor_liquido || 0);
+      }
+    } catch (e) {
+      // tabela opcional, segue sem quebrar
+    }
+
     autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30, 41, 63] } });
     const endY = (doc as any).lastAutoTable.finalY + 12;
     doc.setFont("helvetica", "bold");
     doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
     doc.setFont("helvetica", "normal");
     doc.text(`Forma de Pagamento: PIX`, 40, endY + 18);
-    doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado]?.pix_key || "—"}`, 40, endY + 34);
+    doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado || ""]?.pix_key || "—"}`, 40, endY + 34);
     const signY = endY + 100;
     doc.line(40, signY, 320, signY);
-    doc.text(`${userLabel(vendedorUsado)}`, 40, signY + 14);
-    doc.text(`${secureById[vendedorUsado]?.cpf || "—"}`, 40, signY + 28);
+    doc.text(`${userLabel(vendedorUsado || "")}`, 40, signY + 14);
+    doc.text(`${secureById[vendedorUsado || ""]?.cpf || "—"}`, 40, signY + 28);
 
-    doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado)}.pdf`);
+    doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado || "")}.pdf`);
   }
 
   /* Listas auxiliares */
-  const rowsAPagar = useMemo(() => rows.filter((r) => r.status === "a_pagar"), [rows]);
+  const rowsAPagarBase = useMemo(() => rows.filter((r) => r.status === "a_pagar"), [rows]);
+  const rowsAPagar = useMemo(() => {
+    const q = normalize(unpaidPropSearch);
+    if (!q) return rowsAPagarBase;
+    return rowsAPagarBase.filter((r) => normalize(r.numero_proposta || "").includes(q));
+  }, [rowsAPagarBase, unpaidPropSearch]);
+
   const pagosFlat = useMemo(() => {
     const list: Array<{ flow: CommissionFlow; comm: Commission }> = [];
     rows
@@ -1678,14 +1390,13 @@ export default function ComissoesPage() {
   /* ========================= Render ========================= */
   return (
     <div className="relative p-4 space-y-8 isolate">
-      {/* Liquid background (fica atrás do conteúdo) */}
+      {/* Liquid background */}
       <div className="liquid-bg">
         <span className="blob b1" />
         <span className="blob b2" />
         <span className="gold" />
       </div>
 
-      {/* Conteúdo acima do fundo */}
       <div className="relative z-[1] space-y-8">
         {/* Filtros topo */}
         <Card>
@@ -1697,10 +1408,10 @@ export default function ComissoesPage() {
           <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <div className="flex flex-col gap-2">
               <Label>Vendedor</Label>
-              <Select value={vendedorId} onValueChange={setVendedorId}>
+              <Select value={vendedorId} onValueChange={setVendedorId} disabled={!isAdmin}>
                 <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
+                  {isAdmin && <SelectItem value="all">Todos</SelectItem>}
                   {users.map((u) => (
                     <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>
                   ))}
@@ -1756,133 +1467,46 @@ export default function ComissoesPage() {
 
         {/* ===== Dashboards ===== */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-          {/* 5 anos (apenas pagos) */}
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Nos últimos 5 anos — {vendedorAtual}</CardTitle>
-            </CardHeader>
+            <CardHeader className="pb-3"><CardTitle>Nos últimos 5 anos — {userLabel(vendedorId === "all" ? null : vendedorId)}</CardTitle></CardHeader>
             <CardContent className="space-y-6">
-              <Donut
-                paid={range5yPago}
-                pending={0}
-                label="5 anos"
-                hoverPaidText={`Pago no período: ${BRL(range5yPago)}`}
-                hoverPendText={`—`}
-                pendingLegend="—"
-              />
-              <LineChart
-                labels={annual.labels}
-                series={[
-                  { name: "Previsto", data: annual.previstoBruto.map(() => 0) },
-                  { name: "Pago", data: annual.pagoBruto },
-                ]}
-              />
+              <Donut paid={paidInRangeLiquid(new Date(now.getFullYear()-5, now.getMonth(), 1), now)} pending={0} label="5 anos" hoverPaidText={`Pago no período: ${BRL(paidInRangeLiquid(new Date(now.getFullYear()-5, now.getMonth(), 1), now))}`} hoverPendText="—" pendingLegend="—" />
+              <LineChart labels={annual.labels} series={[{ name: "Previsto", data: annual.previstoBruto.map(() => 0) }, { name: "Pago", data: annual.pagoBruto }]} />
             </CardContent>
           </Card>
 
-          {/* Ano anterior (apenas pagos) */}
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Ano anterior — {new Date().getFullYear() - 1}</CardTitle>
-            </CardHeader>
+            <CardHeader className="pb-3"><CardTitle>Ano anterior — {new Date().getFullYear() - 1}</CardTitle></CardHeader>
             <CardContent className="space-y-6">
-              <Donut
-                paid={rangePrevYPago}
-                pending={0}
-                label="Ano anterior"
-                hoverPaidText={`Pago no ano anterior: ${BRL(rangePrevYPago)}`}
-                hoverPendText={"—"}
-                pendingLegend="—"
-              />
-              <LineChart
-                labels={monthlyPrev.labels}
-                series={[
-                  { name: "Previsto", data: monthlyPrev.previstoBruto.map(() => 0) },
-                  { name: "Pago", data: monthlyPrev.pagoBruto },
-                ]}
-              />
+              <Donut paid={paidInRangeLiquid(new Date(now.getFullYear()-1,0,1), new Date(now.getFullYear()-1,11,31))} pending={0} label="Ano anterior" hoverPaidText={`Pago no ano anterior: ${BRL(paidInRangeLiquid(new Date(now.getFullYear()-1,0,1), new Date(now.getFullYear()-1,11,31)))}`} hoverPendText="—" pendingLegend="—" />
+              <LineChart labels={projectMonthlyFlows(rows, new Date().getFullYear()-1, false).labels} series={[{ name: "Previsto", data: projectMonthlyFlows(rows, new Date().getFullYear()-1, false).previstoBruto }, { name: "Pago", data: projectMonthlyFlows(rows, new Date().getFullYear()-1, false).pagoBruto }]} />
             </CardContent>
           </Card>
 
-          {/* Ano atual: Pago + Previsto */}
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Ano atual — {new Date().getFullYear()}</CardTitle>
-            </CardHeader>
+            <CardHeader className="pb-3"><CardTitle>Ano atual — {new Date().getFullYear()}</CardTitle></CardHeader>
             <CardContent className="space-y-6">
-              <Donut
-                paid={rangeYPago}
-                pending={rangeYPrev}
-                label="Ano"
-                hoverPaidText={`Pago no ano: ${BRL(rangeYPago)}`}
-                hoverPendText={`Previsto no ano: ${BRL(rangeYPrev)}`}
-              />
-              <LineChart
-                labels={monthlyCurr.labels}
-                series={[
-                  { name: "Previsto", data: monthlyCurr.previstoBruto },
-                  { name: "Pago", data: monthlyCurr.pagoBruto },
-                ]}
-              />
+              <Donut paid={paidInRangeLiquid(new Date(now.getFullYear(),0,1), now)} pending={previstoInRange(new Date(now.getFullYear(),0,1), new Date(now.getFullYear(),11,31))} label="Ano" hoverPaidText={`Pago no ano: ${BRL(paidInRangeLiquid(new Date(now.getFullYear(),0,1), now))}`} hoverPendText={`Previsto no ano: ${BRL(previstoInRange(new Date(now.getFullYear(),0,1), new Date(now.getFullYear(),11,31)))}`} />
+              <LineChart labels={monthlyCurr.labels} series={[{ name: "Previsto", data: monthlyCurr.previstoBruto }, { name: "Pago", data: monthlyCurr.pagoBruto }]} />
             </CardContent>
           </Card>
 
-          {/* Mês atual: Pago + Previsto (semanas sex→qui) */}
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Mês atual (semanas sex→qui)</CardTitle>
-            </CardHeader>
+            <CardHeader className="pb-3"><CardTitle>Mês atual (semanas sex→qui)</CardTitle></CardHeader>
             <CardContent className="space-y-6">
-              <Donut
-                paid={rangeMPago}
-                pending={rangeMPrev}
-                label="Mês"
-                hoverPaidText={`Pago no mês: ${BRL(rangeMPago)}`}
-                hoverPendText={`Previsto no mês: ${BRL(rangeMPrev)}`}
-              />
-              <LineChart
-                labels={weeklyCurr.labels}
-                series={[
-                  { name: "Previsto", data: weeklyCurr.previstoBruto },
-                  { name: "Pago", data: weeklyCurr.pagoBruto },
-                ]}
-              />
+              <Donut paid={paidInRangeLiquid(mStart, now)} pending={previstoInRange(mStart, endOfMonth(now))} label="Mês" hoverPaidText={`Pago no mês: ${BRL(paidInRangeLiquid(mStart, now))}`} hoverPendText={`Previsto no mês: ${BRL(previstoInRange(mStart, endOfMonth(now)))}`} />
+              <LineChart labels={weeklyCurr.labels} series={[{ name: "Previsto", data: weeklyCurr.previstoBruto }, { name: "Pago", data: weeklyCurr.pagoBruto }]} />
             </CardContent>
           </Card>
         </div>
 
         {/* Resumo */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>🔥 Vendas</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>🧾 Comissão Bruta</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>✅ Comissão Líquida</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.comLiquida)}</CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>📤 Comissão Paga (Liq.)</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.comPaga)}</CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>⏳ Pendente (Liq.)</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent>
-          </Card>
+          <Card><CardHeader className="pb-3"><CardTitle>🔥 Vendas</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent></Card>
+          <Card><CardHeader className="pb-3"><CardTitle>🧾 Comissão Bruta</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent></Card>
+          <Card><CardHeader className="pb-3"><CardTitle>✅ Comissão Líquida</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comLiquida)}</CardContent></Card>
+          <Card><CardHeader className="pb-3"><CardTitle>📤 Comissão Paga (Liq.)</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPaga)}</CardContent></Card>
+          <Card><CardHeader className="pb-3"><CardTitle>⏳ Pendente (Liq.)</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent></Card>
         </div>
 
         {/* Vendas sem comissão */}
@@ -1891,9 +1515,7 @@ export default function ComissoesPage() {
             <CardTitle className="flex items-center justify-between">
               <span>Vendas sem comissão (todos os registros + filtros)</span>
               <div className="flex items-center gap-3">
-                <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>
-                  {showVendasSem ? "Ocultar" : "Expandir"}
-                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowVendasSem((v) => !v)}>{showVendasSem ? "Ocultar" : "Expandir"}</Button>
               </div>
             </CardTitle>
           </CardHeader>
@@ -1915,11 +1537,7 @@ export default function ComissoesPage() {
                 </thead>
                 <tbody>
                   {vendasSemCom.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="p-4 text-gray-500">
-                        Sem pendências 🎉
-                      </td>
-                    </tr>
+                    <tr><td colSpan={9} className="p-4 text-gray-500">Sem pendências 🎉</td></tr>
                   )}
                   {vendasSemCom.map((v) => {
                     const clienteId = v.lead_id || v.cliente_lead_id || "";
@@ -1927,26 +1545,15 @@ export default function ComissoesPage() {
                       <tr key={v.id} className="border-b">
                         <td className="p-2">{formatISODateBR(v.data_venda)}</td>
                         <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                        <td className="p-2">
-                          {(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}
-                        </td>
+                        <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
                         <td className="p-2">{v.numero_proposta || "—"}</td>
                         <td className="p-2">{v.administradora || "—"}</td>
                         <td className="p-2">{v.segmento || "—"}</td>
                         <td className="p-2">{v.tabela || "—"}</td>
                         <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
                         <td className="p-2">
-                          <Button
-                            size="sm"
-                            onClick={() => gerarComissaoDeVenda(v)}
-                            disabled={genBusy === v.id}
-                          >
-                            {genBusy === v.id ? (
-                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                            ) : (
-                              <PlusCircle className="w-4 h-4 mr-1" />
-                            )}
-                            Gerar Comissão
+                          <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id}>
+                            {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />} Gerar Comissão
                           </Button>
                         </td>
                       </tr>
@@ -1962,23 +1569,17 @@ export default function ComissoesPage() {
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <span className="text-base font-semibold">
-                Detalhamento de Comissões (a pagar)
-              </span>
+              <span className="text-base font-semibold">Detalhamento de Comissões (a pagar)</span>
 
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:gap-6">
                 <div className="flex flex-col gap-2">
                   <Label>Vendedor</Label>
-                  <Select value={vendedorId} onValueChange={setVendedorId}>
-                    <SelectTrigger className="w-[220px]">
-                      <SelectValue placeholder="Todos" />
-                    </SelectTrigger>
+                  <Select value={vendedorId} onValueChange={setVendedorId} disabled={!isAdmin}>
+                    <SelectTrigger className="w-[220px]"><SelectValue placeholder="Todos" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
+                      {isAdmin && <SelectItem value="all">Todos</SelectItem>}
                       {users.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.nome?.trim() || u.email?.trim() || u.id}
-                        </SelectItem>
+                        <SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1987,39 +1588,32 @@ export default function ComissoesPage() {
                 <div className="flex flex-col gap-4 lg:flex-row lg:gap-6">
                   <div className="flex flex-col gap-2">
                     <Label>Data do Recibo</Label>
-                    <Input
-                      type="date"
-                      value={reciboDate}
-                      onChange={(e) => setReciboDate(e.target.value)}
-                    />
+                    <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label>Imposto (%)</Label>
-                    <Input
-                      value={reciboImpostoPct}
-                      onChange={(e) => setReciboImpostoPct(e.target.value)}
-                      className="w-24"
-                    />
+                    <Input value={reciboImpostoPct} onChange={(e) => setReciboImpostoPct(e.target.value)} className="w-24" />
                   </div>
-
                   <div className="flex items-end gap-3">
-                    <Button onClick={downloadReceiptPDFPorData}>
-                      <FileText className="w-4 h-4 mr-1" /> Recibo
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setShowUnpaid((v) => !v)}
-                    >
-                      {showUnpaid ? "Ocultar" : "Expandir"}
-                    </Button>
+                    <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
+                    <Button size="sm" variant="outline" onClick={() => setShowUnpaid((v) => !v)}>{showUnpaid ? "Ocultar" : "Expandir"}</Button>
                   </div>
                 </div>
               </div>
             </CardTitle>
           </CardHeader>
+
           {showUnpaid && (
             <CardContent className="overflow-x-auto">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 pb-3">
+                <Input
+                  placeholder="Buscar pelo nº da proposta"
+                  value={unpaidPropSearch}
+                  onChange={(e) => { setUnpaidPropSearch(e.target.value); }}
+                  className="w-[280px]"
+                />
+              </div>
+
               <table className="min-w-[1200px] w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50">
@@ -2039,62 +1633,44 @@ export default function ComissoesPage() {
                 </thead>
                 <tbody>
                   {loading && (
-                    <tr>
-                      <td colSpan={12} className="p-6">
-                        <Loader2 className="animate-spin inline mr-2" /> Carregando...
-                      </td>
-                    </tr>
+                    <tr><td colSpan={12} className="p-6"><Loader2 className="animate-spin inline mr-2" /> Carregando...</td></tr>
                   )}
                   {!loading && rowsAPagar.length === 0 && (
-                    <tr>
-                      <td colSpan={12} className="p-6 text-gray-500">
-                        Sem registros.
-                      </td>
-                    </tr>
+                    <tr><td colSpan={12} className="p-6 text-gray-500">Sem registros.</td></tr>
                   )}
-                  {!loading &&
-                    rowsAPagar.map((r) => (
+                  {!loading && rowsAPagar.map((r) => {
+                    const isConfirm = hasRegisteredButUnpaid(r.flow);
+                    const chipClasses =
+                      isConfirm
+                        ? "bg-[#1E293F] text-white hover:opacity-95"
+                        : "bg-[#A11C27] text-white hover:opacity-95";
+                    return (
                       <tr key={r.id} className="border-b hover:bg-gray-50">
-                        <td className="p-2">
-                          {r.data_venda ? formatISODateBR(r.data_venda) : "—"}
-                        </td>
+                        <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
                         <td className="p-2">{userLabel(r.vendedor_id)}</td>
                         <td className="p-2">{r.cliente_nome || "—"}</td>
                         <td className="p-2">{r.numero_proposta || "—"}</td>
                         <td className="p-2">{r.segmento || "—"}</td>
                         <td className="p-2">{r.tabela || "—"}</td>
-                        <td className="p-2 text-right">
-                          {BRL(r.valor_venda ?? r.base_calculo)}
-                        </td>
+                        <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
                         <td className="p-2 text-right">{pct100(r.percent_aplicado)}</td>
                         <td className="p-2 text-right">{BRL(r.valor_total)}</td>
                         <td className="p-2">{r.status}</td>
-                        <td className="p-2">
-                          {r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}
-                        </td>
+                        <td className="p-2">{r.data_pagamento ? formatISODateBR(r.data_pagamento) : "—"}</td>
                         <td className="p-2">
                           <div className="flex flex-col gap-2 sm:flex-row">
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => openPaymentFor(r)}
-                            >
+                            <Button size="sm" className={chipClasses} onClick={() => openPaymentFor(r)}>
                               <DollarSign className="w-4 h-4 mr-1" />
-                              {hasRegisteredButUnpaid(r.flow)
-                                ? "Confirmar Pagamento"
-                                : "Registrar pagamento"}
+                              {isConfirm ? "Confirmar Pagamento" : "Registrar pagamento"}
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => retornarComissao(r)}
-                            >
+                            <Button size="sm" variant="outline" onClick={() => retornarComissao(r)}>
                               <RotateCcw className="w-4 h-4 mr-1" /> Retornar
                             </Button>
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </CardContent>
@@ -2110,19 +1686,17 @@ export default function ComissoesPage() {
                 <Input
                   placeholder="Buscar por cliente ou nº proposta"
                   value={paidSearch}
-                  onChange={(e) => {
-                    setPaidSearch(e.target.value);
-                    setPaidPage(1);
-                  }}
+                  onChange={(e) => { setPaidSearch(e.target.value); setPaidPage(1); }}
                   className="w-[280px]"
                 />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setShowPaid((v) => !v)}
-                >
-                  {showPaid ? "Ocultar" : "Expandir"}
-                </Button>
+                <div className="flex items-center gap-3">
+                  <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>
+                    {showPaid ? "Ocultar" : "Expandir"}
+                  </Button>
+                  <Button size="sm" onClick={() => setOpenBulkRefund(true)} className="bg-[#A11C27] text-white hover:opacity-95">
+                    Estorno
+                  </Button>
+                </div>
               </div>
             </CardTitle>
           </CardHeader>
@@ -2142,53 +1716,25 @@ export default function ComissoesPage() {
                 </thead>
                 <tbody>
                   {pagosPage.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="p-6 text-gray-500">
-                        Nenhum pagamento encontrado.
-                      </td>
-                    </tr>
+                    <tr><td colSpan={7} className="p-6 text-gray-500">Nenhum pagamento encontrado.</td></tr>
                   )}
                   {pagosPage.map(({ flow, comm }) => (
                     <tr key={flow.id} className="border-b">
-                      <td className="p-2">
-                        {flow.data_pagamento_vendedor
-                          ? formatISODateBR(flow.data_pagamento_vendedor)
-                          : "—"}
-                      </td>
+                      <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
                       <td className="p-2">{userLabel(comm.vendedor_id)}</td>
                       <td className="p-2">{comm.cliente_nome || "—"}</td>
                       <td className="p-2">{comm.numero_proposta || "—"}</td>
                       <td className="p-2">M{flow.mes}</td>
-                      <td className="p-2 text-right">
-                        {BRL(flow.valor_pago_vendedor)}
-                      </td>
+                      <td className="p-2 text-right">{BRL(flow.valor_pago_vendedor)}</td>
                       <td className="p-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
                           {flow.recibo_vendedor_url && (
-                            <a
-                              className="underline text-blue-700"
-                              href="#"
-                              onClick={async (e) => {
-                                e.preventDefault();
-                                const u = await getSignedUrl(flow.recibo_vendedor_url);
-                                if (u) window.open(u, "_blank");
-                              }}
-                            >
+                            <a className="underline text-blue-700" href="#" onClick={async (e) => { e.preventDefault(); const u = await getSignedUrl(flow.recibo_vendedor_url); if (u) window.open(u, "_blank"); }}>
                               Recibo
                             </a>
                           )}
                           {flow.comprovante_pagto_url && (
-                            <a
-                              className="underline text-blue-700"
-                              href="#"
-                              onClick={async (e) => {
-                                e.preventDefault();
-                                const u = await getSignedUrl(
-                                  flow.comprovante_pagto_url
-                                );
-                                if (u) window.open(u, "_blank");
-                              }}
-                            >
+                            <a className="underline text-blue-700" href="#" onClick={async (e) => { e.preventDefault(); const u = await getSignedUrl(flow.comprovante_pagto_url); if (u) window.open(u, "_blank"); }}>
                               Comprovante
                             </a>
                           )}
@@ -2198,29 +1744,13 @@ export default function ComissoesPage() {
                   ))}
                 </tbody>
               </table>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end sm:gap-6 pt-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-4 pt-6">
                 <div className="text-sm text-gray-600">
-                  Mostrando {pagosPage.length ? pageStart + 1 : 0}–
-                  {Math.min(pageStart + pageSize, pagosFiltered.length)} de{" "}
-                  {pagosFiltered.length}
+                  Mostrando {pagosPage.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageSize, pagosFiltered.length)} de {pagosFiltered.length}
                 </div>
                 <div className="flex items-center gap-3">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setPaidPage((p) => Math.max(1, p - 1))}
-                    disabled={paidPage <= 1}
-                  >
-                    Anterior
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setPaidPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={paidPage >= totalPages}
-                  >
-                    Próxima
-                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.max(1, p - 1))} disabled={paidPage <= 1}>Anterior</Button>
+                  <Button size="sm" variant="outline" onClick={() => setPaidPage((p) => Math.min(totalPages, p + 1))} disabled={paidPage >= totalPages}>Próxima</Button>
                 </div>
               </div>
             </CardContent>
@@ -2230,132 +1760,64 @@ export default function ComissoesPage() {
         {/* Regras (overlay) */}
         <Dialog open={openRules} onOpenChange={setOpenRules}>
           <DialogContent className="max-w-6xl">
-            <DialogHeader>
-              <DialogTitle>Regras de Comissão</DialogTitle>
-            </DialogHeader>
+            <DialogHeader><DialogTitle>Regras de Comissão</DialogTitle></DialogHeader>
 
-            {/* Cabeçalho do formulário */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               <div className="flex flex-col gap-2">
                 <Label>Vendedor</Label>
-                <Select
-                  value={ruleVendorId}
-                  onValueChange={(v) => {
-                    setRuleVendorId(v);
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
+                <Select value={ruleVendorId} onValueChange={(v) => { setRuleVendorId(v); }}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                   <SelectContent>
-                    {users.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.nome?.trim() || u.email?.trim() || u.id}
-                      </SelectItem>
-                    ))}
+                    {users.map((u) => (<SelectItem key={u.id} value={u.id}>{u.nome?.trim() || u.email?.trim() || u.id}</SelectItem>))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-2">
                 <Label>Tabela (SimTables)</Label>
                 <Select value={ruleSimTableId} onValueChange={setRuleSimTableId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                   <SelectContent className="max-h-[300px]">
-                    {simGroups.map((g) => (
-                      <SelectItem key={g.key} value={g.key}>
-                        {g.segmento} — {g.nome_tabela}
-                      </SelectItem>
-                    ))}
+                    {simGroups.map((g) => (<SelectItem key={g.key} value={g.key}>{g.segmento} — {g.nome_tabela}</SelectItem>))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-2">
                 <Label>% Padrão (ex.: 1,20 = 1,20%)</Label>
-                <Input
-                  value={rulePercent}
-                  onChange={(e) => setRulePercent(e.target.value)}
-                  placeholder="1,20"
-                />
+                <Input value={rulePercent} onChange={(e) => setRulePercent(e.target.value)} placeholder="1,20" />
               </div>
               <div className="flex flex-col gap-2">
                 <Label>Nº de meses do fluxo</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={36}
-                  value={ruleMeses}
-                  onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))}
-                />
+                <Input type="number" min={1} max={36} value={ruleMeses} onChange={(e) => onChangeMeses(parseInt(e.target.value || "1"))} />
               </div>
             </div>
 
             <hr className="my-6" />
 
-            {/* Fluxo */}
             <div className="space-y-4">
-              <Label>
-                Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total <b>ou</b>{" "}
-                a soma igual ao % Padrão
-              </Label>
+              <Label>Fluxo do pagamento (M1..Mn) — você pode digitar 100% no total <b>ou</b> a soma igual ao % Padrão</Label>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 p-4 border rounded-md bg-white">
                 {Array.from({ length: ruleMeses }).map((_, i) => (
-                  <Input
-                    key={i}
-                    value={ruleFluxoPct[i] || "0,00"}
-                    onChange={(e) => {
-                      const arr = [...ruleFluxoPct];
-                      arr[i] = e.target.value;
-                      setRuleFluxoPct(arr);
-                    }}
-                    placeholder="0,33"
-                  />
+                  <Input key={i} value={ruleFluxoPct[i] || "0,00"} onChange={(e) => { const arr = [...ruleFluxoPct]; arr[i] = e.target.value; setRuleFluxoPct(arr); }} placeholder="0,33" />
                 ))}
               </div>
-              <div className="text-xs text-gray-600">
-                Soma do fluxo:{" "}
-                <b>
-                  {fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão{" "}
-                  {rulePercent || "0,00"})
-                </b>
-              </div>
+              <div className="text-xs text-gray-600">Soma do fluxo: <b>{fluxoSoma.toFixed(2)} (aceitas: 1,00 ou % padrão {rulePercent || "0,00"})</b></div>
             </div>
 
             <hr className="my-6" />
 
-            {/* Observações + Ações */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-end">
               <div className="lg:col-span-2 flex flex-col gap-2">
                 <Label>Observações</Label>
-                <Input
-                  value={ruleObs}
-                  onChange={(e) => setRuleObs(e.target.value)}
-                  placeholder="Opcional"
-                />
+                <Input value={ruleObs} onChange={(e) => setRuleObs(e.target.value)} placeholder="Opcional" />
               </div>
               <div className="flex gap-3">
-                <Button onClick={saveRule}>
-                  <Save className="w-4 h-4 mr-1" /> Salvar Regra
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setRuleSimTableId("");
-                    setRulePercent("1,20");
-                    setRuleMeses(1);
-                    setRuleFluxoPct(["100,00"]);
-                    setRuleObs("");
-                  }}
-                >
-                  Limpar
-                </Button>
+                <Button onClick={saveRule}><Save className="w-4 h-4 mr-1" /> Salvar Regra</Button>
+                <Button variant="outline" onClick={() => { setRuleSimTableId(""); setRulePercent("1,20"); setRuleMeses(1); setRuleFluxoPct(["100,00"]); setRuleObs(""); }}>Limpar</Button>
               </div>
             </div>
 
             <hr className="my-6" />
 
-            {/* Lista de regras */}
             <div className="border rounded-md max-h-[45vh] overflow-y-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 sticky top-0">
@@ -2370,11 +1832,7 @@ export default function ComissoesPage() {
                 </thead>
                 <tbody>
                   {(!ruleRows || ruleRows.length === 0) && (
-                    <tr>
-                      <td colSpan={6} className="p-4 text-gray-500">
-                        Nenhuma regra cadastrada para o vendedor selecionado.
-                      </td>
-                    </tr>
+                    <tr><td colSpan={6} className="p-4 text-gray-500">Nenhuma regra cadastrada para o vendedor selecionado.</td></tr>
                   )}
                   {ruleRows.map((r) => (
                     <tr key={`${r.vendedor_id}-${r.sim_table_id}`} className="border-t">
@@ -2385,20 +1843,8 @@ export default function ComissoesPage() {
                       <td className="p-2">{r.fluxo_meses} Pgtos</td>
                       <td className="p-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => loadRuleToForm(r)}
-                          >
-                            <Pencil className="w-4 h-4 mr-1" /> Editar
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => deleteRule(r.vendedor_id, r.sim_table_id)}
-                          >
-                            <Trash2 className="w-4 h-4 mr-1" /> Excluir
-                          </Button>
+                          <Button size="sm" variant="secondary" onClick={() => loadRuleToForm(r)}><Pencil className="w-4 h-4 mr-1" /> Editar</Button>
+                          <Button size="sm" variant="outline" onClick={() => deleteRule(r.vendedor_id, r.sim_table_id)}><Trash2 className="w-4 h-4 mr-1" /> Excluir</Button>
                         </div>
                       </td>
                     </tr>
@@ -2408,19 +1854,15 @@ export default function ComissoesPage() {
             </div>
 
             <DialogFooter className="pt-6">
-              <Button variant="secondary" onClick={() => setOpenRules(false)}>
-                Fechar
-              </Button>
+              <Button variant="secondary" onClick={() => setOpenRules(false)}>Fechar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
-        {/* Pagamento (overlay largo) */}
+        {/* Pagamento (overlay) */}
         <Dialog open={openPay} onOpenChange={setOpenPay}>
           <DialogContent className="w-[98vw] max-w-[1400px]">
-            <DialogHeader>
-              <DialogTitle>Registrar pagamento ao vendedor</DialogTitle>
-            </DialogHeader>
+            <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
             <Tabs defaultValue={payDefaultTab}>
               <TabsList className="mb-4">
                 <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>
@@ -2431,28 +1873,18 @@ export default function ComissoesPage() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div className="flex flex-col gap-2">
                     <Label>Data do pagamento</Label>
-                    <Input
-                      type="date"
-                      value={payDate}
-                      onChange={(e) => setPayDate(e.target.value)}
-                    />
+                    <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label>Valor pago ao vendedor (opcional)</Label>
-                    <Input
-                      placeholder="Ex.: 1.974,00"
-                      value={payValue}
-                      onChange={(e) => setPayValue(e.target.value)}
-                    />
+                    <Input placeholder="Ex.: 1.974,00" value={payValue} onChange={(e) => setPayValue(e.target.value)} />
                   </div>
                   <div className="flex items-end">
                     <Button
                       onClick={() =>
                         paySelectedParcels({
                           data_pagamento_vendedor: payDate,
-                          valor_pago_vendedor: payValue
-                            ? parseFloat(payValue.replace(/\./g, "").replace(",", "."))
-                            : undefined,
+                          valor_pago_vendedor: payValue ? parseFloat(payValue.replace(/\./g, "").replace(",", ".")) : undefined,
                           recibo_file: null,
                           comprovante_file: null,
                         })
@@ -2467,11 +1899,7 @@ export default function ComissoesPage() {
                       onClick={() => {
                         const pend = Object.fromEntries(
                           payFlow
-                            .filter(
-                              (f) =>
-                                !f.data_pagamento_vendedor &&
-                                (f.valor_pago_vendedor ?? 0) === 0
-                            )
+                            .filter((f) => !f.data_pagamento_vendedor && (f.valor_pago_vendedor ?? 0) === 0)
                             .map((f) => [f.id, true])
                         );
                         setPaySelected(pend);
@@ -2496,37 +1924,17 @@ export default function ComissoesPage() {
                     </thead>
                     <tbody>
                       {payFlow.map((f) => {
-                        const isLocked =
-                          (f.valor_pago_vendedor ?? 0) > 0 ||
-                          Boolean(f.recibo_vendedor_url) ||
-                          Boolean(f.comprovante_pagto_url);
+                        const isLocked = (f.valor_pago_vendedor ?? 0) > 0 || Boolean(f.recibo_vendedor_url) || Boolean(f.comprovante_pagto_url);
                         return (
-                          <tr
-                            key={f.id}
-                            className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}
-                          >
+                          <tr key={f.id} className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}>
                             <td className="p-2">
-                              <Checkbox
-                                checked={!!paySelected[f.id]}
-                                onCheckedChange={(v) =>
-                                  setPaySelected((s) => ({ ...s, [f.id]: !!v }))
-                                }
-                                disabled={isLocked}
-                              />
+                              <Checkbox checked={!!paySelected[f.id]} onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))} disabled={isLocked} />
                             </td>
                             <td className="p-2">M{f.mes}</td>
                             <td className="p-2">{pct100(f.percentual)}</td>
-                            <td className="p-2 text-right">
-                              {BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}
-                            </td>
-                            <td className="p-2 text-right">
-                              {BRL(f.valor_pago_vendedor)}
-                            </td>
-                            <td className="p-2">
-                              {f.data_pagamento_vendedor
-                                ? formatISODateBR(f.data_pagamento_vendedor)
-                                : "—"}
-                            </td>
+                            <td className="p-2 text-right">{BRL((f as any)._valor_previsto_calc ?? f.valor_previsto)}</td>
+                            <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+                            <td className="p-2">{f.data_pagamento_vendedor ? formatISODateBR(f.data_pagamento_vendedor) : "—"}</td>
                           </tr>
                         );
                       })}
@@ -2539,9 +1947,86 @@ export default function ComissoesPage() {
                 <UploadArea onConfirm={paySelectedParcels} />
               </TabsContent>
             </Tabs>
-            <DialogFooter className="pt-6">
-              <Button onClick={() => setOpenPay(false)} variant="secondary">
-                Fechar
+            <DialogFooter className="pt-6"><Button onClick={() => setOpenPay(false)} variant="secondary">Fechar</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Overlay de ESTORNO (global) */}
+        <Dialog open={openBulkRefund} onOpenChange={setOpenBulkRefund}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader><DialogTitle>Estorno de comissão (por nº de proposta)</DialogTitle></DialogHeader>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2">
+                <Label>Nº da proposta</Label>
+                <div className="flex gap-2">
+                  <Input value={bulkRefundProp} onChange={(e) => setBulkRefundProp(e.target.value)} placeholder="Ex.: 1234" />
+                  <Button variant="secondary" onClick={searchRefundByProposal}>Buscar</Button>
+                </div>
+              </div>
+              <div>
+                <Label>Data do estorno</Label>
+                <Input type="date" value={bulkRefundDate} onChange={(e) => setBulkRefundDate(e.target.value)} />
+              </div>
+            </div>
+
+            {bulkRefundFound && (
+              <div className="mt-4 space-y-3 border rounded-md p-4 bg-white">
+                <div className="text-sm text-gray-700">
+                  <b>Vendedor:</b> {userLabel(bulkRefundFound.comm.vendedor_id)} &nbsp; • &nbsp;
+                  <b>Proposta:</b> {bulkRefundFound.comm.numero_proposta || "—"}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-[700px] w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="p-2 text-left">Parcela</th>
+                        <th className="p-2 text-left">Data Pagto</th>
+                        <th className="p-2 text-right">Valor Pago (Bruto)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bulkRefundFound.flows.map(f => (
+                        <tr key={f.id} className="border-b">
+                          <td className="p-2">M{f.mes}</td>
+                          <td className="p-2">{formatISODateBR(f.data_pagamento_vendedor)}</td>
+                          <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td className="p-2 font-medium" colSpan={2}>Total pago</td>
+                        <td className="p-2 text-right font-bold">
+                          {BRL(sum(bulkRefundFound.flows.map(f => f.valor_pago_vendedor || 0)))}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                  <div className="md:col-span-2">
+                    <Label>Valor bruto do estorno</Label>
+                    <Input value={bulkRefundGross} onChange={(e) => setBulkRefundGross(e.target.value)} placeholder="Ex.: 5.000,00" />
+                  </div>
+                  <div className="flex flex-col">
+                    <Label>Valor líquido (auto)</Label>
+                    <div className="p-2 border rounded-md bg-gray-50">
+                      {(() => {
+                        const g = parseFloat(bulkRefundGross.replace(/\./g, "").replace(",", ".")) || 0;
+                        const n = g * (1 - impostoFrac);
+                        return BRL(n);
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <DialogFooter className="pt-4">
+              <Button variant="secondary" onClick={() => setOpenBulkRefund(false)}>Fechar</Button>
+              <Button disabled={!bulkRefundFound || busyRefund} onClick={confirmBulkRefund}>
+                {busyRefund ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Confirmar estorno
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -2552,15 +2037,6 @@ export default function ComissoesPage() {
 }
 
 /* ========================= Subcomponentes ========================= */
-function Metric({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="p-3 rounded-xl border bg-white">
-      <div className="text-xs text-gray-500">{title}</div>
-      <div className="text-xl font-bold">{value}</div>
-    </div>
-  );
-}
-
 function UploadArea({
   onConfirm,
 }: {
@@ -2571,9 +2047,7 @@ function UploadArea({
     comprovante_file?: File | null;
   }) => Promise<void>;
 }) {
-  const [dataPg, setDataPg] = useState<string>(() =>
-    new Date().toISOString().slice(0, 10)
-  );
+  const [dataPg, setDataPg] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [valorPg, setValorPg] = useState<string>("");
   const [fileRecibo, setFileRecibo] = useState<File | null>(null);
   const [fileComp, setFileComp] = useState<File | null>(null);
@@ -2583,28 +2057,18 @@ function UploadArea({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="flex flex-col gap-2">
           <Label>Data do pagamento</Label>
-          <Input
-            type="date"
-            value={dataPg}
-            onChange={(e) => setDataPg(e.target.value)}
-          />
+          <Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} />
         </div>
         <div className="flex flex-col gap-2">
           <Label>Valor pago ao vendedor (opcional)</Label>
-          <Input
-            placeholder="Ex.: 1.974,00"
-            value={valorPg}
-            onChange={(e) => setValorPg(e.target.value)}
-          />
+          <Input placeholder="Ex.: 1.974,00" value={valorPg} onChange={(e) => setValorPg(e.target.value)} />
         </div>
         <div className="flex items-end">
           <Button
             onClick={() =>
               onConfirm({
                 data_pagamento_vendedor: dataPg,
-                valor_pago_vendedor: valorPg
-                  ? parseFloat(valorPg.replace(/\./g, "").replace(",", "."))
-                  : undefined,
+                valor_pago_vendedor: valorPg ? parseFloat(valorPg.replace(/\./g, "").replace(",", ".")) : undefined,
                 recibo_file: fileRecibo,
                 comprovante_file: fileComp,
               })
@@ -2618,26 +2082,16 @@ function UploadArea({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="flex flex-col gap-2">
           <Label>Recibo assinado (PDF)</Label>
-          <Input
-            type="file"
-            accept="application/pdf"
-            onChange={(e) => setFileRecibo(e.target.files?.[0] || null)}
-          />
+          <Input type="file" accept="application/pdf" onChange={(e) => setFileRecibo(e.target.files?.[0] || null)} />
         </div>
         <div className="flex flex-col gap-2">
           <Label>Comprovante de pagamento (PDF/Imagem)</Label>
-          <Input
-            type="file"
-            accept="application/pdf,image/*"
-            onChange={(e) => setFileComp(e.target.files?.[0] || null)}
-          />
+          <Input type="file" accept="application/pdf,image/*" onChange={(e) => setFileComp(e.target.files?.[0] || null)} />
         </div>
       </div>
 
       <div className="text-xs text-gray-500 leading-relaxed">
-        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>.
-        Se nenhuma parcela estiver marcada, a confirmação faz uma seleção
-        segura automática (especialmente no fluxo 1×100%).
+        Arquivos vão para o bucket <code>comissoes</code>. Digite o valor <b>BRUTO</b>. Se nenhuma parcela estiver marcada, a confirmação faz uma seleção segura automática.
       </div>
     </div>
   );

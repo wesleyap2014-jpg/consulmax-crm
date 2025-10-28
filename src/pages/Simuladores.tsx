@@ -1004,7 +1004,7 @@ function ModalBase({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{title}</div>
@@ -1286,7 +1286,7 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
-      permite_livre: perLivre as any, // compat
+      // ⛔️ REMOVIDO: 'permite_livre' que não existe no schema
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1306,7 +1306,7 @@ function TableFormOverlay({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 z={[`60`]} flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{initial ? "Editar Tabela" : "Nova Tabela"}</div>
@@ -1698,7 +1698,7 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
-          {/* === Configurações do Lance (RESTAURADO) === */}
+          {/* === Configurações do Lance === */}
           <Card>
             <CardHeader>
               <CardTitle>Configurações do Lance</CardTitle>

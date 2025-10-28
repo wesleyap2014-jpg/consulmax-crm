@@ -5,16 +5,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, X, ChevronsUpDown, Search } from "lucide-react";
 import { useParams, useLocation, useSearchParams } from "react-router-dom";
-import { ChevronsUpDown, Search } from "lucide-react";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
 
 type Lead = { id: UUID; nome: string; telefone?: string | null };
-type Admin = { id: UUID; name: string };
+
+type AdminRules = {
+  moto_credito_min_para_limite?: number;           // default 20000
+  moto_limite_pct?: number;                        // default 0.01 (1%)
+  manter_parcela_segmentos?: string[];             // default ["servicos","moto<20000>"]
+  limitador_behavior?: "prefer_limitador_maior" | "prefer_nova_parcela"; // default prefer_limitador_maior
+};
+
+type Admin = { id: UUID; name: string; rules?: AdminRules | null };
 
 type SimTable = {
   id: UUID;
@@ -44,15 +51,10 @@ type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
 /* ======================= Helpers ========================= */
 const brMoney = (v: number) =>
-  v.toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    maximumFractionDigits: 2,
-  });
+  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
 
 const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
 
-/** BRL mask */
 function formatBRLInputFromNumber(n: number): string {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -71,18 +73,9 @@ function parsePctInputToDecimal(s: string): number {
   const val = parseFloat(clean);
   return isNaN(val) ? 0 : val / 100;
 }
-
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
-
-/** Exceção do limitador: Motocicleta >= 20k => 1% */
-function resolveLimitadorPct(baseLimitadorPct: number, segmento: string, credito: number): number {
-  if (segmento?.toLowerCase().includes("motocicleta") && credito >= 20000) return 0.01;
-  return baseLimitadorPct;
-}
-
-/** Formata telefone BR para exibição */
 function formatPhoneBR(s?: string) {
   const d = (s || "").replace(/\D/g, "");
   if (!d) return "";
@@ -107,6 +100,9 @@ type CalcInput = {
   lanceOfertPct: number;
   lanceEmbutPct: number; // <= 0.25
   parcContemplacao: number;
+
+  // === regras por administradora ===
+  adminRules: Required<AdminRules>;
 };
 
 function calcularSimulacao(i: CalcInput) {
@@ -123,6 +119,7 @@ function calcularSimulacao(i: CalcInput) {
     lanceOfertPct,
     lanceEmbutPct,
     parcContemplacao,
+    adminRules,
   } = i;
 
   const prazo = Math.max(1, Math.floor(prazoVenda));
@@ -134,10 +131,18 @@ function calcularSimulacao(i: CalcInput) {
   const isServico = segLower.includes("serv");
   const isMoto = segLower.includes("moto");
 
+  // ===== Regras parametrizadas por admin =====
+  const motoMin = adminRules.moto_credito_min_para_limite ?? 20000;
+  const motoPct = adminRules.moto_limite_pct ?? 0.01;
+  const manterList = (adminRules.manter_parcela_segmentos ?? ["servicos", "moto<20000>"]).map(
+    (s) => s.toLowerCase()
+  );
+  const limitBehavior = adminRules.limitador_behavior ?? "prefer_limitador_maior";
+
   // TA efetiva (parte que vai para as parcelas mensais)
   const TA_efetiva = Math.max(0, taxaAdmFull - antecipPct);
 
-  // Valor de categoria (base para saldo + limitador + seguro)
+  // Valor de categoria
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
   // Fator do Fundo Comum conforme contratação
@@ -148,10 +153,10 @@ function calcularSimulacao(i: CalcInput) {
   const baseMensalSemSeguro =
     (C * fundoComumFactor + C * TA_efetiva + C * frPct) / prazo;
 
-  // Seguro mensal (só soma na parcela, não abate saldo)
+  // Seguro mensal
   const seguroMensal = seguro ? valorCategoria * i.seguroPrestPct : 0;
 
-  // Antecipação (somada nas primeiras 1 ou 2 parcelas)
+  // Antecipação
   const antecipAdicionalCada =
     antecipParcelas > 0 ? (C * antecipPct) / antecipParcelas : 0;
 
@@ -172,7 +177,7 @@ function calcularSimulacao(i: CalcInput) {
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
-  // SALDO DEVEDOR FINAL (valorCategoria - pagos - lance ofertado)
+  // SALDO DEVEDOR FINAL
   const saldoDevedorFinal = Math.max(
     0,
     valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
@@ -181,31 +186,41 @@ function calcularSimulacao(i: CalcInput) {
   // NOVA PARCELA (sem limite) = saldo final / prazo restante (SEM seguro)
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
 
-  // LIMITADOR (sobre valor de categoria)
-  const limitadorBase = resolveLimitadorPct(i.limitadorPct, segmento, C);
+  // LIMITADOR parametrizado
+  let limitadorBase = i.limitadorPct;
+  if (isMoto && C >= motoMin) limitadorBase = motoPct; // aplica regra especial se configurada
+
   const parcelaLimitante = limitadorBase > 0 ? valorCategoria * limitadorBase : 0;
 
-  // Regras especiais: Serviços OU Moto < 20k => mantém parcela, recalcula apenas prazo
-  const manterParcela = isServico || (isMoto && C < 20000);
+  // Manter parcela? (definido por lista)
+  const manterParcela =
+    manterList.includes("servicos") && isServico
+      ? true
+      : manterList.includes("moto<20000>") && isMoto && C < motoMin
+      ? true
+      : false;
 
   let aplicouLimitador = false;
-  let parcelaEscolhida = baseMensalSemSeguro; // sempre sem seguro
+  let parcelaEscolhida = baseMensalSemSeguro;
 
   if (!manterParcela) {
-    // regra padrão: se limitador for maior que a nova parcela, aplica limitador
-    if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
-      aplicouLimitador = true;
-      parcelaEscolhida = parcelaLimitante;
-    } else {
-      // sem limitador: usa a própria novaParcelaSemLimite (mantém prazo)
+    if (limitBehavior === "prefer_nova_parcela") {
       parcelaEscolhida = novaParcelaSemLimite;
+    } else {
+      // prefer_limitador_maior (padrão Embracon)
+      if (limitadorBase > 0 && parcelaLimitante > novaParcelaSemLimite) {
+        aplicouLimitador = true;
+        parcelaEscolhida = parcelaLimitante;
+      } else {
+        parcelaEscolhida = novaParcelaSemLimite;
+      }
     }
   }
 
-  // Caso especial: antecipação em 2x e contemplação na 1ª parcela
+  // Caso especial: 2ª antecipação quando contemplado na 1ª
   const has2aAntecipDepois = antecipParcelas >= 2 && parcContemplacao === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois
-    ? parcelaEscolhida + antecipAdicionalCada /* (sem seguro no saldo) */
+    ? parcelaEscolhida + antecipAdicionalCada
     : null;
 
   // NOVO PRAZO
@@ -295,19 +310,17 @@ function PercentInput({
 /* ========================= Página ======================== */
 export default function Simuladores() {
   const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams(); // se usa ?setup=1
+  const [searchParams] = useSearchParams();
   const setup = searchParams.get("setup") === "1";
   const routeAdminId = id ?? null;
-  
+
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [tables, setTables] = useState<SimTable[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [activeAdminId, setActiveAdminId] = useState<string | null>(routeAdminId);
-  
-  useEffect(() => {
-    setActiveAdminId(routeAdminId);
-  }, [routeAdminId]);
+
+  useEffect(() => setActiveAdminId(routeAdminId), [routeAdminId]);
 
   useEffect(() => {
     if (!routeAdminId && !activeAdminId && admins.length) {
@@ -317,7 +330,7 @@ export default function Simuladores() {
 
   const [mgrOpen, setMgrOpen] = useState(false);
 
-  // seleção Embracon (genérica)
+  // seleção / estados
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
   const [grupo, setGrupo] = useState<string>("");
@@ -341,61 +354,42 @@ export default function Simuladores() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
 
-  // telefone do usuário logado (para o Resumo / Proposta)
   const [userPhone, setUserPhone] = useState<string>("");
-
-  // Texto livre para “Assembleia”
   const [assembleia, setAssembleia] = useState<string>("15/10");
 
-  // URL: /simuladores/:id?setup=1
-  const adminId = routeAdminId;   // reaproveita o id já lido lá em cima
-  const openSetup = setup;        // reaproveita o boolean já calculado
+  const adminId = routeAdminId;
+  const openSetup = setup;
   const { pathname: _pathname } = useLocation();
-  const showTopChips = false;     // ou pathname === "/simuladores"
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
-        supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+        supabase.from("sim_admins").select("id,name,rules").order("name", { ascending: true }),
         supabase.from("sim_tables").select("*"),
         supabase.from("leads").select("id, nome, telefone").limit(200).order("created_at", { ascending: false }),
       ]);
-      setAdmins(a ?? []);
+      setAdmins((a ?? []).map((x: any) => ({ id: x.id, name: x.name, rules: x.rules || null })));
       setTables(t ?? []);
       setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
-      // 1) padrão: Embracon > ou o primeiro da lista
+      // Embracon como default, senão primeira
       const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
       let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
-
-      // 2) se a URL tiver um adminId válido, priorize ele
-      if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) {
-        nextActiveId = adminId as string;
-      }
+      if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) nextActiveId = adminId as string;
       setActiveAdminId(nextActiveId);
 
-      // 3) terminou o loading
       setLoading(false);
-
-      // 4) se a URL tiver ?setup=1, abre o modal de tabelas
-      if (openSetup) {
-        setTimeout(() => setMgrOpen(true), 0);
-      }
+      if (openSetup) setTimeout(() => setMgrOpen(true), 0);
     })();
   }, []);
 
-  // pega telefone do usuário logado
   useEffect(() => {
     (async () => {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
       if (!uid) return;
-      const { data } = await supabase
-        .from("users")
-        .select("phone")
-        .eq("auth_user_id", uid)
-        .maybeSingle();
+      const { data } = await supabase.from("users").select("phone").eq("auth_user_id", uid).maybeSingle();
       setUserPhone((data?.phone || "").toString());
     })();
   }, []);
@@ -405,12 +399,30 @@ export default function Simuladores() {
     setLeadInfo(found ? { nome: found.nome, telefone: found.telefone } : null);
   }, [leadId, leads]);
 
+  const activeAdmin = admins.find((a) => a.id === activeAdminId) || null;
+
+  // Defaults de regras (Embracon) + merge com admin.rules
+  const adminRules: Required<AdminRules> = useMemo(() => {
+    const base: Required<AdminRules> = {
+      moto_credito_min_para_limite: 20000,
+      moto_limite_pct: 0.01,
+      manter_parcela_segmentos: ["servicos", "moto<20000>"],
+      limitador_behavior: "prefer_limitador_maior",
+    };
+    const r = (activeAdmin?.rules || {}) as AdminRules;
+    return {
+      moto_credito_min_para_limite: r.moto_credito_min_para_limite ?? base.moto_credito_min_para_limite,
+      moto_limite_pct: r.moto_limite_pct ?? base.moto_limite_pct,
+      manter_parcela_segmentos: r.manter_parcela_segmentos ?? base.manter_parcela_segmentos,
+      limitador_behavior: r.limitador_behavior ?? base.limitador_behavior,
+    };
+  }, [activeAdmin?.rules]);
+
   const adminTables = useMemo(
     () => tables.filter((t) => t.admin_id === activeAdminId),
     [tables, activeAdminId]
   );
 
-  // nomes de tabela distintos por segmento
   const nomesTabelaSegmento = useMemo(() => {
     const list = adminTables
       .filter((t) => (segmento ? t.segmento === segmento : true))
@@ -418,11 +430,8 @@ export default function Simuladores() {
     return Array.from(new Set(list));
   }, [adminTables, segmento]);
 
-  // variantes (linhas) do nome escolhido (prazo e taxas diferentes)
   const variantesDaTabela = useMemo(() => {
-    return adminTables.filter(
-      (t) => t.segmento === segmento && t.nome_tabela === nomeTabela
-    );
+    return adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela);
   }, [adminTables, segmento, nomeTabela]);
 
   const tabelaSelecionada = useMemo(
@@ -433,21 +442,14 @@ export default function Simuladores() {
   useEffect(() => {
     if (!tabelaSelecionada) return;
     setPrazoAte(tabelaSelecionada.prazo_limite);
-    setFaixa({
-      min: tabelaSelecionada.faixa_min,
-      max: tabelaSelecionada.faixa_max,
-    });
-    if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25)
-      setForma("Parcela Cheia");
-    if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50)
-      setForma("Parcela Cheia");
+    setFaixa({ min: tabelaSelecionada.faixa_min, max: tabelaSelecionada.faixa_max });
+    if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25) setForma("Parcela Cheia");
+    if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
   }, [tabelaSelecionada]); // eslint-disable-line
 
-  // valida % embutido
   const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, 0.25);
   useEffect(() => {
-    if (lanceEmbutPct !== lanceEmbutPctValid)
-      setLanceEmbutPct(lanceEmbutPctValid);
+    if (lanceEmbutPct !== lanceEmbutPctValid) setLanceEmbutPct(lanceEmbutPctValid);
   }, [lanceEmbutPct]); // eslint-disable-line
 
   const prazoAviso =
@@ -482,6 +484,7 @@ export default function Simuladores() {
       lanceOfertPct,
       lanceEmbutPct: lanceEmbutPctValid,
       parcContemplacao,
+      adminRules, // <<<<<< regras por administradora
     };
     setCalc(calcularSimulacao(inp));
   }, [
@@ -493,6 +496,7 @@ export default function Simuladores() {
     lanceOfertPct,
     lanceEmbutPctValid,
     parcContemplacao,
+    adminRules,
   ]); // eslint-disable-line
 
   async function salvarSimulacao() {
@@ -516,7 +520,7 @@ export default function Simuladores() {
       lance_embutido_pct: lanceEmbutPctValid,
       parcela_contemplacao: parcContemplacao,
 
-      // ====== valores calculados ======
+      // calculados
       valor_categoria: calc.valorCategoria,
       parcela_ate_1_ou_2: calc.parcelaAte,
       parcela_demais: calc.parcelaDemais,
@@ -531,21 +535,13 @@ export default function Simuladores() {
       saldo_devedor_final: calc.saldoDevedorFinal,
       novo_prazo: calc.novoPrazo,
 
-      // ====== persistir ADM/FR usados (fração 0–1) ======
       adm_tax_pct: tabelaSelecionada.taxa_adm_pct,
       fr_tax_pct: tabelaSelecionada.fundo_reserva_pct,
     };
 
-    const { data, error } = await supabase
-      .from("sim_simulations")
-      .insert(payload)
-      .select("code")
-      .single();
+    const { data, error } = await supabase.from("sim_simulations").insert(payload).select("code").single();
     setSalvando(false);
-    if (error) {
-      alert("Erro ao salvar simulação: " + error.message);
-      return;
-    }
+    if (error) { alert("Erro ao salvar simulação: " + error.message); return; }
     setSimCode(data?.code ?? null);
   }
 
@@ -556,36 +552,26 @@ export default function Simuladores() {
       return [newTable, ...prev];
     });
   }
-
   function handleTableDeleted(id: string) {
     setTables((prev) => prev.filter((t) => t.id !== id));
   }
 
-  // ===== Resumo da Proposta (texto copiável) =====
   const resumoTexto = useMemo(() => {
     if (!tabelaSelecionada || !calc || !podeCalcular) return "";
-
-    const bem = (() => {
-      const seg = (segmento || tabelaSelecionada.segmento || "").toLowerCase();
-      if (seg.includes("imó")) return "imóvel";
-      if (seg.includes("serv")) return "serviço";
-      if (seg.includes("moto")) return "motocicleta";
-      return "veículo";
-    })();
+    const seg = (segmento || tabelaSelecionada.segmento || "").toLowerCase();
+    const bem =
+      seg.includes("imó") ? "imóvel" :
+      seg.includes("serv") ? "serviço" :
+      seg.includes("moto") ? "motocicleta" : "veículo";
 
     const primeiraParcelaLabel =
-      tabelaSelecionada.antecip_parcelas === 2
-        ? "Parcelas 1 e 2"
-        : tabelaSelecionada.antecip_parcelas === 1
-        ? "Parcela 1"
-        : "Parcela inicial";
+      tabelaSelecionada.antecip_parcelas === 2 ? "Parcelas 1 e 2"
+      : tabelaSelecionada.antecip_parcelas === 1 ? "Parcela 1"
+      : "Parcela inicial";
 
-    const parcelaRestanteValor = brMoney(calc.parcelaEscolhida);
     const segundaParcExtra =
       calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao
-        ? ` (2ª parcela com antecipação: ${brMoney(
-            calc.segundaParcelaComAntecipacao
-          )})`
+        ? ` (2ª parcela com antecipação: ${brMoney(calc.segundaParcelaComAntecipacao)})`
         : "";
 
     const telDigits = (userPhone || "").replace(/\D/g, "");
@@ -594,41 +580,28 @@ export default function Simuladores() {
     return (
 `🎯 Com a estratégia certa, você conquista seu ${bem} sem pagar juros, sem entrada e ainda economiza!
 
-📌 Confira essa simulação real:
+📌 Simulação:
 
 💰 Crédito contratado: ${brMoney(credito)}
-
-💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (Primeira parcela em até 3x sem juros no cartão)
-
+💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (1ª em até 3x no cartão)
 💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
 🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
-
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
-
-📆 Parcelas restantes (valor): ${parcelaRestanteValor}${segundaParcExtra}
-
+📆 Parcelas restantes: ${brMoney(calc.parcelaEscolhida)}${segundaParcExtra}
 ⏳ Prazo restante: ${calc.novoPrazo} meses
 
-💡 Um planejamento inteligente que cabe no seu bolso e acelera a realização do seu sonho!
-
-👉 Quer simular com o valor do seu ${bem} dos sonhos?
-Me chama aqui e eu te mostro o melhor caminho 👇
+👉 Quer simular com o valor do seu ${bem}?
 ${wa}`
     );
   }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone]);
 
   async function copiarResumo() {
-    try {
-      await navigator.clipboard.writeText(resumoTexto);
-      alert("Resumo copiado!");
-    } catch {
-      alert("Não foi possível copiar o resumo.");
-    }
+    try { await navigator.clipboard.writeText(resumoTexto); alert("Resumo copiado!"); }
+    catch { alert("Não foi possível copiar o resumo."); }
   }
 
-  // ===== Novo: Texto “OPORTUNIDADE / PROPOSTA” =====
   function normalizarSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
     if (s.includes("imó")) return "Imóvel";
@@ -647,26 +620,16 @@ ${wa}`
     return "🚗";
   }
 
-  const activeAdmin = admins.find((a) => a.id === activeAdminId);
   const propostaTexto = useMemo(() => {
     if (!calc || !podeCalcular) return "";
-
     const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
     const seg = normalizarSegmento(segBase);
     const emoji = emojiDoSegmento(segBase);
-
-    const parcela1 = brMoney(calc.parcelaAte);
     const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
     const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
-
-    const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
-
-    const grupoTxt = grupo || "—";
-
+    const adminNome = activeAdmin?.name || "Administrador";
     const whatsappFmt = formatPhoneBR(userPhone);
     const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
-
-    const adminNome = activeAdmin?.name || "Administrador";
 
     return (
 `🚨OPORTUNIDADE 🚨
@@ -676,15 +639,12 @@ ${wa}`
 Proposta ${seg}
 
 ${emoji} Crédito: ${brMoney(calc.novoCredito)}
-💰 Parcela 1: ${parcela1} (Em até 3x no cartão)${linhaParc2}
-${linhaPrazo}
+💰 Parcela 1: ${brMoney(calc.parcelaAte)} (Em até 3x no cartão)${linhaParc2}
+📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}
 💵 Lance Próprio: ${brMoney(calc.lanceProprioValor)}
-📢 Grupo: ${grupoTxt}
-
-🚨 POUCAS VAGAS DISPONÍVEIS🚨
+📢 Grupo: ${grupo || "—"}
 
 Assembleia ${assembleia}
-
 📲 Garanta sua vaga agora!${whatsappLine}
 
 Vantagens
@@ -695,12 +655,8 @@ Vantagens
   }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone, activeAdmin]);
 
   async function copiarProposta() {
-    try {
-      await navigator.clipboard.writeText(propostaTexto);
-      alert("Texto copiado!");
-    } catch {
-      alert("Não foi possível copiar o texto.");
-    }
+    try { await navigator.clipboard.writeText(propostaTexto); alert("Texto copiado!"); }
+    catch { alert("Não foi possível copiar o texto."); }
   }
 
   if (loading) {
@@ -713,56 +669,19 @@ Vantagens
 
   return (
     <div className="p-6 space-y-4">
-      {/* topo: admins + botões */}
       <div className="flex flex-wrap items-center gap-2">
-        {/* Chips de administradoras (escondidos quando showTopChips === false) */}
-        {false && (
-          <div className="flex flex-wrap gap-2">
-            {admins.map((a) => (
-              <Button
-                key={a.id}
-                variant={activeAdminId === a.id ? "default" : "secondary"}
-                onClick={() => setActiveAdminId(a.id)}
-                className="h-10 rounded-2xl px-4"
-              >
-                {a.name}
-              </Button>
-            ))}
-          </div>
-        )}
-
         <div className="ml-auto flex items-center gap-2">
           {activeAdmin && (
             <>
-              {/* ✅ Mantido SEM depender do showTopChips */}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setMgrOpen(true)}
-                className="h-10 rounded-2xl px-4"
-              >
+              <Button variant="secondary" size="sm" onClick={() => setMgrOpen(true)} className="h-10 rounded-2xl px-4">
                 Gerenciar Tabelas
               </Button>
-
-              {/* ⛔️ "+ Add Administradora" só aparece se showTopChips === true */}
-              {false && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => alert("Em breve: adicionar administradora.")}
-                  className="h-10 rounded-2xl px-4 whitespace-nowrap"
-                >
-                  <Plus className="h-4 w-4 mr-1" /> + Add Administradora
-                </Button>
-              )}
             </>
           )}
         </div>
       </div>
 
-      {/* layout em duas colunas */}
       <div className="grid grid-cols-12 gap-4">
-        {/* coluna esquerda: simulador */}
         <div className="col-span-12 lg:col-span-8">
           <Card>
             <CardHeader>
@@ -785,16 +704,9 @@ Vantagens
                   grupo={grupo}
                   setGrupo={setGrupo}
                   segmento={segmento}
-                  setSegmento={(v) => {
-                    setSegmento(v);
-                    setNomeTabela("");
-                    setTabelaId("");
-                  }}
+                  setSegmento={(v) => { setSegmento(v); setNomeTabela(""); setTabelaId(""); }}
                   nomeTabela={nomeTabela}
-                  setNomeTabela={(v) => {
-                    setNomeTabela(v);
-                    setTabelaId("");
-                  }}
+                  setNomeTabela={(v) => { setNomeTabela(v); setTabelaId(""); }}
                   tabelaId={tabelaId}
                   setTabelaId={setTabelaId}
                   credito={credito}
@@ -818,156 +730,92 @@ Vantagens
                   simCode={simCode}
                 />
               ) : (
-                <div className="text-sm text-muted-foreground">
-                  Nenhuma administradora encontrada.
-                </div>
+                <div className="text-sm text-muted-foreground">Nenhuma administradora encontrada.</div>
               )}
             </CardContent>
           </Card>
 
-          {/* Ações principais */}
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button disabled={!calc || salvando} onClick={salvarSimulacao} className="h-10 rounded-2xl px-4">
               {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
             </Button>
-            {simCode && (
-              <span className="text-sm">
-                ✅ Salvo como <strong>Simulação #{simCode}</strong>
-              </span>
-            )}
+            {simCode && <span className="text-sm">✅ Salvo como <strong>Simulação #{simCode}</strong></span>}
           </div>
         </div>
 
-        {/* coluna direita: memória + textos */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Memória de Cálculo</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Memória de Cálculo</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
               {!tabelaSelecionada ? (
-                <div className="text-muted-foreground">
-                  Selecione uma tabela para ver os detalhes.
-                </div>
+                <div className="text-muted-foreground">Selecione uma tabela para ver os detalhes.</div>
               ) : (
                 <>
                   <div className="grid grid-cols-2 gap-2">
-                    <div>Crédito</div>
-                    <div className="text-right font-medium">
-                      {brMoney(credito || 0)}
-                    </div>
-                    <div>Prazo da Venda</div>
-                    <div className="text-right">{prazoVenda || "-"}</div>
-                    <div>Forma</div>
-                    <div className="text-right">{forma}</div>
+                    <div>Crédito</div><div className="text-right font-medium">{brMoney(credito || 0)}</div>
+                    <div>Prazo da Venda</div><div className="text-right">{prazoVenda || "-"}</div>
+                    <div>Forma</div><div className="text-right">{forma}</div>
                     <div>Seguro / parcela</div>
-                    <div className="text-right">
-                      {seguroPrest
-                        ? pctHuman(tabelaSelecionada.seguro_prest_pct)
-                        : "—"}
-                    </div>
+                    <div className="text-right">{seguroPrest ? pctHuman(tabelaSelecionada.seguro_prest_pct) : "—"}</div>
                   </div>
                   <hr className="my-2" />
                   <div className="grid grid-cols-2 gap-2">
                     <div>Fundo Comum (fator)</div>
                     <div className="text-right">
-                      {calc
-                        ? (calc.fundoComumFactor * 100).toFixed(0) + "%"
-                        : "—"}
+                      {calc ? (calc.fundoComumFactor * 100).toFixed(0) + "%" : "—"}
                     </div>
-                    <div>Taxa Adm (total)</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.taxa_adm_pct)}
-                    </div>
-                    <div>TA efetiva</div>
-                    <div className="text-right">
-                      {calc ? pctHuman(calc.TA_efetiva) : "—"}
-                    </div>
-                    <div>Fundo Reserva</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.fundo_reserva_pct)}
-                    </div>
+                    <div>Taxa Adm (total)</div><div className="text-right">{pctHuman(tabelaSelecionada.taxa_adm_pct)}</div>
+                    <div>TA efetiva</div><div className="text-right">{calc ? pctHuman(calc.TA_efetiva) : "—"}</div>
+                    <div>Fundo Reserva</div><div className="text-right">{pctHuman(tabelaSelecionada.fundo_reserva_pct)}</div>
                     <div>Antecipação Adm</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.antecip_pct)} •{" "}
-                      {tabelaSelecionada.antecip_parcelas}x
-                    </div>
-                    <div>Limitador Parcela</div>
+                    <div className="text-right">{pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x</div>
+                    <div>Limitador Parcela (regra atual)</div>
                     <div className="text-right">
                       {pctHuman(
-                        resolveLimitadorPct(
-                          tabelaSelecionada.limitador_parcela_pct,
-                          tabelaSelecionada.segmento,
-                          credito || 0
-                        )
+                        (tabelaSelecionada.segmento.toLowerCase().includes("moto") &&
+                         (credito || 0) >= (adminRules.moto_credito_min_para_limite ?? 20000))
+                          ? (adminRules.moto_limite_pct ?? 0.01)
+                          : tabelaSelecionada.limitador_parcela_pct
                       )}
                     </div>
-                    <div>Valor de Categoria</div>
-                    <div className="text-right">
-                      {calc ? brMoney(calc.valorCategoria) : "—"}
-                    </div>
+                    <div>Valor de Categoria</div><div className="text-right">{calc ? brMoney(calc.valorCategoria) : "—"}</div>
                   </div>
                 </>
               )}
             </CardContent>
           </Card>
 
-          {/* Resumo antigo */}
           <Card>
-            <CardHeader>
-              <CardTitle>Resumo da Proposta</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Resumo da Proposta</CardTitle></CardHeader>
             <CardContent className="space-y-2">
-              <textarea
-                className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed"
-                style={{ lineHeight: "1.6" }}
-                readOnly
-                value={resumoTexto}
-                placeholder="Preencha os campos da simulação para gerar o resumo."
-              />
+              <textarea className="w-full h-64 border rounded-md p-3 text-sm leading-relaxed" readOnly value={resumoTexto}
+                placeholder="Preencha os campos da simulação para gerar o resumo." />
               <div className="flex items-center justify-end gap-2">
-                <Button onClick={copiarResumo} disabled={!resumoTexto}>
-                  Copiar
-                </Button>
+                <Button onClick={copiarResumo} disabled={!resumoTexto}>Copiar</Button>
               </div>
             </CardContent>
           </Card>
 
-          {/* OPORTUNIDADE / PROPOSTA */}
           <Card>
-            <CardHeader>
-              <CardTitle>Texto: Oportunidade / Proposta</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Texto: Oportunidade / Proposta</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <Label>Assembleia (ex.: 15/10)</Label>
-                  <Input
-                    value={assembleia}
-                    onChange={(e) => setAssembleia(e.target.value)}
-                    placeholder="dd/mm"
-                  />
+                  <Input value={assembleia} onChange={(e) => setAssembleia(e.target.value)} placeholder="dd/mm" />
                 </div>
               </div>
-              <textarea
-                className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed"
-                style={{ lineHeight: "1.6" }}
-                readOnly
-                value={propostaTexto}
-                placeholder="Preencha a simulação para gerar o texto."
-              />
+              <textarea className="w-full h-72 border rounded-md p-3 text-sm leading-relaxed" readOnly
+                value={propostaTexto} placeholder="Preencha a simulação para gerar o texto." />
               <div className="flex items-center justify-end gap-2">
-                <Button onClick={copiarProposta} disabled={!propostaTexto}>
-                  Copiar
-                </Button>
+                <Button onClick={copiarProposta} disabled={!propostaTexto}>Copiar</Button>
               </div>
             </CardContent>
           </Card>
         </div>
       </div>
 
-      {/* Overlay de gerenciamento de tabelas */}
       {mgrOpen && activeAdmin && (
         <TableManagerModal
           admin={activeAdmin}
@@ -981,34 +829,19 @@ Vantagens
   );
 }
 
-/* =============== Modal: base com ESC para fechar =============== */
-function ModalBase({
-  children,
-  onClose,
-  title,
-}: {
-  children: React.ReactNode;
-  onClose: () => void;
-  title: string;
-}) {
+/* =============== Modal Base =============== */
+function ModalBase({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string; }) {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-5xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{title}</div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-muted"
-            aria-label="Fechar"
-          >
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -1018,27 +851,16 @@ function ModalBase({
   );
 }
 
-/* ============== Modal: Gerenciar Tabelas (com paginação) ============== */
+/* ============== Gerenciador de Tabelas ============== */
 function TableManagerModal({
-  admin,
-  allTables,
-  onClose,
-  onCreatedOrUpdated,
-  onDeleted,
-}: {
-  admin: Admin;
-  allTables: SimTable[];
-  onClose: () => void;
-  onCreatedOrUpdated: (t: SimTable) => void;
-  onDeleted: (id: string) => void;
-}) {
+  admin, allTables, onClose, onCreatedOrUpdated, onDeleted,
+}: { admin: Admin; allTables: SimTable[]; onClose: () => void; onCreatedOrUpdated: (t: SimTable) => void; onDeleted: (id: string) => void; }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<SimTable | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
-  // reset página quando muda a lista
   useEffect(() => setPage(1), [allTables.length]);
 
   const grouped = useMemo(() => {
@@ -1050,30 +872,16 @@ function TableManagerModal({
   }, [allTables]);
 
   const totalPages = Math.max(1, Math.ceil(grouped.length / pageSize));
-  const pageItems = useMemo(
-    () => grouped.slice((page - 1) * pageSize, page * pageSize),
-    [grouped, page]
-  );
+  const pageItems = useMemo(() => grouped.slice((page - 1) * pageSize, page * pageSize), [grouped, page]);
 
   async function deletar(id: string) {
     if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
     setBusyId(id);
-
-    // 1) Exclui simulações dependentes (evita erro de FK)
     const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
-    if (delSims.error) {
-      setBusyId(null);
-      alert("Erro ao excluir simulações vinculadas: " + delSims.error.message);
-      return;
-    }
-
-    // 2) Exclui a tabela
+    if (delSims.error) { setBusyId(null); alert("Erro ao excluir simulações vinculadas: " + delSims.error.message); return; }
     const { error } = await supabase.from("sim_tables").delete().eq("id", id);
     setBusyId(null);
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-      return;
-    }
+    if (error) { alert("Erro ao excluir: " + error.message); return; }
     onDeleted(id);
   }
 
@@ -1081,16 +889,8 @@ function TableManagerModal({
     <ModalBase onClose={onClose} title="Gerenciador de Tabelas">
       <div className="p-4">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-sm text-muted-foreground">
-            Admin ativa: <strong>{admin.name}</strong>
-          </div>
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setShowForm(true);
-            }}
-            className="h-10 rounded-2xl px-4"
-          >
+          <div className="text-sm text-muted-foreground">Admin ativa: <strong>{admin.name}</strong></div>
+          <Button onClick={() => { setEditing(null); setShowForm(true); }} className="h-10 rounded-2xl px-4">
             <Plus className="h-4 w-4 mr-1" /> Nova Tabela
           </Button>
         </div>
@@ -1125,29 +925,11 @@ function TableManagerModal({
                   <td className="p-2">{pctHuman(t.seguro_prest_pct)}</td>
                   <td className="p-2">
                     <div className="flex justify-end gap-2">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => {
-                          setEditing(t);
-                          setShowForm(true);
-                        }}
-                        className="h-9 rounded-xl px-3"
-                      >
+                      <Button variant="secondary" size="sm" onClick={() => { setEditing(t); setShowForm(true); }} className="h-9 rounded-xl px-3">
                         <Pencil className="h-4 w-4 mr-1" /> Editar
                       </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={busyId === t.id}
-                        onClick={() => deletar(t.id)}
-                        className="h-9 rounded-xl px-3"
-                      >
-                        {busyId === t.id ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4 mr-1" />
-                        )}
+                      <Button variant="destructive" size="sm" disabled={busyId === t.id} onClick={() => deletar(t.id)} className="h-9 rounded-xl px-3">
+                        {busyId === t.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
                         Excluir
                       </Button>
                     </div>
@@ -1155,52 +937,18 @@ function TableManagerModal({
                 </tr>
               ))}
               {pageItems.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={10}
-                    className="p-4 text-center text-muted-foreground"
-                  >
-                    Sem tabelas para esta administradora.
-                  </td>
-                </tr>
+                <tr><td colSpan={10} className="p-4 text-center text-muted-foreground">Sem tabelas para esta administradora.</td></tr>
               )}
             </tbody>
           </table>
         </div>
 
-        {/* paginação */}
         <div className="flex items-center justify-between mt-3 text-sm">
-          <div>
-            {grouped.length > 0 && (
-              <>
-                Mostrando{" "}
-                <strong>
-                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}
-                </strong>{" "}
-                de <strong>{grouped.length}</strong>
-              </>
-            )}
-          </div>
+          <div>{grouped.length > 0 && <>Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}</strong> de <strong>{grouped.length}</strong></>}</div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
-              Anterior
-            </Button>
-            <span>
-              Página {page} de {totalPages}
-            </span>
-            <Button
-              variant="secondary"
-              className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
-              Próxima
-            </Button>
+            <Button variant="secondary" className="h-9 rounded-xl px-3" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
+            <span>Página {page} de {totalPages}</span>
+            <Button variant="secondary" className="h-9 rounded-xl px-3" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Próxima</Button>
           </div>
         </div>
       </div>
@@ -1210,10 +958,7 @@ function TableManagerModal({
           adminId={admin.id}
           initial={editing || undefined}
           onClose={() => setShowForm(false)}
-          onSaved={(t) => {
-            onCreatedOrUpdated(t);
-            setShowForm(false);
-          }}
+          onSaved={(t) => { onCreatedOrUpdated(t); setShowForm(false); }}
         />
       )}
     </ModalBase>
@@ -1222,16 +967,8 @@ function TableManagerModal({
 
 /* ===== Overlay de Formulário (Novo / Editar) de Tabela ==== */
 function TableFormOverlay({
-  adminId,
-  initial,
-  onSaved,
-  onClose,
-}: {
-  adminId: string;
-  initial?: SimTable;
-  onSaved: (t: SimTable) => void;
-  onClose: () => void;
-}) {
+  adminId, initial, onSaved, onClose,
+}: { adminId: string; initial?: SimTable; onSaved: (t: SimTable) => void; onClose: () => void; }) {
   const [segmento, setSegmento] = useState(initial?.segmento || "Imóvel Estendido");
   const [nome, setNome] = useState(initial?.nome_tabela || "Select Estendido");
   const [faixaMin, setFaixaMin] = useState(initial?.faixa_min ?? 120000);
@@ -1257,7 +994,6 @@ function TableFormOverlay({
 
   const [saving, setSaving] = useState(false);
 
-  // ESC para fechar
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -1282,7 +1018,6 @@ function TableFormOverlay({
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
-      // ⛔️ removido 'permite_livre'
       permite_lance_livre: perLivre,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
@@ -1291,11 +1026,9 @@ function TableFormOverlay({
     };
 
     let res;
-    if (initial) {
-      res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
-    } else {
-      res = await supabase.from("sim_tables").insert(payload).select("*").single();
-    }
+    if (initial) res = await supabase.from("sim_tables").update(payload).eq("id", initial.id).select("*").single();
+    else res = await supabase.from("sim_tables").insert(payload).select("*").single();
+
     setSaving(false);
     if (res.error) { alert("Erro ao salvar tabela: " + res.error.message); return; }
     onSaved(res.data as SimTable);
@@ -1306,9 +1039,7 @@ function TableFormOverlay({
       <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{initial ? "Editar Tabela" : "Nova Tabela"}</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar">
-            <X className="h-5 w-5" />
-          </button>
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Fechar"><X className="h-5 w-5" /></button>
         </div>
 
         <div className="p-4 grid gap-3 md:grid-cols-4">
@@ -1405,13 +1136,10 @@ function EmbraconSimulator(p: EmbraconProps) {
   const [leadQuery, setLeadQuery] = useState("");
 
   const filteredLeads = useMemo(() => {
-    const norm = (s: string) =>
-      s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-
+    const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     const qRaw = leadQuery.trim();
     const q = norm(qRaw);
     const qDigits = qRaw.replace(/\D/g, ""); // busca por telefone
-
     return p.leads.filter((l) => {
       const nome = norm(l.nome || "");
       const tel = (l.telefone || "").replace(/\D/g, "");
@@ -1419,9 +1147,7 @@ function EmbraconSimulator(p: EmbraconProps) {
     });
   }, [p.leads, leadQuery]);
 
-  useEffect(() => {
-    if (!leadOpen) setLeadQuery("");
-  }, [leadOpen]);
+  useEffect(() => { if (!leadOpen) setLeadQuery(""); }, [leadOpen]);
 
   return (
     <div className="space-y-6">
@@ -1439,41 +1165,25 @@ function EmbraconSimulator(p: EmbraconProps) {
                 </PopoverButton>
 
                 <PopoverContent className="min-w-[260px] p-2 z-50">
-                  {/* Busca */}
                   <div className="flex items-center gap-2 mb-2">
                     <Search className="h-4 w-4 opacity-60" />
-                    <Input
-                      placeholder="Buscar lead por nome ou telefone..."
-                      value={leadQuery}
-                      onChange={(e) => setLeadQuery(e.target.value)}
-                      className="h-8"
-                    />
+                    <Input placeholder="Buscar lead por nome ou telefone..." value={leadQuery}
+                      onChange={(e) => setLeadQuery(e.target.value)} className="h-8" />
                   </div>
 
-                  {/* Lista */}
                   <div className="max-h-64 overflow-y-auto space-y-1">
                     {filteredLeads.length > 0 ? (
                       filteredLeads.map((l) => (
                         <PopoverClose asChild key={l.id}>
-                          <button
-                            type="button"
-                            className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-                            onClick={() => {
-                              p.setLeadId(l.id);
-                              setLeadQuery(""); // limpa a busca
-                            }}
-                          >
+                          <button type="button" className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
+                            onClick={() => { p.setLeadId(l.id); setLeadQuery(""); }}>
                             <div className="text-sm font-medium">{l.nome}</div>
-                            {l.telefone && (
-                              <div className="text-xs text-muted-foreground">{l.telefone}</div>
-                            )}
+                            {l.telefone && <div className="text-xs text-muted-foreground">{l.telefone}</div>}
                           </button>
                         </PopoverClose>
                       ))
                     ) : (
-                      <div className="text-sm text-muted-foreground px-2 py-6 text-center">
-                        Nenhum lead encontrado
-                      </div>
+                      <div className="text-sm text-muted-foreground px-2 py-6 text-center">Nenhum lead encontrado</div>
                     )}
                   </div>
                 </PopoverContent>
@@ -1485,13 +1195,10 @@ function EmbraconSimulator(p: EmbraconProps) {
                 </p>
               )}
             </div>
+
             <div>
               <Label>Nº do Grupo (opcional)</Label>
-              <Input
-                value={p.grupo}
-                onChange={(e) => p.setGrupo(e.target.value)}
-                placeholder="ex.: 9957"
-              />
+              <Input value={p.grupo} onChange={(e) => p.setGrupo(e.target.value)} placeholder="ex.: 9957" />
             </div>
           </div>
         </CardContent>
@@ -1505,56 +1212,32 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Segmento</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.segmento}
-                  onChange={(e) => p.setSegmento(e.target.value)}
-                >
+                <select className="w-full h-10 border rounded-md px-3" value={p.segmento}
+                  onChange={(e) => p.setSegmento(e.target.value)}>
                   <option value="">Selecione o segmento</option>
-                  {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map(
-                    (s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    )
-                  )}
-                </select>
-              </div>
-
-              <div>
-                <Label>Tabela</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.nomeTabela}
-                  disabled={!p.segmento}
-                  onChange={(e) => p.setNomeTabela(e.target.value)}
-                >
-                  <option value="">
-                    {p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}
-                  </option>
-                  {p.nomesTabelaSegmento.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
+                  {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map((s) => (
+                    <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
               </div>
 
               <div>
+                <Label>Tabela</Label>
+                <select className="w-full h-10 border rounded-md px-3" value={p.nomeTabela} disabled={!p.segmento}
+                  onChange={(e) => p.setNomeTabela(e.target.value)}>
+                  <option value="">{p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}</option>
+                  {p.nomesTabelaSegmento.map((n) => (<option key={n} value={n}>{n}</option>))}
+                </select>
+              </div>
+
+              <div>
                 <Label>Prazo Até</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.tabelaId}
-                  disabled={!p.nomeTabela}
-                  onChange={(e) => p.setTabelaId(e.target.value)}
-                >
-                  <option value="">
-                    {p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}
-                  </option>
+                <select className="w-full h-10 border rounded-md px-3" value={p.tabelaId} disabled={!p.nomeTabela}
+                  onChange={(e) => p.setTabelaId(e.target.value)}>
+                  <option value="">{p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}</option>
                   {p.variantesDaTabela.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR{" "}
-                      {pctHuman(t.fundo_reserva_pct)}
+                      {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR {pctHuman(t.fundo_reserva_pct)}
                     </option>
                   ))}
                 </select>
@@ -1562,10 +1245,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 
               <div>
                 <Label>Faixa de Crédito</Label>
-                <Input
-                  value={p.faixa ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}` : ""}
-                  readOnly
-                />
+                <Input value={p.faixa ? `${brMoney(p.faixa.min)} a ${brMoney(p.faixa.max)}` : ""} readOnly />
               </div>
             </CardContent>
           </Card>
@@ -1574,99 +1254,36 @@ function EmbraconSimulator(p: EmbraconProps) {
           <Card>
             <CardHeader><CardTitle>Configurações da Venda</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
-              <div>
-                <Label>Valor do Crédito</Label>
-                <MoneyInput value={p.credito || 0} onChange={p.setCredito} />
-              </div>
-
+              <div><Label>Valor do Crédito</Label><MoneyInput value={p.credito || 0} onChange={p.setCredito} /></div>
               <div>
                 <Label>Prazo da Venda (meses)</Label>
-                <Input
-                  type="number"
-                  value={p.prazoVenda || ""}
-                  onChange={(e) => p.setPrazoVenda(Number(e.target.value))}
-                />
-                {p.prazoAviso && (
-                  <p className="text-xs text-yellow-600 mt-1">{p.prazoAviso}</p>
-                )}
+                <Input type="number" value={p.prazoVenda || ""} onChange={(e) => p.setPrazoVenda(Number(e.target.value))} />
+                {p.prazoAviso && <p className="text-xs text-yellow-600 mt-1">{p.prazoAviso}</p>}
               </div>
-
               <div>
                 <Label>Forma de Contratação</Label>
-                <select
-                  className="w-full h-10 border rounded-md px-3"
-                  value={p.forma}
-                  disabled={!p.tabelaSelecionada}
-                  onChange={(e) => p.setForma(e.target.value as any)}
-                >
+                <select className="w-full h-10 border rounded-md px-3" value={p.forma} disabled={!p.tabelaSelecionada}
+                  onChange={(e) => p.setForma(e.target.value as any)}>
                   <option value="">Selecione</option>
-                  {p.tabelaSelecionada?.contrata_parcela_cheia && (
-                    <option value="Parcela Cheia">Parcela Cheia</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_25 && (
-                    <option value="Reduzida 25%">Reduzida 25%</option>
-                  )}
-                  {p.tabelaSelecionada?.contrata_reduzida_50 && (
-                    <option value="Reduzida 50%">Reduzida 50%</option>
-                  )}
+                  {p.tabelaSelecionada?.contrata_parcela_cheia && (<option value="Parcela Cheia">Parcela Cheia</option>)}
+                  {p.tabelaSelecionada?.contrata_reduzida_25 && (<option value="Reduzida 25%">Reduzida 25%</option>)}
+                  {p.tabelaSelecionada?.contrata_reduzida_50 && (<option value="Reduzida 50%">Reduzida 50%</option>)}
                 </select>
               </div>
-
               <div>
                 <Label>Seguro Prestamista</Label>
                 <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    className={
-                      p.seguroPrest
-                        ? "bg-red-600 text-white hover:bg-red-700"
-                        : "bg-muted text-foreground/60 hover:bg-muted"
-                    }
-                    onClick={() => p.setSeguroPrest(true)}
-                  >
-                    Sim
-                  </Button>
-                  <Button
-                    type="button"
-                    className={
-                      !p.seguroPrest
-                        ? "bg-red-600 text-white hover:bg-red-700"
-                        : "bg-muted text-foreground/60 hover:bg-muted"
-                    }
-                    onClick={() => p.setSeguroPrest(false)}
-                  >
-                    Não
-                  </Button>
+                  <Button type="button" className={p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"} onClick={() => p.setSeguroPrest(true)}>Sim</Button>
+                  <Button type="button" className={!p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"} onClick={() => p.setSeguroPrest(false)}>Não</Button>
                 </div>
               </div>
 
               {p.tabelaSelecionada && (
                 <div className="md:col-span-4 grid grid-cols-2 gap-3 text-sm bg-muted/30 rounded-lg p-3">
-                  <div>
-                    % Taxa de Adm:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong>
-                  </div>
-                  <div>
-                    % Fundo Reserva:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong>
-                  </div>
-                  <div>
-                    % Antecipação:{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> •
-                    Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong>
-                  </div>
-                  <div>
-                    Limitador de Parcela:{" "}
-                    <strong>
-                      {pctHuman(
-                        resolveLimitadorPct(
-                          p.tabelaSelecionada.limitador_parcela_pct,
-                          p.tabelaSelecionada.segmento,
-                          p.credito || 0
-                        )
-                      )}
-                    </strong>
-                  </div>
+                  <div>% Taxa de Adm: <strong>{pctHuman(p.tabelaSelecionada.taxa_adm_pct)}</strong></div>
+                  <div>% Fundo Reserva: <strong>{pctHuman(p.tabelaSelecionada.fundo_reserva_pct)}</strong></div>
+                  <div>% Antecipação: <strong>{pctHuman(p.tabelaSelecionada.antecip_pct)}</strong> • Parcelas: <strong>{p.tabelaSelecionada.antecip_parcelas}</strong></div>
+                  <div>Limitador de Parcela (admin): <strong>{pctHuman(p.tabelaSelecionada.limitador_parcela_pct)}</strong></div>
                 </div>
               )}
             </CardContent>
@@ -1674,153 +1291,51 @@ function EmbraconSimulator(p: EmbraconProps) {
 
           {/* Até a contemplação */}
           <Card>
-            <CardHeader>
-              <CardTitle>Plano de Pagamento até a Contemplação</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Plano de Pagamento até a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
-              <div>
-                <Label>
-                  {p.tabelaSelecionada?.antecip_parcelas === 2
-                    ? "Parcelas 1 e 2"
-                    : p.tabelaSelecionada?.antecip_parcelas === 1
-                    ? "Parcela 1"
-                    : "Parcela Inicial"}
-                </Label>
-                <Input value={p.calc ? brMoney(p.calc.parcelaAte) : ""} readOnly />
-              </div>
-              <div>
-                <Label>Demais Parcelas</Label>
-                <Input value={p.calc ? brMoney(p.calc.parcelaDemais) : ""} readOnly />
-              </div>
+              <div><Label>{p.tabelaSelecionada?.antecip_parcelas === 2 ? "Parcelas 1 e 2" : p.tabelaSelecionada?.antecip_parcelas === 1 ? "Parcela 1" : "Parcela Inicial"}</Label>
+                <Input value={p.calc ? brMoney(p.calc.parcelaAte) : ""} readOnly /></div>
+              <div><Label>Demais Parcelas</Label><Input value={p.calc ? brMoney(p.calc.parcelaDemais) : ""} readOnly /></div>
             </CardContent>
           </Card>
 
-          {/* === Configurações do Lance === */}
+          {/* Lances */}
           <Card>
-            <CardHeader>
-              <CardTitle>Configurações do Lance</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Configurações do Lance</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
-              <div>
-                <Label>Lance Ofertado (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceOfertPct}
-                  onChangeDecimal={p.setLanceOfertPct}
-                />
-              </div>
-              <div>
-                <Label>Lance Embutido (%)</Label>
-                <PercentInput
-                  valueDecimal={p.lanceEmbutPct}
-                  onChangeDecimal={(d) => {
-                    if (d > 0.25) {
-                      alert("Lance embutido limitado a 25,0000% do crédito. Voltando para 25%.");
-                      p.setLanceEmbutPct(0.25);
-                    } else {
-                      p.setLanceEmbutPct(d);
-                    }
-                  }}
-                  maxDecimal={0.25}
-                />
+              <div><Label>Lance Ofertado (%)</Label><PercentInput valueDecimal={p.lanceOfertPct} onChangeDecimal={p.setLanceOfertPct} /></div>
+              <div><Label>Lance Embutido (%)</Label>
+                <PercentInput valueDecimal={p.lanceEmbutPct} onChangeDecimal={(d) => { if (d > 0.25) { alert("Lance embutido limitado a 25,0000% do crédito."); p.setLanceEmbutPct(0.25); } else { p.setLanceEmbutPct(d); } }} maxDecimal={0.25} />
               </div>
               <div>
                 <Label>Parcela da Contemplação</Label>
-                <Input
-                  type="number"
-                  value={p.parcContemplacao}
-                  onChange={(e) =>
-                    p.setParcContemplacao(Math.max(1, Number(e.target.value)))
-                  }
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Deve ser menor que o Prazo da Venda.
-                </p>
+                <Input type="number" value={p.parcContemplacao} onChange={(e) => p.setParcContemplacao(Math.max(1, Number(e.target.value)))} />
+                <p className="text-xs text-muted-foreground mt-1">Deve ser menor que o Prazo da Venda.</p>
               </div>
             </CardContent>
           </Card>
 
           {/* Pós */}
           <Card>
-            <CardHeader>
-              <CardTitle>Plano de Pagamento após a Contemplação</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Plano de Pagamento após a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
-              <div>
-                <Label>Lance Ofertado</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Lance Embutido</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Lance Próprio</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""}
-                  readOnly
-                />
-              </div>
-
-              <div>
-                <Label>Lance Percebido (%)</Label>
-                <Input
-                  value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Novo Crédito</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.novoCredito) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Nova Parcela (sem limite)</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""}
-                  readOnly
-                />
-              </div>
-
-              <div>
-                <Label>Parcela Limitante</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Parcela Escolhida</Label>
-                <Input
-                  value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""}
-                  readOnly
-                />
-              </div>
-              <div>
-                <Label>Novo Prazo (meses)</Label>
-                <Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly />
-              </div>
-
+              <div><Label>Lance Ofertado</Label><Input value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""} readOnly /></div>
+              <div><Label>Lance Embutido</Label><Input value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""} readOnly /></div>
+              <div><Label>Lance Próprio</Label><Input value={p.calc ? brMoney(p.calc.lanceProprioValor) : ""} readOnly /></div>
+              <div><Label>Lance Percebido (%)</Label><Input value={p.calc ? pctHuman(p.calc.lancePercebidoPct) : ""} readOnly /></div>
+              <div><Label>Novo Crédito</Label><Input value={p.calc ? brMoney(p.calc.novoCredito) : ""} readOnly /></div>
+              <div><Label>Nova Parcela (sem limite)</Label><Input value={p.calc ? brMoney(p.calc.novaParcelaSemLimite) : ""} readOnly /></div>
+              <div><Label>Parcela Limitante</Label><Input value={p.calc ? brMoney(p.calc.parcelaLimitante) : ""} readOnly /></div>
+              <div><Label>Parcela Escolhida</Label><Input value={p.calc ? brMoney(p.calc.parcelaEscolhida) : ""} readOnly /></div>
+              <div><Label>Novo Prazo (meses)</Label><Input value={p.calc ? String(p.calc.novoPrazo) : ""} readOnly /></div>
               {p.calc?.has2aAntecipDepois && p.calc?.segundaParcelaComAntecipacao != null && (
-                <div className="md:col-span-3">
-                  <Label>2ª parcela (com antecipação)</Label>
-                  <Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly />
-                </div>
+                <div className="md:col-span-3"><Label>2ª parcela (com antecipação)</Label><Input value={brMoney(p.calc.segundaParcelaComAntecipacao)} readOnly /></div>
               )}
             </CardContent>
           </Card>
         </>
       ) : (
-        <div className="text-sm text-muted-foreground">
-          Selecione um lead para abrir o simulador.
-        </div>
+        <div className="text-sm text-muted-foreground">Selecione um lead para abrir o simulador.</div>
       )}
     </div>
   );

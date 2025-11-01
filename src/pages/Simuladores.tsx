@@ -39,11 +39,28 @@ type SimTable = {
   indice_correcao: string[];
 };
 
+// Admin.rules esperados
+// {
+//   modelo_lance: "percentual" | "parcela",
+//   modelo_lance_base: "credito" | "parcela_termo",
+//   lance_ofert_base: "credito" | "valor_categoria",
+//   lance_embut_base: "credito" | "valor_categoria",
+//   embut_cap_adm_pct: number, // ex.: 0.25
+//   embut_base: "credito" | "parcela_termo", // base do limite do embutido
+//   limit_enabled: boolean,
+//   redutor_pre_contemplacao_enabled: boolean,
+//   redutor_base: "valor_categoria" | "credito"
+// }
+
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
 /* ======================= Helpers ========================= */
 const brMoney = (v: number) =>
-  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
+  v.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 2,
+  });
 
 const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
 
@@ -55,6 +72,7 @@ function parseBRLInputToNumber(s: string): number {
   const cents = digits.length ? parseInt(digits, 10) : 0;
   return cents / 100;
 }
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -66,7 +84,7 @@ function formatPhoneBR(s?: string) {
   return s || "";
 }
 
-/* ========== Percent Input (cursor estável) ========== */
+/* ========== Percent Input (sem pular cursor) ========== */
 function PercentInput({
   valueDecimal,
   onChangeDecimal,
@@ -79,18 +97,21 @@ function PercentInput({
   placeholder?: string;
 }) {
   const [raw, setRaw] = useState<string>(() => (valueDecimal * 100 || 0).toString().replace(".", ","));
+
   useEffect(() => {
     const target = (valueDecimal * 100).toString().replace(".", ",");
     if (target !== raw) setRaw(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valueDecimal]);
+
   function commit(val: string) {
     const clean = val.trim().replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
     const num = parseFloat(clean);
-    let dec = isNaN(num) ? 0 : num / 100;
+    let dec = isNaN(num) ? 0 : num / 100; // fração
     if (typeof maxDecimal === "number") dec = clamp(dec, 0, maxDecimal);
     onChangeDecimal(dec);
   }
+
   return (
     <div className="flex items-center gap-2">
       <Input
@@ -114,13 +135,15 @@ export type CalcInput = {
   seguro: boolean;
   segmento: string;
 
+  // Tabela
   taxaAdmFull: number;
   frPct: number;
   antecipPct: number;
-  antecipParcelas: number;
+  antecipParcelas: 0 | 1 | 2 | number;
   limitadorPct: number;
   seguroPrestPct: number;
 
+  // Lance por rules
   modeloLance: "percentual" | "parcela";
   lanceBase: "credito" | "parcela_termo";
   prazoOriginalGrupo?: number;
@@ -128,13 +151,14 @@ export type CalcInput = {
   lanceEmbutParcelas?: number;
   lanceOfertPct?: number;
   lanceEmbutPct?: number;
+  embutCapPct?: number | null; // limite da administradora
+  embutCapBase?: "credito" | "parcela_termo"; // base do limite
 
-  embutCapPct?: number | null;
-  embutCapBase?: "credito" | "parcela_termo";
-
+  // Bases para cálculo dos percentuais
   ofertBaseKind?: "credito" | "valor_categoria";
   embutBaseKind?: "credito" | "valor_categoria";
 
+  // Regras extras
   limitEnabled?: boolean;
   redutorPreEnabled?: boolean;
   redutorBase?: "credito" | "valor_categoria";
@@ -167,6 +191,7 @@ function calcularSimulacao(i: CalcInput) {
     embutCapPct = 0.25,
     embutCapBase = "credito",
 
+    // Novas bases para percentuais
     ofertBaseKind = "credito",
     embutBaseKind = "credito",
 
@@ -181,35 +206,42 @@ function calcularSimulacao(i: CalcInput) {
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
+  // Valor de categoria
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
+  // Parcela termo (para lance por parcelas e possível base do limite do embutido)
   const prazoTermo = Math.max(1, prazoOriginalGrupo || prazoVenda);
   const parcelaTermo = valorCategoria / prazoTermo;
 
+  // Fator da forma
   let fatorForma = 1;
   if (forma === "Reduzida 25%") fatorForma = 0.75;
   if (forma === "Reduzida 50%") fatorForma = 0.5;
 
+  // Base pré-contemplação
   const baseMensalPre =
     redutorPreEnabled && redutorBase === "valor_categoria"
       ? (valorCategoria / prazo) * fatorForma
       : (C * fatorForma + C * Math.max(0, taxaAdmFull - antecipPct) + C * frPct) / prazo;
 
+  // Seguro (apenas exibição)
   const seguroMensal = seguro ? valorCategoria * seguroPrestPct : 0;
 
-  const antParc = Math.max(0, Number(antecipParcelas) || 0);
-  const antecipCada = antParc > 0 ? (C * antecipPct) / antParc : 0;
+  // Antecipação
+  const antParcelas = Math.max(0, Number(antecipParcelas) || 0);
+  const antecipCada = antParcelas > 0 ? (C * antecipPct) / antParcelas : 0;
 
-  const parcelaAte = baseMensalPre + (antParc > 0 ? antecipCada : 0) + seguroMensal;
+  const parcelaAte = baseMensalPre + (antParcelas > 0 ? antecipCada : 0) + seguroMensal;
   const parcelaDemais = baseMensalPre + seguroMensal;
 
-  const totalPagoSemSeguro = baseMensalPre * parcelasPagas + antecipCada * Math.min(parcelasPagas, antParc);
+  // Total pago até contemplação (sem seguro)
+  const totalPagoSemSeguro = baseMensalPre * parcelasPagas + antecipCada * Math.min(parcelasPagas, antParcelas);
 
   // ===== Lances =====
   let lanceOfertadoValor = 0;
   let lanceEmbutidoValor = 0;
 
-  // teto absoluto em valor para embutido
+  // Limite absoluto em valor para o embutido conforme regra da administradora
   const embutLimitValorBase = embutCapBase === "parcela_termo" ? parcelaTermo * prazoTermo : C;
   const embutValorMaximo = (embutCapPct ?? 0.25) * embutLimitValorBase;
 
@@ -219,6 +251,7 @@ function calcularSimulacao(i: CalcInput) {
     lanceOfertadoValor = ofertValor;
     lanceEmbutidoValor = Math.min(embutValor, embutValorMaximo);
   } else {
+    // percentuais com base configurável: crédito OU valor de categoria (crédito + taxas)
     const baseOfert = ofertBaseKind === "valor_categoria" ? valorCategoria : C;
     const baseEmbut = embutBaseKind === "valor_categoria" ? valorCategoria : C;
 
@@ -231,11 +264,14 @@ function calcularSimulacao(i: CalcInput) {
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
+  // Saldo final
   const saldoDevedorFinal = Math.max(0, valorCategoria - totalPagoSemSeguro - lanceOfertadoValor);
 
+  // Pós-contemplação
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
   const parcelaLimitante = limitEnabled ? valorCategoria * limitadorPct : 0;
 
+  // Regra especial: segmento Serviços -> NÃO reduzir valor de parcela; apenas recalcular prazo
   const isServicos = (segmento || "").toLowerCase().includes("serv");
 
   let aplicouLimitador = false;
@@ -249,28 +285,36 @@ function calcularSimulacao(i: CalcInput) {
     parcelaEscolhida = parcelaDemais;
   }
 
-  const has2aAntecipDepois = antParc >= 2 && parcContemplacao === 1;
+  // 2ª antecipação após 1ª
+  const has2aAntecipDepois = antParcelas >= 2 && parcContemplacao === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois ? parcelaEscolhida + antecipCada : null;
 
+  // Novo prazo
   let saldoParaPrazo = saldoDevedorFinal;
-  if (has2aAntecipDepois) saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipCada));
+  if (has2aAntecipDepois) {
+    saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipCada));
+  }
   const novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
 
   return {
     valorCategoria,
     parcelaTermo,
+
     parcelaAte,
     parcelaDemais,
+
     lanceOfertadoValor,
     lanceEmbutidoValor,
     lanceProprioValor,
     lancePercebidoPct: novoCredito > 0 ? lanceProprioValor / novoCredito : 0,
     novoCredito,
+
     novaParcelaSemLimite,
     parcelaLimitante,
     parcelaEscolhida,
     saldoDevedorFinal,
     novoPrazo,
+
     TA_efetiva: Math.max(0, taxaAdmFull - antecipPct),
     antecipAdicionalCada: antecipCada,
     has2aAntecipDepois,
@@ -296,56 +340,6 @@ function MoneyInput({
   );
 }
 
-/* ========== Normalização das RULES (Maggi/geral) ========== */
-function normalizeRules(raw: any) {
-  const r = raw || {};
-
-  // modelo do lance
-  const modelo_lance: "percentual" | "parcela" =
-    r?.lance?.modelo ?? r?.modelo_lance ?? "percentual";
-
-  // base percentual do ofertado/embutido
-  const ofertBaseKind: "credito" | "valor_categoria" =
-    r?.lance?.base_ofertado === "categoria" ? "valor_categoria" : (r?.lance_ofert_base ?? "credito");
-
-  const embutBaseKind: "credito" | "valor_categoria" =
-    r?.lance_embutido?.base === "categoria" ? "valor_categoria" : (r?.lance_embut_base ?? "credito");
-
-  // base do limite do embutido e cap
-  const embut_base: "credito" | "parcela_termo" = r?.embut_base ?? "credito";
-  const embut_cap_adm_pct: number =
-    r?.lance_embutido?.cap_pct ?? r?.embut_cap_adm_pct ?? 0.25;
-
-  // base do lance (modo "parcela")
-  const modelo_lance_base: "credito" | "parcela_termo" =
-    r?.modelo_lance_base ?? "credito";
-
-  // limitador
-  const limit_enabled =
-    r?.limitador_parcela?.existe === false ? false : (r?.limit_enabled ?? true);
-
-  // redutor pré-contemplação
-  const redutor_pre_contemplacao_enabled =
-    r?.redutor_pre_contratacao?.permite === true
-      ? true
-      : r?.redutor_pre_contemplacao_enabled === true;
-
-  const redutor_base: "valor_categoria" | "credito" =
-    r?.redutor_base ?? (r?.limitador_parcela?.base === "categoria" ? "valor_categoria" : "valor_categoria");
-
-  return {
-    modelo_lance,
-    lance_ofert_base: ofertBaseKind,
-    lance_embut_base: embutBaseKind,
-    embut_base,
-    embut_cap_adm_pct,
-    modelo_lance_base,
-    limit_enabled,
-    redutor_pre_contemplacao_enabled,
-    redutor_base,
-  };
-}
-
 /* ========================= Página ======================== */
 export default function Simuladores() {
   const { id } = useParams<{ id: string }>();
@@ -361,11 +355,14 @@ export default function Simuladores() {
 
   useEffect(() => setActiveAdminId(routeAdminId), [routeAdminId]);
   useEffect(() => {
-    if (!routeAdminId && !activeAdminId && admins.length) setActiveAdminId(admins[0].id);
+    if (!routeAdminId && !activeAdminId && admins.length) {
+      setActiveAdminId(admins[0].id);
+    }
   }, [routeAdminId, activeAdminId, admins]);
 
   const [mgrOpen, setMgrOpen] = useState(false);
 
+  // seleção geral
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
   const [grupo, setGrupo] = useState<string>("");
@@ -381,6 +378,7 @@ export default function Simuladores() {
   const [forma, setForma] = useState<FormaContratacao>("Parcela Cheia");
   const [seguroPrest, setSeguroPrest] = useState<boolean>(false);
 
+  // Lances (ambos modos)
   const [lanceOfertPct, setLanceOfertPct] = useState<number>(0);
   const [lanceEmbutPct, setLanceEmbutPct] = useState<number>(0);
   const [prazoOriginalGrupo, setPrazoOriginalGrupo] = useState<number>(0);
@@ -399,7 +397,7 @@ export default function Simuladores() {
   const adminId = routeAdminId;
   const openSetup = setup;
 
-  // Load
+  // Load basic data (admins com rules)
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -439,19 +437,18 @@ export default function Simuladores() {
   }, [leadId, leads]);
 
   const activeAdmin = useMemo(() => admins.find((a) => a.id === activeAdminId) || null, [admins, activeAdminId]);
-  const adminRulesRaw = (activeAdmin?.rules || {}) as any;
-  const adminRules = useMemo(() => normalizeRules(adminRulesRaw), [adminRulesRaw]);
+  const adminRules = (activeAdmin?.rules || {}) as any;
 
   const adminTables = useMemo(() => tables.filter((t) => t.admin_id === activeAdminId), [tables, activeAdminId]);
 
   const nomesTabelaSegmento = useMemo(() => {
-    const list = adminTables.filter((t) => (segmento ? t.segmento === segmento : true)).map((t) => t.nome_tabela);
+    const list = adminTables
+      .filter((t) => (segmento ? t.segmento === segmento : true))
+      .map((t) => t.nome_tabela);
     return Array.from(new Set(list));
   }, [adminTables, segmento]);
 
-  const variantesDaTabela = useMemo(() => {
-    return adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela);
-  }, [adminTables, segmento, nomeTabela]);
+  const variantesDaTabela = useMemo(() => adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela), [adminTables, segmento, nomeTabela]);
 
   const tabelaSelecionada = useMemo(() => tables.find((t) => t.id === tabelaId) || null, [tables, tabelaId]);
 
@@ -461,9 +458,9 @@ export default function Simuladores() {
     setFaixa({ min: tabelaSelecionada.faixa_min, max: tabelaSelecionada.faixa_max });
     if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25) setForma("Parcela Cheia");
     if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
-  }, [tabelaSelecionada, forma]);
+  }, [tabelaSelecionada]); // eslint-disable-line
 
-  // cap do embutido
+  // valida % embutido contra regra da administradora
   const embutCapPct = adminRules?.embut_cap_adm_pct ?? 0.25;
   useEffect(() => {
     if (lanceEmbutPct > embutCapPct) setLanceEmbutPct(embutCapPct);
@@ -482,8 +479,7 @@ export default function Simuladores() {
       setCalc(null);
       return;
     }
-
-    const modeloLance = adminRules?.modelo_lance ?? "percentual";
+    const modeloLance = (adminRules?.modelo_lance ?? "percentual") as "percentual" | "parcela";
     const lanceBase = (adminRules?.modelo_lance_base ?? (modeloLance === "parcela" ? "parcela_termo" : "credito")) as
       | "credito"
       | "parcela_termo";
@@ -494,7 +490,6 @@ export default function Simuladores() {
       forma,
       seguro: seguroPrest,
       segmento: tabelaSelecionada.segmento,
-
       taxaAdmFull: tabelaSelecionada.taxa_adm_pct,
       frPct: tabelaSelecionada.fundo_reserva_pct,
       antecipPct: tabelaSelecionada.antecip_pct,
@@ -506,11 +501,13 @@ export default function Simuladores() {
       lanceBase,
       prazoOriginalGrupo: Number(prazoOriginalGrupo || prazoVenda),
 
+      // limites/base do embutido
       embutCapPct,
-      embutCapBase: adminRules?.embut_base ?? "credito",
+      embutCapBase: (adminRules?.embut_base ?? "credito") as "credito" | "parcela_termo",
 
-      ofertBaseKind: adminRules?.lance_ofert_base ?? "credito",
-      embutBaseKind: adminRules?.lance_embut_base ?? "credito",
+      // bases percentuais (ofertado/embutido) conforme regra
+      ofertBaseKind: (adminRules?.lance_ofert_base ?? "credito") as "credito" | "valor_categoria",
+      embutBaseKind: (adminRules?.lance_embut_base ?? "credito") as "credito" | "valor_categoria",
 
       limitEnabled: adminRules?.limit_enabled !== false,
       redutorPreEnabled: adminRules?.redutor_pre_contemplacao_enabled === true,
@@ -518,9 +515,11 @@ export default function Simuladores() {
 
       parcContemplacao,
 
+      // modo “parcela”
       lanceOfertParcelas,
       lanceEmbutParcelas,
 
+      // modo “percentual”
       lanceOfertPct,
       lanceEmbutPct,
     };
@@ -608,6 +607,12 @@ export default function Simuladores() {
     setTables((prev) => prev.filter((t) => t.id !== id));
   }
 
+  // receber atualização de regras da admin (limitador embutido, etc.)
+  function handleAdminRulesUpdated(nextRules: any) {
+    setAdmins((prev) => prev.map((a) => (a.id === activeAdminId ? { ...a, rules: nextRules } : a)));
+  }
+
+  // ===== Resumo da Proposta (texto copiável) =====
   const resumoTexto = useMemo(() => {
     if (!tabelaSelecionada || !calc || !podeCalcular) return "";
 
@@ -672,6 +677,7 @@ ${wa}`
     }
   }
 
+  // Texto “OPORTUNIDADE / PROPOSTA”
   function normalizarSegmento(seg?: string) {
     const s = (seg || "").toLowerCase();
     if (s.includes("imó")) return "Imóvel";
@@ -702,6 +708,7 @@ ${wa}`
     const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
 
     const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
+
     const grupoTxt = grupo || "—";
 
     const whatsappFmt = formatPhoneBR(userPhone);
@@ -752,6 +759,7 @@ Vantagens
 
   return (
     <div className="p-6 space-y-4">
+      {/* topo */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="ml-auto flex items-center gap-2">
           {activeAdmin && (
@@ -762,7 +770,9 @@ Vantagens
         </div>
       </div>
 
+      {/* layout */}
       <div className="grid grid-cols-12 gap-4">
+        {/* esquerda */}
         <div className="col-span-12 lg:col-span-8">
           <Card>
             <CardHeader>
@@ -813,12 +823,14 @@ Vantagens
                   setLanceOfertPct={setLanceOfertPct}
                   lanceEmbutPct={lanceEmbutPct}
                   setLanceEmbutPct={setLanceEmbutPct}
+                  // novos campos
                   prazoOriginalGrupo={prazoOriginalGrupo}
                   setPrazoOriginalGrupo={setPrazoOriginalGrupo}
                   lanceOfertParcelas={lanceOfertParcelas}
                   setLanceOfertParcelas={setLanceOfertParcelas}
                   lanceEmbutParcelas={lanceEmbutParcelas}
                   setLanceEmbutParcelas={setLanceEmbutParcelas}
+                  //
                   parcContemplacao={parcContemplacao}
                   setParcContemplacao={setParcContemplacao}
                   prazoAviso={prazoAviso}
@@ -842,6 +854,7 @@ Vantagens
           </div>
         </div>
 
+        {/* direita */}
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <Card>
             <CardHeader><CardTitle>Memória de Cálculo</CardTitle></CardHeader>
@@ -869,9 +882,7 @@ Vantagens
                     <div>Fundo Reserva</div>
                     <div className="text-right">{pctHuman(tabelaSelecionada.fundo_reserva_pct)}</div>
                     <div>Antecipação Adm</div>
-                    <div className="text-right">
-                      {pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x
-                    </div>
+                    <div className="text-right">{pctHuman(tabelaSelecionada.antecip_pct)} • {tabelaSelecionada.antecip_parcelas}x</div>
                     <div>Valor de Categoria</div>
                     <div className="text-right">{calc ? brMoney(calc.valorCategoria) : "—"}</div>
                     <div>Parcela (termo)</div>
@@ -922,6 +933,7 @@ Vantagens
         </div>
       </div>
 
+      {/* Overlay de gerenciamento de tabelas */}
       {mgrOpen && activeAdmin && (
         <TableManagerModal
           admin={activeAdmin}
@@ -929,6 +941,7 @@ Vantagens
           onClose={() => setMgrOpen(false)}
           onCreatedOrUpdated={handleTableCreatedOrUpdated}
           onDeleted={handleTableDeleted}
+          onAdminRulesUpdated={handleAdminRulesUpdated}
         />
       )}
     </div>
@@ -946,7 +959,9 @@ function ModalBase({
   title: string;
 }) {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -966,25 +981,63 @@ function ModalBase({
   );
 }
 
-/* ============== Modal: Gerenciador de Tabelas ============== */
+/* ============== Modal: Gerenciar Tabelas ============== */
 function TableManagerModal({
   admin,
   allTables,
   onClose,
   onCreatedOrUpdated,
   onDeleted,
+  onAdminRulesUpdated,
 }: {
   admin: Admin;
   allTables: SimTable[];
   onClose: () => void;
   onCreatedOrUpdated: (t: SimTable) => void;
   onDeleted: (id: string) => void;
+  onAdminRulesUpdated?: (rules: any) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<SimTable | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const pageSize = 10;
+
+  // Regras (limitador do embutido)
+  const rules = (admin.rules || {}) as any;
+  const [embutCapHuman, setEmbutCapHuman] = useState(
+    (((rules.embut_cap_adm_pct ?? 0.25) * 100).toFixed(4)).replace(".", ",")
+  );
+  const [embutBase, setEmbutBase] = useState<"credito" | "parcela_termo">(rules.embut_base ?? "credito");
+  const [savingRules, setSavingRules] = useState(false);
+
+  function parsePct(s: string) {
+    const clean = (s || "").replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
+    const n = parseFloat(clean);
+    return isNaN(n) ? 0 : n / 100;
+  }
+
+  async function salvarRulesAdmin() {
+    setSavingRules(true);
+    const nextRules = {
+      ...rules,
+      embut_cap_adm_pct: parsePct(embutCapHuman),
+      embut_base: embutBase,
+    };
+    const { data, error } = await supabase
+      .from("sim_admins")
+      .update({ rules: nextRules })
+      .eq("id", admin.id)
+      .select("id, rules")
+      .single();
+
+    setSavingRules(false);
+    if (error) {
+      alert("Erro ao salvar regras da administradora: " + error.message);
+      return;
+    }
+    onAdminRulesUpdated?.(data?.rules || nextRules);
+  }
 
   useEffect(() => setPage(1), [allTables.length]);
 
@@ -997,10 +1050,7 @@ function TableManagerModal({
   }, [allTables]);
 
   const totalPages = Math.max(1, Math.ceil(grouped.length / pageSize));
-  const pageItems = useMemo(
-    () => grouped.slice((page - 1) * pageSize, page * pageSize),
-    [grouped, page]
-  );
+  const pageItems = useMemo(() => grouped.slice((page - 1) * pageSize, page * pageSize), [grouped, page]);
 
   async function deletar(id: string) {
     if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas a ela também serão excluídas)")) return;
@@ -1024,8 +1074,44 @@ function TableManagerModal({
 
   return (
     <ModalBase onClose={onClose} title="Gerenciador de Tabelas">
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-3">
+      <div className="p-4 space-y-4">
+        {/* Regras da Administradora */}
+        <div className="rounded-xl border p-3">
+          <div className="mb-2 font-medium">Configuração da Administradora</div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div>
+              <Label>Teto do lance embutido (%)</Label>
+              <Input
+                value={embutCapHuman}
+                onChange={(e) => setEmbutCapHuman(e.target.value)}
+                placeholder="25,0000"
+                className="h-10"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Ex.: 25,0000 = 25%. Grava em <code>rules.embut_cap_adm_pct</code> (fração).
+              </p>
+            </div>
+            <div>
+              <Label>Base do limite do embutido</Label>
+              <select
+                className="w-full h-10 border rounded-md px-3"
+                value={embutBase}
+                onChange={(e) => setEmbutBase(e.target.value as any)}
+              >
+                <option value="credito">Crédito</option>
+                <option value="parcela_termo">Parcela termo (prazo original)</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <Button onClick={salvarRulesAdmin} disabled={savingRules} className="h-10 rounded-2xl px-4">
+                {savingRules && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Salvar regras da administradora
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
             Admin ativa: <strong>{admin.name}</strong>
           </div>
@@ -1051,7 +1137,7 @@ function TableManagerModal({
                 <th className="text-left p-2">% FR</th>
                 <th className="text-left p-2">% Antecip</th>
                 <th className="text-left p-2">Parc Ant.</th>
-                <th className="text-left p-2">% Limite</th>
+                <th className="text-left p-2">% Limite Parcela</th>
                 <th className="text-left p-2">% Seguro</th>
                 <th className="text-right p-2">Ações</th>
               </tr>
@@ -1088,11 +1174,7 @@ function TableManagerModal({
                         onClick={() => deletar(t.id)}
                         className="h-9 rounded-xl px-3"
                       >
-                        {busyId === t.id ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4 mr-1" />
-                        )}
+                        {busyId === t.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
                         Excluir
                       </Button>
                     </div>
@@ -1174,24 +1256,12 @@ function TableFormOverlay({
   const [faixaMax, setFaixaMax] = useState(initial?.faixa_max ?? 1200000);
   const [prazoLimite, setPrazoLimite] = useState(initial?.prazo_limite ?? 240);
 
-  function fmtPct(d: number) { return (d * 100).toFixed(4).replace(".", ","); }
-  function parsePct(s: string) {
-    const clean = (s || "").replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
-    const num = parseFloat(clean);
-    return isNaN(num) ? 0 : num / 100;
-  }
-
-  const [taxaAdmHuman, setTaxaAdmHuman] = useState(fmtPct(initial?.taxa_adm_pct ?? 0.22));
-  const [frHuman, setFrHuman] = useState(fmtPct(initial?.fundo_reserva_pct ?? 0.02));
-  const [antecipHuman, setAntecipHuman] = useState(fmtPct(initial?.antecip_pct ?? 0.02));
+  const [taxaAdmHuman, setTaxaAdmHuman] = useState(((initial?.taxa_adm_pct ?? 0.22) * 100).toFixed(4).replace(".", ","));
+  const [frHuman, setFrHuman] = useState(((initial?.fundo_reserva_pct ?? 0.02) * 100).toFixed(4).replace(".", ","));
+  const [antecipHuman, setAntecipHuman] = useState(((initial?.antecip_pct ?? 0.02) * 100).toFixed(4).replace(".", ","));
   const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
-  const [limHuman, setLimHuman] = useState(fmtPct(initial?.limitador_parcela_pct ?? 0.002565));
-  const [seguroHuman, setSeguroHuman] = useState(fmtPct(initial?.seguro_prest_pct ?? 0.00061));
-
-  const [perEmbutido, setPerEmbutido] = useState(initial?.permite_lance_embutido ?? true);
-  const [perFixo25, setPerFixo25] = useState(initial?.permite_lance_fixo_25 ?? true);
-  const [perFixo50, setPerFixo50] = useState(initial?.permite_lance_fixo_50 ?? true);
-  const [perLivre, setPerLivre] = useState(initial?.permite_lance_livre ?? true);
+  const [limHuman, setLimHuman] = useState(((initial?.limitador_parcela_pct ?? 0.002565) * 100).toFixed(4).replace(".", ","));
+  const [seguroHuman, setSeguroHuman] = useState(((initial?.seguro_prest_pct ?? 0.00061) * 100).toFixed(4).replace(".", ","));
 
   const [cParcelaCheia, setCParcelaCheia] = useState(initial?.contrata_parcela_cheia ?? true);
   const [cRed25, setCRed25] = useState(initial?.contrata_reduzida_25 ?? true);
@@ -1205,6 +1275,12 @@ function TableFormOverlay({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  function parsePct(s: string) {
+    const clean = (s || "").replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
+    const n = parseFloat(clean);
+    return isNaN(n) ? 0 : n / 100;
+    }
 
   async function salvar() {
     setSaving(true);
@@ -1221,10 +1297,10 @@ function TableFormOverlay({
       antecip_parcelas: Number(antecipParcelas) || 0,
       limitador_parcela_pct: parsePct(limHuman),
       seguro_prest_pct: parsePct(seguroHuman),
-      permite_lance_embutido: perEmbutido,
-      permite_lance_fixo_25: perFixo25,
-      permite_lance_fixo_50: perFixo50,
-      permite_lance_livre: perLivre,
+      permite_lance_embutido: true,
+      permite_lance_fixo_25: true,
+      permite_lance_fixo_50: true,
+      permite_lance_livre: true,
       contrata_parcela_cheia: cParcelaCheia,
       contrata_reduzida_25: cRed25,
       contrata_reduzida_50: cRed50,
@@ -1266,16 +1342,6 @@ function TableFormOverlay({
 
           <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
           <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
-
-          <div className="col-span-2">
-            <Label>Lances Permitidos</Label>
-            <div className="flex gap-4 mt-1 text-sm">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perEmbutido} onChange={(e) => setPerEmbutido(e.target.checked)} />Embutido</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo25} onChange={(e) => setPerFixo25(e.target.checked)} />Fixo 25%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perFixo50} onChange={(e) => setPerFixo50(e.target.checked)} />Fixo 50%</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={perLivre} onChange={(e) => setPerLivre(e.target.checked)} />Livre</label>
-            </div>
-          </div>
 
           <div className="col-span-2">
             <Label>Formas de Contratação</Label>
@@ -1330,6 +1396,7 @@ type EmbraconProps = {
   forma: FormaContratacao; setForma: (v: FormaContratacao) => void;
   seguroPrest: boolean; setSeguroPrest: (v: boolean) => void;
 
+  // Lances
   lanceOfertPct: number; setLanceOfertPct: (v: number) => void;
   lanceEmbutPct: number; setLanceEmbutPct: (v: number) => void;
   prazoOriginalGrupo: number; setPrazoOriginalGrupo: (v: number) => void;
@@ -1351,10 +1418,13 @@ function EmbraconSimulator(p: EmbraconProps) {
   const [leadQuery, setLeadQuery] = useState("");
 
   const filteredLeads = useMemo(() => {
-    const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const norm = (s: string) =>
+      s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
     const qRaw = leadQuery.trim();
     const q = norm(qRaw);
     const qDigits = qRaw.replace(/\D/g, "");
+
     return p.leads.filter((l) => {
       const nome = norm(l.nome || "");
       const tel = (l.telefone || "").replace(/\D/g, "");
@@ -1362,7 +1432,9 @@ function EmbraconSimulator(p: EmbraconProps) {
     });
   }, [p.leads, leadQuery]);
 
-  useEffect(() => { if (!leadOpen) setLeadQuery(""); }, [leadOpen]);
+  useEffect(() => {
+    if (!leadOpen) setLeadQuery("");
+  }, [leadOpen]);
 
   const lanceModoParcela = (p.adminRules?.modelo_lance ?? "percentual") === "parcela";
 
@@ -1396,10 +1468,15 @@ function EmbraconSimulator(p: EmbraconProps) {
                           <button
                             type="button"
                             className="w-full text-left px-2 py-1.5 rounded hover:bg-muted"
-                            onClick={() => { p.setLeadId(l.id); setLeadQuery(""); }}
+                            onClick={() => {
+                              p.setLeadId(l.id);
+                              setLeadQuery("");
+                            }}
                           >
                             <div className="text-sm font-medium">{l.nome}</div>
-                            {l.telefone && <div className="text-xs text-muted-foreground">{l.telefone}</div>}
+                            {l.telefone && (
+                              <div className="text-xs text-muted-foreground">{l.telefone}</div>
+                            )}
                           </button>
                         </PopoverClose>
                       ))
@@ -1411,6 +1488,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                   </div>
                 </PopoverContent>
               </Popover>
+
               {p.leadInfo && (
                 <p className="text-xs text-muted-foreground mt-1">
                   {p.leadInfo.nome} • {p.leadInfo.telefone || "sem telefone"}
@@ -1433,7 +1511,11 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Segmento</Label>
-                <select className="w-full h-10 border rounded-md px-3" value={p.segmento} onChange={(e) => p.setSegmento(e.target.value)}>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.segmento}
+                  onChange={(e) => p.setSegmento(e.target.value)}
+                >
                   <option value="">Selecione o segmento</option>
                   {Array.from(new Set(p.adminTables.map((t) => t.segmento))).map((s) => (
                     <option key={s} value={s}>{s}</option>
@@ -1449,8 +1531,12 @@ function EmbraconSimulator(p: EmbraconProps) {
                   disabled={!p.segmento}
                   onChange={(e) => p.setNomeTabela(e.target.value)}
                 >
-                  <option value="">{p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}</option>
-                  {p.nomesTabelaSegmento.map((n) => (<option key={n} value={n}>{n}</option>))}
+                  <option value="">
+                    {p.segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}
+                  </option>
+                  {p.nomesTabelaSegmento.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
                 </select>
               </div>
 
@@ -1462,7 +1548,9 @@ function EmbraconSimulator(p: EmbraconProps) {
                   disabled={!p.nomeTabela}
                   onChange={(e) => p.setTabelaId(e.target.value)}
                 >
-                  <option value="">{p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}</option>
+                  <option value="">
+                    {p.nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}
+                  </option>
                   {p.variantesDaTabela.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR {pctHuman(t.fundo_reserva_pct)}
@@ -1494,21 +1582,40 @@ function EmbraconSimulator(p: EmbraconProps) {
 
               <div>
                 <Label>Forma de Contratação</Label>
-                <select className="w-full h-10 border rounded-md px-3" value={p.forma} disabled={!p.tabelaSelecionada} onChange={(e) => p.setForma(e.target.value as any)}>
+                <select
+                  className="w-full h-10 border rounded-md px-3"
+                  value={p.forma}
+                  disabled={!p.tabelaSelecionada}
+                  onChange={(e) => p.setForma(e.target.value as any)}
+                >
                   <option value="">Selecione</option>
-                  {p.tabelaSelecionada?.contrata_parcela_cheia && (<option value="Parcela Cheia">Parcela Cheia</option>)}
-                  {p.tabelaSelecionada?.contrata_reduzida_25 && (<option value="Reduzida 25%">Reduzida 25%</option>)}
-                  {p.tabelaSelecionada?.contrata_reduzida_50 && (<option value="Reduzida 50%">Reduzida 50%</option>)}
+                  {p.tabelaSelecionada?.contrata_parcela_cheia && (
+                    <option value="Parcela Cheia">Parcela Cheia</option>
+                  )}
+                  {p.tabelaSelecionada?.contrata_reduzida_25 && (
+                    <option value="Reduzida 25%">Reduzida 25%</option>
+                  )}
+                  {p.tabelaSelecionada?.contrata_reduzida_50 && (
+                    <option value="Reduzida 50%">Reduzida 50%</option>
+                  )}
                 </select>
               </div>
 
               <div>
                 <Label>Seguro Prestamista</Label>
                 <div className="flex gap-2">
-                  <Button type="button" className={p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"} onClick={() => p.setSeguroPrest(true)}>
+                  <Button
+                    type="button"
+                    className={p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"}
+                    onClick={() => p.setSeguroPrest(true)}
+                  >
                     Sim
                   </Button>
-                  <Button type="button" className={!p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"} onClick={() => p.setSeguroPrest(false)}>
+                  <Button
+                    type="button"
+                    className={!p.seguroPrest ? "bg-red-600 text-white hover:bg-red-700" : "bg-muted text-foreground/60 hover:bg-muted"}
+                    onClick={() => p.setSeguroPrest(false)}
+                  >
                     Não
                   </Button>
                 </div>
@@ -1525,11 +1632,18 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
+          {/* Até a contemplação */}
           <Card>
             <CardHeader><CardTitle>Plano de Pagamento até a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div>
-                <Label>{p.tabelaSelecionada?.antecip_parcelas === 2 ? "Parcelas 1 e 2" : p.tabelaSelecionada?.antecip_parcelas === 1 ? "Parcela 1" : "Parcela Inicial"}</Label>
+                <Label>
+                  {p.tabelaSelecionada?.antecip_parcelas === 2
+                    ? "Parcelas 1 e 2"
+                    : p.tabelaSelecionada?.antecip_parcelas === 1
+                    ? "Parcela 1"
+                    : "Parcela Inicial"}
+                </Label>
                 <Input value={p.calc ? brMoney(p.calc.parcelaAte) : ""} readOnly />
               </div>
               <div>
@@ -1539,6 +1653,7 @@ function EmbraconSimulator(p: EmbraconProps) {
             </CardContent>
           </Card>
 
+          {/* Configurações do Lance */}
           <Card>
             <CardHeader><CardTitle>Configurações do Lance</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
@@ -1546,18 +1661,30 @@ function EmbraconSimulator(p: EmbraconProps) {
                 <>
                   <div>
                     <Label>Prazo original do grupo</Label>
-                    <Input type="number" value={p.prazoOriginalGrupo || p.prazoVenda || 0} onChange={(e) => p.setPrazoOriginalGrupo(Math.max(1, Number(e.target.value)))} />
+                    <Input
+                      type="number"
+                      value={p.prazoOriginalGrupo || p.prazoVenda || 0}
+                      onChange={(e) => p.setPrazoOriginalGrupo(Math.max(1, Number(e.target.value)))}
+                    />
                     <p className="text-xs text-muted-foreground mt-1">Base para a parcela termo.</p>
                   </div>
                   <div>
                     <Label>Qtde Parcelas (Lance Ofertado)</Label>
-                    <Input type="number" value={p.lanceOfertParcelas} onChange={(e) => p.setLanceOfertParcelas(Math.max(0, Number(e.target.value)))} />
+                    <Input
+                      type="number"
+                      value={p.lanceOfertParcelas}
+                      onChange={(e) => p.setLanceOfertParcelas(Math.max(0, Number(e.target.value)))}
+                    />
                   </div>
                   <div>
                     <Label>Qtde Parcelas (Lance Embutido)</Label>
-                    <Input type="number" value={p.lanceEmbutParcelas} onChange={(e) => p.setLanceEmbutParcelas(Math.max(0, Number(e.target.value)))} />
+                    <Input
+                      type="number"
+                      value={p.lanceEmbutParcelas}
+                      onChange={(e) => p.setLanceEmbutParcelas(Math.max(0, Number(e.target.value)))}
+                    />
                     <p className="text-xs text-muted-foreground mt-1">
-                      Teto do embutido: {pctHuman(p.adminRules?.embut_cap_adm_pct ?? 0.25)} do {p.adminRules?.embut_base === "parcela_termo" ? "total de parcelas-termo" : "crédito"}.
+                      Teto do embutido: definido na administradora.
                     </p>
                   </div>
                 </>
@@ -1566,28 +1693,31 @@ function EmbraconSimulator(p: EmbraconProps) {
                   <div>
                     <Label>Lance Ofertado (%)</Label>
                     <PercentInput valueDecimal={p.lanceOfertPct} onChangeDecimal={p.setLanceOfertPct} />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Base: {p.adminRules?.lance_ofert_base === "valor_categoria" ? "Crédito + taxas (valor de categoria)" : "Crédito"}.
-                    </p>
                   </div>
                   <div>
                     <Label>Lance Embutido (%)</Label>
-                    <PercentInput valueDecimal={p.lanceEmbutPct} onChangeDecimal={(d) => p.setLanceEmbutPct(Math.min(d, p.adminRules?.embut_cap_adm_pct ?? 0.25))} maxDecimal={p.adminRules?.embut_cap_adm_pct ?? 0.25} />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Base: {p.adminRules?.lance_embut_base === "valor_categoria" ? "Categoria" : "Crédito"} • Teto: {pctHuman(p.adminRules?.embut_cap_adm_pct ?? 0.25)} do {p.adminRules?.embut_base === "parcela_termo" ? "total de parcelas-termo" : "crédito"}.
-                    </p>
+                    <PercentInput
+                      valueDecimal={p.lanceEmbutPct}
+                      onChangeDecimal={(d) => p.setLanceEmbutPct(d)}
+                      maxDecimal={p.adminRules?.embut_cap_adm_pct ?? 0.25}
+                    />
                   </div>
                 </>
               )}
 
               <div>
                 <Label>Parcela da Contemplação</Label>
-                <Input type="number" value={p.parcContemplacao} onChange={(e) => p.setParcContemplacao(Math.max(1, Number(e.target.value)))} />
+                <Input
+                  type="number"
+                  value={p.parcContemplacao}
+                  onChange={(e) => p.setParcContemplacao(Math.max(1, Number(e.target.value)))}
+                />
                 <p className="text-xs text-muted-foreground mt-1">Deve ser menor que o Prazo da Venda.</p>
               </div>
             </CardContent>
           </Card>
 
+          {/* Pós */}
           <Card>
             <CardHeader><CardTitle>Plano de Pagamento após a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">

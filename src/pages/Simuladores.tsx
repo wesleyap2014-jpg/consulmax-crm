@@ -1,13 +1,12 @@
 // src/pages/Simuladores.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Pencil, Trash2, X } from "lucide-react";
-import { useParams, useLocation, useSearchParams } from "react-router-dom";
-import { ChevronsUpDown, Search } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, X, ChevronsUpDown, Search } from "lucide-react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
 
 /* ========================= Tipos ========================= */
@@ -44,11 +43,7 @@ type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
 
 /* ======================= Helpers ========================= */
 const brMoney = (v: number) =>
-  v.toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    maximumFractionDigits: 2,
-  });
+  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
 
 const pctHuman = (v: number) => (v * 100).toFixed(4) + "%";
 
@@ -166,7 +161,7 @@ function calcularSimulacao(i: CalcInput) {
   const baseMensalPre =
     redutorPreEnabled && redutorBase === "valor_categoria"
       ? (valorCategoria / prazo) * fatorForma
-      : // fallback compat
+      : // compat antigo
         (C * fatorForma + C * Math.max(0, taxaAdmFull - antecipPct) + C * frPct) / prazo;
 
   // Seguro (apenas exibição)
@@ -216,7 +211,12 @@ function calcularSimulacao(i: CalcInput) {
 
   let aplicouLimitador = false;
   let parcelaEscolhida = novaParcelaSemLimite;
-  if (limitEnabled && parcelaLimitante > novaParcelaSemLimite) {
+
+  // Regra especial: Serviços mantêm o valor da parcela; ajusta-se apenas o prazo
+  const isServicos = (segmento || "").toLowerCase().includes("serv");
+  if (isServicos) {
+    parcelaEscolhida = parcelaDemais; // mantém parcela
+  } else if (limitEnabled && parcelaLimitante > novaParcelaSemLimite) {
     aplicouLimitador = true;
     parcelaEscolhida = parcelaLimitante;
   }
@@ -227,12 +227,12 @@ function calcularSimulacao(i: CalcInput) {
     ? parcelaEscolhida + antecipCada
     : null;
 
-  // Novo prazo
+  // Novo prazo (se manter parcela em serviços, prazo recalcula sobre a parcelaEscolhida mantida)
   let saldoParaPrazo = saldoDevedorFinal;
   if (has2aAntecipDepois) {
     saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipCada));
   }
-  const novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
+  const novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / Math.max(1e-6, parcelaEscolhida)));
 
   return {
     valorCategoria,
@@ -278,6 +278,8 @@ function MoneyInput({
   );
 }
 
+/** PercentInput que NÃO reposiciona o cursor a cada tecla.
+ *  Formata só no blur/Enter; durante a digitação mantém o texto do usuário. */
 function PercentInput({
   valueDecimal,
   onChangeDecimal,
@@ -288,17 +290,37 @@ function PercentInput({
   onChangeDecimal: (d: number) => void;
   maxDecimal?: number;
 } & React.InputHTMLAttributes<HTMLInputElement>) {
-  const display = formatPctInputFromDecimal(valueDecimal || 0);
+  const [text, setText] = useState<string>(formatPctInputFromDecimal(valueDecimal || 0));
+  const lastProp = useRef<number>(valueDecimal);
+
+  // Se o valor vindo de fora mudar (ex.: reset), sincroniza o texto.
+  useEffect(() => {
+    if (lastProp.current !== valueDecimal) {
+      lastProp.current = valueDecimal;
+      setText(formatPctInputFromDecimal(valueDecimal || 0));
+    }
+  }, [valueDecimal]);
+
+  function commit(raw: string) {
+    let d = parsePctInputToDecimal(raw);
+    if (typeof maxDecimal === "number") d = clamp(d, 0, maxDecimal);
+    onChangeDecimal(d);
+    lastProp.current = d;
+    setText(formatPctInputFromDecimal(d));
+  }
+
   return (
     <div className="flex items-center gap-2">
       <Input
         {...rest}
         inputMode="decimal"
-        value={display}
-        onChange={(e) => {
-          let d = parsePctInputToDecimal(e.target.value);
-          if (typeof maxDecimal === "number") d = clamp(d, 0, maxDecimal);
-          onChangeDecimal(d);
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur();
+          }
         }}
         className={`text-right ${rest.className || ""}`}
       />
@@ -364,6 +386,9 @@ export default function Simuladores() {
   const adminId = routeAdminId;
   const openSetup = setup;
 
+  // Teto do lance embutido (override opcional)
+  const [embutCapPctOverride, setEmbutCapPctOverride] = useState<number | null>(null);
+
   // Load basic data (admins com rules)
   useEffect(() => {
     (async () => {
@@ -410,6 +435,15 @@ export default function Simuladores() {
   );
   const adminRules = (activeAdmin?.rules || {}) as any;
 
+  useEffect(() => {
+    // ao trocar de admin, carrega teto do embutido (se houver)
+    if (adminRules && typeof adminRules.embut_cap_adm_pct === "number") {
+      setEmbutCapPctOverride(adminRules.embut_cap_adm_pct);
+    } else {
+      setEmbutCapPctOverride(null);
+    }
+  }, [activeAdminId]); // eslint-disable-line
+
   const adminTables = useMemo(
     () => tables.filter((t) => t.admin_id === activeAdminId),
     [tables, activeAdminId]
@@ -440,11 +474,12 @@ export default function Simuladores() {
   }, [tabelaSelecionada]); // eslint-disable-line
 
   // valida % embutido
-  const embutCapPct = adminRules?.embut_cap_adm_pct ?? 0.25;
+  const capDefault = typeof adminRules?.embut_cap_adm_pct === "number" ? adminRules.embut_cap_adm_pct : 0.25;
+  const embutCapPct = typeof embutCapPctOverride === "number" ? embutCapPctOverride : capDefault;
   const lanceEmbutPctValid = clamp(lanceEmbutPct, 0, embutCapPct);
   useEffect(() => {
     if (lanceEmbutPct !== lanceEmbutPctValid) setLanceEmbutPct(lanceEmbutPctValid);
-  }, [lanceEmbutPct]); // eslint-disable-line
+  }, [lanceEmbutPctValid]); // eslint-disable-line
 
   const prazoAviso =
     prazoVenda > 0 && prazoAte > 0 && prazoVenda > prazoAte
@@ -516,13 +551,15 @@ export default function Simuladores() {
     prazoOriginalGrupo,
     lanceOfertParcelas,
     lanceEmbutParcelas,
+    embutCapPct,
   ]); // eslint-disable-line
 
   async function salvarSimulacao() {
     if (!tabelaSelecionada || !calc) return;
     setSalvando(true);
 
-    const payload = {
+    // base payload
+    const payload: any = {
       admin_id: activeAdminId,
       table_id: tabelaSelecionada.id,
       lead_id: leadId || null,
@@ -542,8 +579,6 @@ export default function Simuladores() {
       prazo_original_grupo: prazoOriginalGrupo || null,
       lance_ofertado_pct: lanceOfertPct,
       lance_embutido_pct: lanceEmbutPctValid,
-      lance_ofertado_parcelas: lanceOfertParcelas,
-      lance_embutido_parcelas: lanceEmbutParcelas,
 
       parcela_contemplacao: parcContemplacao,
 
@@ -568,7 +603,30 @@ export default function Simuladores() {
       fr_tax_pct: tabelaSelecionada.fundo_reserva_pct,
     };
 
-    const { data, error } = await supabase.from("sim_simulations").insert(payload).select("code").single();
+    // Campos extras só se o modelo for "parcela"
+    if ((adminRules?.modelo_lance ?? "percentual") === "parcela") {
+      payload.lance_ofertado_parcelas = lanceOfertParcelas;
+      payload.lance_embutido_parcelas = lanceEmbutParcelas;
+    }
+
+    // 1ª tentativa
+    let { data, error } = await supabase.from("sim_simulations").insert(payload).select("code").single();
+
+    // Retry seguro se a tabela não tiver colunas novas (schema cache/column not found)
+    if (error && /column .* not found|schema cache|does not exist/i.test(error.message || "")) {
+      try {
+        const payloadRetry = { ...payload };
+        delete payloadRetry.lance_ofertado_parcelas;
+        delete payloadRetry.lance_embutido_parcelas;
+
+        const retry = await supabase.from("sim_simulations").insert(payloadRetry).select("code").single();
+        data = retry.data;
+        error = retry.error;
+      } catch (e: any) {
+        // cai no handle padrão
+      }
+    }
+
     setSalvando(false);
     if (error) {
       alert("Erro ao salvar simulação: " + error.message);
@@ -814,6 +872,8 @@ Vantagens
                   salvar={salvarSimulacao}
                   salvando={salvando}
                   simCode={simCode}
+                  embutCapPct={embutCapPct}
+                  setEmbutCapPct={setEmbutCapPctOverride}
                 />
               ) : (
                 <div className="text-sm text-muted-foreground">Nenhuma administradora encontrada.</div>
@@ -1174,7 +1234,7 @@ function TableFormOverlay({
   const [taxaAdmHuman, setTaxaAdmHuman] = useState(formatPctInputFromDecimal(initial?.taxa_adm_pct ?? 0.22));
   const [frHuman, setFrHuman] = useState(formatPctInputFromDecimal(initial?.fundo_reserva_pct ?? 0.02));
   const [antecipHuman, setAntecipHuman] = useState(formatPctInputFromDecimal(initial?.antecip_pct ?? 0.02));
-  const [antecipParcelas, setAntecipParcelas] = useState(initial?.antecip_parcelas ?? 1);
+  const [antecipParcelas, setAntecipParcelas] = useState<number>(initial?.antecip_parcelas ?? 1);
   const [limHuman, setLimHuman] = useState(formatPctInputFromDecimal(initial?.limitador_parcela_pct ?? 0.002565));
   const [seguroHuman, setSeguroHuman] = useState(formatPctInputFromDecimal(initial?.seguro_prest_pct ?? 0.00061));
 
@@ -1198,6 +1258,9 @@ function TableFormOverlay({
 
   async function salvar() {
     setSaving(true);
+    // clamp obrigatório: antecip_parcelas aceita apenas 0|1|2 na base
+    const antecipParcelasClamped = clamp(Number(antecipParcelas) || 0, 0, 2);
+
     const payload: Omit<SimTable, "id"> = {
       admin_id: adminId,
       segmento,
@@ -1208,7 +1271,7 @@ function TableFormOverlay({
       taxa_adm_pct: parsePctInputToDecimal(taxaAdmHuman),
       fundo_reserva_pct: parsePctInputToDecimal(frHuman),
       antecip_pct: parsePctInputToDecimal(antecipHuman),
-      antecip_parcelas: Number(antecipParcelas) || 0,
+      antecip_parcelas: antecipParcelasClamped,
       limitador_parcela_pct: parsePctInputToDecimal(limHuman),
       seguro_prest_pct: parsePctInputToDecimal(seguroHuman),
       permite_lance_embutido: perEmbutido,
@@ -1252,7 +1315,20 @@ function TableFormOverlay({
           <div><Label>% Taxa Adm</Label><Input value={taxaAdmHuman} onChange={(e) => setTaxaAdmHuman(e.target.value)} /></div>
           <div><Label>% Fundo Reserva</Label><Input value={frHuman} onChange={(e) => setFrHuman(e.target.value)} /></div>
           <div><Label>% Antecipação da Adm</Label><Input value={antecipHuman} onChange={(e) => setAntecipHuman(e.target.value)} /></div>
-          <div><Label>Parcelas da Antecipação</Label><Input type="number" value={antecipParcelas} onChange={(e) => setAntecipParcelas(Number(e.target.value))} /></div>
+
+          <div>
+            <Label>Parcelas da Antecipação</Label>
+            <select
+              className="w-full h-10 border rounded-md px-3"
+              value={String(antecipParcelas)}
+              onChange={(e) => setAntecipParcelas(Number(e.target.value))}
+            >
+              <option value="0">0 (sem antecipação)</option>
+              <option value="1">1 parcela</option>
+              <option value="2">2 parcelas</option>
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">A base aceita apenas 0, 1 ou 2.</p>
+          </div>
 
           <div><Label>% Limitador Parcela</Label><Input value={limHuman} onChange={(e) => setLimHuman(e.target.value)} /></div>
           <div><Label>% Seguro por parcela</Label><Input value={seguroHuman} onChange={(e) => setSeguroHuman(e.target.value)} /></div>
@@ -1335,6 +1411,9 @@ type EmbraconProps = {
   salvar: () => Promise<void>;
   salvando: boolean;
   simCode: number | null;
+
+  embutCapPct: number;
+  setEmbutCapPct: (n: number | null) => void;
 };
 
 function EmbraconSimulator(p: EmbraconProps) {
@@ -1608,7 +1687,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                       onChange={(e) => p.setLanceEmbutParcelas(Math.max(0, Number(e.target.value)))}
                     />
                     <p className="text-xs text-muted-foreground mt-1">
-                      Teto do embutido: {pctHuman(p.adminRules?.embut_cap_adm_pct ?? 0.25)} do crédito.
+                      Teto do embutido: {pctHuman(p.embutCapPct)} do crédito.
                     </p>
                   </div>
                 </>
@@ -1622,8 +1701,8 @@ function EmbraconSimulator(p: EmbraconProps) {
                     <Label>Lance Embutido (%)</Label>
                     <PercentInput
                       valueDecimal={p.lanceEmbutPct}
-                      onChangeDecimal={(d) => p.setLanceEmbutPct(Math.min(d, p.adminRules?.embut_cap_adm_pct ?? 0.25))}
-                      maxDecimal={p.adminRules?.embut_cap_adm_pct ?? 0.25}
+                      onChangeDecimal={(d) => p.setLanceEmbutPct(Math.min(d, p.embutCapPct))}
+                      maxDecimal={p.embutCapPct}
                     />
                   </div>
                 </>
@@ -1637,6 +1716,18 @@ function EmbraconSimulator(p: EmbraconProps) {
                   onChange={(e) => p.setParcContemplacao(Math.max(1, Number(e.target.value)))}
                 />
                 <p className="text-xs text-muted-foreground mt-1">Deve ser menor que o Prazo da Venda.</p>
+              </div>
+
+              {/* Teto do embutido (override por admin) */}
+              <div className="md:col-span-3">
+                <Label>Teto do Lance Embutido (adm)</Label>
+                <PercentInput
+                  valueDecimal={p.embutCapPct}
+                  onChangeDecimal={(d) => p.setEmbutCapPct(clamp(d, 0, 1))}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Valor máximo permitido para lance embutido desta administradora.
+                </p>
               </div>
             </CardContent>
           </Card>

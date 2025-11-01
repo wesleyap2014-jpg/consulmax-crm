@@ -628,6 +628,7 @@ export default function Simuladores() {
 💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
+
 🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}

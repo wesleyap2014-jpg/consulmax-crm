@@ -39,12 +39,17 @@ type SimTable = {
   indice_correcao: string[];
 };
 
-// Regras esperadas em Admin.rules
+// Admin.rules esperados
 // {
 //   modelo_lance: "percentual" | "parcela",
-//   modelo_lance_base: "credito" | "parcela_termo",          // base do lance ofertado/embutido no modo percentual
-//   embut_cap_adm_pct: number,                               // limite do embutido (fração)
-//   embut_base: "credito" | "parcela_termo",                 // base para o limite do embutido
+//   modelo_lance_base: "credito" | "parcela_termo",
+//   // Bases específicas para percentuais:
+//
+//   lance_ofert_base: "credito" | "valor_categoria",
+//   lance_embut_base: "credito" | "valor_categoria",
+//
+//   embut_cap_adm_pct: number, // ex.: 0.25 (25%)
+//   embut_base: "credito" | "parcela_termo", // base do LIMITE do embutido
 //   limit_enabled: boolean,
 //   redutor_pre_contemplacao_enabled: boolean,
 //   redutor_base: "valor_categoria" | "credito"
@@ -66,6 +71,7 @@ function parseBRLInputToNumber(s: string): number {
   const cents = digits.length ? parseInt(digits, 10) : 0;
   return cents / 100;
 }
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -77,7 +83,7 @@ function formatPhoneBR(s?: string) {
   return s || "";
 }
 
-/* ========== Percent Input (estável p/ cursor) ========== */
+/* ========== Percent Input (sem pular cursor) ========== */
 function PercentInput({
   valueDecimal,
   onChangeDecimal,
@@ -140,12 +146,21 @@ export type CalcInput = {
   modeloLance: "percentual" | "parcela";
   lanceBase: "credito" | "parcela_termo";
   prazoOriginalGrupo?: number;
-  lanceOfertParcelas?: number;
-  lanceEmbutParcelas?: number;
+
+  // Percentual
   lanceOfertPct?: number;
   lanceEmbutPct?: number;
-  embutCapPct?: number | null; // limite da administradora
-  embutCapBase?: "credito" | "parcela_termo"; // base do limite
+  // Parcelas
+  lanceOfertParcelas?: number;
+  lanceEmbutParcelas?: number;
+
+  // Limite do embutido
+  embutCapPct?: number | null;
+  embutCapBase?: "credito" | "parcela_termo";
+
+  // Base dos percentuais (ofertado/embutido)
+  ofertBaseKind?: "credito" | "valor_categoria";
+  embutBaseKind?: "credito" | "valor_categoria";
 
   // Regras extras
   limitEnabled?: boolean;
@@ -180,6 +195,9 @@ function calcularSimulacao(i: CalcInput) {
     embutCapPct = 0.25,
     embutCapBase = "credito",
 
+    ofertBaseKind = "credito",
+    embutBaseKind = "credito",
+
     limitEnabled = true,
     redutorPreEnabled = false,
     redutorBase = "valor_categoria",
@@ -191,7 +209,7 @@ function calcularSimulacao(i: CalcInput) {
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
-  // Valor de categoria (Crédito + taxas)
+  // Valor de categoria
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
   // Parcela termo
@@ -203,27 +221,30 @@ function calcularSimulacao(i: CalcInput) {
   if (forma === "Reduzida 25%") fatorForma = 0.75;
   if (forma === "Reduzida 50%") fatorForma = 0.5;
 
-  // Pré-contemplação (pode usar base "valor_categoria")
+  // Base pré-contemplação
   const baseMensalPre =
     redutorPreEnabled && redutorBase === "valor_categoria"
       ? (valorCategoria / prazo) * fatorForma
       : (C * fatorForma + C * Math.max(0, taxaAdmFull - antecipPct) + C * frPct) / prazo;
 
+  // Seguro (apenas exibição)
   const seguroMensal = seguro ? valorCategoria * seguroPrestPct : 0;
 
-  const antParc = Math.max(0, Number(antecipParcelas) || 0);
-  const antecipCada = antParc > 0 ? (C * antecipPct) / antParc : 0;
+  // Antecipação
+  const antParcelas = Math.max(0, Number(antecipParcelas) || 0);
+  const antecipCada = antParcelas > 0 ? (C * antecipPct) / antParcelas : 0;
 
-  const parcelaAte = baseMensalPre + (antParc > 0 ? antecipCada : 0) + seguroMensal;
+  const parcelaAte = baseMensalPre + (antParcelas > 0 ? antecipCada : 0) + seguroMensal;
   const parcelaDemais = baseMensalPre + seguroMensal;
 
-  const totalPagoSemSeguro = baseMensalPre * parcelasPagas + antecipCada * Math.min(parcelasPagas, antParc);
+  // Total pago até contemplação (sem seguro)
+  const totalPagoSemSeguro = baseMensalPre * parcelasPagas + antecipCada * Math.min(parcelasPagas, antParcelas);
 
   // ===== Lances =====
   let lanceOfertadoValor = 0;
   let lanceEmbutidoValor = 0;
 
-  // Limite (valor) do embutido conforme base configurada
+  // Limite absoluto em valor para o embutido conforme regra da administradora
   const embutLimitValorBase = embutCapBase === "parcela_termo" ? parcelaTermo * prazoTermo : C;
   const embutValorMaximo = (embutCapPct ?? 0.25) * embutLimitValorBase;
 
@@ -233,11 +254,14 @@ function calcularSimulacao(i: CalcInput) {
     lanceOfertadoValor = ofertValor;
     lanceEmbutidoValor = Math.min(embutValor, embutValorMaximo);
   } else {
-    // percentual sobre base
-    const basePercentual = lanceBase === "credito" ? C : parcelaTermo * prazoTermo; // permite “Crédito + taxas” via valorCategoria? -> percentual sempre sobre CRÉDITO; o “+taxas” entrou no valorCategoria e no termo
-    lanceOfertadoValor = basePercentual * Math.max(0, lanceOfertPct);
+    // Percentuais com base configurável: crédito OU valor de categoria (crédito + taxas)
+    const baseOfert = ofertBaseKind === "valor_categoria" ? valorCategoria : C;
+    const baseEmbut = embutBaseKind === "valor_categoria" ? valorCategoria : C;
+
+    lanceOfertadoValor = baseOfert * Math.max(0, lanceOfertPct);
+
     const embutPct = Math.min(Math.max(0, lanceEmbutPct), embutCapPct ?? 0.25);
-    lanceEmbutidoValor = Math.min(basePercentual * embutPct, embutValorMaximo);
+    lanceEmbutidoValor = Math.min(baseEmbut * embutPct, embutValorMaximo);
   }
 
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
@@ -250,6 +274,7 @@ function calcularSimulacao(i: CalcInput) {
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
   const parcelaLimitante = limitEnabled ? valorCategoria * limitadorPct : 0;
 
+  // Regra especial: Serviços -> manter valor de parcela (recalcula só prazo)
   const isServicos = (segmento || "").toLowerCase().includes("serv");
 
   let aplicouLimitador = false;
@@ -260,18 +285,16 @@ function calcularSimulacao(i: CalcInput) {
       parcelaEscolhida = parcelaLimitante;
     }
   } else {
-    // Serviços: mantém valor da parcela (demais) e recalcula prazo apenas
-    parcelaEscolhida = parcelaDemais;
+    parcelaEscolhida = parcelaDemais; // mantém valor
   }
 
   // 2ª antecipação após 1ª
-  const has2aAntecipDepois = antParc >= 2 && parcContemplacao === 1;
+  const has2aAntecipDepois = antParcelas >= 2 && parcContemplacao === 1;
   const segundaParcelaComAntecipacao = has2aAntecipDepois ? parcelaEscolhida + antecipCada : null;
 
+  // Novo prazo
   let saldoParaPrazo = saldoDevedorFinal;
-  if (has2aAntecipDepois) {
-    saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipCada));
-  }
+  if (has2aAntecipDepois) saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipCada));
   const novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
 
   return {
@@ -388,6 +411,7 @@ export default function Simuladores() {
       setTables(t ?? []);
       setLeads((l ?? []).map((x: any) => ({ id: x.id, nome: x.nome, telefone: x.telefone })));
 
+      // default: Embracon > primeiro
       const embr = (a ?? []).find((ad: any) => ad.name === "Embracon");
       let nextActiveId = embr?.id ?? (a?.[0]?.id ?? null);
       if (adminId && (a ?? []).some((ad: any) => ad.id === adminId)) nextActiveId = adminId as string;
@@ -426,10 +450,9 @@ export default function Simuladores() {
     return Array.from(new Set(list));
   }, [adminTables, segmento]);
 
-  const variantesDaTabela = useMemo(
-    () => adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela),
-    [adminTables, segmento, nomeTabela]
-  );
+  const variantesDaTabela = useMemo(() => {
+    return adminTables.filter((t) => t.segmento === segmento && t.nome_tabela === nomeTabela);
+  }, [adminTables, segmento, nomeTabela]);
 
   const tabelaSelecionada = useMemo(() => tables.find((t) => t.id === tabelaId) || null, [tables, tabelaId]);
 
@@ -439,8 +462,9 @@ export default function Simuladores() {
     setFaixa({ min: tabelaSelecionada.faixa_min, max: tabelaSelecionada.faixa_max });
     if (forma === "Reduzida 25%" && !tabelaSelecionada.contrata_reduzida_25) setForma("Parcela Cheia");
     if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
-  }, [tabelaSelecionada]);
+  }, [tabelaSelecionada]); // eslint-disable-line
 
+  // valida % embutido contra regra da administradora
   const embutCapPct = adminRules?.embut_cap_adm_pct ?? 0.25;
   useEffect(() => {
     if (lanceEmbutPct > embutCapPct) setLanceEmbutPct(embutCapPct);
@@ -451,8 +475,7 @@ export default function Simuladores() {
       ? "⚠️ Prazo da venda ultrapassa o Prazo Até da tabela selecionada."
       : null;
 
-  const podeCalcular =
-    !!tabelaSelecionada && credito > 0 && prazoVenda > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
+  const podeCalcular = !!tabelaSelecionada && credito > 0 && prazoVenda > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
 
   // cálculo
   useEffect(() => {
@@ -461,8 +484,9 @@ export default function Simuladores() {
       return;
     }
     const modeloLance = (adminRules?.modelo_lance ?? "percentual") as "percentual" | "parcela";
-    const lanceBase = (adminRules?.modelo_lance_base ??
-      (modeloLance === "parcela" ? "parcela_termo" : "credito")) as "credito" | "parcela_termo";
+    const lanceBase = (adminRules?.modelo_lance_base ?? (modeloLance === "parcela" ? "parcela_termo" : "credito")) as
+      | "credito"
+      | "parcela_termo";
 
     const inp: CalcInput = {
       credito,
@@ -480,8 +504,13 @@ export default function Simuladores() {
       modeloLance,
       lanceBase,
       prazoOriginalGrupo: Number(prazoOriginalGrupo || prazoVenda),
+
       embutCapPct,
       embutCapBase: (adminRules?.embut_base ?? "credito") as "credito" | "parcela_termo",
+
+      // bases de percentuais
+      ofertBaseKind: (adminRules?.lance_ofert_base ?? "credito") as "credito" | "valor_categoria",
+      embutBaseKind: (adminRules?.lance_embut_base ?? "credito") as "credito" | "valor_categoria",
 
       limitEnabled: adminRules?.limit_enabled !== false,
       redutorPreEnabled: adminRules?.redutor_pre_contemplacao_enabled === true,
@@ -489,11 +518,11 @@ export default function Simuladores() {
 
       parcContemplacao,
 
-      // modo “parcela”
+      // Modo “parcela”
       lanceOfertParcelas,
       lanceEmbutParcelas,
 
-      // modo “percentual”
+      // Modo “percentual”
       lanceOfertPct,
       lanceEmbutPct,
     };
@@ -594,11 +623,8 @@ export default function Simuladores() {
     })();
 
     const primeiraParcelaLabel =
-      tabelaSelecionada.antecip_parcelas === 2
-        ? "Parcelas 1 e 2"
-        : tabelaSelecionada.antecip_parcelas === 1
-        ? "Parcela 1"
-        : "Parcela inicial";
+      tabelaSelecionada.antecip_parcelas === 2 ? "Parcelas 1 e 2" :
+      tabelaSelecionada.antecip_parcelas === 1 ? "Parcela 1" : "Parcela inicial";
 
     const parcelaRestanteValor = brMoney(calc.parcelaEscolhida);
     const segundaParcExtra =
@@ -975,7 +1001,7 @@ function TableManagerModal({
   const pageItems = useMemo(() => grouped.slice((page - 1) * pageSize, page * pageSize), [grouped, page]);
 
   async function deletar(id: string) {
-    if (!confirm("Confirmar exclusão desta tabela? (As simulações vinculadas também serão excluídas)")) return;
+    if (!confirm("Confirmar exclusão desta tabela? (Regras de comissão vinculadas também serão excluídas)")) return;
     setBusyId(id);
 
     const delSims = await supabase.from("sim_simulations").delete().eq("table_id", id);
@@ -1083,7 +1109,9 @@ function TableManagerModal({
             {grouped.length > 0 && (
               <>
                 Mostrando{" "}
-                <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}</strong>{" "}
+                <strong>
+                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, grouped.length)}
+                </strong>{" "}
                 de <strong>{grouped.length}</strong>
               </>
             )}
@@ -1097,12 +1125,12 @@ function TableManagerModal({
             >
               Anterior
             </Button>
-            <span> Página {page} de {Math.max(1, Math.ceil(grouped.length / pageSize))} </span>
+            <span> Página {page} de {totalPages} </span>
             <Button
               variant="secondary"
               className="h-9 rounded-xl px-3"
-              onClick={() => setPage((p) => Math.min(Math.max(1, Math.ceil(grouped.length / pageSize)), p + 1))}
-              disabled={page === Math.max(1, Math.ceil(grouped.length / pageSize))}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
             >
               Próxima
             </Button>
@@ -1168,14 +1196,14 @@ function TableFormOverlay({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  function parsePct(s: string) {
-    const clean = s.trim().replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
-    const val = parseFloat(clean);
-    return isNaN(val) ? 0 : val / 100;
-    }
-
   async function salvar() {
     setSaving(true);
+    const toPct = (s: string) => {
+      const clean = s.replace(/\s|%/g, "").replace(/\./g, "").replace(",", ".");
+      const n = parseFloat(clean);
+      return isNaN(n) ? 0 : n / 100;
+    };
+
     const payload: Omit<SimTable, "id"> = {
       admin_id: adminId,
       segmento,
@@ -1183,12 +1211,12 @@ function TableFormOverlay({
       faixa_min: Number(faixaMin) || 0,
       faixa_max: Number(faixaMax) || 0,
       prazo_limite: Number(prazoLimite) || 0,
-      taxa_adm_pct: parsePct(taxaAdmHuman),
-      fundo_reserva_pct: parsePct(frHuman),
-      antecip_pct: parsePct(antecipHuman),
+      taxa_adm_pct: toPct(taxaAdmHuman),
+      fundo_reserva_pct: toPct(frHuman),
+      antecip_pct: toPct(antecipHuman),
       antecip_parcelas: Number(antecipParcelas) || 0,
-      limitador_parcela_pct: parsePct(limHuman),
-      seguro_prest_pct: parsePct(seguroHuman),
+      limitador_parcela_pct: toPct(limHuman),
+      seguro_prest_pct: toPct(seguroHuman),
       permite_lance_embutido: perEmbutido,
       permite_lance_fixo_25: perFixo25,
       permite_lance_fixo_50: perFixo50,
@@ -1586,7 +1614,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                       onChange={(e) => p.setLanceEmbutParcelas(Math.max(0, Number(e.target.value)))}
                     />
                     <p className="text-xs text-muted-foreground mt-1">
-                      Teto do embutido: {pctHuman(p.adminRules?.embut_cap_adm_pct ?? 0.25)} (base {p.adminRules?.embut_base === "parcela_termo" ? "Parcela termo" : "Crédito"}).
+                      Teto do embutido: {pctHuman(p.adminRules?.embut_cap_adm_pct ?? 0.25)} (base da regra).
                     </p>
                   </div>
                 </>
@@ -1595,6 +1623,9 @@ function EmbraconSimulator(p: EmbraconProps) {
                   <div>
                     <Label>Lance Ofertado (%)</Label>
                     <PercentInput valueDecimal={p.lanceOfertPct} onChangeDecimal={p.setLanceOfertPct} />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Base: {p.adminRules?.lance_ofert_base === "valor_categoria" ? "Crédito + Taxas" : "Crédito"}.
+                    </p>
                   </div>
                   <div>
                     <Label>Lance Embutido (%)</Label>
@@ -1604,7 +1635,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                       maxDecimal={p.adminRules?.embut_cap_adm_pct ?? 0.25}
                     />
                     <p className="text-xs text-muted-foreground mt-1">
-                      Limite do embutido calculado sobre {p.adminRules?.embut_base === "parcela_termo" ? "Parcela termo total" : "Crédito"}.
+                      Base: {p.adminRules?.lance_embut_base === "valor_categoria" ? "Crédito + Taxas" : "Crédito"} • Limite: {pctHuman(p.adminRules?.embut_cap_adm_pct ?? 0.25)} (base {p.adminRules?.embut_base === "parcela_termo" ? "Parcela Termo" : "Crédito"}).
                     </p>
                   </div>
                 </>
@@ -1624,7 +1655,7 @@ function EmbraconSimulator(p: EmbraconProps) {
 
           {/* Pós */}
           <Card>
-            <CardHeader><CardTitle>Plano de Pagamento após a Contemplação</CardHeader></CardHeader>
+            <CardHeader><CardTitle>Plano de Pagamento após a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
               <div><Label>Lance Ofertado</Label><Input value={p.calc ? brMoney(p.calc.lanceOfertadoValor) : ""} readOnly /></div>
               <div><Label>Lance Embutido</Label><Input value={p.calc ? brMoney(p.calc.lanceEmbutidoValor) : ""} readOnly /></div>

@@ -94,39 +94,50 @@ const PAGE_SIZE = 15;
 
 // --------- componente ---------
 export default function Usuarios() {
-  // Guard de admin (robusto)
+  // Guard de admin (RPC + fallback)
   const [checkingRole, setCheckingRole] = useState(true);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const { data: authData, error: authErr } = await supabase.auth.getUser();
-        if (authErr) throw authErr;
+        const { data: sessionData, error: sErr } = await supabase.auth.getUser();
+        if (sErr) throw sErr;
+        const uid = sessionData?.user?.id || null;
+        const email = sessionData?.user?.email || null;
 
-        const uid = authData?.user?.id || null;
-        const email = authData?.user?.email || null;
+        let admin = false;
 
-        // 1) tenta por auth_user_id
-        let { data: row } = await supabase
-          .from("users")
-          .select("id, role, user_role, email")
-          .eq("auth_user_id", uid as any)
-          .maybeSingle();
-
-        // 2) fallback por e-mail (cadastros antigos sem auth_user_id)
-        if (!row && email) {
-          const q2 = await supabase
-            .from("users")
-            .select("id, role, user_role, email")
-            .ilike("email", email)
-            .maybeSingle();
-          row = q2.data || null;
+        // 1) Checagem via RPC (ignora RLS)
+        if (uid) {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc("is_admin", { uid });
+          if (!rpcErr && typeof rpcData === "boolean") {
+            admin = rpcData;
+          }
         }
 
-        // 3) decide admin: role ou user_role, case-insensitive
-        const roleStr = String(row?.role || row?.user_role || "").toLowerCase();
-        setIsAdmin(roleStr === "admin");
+        // 2) Fallback por segurança (caso RPC falhe/indisponível)
+        if (!admin) {
+          let { data: row } = await supabase
+            .from("users")
+            .select("id, role, user_role, email")
+            .eq("auth_user_id", uid as any)
+            .maybeSingle();
+
+          if (!row && email) {
+            const q2 = await supabase
+              .from("users")
+              .select("id, role, user_role, email")
+              .ilike("email", email)
+              .maybeSingle();
+            row = q2.data || null;
+          }
+
+          const roleStr = String(row?.role || row?.user_role || "").toLowerCase();
+          admin = roleStr === "admin";
+        }
+
+        setIsAdmin(admin);
       } catch {
         setIsAdmin(false);
       } finally {
@@ -136,7 +147,7 @@ export default function Usuarios() {
   }, []);
 
   const [loading, setLoading] = useState(false);
-  const [showCreate, setShowCreate] = useState(false); // overlay do cadastro
+  const [showCreate, setShowCreate] = useState(false);
 
   // busca + paginação
   const [search, setSearch] = useState("");
@@ -163,11 +174,10 @@ export default function Usuarios() {
     fotoPreview: null,
   });
 
-  // lista de usuários (tabela public.users)
   const [users, setUsers] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
 
-  // carregar lista (apenas se admin)
+  // carregar lista (somente admin)
   useEffect(() => {
     if (isAdmin) void loadUsers(page, search);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -281,7 +291,7 @@ export default function Usuarios() {
         nome: form.nome.trim(),
         email: form.email.trim().toLowerCase(),
         role: roleForAPI,
-        cpf: cpfDigits || null, // backend opcional
+        cpf: cpfDigits || null,
         phone: onlyDigits(form.celular),
         telefone: onlyDigits(form.celular),
         cep: onlyDigits(form.cep),
@@ -430,7 +440,6 @@ export default function Usuarios() {
         return;
       }
 
-      // Atualização opcional do CPF via API própria
       if (editing.cpf) {
         try {
           const resCpf = await fetch(`/api/users/set-cpf`, {

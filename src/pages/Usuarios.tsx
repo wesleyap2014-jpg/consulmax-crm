@@ -91,7 +91,40 @@ const defaultScopes: Record<ScopeKey, boolean> = ALL_SCOPES.reduce(
 
 // --------- componente ---------
 export default function Usuarios() {
+  // guard de admin
+  const [checkingRole, setCheckingRole] = useState(true);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        const uid = auth?.user?.id;
+        if (!uid) {
+          setIsAdmin(false);
+          setCheckingRole(false);
+          return;
+        }
+        const { data, error } = await supabase
+          .from("users")
+          .select("id, role")
+          .eq("auth_user_id", uid)
+          .limit(1)
+          .maybeSingle();
+        if (error) throw error;
+        setIsAdmin(String(data?.role || "viewer") === "admin");
+      } catch (e) {
+        console.warn("Falha ao checar role:", e);
+        setIsAdmin(false);
+      } finally {
+        setCheckingRole(false);
+      }
+    })();
+  }, []);
+
   const [loading, setLoading] = useState(false);
+  const [showCreate, setShowCreate] = useState(false); // overlay do cadastro
+
   const [form, setForm] = useState<FormState>({
     nome: "",
     cpf: "",
@@ -116,18 +149,18 @@ export default function Usuarios() {
   const [users, setUsers] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null); // objeto do usuário em edição
 
-  // carregar lista ao entrar
+  // carregar lista ao entrar (apenas se admin)
   useEffect(() => {
-    loadUsers();
+    if (isAdmin) loadUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAdmin]);
 
   async function loadUsers() {
     const { data, error } = await supabase
       .from("users")
       .select(
         // sem login/photo_url
-        "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes"
+        "id, auth_user_id, nome, email, role, cpf, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes"
       )
       .order("id", { ascending: false });
     if (error) {
@@ -138,7 +171,7 @@ export default function Usuarios() {
     setUsers(data || []);
   }
 
-  // CEP -> ViaCEP auto-preencher
+  // CEP -> ViaCEP auto-preencher (form de cadastro)
   useEffect(() => {
     const dig = onlyDigits(form.cep);
     if (dig.length === 8) {
@@ -161,7 +194,7 @@ export default function Usuarios() {
     }
   }, [form.cep]);
 
-  // PIX auto-preencher conforme tipo
+  // PIX auto-preencher conforme tipo (form de cadastro)
   useEffect(() => {
     let key = form.pix_key;
     if (form.pix_type === "cpf") key = onlyDigits(form.cpf);
@@ -172,15 +205,13 @@ export default function Usuarios() {
   }, [form.pix_type, form.cpf, form.email, form.celular]);
 
   // upload de foto no bucket "avatars"
-  async function uploadFotoSeNecessario(): Promise<string | null> {
-    if (!form.fotoFile) return null;
-    const ext = form.fotoFile.name.split(".").pop() || "jpg";
-    const path = `avatars/${Date.now()}_${Math.random()
-      .toString(16)
-      .slice(2)}.${ext}`;
+  async function uploadFotoSeNecessario(file: File | null): Promise<string | null> {
+    if (!file) return null;
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `avatars/${Date.now()}_${Math.random().toString(16).slice(2)}.${ext}`;
     const { error } = await supabase.storage
       .from("avatars")
-      .upload(path, form.fotoFile, { upsert: true });
+      .upload(path, file, { upsert: true });
     if (error) {
       alert("Falha ao enviar a foto: " + error.message);
       return null;
@@ -195,14 +226,12 @@ export default function Usuarios() {
     if (!form.email.trim()) return alert("Informe o e-mail.");
     const cpfDigits = onlyDigits(form.cpf);
     if (cpfDigits.length !== 11) return alert("CPF inválido.");
-    if (onlyDigits(form.celular).length < 10)
-      return alert("Celular inválido.");
-    if (form.pix_type && !form.pix_key.trim())
-      return alert("Informe a chave PIX correspondente.");
+    if (onlyDigits(form.celular).length < 10) return alert("Celular inválido.");
+    if (form.pix_type && !form.pix_key.trim()) return alert("Informe a chave PIX correspondente.");
 
     try {
       setLoading(true);
-      const avatar_url = await uploadFotoSeNecessario();
+      const avatar_url = await uploadFotoSeNecessario(form.fotoFile);
       const scopesList = ALL_SCOPES.filter((k) => form.scopes[k]);
       const numeroFinal = form.sn ? "s/n" : form.numero.trim();
       const roleForAPI = mapRoleToAPI(form.role);
@@ -242,18 +271,12 @@ export default function Usuarios() {
       }
 
       if (!res.ok) {
-        const msg =
-          (data && (data.error || data.message)) || raw || `HTTP ${res.status}`;
+        const msg = (data && (data.error || data.message)) || raw || `HTTP ${res.status}`;
         alert("Erro ao criar usuário: " + msg);
         return;
       }
 
-      const senha =
-        data?.password ||
-        data?.temp_password ||
-        data?.tempPass ||
-        data?.temp ||
-        null;
+      const senha = data?.password || data?.temp_password || data?.tempPass || data?.temp || null;
 
       alert(
         senha
@@ -263,7 +286,7 @@ export default function Usuarios() {
 
       await loadUsers(); // atualiza a lista
 
-      // limpa form
+      // limpa form e fecha overlay
       setForm({
         nome: "",
         cpf: "",
@@ -283,6 +306,7 @@ export default function Usuarios() {
         fotoFile: null,
         fotoPreview: null,
       });
+      setShowCreate(false);
     } catch (e: any) {
       alert("Falha inesperada: " + (e?.message || e));
     } finally {
@@ -290,33 +314,45 @@ export default function Usuarios() {
     }
   }
 
-  // edição (modal simples)
+  // edição (modal)
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editFotoFile, setEditFotoFile] = useState<File | null>(null);
+  const [editFotoPreview, setEditFotoPreview] = useState<string | null>(null);
+
   function openEdit(u: any) {
     setEditing({
       ...u,
-      cpf: "", // por segurança não exibimos cpf aqui (se criptografado)
+      cpf: u.cpf || "",
       celular: u.phone ? maskPhone(String(u.phone)) : "",
       cep: u.cep ? maskCEP(String(u.cep)) : "",
     });
+    setEditFotoFile(null);
+    setEditFotoPreview(null);
   }
   function closeEdit() {
     setEditing(null);
+    setEditFotoFile(null);
+    setEditFotoPreview(null);
   }
   async function saveEdit() {
     if (!editing) return;
     try {
       setSavingEdit(true);
-      const scopesList: ScopeKey[] =
-        Array.isArray(editing.scopes) && editing.scopes.length
-          ? editing.scopes
-          : [];
+
+      // upload da nova foto (se houver)
+      let avatar_url: string | null = null;
+      if (editFotoFile) {
+        avatar_url = await uploadFotoSeNecessario(editFotoFile);
+      }
+
+      const scopesList: ScopeKey[] = Array.isArray(editing.scopes) && editing.scopes.length ? editing.scopes : [];
 
       // ⚠️ Compat: atualizar 'telefone' junto com 'phone'
-      const update = {
+      const update: any = {
         nome: editing.nome?.trim() || null,
         email: editing.email?.trim().toLowerCase() || null,
         role: editing.role || null,
+        cpf: editing.cpf ? onlyDigits(editing.cpf) : null,
         phone: editing.celular ? onlyDigits(editing.celular) : null,
         telefone: editing.celular ? onlyDigits(editing.celular) : null, // <— compat
         cep: editing.cep ? onlyDigits(editing.cep) : null,
@@ -329,6 +365,8 @@ export default function Usuarios() {
         pix_key: editing.pix_key || null,
         scopes: scopesList,
       };
+
+      if (avatar_url) update.avatar_url = avatar_url;
 
       const { error } = await supabase
         .from("users")
@@ -365,9 +403,7 @@ export default function Usuarios() {
               }))
             }
           />
-          <span style={{ textTransform: "capitalize" }}>
-            {k.replace("_", " ")}
-          </span>
+          <span style={{ textTransform: "capitalize" }}>{k.replace("_", " ")}</span>
         </label>
       )),
     [form.scopes]
@@ -381,6 +417,7 @@ export default function Usuarios() {
             <tr>
               <th style={th}>Foto</th>
               <th style={th}>Nome</th>
+              <th style={th}>CPF</th>
               <th style={th}>E-mail</th>
               <th style={th}>Perfil</th>
               <th style={th}>Celular</th>
@@ -390,32 +427,20 @@ export default function Usuarios() {
           </thead>
           <tbody>
             {users.map((u) => (
-              <tr key={u.id}>
+              <tr key={u.id} style={{ transition: "background .15s" }}>
                 <td style={td}>
                   {u.avatar_url ? (
                     <img
                       src={u.avatar_url}
                       alt=""
-                      style={{
-                        width: 36,
-                        height: 36,
-                        objectFit: "cover",
-                        borderRadius: 10,
-                        border: "1px solid #eee",
-                      }}
+                      style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 10, border: "1px solid #eee" }}
                     />
                   ) : (
-                    <div
-                      style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 10,
-                        background: "#eee",
-                      }}
-                    />
+                    <div style={{ width: 40, height: 40, borderRadius: 10, background: "#eee" }} />
                   )}
                 </td>
                 <td style={td}>{u.nome}</td>
+                <td style={td}>{u.cpf ? maskCPF(String(u.cpf)) : "-"}</td>
                 <td style={td}>{u.email}</td>
                 <td style={td}>{String(u.role).toUpperCase()}</td>
                 <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
@@ -429,15 +454,13 @@ export default function Usuarios() {
                     : "-"}
                 </td>
                 <td style={td}>
-                  <button onClick={() => openEdit(u)} style={btnPrimary}>
-                    Editar
-                  </button>
+                  <button onClick={() => openEdit(u)} style={btnPrimarySmall}>Editar</button>
                 </td>
               </tr>
             ))}
             {users.length === 0 && (
               <tr>
-                <td style={td} colSpan={7}>
+                <td style={td} colSpan={8}>
                   Nenhum usuário encontrado.
                 </td>
               </tr>
@@ -448,220 +471,239 @@ export default function Usuarios() {
     );
   }
 
-  return (
-    <div style={{ maxWidth: 1080, margin: "40px auto", fontFamily: "Inter, system-ui, Arial" }}>
-      <h1 style={{ marginBottom: 16 }}>Cadastro de Usuário</h1>
-
-      {/* CARD DE CADASTRO */}
-      <div style={card}>
-        <div style={grid3}>
-          <input
-            placeholder="Nome completo"
-            value={form.nome}
-            onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
-            style={input}
-          />
-
-          <input
-            placeholder="CPF"
-            value={form.cpf}
-            onChange={(e) => setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))}
-            style={input}
-            inputMode="numeric"
-          />
-
-          <input
-            placeholder="Celular"
-            value={form.celular}
-            onChange={(e) => setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))}
-            style={input}
-            inputMode="tel"
-          />
-
-          <input
-            placeholder="CEP"
-            value={form.cep}
-            onChange={(e) => setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))}
-            style={input}
-            inputMode="numeric"
-          />
-
-          <input
-            placeholder="Logradouro"
-            value={form.logradouro}
-            onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
-            style={input}
-          />
-
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              placeholder="Número"
-              value={form.sn ? "s/n" : form.numero}
-              disabled={form.sn}
-              onChange={(e) => setForm((s) => ({ ...s, numero: e.target.value }))}
-              style={input}
-            />
-            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <input
-                type="checkbox"
-                checked={form.sn}
-                onChange={(e) =>
-                  setForm((s) => ({
-                    ...s,
-                    sn: e.target.checked,
-                    numero: e.target.checked ? "" : s.numero,
-                  }))
-                }
-              />
-              s/n
-            </label>
-          </div>
-
-          <input
-            placeholder="Bairro"
-            value={form.bairro}
-            onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
-            style={input}
-          />
-
-          <input
-            placeholder="Cidade"
-            value={form.cidade}
-            onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
-            style={input}
-          />
-
-          <input
-            placeholder="UF"
-            value={form.uf}
-            onChange={(e) =>
-              setForm((s) => ({
-                ...s,
-                uf: e.target.value.toUpperCase().slice(0, 2),
-              }))
-            }
-            style={input}
-          />
-
-          <input
-            placeholder="E-mail"
-            value={form.email}
-            type="email"
-            onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
-            style={input}
-          />
-
-          <select
-            value={form.role}
-            onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
-            style={input}
-          >
-            <option value="admin">Admin</option>
-            <option value="vendedor">Vendedor</option>
-            <option value="operacoes">Operações</option>
-          </select>
-
-          {/* PIX */}
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <select
-              value={form.pix_type}
-              onChange={(e) => setForm((s) => ({ ...s, pix_type: e.target.value as any }))}
-              style={input}
-            >
-              <option value="">Tipo da chave PIX</option>
-              <option value="cpf">CPF</option>
-              <option value="email">E-mail</option>
-              <option value="phone">Telefone</option>
-            </select>
-            <input
-              placeholder="Chave PIX"
-              value={form.pix_key}
-              onChange={(e) => setForm((s) => ({ ...s, pix_key: e.target.value }))}
-              style={input}
-            />
-          </div>
-
-          {/* foto */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => {
-                const f = e.target.files?.[0] || null;
-                setForm((s) => ({
-                  ...s,
-                  fotoFile: f,
-                  fotoPreview: f ? URL.createObjectURL(f) : null,
-                }));
-              }}
-            />
-            {form.fotoPreview && (
-              <img
-                src={form.fotoPreview}
-                alt="preview"
-                style={{
-                  width: 56,
-                  height: 56,
-                  objectFit: "cover",
-                  borderRadius: 12,
-                  border: "1px solid #eee",
-                }}
-              />
-            )}
-          </div>
-
-          {/* scopes */}
-          <div
-            style={{
-              gridColumn: "1 / span 3",
-              display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0,1fr))",
-              gap: 8,
-            }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>
-              Guias com acesso:
-            </div>
-            {scopeCheckboxes}
-          </div>
-
-          <button onClick={onSubmit} disabled={loading} style={btnPrimaryFull}>
-            {loading ? "Cadastrando..." : "Cadastrar"}
-          </button>
+  // UI principal
+  if (checkingRole) {
+    return (
+      <div style={pageWrap}>Carregando…</div>
+    );
+  }
+  if (!isAdmin) {
+    return (
+      <div style={pageWrap}>
+        <div style={{ ...card, textAlign: "center", padding: 32 }}>
+          <h2 style={{ margin: 0 }}>Acesso negado</h2>
+          <p style={{ marginTop: 8 }}>Esta guia é exclusiva para administradores.</p>
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={pageWrap}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h1 style={{ margin: 0 }}>Usuários</h1>
+
+        {/* Chip para abrir o overlay de cadastro */}
+        <button onClick={() => setShowCreate(true)} style={chipButton}>
+          + Cadastro de Usuário
+        </button>
       </div>
 
       {/* TABELA DE USUÁRIOS */}
-      <h2 style={{ margin: "24px 0 12px" }}>Usuários Cadastrados</h2>
-      <div style={card}>{renderUsersTable()}</div>
+      <div style={{ ...card, padding: 0 }}>
+        <div style={{ padding: 14, borderBottom: "1px solid #eef2f7", display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontWeight: 700 }}>Usuários Cadastrados</span>
+        </div>
+        <div style={{ padding: 12 }}>{renderUsersTable()}</div>
+      </div>
+
+      {/* OVERLAY: CADASTRO */}
+      {showCreate && (
+        <div style={modalBackdrop}>
+          <div style={modalCardWide}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <h2 style={{ margin: 0 }}>Novo usuário</h2>
+              <button onClick={() => setShowCreate(false)} style={btnGhost}>Fechar</button>
+            </div>
+
+            <div style={grid3}>
+              <input
+                placeholder="Nome completo"
+                value={form.nome}
+                onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
+                style={input}
+              />
+
+              <input
+                placeholder="CPF"
+                value={form.cpf}
+                onChange={(e) => setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))}
+                style={input}
+                inputMode="numeric"
+              />
+
+              <input
+                placeholder="Celular"
+                value={form.celular}
+                onChange={(e) => setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))}
+                style={input}
+                inputMode="tel"
+              />
+
+              <input
+                placeholder="CEP"
+                value={form.cep}
+                onChange={(e) => setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))}
+                style={input}
+                inputMode="numeric"
+              />
+
+              <input
+                placeholder="Logradouro"
+                value={form.logradouro}
+                onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
+                style={input}
+              />
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  placeholder="Número"
+                  value={form.sn ? "s/n" : form.numero}
+                  disabled={form.sn}
+                  onChange={(e) => setForm((s) => ({ ...s, numero: e.target.value }))}
+                  style={input}
+                />
+                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.sn}
+                    onChange={(e) =>
+                      setForm((s) => ({
+                        ...s,
+                        sn: e.target.checked,
+                        numero: e.target.checked ? "" : s.numero,
+                      }))
+                    }
+                  />
+                  s/n
+                </label>
+              </div>
+
+              <input
+                placeholder="Bairro"
+                value={form.bairro}
+                onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
+                style={input}
+              />
+
+              <input
+                placeholder="Cidade"
+                value={form.cidade}
+                onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
+                style={input}
+              />
+
+              <input
+                placeholder="UF"
+                value={form.uf}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    uf: e.target.value.toUpperCase().slice(0, 2),
+                  }))
+                }
+                style={input}
+              />
+
+              <input
+                placeholder="E-mail"
+                value={form.email}
+                type="email"
+                onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+                style={input}
+              />
+
+              <select
+                value={form.role}
+                onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
+                style={input}
+              >
+                <option value="admin">Admin</option>
+                <option value="vendedor">Vendedor</option>
+                <option value="operacoes">Operações</option>
+              </select>
+
+              {/* PIX */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select
+                  value={form.pix_type}
+                  onChange={(e) => setForm((s) => ({ ...s, pix_type: e.target.value as any }))}
+                  style={input}
+                >
+                  <option value="">Tipo da chave PIX</option>
+                  <option value="cpf">CPF</option>
+                  <option value="email">E-mail</option>
+                  <option value="telefone">Telefone</option>
+                </select>
+                <input
+                  placeholder="Chave PIX"
+                  value={form.pix_key}
+                  onChange={(e) => setForm((s) => ({ ...s, pix_key: e.target.value }))}
+                  style={input}
+                />
+              </div>
+
+              {/* foto */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setForm((s) => ({
+                      ...s,
+                      fotoFile: f,
+                      fotoPreview: f ? URL.createObjectURL(f) : null,
+                    }));
+                  }}
+                />
+                {form.fotoPreview && (
+                  <img
+                    src={form.fotoPreview}
+                    alt="preview"
+                    style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }}
+                  />
+                )}
+              </div>
+
+              {/* scopes */}
+              <div style={{ gridColumn: "1 / span 3", display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
+                {scopeCheckboxes}
+              </div>
+
+              <button onClick={onSubmit} disabled={loading} style={btnPrimaryFull}>
+                {loading ? "Cadastrando..." : "Cadastrar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE EDIÇÃO */}
       {editing && (
         <div style={modalBackdrop}>
-          <div style={modalCard}>
+          <div style={modalCardWide}>
             <h3 style={{ marginTop: 0 }}>Editar usuário</h3>
             <div style={grid3}>
               <input
                 placeholder="Nome"
                 value={editing.nome || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, nome: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, nome: e.target.value }))}
                 style={input}
               />
+
               <input
-                placeholder="E-mail"
-                value={editing.email || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, email: e.target.value }))
-                }
+                placeholder="CPF"
+                value={editing.cpf || ""}
+                onChange={(e) => setEditing((s: any) => ({ ...s, cpf: maskCPF(e.target.value) }))}
                 style={input}
+                inputMode="numeric"
               />
+
               <select
                 value={editing.role || "viewer"}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, role: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, role: e.target.value }))}
                 style={input}
               >
                 <option value="viewer">Operações</option>
@@ -672,78 +714,50 @@ export default function Usuarios() {
               <input
                 placeholder="Celular"
                 value={editing.celular || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({
-                    ...s,
-                    celular: maskPhone(e.target.value),
-                  }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, celular: maskPhone(e.target.value) }))}
                 style={input}
               />
               <input
                 placeholder="CEP"
                 value={editing.cep || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({
-                    ...s,
-                    cep: maskCEP(e.target.value),
-                  }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))}
                 style={input}
               />
               <input
                 placeholder="Logradouro"
                 value={editing.logradouro || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({
-                    ...s,
-                    logradouro: e.target.value,
-                  }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, logradouro: e.target.value }))}
                 style={input}
               />
               <input
                 placeholder="Número"
                 value={editing.numero || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, numero: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, numero: e.target.value }))}
                 style={input}
               />
               <input
                 placeholder="Bairro"
                 value={editing.bairro || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, bairro: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, bairro: e.target.value }))}
                 style={input}
               />
               <input
                 placeholder="Cidade"
                 value={editing.cidade || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, cidade: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, cidade: e.target.value }))}
                 style={input}
               />
               <input
                 placeholder="UF"
                 value={editing.uf || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({
-                    ...s,
-                    uf: String(e.target.value).toUpperCase().slice(0, 2),
-                  }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, uf: String(e.target.value).toUpperCase().slice(0, 2) }))}
                 style={input}
               />
 
               {/* PIX na edição */}
               <select
                 value={editing.pix_type || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, pix_type: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, pix_type: e.target.value }))}
                 style={input}
               >
                 <option value="">Tipo da chave PIX</option>
@@ -754,34 +768,38 @@ export default function Usuarios() {
               <input
                 placeholder="Chave PIX"
                 value={editing.pix_key || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, pix_key: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, pix_key: e.target.value }))}
                 style={input}
               />
 
+              {/* Foto na edição */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setEditFotoFile(f);
+                    setEditFotoPreview(f ? URL.createObjectURL(f) : null);
+                  }}
+                />
+                {(editFotoPreview || editing.avatar_url) && (
+                  <img
+                    src={editFotoPreview || editing.avatar_url}
+                    alt="preview"
+                    style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }}
+                  />
+                )}
+              </div>
+
               {/* scopes na edição */}
-              <div
-                style={{
-                  gridColumn: "1 / span 3",
-                  display: "grid",
-                  gridTemplateColumns: "repeat(4, minmax(0,1fr))",
-                  gap: 8,
-                }}
-              >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                  Guias com acesso:
-                </div>
+              <div style={{ gridColumn: "1 / span 3", display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
                 {ALL_SCOPES.map((k) => {
-                  const list: ScopeKey[] = Array.isArray(editing.scopes)
-                    ? editing.scopes
-                    : [];
+                  const list: ScopeKey[] = Array.isArray(editing.scopes) ? editing.scopes : [];
                   const checked = list.includes(k);
                   return (
-                    <label
-                      key={k}
-                      style={{ display: "flex", gap: 8, alignItems: "center" }}
-                    >
+                    <label key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <input
                         type="checkbox"
                         checked={checked}
@@ -789,28 +807,21 @@ export default function Usuarios() {
                           const listNow = new Set(list);
                           if (checked) listNow.delete(k);
                           else listNow.add(k);
-                          setEditing((s: any) => ({
-                            ...s,
-                            scopes: Array.from(listNow),
-                          }));
+                          setEditing((s: any) => ({ ...s, scopes: Array.from(listNow) }));
                         }}
                       />
-                      <span style={{ textTransform: "capitalize" }}>
-                        {k.replace("_", " ")}
-                      </span>
+                      <span style={{ textTransform: "capitalize" }}>{k.replace("_", " ")}</span>
                     </label>
                   );
                 })}
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
               <button onClick={saveEdit} disabled={savingEdit} style={btnPrimary}>
                 {savingEdit ? "Salvando..." : "Salvar alterações"}
               </button>
-              <button onClick={closeEdit} style={btnGhost}>
-                Cancelar
-              </button>
+              <button onClick={closeEdit} style={btnGhost}>Cancelar</button>
             </div>
           </div>
         </div>
@@ -819,13 +830,20 @@ export default function Usuarios() {
   );
 }
 
-// --------- estilos inline simples ---------
+// --------- estilos inline (refinados, sem perder funcionalidade) ---------
+const pageWrap: React.CSSProperties = {
+  maxWidth: 1080,
+  margin: "40px auto",
+  fontFamily: "Inter, system-ui, Arial",
+};
+
 const card: React.CSSProperties = {
   background: "#fff",
   borderRadius: 16,
-  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+  boxShadow: "0 4px 18px rgba(0,0,0,0.08)",
   padding: 16,
   marginBottom: 16,
+  border: "1px solid #eef2f7",
 };
 
 const grid3: React.CSSProperties = {
@@ -842,8 +860,8 @@ const input: React.CSSProperties = {
   outline: "none",
 };
 
-const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
-const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
+const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 10, background: "#fafbfc", borderBottom: "1px solid #eef2f7" };
+const td: React.CSSProperties = { padding: 10, borderTop: "1px solid #f1f5f9" };
 
 const btnPrimaryFull: React.CSSProperties = {
   gridColumn: "1 / span 3",
@@ -866,6 +884,16 @@ const btnPrimary: React.CSSProperties = {
   fontWeight: 700,
 };
 
+const btnPrimarySmall: React.CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 10,
+  background: "#A11C27",
+  color: "#fff",
+  border: 0,
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
 const btnGhost: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
@@ -876,19 +904,32 @@ const btnGhost: React.CSSProperties = {
   fontWeight: 700,
 };
 
+const chipButton: React.CSSProperties = {
+  border: "1px solid #E0CE8C",
+  background: "#fff",
+  color: "#1E293F",
+  padding: "8px 12px",
+  borderRadius: 999,
+  cursor: "pointer",
+  fontWeight: 700,
+  boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+};
+
 const modalBackdrop: React.CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,.3)",
+  background: "rgba(0,0,0,.25)",
   display: "grid",
   placeItems: "center",
   zIndex: 50,
+  padding: 16,
 };
 
-const modalCard: React.CSSProperties = {
-  width: "min(900px, 92vw)",
+const modalCardWide: React.CSSProperties = {
+  width: "min(1080px, 96vw)",
   background: "#fff",
   padding: 16,
   borderRadius: 16,
   boxShadow: "0 20px 60px rgba(0,0,0,.3)",
+  border: "1px solid #eef2f7",
 };

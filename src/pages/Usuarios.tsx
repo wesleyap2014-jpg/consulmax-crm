@@ -344,7 +344,10 @@ export default function Usuarios() {
   }
 
   async function saveEdit() {
-    if (!editing) return;
+    if (!editing || !editing.id) {
+      alert("Registro inválido (sem ID). Reabra o modal e tente novamente.");
+      return;
+    }
     try {
       setSavingEdit(true);
 
@@ -379,15 +382,23 @@ export default function Usuarios() {
       };
       if (avatar_url) update.avatar_url = avatar_url;
 
-      const { error } = await supabase
+      // Usar maybeSingle() para evitar o erro "Cannot coerce the result..."
+      const { data, error } = await supabase
         .from("users")
         .update(update)
         .eq("id", editing.id)
         .select("id")
-        .single();
+        .maybeSingle();
 
       if (error) {
+        console.error(error);
         alert("Falha ao salvar: " + error.message);
+        return;
+      }
+      if (!data) {
+        alert(
+          "Nada foi atualizado. Verifique permissões (RLS) ou o ID do registro."
+        );
         return;
       }
 

@@ -89,6 +89,9 @@ const defaultScopes: Record<ScopeKey, boolean> = ALL_SCOPES.reduce(
   {} as Record<ScopeKey, boolean>
 );
 
+// --------- paginação ---------
+const PAGE_SIZE = 15;
+
 // --------- componente ---------
 export default function Usuarios() {
   // Guard de admin
@@ -122,6 +125,11 @@ export default function Usuarios() {
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false); // overlay do cadastro
 
+  // busca + paginação
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+
   const [form, setForm] = useState<FormState>({
     nome: "",
     cpf: "",
@@ -142,33 +150,55 @@ export default function Usuarios() {
     fotoPreview: null,
   });
 
-  // lista de usuários cadastrados (tabela public.users)
+  // lista de usuários (tabela public.users)
   const [users, setUsers] = useState<any[]>([]);
-  const [editing, setEditing] = useState<any | null>(null); // objeto do usuário em edição
+  const [editing, setEditing] = useState<any | null>(null);
 
-  // carregar lista ao entrar (apenas se admin)
+  // carregar lista (apenas se admin)
   useEffect(() => {
-    if (isAdmin) loadUsers();
+    if (isAdmin) void loadUsers(page, search);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
+  }, [isAdmin, page]);
 
-  async function loadUsers() {
-    const { data, error } = await supabase
+  async function loadUsers(p: number = 0, term: string = "") {
+    const from = p * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    let q = supabase
       .from("users")
       .select(
-        // OBS: sem cpf; compat: avatar_url/photo_url; pix_type/pix_kind
-        "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, photo_url, scopes"
+        "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, pix_kind, avatar_url, photo_url, scopes",
+        { count: "exact" }
       )
-      .order("id", { ascending: false });
+      .order("nome", { ascending: true });
+
+    const t = term.trim();
+    if (t) {
+      // procura por nome/email e por dígitos no telefone
+      const digits = onlyDigits(t);
+      const or = [
+        `nome.ilike.%${t}%`,
+        `email.ilike.%${t}%`,
+        digits ? `phone.ilike.%${digits}%` : null,
+      ]
+        .filter(Boolean)
+        .join(",");
+      q = q.or(or);
+    }
+
+    q = q.range(from, to);
+
+    const { data, error, count } = await q;
     if (error) {
       console.error(error);
       alert("Falha ao carregar usuários: " + error.message);
       return;
     }
     setUsers(data || []);
+    setTotal(count || 0);
   }
 
-  // CEP -> ViaCEP auto-preencher (form de cadastro)
+  // CEP -> ViaCEP (form de cadastro)
   useEffect(() => {
     const dig = onlyDigits(form.cep);
     if (dig.length === 8) {
@@ -176,7 +206,7 @@ export default function Usuarios() {
         try {
           const resp = await fetch(`https://viacep.com.br/ws/${dig}/json/`);
           const data = await resp.json();
-          if (data?.erro) return; // CEP inválido
+          if (data?.erro) return;
           setForm((s) => ({
             ...s,
             logradouro: data.logradouro || s.logradouro,
@@ -191,7 +221,7 @@ export default function Usuarios() {
     }
   }, [form.cep]);
 
-  // PIX auto-preencher conforme tipo (form de cadastro)
+  // PIX auto-preencher conforme tipo (cadastro)
   useEffect(() => {
     let key = form.pix_key;
     if (form.pix_type === "cpf") key = onlyDigits(form.cpf);
@@ -201,7 +231,7 @@ export default function Usuarios() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.pix_type, form.cpf, form.email, form.celular]);
 
-  // upload de foto no bucket "avatars"
+  // upload de foto
   async function uploadFotoSeNecessario(file: File | null): Promise<string | null> {
     if (!file) return null;
     const ext = file.name.split(".").pop() || "jpg";
@@ -220,14 +250,12 @@ export default function Usuarios() {
   }
 
   async function onSubmit() {
-    // validações básicas
+    // validações
     if (!form.nome.trim()) return alert("Informe o nome.");
     if (!form.email.trim()) return alert("Informe o e-mail.");
     const cpfDigits = onlyDigits(form.cpf);
-    if (cpfDigits && cpfDigits.length !== 11)
-      return alert("CPF inválido.");
-    if (onlyDigits(form.celular).length < 10)
-      return alert("Celular inválido.");
+    if (cpfDigits && cpfDigits.length !== 11) return alert("CPF inválido.");
+    if (onlyDigits(form.celular).length < 10) return alert("Celular inválido.");
     if (form.pix_type && !form.pix_key.trim())
       return alert("Informe a chave PIX correspondente.");
 
@@ -238,12 +266,12 @@ export default function Usuarios() {
       const numeroFinal = form.sn ? "s/n" : form.numero.trim();
       const roleForAPI = mapRoleToAPI(form.role);
 
-      // ⚠️ Compat: enviando 'telefone' junto com 'phone'
+      // ⚠️ Compat: enviando 'telefone' junto
       const payload = {
         nome: form.nome.trim(),
         email: form.email.trim().toLowerCase(),
-        role: roleForAPI, // 'admin' | 'vendedor' | 'viewer'
-        cpf: cpfDigits || null, // usado por /api/users/create se implementar criptografia
+        role: roleForAPI,
+        cpf: cpfDigits || null, // usado via backend se houver criptografia
         phone: onlyDigits(form.celular),
         telefone: onlyDigits(form.celular),
         cep: onlyDigits(form.cep),
@@ -268,9 +296,7 @@ export default function Usuarios() {
       let data: any = null;
       try {
         data = JSON.parse(raw);
-      } catch {
-        /* resposta não-JSON */
-      }
+      } catch {}
 
       if (!res.ok) {
         const msg =
@@ -292,9 +318,10 @@ export default function Usuarios() {
           : "Usuário criado com sucesso!"
       );
 
-      await loadUsers(); // atualiza a lista
+      await loadUsers(0, search);
+      setPage(0);
 
-      // limpa form e fecha overlay
+      // limpar form
       setForm({
         nome: "",
         cpf: "",
@@ -322,7 +349,7 @@ export default function Usuarios() {
     }
   }
 
-  // edição (modal)
+  // edição
   const [savingEdit, setSavingEdit] = useState(false);
   const [editFotoFile, setEditFotoFile] = useState<File | null>(null);
   const [editFotoPreview, setEditFotoPreview] = useState<string | null>(null);
@@ -330,7 +357,7 @@ export default function Usuarios() {
   function openEdit(u: any) {
     setEditing({
       ...u,
-      cpf: "", // não lemos cpf_encrypted — exibimos vazio para novo valor
+      cpf: "",
       celular: u.phone ? maskPhone(String(u.phone)) : "",
       cep: u.cep ? maskCEP(String(u.cep)) : "",
     });
@@ -351,23 +378,18 @@ export default function Usuarios() {
     try {
       setSavingEdit(true);
 
-      // upload da nova foto (se houver)
       let avatar_url: string | null = null;
-      if (editFotoFile) {
-        avatar_url = await uploadFotoSeNecessario(editFotoFile);
-      }
+      if (editFotoFile) avatar_url = await uploadFotoSeNecessario(editFotoFile);
 
       const scopesList: ScopeKey[] =
         Array.isArray(editing.scopes) && editing.scopes.length
           ? editing.scopes
           : [];
 
-      // ⚠️ Compat: atualizar 'telefone' junto com 'phone'
       const update: any = {
         nome: editing.nome?.trim() || null,
         email: editing.email?.trim().toLowerCase() || null,
         role: editing.role || null,
-        // cpf: não lido do banco (armazenado como cpf_encrypted via backend)
         phone: editing.celular ? onlyDigits(editing.celular) : null,
         telefone: editing.celular ? onlyDigits(editing.celular) : null,
         cep: editing.cep ? onlyDigits(editing.cep) : null,
@@ -382,7 +404,6 @@ export default function Usuarios() {
       };
       if (avatar_url) update.avatar_url = avatar_url;
 
-      // Usar maybeSingle() para evitar o erro "Cannot coerce the result..."
       const { data, error } = await supabase
         .from("users")
         .update(update)
@@ -396,13 +417,11 @@ export default function Usuarios() {
         return;
       }
       if (!data) {
-        alert(
-          "Nada foi atualizado. Verifique permissões (RLS) ou o ID do registro."
-        );
+        alert("Nada foi atualizado. Verifique permissões (RLS) ou o ID do registro.");
         return;
       }
 
-      // Atualização opcional de CPF via API própria (se existir)
+      // Atualização opcional do CPF via API própria
       if (editing.cpf) {
         try {
           const resCpf = await fetch(`/api/users/set-cpf`, {
@@ -413,15 +432,13 @@ export default function Usuarios() {
               cpf: onlyDigits(editing.cpf),
             }),
           });
-          if (!resCpf.ok) {
-            console.warn("API /api/users/set-cpf não disponível ou falhou.");
-          }
+          if (!resCpf.ok) console.warn("API /api/users/set-cpf falhou/indisponível.");
         } catch (e) {
           console.warn("Falha ao atualizar CPF via API opcional:", e);
         }
       }
 
-      await loadUsers();
+      await loadUsers(page, search);
       closeEdit();
     } catch (e: any) {
       alert("Erro inesperado: " + (e?.message || e));
@@ -434,10 +451,7 @@ export default function Usuarios() {
   const scopeCheckboxes = useMemo(
     () =>
       ALL_SCOPES.map((k) => (
-        <label
-          key={k}
-          style={{ display: "flex", gap: 8, alignItems: "center" }}
-        >
+        <label key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             type="checkbox"
             checked={!!form.scopes[k]}
@@ -448,20 +462,20 @@ export default function Usuarios() {
               }))
             }
           />
-          <span style={{ textTransform: "capitalize" }}>
-            {k.replace("_", " ")}
-          </span>
+          <span style={{ textTransform: "capitalize" }}>{k.replace("_", " ")}</span>
         </label>
       )),
     [form.scopes]
   );
 
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const canPrev = page > 0;
+  const canNext = page + 1 < totalPages;
+
   function renderUsersTable() {
     return (
       <div style={{ overflowX: "auto" }}>
-        <table
-          style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}
-        >
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
           <thead>
             <tr>
               <th style={th}>Foto</th>
@@ -502,7 +516,9 @@ export default function Usuarios() {
                 </td>
                 <td style={td}>{u.nome}</td>
                 <td style={td}>{u.email}</td>
-                <td style={td}>{String(u.role).toUpperCase()}</td>
+                <td style={td}>
+                  <span style={rolePill}>{String(u.role).toUpperCase()}</span>
+                </td>
                 <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
                 <td style={td}>
                   {(u.pix_type || u.pix_kind)
@@ -529,6 +545,27 @@ export default function Usuarios() {
             )}
           </tbody>
         </table>
+
+        {/* Paginação */}
+        <div style={paginationWrap}>
+          <button
+            style={{ ...btnGhost, opacity: canPrev ? 1 : 0.5 }}
+            onClick={() => canPrev && setPage((p) => p - 1)}
+            disabled={!canPrev}
+          >
+            ◀ Anterior
+          </button>
+          <div style={{ fontSize: 13 }}>
+            Página <b>{page + 1}</b> de <b>{totalPages}</b> · <b>{total}</b> registros
+          </div>
+          <button
+            style={{ ...btnGhost, opacity: canNext ? 1 : 0.5 }}
+            onClick={() => canNext && setPage((p) => p + 1)}
+            disabled={!canNext}
+          >
+            Próxima ▶
+          </button>
+        </div>
       </div>
     );
   }
@@ -550,23 +587,60 @@ export default function Usuarios() {
 
   return (
     <div style={pageWrap}>
+      {/* Cabeçalho com busca + chip de cadastro */}
       <div
         style={{
-          display: "flex",
-          justifyContent: "space-between",
+          display: "grid",
+          gridTemplateColumns: "1fr auto",
+          gap: 12,
           alignItems: "center",
           marginBottom: 16,
         }}
       >
-        <h1 style={{ margin: 0 }}>Usuários</h1>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            placeholder="Buscar por nome, e-mail ou telefone…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setPage(0);
+                loadUsers(0, search);
+              }
+            }}
+            style={{ ...input, width: 420 }}
+          />
+          <button
+            style={btnGhost}
+            onClick={() => {
+              setPage(0);
+              loadUsers(0, search);
+            }}
+          >
+            Buscar
+          </button>
+          {search && (
+            <button
+              style={btnGhost}
+              onClick={() => {
+                setSearch("");
+                setPage(0);
+                loadUsers(0, "");
+              }}
+            >
+              Limpar
+            </button>
+          )}
+        </div>
 
-        {/* Chip para abrir o overlay de cadastro */}
-        <button onClick={() => setShowCreate(true)} style={chipButton}>
-          + Cadastro de Usuário
-        </button>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button onClick={() => setShowCreate(true)} style={chipButton}>
+            + Cadastro de Usuário
+          </button>
+        </div>
       </div>
 
-      {/* TABELA DE USUÁRIOS */}
+      {/* TABELA DE USUÁRIOS (card mais largo) */}
       <div style={{ ...card, padding: 0 }}>
         <div
           style={{
@@ -604,18 +678,14 @@ export default function Usuarios() {
               <input
                 placeholder="Nome completo"
                 value={form.nome}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, nome: e.target.value }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
                 style={input}
               />
 
               <input
                 placeholder="CPF"
                 value={form.cpf}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))}
                 style={input}
                 inputMode="numeric"
               />
@@ -623,9 +693,7 @@ export default function Usuarios() {
               <input
                 placeholder="Celular"
                 value={form.celular}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))}
                 style={input}
                 inputMode="tel"
               />
@@ -633,9 +701,7 @@ export default function Usuarios() {
               <input
                 placeholder="CEP"
                 value={form.cep}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))}
                 style={input}
                 inputMode="numeric"
               />
@@ -643,9 +709,7 @@ export default function Usuarios() {
               <input
                 placeholder="Logradouro"
                 value={form.logradouro}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, logradouro: e.target.value }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
                 style={input}
               />
 
@@ -654,9 +718,7 @@ export default function Usuarios() {
                   placeholder="Número"
                   value={form.sn ? "s/n" : form.numero}
                   disabled={form.sn}
-                  onChange={(e) =>
-                    setForm((s) => ({ ...s, numero: e.target.value }))
-                  }
+                  onChange={(e) => setForm((s) => ({ ...s, numero: e.target.value }))}
                   style={input}
                 />
                 <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -678,18 +740,14 @@ export default function Usuarios() {
               <input
                 placeholder="Bairro"
                 value={form.bairro}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, bairro: e.target.value }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
                 style={input}
               />
 
               <input
                 placeholder="Cidade"
                 value={form.cidade}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, cidade: e.target.value }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
                 style={input}
               />
 
@@ -709,17 +767,13 @@ export default function Usuarios() {
                 placeholder="E-mail"
                 value={form.email}
                 type="email"
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, email: e.target.value }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
                 style={input}
               />
 
               <select
                 value={form.role}
-                onChange={(e) =>
-                  setForm((s) => ({ ...s, role: e.target.value as RoleUI }))
-                }
+                onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
                 style={input}
               >
                 <option value="admin">Admin</option>
@@ -731,9 +785,7 @@ export default function Usuarios() {
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <select
                   value={form.pix_type}
-                  onChange={(e) =>
-                    setForm((s) => ({ ...s, pix_type: e.target.value as any }))
-                  }
+                  onChange={(e) => setForm((s) => ({ ...s, pix_type: e.target.value as any }))}
                   style={input}
                 >
                   <option value="">Tipo da chave PIX</option>
@@ -744,9 +796,7 @@ export default function Usuarios() {
                 <input
                   placeholder="Chave PIX"
                   value={form.pix_key}
-                  onChange={(e) =>
-                    setForm((s) => ({ ...s, pix_key: e.target.value }))
-                  }
+                  onChange={(e) => setForm((s) => ({ ...s, pix_key: e.target.value }))}
                   style={input}
                 />
               </div>
@@ -789,9 +839,7 @@ export default function Usuarios() {
                   gap: 8,
                 }}
               >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                  Guias com acesso:
-                </div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
                 {scopeCheckboxes}
               </div>
 
@@ -812,27 +860,21 @@ export default function Usuarios() {
               <input
                 placeholder="Nome"
                 value={editing.nome || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, nome: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, nome: e.target.value }))}
                 style={input}
               />
 
               <input
                 placeholder="CPF (não exibimos o atual por segurança)"
                 value={editing.cpf || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, cpf: maskCPF(e.target.value) }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, cpf: maskCPF(e.target.value) }))}
                 style={input}
                 inputMode="numeric"
               />
 
               <select
                 value={editing.role || "viewer"}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, role: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, role: e.target.value }))}
                 style={input}
               >
                 <option value="viewer">Operações</option>
@@ -844,51 +886,38 @@ export default function Usuarios() {
                 placeholder="Celular"
                 value={editing.celular || ""}
                 onChange={(e) =>
-                  setEditing((s: any) => ({
-                    ...s,
-                    celular: maskPhone(e.target.value),
-                  }))
+                  setEditing((s: any) => ({ ...s, celular: maskPhone(e.target.value) }))
                 }
                 style={input}
               />
               <input
                 placeholder="CEP"
                 value={editing.cep || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))}
                 style={input}
               />
               <input
                 placeholder="Logradouro"
                 value={editing.logradouro || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, logradouro: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, logradouro: e.target.value }))}
                 style={input}
               />
               <input
                 placeholder="Número"
                 value={editing.numero || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, numero: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, numero: e.target.value }))}
                 style={input}
               />
               <input
                 placeholder="Bairro"
                 value={editing.bairro || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, bairro: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, bairro: e.target.value }))}
                 style={input}
               />
               <input
                 placeholder="Cidade"
                 value={editing.cidade || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, cidade: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, cidade: e.target.value }))}
                 style={input}
               />
               <input
@@ -906,9 +935,7 @@ export default function Usuarios() {
               {/* PIX na edição */}
               <select
                 value={editing.pix_type || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, pix_type: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, pix_type: e.target.value }))}
                 style={input}
               >
                 <option value="">Tipo da chave PIX</option>
@@ -919,9 +946,7 @@ export default function Usuarios() {
               <input
                 placeholder="Chave PIX"
                 value={editing.pix_key || ""}
-                onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, pix_key: e.target.value }))
-                }
+                onChange={(e) => setEditing((s: any) => ({ ...s, pix_key: e.target.value }))}
                 style={input}
               />
 
@@ -960,19 +985,12 @@ export default function Usuarios() {
                   gap: 8,
                 }}
               >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                  Guias com acesso:
-                </div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
                 {ALL_SCOPES.map((k) => {
-                  const list: ScopeKey[] = Array.isArray(editing.scopes)
-                    ? editing.scopes
-                    : [];
+                  const list: ScopeKey[] = Array.isArray(editing.scopes) ? editing.scopes : [];
                   const checked = list.includes(k);
                   return (
-                    <label
-                      key={k}
-                      style={{ display: "flex", gap: 8, alignItems: "center" }}
-                    >
+                    <label key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <input
                         type="checkbox"
                         checked={checked}
@@ -980,10 +998,7 @@ export default function Usuarios() {
                           const listNow = new Set(list);
                           if (checked) listNow.delete(k);
                           else listNow.add(k);
-                          setEditing((s: any) => ({
-                            ...s,
-                            scopes: Array.from(listNow),
-                          }));
+                          setEditing((s: any) => ({ ...s, scopes: Array.from(listNow) }));
                         }}
                       />
                       <span style={{ textTransform: "capitalize" }}>
@@ -996,12 +1011,7 @@ export default function Usuarios() {
             </div>
 
             <div
-              style={{
-                display: "flex",
-                gap: 8,
-                marginTop: 12,
-                justifyContent: "flex-end",
-              }}
+              style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}
             >
               <button onClick={saveEdit} disabled={savingEdit} style={btnPrimary}>
                 {savingEdit ? "Salvando..." : "Salvar alterações"}
@@ -1017,9 +1027,9 @@ export default function Usuarios() {
   );
 }
 
-// --------- estilos inline (refinados, sem perder funcionalidade) ---------
+// --------- estilos ----------
 const pageWrap: React.CSSProperties = {
-  maxWidth: 1080,
+  maxWidth: 1280, // mais largo
   margin: "40px auto",
   fontFamily: "Inter, system-ui, Arial",
 };
@@ -1029,7 +1039,7 @@ const card: React.CSSProperties = {
   borderRadius: 16,
   boxShadow: "0 4px 18px rgba(0,0,0,0.08)",
   padding: 16,
-  marginBottom: 16,
+  marginBottom: 24,
   border: "1px solid #eef2f7",
 };
 
@@ -1123,10 +1133,28 @@ const modalBackdrop: React.CSSProperties = {
 };
 
 const modalCardWide: React.CSSProperties = {
-  width: "min(1080px, 96vw)",
+  width: "min(1280px, 96vw)", // mais largo
   background: "#fff",
   padding: 16,
   borderRadius: 16,
   boxShadow: "0 20px 60px rgba(0,0,0,.3)",
   border: "1px solid #eef2f7",
+};
+
+const paginationWrap: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  marginTop: 12,
+};
+
+const rolePill: React.CSSProperties = {
+  display: "inline-block",
+  padding: "2px 8px",
+  borderRadius: 999,
+  background: "#F5F5F5",
+  border: "1px solid #EEE",
+  fontSize: 11,
+  letterSpacing: 0.4,
 };

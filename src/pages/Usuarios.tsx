@@ -94,26 +94,39 @@ const PAGE_SIZE = 15;
 
 // --------- componente ---------
 export default function Usuarios() {
-  // Guard de admin
+  // Guard de admin (robusto)
   const [checkingRole, setCheckingRole] = useState(true);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const { data: auth } = await supabase.auth.getUser();
-        const uid = auth?.user?.id;
-        if (!uid) {
-          setIsAdmin(false);
-          return;
-        }
-        const { data, error } = await supabase
+        const { data: authData, error: authErr } = await supabase.auth.getUser();
+        if (authErr) throw authErr;
+
+        const uid = authData?.user?.id || null;
+        const email = authData?.user?.email || null;
+
+        // 1) tenta por auth_user_id
+        let { data: row } = await supabase
           .from("users")
-          .select("id, role")
-          .eq("auth_user_id", uid)
+          .select("id, role, user_role, email")
+          .eq("auth_user_id", uid as any)
           .maybeSingle();
-        if (error) throw error;
-        setIsAdmin(String(data?.role || "viewer") === "admin");
+
+        // 2) fallback por e-mail (cadastros antigos sem auth_user_id)
+        if (!row && email) {
+          const q2 = await supabase
+            .from("users")
+            .select("id, role, user_role, email")
+            .ilike("email", email)
+            .maybeSingle();
+          row = q2.data || null;
+        }
+
+        // 3) decide admin: role ou user_role, case-insensitive
+        const roleStr = String(row?.role || row?.user_role || "").toLowerCase();
+        setIsAdmin(roleStr === "admin");
       } catch {
         setIsAdmin(false);
       } finally {
@@ -167,14 +180,13 @@ export default function Usuarios() {
     let q = supabase
       .from("users")
       .select(
-        "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, pix_kind, avatar_url, photo_url, scopes",
+        "id, auth_user_id, nome, email, role, user_role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, pix_kind, avatar_url, photo_url, scopes",
         { count: "exact" }
       )
       .order("nome", { ascending: true });
 
     const t = term.trim();
     if (t) {
-      // procura por nome/email e por dígitos no telefone
       const digits = onlyDigits(t);
       const or = [
         `nome.ilike.%${t}%`,
@@ -198,7 +210,7 @@ export default function Usuarios() {
     setTotal(count || 0);
   }
 
-  // CEP -> ViaCEP (form de cadastro)
+  // CEP -> ViaCEP (cadastro)
   useEffect(() => {
     const dig = onlyDigits(form.cep);
     if (dig.length === 8) {
@@ -221,7 +233,7 @@ export default function Usuarios() {
     }
   }, [form.cep]);
 
-  // PIX auto-preencher conforme tipo (cadastro)
+  // PIX auto-preencher (cadastro)
   useEffect(() => {
     let key = form.pix_key;
     if (form.pix_type === "cpf") key = onlyDigits(form.cpf);
@@ -250,7 +262,6 @@ export default function Usuarios() {
   }
 
   async function onSubmit() {
-    // validações
     if (!form.nome.trim()) return alert("Informe o nome.");
     if (!form.email.trim()) return alert("Informe o e-mail.");
     const cpfDigits = onlyDigits(form.cpf);
@@ -266,12 +277,11 @@ export default function Usuarios() {
       const numeroFinal = form.sn ? "s/n" : form.numero.trim();
       const roleForAPI = mapRoleToAPI(form.role);
 
-      // ⚠️ Compat: enviando 'telefone' junto
       const payload = {
         nome: form.nome.trim(),
         email: form.email.trim().toLowerCase(),
         role: roleForAPI,
-        cpf: cpfDigits || null, // usado via backend se houver criptografia
+        cpf: cpfDigits || null, // backend opcional
         phone: onlyDigits(form.celular),
         telefone: onlyDigits(form.celular),
         cep: onlyDigits(form.cep),
@@ -321,7 +331,6 @@ export default function Usuarios() {
       await loadUsers(0, search);
       setPage(0);
 
-      // limpar form
       setForm({
         nome: "",
         cpf: "",
@@ -389,7 +398,7 @@ export default function Usuarios() {
       const update: any = {
         nome: editing.nome?.trim() || null,
         email: editing.email?.trim().toLowerCase() || null,
-        role: editing.role || null,
+        role: editing.role || editing.user_role || null,
         phone: editing.celular ? onlyDigits(editing.celular) : null,
         telefone: editing.celular ? onlyDigits(editing.celular) : null,
         cep: editing.cep ? onlyDigits(editing.cep) : null,
@@ -517,7 +526,9 @@ export default function Usuarios() {
                 <td style={td}>{u.nome}</td>
                 <td style={td}>{u.email}</td>
                 <td style={td}>
-                  <span style={rolePill}>{String(u.role).toUpperCase()}</span>
+                  <span style={rolePill}>
+                    {String(u.role || u.user_role || "").toUpperCase() || "-"}
+                  </span>
                 </td>
                 <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
                 <td style={td}>
@@ -570,11 +581,8 @@ export default function Usuarios() {
     );
   }
 
-  // UI principal
-  if (checkingRole) {
-    return <div style={pageWrap}>Carregando…</div>;
-  }
-  if (!isAdmin) {
+  if (checkingRole) return <div style={pageWrap}>Carregando…</div>;
+  if (!isAdmin)
     return (
       <div style={pageWrap}>
         <div style={{ ...card, textAlign: "center", padding: 32 }}>
@@ -583,7 +591,6 @@ export default function Usuarios() {
         </div>
       </div>
     );
-  }
 
   return (
     <div style={pageWrap}>
@@ -640,7 +647,7 @@ export default function Usuarios() {
         </div>
       </div>
 
-      {/* TABELA DE USUÁRIOS (card mais largo) */}
+      {/* TABELA DE USUÁRIOS */}
       <div style={{ ...card, padding: 0 }}>
         <div
           style={{
@@ -873,7 +880,7 @@ export default function Usuarios() {
               />
 
               <select
-                value={editing.role || "viewer"}
+                value={editing.role || editing.user_role || "viewer"}
                 onChange={(e) => setEditing((s: any) => ({ ...s, role: e.target.value }))}
                 style={input}
               >
@@ -1029,7 +1036,7 @@ export default function Usuarios() {
 
 // --------- estilos ----------
 const pageWrap: React.CSSProperties = {
-  maxWidth: 1280, // mais largo
+  maxWidth: 1280,
   margin: "40px auto",
   fontFamily: "Inter, system-ui, Arial",
 };
@@ -1133,7 +1140,7 @@ const modalBackdrop: React.CSSProperties = {
 };
 
 const modalCardWide: React.CSSProperties = {
-  width: "min(1280px, 96vw)", // mais largo
+  width: "min(1280px, 96vw)",
   background: "#fff",
   padding: 16,
   borderRadius: 16,

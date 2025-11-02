@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-// --------- helpers de máscara ---------
+/* -------------------- helpers de máscara -------------------- */
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
 
 const maskCPF = (v: string) => {
@@ -38,7 +38,7 @@ const maskCEP = (v: string) => {
   return d.slice(0, 5) + "-" + d.slice(5);
 };
 
-// --------- tipos ---------
+/* -------------------- tipos -------------------- */
 type RoleUI = "admin" | "vendedor" | "operacoes";
 const mapRoleToAPI = (r: RoleUI): "admin" | "vendedor" | "viewer" =>
   r === "operacoes" ? "viewer" : r;
@@ -89,71 +89,82 @@ const defaultScopes: Record<ScopeKey, boolean> = ALL_SCOPES.reduce(
   {} as Record<ScopeKey, boolean>
 );
 
-// --------- paginação ---------
-const PAGE_SIZE = 15;
-
-// --------- componente ---------
+/* ============================================================
+   Página
+============================================================ */
 export default function Usuarios() {
-  // Guard de admin (RPC + fallback)
-  const [checkingRole, setCheckingRole] = useState(true);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
-
+  /* -------- guard admin -------- */
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   useEffect(() => {
     (async () => {
-      try {
-        const { data: sessionData, error: sErr } = await supabase.auth.getUser();
-        if (sErr) throw sErr;
-        const uid = sessionData?.user?.id || null;
-        const email = sessionData?.user?.email || null;
-
-        let admin = false;
-
-        // 1) Checagem via RPC (ignora RLS)
-        if (uid) {
-          const { data: rpcData, error: rpcErr } = await supabase.rpc("is_admin", { uid });
-          if (!rpcErr && typeof rpcData === "boolean") {
-            admin = rpcData;
-          }
-        }
-
-        // 2) Fallback por segurança (caso RPC falhe/indisponível)
-        if (!admin) {
-          let { data: row } = await supabase
-            .from("users")
-            .select("id, role, user_role, email")
-            .eq("auth_user_id", uid as any)
-            .maybeSingle();
-
-          if (!row && email) {
-            const q2 = await supabase
-              .from("users")
-              .select("id, role, user_role, email")
-              .ilike("email", email)
-              .maybeSingle();
-            row = q2.data || null;
-          }
-
-          const roleStr = String(row?.role || row?.user_role || "").toLowerCase();
-          admin = roleStr === "admin";
-        }
-
-        setIsAdmin(admin);
-      } catch {
+      const { data: u } = await supabase.auth.getUser();
+      const uid = u?.user?.id;
+      if (!uid) {
         setIsAdmin(false);
-      } finally {
-        setCheckingRole(false);
+        return;
+      }
+      const { data, error } = await supabase.rpc("is_admin", { uid });
+      if (error) {
+        console.error(error);
+        setIsAdmin(false);
+      } else {
+        setIsAdmin(!!data);
       }
     })();
   }, []);
 
-  const [loading, setLoading] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
-
-  // busca + paginação
+  /* -------- listagem -------- */
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingList, setLoadingList] = useState(false);
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(0);
-  const [total, setTotal] = useState(0);
+  const pageSize = 15;
+  const [page, setPage] = useState(1);
+  const [totalRows, setTotalRows] = useState(0);
 
+  async function loadUsers() {
+    setLoadingList(true);
+    try {
+      const orSearch =
+        search.trim().length > 0
+          ? `nome.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${onlyDigits(
+              search
+            )}%`
+          : undefined;
+
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      // count: "exact" para paginação
+      let q = supabase
+        .from("users")
+        .select(
+          "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes",
+          { count: "exact" }
+        )
+        .order("id", { ascending: false }) // ok manter
+        .range(from, to);
+
+      if (orSearch) q = q.or(orSearch);
+
+      const { data, error, count } = await q;
+      if (error) throw error;
+      setUsers(data || []);
+      setTotalRows(count || 0);
+    } catch (e: any) {
+      alert("Falha ao carregar usuários: " + (e?.message || e));
+    } finally {
+      setLoadingList(false);
+    }
+  }
+
+  useEffect(() => {
+    if (isAdmin) loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, page, search]);
+
+  /* -------- form cadastro (overlay) -------- */
+  const [openCreate, setOpenCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<FormState>({
     nome: "",
     cpf: "",
@@ -174,53 +185,7 @@ export default function Usuarios() {
     fotoPreview: null,
   });
 
-  const [users, setUsers] = useState<any[]>([]);
-  const [editing, setEditing] = useState<any | null>(null);
-
-  // carregar lista (somente admin)
-  useEffect(() => {
-    if (isAdmin) void loadUsers(page, search);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, page]);
-
-  async function loadUsers(p: number = 0, term: string = "") {
-    const from = p * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
-
-    let q = supabase
-      .from("users")
-      .select(
-        "id, auth_user_id, nome, email, role, user_role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, pix_kind, avatar_url, photo_url, scopes",
-        { count: "exact" }
-      )
-      .order("nome", { ascending: true });
-
-    const t = term.trim();
-    if (t) {
-      const digits = onlyDigits(t);
-      const or = [
-        `nome.ilike.%${t}%`,
-        `email.ilike.%${t}%`,
-        digits ? `phone.ilike.%${digits}%` : null,
-      ]
-        .filter(Boolean)
-        .join(",");
-      q = q.or(or);
-    }
-
-    q = q.range(from, to);
-
-    const { data, error, count } = await q;
-    if (error) {
-      console.error(error);
-      alert("Falha ao carregar usuários: " + error.message);
-      return;
-    }
-    setUsers(data || []);
-    setTotal(count || 0);
-  }
-
-  // CEP -> ViaCEP (cadastro)
+  // ViaCEP no cadastro
   useEffect(() => {
     const dig = onlyDigits(form.cep);
     if (dig.length === 8) {
@@ -236,14 +201,12 @@ export default function Usuarios() {
             cidade: data.localidade || s.cidade,
             uf: data.uf || s.uf,
           }));
-        } catch {
-          /* ignora */
-        }
+        } catch {}
       })();
     }
   }, [form.cep]);
 
-  // PIX auto-preencher (cadastro)
+  // PIX auto
   useEffect(() => {
     let key = form.pix_key;
     if (form.pix_type === "cpf") key = onlyDigits(form.cpf);
@@ -253,7 +216,6 @@ export default function Usuarios() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.pix_type, form.cpf, form.email, form.celular]);
 
-  // upload de foto
   async function uploadFotoSeNecessario(file: File | null): Promise<string | null> {
     if (!file) return null;
     const ext = file.name.split(".").pop() || "jpg";
@@ -271,27 +233,26 @@ export default function Usuarios() {
     return data?.publicUrl || null;
   }
 
-  async function onSubmit() {
+  async function submitCreate() {
+    // validações
     if (!form.nome.trim()) return alert("Informe o nome.");
     if (!form.email.trim()) return alert("Informe o e-mail.");
-    const cpfDigits = onlyDigits(form.cpf);
-    if (cpfDigits && cpfDigits.length !== 11) return alert("CPF inválido.");
+    if (onlyDigits(form.cpf).length !== 11) return alert("CPF inválido.");
     if (onlyDigits(form.celular).length < 10) return alert("Celular inválido.");
-    if (form.pix_type && !form.pix_key.trim())
-      return alert("Informe a chave PIX correspondente.");
 
     try {
-      setLoading(true);
+      setCreating(true);
       const avatar_url = await uploadFotoSeNecessario(form.fotoFile);
       const scopesList = ALL_SCOPES.filter((k) => form.scopes[k]);
       const numeroFinal = form.sn ? "s/n" : form.numero.trim();
       const roleForAPI = mapRoleToAPI(form.role);
 
+      // compat: enviar telefone
       const payload = {
         nome: form.nome.trim(),
         email: form.email.trim().toLowerCase(),
-        role: roleForAPI,
-        cpf: cpfDigits || null,
+        role: roleForAPI, // admin | vendedor | viewer
+        cpf: onlyDigits(form.cpf),
         phone: onlyDigits(form.celular),
         telefone: onlyDigits(form.celular),
         cep: onlyDigits(form.cep),
@@ -338,9 +299,7 @@ export default function Usuarios() {
           : "Usuário criado com sucesso!"
       );
 
-      await loadUsers(0, search);
-      setPage(0);
-
+      setOpenCreate(false);
       setForm({
         nome: "",
         cpf: "",
@@ -360,45 +319,66 @@ export default function Usuarios() {
         fotoFile: null,
         fotoPreview: null,
       });
-      setShowCreate(false);
+      setPage(1);
+      await loadUsers();
     } catch (e: any) {
       alert("Falha inesperada: " + (e?.message || e));
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   }
 
-  // edição
+  /* -------- edição -------- */
+  const [editing, setEditing] = useState<any | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
-  const [editFotoFile, setEditFotoFile] = useState<File | null>(null);
-  const [editFotoPreview, setEditFotoPreview] = useState<string | null>(null);
 
   function openEdit(u: any) {
     setEditing({
       ...u,
-      cpf: "",
+      cpf: "", // não mostramos cpf salvo (se houver encriptação ou compliance)
       celular: u.phone ? maskPhone(String(u.phone)) : "",
       cep: u.cep ? maskCEP(String(u.cep)) : "",
+      fotoFile: null as File | null,
+      fotoPreview: null as string | null,
     });
-    setEditFotoFile(null);
-    setEditFotoPreview(null);
   }
   function closeEdit() {
     setEditing(null);
-    setEditFotoFile(null);
-    setEditFotoPreview(null);
   }
 
-  async function saveEdit() {
-    if (!editing || !editing.id) {
-      alert("Registro inválido (sem ID). Reabra o modal e tente novamente.");
-      return;
+  // ViaCEP na edição
+  useEffect(() => {
+    if (!editing) return;
+    const dig = onlyDigits(editing.cep || "");
+    if (dig.length === 8) {
+      (async () => {
+        try {
+          const resp = await fetch(`https://viacep.com.br/ws/${dig}/json/`);
+          const data = await resp.json();
+          if (data?.erro) return;
+          setEditing((s: any) => ({
+            ...s,
+            logradouro: data.logradouro || s.logradouro,
+            bairro: data.bairro || s.bairro,
+            cidade: data.localidade || s.cidade,
+            uf: data.uf || s.uf,
+          }));
+        } catch {}
+      })();
     }
+  }, [editing?.cep]);
+
+  async function saveEdit() {
+    if (!editing) return;
     try {
       setSavingEdit(true);
 
-      let avatar_url: string | null = null;
-      if (editFotoFile) avatar_url = await uploadFotoSeNecessario(editFotoFile);
+      // upload foto se selecionada
+      let avatar_url: string | undefined = undefined;
+      if (editing.fotoFile) {
+        const u = await uploadFotoSeNecessario(editing.fotoFile);
+        avatar_url = u || undefined;
+      }
 
       const scopesList: ScopeKey[] =
         Array.isArray(editing.scopes) && editing.scopes.length
@@ -408,7 +388,7 @@ export default function Usuarios() {
       const update: any = {
         nome: editing.nome?.trim() || null,
         email: editing.email?.trim().toLowerCase() || null,
-        role: editing.role || editing.user_role || null,
+        role: editing.role || null, // admin | vendedor | viewer (do banco)
         phone: editing.celular ? onlyDigits(editing.celular) : null,
         telefone: editing.celular ? onlyDigits(editing.celular) : null,
         cep: editing.cep ? onlyDigits(editing.cep) : null,
@@ -423,40 +403,18 @@ export default function Usuarios() {
       };
       if (avatar_url) update.avatar_url = avatar_url;
 
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("users")
         .update(update)
         .eq("id", editing.id)
         .select("id")
-        .maybeSingle();
+        .single();
 
       if (error) {
-        console.error(error);
         alert("Falha ao salvar: " + error.message);
         return;
       }
-      if (!data) {
-        alert("Nada foi atualizado. Verifique permissões (RLS) ou o ID do registro.");
-        return;
-      }
-
-      if (editing.cpf) {
-        try {
-          const resCpf = await fetch(`/api/users/set-cpf`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              user_id: editing.id,
-              cpf: onlyDigits(editing.cpf),
-            }),
-          });
-          if (!resCpf.ok) console.warn("API /api/users/set-cpf falhou/indisponível.");
-        } catch (e) {
-          console.warn("Falha ao atualizar CPF via API opcional:", e);
-        }
-      }
-
-      await loadUsers(page, search);
+      await loadUsers();
       closeEdit();
     } catch (e: any) {
       alert("Erro inesperado: " + (e?.message || e));
@@ -465,7 +423,7 @@ export default function Usuarios() {
     }
   }
 
-  // helpers UI
+  /* -------- UI helpers -------- */
   const scopeCheckboxes = useMemo(
     () =>
       ALL_SCOPES.map((k) => (
@@ -486,208 +444,159 @@ export default function Usuarios() {
     [form.scopes]
   );
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const canPrev = page > 0;
-  const canNext = page + 1 < totalPages;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
-  function renderUsersTable() {
+  /* ============================================================
+     Render
+  ============================================================ */
+  if (isAdmin === null) {
     return (
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-          <thead>
-            <tr>
-              <th style={th}>Foto</th>
-              <th style={th}>Nome</th>
-              <th style={th}>E-mail</th>
-              <th style={th}>Perfil</th>
-              <th style={th}>Celular</th>
-              <th style={th}>PIX</th>
-              <th style={th}>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} style={{ transition: "background .15s" }}>
-                <td style={td}>
-                  {u.avatar_url || u.photo_url ? (
-                    <img
-                      src={u.avatar_url || u.photo_url}
-                      alt=""
-                      style={{
-                        width: 40,
-                        height: 40,
-                        objectFit: "cover",
-                        borderRadius: 10,
-                        border: "1px solid #eee",
-                      }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 10,
-                        background: "#eee",
-                      }}
-                    />
-                  )}
-                </td>
-                <td style={td}>{u.nome}</td>
-                <td style={td}>{u.email}</td>
-                <td style={td}>
-                  <span style={rolePill}>
-                    {String(u.role || u.user_role || "").toUpperCase() || "-"}
-                  </span>
-                </td>
-                <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
-                <td style={td}>
-                  {(u.pix_type || u.pix_kind)
-                    ? (u.pix_type || u.pix_kind) === "cpf"
-                      ? maskCPF(String(u.pix_key || ""))
-                      : (u.pix_type || u.pix_kind) === "telefone"
-                      ? maskPhone(String(u.pix_key || ""))
-                      : String(u.pix_key || "")
-                    : "-"}
-                </td>
-                <td style={td}>
-                  <button onClick={() => openEdit(u)} style={btnPrimarySmall}>
-                    Editar
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {users.length === 0 && (
-              <tr>
-                <td style={td} colSpan={7}>
-                  Nenhum usuário encontrado.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div style={{ maxWidth: 1280, margin: "40px auto", fontFamily: "Inter, system-ui, Arial" }}>
+        <div style={card}>Verificando permissões…</div>
+      </div>
+    );
+  }
 
-        {/* Paginação */}
-        <div style={paginationWrap}>
-          <button
-            style={{ ...btnGhost, opacity: canPrev ? 1 : 0.5 }}
-            onClick={() => canPrev && setPage((p) => p - 1)}
-            disabled={!canPrev}
-          >
-            ◀ Anterior
-          </button>
-          <div style={{ fontSize: 13 }}>
-            Página <b>{page + 1}</b> de <b>{totalPages}</b> · <b>{total}</b> registros
-          </div>
-          <button
-            style={{ ...btnGhost, opacity: canNext ? 1 : 0.5 }}
-            onClick={() => canNext && setPage((p) => p + 1)}
-            disabled={!canNext}
-          >
-            Próxima ▶
-          </button>
+  if (!isAdmin) {
+    return (
+      <div style={{ maxWidth: 1280, margin: "40px auto", fontFamily: "Inter, system-ui, Arial" }}>
+        <div style={card}>
+          <h2 style={{ marginTop: 0 }}>Acesso negado</h2>
+          <p>Esta guia é exclusiva para administradores.</p>
         </div>
       </div>
     );
   }
 
-  if (checkingRole) return <div style={pageWrap}>Carregando…</div>;
-  if (!isAdmin)
-    return (
-      <div style={pageWrap}>
-        <div style={{ ...card, textAlign: "center", padding: 32 }}>
-          <h2 style={{ margin: 0 }}>Acesso negado</h2>
-          <p style={{ marginTop: 8 }}>Esta guia é exclusiva para administradores.</p>
-        </div>
-      </div>
-    );
-
   return (
-    <div style={pageWrap}>
-      {/* Cabeçalho com busca + chip de cadastro */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr auto",
-          gap: 12,
-          alignItems: "center",
-          marginBottom: 16,
-        }}
-      >
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            placeholder="Buscar por nome, e-mail ou telefone…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                setPage(0);
-                loadUsers(0, search);
-              }
-            }}
-            style={{ ...input, width: 420 }}
-          />
+    <div style={{ maxWidth: 1280, margin: "40px auto", fontFamily: "Inter, system-ui, Arial" }}>
+      {/* Header / barra ações */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+        <input
+          placeholder="Buscar por nome, e-mail ou telefone"
+          value={search}
+          onChange={(e) => {
+            setPage(1);
+            setSearch(e.target.value);
+          }}
+          style={{ ...input, width: 420 }}
+        />
+        <button onClick={() => setOpenCreate(true)} style={chipButton}>
+          + Cadastro de Usuário
+        </button>
+      </div>
+
+      {/* Tabela */}
+      <div style={card}>
+        <h2 style={{ margin: "0 0 12px" }}>Usuários Cadastrados</h2>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+            <thead>
+              <tr>
+                <th style={th}>Foto</th>
+                <th style={th}>Nome</th>
+                <th style={th}>E-mail</th>
+                <th style={th}>Perfil</th>
+                <th style={th}>Celular</th>
+                <th style={th}>PIX</th>
+                <th style={th}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loadingList && (
+                <tr>
+                  <td style={td} colSpan={7}>Carregando…</td>
+                </tr>
+              )}
+              {!loadingList &&
+                users.map((u) => (
+                  <tr key={u.id}>
+                    <td style={td}>
+                      {u.avatar_url ? (
+                        <img
+                          src={u.avatar_url}
+                          alt=""
+                          style={{
+                            width: 40,
+                            height: 40,
+                            objectFit: "cover",
+                            borderRadius: 12,
+                            border: "1px solid #eee",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 12,
+                            background: "#eee",
+                          }}
+                        />
+                      )}
+                    </td>
+                    <td style={td}>{u.nome}</td>
+                    <td style={td}>{u.email}</td>
+                    <td style={td}>
+                      <span style={roleBadge(u.role)}>{String(u.role || "").toUpperCase()}</span>
+                    </td>
+                    <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
+                    <td style={td}>
+                      {u.pix_type
+                        ? u.pix_type === "cpf"
+                          ? maskCPF(String(u.pix_key || ""))
+                          : u.pix_type === "telefone"
+                          ? maskPhone(String(u.pix_key || ""))
+                          : String(u.pix_key || "")
+                        : "-"}
+                    </td>
+                    <td style={td}>
+                      <button onClick={() => openEdit(u)} style={btnPrimary}>
+                        Editar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              {!loadingList && users.length === 0 && (
+                <tr>
+                  <td style={td} colSpan={7}>
+                    Nenhum usuário encontrado.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* paginação */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
           <button
             style={btnGhost}
-            onClick={() => {
-              setPage(0);
-              loadUsers(0, search);
-            }}
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
           >
-            Buscar
+            ◀ Anterior
           </button>
-          {search && (
-            <button
-              style={btnGhost}
-              onClick={() => {
-                setSearch("");
-                setPage(0);
-                loadUsers(0, "");
-              }}
-            >
-              Limpar
-            </button>
-          )}
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button onClick={() => setShowCreate(true)} style={chipButton}>
-            + Cadastro de Usuário
+          <div style={{ fontSize: 12, color: "#475569" }}>
+            Página {page} de {totalPages} • {totalRows} registros
+          </div>
+          <button
+            style={btnGhost}
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Próxima ▶
           </button>
         </div>
       </div>
 
-      {/* TABELA DE USUÁRIOS */}
-      <div style={{ ...card, padding: 0 }}>
-        <div
-          style={{
-            padding: 14,
-            borderBottom: "1px solid #eef2f7",
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-          }}
-        >
-          <span style={{ fontWeight: 700 }}>Usuários Cadastrados</span>
-        </div>
-        <div style={{ padding: 12 }}>{renderUsersTable()}</div>
-      </div>
-
-      {/* OVERLAY: CADASTRO */}
-      {showCreate && (
+      {/* Overlay de cadastro */}
+      {openCreate && (
         <div style={modalBackdrop}>
           <div style={modalCardWide}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 8,
-              }}
-            >
-              <h2 style={{ margin: 0 }}>Novo usuário</h2>
-              <button onClick={() => setShowCreate(false)} style={btnGhost}>
-                Fechar
-              </button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <h3 style={{ margin: 0 }}>Novo usuário</h3>
+              <button onClick={() => setOpenCreate(false)} style={btnGhost}>Fechar</button>
             </div>
 
             <div style={grid3}>
@@ -697,7 +606,6 @@ export default function Usuarios() {
                 onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
                 style={input}
               />
-
               <input
                 placeholder="CPF"
                 value={form.cpf}
@@ -705,7 +613,6 @@ export default function Usuarios() {
                 style={input}
                 inputMode="numeric"
               />
-
               <input
                 placeholder="Celular"
                 value={form.celular}
@@ -721,14 +628,12 @@ export default function Usuarios() {
                 style={input}
                 inputMode="numeric"
               />
-
               <input
                 placeholder="Logradouro"
                 value={form.logradouro}
                 onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
                 style={input}
               />
-
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input
                   placeholder="Número"
@@ -759,14 +664,12 @@ export default function Usuarios() {
                 onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
                 style={input}
               />
-
               <input
                 placeholder="Cidade"
                 value={form.cidade}
                 onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
                 style={input}
               />
-
               <input
                 placeholder="UF"
                 value={form.uf}
@@ -786,7 +689,6 @@ export default function Usuarios() {
                 onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
                 style={input}
               />
-
               <select
                 value={form.role}
                 onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
@@ -797,7 +699,6 @@ export default function Usuarios() {
                 <option value="operacoes">Operações</option>
               </select>
 
-              {/* PIX */}
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <select
                   value={form.pix_type}
@@ -817,7 +718,6 @@ export default function Usuarios() {
                 />
               </div>
 
-              {/* foto */}
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <input
                   type="file"
@@ -846,28 +746,28 @@ export default function Usuarios() {
                 )}
               </div>
 
-              {/* scopes */}
               <div
                 style={{
                   gridColumn: "1 / span 3",
                   display: "grid",
                   gridTemplateColumns: "repeat(4, minmax(0,1fr))",
                   gap: 8,
+                  marginTop: 4,
                 }}
               >
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
                 {scopeCheckboxes}
               </div>
 
-              <button onClick={onSubmit} disabled={loading} style={btnPrimaryFull}>
-                {loading ? "Cadastrando..." : "Cadastrar"}
+              <button onClick={submitCreate} disabled={creating} style={btnPrimaryFull}>
+                {creating ? "Cadastrando..." : "Cadastrar"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL DE EDIÇÃO */}
+      {/* Modal de edição */}
       {editing && (
         <div style={modalBackdrop}>
           <div style={modalCardWide}>
@@ -879,17 +779,14 @@ export default function Usuarios() {
                 onChange={(e) => setEditing((s: any) => ({ ...s, nome: e.target.value }))}
                 style={input}
               />
-
               <input
-                placeholder="CPF (não exibimos o atual por segurança)"
-                value={editing.cpf || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cpf: maskCPF(e.target.value) }))}
+                placeholder="E-mail"
+                value={editing.email || ""}
+                onChange={(e) => setEditing((s: any) => ({ ...s, email: e.target.value }))}
                 style={input}
-                inputMode="numeric"
               />
-
               <select
-                value={editing.role || editing.user_role || "viewer"}
+                value={editing.role || "viewer"}
                 onChange={(e) => setEditing((s: any) => ({ ...s, role: e.target.value }))}
                 style={input}
               >
@@ -909,15 +806,20 @@ export default function Usuarios() {
               <input
                 placeholder="CEP"
                 value={editing.cep || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))
+                }
                 style={input}
               />
               <input
                 placeholder="Logradouro"
                 value={editing.logradouro || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, logradouro: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, logradouro: e.target.value }))
+                }
                 style={input}
               />
+
               <input
                 placeholder="Número"
                 value={editing.numero || ""}
@@ -948,7 +850,6 @@ export default function Usuarios() {
                 style={input}
               />
 
-              {/* PIX na edição */}
               <select
                 value={editing.pix_type || ""}
                 onChange={(e) => setEditing((s: any) => ({ ...s, pix_type: e.target.value }))}
@@ -966,20 +867,23 @@ export default function Usuarios() {
                 style={input}
               />
 
-              {/* Foto na edição */}
+              {/* upload foto (opcional na edição) */}
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <input
                   type="file"
                   accept="image/*"
                   onChange={(e) => {
                     const f = e.target.files?.[0] || null;
-                    setEditFotoFile(f);
-                    setEditFotoPreview(f ? URL.createObjectURL(f) : null);
+                    setEditing((s: any) => ({
+                      ...s,
+                      fotoFile: f,
+                      fotoPreview: f ? URL.createObjectURL(f) : null,
+                    }));
                   }}
                 />
-                {(editFotoPreview || editing.avatar_url || editing.photo_url) && (
+                {editing.fotoPreview && (
                   <img
-                    src={editFotoPreview || editing.avatar_url || editing.photo_url}
+                    src={editing.fotoPreview}
                     alt="preview"
                     style={{
                       width: 56,
@@ -1006,7 +910,10 @@ export default function Usuarios() {
                   const list: ScopeKey[] = Array.isArray(editing.scopes) ? editing.scopes : [];
                   const checked = list.includes(k);
                   return (
-                    <label key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <label
+                      key={k}
+                      style={{ display: "flex", gap: 8, alignItems: "center" }}
+                    >
                       <input
                         type="checkbox"
                         checked={checked}
@@ -1014,7 +921,10 @@ export default function Usuarios() {
                           const listNow = new Set(list);
                           if (checked) listNow.delete(k);
                           else listNow.add(k);
-                          setEditing((s: any) => ({ ...s, scopes: Array.from(listNow) }));
+                          setEditing((s: any) => ({
+                            ...s,
+                            scopes: Array.from(listNow),
+                          }));
                         }}
                       />
                       <span style={{ textTransform: "capitalize" }}>
@@ -1026,9 +936,7 @@ export default function Usuarios() {
               </div>
             </div>
 
-            <div
-              style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}
-            >
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
               <button onClick={saveEdit} disabled={savingEdit} style={btnPrimary}>
                 {savingEdit ? "Salvando..." : "Salvar alterações"}
               </button>
@@ -1043,20 +951,13 @@ export default function Usuarios() {
   );
 }
 
-// --------- estilos ----------
-const pageWrap: React.CSSProperties = {
-  maxWidth: 1280,
-  margin: "40px auto",
-  fontFamily: "Inter, system-ui, Arial",
-};
-
+/* -------------------- estilos -------------------- */
 const card: React.CSSProperties = {
   background: "#fff",
   borderRadius: 16,
-  boxShadow: "0 4px 18px rgba(0,0,0,0.08)",
+  boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
   padding: 16,
-  marginBottom: 24,
-  border: "1px solid #eef2f7",
+  marginBottom: 16,
 };
 
 const grid3: React.CSSProperties = {
@@ -1073,18 +974,8 @@ const input: React.CSSProperties = {
   outline: "none",
 };
 
-const th: React.CSSProperties = {
-  textAlign: "left",
-  fontSize: 12,
-  color: "#475569",
-  padding: 10,
-  background: "#fafbfc",
-  borderBottom: "1px solid #eef2f7",
-};
-const td: React.CSSProperties = {
-  padding: 10,
-  borderTop: "1px solid #f1f5f9",
-};
+const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
+const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
 
 const btnPrimaryFull: React.CSSProperties = {
   gridColumn: "1 / span 3",
@@ -1107,16 +998,6 @@ const btnPrimary: React.CSSProperties = {
   fontWeight: 700,
 };
 
-const btnPrimarySmall: React.CSSProperties = {
-  padding: "8px 12px",
-  borderRadius: 10,
-  background: "#A11C27",
-  color: "#fff",
-  border: 0,
-  cursor: "pointer",
-  fontWeight: 700,
-};
-
 const btnGhost: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
@@ -1128,49 +1009,43 @@ const btnGhost: React.CSSProperties = {
 };
 
 const chipButton: React.CSSProperties = {
-  border: "1px solid #E0CE8C",
-  background: "#fff",
-  color: "#1E293F",
-  padding: "8px 12px",
+  padding: "10px 14px",
   borderRadius: 999,
+  background: "#fff",
+  color: "#A11C27",
+  border: "1px solid #A11C27",
   cursor: "pointer",
-  fontWeight: 700,
-  boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+  fontWeight: 800,
 };
 
 const modalBackdrop: React.CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,.25)",
+  background: "rgba(0,0,0,.35)",
   display: "grid",
   placeItems: "center",
   zIndex: 50,
-  padding: 16,
 };
 
 const modalCardWide: React.CSSProperties = {
-  width: "min(1280px, 96vw)",
+  width: "min(1080px, 95vw)",
   background: "#fff",
   padding: 16,
   borderRadius: 16,
   boxShadow: "0 20px 60px rgba(0,0,0,.3)",
-  border: "1px solid #eef2f7",
 };
 
-const paginationWrap: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 12,
-  marginTop: 12,
-};
-
-const rolePill: React.CSSProperties = {
+const roleBadge = (role: string): React.CSSProperties => ({
   display: "inline-block",
-  padding: "2px 8px",
+  padding: "4px 8px",
   borderRadius: 999,
-  background: "#F5F5F5",
-  border: "1px solid #EEE",
-  fontSize: 11,
-  letterSpacing: 0.4,
-};
+  fontSize: 12,
+  fontWeight: 800,
+  background:
+    String(role).toLowerCase() === "admin"
+      ? "#1E293F"
+      : String(role).toLowerCase() === "vendedor"
+      ? "#B5A573"
+      : "#E0CE8C",
+  color: "#fff",
+});

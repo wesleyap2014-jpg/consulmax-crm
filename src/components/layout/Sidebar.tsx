@@ -16,6 +16,8 @@ import {
   SlidersHorizontal,
   BarChart3,
   Link as LinkIcon,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react'
 
 type SidebarProps = {
@@ -68,8 +70,8 @@ const glassHoverPill: CSSProperties = {
   WebkitBackdropFilter: 'blur(6px)',
 }
 
-const SidebarLiquidBG: FC = () => (
-  <div style={sbLiquidCanvas}>
+const SidebarLiquidBG: FC<{ headerOffset?: number }> = ({ headerOffset = 56 }) => (
+  <div style={{ ...sbLiquidCanvas, top: headerOffset }}>
     <style>{sbLiquidKeyframes}</style>
     <span style={{ ...sbBlob, ...sbBlob1 }} />
     <span style={{ ...sbBlob, ...sbBlob2 }} />
@@ -78,8 +80,10 @@ const SidebarLiquidBG: FC = () => (
 )
 
 const sbLiquidCanvas: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
+  position: 'fixed', // cobre a coluna toda independentemente do conteúdo
+  left: 0,
+  bottom: 0,
+  width: '16rem', // largura md:w-64
   zIndex: 0,
   overflow: 'hidden',
   pointerEvents: 'none',
@@ -133,6 +137,17 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     [location.pathname]
   )
 
+  // ⤵️ Estado de colapso com persistência
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('@consulmax:sidebar-collapsed')
+      return saved === '1'
+    } catch { return false }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('@consulmax:sidebar-collapsed', collapsed ? '1' : '0') } catch {}
+  }, [collapsed])
+
   const simListId = useId()
   const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive)
   useEffect(() => { setSimGroupOpen(simuladoresActive) }, [simuladoresActive])
@@ -170,156 +185,186 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     return () => { alive = false }
   }, [location.pathname])
 
+  // classes utilitárias para colapsado
+  const widthClass = collapsed ? 'md:w-20 w-full' : 'md:w-64 w-full'
+  const textHidden = collapsed ? 'opacity-0 pointer-events-none select-none w-0' : 'opacity-100'
+  const labelHidden = collapsed ? 'hidden' : 'inline'
+  const pillPadding = collapsed ? 'px-2.5' : 'px-3'
+
   return (
     <aside
-      className="
-        md:w-64 w-full border-r
-        md:shadow
-        md:sticky md:top-14
-        h-[calc(100vh-56px)]
-        p-3
-        overflow-y-auto
-        pb-[max(env(safe-area-inset-bottom),theme(spacing.3))]
-      "
+      className={`
+        ${widthClass} border-r md:shadow md:sticky md:top-14
+        min-h-[calc(100vh-56px)] h-auto
+        p-3 overflow-visible
+        pb-[max(env(safe-area-inset-bottom),theme(spacing.6))]
+      `}
       style={glassSidebarBase}
       role="navigation"
       aria-label="Navegação principal"
     >
-      {/* camada líquida (fica por baixo do conteúdo) */}
-      <SidebarLiquidBG />
+      {/* camada líquida fixa (fica por baixo do conteúdo) */}
+      {!collapsed && <SidebarLiquidBG headerOffset={56} />}
 
-      {/* Cabeçalho com logo */}
-      <Link
-        to="/oportunidades"
-        className="relative z-[1] flex items-center gap-3 mb-6 px-2"
-        onClick={() => onNavigate?.()}
-      >
-        <img
-          src={LOGO_URL}
-          alt="Consulmax"
-          title="Consulmax"
-          width={40}
-          height={40}
-          loading="eager"
-          className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_URL }}
-        />
-        <div className="flex flex-col leading-tight">
-          <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
-          <span className="text-xs text-consulmax-secondary">Maximize as suas conquistas</span>
-        </div>
-      </Link>
+      {/* Cabeçalho com logo + botão de colapsar */}
+      <div className="relative z-[1] flex items-center justify-between mb-4">
+        <Link
+          to="/oportunidades"
+          className="flex items-center gap-3"
+          onClick={() => onNavigate?.()}
+        >
+          <img
+            src={LOGO_URL}
+            alt="Consulmax"
+            title="Consulmax"
+            width={40}
+            height={40}
+            loading="eager"
+            className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_URL }}
+          />
+          <div className={`flex flex-col leading-tight transition-opacity duration-200 ${textHidden}`}>
+            <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
+            <span className="text-xs text-consulmax-secondary">Maximize as suas conquistas</span>
+          </div>
+        </Link>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (collapsed) setSimGroupOpen(false) // garante fechado ao expandir/colapsar
+            setCollapsed(v => !v)
+          }}
+          className="ml-2 inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40"
+          title={collapsed ? 'Expandir barra lateral' : 'Ocultar barra lateral'}
+          aria-label={collapsed ? 'Expandir barra lateral' : 'Ocultar barra lateral'}
+          style={glassHoverPill}
+        >
+          {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
+        </button>
+      </div>
 
       {/* Navegação */}
       <nav className="relative z-[1] grid gap-2">
-        {items.map((i) =>
-          i.to === '/propostas' ? (
-            <div key="simuladores-group">
-              {/* Grupo Simuladores */}
-              <button
-                type="button"
-                onClick={() => setSimGroupOpen((v) => !v)}
-                className={`
-                  w-full text-left px-3 py-2.5 rounded-2xl transition-colors
-                  flex items-center justify-between
-                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                  ${simuladoresActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-                `}
-                style={simuladoresActive ? activePillStyle : glassHoverPill}
-                aria-expanded={simGroupOpen}
-                aria-controls={simListId}
-              >
-                <span className="flex items-center gap-2">
-                  <Calculator className="h-4 w-4" />
-                  Simuladores
-                </span>
-                <span className="text-xs opacity-80" aria-hidden>
-                  {simGroupOpen ? '▾' : '▸'}
-                </span>
-              </button>
+        {/* Grupo Simuladores sempre vem antes de Propostas */}
+        <div key="simuladores-group">
+          <button
+            type="button"
+            onClick={() => !collapsed && setSimGroupOpen((v) => !v)}
+            className={`
+              w-full text-left ${pillPadding} py-2.5 rounded-2xl transition-colors
+              flex items-center justify-between
+              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+              ${simuladoresActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
+              ${collapsed ? 'justify-center' : ''}
+            `}
+            style={simuladoresActive ? activePillStyle : glassHoverPill}
+            aria-expanded={!collapsed && simGroupOpen}
+            aria-controls={simListId}
+            title="Simuladores"
+          >
+            <span className="flex items-center gap-2">
+              <Calculator className="h-4 w-4" />
+              {!collapsed && <span>Simuladores</span>}
+            </span>
+            {!collapsed && (
+              <span className="text-xs opacity-80" aria-hidden>
+                {simGroupOpen ? '▾' : '▸'}
+              </span>
+            )}
+          </button>
 
-              {simGroupOpen && (
-                <div id={simListId} className="ml-6 grid gap-1 mt-1">
-                  {adminsLoading && (
-                    <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>
-                  )}
-
-                  {!adminsLoading && admins.length > 0 && admins.map((ad) => (
-                    <NavLink
-                      key={ad.id}
-                      to={`/simuladores/${ad.id}`} // sempre ID
-                      className={({ isActive }) =>
-                        `px-3 py-2.5 rounded-2xl transition-colors
-                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                         ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                      }
-                      style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                      onClick={() => onNavigate?.()}
-                    >
-                      {ad.name}
-                    </NavLink>
-                  ))}
-
-                  {!adminsLoading && admins.length === 0 && embraconId && (
-                    <NavLink
-                      to={`/simuladores/${embraconId}`}
-                      className={({ isActive }) =>
-                        `px-3 py-2.5 rounded-2xl transition-colors
-                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                         ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                      }
-                      style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                      onClick={() => onNavigate?.()}
-                    >
-                      Embracon
-                    </NavLink>
-                  )}
-
-                  <NavLink
-                    to="/simuladores/add"
-                    className={({ isActive }) =>
-                      `px-3 py-2.5 rounded-2xl transition-colors
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                       ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                    }
-                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                    onClick={() => onNavigate?.()}
-                  >
-                    + Add Administradora
-                  </NavLink>
-                </div>
+          {!collapsed && simGroupOpen && (
+            <div id={simListId} className="ml-6 grid gap-1 mt-1">
+              {adminsLoading && (
+                <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>
               )}
 
-              {/* Depois insere o item Propostas normalmente */}
+              {!adminsLoading && admins.length > 0 && admins.map((ad) => (
+                <NavLink
+                  key={ad.id}
+                  to={`/simuladores/${ad.id}`} // sempre ID
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                >
+                  {ad.name}
+                </NavLink>
+              ))}
+
+              {!adminsLoading && admins.length === 0 && embraconId && (
+                <NavLink
+                  to={`/simuladores/${embraconId}`}
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                >
+                  Embracon
+                </NavLink>
+              )}
+
               <NavLink
-                key={i.to}
-                to={i.to}
+                to="/simuladores/add"
                 className={({ isActive }) =>
-                  `px-3 py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                  `${pillPadding} py-2.5 rounded-2xl transition-colors
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                    ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                 }
                 style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                 onClick={() => onNavigate?.()}
               >
-                <i.icon className="h-4 w-4" />
-                {i.label}
+                + Add Administradora
               </NavLink>
             </div>
+          )}
+
+          {/* 🔹 Espaçamento extra entre Simuladores e Propostas */}
+          <div className="h-2" />
+        </div>
+
+        {/* Restante do menu (inclui Propostas) */}
+        {items.map((i) =>
+          i.to === '/propostas' ? (
+            <NavLink
+              key={i.to}
+              to={i.to}
+              className={({ isActive }) =>
+                `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                 ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
+                 ${collapsed ? 'justify-center' : ''}`
+              }
+              style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+              onClick={() => onNavigate?.()}
+              title={i.label}
+            >
+              <i.icon className="h-4 w-4" />
+              {!collapsed && i.label}
+            </NavLink>
           ) : (
             <NavLink
               key={i.to}
               to={i.to}
               className={({ isActive }) =>
-                `px-3 py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                 ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                 ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
+                 ${collapsed ? 'justify-center' : ''}`
               }
               style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
               onClick={() => onNavigate?.()}
+              title={i.label}
             >
               <i.icon className="h-4 w-4" />
-              {i.label}
+              {!collapsed && i.label}
             </NavLink>
           )
         )}

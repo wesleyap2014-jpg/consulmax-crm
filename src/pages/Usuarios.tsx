@@ -107,60 +107,8 @@ export default function Usuarios() {
         }
         const { data, error } = await supabase
           .from("users")
-          .select("id, role")
-          .eq("auth_user_id", uid)
-          .limit(1)
-          .maybeSingle();
-        if (error) throw error;
-        setIsAdmin(String(data?.role || "viewer") === "admin");
-      } catch (e) {
-        console.warn("Falha ao checar role:", e);
-        setIsAdmin(false);
-      } finally {
-        setCheckingRole(false);
-      }
-    })();
-  }, []);
-
-  const [loading, setLoading] = useState(false);
-  const [showCreate, setShowCreate] = useState(false); // overlay do cadastro
-
-  const [form, setForm] = useState<FormState>({
-    nome: "",
-    cpf: "",
-    cep: "",
-    logradouro: "",
-    numero: "",
-    sn: false,
-    bairro: "",
-    cidade: "",
-    uf: "",
-    email: "",
-    celular: "",
-    role: "operacoes",
-    scopes: defaultScopes,
-    pix_type: "",
-    pix_key: "",
-    fotoFile: null,
-    fotoPreview: null,
-  });
-
-  // lista de usuários cadastrados (tabela public.users)
-  const [users, setUsers] = useState<any[]>([]);
-  const [editing, setEditing] = useState<any | null>(null); // objeto do usuário em edição
-
-  // carregar lista ao entrar (apenas se admin)
-  useEffect(() => {
-    if (isAdmin) loadUsers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
-
-  async function loadUsers() {
-    const { data, error } = await supabase
-      .from("users")
-      .select(
-        // sem login/photo_url
-        "id, auth_user_id, nome, email, role, cpf, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes"
+          .select(
+        "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, photo_url, scopes"
       )
       .order("id", { ascending: false });
     if (error) {
@@ -322,7 +270,7 @@ export default function Usuarios() {
   function openEdit(u: any) {
     setEditing({
       ...u,
-      cpf: u.cpf || "",
+      
       celular: u.phone ? maskPhone(String(u.phone)) : "",
       cep: u.cep ? maskCEP(String(u.cep)) : "",
     });
@@ -352,7 +300,7 @@ export default function Usuarios() {
         nome: editing.nome?.trim() || null,
         email: editing.email?.trim().toLowerCase() || null,
         role: editing.role || null,
-        cpf: editing.cpf ? onlyDigits(editing.cpf) : null,
+        // cpf: não é lido do banco (armazenado como cpf_encrypted).
         phone: editing.celular ? onlyDigits(editing.celular) : null,
         telefone: editing.celular ? onlyDigits(editing.celular) : null, // <— compat
         cep: editing.cep ? onlyDigits(editing.cep) : null,
@@ -368,12 +316,28 @@ export default function Usuarios() {
 
       if (avatar_url) update.avatar_url = avatar_url;
 
-      const { error } = await supabase
+      const { error } = const { error } = await supabase
         .from("users")
         .update(update)
         .eq("id", editing.id)
         .select("id")
         .single();
+
+      // tentativa opcional de atualizar CPF via API própria (se existir)
+      if (!error && editing.cpf) {
+        try {
+          const resCpf = await fetch(`/api/users/set-cpf`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: editing.id, cpf: onlyDigits(editing.cpf) }),
+          });
+          if (!resCpf.ok) {
+            console.warn("API /api/users/set-cpf não disponível ou falhou.");
+          }
+        } catch (e) {
+          console.warn("Falha ao atualizar CPF via API opcional:", e);
+        }
+      }
 
       if (error) {
         alert("Falha ao salvar: " + error.message);
@@ -417,7 +381,6 @@ export default function Usuarios() {
             <tr>
               <th style={th}>Foto</th>
               <th style={th}>Nome</th>
-              <th style={th}>CPF</th>
               <th style={th}>E-mail</th>
               <th style={th}>Perfil</th>
               <th style={th}>Celular</th>
@@ -440,15 +403,14 @@ export default function Usuarios() {
                   )}
                 </td>
                 <td style={td}>{u.nome}</td>
-                <td style={td}>{u.cpf ? maskCPF(String(u.cpf)) : "-"}</td>
                 <td style={td}>{u.email}</td>
                 <td style={td}>{String(u.role).toUpperCase()}</td>
                 <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
                 <td style={td}>
-                  {u.pix_type
-                    ? u.pix_type === "cpf"
+                  {(u.pix_type || u.pix_kind)
+                    ? (u.pix_type || u.pix_kind) === "cpf"
                       ? maskCPF(String(u.pix_key || ""))
-                      : u.pix_type === "telefone"
+                      : (u.pix_type || u.pix_kind) === "telefone"
                       ? maskPhone(String(u.pix_key || ""))
                       : String(u.pix_key || "")
                     : "-"}
@@ -525,9 +487,9 @@ export default function Usuarios() {
               />
 
               <input
-                placeholder="CPF"
-                value={form.cpf}
-                onChange={(e) => setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))}
+                placeholder="CPF (não exibimos o atual por segurança)"
+                value={editing.cpf || ""}
+                onChange={(e) => setEditing((s: any) => ({ ...s, cpf: maskCPF(e.target.value) }))}
                 style={input}
                 inputMode="numeric"
               />
@@ -785,7 +747,7 @@ export default function Usuarios() {
                 />
                 {(editFotoPreview || editing.avatar_url) && (
                   <img
-                    src={editFotoPreview || editing.avatar_url}
+                    src={editFotoPreview || editing.avatar_url || editing.photo_url}
                     alt="preview"
                     style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }}
                   />

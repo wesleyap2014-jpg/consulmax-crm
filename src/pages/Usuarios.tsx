@@ -91,7 +91,7 @@ const defaultScopes: Record<ScopeKey, boolean> = ALL_SCOPES.reduce(
 
 // --------- componente ---------
 export default function Usuarios() {
-  // guard de admin
+  // Guard de admin
   const [checkingRole, setCheckingRole] = useState(true);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
@@ -102,12 +102,61 @@ export default function Usuarios() {
         const uid = auth?.user?.id;
         if (!uid) {
           setIsAdmin(false);
-          setCheckingRole(false);
           return;
         }
         const { data, error } = await supabase
           .from("users")
-          .select(
+          .select("id, role")
+          .eq("auth_user_id", uid)
+          .maybeSingle();
+        if (error) throw error;
+        setIsAdmin(String(data?.role || "viewer") === "admin");
+      } catch {
+        setIsAdmin(false);
+      } finally {
+        setCheckingRole(false);
+      }
+    })();
+  }, []);
+
+  const [loading, setLoading] = useState(false);
+  const [showCreate, setShowCreate] = useState(false); // overlay do cadastro
+
+  const [form, setForm] = useState<FormState>({
+    nome: "",
+    cpf: "",
+    cep: "",
+    logradouro: "",
+    numero: "",
+    sn: false,
+    bairro: "",
+    cidade: "",
+    uf: "",
+    email: "",
+    celular: "",
+    role: "operacoes",
+    scopes: defaultScopes,
+    pix_type: "",
+    pix_key: "",
+    fotoFile: null,
+    fotoPreview: null,
+  });
+
+  // lista de usuários cadastrados (tabela public.users)
+  const [users, setUsers] = useState<any[]>([]);
+  const [editing, setEditing] = useState<any | null>(null); // objeto do usuário em edição
+
+  // carregar lista ao entrar (apenas se admin)
+  useEffect(() => {
+    if (isAdmin) loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  async function loadUsers() {
+    const { data, error } = await supabase
+      .from("users")
+      .select(
+        // OBS: sem cpf; compat: avatar_url/photo_url; pix_type/pix_kind
         "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, photo_url, scopes"
       )
       .order("id", { ascending: false });
@@ -156,7 +205,9 @@ export default function Usuarios() {
   async function uploadFotoSeNecessario(file: File | null): Promise<string | null> {
     if (!file) return null;
     const ext = file.name.split(".").pop() || "jpg";
-    const path = `avatars/${Date.now()}_${Math.random().toString(16).slice(2)}.${ext}`;
+    const path = `avatars/${Date.now()}_${Math.random()
+      .toString(16)
+      .slice(2)}.${ext}`;
     const { error } = await supabase.storage
       .from("avatars")
       .upload(path, file, { upsert: true });
@@ -173,9 +224,12 @@ export default function Usuarios() {
     if (!form.nome.trim()) return alert("Informe o nome.");
     if (!form.email.trim()) return alert("Informe o e-mail.");
     const cpfDigits = onlyDigits(form.cpf);
-    if (cpfDigits.length !== 11) return alert("CPF inválido.");
-    if (onlyDigits(form.celular).length < 10) return alert("Celular inválido.");
-    if (form.pix_type && !form.pix_key.trim()) return alert("Informe a chave PIX correspondente.");
+    if (cpfDigits && cpfDigits.length !== 11)
+      return alert("CPF inválido.");
+    if (onlyDigits(form.celular).length < 10)
+      return alert("Celular inválido.");
+    if (form.pix_type && !form.pix_key.trim())
+      return alert("Informe a chave PIX correspondente.");
 
     try {
       setLoading(true);
@@ -184,14 +238,14 @@ export default function Usuarios() {
       const numeroFinal = form.sn ? "s/n" : form.numero.trim();
       const roleForAPI = mapRoleToAPI(form.role);
 
-      // ⚠️ Compat: enviando 'telefone' junto com 'phone' até corrigirmos a trigger do banco
+      // ⚠️ Compat: enviando 'telefone' junto com 'phone'
       const payload = {
         nome: form.nome.trim(),
         email: form.email.trim().toLowerCase(),
         role: roleForAPI, // 'admin' | 'vendedor' | 'viewer'
-        cpf: cpfDigits,
+        cpf: cpfDigits || null, // usado por /api/users/create se implementar criptografia
         phone: onlyDigits(form.celular),
-        telefone: onlyDigits(form.celular), // <— compat
+        telefone: onlyDigits(form.celular),
         cep: onlyDigits(form.cep),
         logradouro: form.logradouro.trim(),
         numero: numeroFinal,
@@ -219,12 +273,18 @@ export default function Usuarios() {
       }
 
       if (!res.ok) {
-        const msg = (data && (data.error || data.message)) || raw || `HTTP ${res.status}`;
+        const msg =
+          (data && (data.error || data.message)) || raw || `HTTP ${res.status}`;
         alert("Erro ao criar usuário: " + msg);
         return;
       }
 
-      const senha = data?.password || data?.temp_password || data?.tempPass || data?.temp || null;
+      const senha =
+        data?.password ||
+        data?.temp_password ||
+        data?.tempPass ||
+        data?.temp ||
+        null;
 
       alert(
         senha
@@ -270,7 +330,7 @@ export default function Usuarios() {
   function openEdit(u: any) {
     setEditing({
       ...u,
-      
+      cpf: "", // não lemos cpf_encrypted — exibimos vazio para novo valor
       celular: u.phone ? maskPhone(String(u.phone)) : "",
       cep: u.cep ? maskCEP(String(u.cep)) : "",
     });
@@ -282,6 +342,7 @@ export default function Usuarios() {
     setEditFotoFile(null);
     setEditFotoPreview(null);
   }
+
   async function saveEdit() {
     if (!editing) return;
     try {
@@ -293,16 +354,19 @@ export default function Usuarios() {
         avatar_url = await uploadFotoSeNecessario(editFotoFile);
       }
 
-      const scopesList: ScopeKey[] = Array.isArray(editing.scopes) && editing.scopes.length ? editing.scopes : [];
+      const scopesList: ScopeKey[] =
+        Array.isArray(editing.scopes) && editing.scopes.length
+          ? editing.scopes
+          : [];
 
       // ⚠️ Compat: atualizar 'telefone' junto com 'phone'
       const update: any = {
         nome: editing.nome?.trim() || null,
         email: editing.email?.trim().toLowerCase() || null,
         role: editing.role || null,
-        // cpf: não é lido do banco (armazenado como cpf_encrypted).
+        // cpf: não lido do banco (armazenado como cpf_encrypted via backend)
         phone: editing.celular ? onlyDigits(editing.celular) : null,
-        telefone: editing.celular ? onlyDigits(editing.celular) : null, // <— compat
+        telefone: editing.celular ? onlyDigits(editing.celular) : null,
         cep: editing.cep ? onlyDigits(editing.cep) : null,
         logradouro: editing.logradouro || null,
         numero: editing.numero || null,
@@ -313,23 +377,30 @@ export default function Usuarios() {
         pix_key: editing.pix_key || null,
         scopes: scopesList,
       };
-
       if (avatar_url) update.avatar_url = avatar_url;
 
-      const { error } = const { error } = await supabase
+      const { error } = await supabase
         .from("users")
         .update(update)
         .eq("id", editing.id)
         .select("id")
         .single();
 
-      // tentativa opcional de atualizar CPF via API própria (se existir)
-      if (!error && editing.cpf) {
+      if (error) {
+        alert("Falha ao salvar: " + error.message);
+        return;
+      }
+
+      // Atualização opcional de CPF via API própria (se existir)
+      if (editing.cpf) {
         try {
           const resCpf = await fetch(`/api/users/set-cpf`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: editing.id, cpf: onlyDigits(editing.cpf) }),
+            body: JSON.stringify({
+              user_id: editing.id,
+              cpf: onlyDigits(editing.cpf),
+            }),
           });
           if (!resCpf.ok) {
             console.warn("API /api/users/set-cpf não disponível ou falhou.");
@@ -339,10 +410,6 @@ export default function Usuarios() {
         }
       }
 
-      if (error) {
-        alert("Falha ao salvar: " + error.message);
-        return;
-      }
       await loadUsers();
       closeEdit();
     } catch (e: any) {
@@ -356,7 +423,10 @@ export default function Usuarios() {
   const scopeCheckboxes = useMemo(
     () =>
       ALL_SCOPES.map((k) => (
-        <label key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <label
+          key={k}
+          style={{ display: "flex", gap: 8, alignItems: "center" }}
+        >
           <input
             type="checkbox"
             checked={!!form.scopes[k]}
@@ -367,7 +437,9 @@ export default function Usuarios() {
               }))
             }
           />
-          <span style={{ textTransform: "capitalize" }}>{k.replace("_", " ")}</span>
+          <span style={{ textTransform: "capitalize" }}>
+            {k.replace("_", " ")}
+          </span>
         </label>
       )),
     [form.scopes]
@@ -376,7 +448,9 @@ export default function Usuarios() {
   function renderUsersTable() {
     return (
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+        <table
+          style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}
+        >
           <thead>
             <tr>
               <th style={th}>Foto</th>
@@ -392,14 +466,27 @@ export default function Usuarios() {
             {users.map((u) => (
               <tr key={u.id} style={{ transition: "background .15s" }}>
                 <td style={td}>
-                  {u.avatar_url ? (
+                  {u.avatar_url || u.photo_url ? (
                     <img
-                      src={u.avatar_url}
+                      src={u.avatar_url || u.photo_url}
                       alt=""
-                      style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 10, border: "1px solid #eee" }}
+                      style={{
+                        width: 40,
+                        height: 40,
+                        objectFit: "cover",
+                        borderRadius: 10,
+                        border: "1px solid #eee",
+                      }}
                     />
                   ) : (
-                    <div style={{ width: 40, height: 40, borderRadius: 10, background: "#eee" }} />
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 10,
+                        background: "#eee",
+                      }}
+                    />
                   )}
                 </td>
                 <td style={td}>{u.nome}</td>
@@ -416,13 +503,15 @@ export default function Usuarios() {
                     : "-"}
                 </td>
                 <td style={td}>
-                  <button onClick={() => openEdit(u)} style={btnPrimarySmall}>Editar</button>
+                  <button onClick={() => openEdit(u)} style={btnPrimarySmall}>
+                    Editar
+                  </button>
                 </td>
               </tr>
             ))}
             {users.length === 0 && (
               <tr>
-                <td style={td} colSpan={8}>
+                <td style={td} colSpan={7}>
                   Nenhum usuário encontrado.
                 </td>
               </tr>
@@ -435,9 +524,7 @@ export default function Usuarios() {
 
   // UI principal
   if (checkingRole) {
-    return (
-      <div style={pageWrap}>Carregando…</div>
-    );
+    return <div style={pageWrap}>Carregando…</div>;
   }
   if (!isAdmin) {
     return (
@@ -452,7 +539,14 @@ export default function Usuarios() {
 
   return (
     <div style={pageWrap}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
         <h1 style={{ margin: 0 }}>Usuários</h1>
 
         {/* Chip para abrir o overlay de cadastro */}
@@ -463,7 +557,15 @@ export default function Usuarios() {
 
       {/* TABELA DE USUÁRIOS */}
       <div style={{ ...card, padding: 0 }}>
-        <div style={{ padding: 14, borderBottom: "1px solid #eef2f7", display: "flex", alignItems: "center", gap: 12 }}>
+        <div
+          style={{
+            padding: 14,
+            borderBottom: "1px solid #eef2f7",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
           <span style={{ fontWeight: 700 }}>Usuários Cadastrados</span>
         </div>
         <div style={{ padding: 12 }}>{renderUsersTable()}</div>
@@ -473,23 +575,36 @@ export default function Usuarios() {
       {showCreate && (
         <div style={modalBackdrop}>
           <div style={modalCardWide}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
               <h2 style={{ margin: 0 }}>Novo usuário</h2>
-              <button onClick={() => setShowCreate(false)} style={btnGhost}>Fechar</button>
+              <button onClick={() => setShowCreate(false)} style={btnGhost}>
+                Fechar
+              </button>
             </div>
 
             <div style={grid3}>
               <input
                 placeholder="Nome completo"
                 value={form.nome}
-                onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, nome: e.target.value }))
+                }
                 style={input}
               />
 
               <input
-                placeholder="CPF (não exibimos o atual por segurança)"
-                value={editing.cpf || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cpf: maskCPF(e.target.value) }))}
+                placeholder="CPF"
+                value={form.cpf}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))
+                }
                 style={input}
                 inputMode="numeric"
               />
@@ -497,7 +612,9 @@ export default function Usuarios() {
               <input
                 placeholder="Celular"
                 value={form.celular}
-                onChange={(e) => setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))
+                }
                 style={input}
                 inputMode="tel"
               />
@@ -505,7 +622,9 @@ export default function Usuarios() {
               <input
                 placeholder="CEP"
                 value={form.cep}
-                onChange={(e) => setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))
+                }
                 style={input}
                 inputMode="numeric"
               />
@@ -513,7 +632,9 @@ export default function Usuarios() {
               <input
                 placeholder="Logradouro"
                 value={form.logradouro}
-                onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, logradouro: e.target.value }))
+                }
                 style={input}
               />
 
@@ -522,7 +643,9 @@ export default function Usuarios() {
                   placeholder="Número"
                   value={form.sn ? "s/n" : form.numero}
                   disabled={form.sn}
-                  onChange={(e) => setForm((s) => ({ ...s, numero: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((s) => ({ ...s, numero: e.target.value }))
+                  }
                   style={input}
                 />
                 <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -544,14 +667,18 @@ export default function Usuarios() {
               <input
                 placeholder="Bairro"
                 value={form.bairro}
-                onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, bairro: e.target.value }))
+                }
                 style={input}
               />
 
               <input
                 placeholder="Cidade"
                 value={form.cidade}
-                onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, cidade: e.target.value }))
+                }
                 style={input}
               />
 
@@ -571,13 +698,17 @@ export default function Usuarios() {
                 placeholder="E-mail"
                 value={form.email}
                 type="email"
-                onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, email: e.target.value }))
+                }
                 style={input}
               />
 
               <select
                 value={form.role}
-                onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, role: e.target.value as RoleUI }))
+                }
                 style={input}
               >
                 <option value="admin">Admin</option>
@@ -589,7 +720,9 @@ export default function Usuarios() {
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <select
                   value={form.pix_type}
-                  onChange={(e) => setForm((s) => ({ ...s, pix_type: e.target.value as any }))}
+                  onChange={(e) =>
+                    setForm((s) => ({ ...s, pix_type: e.target.value as any }))
+                  }
                   style={input}
                 >
                   <option value="">Tipo da chave PIX</option>
@@ -600,7 +733,9 @@ export default function Usuarios() {
                 <input
                   placeholder="Chave PIX"
                   value={form.pix_key}
-                  onChange={(e) => setForm((s) => ({ ...s, pix_key: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((s) => ({ ...s, pix_key: e.target.value }))
+                  }
                   style={input}
                 />
               </div>
@@ -623,14 +758,29 @@ export default function Usuarios() {
                   <img
                     src={form.fotoPreview}
                     alt="preview"
-                    style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }}
+                    style={{
+                      width: 56,
+                      height: 56,
+                      objectFit: "cover",
+                      borderRadius: 12,
+                      border: "1px solid #eee",
+                    }}
                   />
                 )}
               </div>
 
               {/* scopes */}
-              <div style={{ gridColumn: "1 / span 3", display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
+              <div
+                style={{
+                  gridColumn: "1 / span 3",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, minmax(0,1fr))",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                  Guias com acesso:
+                </div>
                 {scopeCheckboxes}
               </div>
 
@@ -651,21 +801,27 @@ export default function Usuarios() {
               <input
                 placeholder="Nome"
                 value={editing.nome || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, nome: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, nome: e.target.value }))
+                }
                 style={input}
               />
 
               <input
-                placeholder="CPF"
+                placeholder="CPF (não exibimos o atual por segurança)"
                 value={editing.cpf || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cpf: maskCPF(e.target.value) }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, cpf: maskCPF(e.target.value) }))
+                }
                 style={input}
                 inputMode="numeric"
               />
 
               <select
                 value={editing.role || "viewer"}
-                onChange={(e) => setEditing((s: any) => ({ ...s, role: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, role: e.target.value }))
+                }
                 style={input}
               >
                 <option value="viewer">Operações</option>
@@ -676,50 +832,72 @@ export default function Usuarios() {
               <input
                 placeholder="Celular"
                 value={editing.celular || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, celular: maskPhone(e.target.value) }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    celular: maskPhone(e.target.value),
+                  }))
+                }
                 style={input}
               />
               <input
                 placeholder="CEP"
                 value={editing.cep || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))
+                }
                 style={input}
               />
               <input
                 placeholder="Logradouro"
                 value={editing.logradouro || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, logradouro: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, logradouro: e.target.value }))
+                }
                 style={input}
               />
               <input
                 placeholder="Número"
                 value={editing.numero || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, numero: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, numero: e.target.value }))
+                }
                 style={input}
               />
               <input
                 placeholder="Bairro"
                 value={editing.bairro || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, bairro: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, bairro: e.target.value }))
+                }
                 style={input}
               />
               <input
                 placeholder="Cidade"
                 value={editing.cidade || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cidade: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, cidade: e.target.value }))
+                }
                 style={input}
               />
               <input
                 placeholder="UF"
                 value={editing.uf || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, uf: String(e.target.value).toUpperCase().slice(0, 2) }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    uf: String(e.target.value).toUpperCase().slice(0, 2),
+                  }))
+                }
                 style={input}
               />
 
               {/* PIX na edição */}
               <select
                 value={editing.pix_type || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, pix_type: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, pix_type: e.target.value }))
+                }
                 style={input}
               >
                 <option value="">Tipo da chave PIX</option>
@@ -730,7 +908,9 @@ export default function Usuarios() {
               <input
                 placeholder="Chave PIX"
                 value={editing.pix_key || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, pix_key: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({ ...s, pix_key: e.target.value }))
+                }
                 style={input}
               />
 
@@ -745,23 +925,43 @@ export default function Usuarios() {
                     setEditFotoPreview(f ? URL.createObjectURL(f) : null);
                   }}
                 />
-                {(editFotoPreview || editing.avatar_url) && (
+                {(editFotoPreview || editing.avatar_url || editing.photo_url) && (
                   <img
                     src={editFotoPreview || editing.avatar_url || editing.photo_url}
                     alt="preview"
-                    style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid #eee" }}
+                    style={{
+                      width: 56,
+                      height: 56,
+                      objectFit: "cover",
+                      borderRadius: 12,
+                      border: "1px solid #eee",
+                    }}
                   />
                 )}
               </div>
 
               {/* scopes na edição */}
-              <div style={{ gridColumn: "1 / span 3", display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
+              <div
+                style={{
+                  gridColumn: "1 / span 3",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, minmax(0,1fr))",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                  Guias com acesso:
+                </div>
                 {ALL_SCOPES.map((k) => {
-                  const list: ScopeKey[] = Array.isArray(editing.scopes) ? editing.scopes : [];
+                  const list: ScopeKey[] = Array.isArray(editing.scopes)
+                    ? editing.scopes
+                    : [];
                   const checked = list.includes(k);
                   return (
-                    <label key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <label
+                      key={k}
+                      style={{ display: "flex", gap: 8, alignItems: "center" }}
+                    >
                       <input
                         type="checkbox"
                         checked={checked}
@@ -769,21 +969,35 @@ export default function Usuarios() {
                           const listNow = new Set(list);
                           if (checked) listNow.delete(k);
                           else listNow.add(k);
-                          setEditing((s: any) => ({ ...s, scopes: Array.from(listNow) }));
+                          setEditing((s: any) => ({
+                            ...s,
+                            scopes: Array.from(listNow),
+                          }));
                         }}
                       />
-                      <span style={{ textTransform: "capitalize" }}>{k.replace("_", " ")}</span>
+                      <span style={{ textTransform: "capitalize" }}>
+                        {k.replace("_", " ")}
+                      </span>
                     </label>
                   );
                 })}
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                marginTop: 12,
+                justifyContent: "flex-end",
+              }}
+            >
               <button onClick={saveEdit} disabled={savingEdit} style={btnPrimary}>
                 {savingEdit ? "Salvando..." : "Salvar alterações"}
               </button>
-              <button onClick={closeEdit} style={btnGhost}>Cancelar</button>
+              <button onClick={closeEdit} style={btnGhost}>
+                Cancelar
+              </button>
             </div>
           </div>
         </div>
@@ -822,8 +1036,18 @@ const input: React.CSSProperties = {
   outline: "none",
 };
 
-const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 10, background: "#fafbfc", borderBottom: "1px solid #eef2f7" };
-const td: React.CSSProperties = { padding: 10, borderTop: "1px solid #f1f5f9" };
+const th: React.CSSProperties = {
+  textAlign: "left",
+  fontSize: 12,
+  color: "#475569",
+  padding: 10,
+  background: "#fafbfc",
+  borderBottom: "1px solid #eef2f7",
+};
+const td: React.CSSProperties = {
+  padding: 10,
+  borderTop: "1px solid #f1f5f9",
+};
 
 const btnPrimaryFull: React.CSSProperties = {
   gridColumn: "1 / span 3",

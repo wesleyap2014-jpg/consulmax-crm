@@ -17,10 +17,25 @@ function getInitials(name?: string, email?: string) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+// Util: timeout para promessas (evita travar a UI em redes ruins)
+function withTimeout<T>(promise: Promise<T>, ms: number, label = "Operação") {
+  let t: any;
+  const timeout = new Promise<never>((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} excedeu ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
+// Chave de cache por usuário
+const cacheKey = (uid: string) => `hdr_profile_v1:${uid}`;
+const cacheAvatarKey = (uid: string) => `hdr_avatar_url_v1:${uid}`;
+
 export default function Header() {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [profile, setProfile] = useState<Profile>({
     name: "",
     email: "",
@@ -41,8 +56,12 @@ export default function Header() {
     function onDocClick(e: MouseEvent) {
       if (!menuOpen) return;
       const t = e.target as Node;
-      if (menuRef.current && !menuRef.current.contains(t) &&
-          menuBtnRef.current && !menuBtnRef.current.contains(t)) {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(t) &&
+        menuBtnRef.current &&
+        !menuBtnRef.current.contains(t)
+      ) {
         setMenuOpen(false);
       }
     }
@@ -58,116 +77,48 @@ export default function Header() {
   }, [menuOpen]);
 
   const fetchUsersRow = useCallback(
-    async (authUserId: string) => {
-      const { data, error } = await supabase
+    async (authUserId: string, signal?: AbortSignal) => {
+      // SELECT mínimo e direto; com timeout para não travar
+      const p = supabase
         .from("users")
         .select("nome, avatar_url")
         .eq("auth_user_id", authUserId)
         .maybeSingle();
+
+      const { data, error } = await withTimeout(p, 4000, "Carregar perfil");
+      if (signal?.aborted) return null;
       if (error) {
-        console.error("users fetch error:", error.message);
+        console.error("users fetch error:", (error as any).message || error);
+        return null;
       }
       return data as { nome?: string | null; avatar_url?: string | null } | null;
     },
     []
   );
 
-  // carrega sessão + perfil (com redirecionamento se não houver)
-  useEffect(() => {
-    let alive = true;
-
-    const load = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const user = session?.user;
-        if (!user) {
-          navigate("/login", { replace: true });
-          return;
-        }
-
-        // base do Auth
-        let baseName =
-          (user.user_metadata as any)?.nome ||
-          (user.user_metadata as any)?.full_name ||
-          user.email ||
-          "";
-        const baseEmail = user.email || "";
-
-        // linha em public.users
-        const row = await fetchUsersRow(user.id);
-        const name = row?.nome || baseName;
-        const avatarPath =
-          (user.user_metadata as any)?.avatar_url || row?.avatar_url || null;
-
-        if (!alive) return;
-        setProfile({ name, email: baseEmail, avatarPath });
-      } catch (e) {
-        console.error("load header profile:", e);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-
-    load();
-
-    // assina mudanças de sessão (login/logout/troca de usuário)
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const user = session?.user;
-      if (!user) {
-        navigate("/login", { replace: true });
-        return;
-      }
-      setLoading(true);
-      try {
-        const quickName =
-          (user.user_metadata as any)?.nome ||
-          (user.user_metadata as any)?.full_name ||
-          user.email ||
-          "";
-        const quickEmail = user.email || "";
-        // Atualiza rápido
-        setProfile((p) => ({ ...p, name: quickName, email: quickEmail }));
-
-        // Busca completa (tabela users)
-        const row = await fetchUsersRow(user.id);
-        const name = row?.nome || quickName;
-        const avatarPath =
-          (user.user_metadata as any)?.avatar_url || row?.avatar_url || null;
-        setProfile({ name, email: quickEmail, avatarPath });
-      } catch (e) {
-        console.error("auth change reload:", e);
-      } finally {
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      alive = false;
-      sub.subscription.unsubscribe();
-    };
-  }, [fetchUsersRow, navigate]);
-
   // gera/renova signed URL quando há caminho de Storage
   const buildAvatarUrl = useCallback(async (path: string) => {
     // Se já é http(s), usa direto
     if (/^https?:\/\//i.test(path)) return path;
-    // Troque "avatars" se o bucket tiver outro nome
-    const { data, error } = await supabase.storage
-      .from("avatars")
-      .createSignedUrl(path, 60 * 60); // 1h
-    if (error) throw new Error(error.message);
+
+    // Tenta signed de 60min com timeout curto para não travar
+    const { data, error } = await withTimeout(
+      supabase.storage.from("avatars").createSignedUrl(path, 60 * 60),
+      3500,
+      "Avatar URL"
+    );
+    if (error) throw new Error((error as any).message || "Erro ao gerar avatar");
     return data.signedUrl;
   }, []);
 
   const scheduleAvatarRefresh = useCallback(
     (path: string) => {
       if (avatarRefreshTimer.current) clearTimeout(avatarRefreshTimer.current);
-      // Renova 5 min antes de expirar
+      // Renova 5 min antes de expirar (60min) — aqui aos 55 min
       avatarRefreshTimer.current = setTimeout(async () => {
         try {
           const next = await buildAvatarUrl(path);
           setAvatarUrl(next);
-          // reprograma novamente
           scheduleAvatarRefresh(path);
         } catch (e) {
           console.error("avatar refresh error:", e);
@@ -178,37 +129,155 @@ export default function Header() {
     [buildAvatarUrl]
   );
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
+  const loadAvatar = useCallback(
+    async (uid: string, path: string | null | undefined) => {
+      // limpa timer
+      if (avatarRefreshTimer.current) {
+        clearTimeout(avatarRefreshTimer.current);
+        avatarRefreshTimer.current = null;
+      }
+      if (!path) {
+        setAvatarUrl(null);
+        sessionStorage.removeItem(cacheAvatarKey(uid));
+        return;
+      }
+
+      // tenta ler do cache do avatar (para render instantânea)
+      const cached = sessionStorage.getItem(cacheAvatarKey(uid));
+      if (cached) {
+        setAvatarUrl(cached);
+      }
+
       try {
-        if (!profile.avatarPath) {
-          setAvatarUrl(null);
-          // limpa timer
-          if (avatarRefreshTimer.current) {
-            clearTimeout(avatarRefreshTimer.current);
-            avatarRefreshTimer.current = null;
-          }
-          return;
-        }
-        const nextUrl = await buildAvatarUrl(profile.avatarPath);
-        if (!alive) return;
+        const nextUrl = await buildAvatarUrl(path);
         setAvatarUrl(nextUrl);
-        scheduleAvatarRefresh(profile.avatarPath);
+        sessionStorage.setItem(cacheAvatarKey(uid), nextUrl);
+        scheduleAvatarRefresh(path);
       } catch (e) {
         console.error("avatar url:", e);
         setAvatarUrl(null);
+        sessionStorage.removeItem(cacheAvatarKey(uid));
       }
-    })();
+    },
+    [buildAvatarUrl, scheduleAvatarRefresh]
+  );
+
+  const applyProfile = useCallback((uid: string, value: Profile) => {
+    setProfile(value);
+    // cache rápido para UX suave
+    sessionStorage.setItem(cacheKey(uid), JSON.stringify(value));
+  }, []);
+
+  const load = useCallback(async () => {
+    setError(null);
+    setLoading(true);
+
+    let alive = true;
+    const ctrl = new AbortController();
+
+    try {
+      const { data: userRes, error: userErr } = await withTimeout(
+        supabase.auth.getUser(),
+        2500,
+        "Sessão"
+      );
+      if (userErr) {
+        console.error("auth.getUser error:", (userErr as any).message || userErr);
+      }
+      const user = userRes?.user;
+
+      if (!user) {
+        navigate("/login", { replace: true });
+        return;
+      }
+
+      const uid = user.id;
+
+      // 1) Render instantâneo via cache, se existir
+      const cachedRaw = sessionStorage.getItem(cacheKey(uid));
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw) as Profile;
+          if (alive) {
+            setProfile(cached);
+            setLoading(false);
+            // não sai — continua atualizando silenciosamente em background
+          }
+        } catch {
+          // ignore cache inválido
+        }
+      }
+
+      // 2) Monta base mínima (metadata / email) para pintar rápido na falta de cache
+      const quickName =
+        (user.user_metadata as any)?.nome ||
+        (user.user_metadata as any)?.full_name ||
+        user.email ||
+        "";
+      const quickEmail = user.email || "";
+      const quickAvatar =
+        (user.user_metadata as any)?.avatar_url || null;
+
+      // Preenche se não houver cache
+      if (!cachedRaw) {
+        if (alive) {
+          applyProfile(uid, { name: quickName, email: quickEmail, avatarPath: quickAvatar });
+          setLoading(false);
+        }
+      }
+
+      // 3) Busca refinada no banco (com timeout/abort)
+      const row = await fetchUsersRow(uid, ctrl.signal);
+      if (!alive) return;
+
+      const finalName = row?.nome || quickName;
+      const finalAvatar = row?.avatar_url ?? quickAvatar;
+
+      applyProfile(uid, { name: finalName, email: quickEmail, avatarPath: finalAvatar });
+
+      // 4) Avatar (assíncrono; sem bloquear UI)
+      loadAvatar(uid, finalAvatar);
+    } catch (e: any) {
+      if (!alive) return;
+      console.error("load header profile:", e);
+      setError(e?.message || "Falha ao carregar usuário");
+    } finally {
+      if (alive) setLoading(false);
+    }
+
     return () => {
       alive = false;
+      ctrl.abort();
     };
-  }, [profile.avatarPath, buildAvatarUrl, scheduleAvatarRefresh]);
+  }, [applyProfile, fetchUsersRow, loadAvatar, navigate]);
 
+  // carrega sessão + perfil (com redirecionamento se não houver) e assina mudanças
   useEffect(() => {
+    let unsub: (() => void) | null = null;
+
+    (async () => {
+      const cleanup = await load();
+      // assina mudanças de sessão (login/logout/troca de usuário)
+      const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+        const user = session?.user;
+        if (!user) {
+          navigate("/login", { replace: true });
+          return;
+        }
+        // recarrega sem travar (usa cache + background)
+        load();
+      });
+      unsub = () => sub.subscription.unsubscribe();
+
+      // cleanup do load (abort) se existir
+      if (typeof cleanup === "function") cleanup();
+    })();
+
     return () => {
+      if (unsub) unsub();
       if (avatarRefreshTimer.current) clearTimeout(avatarRefreshTimer.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const initials = useMemo(
@@ -224,8 +293,10 @@ export default function Header() {
     }
   }, [navigate]);
 
-  const handleOpenMenu = useCallback(() => setMenuOpen(true), []);
-  const handleCloseMenu = useCallback(() => setMenuOpen(false), []);
+  const handleRetry = useCallback(() => {
+    setError(null);
+    load();
+  }, [load]);
 
   return (
     <header
@@ -271,14 +342,24 @@ export default function Header() {
             </div>
           )}
 
-          {/* Nome / Email */}
-          <div className="hidden sm:flex flex-col leading-tight">
-            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              {loading ? "Carregando..." : profile.name || "Usuário"}
+          {/* Nome / Email + estado de erro */}
+          <div className="hidden sm:flex flex-col leading-tight min-w-[10rem]">
+            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+              {profile.name || (loading ? "Carregando..." : "Usuário")}
             </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              {loading ? "—" : profile.email}
-            </span>
+            {error ? (
+              <button
+                onClick={handleRetry}
+                className="text-xs text-red-600 hover:underline text-left"
+                title={error}
+              >
+                Falha ao carregar — Tentar novamente
+              </button>
+            ) : (
+              <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                {profile.email || (loading ? "—" : "")}
+              </span>
+            )}
           </div>
 
           {/* Dropdown do usuário */}
@@ -287,7 +368,6 @@ export default function Header() {
               ref={menuBtnRef}
               type="button"
               onClick={() => setMenuOpen((v) => !v)}
-              onFocus={handleOpenMenu}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               aria-controls="user-menu"
@@ -307,7 +387,7 @@ export default function Header() {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    handleCloseMenu();
+                    setMenuOpen(false);
                     navigate("/perfil");
                   }}
                   className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
@@ -317,7 +397,7 @@ export default function Header() {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    handleCloseMenu();
+                    setMenuOpen(false);
                     navigate("/preferencias");
                   }}
                   className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
@@ -328,7 +408,7 @@ export default function Header() {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    handleCloseMenu();
+                    setMenuOpen(false);
                     handleSignOut();
                   }}
                   className="block w-full px-4 py-2 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"

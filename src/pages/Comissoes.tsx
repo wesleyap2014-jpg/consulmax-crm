@@ -617,7 +617,7 @@ export default function ComissoesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUserId]);
 
-  // SINCRONIZA recibo com o vendedor selecionado (requisito do usuário)
+  // SINCRONIZA recibo com o vendedor selecionado
   useEffect(() => {
     setReciboVendor(vendedorId);
   }, [vendedorId]);
@@ -1340,7 +1340,7 @@ export default function ComissoesPage() {
           "ESTORNO",
           "—",
           BRL(-(rf.valor_bruto || 0)),
-          BRL( (rf.valor_bruto || 0) * impostoPct ), // informativo
+          BRL( (rf.valor_bruto || 0) * impostoPct ),
           BRL(-(rf.valor_liquido || 0)),
         ]);
         totalLiquido -= (rf.valor_liquido || 0);
@@ -1878,10 +1878,13 @@ export default function ComissoesPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Pagamento (overlay) */}
+        {/* Pagamento (overlay) — CORREÇÃO DE TAGS AQUI */}
         <Dialog open={openPay} onOpenChange={setOpenPay}>
           <DialogContent className="w-[98vw] max-w-[1400px]">
-            <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogHeader><DialogTitle /></DialogHeader>
+            <DialogHeader>
+              <DialogTitle>Registrar pagamento ao vendedor</DialogTitle>
+            </DialogHeader>
+
             <Tabs defaultValue={payDefaultTab}>
               <TabsList className="mb-4">
                 <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>

@@ -17,8 +17,7 @@ const items = [
   { to: '/clientes',         label: 'Clientes',         icon: UserCheck },
   { to: '/agenda',           label: 'Agenda',           icon: Calendar },
   { to: '/comissoes',        label: 'Comissões',        icon: BarChart3 },
-  // ➕ NOVO: Ranking dos Vendedores
-  { to: '/ranking',          label: 'Ranking',          icon: Trophy },
+  { to: '/ranking',          label: 'Ranking',          icon: Trophy }, // NOVO
   { to: '/usuarios',         label: 'Usuários',         icon: UserCog },
   { to: '/parametros',       label: 'Parâmetros',       icon: SlidersHorizontal },
   { to: '/links',            label: 'Links Úteis',      icon: LinkIcon },
@@ -133,7 +132,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         console.error('Erro ao carregar administradoras:', error.message)
         setAdmins([]); setEmbraconId(null)
       } else {
-        const list = data ?? []
+        const list = (data ?? [])
         setAdmins(list)
         const embr = list.find(a => a.name?.toLowerCase() === 'embracon')
         setEmbraconId(embr?.id ?? null)
@@ -257,7 +256,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) =>
                     `${pillPadding} py-2.5 rounded-2xl transition-colors
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral}` }
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                  }
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                 >
@@ -271,7 +271,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) =>
                     `${pillPadding} py-2.5 rounded-2xl transition-colors
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral` }
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                  }
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                 >
@@ -284,7 +285,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 className={({ isActive }) =>
                   `${pillPadding} py-2.5 rounded-2xl transition-colors
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral` }
+                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                 }
                 style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                 onClick={() => onNavigate?.()}
@@ -312,7 +313,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           {!collapsed && 'Propostas'}
         </NavLink>
 
-        {/* Demais itens na ordem já existente (inclui o novo /ranking) */}
+        {/* Demais itens (inclui /ranking) */}
         {items
           .filter(i => i.to !== '/oportunidades' && i.to !== '/propostas')
           .map((i) => (

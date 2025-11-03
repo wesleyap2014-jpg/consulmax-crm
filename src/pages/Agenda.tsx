@@ -56,17 +56,14 @@ const ORIGENS: AgendaOrigem[] = ["auto", "manual"];
 /** ====== Helpers ====== */
 const onlyDigits = (s: string) => (s || "").replace(/\D+/g, "");
 
-// (ainda usadas em alguns lugares, mantidas)
-const fmtDateTimeBR = (iso?: string | null) =>
-  !iso ? "—" : new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-const fmtDateBR = (iso?: string | null) => !iso ? "—" : new Date(iso).toLocaleDateString("pt-BR");
-
-// NOVO: detecção e formatação seguras para eventos all-day (00:00:00Z)
+// ---------- Correção definitiva de fuso para "all-day" ----------
 function isMidnightUTC(iso?: string | null) {
   if (!iso) return false;
+  // Usa campos UTC para evitar desvio por fuso local
   const d = new Date(iso);
   return d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0;
 }
+// Extrai YYYY-MM-DD quando é 00:00:00Z (sem converter para local)
 function ymdFromISO(iso?: string | null) {
   if (!iso) return null;
   const m = String(iso).match(/^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.000)?Z$/);
@@ -76,6 +73,7 @@ function formatYMD_BR(ymd: string) {
   const [y, m, d] = ymd.split("-");
   return `${d}/${m}/${y}`;
 }
+// Data/hora com tratamento de "all-day"
 function fmtDateTimeSmart(iso?: string | null) {
   if (!iso) return "—";
   if (isMidnightUTC(iso)) {
@@ -86,6 +84,7 @@ function fmtDateTimeSmart(iso?: string | null) {
     day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
   });
 }
+// Data sem hora com tratamento de "all-day"
 function fmtDateSmart(iso?: string | null) {
   if (!iso) return "—";
   if (isMidnightUTC(iso)) {
@@ -94,12 +93,13 @@ function fmtDateSmart(iso?: string | null) {
   }
   return new Date(iso).toLocaleDateString("pt-BR");
 }
+// ----------------------------------------------------------------
 
 const defaultEndFromStart = (isoStart: string) => new Date(new Date(isoStart).getTime() + 30 * 60 * 1000).toISOString();
 const toISODate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
 function localStartOfDayISO(dateStr: string) {
-  // dateStr no formato YYYY-MM-DD (local). Evita deslize de -1 dia.
+  // dateStr YYYY-MM-DD (local). Gera range sem “comer” um dia.
   const d = new Date(`${dateStr}T00:00:00`);
   return d.toISOString();
 }
@@ -131,18 +131,13 @@ function clipboardCopy(text: string) {
 function downloadICS(ev: AgendaEvento) {
   const dt = (iso?: string | null) => (iso ? new Date(iso) : new Date());
   const dtToICS = (d: Date) => {
-    // YYYYMMDDTHHMMSSZ
     const pad = (n: number, s = 2) => String(n).padStart(s, "0");
     return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
   };
   const start = dt(ev.inicio_at);
   const end = dt(ev.fim_at || defaultEndFromStart(ev.inicio_at));
   const ics = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Consulmax CRM//Agenda//PT-BR",
-    "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
+    "BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Consulmax CRM//Agenda//PT-BR","CALSCALE:GREGORIAN","METHOD:PUBLISH",
     "BEGIN:VEVENT",
     `UID:${ev.id}@consulmaxcrm`,
     `DTSTAMP:${dtToICS(new Date())}`,
@@ -150,8 +145,7 @@ function downloadICS(ev: AgendaEvento) {
     `DTEND:${dtToICS(end)}`,
     `SUMMARY:${(ev.titulo || ev.tipo || "Evento").replace(/\n/g, " ")}`,
     (ev.videocall_url ? `URL:${ev.videocall_url}` : ""),
-    "END:VEVENT",
-    "END:VCALENDAR"
+    "END:VEVENT","END:VCALENDAR"
   ].filter(Boolean).join("\r\n");
 
   const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
@@ -668,7 +662,6 @@ export default function AgendaPage() {
                 style={btnSecondary}
                 onClick={()=>{
                   localStorage.setItem(`agenda:shown:${todayKey()}`, "1");
-                  // garante que a aba agenda esteja aberta
                   if (location.pathname !== "/agenda") {
                     window.location.assign("/agenda");
                   } else {

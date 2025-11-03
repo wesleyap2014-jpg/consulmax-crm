@@ -3,6 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /** ====== Configuráveis ====== */
+const ENABLE_DESKTOP_NOTIF = true;
+
 const BIRTHDAY_MSG = (nome: string) => {
   const primeiro = (nome || "").trim().split(/\s+/)[0] || "Olá";
   return (
@@ -56,7 +58,7 @@ const ORIGENS: AgendaOrigem[] = ["auto", "manual"];
 /** ====== Helpers ====== */
 const onlyDigits = (s: string) => (s || "").replace(/\D+/g, "");
 
-// ---------- Correção definitiva de fuso para "all-day" ----------
+// --- Correção definitiva para “all-day” (00:00:00+00) sem deslizar um dia ---
 function isMidnightUTC(iso?: string | null) {
   if (!iso) return false;
   const d = new Date(iso);
@@ -71,7 +73,6 @@ function formatUTCDateBR(iso: string) {
 }
 function fmtDateTimeSmart(iso?: string | null) {
   if (!iso) return "—";
-  // Se for meia-noite em UTC, exibimos só a data (UTC) – típico de "all-day"
   if (isMidnightUTC(iso)) return formatUTCDateBR(iso);
   return new Date(iso).toLocaleString("pt-BR", {
     day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
@@ -82,16 +83,12 @@ function fmtDateSmart(iso?: string | null) {
   if (isMidnightUTC(iso)) return formatUTCDateBR(iso);
   return new Date(iso).toLocaleDateString("pt-BR");
 }
-// ----------------------------------------------------------------
+// ---------------------------------------------------------------------------
 
-const defaultEndFromStart = (isoStart: string) =>
-  new Date(new Date(isoStart).getTime() + 30 * 60 * 1000).toISOString();
-
-const toISODate = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const defaultEndFromStart = (isoStart: string) => new Date(new Date(isoStart).getTime() + 30 * 60 * 1000).toISOString();
+const toISODate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
 function localStartOfDayISO(dateStr: string) {
-  // dateStr YYYY-MM-DD (local). Evita deslize de -1 dia ao gerar o range.
   const d = new Date(`${dateStr}T00:00:00`);
   return d.toISOString();
 }
@@ -115,12 +112,8 @@ const waWithText = (phone?: string | null, text?: string) => {
   return text ? `${base}?text=${encodeURIComponent(text)}` : base;
 };
 function clipboardCopy(text: string) {
-  try {
-    (navigator as any).clipboard?.writeText(text);
-    alert("Copiado para a área de transferência.");
-  } catch {
-    prompt("Copie o texto e envie no WhatsApp:", text);
-  }
+  try { (navigator as any).clipboard?.writeText(text); alert("Copiado para a área de transferência."); }
+  catch { prompt("Copie o texto e envie no WhatsApp:", text); }
 }
 
 // Baixa um .ics de um único evento manual
@@ -128,9 +121,7 @@ function downloadICS(ev: AgendaEvento) {
   const dt = (iso?: string | null) => (iso ? new Date(iso) : new Date());
   const dtToICS = (d: Date) => {
     const pad = (n: number, s = 2) => String(n).padStart(s, "0");
-    return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(
-      d.getUTCMinutes()
-    )}${pad(d.getUTCSeconds())}Z`;
+    return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
   };
   const start = dt(ev.inicio_at);
   const end = dt(ev.fim_at || defaultEndFromStart(ev.inicio_at));
@@ -146,29 +137,22 @@ function downloadICS(ev: AgendaEvento) {
     `DTSTART:${dtToICS(start)}`,
     `DTEND:${dtToICS(end)}`,
     `SUMMARY:${(ev.titulo || ev.tipo || "Evento").replace(/\n/g, " ")}`,
-    ev.videocall_url ? `URL:${ev.videocall_url}` : "",
+    (ev.videocall_url ? `URL:${ev.videocall_url}` : ""),
     "END:VEVENT",
-    "END:VCALENDAR",
-  ]
-    .filter(Boolean)
-    .join("\r\n");
+    "END:VCALENDAR"
+  ].filter(Boolean).join("\r\n");
 
   const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = `${(ev.titulo || ev.tipo || "evento").replace(/\s+/g, "-")}.ics`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  a.href = url; a.download = `${(ev.titulo || ev.tipo || "evento").replace(/\s+/g, "-")}.ics`;
+  document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 }
 
 function todayKey() {
   const d = new Date();
-  const yyyy = d.getFullYear(),
-    mm = String(d.getMonth() + 1).padStart(2, "0"),
-    dd = String(d.getDate()).padStart(2, "0");
+  const yyyy = d.getFullYear(), mm = String(d.getMonth()+1).padStart(2,"0"), dd = String(d.getDate()).padStart(2,"0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -235,10 +219,7 @@ export default function AgendaPage() {
 
   /** grade principal */
   async function loadEvents(targetPage = 1) {
-    if (!dateFrom || !dateTo) {
-      alert("Informe período (início e fim).");
-      return;
-    }
+    if (!dateFrom || !dateTo) { alert("Informe período (início e fim)."); return; }
     setLoading(true);
     try {
       const from = (targetPage - 1) * PAGE_SIZE;
@@ -267,10 +248,7 @@ export default function AgendaPage() {
       if (isAdmin && fUser) query = query.eq("user_id", fUser);
 
       const { data, error, count } = await query.range(from, to);
-      if (error) {
-        alert("Erro ao carregar agenda: " + error.message);
-        return;
-      }
+      if (error) { alert("Erro ao carregar agenda: " + error.message); return; }
       setEvents((data || []) as any);
       setTotal(count || 0);
       setPage(targetPage);
@@ -278,14 +256,8 @@ export default function AgendaPage() {
       setLoading(false);
     }
   }
-  useEffect(() => {
-    loadEvents(1);
-    // eslint-disable-next-line
-  }, [me?.id]);
-  useEffect(() => {
-    loadEvents(1);
-    // eslint-disable-next-line
-  }, [dateFrom, dateTo, fTipo, fOrigem, fUser]);
+  useEffect(() => { loadEvents(1); /* eslint-disable-next-line */ }, [me?.id]);
+  useEffect(() => { loadEvents(1); /* eslint-disable-next-line */ }, [dateFrom, dateTo, fTipo, fOrigem, fUser]);
 
   /** painéis rápidos: próximos 120 dias */
   async function loadSideLists() {
@@ -296,9 +268,7 @@ export default function AgendaPage() {
 
       let qBirth = supabase
         .from("agenda_eventos")
-        .select(
-          `id,tipo,titulo,cliente_id,inicio_at,origem,videocall_url,cliente:clientes!agenda_eventos_cliente_id_fkey (id,nome,telefone)`
-        )
+        .select(`id,tipo,titulo,cliente_id,inicio_at,origem,videocall_url,cliente:clientes!agenda_eventos_cliente_id_fkey (id,nome,telefone)`) 
         .eq("tipo", "aniversario")
         .gte("inicio_at", nowIso)
         .lte("inicio_at", toIso)
@@ -326,9 +296,7 @@ export default function AgendaPage() {
       setLoadingSide(false);
     }
   }
-  useEffect(() => {
-    loadSideLists();
-  }, [quickSearch]);
+  useEffect(() => { loadSideLists(); }, [quickSearch]);
 
   // realtime com debounce para evitar múltiplos reloads
   useEffect(() => {
@@ -342,14 +310,11 @@ export default function AgendaPage() {
         }, 250);
       })
       .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
-    };
+    return () => { supabase.removeChannel(ch); if (refreshTimer.current) window.clearTimeout(refreshTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
-  /** Forçar abertura da Agenda se houver evento hoje (foco: aniversários) */
+  /** Forçar abertura da Agenda se houver evento hoje (foco: aniversários) + Notificação Desktop */
   useEffect(() => {
     (async () => {
       if (!me?.id) return;
@@ -357,24 +322,18 @@ export default function AgendaPage() {
       if (localStorage.getItem(key)) return; // já mostrado hoje
 
       const { startIso, endIso } = isoRangeForLocalDay(todayKey());
-      const { data: bdays } = await supabase
-        .from("agenda_eventos")
-        .select(
-          "id,tipo,titulo,inicio_at,cliente:clientes!agenda_eventos_cliente_id_fkey(id,nome,telefone)"
-        )
-        .eq("tipo", "aniversario")
-        .gte("inicio_at", startIso)
-        .lte("inicio_at", endIso)
-        .limit(20);
-      const { data: evs } = await supabase
-        .from("agenda_eventos")
-        .select("id")
-        .gte("inicio_at", startIso)
-        .lte("inicio_at", endIso)
-        .limit(1);
+      const { data: bdays } = await supabase.from("agenda_eventos")
+        .select("id,tipo,titulo,inicio_at,cliente:clientes!agenda_eventos_cliente_id_fkey(id,nome,telefone)")
+        .eq("tipo","aniversario").gte("inicio_at", startIso).lte("inicio_at", endIso).limit(20);
+      const { data: evs } = await supabase.from("agenda_eventos")
+        .select("id,titulo").gte("inicio_at", startIso).lte("inicio_at", endIso).limit(20);
 
-      if ((bdays?.length || 0) > 0 || (evs?.length || 0) > 0) {
+      const hasToday = (bdays?.length || 0) > 0 || (evs?.length || 0) > 0;
+      if (hasToday) {
         setMustOpenAgenda({ has: true, birthdays: (bdays || []) as any });
+        if (ENABLE_DESKTOP_NOTIF) {
+          tryNotifyDesktop(bdays || [], evs || []);
+        }
       }
     })();
   }, [me?.id]);
@@ -384,78 +343,40 @@ export default function AgendaPage() {
     setEditing(ev);
     const s = new Date(ev.inicio_at);
     const e = new Date(ev.fim_at || defaultEndFromStart(ev.inicio_at));
-    const fmt = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(
-        d.getHours()
-      ).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    setEditStart(fmt(s));
-    setEditEnd(fmt(e));
+    const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}T${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+    setEditStart(fmt(s)); setEditEnd(fmt(e));
   }
-  function closeEdit() {
-    setEditing(null);
-    setEditStart("");
-    setEditEnd("");
-  }
+  function closeEdit(){ setEditing(null); setEditStart(""); setEditEnd(""); }
 
   async function saveReschedule() {
     if (!editing) return;
-    if (editing.origem !== "manual") {
-      alert("Somente eventos manuais podem ser reagendados aqui.");
-      return;
-    }
+    if (editing.origem !== "manual") { alert("Somente eventos manuais podem ser reagendados aqui."); return; }
     const startIso = new Date(editStart).toISOString();
     const endIso = new Date(editEnd).toISOString();
     setLoading(true);
     try {
-      const { error } = await supabase
-        .from("agenda_eventos")
-        .update({ inicio_at: startIso, fim_at: endIso })
-        .eq("id", editing.id);
-      if (error) {
-        alert("Não foi possível reagendar: " + error.message);
-        return;
-      }
-      closeEdit();
-      await loadEvents(page);
-      alert("Evento reagendado!");
-    } finally {
-      setLoading(false);
-    }
+      const { error } = await supabase.from("agenda_eventos").update({ inicio_at: startIso, fim_at: endIso }).eq("id", editing.id);
+      if (error) { alert("Não foi possível reagendar: " + error.message); return; }
+      closeEdit(); await loadEvents(page); alert("Evento reagendado!");
+    } finally { setLoading(false); }
   }
   async function deleteEvent(ev: AgendaEvento) {
-    if (ev.origem !== "manual") {
-      alert("Somente eventos manuais podem ser excluídos aqui.");
-      return;
-    }
+    if (ev.origem !== "manual") { alert("Somente eventos manuais podem ser excluídos aqui."); return; }
     if (!confirm("Tem certeza que deseja excluir este evento?")) return;
     setLoading(true);
     try {
       const { error } = await supabase.from("agenda_eventos").delete().eq("id", ev.id);
-      if (error) {
-        alert("Não foi possível excluir: " + error.message);
-        return;
-      }
-      await loadEvents(page);
-      alert("Evento excluído.");
-    } finally {
-      setLoading(false);
-    }
+      if (error) { alert("Não foi possível excluir: " + error.message); return; }
+      await loadEvents(page); alert("Evento excluído.");
+    } finally { setLoading(false); }
   }
 
   /** criar manual */
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newTipo, setNewTipo] = useState<AgendaTipo>("reuniao");
-  const [newStart, setNewStart] = useState<string>(() => {
-    const d = new Date();
-    d.setMinutes(0, 0, 0);
-    return d.toISOString().slice(0, 16);
-  });
-  const [newEnd, setNewEnd] = useState<string>(() => {
-    const d = new Date();
-    d.setMinutes(30, 0, 0);
-    return d.toISOString().slice(0, 16);
-  });
+  const [newStart, setNewStart] = useState<string>(() => { const d=new Date(); d.setMinutes(0,0,0); return d.toISOString().slice(0,16); });
+  const [newEnd, setNewEnd] = useState<string>(() => { const d=new Date(); d.setMinutes(30,0,0); return d.toISOString().slice(0,16); });
   const [newLink, setNewLink] = useState("");
   async function createManual() {
     if (!newTitle.trim()) return alert("Informe o título.");
@@ -463,51 +384,22 @@ export default function AgendaPage() {
     const endIso = new Date(newEnd).toISOString();
     setLoading(true);
     try {
-      const { error } = await supabase.from("agenda_eventos").insert([
-        {
-          tipo: newTipo,
-          titulo: newTitle.trim(),
-          inicio_at: startIso,
-          fim_at: endIso,
-          origem: "manual",
-          videocall_url: newLink.trim() || null,
-        },
-      ]);
-      if (error) {
-        alert("Falha ao criar evento: " + error.message);
-        return;
-      }
-      setCreating(false);
-      setNewTitle("");
-      setNewLink("");
-      await loadEvents(1);
-      alert("Evento criado!");
-    } finally {
-      setLoading(false);
-    }
+      const { error } = await supabase.from("agenda_eventos").insert([{ tipo: newTipo, titulo: newTitle.trim(), inicio_at: startIso, fim_at: endIso, origem: "manual", videocall_url: newLink.trim() || null }]);
+      if (error) { alert("Falha ao criar evento: " + error.message); return; }
+      setCreating(false); setNewTitle(""); setNewLink(""); await loadEvents(1); alert("Evento criado!");
+    } finally { setLoading(false); }
   }
 
   /** render */
-  const showingFrom = useMemo(
-    () => (total ? (page - 1) * PAGE_SIZE + 1 : 0),
-    [page, total]
-  );
-  const showingTo = useMemo(
-    () => Math.min(page * PAGE_SIZE, total || 0),
-    [page, total]
-  );
+  const showingFrom = useMemo(() => (total ? (page - 1) * PAGE_SIZE + 1 : 0), [page, total]);
+  const showingTo = useMemo(() => Math.min(page * PAGE_SIZE, total || 0), [page, total]);
 
   // handlers de teclado para modais
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
+    function onKey(e: KeyboardEvent){
       if (!editing && !mustOpenAgenda?.has) return;
-      if (e.key === "Escape") {
-        if (editing) closeEdit();
-        if (mustOpenAgenda?.has) setMustOpenAgenda(null);
-      }
-      if (e.key === "Enter" && editing) {
-        saveReschedule();
-      }
+      if (e.key === "Escape") { if (editing) closeEdit(); if (mustOpenAgenda?.has) setMustOpenAgenda(null); }
+      if (e.key === "Enter" && editing) { saveReschedule(); }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -534,53 +426,35 @@ export default function AgendaPage() {
               style={{ ...input, width: 220 }}
               placeholder="Buscar título/nome…"
               value={quickSearch}
-              onChange={(e) => setQuickSearch(e.target.value)}
+              onChange={(e)=>setQuickSearch(e.target.value)}
               aria-label="Buscar aniversários por título ou nome"
             />
           </div>
           <div style={{ maxHeight: 290, overflow: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
               <thead>
-                <tr>
-                  <th style={th}>Quando</th>
-                  <th style={th}>Cliente</th>
-                  <th style={th}>Ações</th>
-                </tr>
+                <tr><th style={th}>Quando</th><th style={th}>Cliente</th><th style={th}>Ações</th></tr>
               </thead>
               <tbody>
                 {loadingSide && (
-                  <tr>
-                    <td style={td} colSpan={3}>
-                      <div className="skl" style={{ width: "100%", height: 18 }} />
-                      <div className="skl" style={{ width: "80%", height: 18, marginTop: 8 }} />
-                    </td>
-                  </tr>
+                  <tr><td style={td} colSpan={3}>
+                    <div className="skl" style={{ width: "100%", height: 18 }} />
+                    <div className="skl" style={{ width: "80%", height: 18, marginTop: 8 }} />
+                  </td></tr>
                 )}
-                {!loadingSide && birthdays.length === 0 && (
-                  <tr>
-                    <td style={td} colSpan={3}>
-                      Nenhum aniversário próximo.
-                    </td>
-                  </tr>
-                )}
-                {birthdays.map((b, i) => {
+                {!loadingSide && birthdays.length===0 && <tr><td style={td} colSpan={3}>Nenhum aniversário próximo.</td></tr>}
+                {birthdays.map((b,i)=>{
                   const nome = b.cliente?.nome || b.titulo || "Cliente";
                   const phone = b.cliente?.telefone || null;
                   const waMsg = waWithText(phone, BIRTHDAY_MSG(nome));
                   return (
-                    <tr key={b.id} className={i % 2 ? "bgRow" : undefined}>
+                    <tr key={b.id} className={i%2 ? "bgRow": undefined}>
                       <td style={td}>{fmtDateSmart(b.inicio_at)}</td>
                       <td style={td}>{nome}</td>
                       <td style={td}>
-                        <div style={{ display: "flex", gap: 8 }}>
+                        <div style={{ display:"flex", gap:8 }}>
                           {waMsg ? (
-                            <a
-                              href={waMsg}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={btnPrimary}
-                              aria-label={`Parabenizar ${nome} pelo WhatsApp`}
-                            >
+                            <a href={waMsg} target="_blank" rel="noreferrer" style={btnPrimary} aria-label={`Parabenizar ${nome} pelo WhatsApp`}>
                               Parabenizar 🎉
                             </a>
                           ) : (
@@ -607,41 +481,23 @@ export default function AgendaPage() {
         <div style={card} aria-label="Painel de assembleias (próximas)">
           <div style={listHeader}>
             <h3 style={{ margin: 0 }}>Assembleias (próximas)</h3>
-            <button
-              style={btnSecondary}
-              onClick={loadSideLists}
-              disabled={loadingSide}
-              aria-label="Atualizar lista de assembleias"
-            >
-              Atualizar
-            </button>
+            <button style={btnSecondary} onClick={loadSideLists} disabled={loadingSide} aria-label="Atualizar lista de assembleias">Atualizar</button>
           </div>
           <div style={{ maxHeight: 290, overflow: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
               <thead>
-                <tr>
-                  <th style={th}>Quando</th>
-                  <th style={th}>Título/Grupo</th>
-                </tr>
+                <tr><th style={th}>Quando</th><th style={th}>Título/Grupo</th></tr>
               </thead>
               <tbody>
                 {loadingSide && (
-                  <tr>
-                    <td style={td} colSpan={2}>
-                      <div className="skl" style={{ width: "100%", height: 18 }} />
-                      <div className="skl" style={{ width: "70%", height: 18, marginTop: 8 }} />
-                    </td>
-                  </tr>
+                  <tr><td style={td} colSpan={2}>
+                    <div className="skl" style={{ width: "100%", height: 18 }} />
+                    <div className="skl" style={{ width: "70%", height: 18, marginTop: 8 }} />
+                  </td></tr>
                 )}
-                {!loadingSide && assemblies.length === 0 && (
-                  <tr>
-                    <td style={td} colSpan={2}>
-                      Nenhuma assembleia próxima.
-                    </td>
-                  </tr>
-                )}
-                {assemblies.map((a, i) => (
-                  <tr key={a.id} className={i % 2 ? "bgRow" : undefined}>
+                {!loadingSide && assemblies.length===0 && <tr><td style={td} colSpan={2}>Nenhuma assembleia próxima.</td></tr>}
+                {assemblies.map((a,i)=>(
+                  <tr key={a.id} className={i%2 ? "bgRow": undefined}>
                     <td style={td}>{fmtDateTimeSmart(a.inicio_at)}</td>
                     <td style={td}>{a.titulo || "Assembleia"}</td>
                   </tr>
@@ -656,101 +512,21 @@ export default function AgendaPage() {
       <div style={card} aria-label="Filtros de pesquisa">
         <h3 style={{ margin: "0 0 12px 0" }}>Filtros</h3>
         <div style={grid4}>
-          <label style={label}>
-            De
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              style={input}
-              aria-label="Data inicial"
-            />
-          </label>
-          <label style={label}>
-            Até
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              style={input}
-              aria-label="Data final"
-            />
-          </label>
-          <label style={label}>
-            Tipo
-            <select
-              value={fTipo}
-              onChange={(e) => setFTipo(e.target.value as any)}
-              style={input}
-              aria-label="Tipo de evento"
-            >
-              <option value="">Todos</option>
-              {TIPOS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={label}>
-            Origem
-            <select
-              value={fOrigem}
-              onChange={(e) => setFOrigem(e.target.value as any)}
-              style={input}
-              aria-label="Origem do evento"
-            >
-              <option value="">Todas</option>
-              {ORIGENS.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </select>
-          </label>
-          {isAdmin && (
-            <label style={label}>
-              Usuário
-              <select
-                value={fUser}
-                onChange={(e) => setFUser(e.target.value)}
-                style={input}
-                aria-label="Filtrar por usuário"
-              >
-                <option value="">Equipe toda</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.nome || u.id} ({(u.role || "").toUpperCase()})
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          <label style={label}>De<input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={input} aria-label="Data inicial"/></label>
+          <label style={label}>Até<input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={input} aria-label="Data final"/></label>
+          <label style={label}>Tipo<select value={fTipo} onChange={e=>setFTipo(e.target.value as any)} style={input} aria-label="Tipo de evento">
+            <option value="">Todos</option>{TIPOS.map(t=><option key={t} value={t}>{t}</option>)}</select></label>
+          <label style={label}>Origem<select value={fOrigem} onChange={e=>setFOrigem(e.target.value as any)} style={input} aria-label="Origem do evento">
+            <option value="">Todas</option>{ORIGENS.map(o=><option key={o} value={o}>{o}</option>)}</select></label>
+          {isAdmin && <label style={label}>Usuário<select value={fUser} onChange={e=>setFUser(e.target.value)} style={input} aria-label="Filtrar por usuário">
+            <option value="">Equipe toda</option>{users.map(u=><option key={u.id} value={u.id}>{u.nome || u.id} ({(u.role||"").toUpperCase()})</option>)}</select></label>}
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
-          <small style={{ color: "#64748b" }}>
-            {total > 0 ? `Mostrando ${showingFrom}-${showingTo} de ${total}` : "Nenhum evento"}
-          </small>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              style={{ ...btnSecondary, opacity: page <= 1 ? 0.6 : 1 }}
-              disabled={page <= 1 || loading}
-              onClick={() => loadEvents(page - 1)}
-              aria-label="Página anterior"
-            >
-              ‹ Anterior
-            </button>
-            <span style={{ fontSize: 12, color: "#475569", alignSelf: "center" }}>
-              Página {page} de {totalPages}
-            </span>
-            <button
-              style={{ ...btnSecondary, opacity: page >= totalPages ? 0.6 : 1 }}
-              disabled={page >= totalPages || loading}
-              onClick={() => loadEvents(page + 1)}
-              aria-label="Próxima página"
-            >
-              Próxima ›
-            </button>
+        <div style={{ display:"flex", justifyContent:"space-between", marginTop:12 }}>
+          <small style={{ color:"#64748b" }}>{total>0?`Mostrando ${showingFrom}-${showingTo} de ${total}`:"Nenhum evento"}</small>
+          <div style={{ display:"flex", gap:8 }}>
+            <button style={{ ...btnSecondary, opacity: page<=1?0.6:1 }} disabled={page<=1||loading} onClick={()=>loadEvents(page-1)} aria-label="Página anterior">‹ Anterior</button>
+            <span style={{ fontSize:12, color:"#475569", alignSelf:"center" }}>Página {page} de {totalPages}</span>
+            <button style={{ ...btnSecondary, opacity: page>=totalPages?0.6:1 }} disabled={page>=totalPages||loading} onClick={()=>loadEvents(page+1)} aria-label="Próxima página">Próxima ›</button>
           </div>
         </div>
       </div>
@@ -758,81 +534,20 @@ export default function AgendaPage() {
       <div style={card} aria-label="Criar evento manual">
         <div style={listHeader}>
           <h3 style={{ margin: 0 }}>Criar evento manual</h3>
-          <button
-            style={btnSecondary}
-            onClick={() => setCreating((v) => !v)}
-            disabled={loading}
-            aria-expanded={creating}
-            aria-controls="form-criar-evento"
-          >
-            {creating ? "Fechar" : "Novo"}
-          </button>
+          <button style={btnSecondary} onClick={()=>setCreating(v=>!v)} disabled={loading} aria-expanded={creating} aria-controls="form-criar-evento">{creating?"Fechar":"Novo"}</button>
         </div>
         {creating && (
           <div id="form-criar-evento" style={grid4}>
-            <label style={label}>
-              Título
-              <input
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                style={input}
-                placeholder="Ex.: Reunião com cliente"
-                aria-label="Título do evento"
-                autoFocus
-              />
-            </label>
-            <label style={label}>
-              Tipo
-              <select
-                value={newTipo}
-                onChange={(e) => setNewTipo(e.target.value as AgendaTipo)}
-                style={input}
-                aria-label="Tipo do evento"
-              >
-                {TIPOS.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={label}>
-              Início
-              <input
-                type="datetime-local"
-                value={newStart}
-                onChange={(e) => setNewStart(e.target.value)}
-                style={input}
-                aria-label="Início"
-              />
-            </label>
-            <label style={label}>
-              Fim
-              <input
-                type="datetime-local"
-                value={newEnd}
-                onChange={(e) => setNewEnd(e.target.value)}
-                style={input}
-                aria-label="Fim"
-              />
-            </label>
-            <label style={{ ...label, gridColumn: "1 / span 4" }}>
-              Link de vídeo (opcional)
-              <input
-                value={newLink}
-                onChange={(e) => setNewLink(e.target.value)}
-                style={input}
-                placeholder="https://meet..."
-                aria-label="Link de videoconferência"
-              />
-            </label>
-            <div style={{ gridColumn: "1 / span 4", display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button style={btnGhost} onClick={() => setCreating(false)} disabled={loading} aria-label="Cancelar criação">
-                Cancelar
-              </button>
-              <button style={btnPrimary} onClick={createManual} disabled={loading} aria-label="Criar evento">
-                {loading ? "Criando..." : "Criar"}
-              </button>
+            <label style={label}>Título<input value={newTitle} onChange={e=>setNewTitle(e.target.value)} style={input} placeholder="Ex.: Reunião com cliente" aria-label="Título do evento" autoFocus/></label>
+            <label style={label}>Tipo<select value={newTipo} onChange={e=>setNewTipo(e.target.value as AgendaTipo)} style={input} aria-label="Tipo do evento">
+              {TIPOS.map(t=><option key={t} value={t}>{t}</option>)}</select></label>
+            <label style={label}>Início<input type="datetime-local" value={newStart} onChange={e=>setNewStart(e.target.value)} style={input} aria-label="Início"/></label>
+            <label style={label}>Fim<input type="datetime-local" value={newEnd} onChange={e=>setNewEnd(e.target.value)} style={input} aria-label="Fim"/></label>
+            <label style={{ ...label, gridColumn:"1 / span 4" }}>Link de vídeo (opcional)
+              <input value={newLink} onChange={e=>setNewLink(e.target.value)} style={input} placeholder="https://meet..." aria-label="Link de videoconferência"/></label>
+            <div style={{ gridColumn:"1 / span 4", display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button style={btnGhost} onClick={()=>setCreating(false)} disabled={loading} aria-label="Cancelar criação">Cancelar</button>
+              <button style={btnPrimary} onClick={createManual} disabled={loading} aria-label="Criar evento">{loading?"Criando...":"Criar"}</button>
             </div>
           </div>
         )}
@@ -841,31 +556,21 @@ export default function AgendaPage() {
       <div style={card} aria-label="Lista de eventos">
         <div style={listHeader}>
           <h3 style={{ margin: 0 }}>Eventos</h3>
-          <button style={btnSecondary} onClick={() => loadEvents(page)} disabled={loading} aria-label="Recarregar eventos">
-            Recarregar
-          </button>
+          <button style={btnSecondary} onClick={()=>loadEvents(page)} disabled={loading} aria-label="Recarregar eventos">Recarregar</button>
         </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"separate", borderSpacing:0 }}>
             <thead>
               <tr>
-                <th style={th}>Início</th>
-                <th style={th}>Fim</th>
-                <th style={th}>Tipo</th>
-                <th style={th}>Origem</th>
-                <th style={th}>Título</th>
-                <th style={th}>Cliente/Lead</th>
-                <th style={th}>Responsável</th>
-                <th style={{ ...th, width: 360 }}>Ações</th>
+                <th style={th}>Início</th><th style={th}>Fim</th><th style={th}>Tipo</th><th style={th}>Origem</th>
+                <th style={th}>Título</th><th style={th}>Cliente/Lead</th><th style={th}>Responsável</th><th style={{ ...th, width:360 }}>Ações</th>
               </tr>
             </thead>
             <tbody>
-              {events.map((e, i) => {
+              {events.map((e,i)=>{
                 const person = e.cliente?.nome || e.lead?.nome || "—";
                 const phone = e.cliente?.telefone || e.lead?.telefone || null;
-                const wa = phone
-                  ? `https://wa.me/${onlyDigits(phone).startsWith("55") ? onlyDigits(phone) : "55" + onlyDigits(phone)}`
-                  : null;
+                const wa = phone ? `https://wa.me/${onlyDigits(phone).startsWith("55") ? onlyDigits(phone) : "55"+onlyDigits(phone)}` : null;
                 const canEdit = e.origem === "manual";
                 const tipoColor: Record<AgendaTipo, string> = {
                   aniversario: "#E0CE8C",
@@ -876,96 +581,37 @@ export default function AgendaPage() {
                   outro: "#64748b",
                 } as const;
                 return (
-                  <tr key={e.id} className={i % 2 ? "bgRow" : undefined}>
+                  <tr key={e.id} className={i%2 ? "bgRow": undefined}>
                     <td style={td}>{fmtDateTimeSmart(e.inicio_at)}</td>
                     <td style={td}>{fmtDateTimeSmart(e.fim_at)}</td>
                     <td style={td}>
-                      <span
-                        title={e.tipo}
-                        style={{
-                          padding: "2px 8px",
-                          borderRadius: 999,
-                          fontSize: 12,
-                          background: `${tipoColor[e.tipo] || "#e2e8f0"}22`,
-                          color: tipoColor[e.tipo] || "#0f172a",
-                          border: `1px solid ${(tipoColor[e.tipo] || "#e2e8f0")}55`,
-                        }}
-                      >
-                        {e.tipo}
-                      </span>
+                      <span title={e.tipo} style={{ padding:"2px 8px", borderRadius:999, fontSize:12, background: `${tipoColor[e.tipo] || "#e2e8f0"}22`, color: tipoColor[e.tipo] || "#0f172a", border:`1px solid ${(tipoColor[e.tipo] || "#e2e8f0")}55` }}>{e.tipo}</span>
                     </td>
                     <td style={td}>{e.origem}</td>
                     <td style={td}>{e.titulo || "—"}</td>
                     <td style={td}>{person}</td>
                     <td style={td}>{e.owner?.nome || "—"}</td>
                     <td style={td}>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        {wa ? (
-                          <a href={wa} target="_blank" rel="noreferrer" style={btnSecondary} aria-label={`Abrir WhatsApp de ${person}`}>
-                            WhatsApp
-                          </a>
-                        ) : (
-                          <button style={{ ...btnSecondary, opacity: 0.5 }} disabled aria-label="Sem WhatsApp">
-                            WhatsApp
-                          </button>
-                        )}
+                      <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                        {wa ? <a href={wa} target="_blank" rel="noreferrer" style={btnSecondary} aria-label={`Abrir WhatsApp de ${person}`}>WhatsApp</a>
+                            : <button style={{ ...btnSecondary, opacity:.5 }} disabled aria-label="Sem WhatsApp">WhatsApp</button>}
                         {e.videocall_url ? (
                           <>
-                            <a
-                              href={e.videocall_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={btnSecondary}
-                              aria-label="Abrir link de videoconferência"
-                            >
-                              Abrir link
-                            </a>
-                            <button
-                              style={btnSecondary}
-                              onClick={() => clipboardCopy(e.videocall_url!)}
-                              aria-label="Copiar link de videoconferência"
-                            >
-                              Copiar link
-                            </button>
+                            <a href={e.videocall_url} target="_blank" rel="noreferrer" style={btnSecondary} aria-label="Abrir link de videoconferência">Abrir link</a>
+                            <button style={btnSecondary} onClick={()=>clipboardCopy(e.videocall_url!)} aria-label="Copiar link de videoconferência">Copiar link</button>
                           </>
-                        ) : (
-                          <button style={{ ...btnSecondary, opacity: 0.5 }} disabled aria-label="Sem link de vídeo">
-                            Sem link
-                          </button>
-                        )}
-                        <button
-                          style={{ ...btnSecondary, opacity: canEdit ? 1 : 0.5 }}
-                          disabled={!canEdit || loading}
-                          onClick={() => openEdit(e)}
-                          aria-label="Reagendar evento"
-                        >
-                          Reagendar
-                        </button>
-                        <button
-                          style={{ ...btnGhost, opacity: canEdit ? 1 : 0.5 }}
-                          disabled={!canEdit || loading}
-                          onClick={() => deleteEvent(e)}
-                          aria-label="Excluir evento"
-                        >
-                          Excluir
-                        </button>
+                        ) : <button style={{ ...btnSecondary, opacity:.5 }} disabled aria-label="Sem link de vídeo">Sem link</button>}
+                        <button style={{ ...btnSecondary, opacity: canEdit?1:.5 }} disabled={!canEdit||loading} onClick={()=>openEdit(e)} aria-label="Reagendar evento">Reagendar</button>
+                        <button style={{ ...btnGhost, opacity: canEdit?1:.5 }} disabled={!canEdit||loading} onClick={()=>deleteEvent(e)} aria-label="Excluir evento">Excluir</button>
                         {canEdit && (
-                          <button style={btnSecondary} onClick={() => downloadICS(e)} aria-label="Exportar para calendário (.ics)">
-                            .ics
-                          </button>
+                          <button style={btnSecondary} onClick={()=>downloadICS(e)} aria-label="Exportar para calendário (.ics)">.ics</button>
                         )}
                       </div>
                     </td>
                   </tr>
                 );
               })}
-              {events.length === 0 && (
-                <tr>
-                  <td style={td} colSpan={8}>
-                    {loading ? "Carregando..." : "Nenhum evento encontrado para os filtros."}
-                  </td>
-                </tr>
-              )}
+              {events.length===0 && <tr><td style={td} colSpan={8}>{loading?"Carregando...":"Nenhum evento encontrado para os filtros."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -978,35 +624,12 @@ export default function AgendaPage() {
           <div role="dialog" aria-modal="true" style={modal}>
             <h3 style={{ marginTop: 0, marginBottom: 12 }}>Reagendar evento</h3>
             <div style={grid2}>
-              <label style={label}>
-                Início
-                <input
-                  type="datetime-local"
-                  value={editStart}
-                  onChange={(e) => setEditStart(e.target.value)}
-                  style={input}
-                  aria-label="Novo início"
-                  autoFocus
-                />
-              </label>
-              <label style={label}>
-                Fim
-                <input
-                  type="datetime-local"
-                  value={editEnd}
-                  onChange={(e) => setEditEnd(e.target.value)}
-                  style={input}
-                  aria-label="Novo fim"
-                />
-              </label>
+              <label style={label}>Início<input type="datetime-local" value={editStart} onChange={e=>setEditStart(e.target.value)} style={input} aria-label="Novo início" autoFocus/></label>
+              <label style={label}>Fim<input type="datetime-local" value={editEnd} onChange={e=>setEditEnd(e.target.value)} style={input} aria-label="Novo fim"/></label>
             </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-              <button style={btnGhost} onClick={closeEdit} disabled={loading} aria-label="Cancelar">
-                Cancelar
-              </button>
-              <button style={btnPrimary} onClick={saveReschedule} disabled={loading} aria-label="Salvar reagendamento">
-                {loading ? "Salvando..." : "Salvar"}
-              </button>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}>
+              <button style={btnGhost} onClick={closeEdit} disabled={loading} aria-label="Cancelar">Cancelar</button>
+              <button style={btnPrimary} onClick={saveReschedule} disabled={loading} aria-label="Salvar reagendamento">{loading?"Salvando...":"Salvar"}</button>
             </div>
           </div>
         </>
@@ -1019,23 +642,17 @@ export default function AgendaPage() {
           <div role="dialog" aria-modal="true" style={modal}>
             <h3 style={{ marginTop: 0, marginBottom: 8 }}>Eventos de hoje</h3>
             {mustOpenAgenda.birthdays?.length ? (
-              <div style={{ margin: "8px 0 12px 0" }}>
+              <div style={{margin:"8px 0 12px 0"}}>
                 <strong>Aniversários:</strong>
-                <ul style={{ margin: "8px 0 0 18px" }}>
-                  {mustOpenAgenda.birthdays.map((b) => (
-                    <li key={b.id}>
-                      {b.cliente?.nome || b.titulo || "Cliente"} — {fmtDateSmart(b.inicio_at)}
-                    </li>
-                  ))}
+                <ul style={{margin:"8px 0 0 18px"}}>
+                  {mustOpenAgenda.birthdays.map(b => <li key={b.id}>{b.cliente?.nome || b.titulo || "Cliente"} — {fmtDateSmart(b.inicio_at)}</li>)}
                 </ul>
               </div>
-            ) : (
-              <p style={{ margin: "8px 0 12px 0" }}>Há compromissos hoje na sua agenda.</p>
-            )}
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            ) : <p style={{margin:"8px 0 12px 0"}}>Há compromissos hoje na sua agenda.</p>}
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
               <button
                 style={btnSecondary}
-                onClick={() => {
+                onClick={()=>{
                   localStorage.setItem(`agenda:shown:${todayKey()}`, "1");
                   if (location.pathname !== "/agenda") {
                     window.location.assign("/agenda");
@@ -1044,19 +661,12 @@ export default function AgendaPage() {
                   }
                 }}
                 aria-label="Abrir Agenda"
-              >
-                Abrir Agenda
-              </button>
+              >Abrir Agenda</button>
               <button
                 style={btnGhost}
-                onClick={() => {
-                  localStorage.setItem(`agenda:shown:${todayKey()}`, "1");
-                  setMustOpenAgenda(null);
-                }}
+                onClick={()=>{ localStorage.setItem(`agenda:shown:${todayKey()}`, "1"); setMustOpenAgenda(null); }}
                 aria-label="Lembrar depois"
-              >
-                Depois
-              </button>
+              >Depois</button>
             </div>
           </div>
         </>
@@ -1078,27 +688,62 @@ export default function AgendaPage() {
   );
 }
 
-/** estilos */
+/** ====== Notificação Desktop ====== */
+function tryNotifyDesktop(bdays: any[], evs: any[]) {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+
+  const title = bdays?.length
+    ? `🎉 ${bdays.length} aniversário(s) hoje`
+    : `📅 Você tem ${evs?.length || 1} compromisso(s) hoje`;
+
+  const body = bdays?.length
+    ? bdays.slice(0, 3).map((b: any) => b?.cliente?.nome || b?.titulo || "Cliente").join(", ")
+    : "Abra a Agenda para conferir seus compromissos.";
+
+  const show = () => {
+    try {
+      const n = new Notification(title, {
+        body,
+        icon: "/favicon.ico",
+        tag: "consulmax-agenda-dia", // evita duplicadas
+        renotify: false,
+      });
+      n.onclick = () => {
+        try { window.focus(); } catch {}
+        window.location.assign("/agenda");
+        n.close();
+      };
+    } catch { /* ignore */ }
+  };
+
+  if (Notification.permission === "granted") {
+    show();
+  } else if (Notification.permission !== "denied") {
+    Notification.requestPermission().then(p => { if (p === "granted") show(); });
+  }
+}
+
+/** estilos base */
 const card: React.CSSProperties = {
   position: "relative",
-  background: "rgba(255,255,255,0.52)",
-  borderRadius: 16,
-  padding: 16,
-  border: "1px solid rgba(255,255,255,0.6)",
-  boxShadow: "0 10px 40px rgba(161,28,39,0.12), inset 0 1px 0 rgba(255,255,255,0.35)",
-  backdropFilter: "blur(12px)",
-  WebkitBackdropFilter: "blur(12px)",
-  marginBottom: 16,
+  background:"rgba(255,255,255,0.52)",
+  borderRadius:16,
+  padding:16,
+  border:"1px solid rgba(255,255,255,0.6)",
+  boxShadow:"0 10px 40px rgba(161,28,39,0.12), inset 0 1px 0 rgba(255,255,255,0.35)",
+  backdropFilter:"blur(12px)",
+  WebkitBackdropFilter:"blur(12px)",
+  marginBottom:16
 };
-const grid2: React.CSSProperties = { display: "grid", gap: 12, gridTemplateColumns: "repeat(2, minmax(0,1fr))" };
-const grid4: React.CSSProperties = { display: "grid", gap: 12, gridTemplateColumns: "repeat(4, minmax(0,1fr))", alignItems: "center" };
-const listHeader: React.CSSProperties = { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 };
-const input: React.CSSProperties = { padding: 10, borderRadius: 10, border: "1px solid #e5e7eb", outline: "none", background: "#fff" };
-const label: React.CSSProperties = { display: "grid", gap: 6, fontSize: 12, color: "#334155" };
-const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: "10px 8px" };
-const td: React.CSSProperties = { padding: "10px 8px", borderTop: "1px solid #eee", verticalAlign: "middle" };
-const btnPrimary: React.CSSProperties = { padding: "10px 16px", borderRadius: 12, background: "#A11C27", color: "#fff", border: 0, fontWeight: 700, cursor: "pointer" };
-const btnSecondary: React.CSSProperties = { padding: "8px 12px", borderRadius: 10, background: "#f1f5f9", color: "#0f172a", border: "1px solid #e2e8f0", fontWeight: 600, cursor: "pointer" };
-const btnGhost: React.CSSProperties = { padding: "8px 12px", borderRadius: 10, background: "#fff", color: "#0f172a", border: "1px solid #e2e8f0", fontWeight: 600, cursor: "pointer" };
-const backdrop: React.CSSProperties = { position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.45)", zIndex: 40 };
-const modal: React.CSSProperties = { position: "fixed", zIndex: 50, top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "min(560px, 92vw)", background: "#fff", borderRadius: 14, padding: 18, boxShadow: "0 12px 48px rgba(0,0,0,0.22)" };
+const grid2: React.CSSProperties = { display:"grid", gap:12, gridTemplateColumns:"repeat(2, minmax(0,1fr))" };
+const grid4: React.CSSProperties = { display:"grid", gap:12, gridTemplateColumns:"repeat(4, minmax(0,1fr))", alignItems:"center" };
+const listHeader: React.CSSProperties = { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 };
+const input: React.CSSProperties = { padding:10, borderRadius:10, border:"1px solid #e5e7eb", outline:"none", background:"#fff" };
+const label: React.CSSProperties = { display:"grid", gap:6, fontSize:12, color:"#334155" };
+const th: React.CSSProperties = { textAlign:"left", fontSize:12, color:"#475569", padding:"10px 8px" };
+const td: React.CSSProperties = { padding:"10px 8px", borderTop:"1px solid #eee", verticalAlign:"middle" };
+const btnPrimary: React.CSSProperties = { padding:"10px 16px", borderRadius:12, background:"#A11C27", color:"#fff", border:0, fontWeight:700, cursor:"pointer" };
+const btnSecondary: React.CSSProperties = { padding:"8px 12px", borderRadius:10, background:"#f1f5f9", color:"#0f172a", border:"1px solid #e2e8f0", fontWeight:600, cursor:"pointer" };
+const btnGhost: React.CSSProperties = { padding:"8px 12px", borderRadius:10, background:"#fff", color:"#0f172a", border:"1px solid #e2e8f0", fontWeight:600, cursor:"pointer" };
+const backdrop: React.CSSProperties = { position:"fixed", inset:0, background:"rgba(15, 23, 42, 0.45)", zIndex:40 };
+const modal: React.CSSProperties = { position:"fixed", zIndex:50, top:"50%", left:"50%", transform:"translate(-50%, -50%)", width:"min(560px, 92vw)", background:"#fff", borderRadius:14, padding:18, boxShadow:"0 12px 48px rgba(0,0,0,0.22)" };

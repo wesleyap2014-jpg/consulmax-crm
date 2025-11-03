@@ -3,10 +3,20 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /** ====== Configuráveis ====== */
+const ENABLE_GLASS = true; // mude para false se quiser desempenho máximo (sem efeito vidro)
+
 const BIRTHDAY_MSG = (nome: string) => {
   const primeiro = (nome || "").trim().split(/\s+/)[0] || "Olá";
   return (
-`${primeiro}, 🎉 *Feliz Aniversário!* 🎉\n\nHoje celebramos mais um capítulo da sua história, cheio de conquistas, aprendizados e sonhos que se renovam.\nQue este novo ciclo seja repleto de *prosperidade, saúde e realizações* — e que cada meta se transforme em vitória.\n\nNa *Consulmax*, acreditamos que planejar é o caminho para conquistar. Que você continue sonhando grande e realizando cada vez mais! ✨\n\nUm brinde ao seu futuro e a todas as conquistas que estão por vir.\n🥂 Parabéns pelo seu dia!`
+`${primeiro}, 🎉 *Feliz Aniversário!* 🎉
+
+Hoje celebramos mais um capítulo da sua história, cheio de conquistas, aprendizados e sonhos que se renovam.
+Que este novo ciclo seja repleto de *prosperidade, saúde e realizações* — e que cada meta se transforme em vitória.
+
+Na *Consulmax*, acreditamos que planejar é o caminho para conquistar. Que você continue sonhando grande e realizando cada vez mais! ✨
+
+Um brinde ao seu futuro e a todas as conquistas que estão por vir.
+🥂 Parabéns pelo seu dia!`
   );
 };
 
@@ -53,6 +63,7 @@ const fmtDateBR = (iso?: string | null) => !iso ? "—" : new Date(iso).toLocale
 const defaultEndFromStart = (isoStart: string) => new Date(new Date(isoStart).getTime() + 30 * 60 * 1000).toISOString();
 const toISODate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
+// Faixa de um dia LOCAL (evita “deslizar” -1 dia por timezone)
 function localStartOfDayISO(dateStr: string) {
   const d = new Date(`${dateStr}T00:00:00`);
   return d.toISOString();
@@ -126,16 +137,6 @@ export default function AgendaPage() {
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
   const isAdmin = me?.role === "admin";
 
-  // ====== PERFORMANCE MODE ======
-  const reduceMotion = useMemo(() => matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches, []);
-  const [isPerfHigh, setIsPerfHigh] = useState(false);
-  useEffect(() => {
-    const cores = (navigator as any).hardwareConcurrency || 4;
-    const mem = (navigator as any).deviceMemory || 4; // em GB, não é suportado em todos browsers
-    setIsPerfHigh(cores >= 8 && mem >= 6 && !reduceMotion);
-  }, [reduceMotion]);
-  const enableGlass = isPerfHigh; // pode trocar para true/false conforme quiser
-
   // filtros
   const today = useMemo(() => new Date(), []);
   const weekAhead = useMemo(() => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), []);
@@ -163,7 +164,6 @@ export default function AgendaPage() {
   const [assemblies, setAssemblies] = useState<AgendaEvento[]>([]);
   const [loadingSide, setLoadingSide] = useState(false);
   const [quickSearch, setQuickSearch] = useState("");
-  const quickTimer = useRef<number | null>(null);
 
   // alerta de eventos do dia (obrigatório ao entrar)
   const [mustOpenAgenda, setMustOpenAgenda] = useState<{ has: boolean; birthdays: AgendaEvento[] } | null>(null);
@@ -213,7 +213,7 @@ export default function AgendaPage() {
           lead:leads!agenda_eventos_lead_id_fkey (id,nome,telefone),
           owner:users!agenda_eventos_user_id_fkey (id,auth_user_id,nome,role)
         `,
-          { count: "planned" }
+          { count: "exact" }
         )
         .gte("inicio_at", startFromIso)
         .lte("inicio_at", endToIso)
@@ -226,7 +226,7 @@ export default function AgendaPage() {
       const { data, error, count } = await query.range(from, to);
       if (error) { alert("Erro ao carregar agenda: " + error.message); return; }
       setEvents((data || []) as any);
-      setTotal(count || (targetPage * PAGE_SIZE + (data?.length || 0))); // fallback simples
+      setTotal(count || 0);
       setPage(targetPage);
     } finally {
       setLoading(false);
@@ -249,7 +249,7 @@ export default function AgendaPage() {
         .gte("inicio_at", nowIso)
         .lte("inicio_at", toIso)
         .order("inicio_at", { ascending: true })
-        .limit(60);
+        .limit(80);
 
       let qAsm = supabase
         .from("agenda_eventos")
@@ -258,7 +258,7 @@ export default function AgendaPage() {
         .gte("inicio_at", nowIso)
         .lte("inicio_at", toIso)
         .order("inicio_at", { ascending: true })
-        .limit(60);
+        .limit(80);
 
       if (quickSearch) {
         qBirth = qBirth.ilike("titulo", `%${quickSearch}%`);
@@ -272,13 +272,7 @@ export default function AgendaPage() {
       setLoadingSide(false);
     }
   }
-  // debounce do quickSearch
-  useEffect(() => {
-    if (quickTimer.current) window.clearTimeout(quickTimer.current);
-    quickTimer.current = window.setTimeout(() => { loadSideLists(); }, 450);
-    return () => { if (quickTimer.current) window.clearTimeout(quickTimer.current); };
-  }, [quickSearch]);
-  useEffect(() => { loadSideLists(); }, []);
+  useEffect(() => { loadSideLists(); }, [quickSearch]);
 
   // realtime com debounce para evitar múltiplos reloads
   useEffect(() => {
@@ -289,7 +283,7 @@ export default function AgendaPage() {
         refreshTimer.current = window.setTimeout(() => {
           loadEvents(page);
           loadSideLists();
-        }, 300);
+        }, 250);
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); if (refreshTimer.current) window.clearTimeout(refreshTimer.current); };
@@ -383,31 +377,10 @@ export default function AgendaPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [editing, mustOpenAgenda?.has]);
 
-  // ====== estilos dependentes de performance ======
-  const cardStyle: React.CSSProperties = enableGlass ? {
-    position: "relative",
-    background:"rgba(255,255,255,0.52)",
-    borderRadius:16,
-    padding:16,
-    border:"1px solid rgba(255,255,255,0.6)",
-    boxShadow:"0 10px 40px rgba(161,28,39,0.12), inset 0 1px 0 rgba(255,255,255,0.35)",
-    backdropFilter:"blur(12px)",
-    WebkitBackdropFilter:"blur(12px)",
-    marginBottom:16
-  } : {
-    position: "relative",
-    background:"#fff",
-    borderRadius:16,
-    padding:16,
-    border:"1px solid #e5e7eb",
-    boxShadow:"0 6px 22px rgba(0,0,0,0.06)",
-    marginBottom:16
-  };
-
   return (
     <div className="agenda-wrap" style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      {/* Liquid Glass background blobs (só em devices fortes) */}
-      {enableGlass && (
+      {/* Liquid Glass background blobs */}
+      {ENABLE_GLASS && (
         <>
           <div className="lg-blobs">
             <div className="lg-blob ruby" />
@@ -422,7 +395,7 @@ export default function AgendaPage() {
       {/* Painéis rápidos */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
         {/* Aniversários */}
-        <div style={cardStyle} aria-label="Painel de aniversários (próximos)">
+        <div style={card} aria-label="Painel de aniversários (próximos)">
           <div style={listHeader}>
             <h3 style={{ margin: 0 }}>Aniversários (próximos)</h3>
             <input
@@ -481,7 +454,7 @@ export default function AgendaPage() {
         </div>
 
         {/* Assembleias */}
-        <div style={cardStyle} aria-label="Painel de assembleias (próximas)">
+        <div style={card} aria-label="Painel de assembleias (próximas)">
           <div style={listHeader}>
             <h3 style={{ margin: 0 }}>Assembleias (próximas)</h3>
             <button style={btnSecondary} onClick={loadSideLists} disabled={loadingSide} aria-label="Atualizar lista de assembleias">Atualizar</button>
@@ -512,7 +485,7 @@ export default function AgendaPage() {
       </div>
 
       {/* Filtros, criação e grade principal */}
-      <div style={cardStyle} aria-label="Filtros de pesquisa">
+      <div style={card} aria-label="Filtros de pesquisa">
         <h3 style={{ margin: "0 0 12px 0" }}>Filtros</h3>
         <div style={grid4}>
           <label style={label}>De<input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={input} aria-label="Data inicial"/></label>
@@ -534,7 +507,7 @@ export default function AgendaPage() {
         </div>
       </div>
 
-      <div style={cardStyle} aria-label="Criar evento manual">
+      <div style={card} aria-label="Criar evento manual">
         <div style={listHeader}>
           <h3 style={{ margin: 0 }}>Criar evento manual</h3>
           <button style={btnSecondary} onClick={()=>setCreating(v=>!v)} disabled={loading} aria-expanded={creating} aria-controls="form-criar-evento">{creating?"Fechar":"Novo"}</button>
@@ -556,7 +529,7 @@ export default function AgendaPage() {
         )}
       </div>
 
-      <div style={cardStyle} aria-label="Lista de eventos">
+      <div style={card} aria-label="Lista de eventos">
         <div style={listHeader}>
           <h3 style={{ margin: 0 }}>Eventos</h3>
           <button style={btnSecondary} onClick={()=>loadEvents(page)} disabled={loading} aria-label="Recarregar eventos">Recarregar</button>
@@ -667,7 +640,7 @@ export default function AgendaPage() {
               >Abrir Agenda</button>
               <button
                 style={btnGhost}
-                onClick={()=>{ localStorage.setItem(`agenda:shown:${todayKey()`, "1"); setMustOpenAgenda(null); }}
+                onClick={()=>{ localStorage.setItem(`agenda:shown:${todayKey()}`, "1"); setMustOpenAgenda(null); }}
                 aria-label="Lembrar depois"
               >Depois</button>
             </div>
@@ -675,25 +648,40 @@ export default function AgendaPage() {
         </>
       )}
 
-      {/* estilos globais para Liquid Glass + skeleton (ativados só quando enableGlass=true) */}
+      {/* estilos globais para Liquid Glass + skeleton */}
       <style>{`
         .bgRow{background:#f8fafc}
-        ${enableGlass ? `
+        ${ENABLE_GLASS ? `
         .lg-blobs { position: fixed; inset: -20vh -10vw auto auto; pointer-events: none; z-index: 0; }
         .lg-blob { position:absolute; filter: blur(60px); opacity:.22; }
         .lg-blob.ruby  { width:46vw; height:46vw; background: radial-gradient(35% 35% at 50% 50%, #A11C27 0%, transparent 70%); top: -10vh; left:-12vw; }
         .lg-blob.navy  { width:40vw; height:40vw; background: radial-gradient(35% 35% at 50% 50%, #1E293F 0%, transparent 70%); top: 30vh; right:-12vw; }
         .lg-shine { position: fixed; right:2vw; bottom:2vh; width:26vw; height:26vw; background: radial-gradient(35% 35% at 50% 50%, rgba(224,206,140,.28), transparent 70%); filter: blur(40px); pointer-events:none; z-index:0; }
-        `: ''}
+        ` : `
+        .lg-blobs, .lg-shine { display:none; }
+        `}
         .agenda-wrap { position: relative; z-index: 1; }
-        .skl { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 37%, #f1f5f9 63%); background-size: 400% 100%; animation: skl 1.2s ease infinite; border-radius: 8px; }
+        .skl { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 37%, #f1f5f9 63%); background-size: 400% 100%; animation: skl 1.4s ease infinite; border-radius: 8px; }
         @keyframes skl { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
       `}</style>
     </div>
   );
 }
 
-/** estilos base */
+/** estilos */
+const card: React.CSSProperties = {
+  position: "relative",
+  background: ENABLE_GLASS ? "rgba(255,255,255,0.52)" : "#fff",
+  borderRadius:16,
+  padding:16,
+  border: ENABLE_GLASS ? "1px solid rgba(255,255,255,0.6)" : "1px solid #e5e7eb",
+  boxShadow: ENABLE_GLASS
+    ? "0 10px 40px rgba(161,28,39,0.12), inset 0 1px 0 rgba(255,255,255,0.35)"
+    : "0 6px 22px rgba(0,0,0,0.06)",
+  backdropFilter: ENABLE_GLASS ? "blur(12px)" : undefined,
+  WebkitBackdropFilter: ENABLE_GLASS ? "blur(12px)" : undefined,
+  marginBottom:16
+};
 const grid2: React.CSSProperties = { display:"grid", gap:12, gridTemplateColumns:"repeat(2, minmax(0,1fr))" };
 const grid4: React.CSSProperties = { display:"grid", gap:12, gridTemplateColumns:"repeat(4, minmax(0,1fr))", alignItems:"center" };
 const listHeader: React.CSSProperties = { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 };

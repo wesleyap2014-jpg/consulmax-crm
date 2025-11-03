@@ -3,8 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /** ====== Configuráveis ====== */
-const ENABLE_GLASS = true; // mude para false se quiser desempenho máximo (sem efeito vidro)
-
 const BIRTHDAY_MSG = (nome: string) => {
   const primeiro = (nome || "").trim().split(/\s+/)[0] || "Olá";
   return (
@@ -57,14 +55,51 @@ const ORIGENS: AgendaOrigem[] = ["auto", "manual"];
 
 /** ====== Helpers ====== */
 const onlyDigits = (s: string) => (s || "").replace(/\D+/g, "");
+
+// (ainda usadas em alguns lugares, mantidas)
 const fmtDateTimeBR = (iso?: string | null) =>
   !iso ? "—" : new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 const fmtDateBR = (iso?: string | null) => !iso ? "—" : new Date(iso).toLocaleDateString("pt-BR");
+
+// NOVO: detecção e formatação seguras para eventos all-day (00:00:00Z)
+function isMidnightUTC(iso?: string | null) {
+  if (!iso) return false;
+  const d = new Date(iso);
+  return d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0;
+}
+function ymdFromISO(iso?: string | null) {
+  if (!iso) return null;
+  const m = String(iso).match(/^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.000)?Z$/);
+  return m ? m[1] : null;
+}
+function formatYMD_BR(ymd: string) {
+  const [y, m, d] = ymd.split("-");
+  return `${d}/${m}/${y}`;
+}
+function fmtDateTimeSmart(iso?: string | null) {
+  if (!iso) return "—";
+  if (isMidnightUTC(iso)) {
+    const ymd = ymdFromISO(iso);
+    return ymd ? formatYMD_BR(ymd) : new Date(iso).toLocaleDateString("pt-BR");
+  }
+  return new Date(iso).toLocaleString("pt-BR", {
+    day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
+  });
+}
+function fmtDateSmart(iso?: string | null) {
+  if (!iso) return "—";
+  if (isMidnightUTC(iso)) {
+    const ymd = ymdFromISO(iso);
+    return ymd ? formatYMD_BR(ymd) : new Date(iso).toLocaleDateString("pt-BR");
+  }
+  return new Date(iso).toLocaleDateString("pt-BR");
+}
+
 const defaultEndFromStart = (isoStart: string) => new Date(new Date(isoStart).getTime() + 30 * 60 * 1000).toISOString();
 const toISODate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
-// Faixa de um dia LOCAL (evita “deslizar” -1 dia por timezone)
 function localStartOfDayISO(dateStr: string) {
+  // dateStr no formato YYYY-MM-DD (local). Evita deslize de -1 dia.
   const d = new Date(`${dateStr}T00:00:00`);
   return d.toISOString();
 }
@@ -96,6 +131,7 @@ function clipboardCopy(text: string) {
 function downloadICS(ev: AgendaEvento) {
   const dt = (iso?: string | null) => (iso ? new Date(iso) : new Date());
   const dtToICS = (d: Date) => {
+    // YYYYMMDDTHHMMSSZ
     const pad = (n: number, s = 2) => String(n).padStart(s, "0");
     return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
   };
@@ -330,7 +366,9 @@ export default function AgendaPage() {
       const { error } = await supabase.from("agenda_eventos").update({ inicio_at: startIso, fim_at: endIso }).eq("id", editing.id);
       if (error) { alert("Não foi possível reagendar: " + error.message); return; }
       closeEdit(); await loadEvents(page); alert("Evento reagendado!");
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }
   async function deleteEvent(ev: AgendaEvento) {
     if (ev.origem !== "manual") { alert("Somente eventos manuais podem ser excluídos aqui."); return; }
@@ -340,7 +378,9 @@ export default function AgendaPage() {
       const { error } = await supabase.from("agenda_eventos").delete().eq("id", ev.id);
       if (error) { alert("Não foi possível excluir: " + error.message); return; }
       await loadEvents(page); alert("Evento excluído.");
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }
 
   /** criar manual */
@@ -359,7 +399,9 @@ export default function AgendaPage() {
       const { error } = await supabase.from("agenda_eventos").insert([{ tipo: newTipo, titulo: newTitle.trim(), inicio_at: startIso, fim_at: endIso, origem: "manual", videocall_url: newLink.trim() || null }]);
       if (error) { alert("Falha ao criar evento: " + error.message); return; }
       setCreating(false); setNewTitle(""); setNewLink(""); await loadEvents(1); alert("Evento criado!");
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }
 
   /** render */
@@ -380,15 +422,11 @@ export default function AgendaPage() {
   return (
     <div className="agenda-wrap" style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       {/* Liquid Glass background blobs */}
-      {ENABLE_GLASS && (
-        <>
-          <div className="lg-blobs">
-            <div className="lg-blob ruby" />
-            <div className="lg-blob navy" />
-          </div>
-          <div className="lg-shine" />
-        </>
-      )}
+      <div className="lg-blobs">
+        <div className="lg-blob ruby" />
+        <div className="lg-blob navy" />
+      </div>
+      <div className="lg-shine" />
 
       <h1 style={{ margin: "16px 0" }}>Agenda</h1>
 
@@ -425,7 +463,7 @@ export default function AgendaPage() {
                   const waMsg = waWithText(phone, BIRTHDAY_MSG(nome));
                   return (
                     <tr key={b.id} className={i%2 ? "bgRow": undefined}>
-                      <td style={td}>{fmtDateBR(b.inicio_at)}</td>
+                      <td style={td}>{fmtDateSmart(b.inicio_at)}</td>
                       <td style={td}>{nome}</td>
                       <td style={td}>
                         <div style={{ display:"flex", gap:8 }}>
@@ -474,7 +512,7 @@ export default function AgendaPage() {
                 {!loadingSide && assemblies.length===0 && <tr><td style={td} colSpan={2}>Nenhuma assembleia próxima.</td></tr>}
                 {assemblies.map((a,i)=>(
                   <tr key={a.id} className={i%2 ? "bgRow": undefined}>
-                    <td style={td}>{fmtDateTimeBR(a.inicio_at)}</td>
+                    <td style={td}>{fmtDateTimeSmart(a.inicio_at)}</td>
                     <td style={td}>{a.titulo || "Assembleia"}</td>
                   </tr>
                 ))}
@@ -558,8 +596,8 @@ export default function AgendaPage() {
                 } as const;
                 return (
                   <tr key={e.id} className={i%2 ? "bgRow": undefined}>
-                    <td style={td}>{fmtDateTimeBR(e.inicio_at)}</td>
-                    <td style={td}>{fmtDateTimeBR(e.fim_at)}</td>
+                    <td style={td}>{fmtDateTimeSmart(e.inicio_at)}</td>
+                    <td style={td}>{fmtDateTimeSmart(e.fim_at)}</td>
                     <td style={td}>
                       <span title={e.tipo} style={{ padding:"2px 8px", borderRadius:999, fontSize:12, background: `${tipoColor[e.tipo] || "#e2e8f0"}22`, color: tipoColor[e.tipo] || "#0f172a", border:`1px solid ${(tipoColor[e.tipo] || "#e2e8f0")}55` }}>{e.tipo}</span>
                     </td>
@@ -621,7 +659,7 @@ export default function AgendaPage() {
               <div style={{margin:"8px 0 12px 0"}}>
                 <strong>Aniversários:</strong>
                 <ul style={{margin:"8px 0 0 18px"}}>
-                  {mustOpenAgenda.birthdays.map(b => <li key={b.id}>{b.cliente?.nome || b.titulo || "Cliente"} — {fmtDateBR(b.inicio_at)}</li>)}
+                  {mustOpenAgenda.birthdays.map(b => <li key={b.id}>{b.cliente?.nome || b.titulo || "Cliente"} — {fmtDateSmart(b.inicio_at)}</li>)}
                 </ul>
               </div>
             ) : <p style={{margin:"8px 0 12px 0"}}>Há compromissos hoje na sua agenda.</p>}
@@ -630,6 +668,7 @@ export default function AgendaPage() {
                 style={btnSecondary}
                 onClick={()=>{
                   localStorage.setItem(`agenda:shown:${todayKey()}`, "1");
+                  // garante que a aba agenda esteja aberta
                   if (location.pathname !== "/agenda") {
                     window.location.assign("/agenda");
                   } else {
@@ -651,15 +690,11 @@ export default function AgendaPage() {
       {/* estilos globais para Liquid Glass + skeleton */}
       <style>{`
         .bgRow{background:#f8fafc}
-        ${ENABLE_GLASS ? `
         .lg-blobs { position: fixed; inset: -20vh -10vw auto auto; pointer-events: none; z-index: 0; }
         .lg-blob { position:absolute; filter: blur(60px); opacity:.22; }
         .lg-blob.ruby  { width:46vw; height:46vw; background: radial-gradient(35% 35% at 50% 50%, #A11C27 0%, transparent 70%); top: -10vh; left:-12vw; }
         .lg-blob.navy  { width:40vw; height:40vw; background: radial-gradient(35% 35% at 50% 50%, #1E293F 0%, transparent 70%); top: 30vh; right:-12vw; }
         .lg-shine { position: fixed; right:2vw; bottom:2vh; width:26vw; height:26vw; background: radial-gradient(35% 35% at 50% 50%, rgba(224,206,140,.28), transparent 70%); filter: blur(40px); pointer-events:none; z-index:0; }
-        ` : `
-        .lg-blobs, .lg-shine { display:none; }
-        `}
         .agenda-wrap { position: relative; z-index: 1; }
         .skl { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 37%, #f1f5f9 63%); background-size: 400% 100%; animation: skl 1.4s ease infinite; border-radius: 8px; }
         @keyframes skl { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
@@ -671,15 +706,13 @@ export default function AgendaPage() {
 /** estilos */
 const card: React.CSSProperties = {
   position: "relative",
-  background: ENABLE_GLASS ? "rgba(255,255,255,0.52)" : "#fff",
+  background:"rgba(255,255,255,0.52)",
   borderRadius:16,
   padding:16,
-  border: ENABLE_GLASS ? "1px solid rgba(255,255,255,0.6)" : "1px solid #e5e7eb",
-  boxShadow: ENABLE_GLASS
-    ? "0 10px 40px rgba(161,28,39,0.12), inset 0 1px 0 rgba(255,255,255,0.35)"
-    : "0 6px 22px rgba(0,0,0,0.06)",
-  backdropFilter: ENABLE_GLASS ? "blur(12px)" : undefined,
-  WebkitBackdropFilter: ENABLE_GLASS ? "blur(12px)" : undefined,
+  border:"1px solid rgba(255,255,255,0.6)",
+  boxShadow:"0 10px 40px rgba(161,28,39,0.12), inset 0 1px 0 rgba(255,255,255,0.35)",
+  backdropFilter:"blur(12px)",
+  WebkitBackdropFilter:"blur(12px)",
   marginBottom:16
 };
 const grid2: React.CSSProperties = { display:"grid", gap:12, gridTemplateColumns:"repeat(2, minmax(0,1fr))" };

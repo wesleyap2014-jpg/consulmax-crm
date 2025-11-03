@@ -4,7 +4,7 @@ import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from
 import { supabase } from '@/lib/supabaseClient'
 import {
   UserCheck, Briefcase, Calendar, Calculator, FileText, Wallet, Layers, UserCog,
-  SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight,
+  SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight, Trophy
 } from 'lucide-react'
 
 type SidebarProps = { onNavigate?: () => void }
@@ -17,6 +17,8 @@ const items = [
   { to: '/clientes',         label: 'Clientes',         icon: UserCheck },
   { to: '/agenda',           label: 'Agenda',           icon: Calendar },
   { to: '/comissoes',        label: 'Comissões',        icon: BarChart3 },
+  // ➕ NOVO: Ranking dos Vendedores
+  { to: '/ranking',          label: 'Ranking',          icon: Trophy },
   { to: '/usuarios',         label: 'Usuários',         icon: UserCog },
   { to: '/parametros',       label: 'Parâmetros',       icon: SlidersHorizontal },
   { to: '/links',            label: 'Links Úteis',      icon: LinkIcon },
@@ -60,8 +62,8 @@ const SidebarLiquidBG: FC = () => (
 )
 
 const sbLiquidCanvas: CSSProperties = {
-  position: 'absolute', // começa no topo do aside
-  inset: 0,             // cobre toda a barra
+  position: 'absolute',
+  inset: 0,
   zIndex: 0,
   overflow: 'hidden',
   pointerEvents: 'none',
@@ -158,10 +160,10 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       {/* Efeito desde o topo */}
       {!collapsed && <SidebarLiquidBG />}
 
-      {/* LOGO / NOME / SLOGAN – mais para cima */}
+      {/* LOGO / NOME / SLOGAN */}
       <Link
         to="/oportunidades"
-        className="relative z-[1] flex items-center gap-3 mb-2" // ↓ menor margem
+        className="relative z-[1] flex items-center gap-3 mb-2"
         onClick={() => onNavigate?.()}
       >
         <img
@@ -182,11 +184,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         </div>
       </Link>
 
-      {/* Botão ocultar/expandir – logo abaixo do cabeçalho */}
+      {/* Botão ocultar/expandir */}
       <div className="relative z-[1] mb-4">
         <button
           type="button"
-          onClick={() => { if (collapsed) setSimGroupOpen(false); setCollapsed(v => !v) }}
+          onClick={() => { if (!collapsed) setSimGroupOpen(false); setCollapsed(v => !v) }}
           className="inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40"
           title={collapsed ? 'Expandir barra lateral' : 'Ocultar barra lateral'}
           aria-label={collapsed ? 'Expandir barra lateral' : 'Ocultar barra lateral'}
@@ -255,8 +257,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) =>
                     `${pillPadding} py-2.5 rounded-2xl transition-colors
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                  }
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral}` }
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                 >
@@ -270,8 +271,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) =>
                     `${pillPadding} py-2.5 rounded-2xl transition-colors
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                  }
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral` }
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                 >
@@ -284,7 +284,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 className={({ isActive }) =>
                   `${pillPadding} py-2.5 rounded-2xl transition-colors
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral` }
                 }
                 style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                 onClick={() => onNavigate?.()}
@@ -312,7 +312,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           {!collapsed && 'Propostas'}
         </NavLink>
 
-        {/* Demais itens na ordem já existente */}
+        {/* Demais itens na ordem já existente (inclui o novo /ranking) */}
         {items
           .filter(i => i.to !== '/oportunidades' && i.to !== '/propostas')
           .map((i) => (

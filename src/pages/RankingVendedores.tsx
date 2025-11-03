@@ -4,42 +4,43 @@ import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+// import { Badge } from "@/components/ui/badge"; // ❌ não existe no seu projeto
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Trophy, Crown, Sparkles, TrendingUp, Calendar as CalIcon } from "lucide-react";
 import clsx from "clsx";
 
-// ====================== CONFIG ======================
+/** -------- Badge simples (fallback) -------- */
+type BadgeProps = React.HTMLAttributes<HTMLSpanElement> & {
+  variant?: "default" | "secondary";
+};
+const Badge: React.FC<BadgeProps> = ({ variant = "default", className = "", ...rest }) => {
+  const base =
+    "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap";
+  const styles =
+    variant === "secondary"
+      ? "bg-slate-100 text-slate-800"
+      : "bg-[#A11C27] text-white";
+  return <span className={`${base} ${styles} ${className}`} {...rest} />;
+};
+
+/* ====================== CONFIG ====================== */
 const CONFIG = {
-  // Tabela de negócios/propostas/vendas:
-  DEALS_TABLE: "propostas", // ajuste se for "oportunidades" ou "vendas"
-  DEALS_USER_KEY: "vendedor_id", // coluna que referencia o usuário
+  DEALS_TABLE: "propostas",
+  DEALS_USER_KEY: "vendedor_id",
   DEALS_CREATED_AT: "created_at",
-  DEALS_STATUS: "status", // coluna de status
-  // valores possíveis que representam "encarteirada" (fechada/vendida)
+  DEALS_STATUS: "status",
   STATUS_ENCARTEIRADA: ["encarteirada", "vendida", "fechada"],
-
-  // Colunas possíveis para valor (usa a primeira existente)
   DEAL_VALUE_CANDIDATES: ["valor", "valor_credito", "credito"],
-
-  // Tabela de usuários (já usada no projeto)
   USERS_TABLE: "users",
   USER_ID: "id",
   USER_NAME: "name",
   USER_EMAIL: "email",
   USER_AVATAR_PATH_CANDIDATES: ["avatarPath", "avatar_url", "avatar"],
-
-  // Bucket de avatars
   AVATARS_BUCKET: "avatars",
 };
-// ====================================================
+/* ==================================================== */
 
-type RawUser = {
-  id: string;
-  name?: string | null;
-  email?: string | null;
-  [k: string]: any;
-};
+type RawUser = { id: string; name?: string | null; email?: string | null; [k: string]: any };
 type RawDeal = Record<string, any>;
 
 type RankRow = {
@@ -49,7 +50,7 @@ type RankRow = {
   avatarUrl?: string | null;
   vendasCount: number;
   encarteiradasCount: number;
-  producao: number; // soma em R$
+  producao: number;
   ticketMedio: number;
 };
 
@@ -60,22 +61,18 @@ function getInitials(name?: string, email?: string) {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
-
 function formatCurrency(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
-
 function monthStartEnd(year: number, monthIndexZeroBased: number) {
   const start = new Date(Date.UTC(year, monthIndexZeroBased, 1, 0, 0, 0));
   const end = new Date(Date.UTC(year, monthIndexZeroBased + 1, 1, 0, 0, 0));
   return { start, end };
 }
-
 function pickFirstExisting(obj: any, keys: string[]): any {
   for (const k of keys) if (k in obj && obj[k] != null) return obj[k];
   return undefined;
 }
-
 async function resolveAvatarUrl(user: RawUser): Promise<string | null> {
   const path = pickFirstExisting(user, CONFIG.USER_AVATAR_PATH_CANDIDATES);
   if (!path) return null;
@@ -89,7 +86,6 @@ async function resolveAvatarUrl(user: RawUser): Promise<string | null> {
     return null;
   }
 }
-
 function useAudio() {
   const cashRef = useRef<HTMLAudioElement | null>(null);
   const successRef = useRef<HTMLAudioElement | null>(null);
@@ -104,21 +100,18 @@ function useAudio() {
 }
 
 export default function RankingVendedores() {
-  // ======= Filtros de período =======
   const now = new Date();
   const [year, setYear] = useState(now.getUTCFullYear());
-  const [month, setMonth] = useState(now.getUTCMonth()); // 0-11
-  const [meta, setMeta] = useState<number>(100000); // R$ meta para barras
+  const [month, setMonth] = useState(now.getUTCMonth());
+  const [meta, setMeta] = useState<number>(100000);
   const { start, end } = useMemo(() => monthStartEnd(year, month), [year, month]);
 
-  // ======= Dados =======
   const [users, setUsers] = useState<RawUser[]>([]);
   const [deals, setDeals] = useState<RawDeal[]>([]);
   const [loading, setLoading] = useState(true);
 
   const { playCash, playSuccess } = useAudio();
 
-  // Carrega usuários
   useEffect(() => {
     let isCancelled = false;
     (async () => {
@@ -129,12 +122,9 @@ export default function RankingVendedores() {
       if (error) console.error(error);
       if (!isCancelled) setUsers(data || []);
     })();
-    return () => {
-      isCancelled = true;
-    };
+    return () => { isCancelled = true; };
   }, []);
 
-  // Carrega negócios do período
   useEffect(() => {
     let isCancelled = false;
     (async () => {
@@ -148,59 +138,43 @@ export default function RankingVendedores() {
       if (!isCancelled) setDeals(data || []);
       setLoading(false);
     })();
-    return () => {
-      isCancelled = true;
-    };
+    return () => { isCancelled = true; };
   }, [start.toISOString(), end.toISOString()]);
 
-  // Realtime: novas vendas e mudanças de status
   useEffect(() => {
     const channel = supabase
       .channel("ranking-realtime")
-      .on(
-        "postgres_changes",
+      .on("postgres_changes",
         { event: "INSERT", schema: "public", table: CONFIG.DEALS_TABLE },
         (payload) => {
           const row = payload.new as RawDeal;
           const createdAt = new Date(row[CONFIG.DEALS_CREATED_AT]);
           if (createdAt >= start && createdAt < end) {
             setDeals((prev) => [row, ...prev]);
-            playCash(); // som de nova venda
+            playCash();
           }
-        }
-      )
-      .on(
-        "postgres_changes",
+        })
+      .on("postgres_changes",
         { event: "UPDATE", schema: "public", table: CONFIG.DEALS_TABLE },
         (payload) => {
           const row = payload.new as RawDeal;
           const createdAt = new Date(row[CONFIG.DEALS_CREATED_AT]);
           if (!(createdAt >= start && createdAt < end)) return;
-
           setDeals((prev) => {
             const idx = prev.findIndex((d) => d.id === row.id);
             const next = [...prev];
             if (idx >= 0) next[idx] = row;
             return next;
           });
-
           const status = String(row[CONFIG.DEALS_STATUS] ?? "").toLowerCase();
-          if (CONFIG.STATUS_ENCARTEIRADA.includes(status)) {
-            playSuccess(); // som de encarteirada
-          }
-        }
-      )
+          if (CONFIG.STATUS_ENCARTEIRADA.includes(status)) playSuccess();
+        })
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [start.getTime(), end.getTime(), playCash, playSuccess]);
 
-  // Monta ranking
   const ranking: RankRow[] = useMemo(() => {
     const byUser: Record<string, RankRow> = {};
-
     const valueKey = deals.length
       ? CONFIG.DEAL_VALUE_CANDIDATES.find((k) => k in deals[0]) || CONFIG.DEAL_VALUE_CANDIDATES[0]
       : CONFIG.DEAL_VALUE_CANDIDATES[0];
@@ -214,14 +188,8 @@ export default function RankingVendedores() {
 
       if (!byUser[uid]) {
         byUser[uid] = {
-          userId: uid,
-          name,
-          email,
-          avatarUrl: undefined,
-          vendasCount: 0,
-          encarteiradasCount: 0,
-          producao: 0,
-          ticketMedio: 0,
+          userId: uid, name, email, avatarUrl: undefined,
+          vendasCount: 0, encarteiradasCount: 0, producao: 0, ticketMedio: 0,
         };
       }
       const status = String(d[CONFIG.DEALS_STATUS] ?? "").toLowerCase();
@@ -229,28 +197,20 @@ export default function RankingVendedores() {
 
       byUser[uid].vendasCount += 1;
       byUser[uid].producao += val;
-      if (CONFIG.STATUS_ENCARTEIRADA.includes(status)) {
-        byUser[uid].encarteiradasCount += 1;
-      }
+      if (CONFIG.STATUS_ENCARTEIRADA.includes(status)) byUser[uid].encarteiradasCount += 1;
     }
 
     const rows = Object.values(byUser);
-    for (const r of rows) {
-      r.ticketMedio = r.vendasCount ? r.producao / r.vendasCount : 0;
-    }
+    for (const r of rows) r.ticketMedio = r.vendasCount ? r.producao / r.vendasCount : 0;
 
-    // Ordena por produção desc, depois encarteiradas, depois vendas
     rows.sort((a, b) => {
       if (b.producao !== a.producao) return b.producao - a.producao;
-      if (b.encarteiradasCount !== a.encarteiradasCount)
-        return b.encarteiradasCount - a.encarteiradasCount;
+      if (b.encarteiradasCount !== a.encarteiradasCount) return b.encarteiradasCount - a.encarteiradasCount;
       return b.vendasCount - a.vendasCount;
     });
-
     return rows;
   }, [deals, users]);
 
-  // Precarrega avatares resolvidos (evita flicker no pódio)
   const [avatars, setAvatars] = useState<Record<string, string | null>>({});
   useEffect(() => {
     let isCancelled = false;
@@ -262,21 +222,16 @@ export default function RankingVendedores() {
       }
       if (!isCancelled) setAvatars(map);
     })();
-    return () => {
-      isCancelled = true;
-    };
+    return () => { isCancelled = true; };
   }, [users]);
 
   const top3 = ranking.slice(0, 3);
   const others = ranking.slice(3);
-
-  // Para mostrar alturas relativas no pódio
   const maxProducao = Math.max(1, ...ranking.map((r) => r.producao));
   const months = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 
   return (
     <div className="p-4 md:p-6 animate-in fade-in slide-in-from-bottom-2">
-      {/* Background “liquid glass” leve */}
       <div className="pointer-events-none fixed inset-0 -z-10">
         <div className="absolute -top-16 -left-24 size-[420px] rounded-full blur-3xl opacity-25 bg-[#A11C27]" />
         <div className="absolute top-10 right-10 size-[360px] rounded-full blur-3xl opacity-25 bg-[#1E293F]" />
@@ -288,9 +243,7 @@ export default function RankingVendedores() {
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
             <Trophy className="h-7 w-7 text-yellow-400" />
             Ranking dos Vendedores
-            <Badge className="ml-2 bg-gradient-to-r from-rose-600 to-fuchsia-600 text-white">
-              {months[month]}/{year}
-            </Badge>
+            <Badge className="ml-2"> {months[month]}/{year} </Badge>
           </h1>
           <p className="text-sm text-muted-foreground">
             Produção mensal, encarteiradas e ticket médio — com pódio e tempo real.
@@ -298,7 +251,6 @@ export default function RankingVendedores() {
         </div>
 
         <div className="flex gap-2 items-center">
-          {/* Mês */}
           <div className="flex items-center gap-2">
             <CalIcon className="h-4 w-4 text-muted-foreground" />
             <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}>
@@ -312,7 +264,7 @@ export default function RankingVendedores() {
               </SelectContent>
             </Select>
           </div>
-          {/* Ano */}
+
           <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
             <SelectTrigger className="w-[110px]">
               <SelectValue />
@@ -320,14 +272,11 @@ export default function RankingVendedores() {
             <SelectContent>
               {Array.from({ length: 6 }).map((_, idx) => {
                 const y = now.getUTCFullYear() - 3 + idx;
-                return (
-                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                );
+                return <SelectItem key={y} value={String(y)}>{y}</SelectItem>;
               })}
             </SelectContent>
           </Select>
 
-          {/* Meta R$ para barras */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Meta R$</span>
             <Input
@@ -358,16 +307,11 @@ export default function RankingVendedores() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               {top3.map((r, idx) => {
                 const height = Math.max(35, Math.round((r.producao / maxProducao) * 100));
-                const medal =
-                  idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉";
+                const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉";
                 const bg =
-                  idx === 0
-                    ? "from-yellow-400/70 to-amber-600/70"
-                    : idx === 1
-                    ? "from-slate-300/80 to-slate-500/70"
-                    : "from-amber-900/40 to-amber-600/30";
-
-                const u = users.find((u) => u.id === r.userId);
+                  idx === 0 ? "from-yellow-400/70 to-amber-600/70"
+                  : idx === 1 ? "from-slate-300/80 to-slate-500/70"
+                  : "from-amber-900/40 to-amber-600/30";
                 const avatar = avatars[r.userId];
 
                 return (
@@ -375,8 +319,7 @@ export default function RankingVendedores() {
                     key={r.userId}
                     className={clsx(
                       "relative rounded-2xl p-4 pb-6 text-center border",
-                      "bg-gradient-to-br", bg,
-                      "shadow-lg overflow-hidden"
+                      "bg-gradient-to-br", bg, "shadow-lg overflow-hidden"
                     )}
                   >
                     <div className="absolute -right-6 -top-6 text-5xl opacity-40 rotate-12 select-none">
@@ -392,7 +335,6 @@ export default function RankingVendedores() {
                       </Avatar>
 
                       <div className="font-semibold">{r.name}</div>
-
                       <div className="text-sm text-muted-foreground -mt-2">
                         {r.vendasCount} vendas · {r.encarteiradasCount} encarteiradas
                       </div>
@@ -409,9 +351,7 @@ export default function RankingVendedores() {
                         {formatCurrency(r.producao)}
                       </div>
 
-                      <Badge className="bg-[#A11C27] hover:bg-[#A11C27]/90">
-                        Ticket {formatCurrency(r.ticketMedio || 0)}
-                      </Badge>
+                      <Badge>Ticket {formatCurrency(r.ticketMedio || 0)}</Badge>
                     </div>
                   </div>
                 );
@@ -450,7 +390,6 @@ export default function RankingVendedores() {
                 </thead>
                 <tbody>
                   {ranking.map((r, i) => {
-                    const u = users.find((x) => x.id === r.userId);
                     const avatar = avatars[r.userId];
                     const pct = meta > 0 ? Math.min(100, Math.round((r.producao / meta) * 100)) : 0;
 
@@ -473,15 +412,13 @@ export default function RankingVendedores() {
                             </Avatar>
                             <div>
                               <div className="font-medium">{r.name}</div>
-                              <div className="text-xs text-muted-foreground">{u?.email}</div>
+                              <div className="text-xs text-muted-foreground">{r.email}</div>
                             </div>
                           </div>
                         </td>
                         <td className="py-3 px-2">{r.vendasCount}</td>
                         <td className="py-3 px-2">
-                          <Badge variant="secondary" className="bg-emerald-100 text-emerald-800">
-                            {r.encarteiradasCount}
-                          </Badge>
+                          <Badge variant="secondary">{r.encarteiradasCount}</Badge>
                         </td>
                         <td className="py-3 px-2 font-semibold">{formatCurrency(r.producao)}</td>
                         <td className="py-3 px-2">{formatCurrency(r.ticketMedio || 0)}</td>
@@ -490,11 +427,7 @@ export default function RankingVendedores() {
                             <div
                               className={clsx(
                                 "h-full rounded-full transition-all",
-                                pct >= 100
-                                  ? "bg-emerald-500"
-                                  : pct >= 60
-                                  ? "bg-amber-500"
-                                  : "bg-rose-500"
+                                pct >= 100 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500"
                               )}
                               style={{ width: `${pct}%` }}
                               title={`${pct}% da meta`}
@@ -510,7 +443,7 @@ export default function RankingVendedores() {
               {others.length > 0 && (
                 <div className="mt-4 text-xs text-muted-foreground flex items-center gap-2">
                   <Sparkles className="h-4 w-4" />
-                  Dica: clique nos filtros de mês/ano acima para comparar períodos.
+                  Dica: compare períodos trocando o mês/ano acima.
                 </div>
               )}
             </div>

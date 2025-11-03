@@ -23,7 +23,10 @@ const AlterarSenha            = React.lazy(() => import('./pages/AlterarSenha'))
 const AdicionarAdministradora = React.lazy(() => import('./pages/AdicionarAdministradora'));
 
 // ✅ NOVO: Links Úteis
-const LinksUteis             = React.lazy(() => import('./pages/LinksUteis'));
+const LinksUteis              = React.lazy(() => import('./pages/LinksUteis'));
+
+// ✅ NOVO: Ranking dos Vendedores
+const RankingVendedores       = React.lazy(() => import('./pages/RankingVendedores'));
 
 function withSuspense(node: React.ReactNode) {
   return (
@@ -68,6 +71,10 @@ export const router = createBrowserRouter([
           { path: 'propostas',         element: withSuspense(<Propostas />) },
           { path: 'comissoes',         element: withSuspense(<Comissoes />) },
           { path: 'carteira',          element: withSuspense(<Carteira />) },
+
+          // ✅ NOVO: Ranking dos Vendedores
+          { path: 'ranking',           element: withSuspense(<RankingVendedores />) },
+
           { path: 'usuarios',          element: withSuspense(<Usuarios />) },
           { path: 'gestao-de-grupos',  element: withSuspense(<GestaoDeGrupos />) },
           { path: 'parametros',        element: withSuspense(<Parametros />) },
@@ -76,7 +83,7 @@ export const router = createBrowserRouter([
           // ✅ NOVO: Links Úteis
           { path: 'links',             element: withSuspense(<LinksUteis />) },
 
-          // 🔁 Redirects legados opcionais para a nova guia
+          // 🔁 Redirects legados opcionais
           { path: 'links-uteis',       element: <Navigate to="/links" replace /> },
           { path: 'linksuteis',        element: <Navigate to="/links" replace /> },
 

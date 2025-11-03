@@ -20,8 +20,6 @@ import {
   RotateCcw,
   Pencil,
   Trash2,
-  Download,
-  Calendar as CalendarIcon,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -155,7 +153,7 @@ const isBetweenISO = (iso?: string | null, s?: Date, e?: Date) => {
 function valorPorExtenso(n: number) {
   const u = ["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove","dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
   const d = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
-  const c = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos"];
+  const c = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "noventos"];
   const ext = (n0: number): string =>
     n0 < 20 ? u[n0] :
     n0 < 100 ? d[Math.floor(n0 / 10)] + (n0 % 10 ? " e " + u[n0 % 10] : "") :
@@ -241,7 +239,7 @@ function Donut({
         </div>
         <div className="text-gray-600">{hover === "paid" ? hoverPaidText : BRL(paid)}</div>
         <div className="mt-3 mb-1">
-          <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: "#A11C27" }} />
+          <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: red }} />
           <span className="font-medium">{pendingLegend}</span>
         </div>
         <div className="text-gray-600">{hover === "pend" ? hoverPendText : BRL(pending)}</div>
@@ -286,10 +284,10 @@ function LineChart({
   const clientToViewBox = (evt: React.MouseEvent<SVGElement>) => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
-    const pt = (svg as any).createSVGPoint();
-    pt.x = (evt as any).clientX;
-    pt.y = (evt as any).clientY;
-    const ctm = (svg as any).getScreenCTM();
+    const pt = svg.createSVGPoint();
+    pt.x = evt.clientX;
+    pt.y = evt.clientY;
+    const ctm = svg.getScreenCTM();
     if (!ctm) return { x: 0, y: 0 };
     const inv = ctm.inverse();
     const p2 = pt.matrixTransform(inv);
@@ -567,6 +565,7 @@ export default function ComissoesPage() {
   /* Recibo */
   const [reciboDate, setReciboDate] = useState<string>(() => toDateInput(new Date()));
   const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00");
+  const [reciboVendor, setReciboVendor] = useState<string>("all");
 
   /* Estorno (global em Comissões Pagas) */
   const [openBulkRefund, setOpenBulkRefund] = useState(false);
@@ -588,47 +587,6 @@ export default function ComissoesPage() {
 
   /* Busca nº proposta (a pagar) */
   const [unpaidPropSearch, setUnpaidPropSearch] = useState<string>("");
-
-  /* Debounce states (buscas) */
-  const [paidSearchInput, setPaidSearchInput] = useState<string>("");
-  const [unpaidSearchInput, setUnpaidSearchInput] = useState<string>("");
-
-  useEffect(() => {
-    const t = setTimeout(() => setPaidSearch(paidSearchInput), 300);
-    return () => clearTimeout(t);
-  }, [paidSearchInput]);
-  useEffect(() => {
-    const t = setTimeout(() => setUnpaidPropSearch(unpaidSearchInput), 300);
-    return () => clearTimeout(t);
-  }, [unpaidSearchInput]);
-
-  /* Persistência dos filtros na URL (querystring) */
-  useEffect(() => {
-    const params = new URLSearchParams();
-    if (vendedorId !== "all") params.set("vendedor", vendedorId);
-    if (status !== "all") params.set("status", status);
-    if (segmento !== "all") params.set("segmento", segmento);
-    if (tabela !== "all") params.set("tabela", tabela);
-    const qs = params.toString();
-    const url = qs ? `?${qs}` : location.pathname;
-    window.history.replaceState(null, "", url);
-  }, [vendedorId, status, segmento, tabela]);
-
-  useEffect(() => {
-    // carregar filtros da URL (apenas na primeira carga de bases)
-    const once = setTimeout(() => {
-      const sp = new URLSearchParams(location.search);
-      const vend = sp.get("vendedor");
-      const sts = sp.get("status") as any;
-      const seg = sp.get("segmento");
-      const tab = sp.get("tabela");
-      if (vend) setVendedorId(vend);
-      if (sts) setStatus(sts);
-      if (seg) setSegmento(seg);
-      if (tab) setTabela(tab);
-    }, 0);
-    return () => clearTimeout(once);
-  }, []);
 
   /* Carregamento de bases + RBAC */
   useEffect(() => {
@@ -653,10 +611,16 @@ export default function ComissoesPage() {
       // se não for admin, trava o vendedor no próprio id
       if (!admin && current?.id) {
         setVendedorId(current.id);
+        setReciboVendor(current.id);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUserId]);
+
+  // SINCRONIZA recibo com o vendedor selecionado (requisito do usuário)
+  useEffect(() => {
+    setReciboVendor(vendedorId);
+  }, [vendedorId]);
 
   // Agrupa SimTables por (segmento, nome_tabela)
   const simGroups = useMemo(() => {
@@ -1119,8 +1083,6 @@ export default function ComissoesPage() {
 
   async function confirmBulkRefund() {
     if (!bulkRefundFound) return;
-    if (!isAdmin) { alert("Somente administradores podem registrar estorno."); return; }
-
     const gross = parseFloat(bulkRefundGross.replace(/\./g, "").replace(",", ".")) || 0;
     if (gross <= 0) { alert("Informe o valor bruto do estorno."); return; }
 
@@ -1136,7 +1098,7 @@ export default function ComissoesPage() {
         const newPaid = current - take;
         const updates: Partial<CommissionFlow> = {
           valor_pago_vendedor: newPaid,
-          // mantém a data original
+          // mantém a data original da parcela paga (para não bagunçar históricos)
         };
         const { error } = await supabase.from("commission_flow").update(updates as any).eq("id", f.id);
         if (error) throw new Error(error.message);
@@ -1154,6 +1116,7 @@ export default function ComissoesPage() {
             valor_liquido: net,
           } as any);
         } catch (e) {
+          // tabela pode não existir; seguimos sem travar o fluxo
           console.warn("[commission_refunds] tabela ausente/erro ao registrar:", (e as any)?.message);
         }
       }
@@ -1177,14 +1140,6 @@ export default function ComissoesPage() {
   async function gerarComissaoDeVenda(venda: Venda) {
     try {
       setGenBusy(venda.id);
-
-      // guarda contra duplicidade
-      const { data: already } = await supabase.from("commissions").select("id").eq("venda_id", venda.id).limit(1);
-      if (already && already.length) {
-        alert("Já existe comissão vinculada a esta venda.");
-        return;
-      }
-
       const vendedorIdCanon = canonUserId(venda.vendedor_id);
       if (!vendedorIdCanon) { alert("Vínculo do vendedor não encontrado em 'users'."); return; }
 
@@ -1259,57 +1214,13 @@ export default function ComissoesPage() {
     }
   }
 
-  // Helpers de exportação CSV
-  function downloadCSV(filename: string, headers: string[], rows: (string | number)[][]) {
-    const csv = [headers.join(";")]
-      .concat(rows.map(r => r.map(v => (typeof v === "string" && v.includes(";")) ? `"${v.replace(/"/g, '""')}"` : String(v)).join(";")))
-      .join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename; a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function exportUnpaidCSV() {
-    const headers = ["Data","Vendedor","Cliente","Nº Proposta","Segmento","Tabela","Crédito","% Comissão","Valor Comissão","Status"];
-    const data = rowsAPagar.map(r => [
-      r.data_venda ? formatISODateBR(r.data_venda) : "—",
-      userLabel(r.vendedor_id),
-      r.cliente_nome || "—",
-      r.numero_proposta || "—",
-      r.segmento || "—",
-      r.tabela || "—",
-      (r.valor_venda ?? r.base_calculo) ?? 0,
-      (r.percent_aplicado ?? 0),
-      (r.valor_total ?? 0),
-      r.status
-    ]);
-    downloadCSV(`comissoes_a_pagar_${toDateInput(new Date())}.csv`, headers, data);
-  }
-
-  function exportPaidCSV() {
-    const headers = ["Data Pagto","Vendedor","Cliente","Nº Proposta","Parcela","Valor Pago (Bruto)"];
-    const data = pagosFiltered.map(({ flow, comm }) => [
-      flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—",
-      userLabel(comm.vendedor_id),
-      comm.cliente_nome || "—",
-      comm.numero_proposta || "—",
-      `M${flow.mes}`,
-      (flow.valor_pago_vendedor ?? 0)
-    ]);
-    downloadCSV(`comissoes_pagas_${toDateInput(new Date())}.csv`, headers, data);
-  }
-
-  // Recibo por data — agora usa SEMPRE o vendedor do filtro quando ≠ "Todos"
+  // Recibo por data (filtra pelo vendedor selecionado)
   async function downloadReceiptPDFPorData() {
     const impostoPct = parseFloat(reciboImpostoPct.replace(",", ".")) / 100 || 0;
     const dataRecibo = reciboDate;
 
-    // >>> melhoria: usa vendedor selecionado no filtro
-    const vendedorSel = vendedorId !== "all"
-      ? vendedorId
-      : (isAdmin ? null : (usersByAuth[authUserId || ""]?.id || null));
+    // vincula ao vendedor selecionado (se "all", inclui todos se admin; se não admin, apenas o próprio)
+    const vendedorSel = reciboVendor !== "all" ? reciboVendor : (isAdmin ? null : (usersByAuth[authUserId || ""]?.id || null));
 
     const { data: flowsAllOnDate, error: flowsErr } = await supabase
       .from("commission_flow")
@@ -1417,13 +1328,11 @@ export default function ComissoesPage() {
 
     // Linhas de ESTORNO (negativas)
     try {
+      const vendFilter = vendedorSel ? { column: "vendedor_id", value: vendedorSel } : null;
       const { data: refunds } = await supabase
         .from("commission_refunds")
         .select("id, commission_id, flow_id, numero_proposta, data_estorno, valor_bruto, valor_liquido");
-      const refundsOnDate = (refunds || []).filter(r =>
-        r.data_estorno === dataRecibo &&
-        (!vendedorSel || (rows.find(x => x.id === r.commission_id)?.vendedor_id === vendedorSel))
-      );
+      const refundsOnDate = (refunds || []).filter(r => r.data_estorno === dataRecibo && (!vendFilter || (rows.find(x => x.id === r.commission_id)?.vendedor_id === vendFilter.value)));
       for (const rf of refundsOnDate) {
         body.push([
           "—",
@@ -1431,12 +1340,14 @@ export default function ComissoesPage() {
           "ESTORNO",
           "—",
           BRL(-(rf.valor_bruto || 0)),
-          BRL( (rf.valor_bruto || 0) * impostoPct ),
+          BRL( (rf.valor_bruto || 0) * impostoPct ), // informativo
           BRL(-(rf.valor_liquido || 0)),
         ]);
         totalLiquido -= (rf.valor_liquido || 0);
       }
-    } catch (e) { /* opcional */ }
+    } catch (e) {
+      // tabela opcional, segue sem quebrar
+    }
 
     autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30, 41, 63] } });
     const endY = (doc as any).lastAutoTable.finalY + 12;
@@ -1482,11 +1393,6 @@ export default function ComissoesPage() {
   const totalPages = Math.max(1, Math.ceil(pagosFiltered.length / pageSize));
   const pageStart = (Math.min(Math.max(paidPage, 1), totalPages) - 1) * pageSize;
   const pagosPage = pagosFiltered.slice(pageStart, pageStart + pageSize);
-
-  // Totais (visíveis)
-  const totalAPagarVisivel = useMemo(() => sum(rowsAPagar.map(r => r.valor_total || 0)), [rowsAPagar]);
-  const totalPagosVisivel = useMemo(() => sum(pagosPage.map(p => p.flow.valor_pago_vendedor || 0)), [pagosPage]);
-  const totalPagosFiltrado = useMemo(() => sum(pagosFiltered.map(p => p.flow.valor_pago_vendedor || 0)), [pagosFiltered]);
 
   /* ========================= Render ========================= */
   return (
@@ -1559,8 +1465,12 @@ export default function ComissoesPage() {
               <Button variant="secondary" onClick={() => setOpenRules(true)}>
                 <Settings className="w-4 h-4 mr-1" /> Regras de Comissão
               </Button>
-              <Button onClick={fetchData} disabled={loading} title="Recarregar dados">
-                {loading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Loader2 className="w-4 h-4 mr-1" />}
+              <Button onClick={fetchData}>
+                {loading ? (
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-4 h-4 mr-1" />
+                )}
                 Atualizar
               </Button>
             </div>
@@ -1624,7 +1534,7 @@ export default function ComissoesPage() {
           {showVendasSem && (
             <CardContent className="overflow-x-auto">
               <table className="min-w-[1100px] w-full text-sm">
-                <thead className="sticky top-0 z-10 shadow-sm">
+                <thead>
                   <tr className="bg-gray-50">
                     <th className="p-2 text-left">Data</th>
                     <th className="p-2 text-left">Vendedor</th>
@@ -1638,16 +1548,13 @@ export default function ComissoesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {loading && (
-                    <tr><td colSpan={9} className="p-4 text-gray-500">Carregando…</td></tr>
-                  )}
-                  {!loading && vendasSemCom.length === 0 && (
+                  {vendasSemCom.length === 0 && (
                     <tr><td colSpan={9} className="p-4 text-gray-500">Sem pendências 🎉</td></tr>
                   )}
-                  {!loading && vendasSemCom.map((v, idx) => {
+                  {vendasSemCom.map((v) => {
                     const clienteId = v.lead_id || v.cliente_lead_id || "";
                     return (
-                      <tr key={v.id} className={`border-b ${idx % 2 ? "bg-gray-50/40" : ""}`}>
+                      <tr key={v.id} className="border-b">
                         <td className="p-2">{formatISODateBR(v.data_venda)}</td>
                         <td className="p-2">{userLabel(v.vendedor_id)}</td>
                         <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
@@ -1657,7 +1564,7 @@ export default function ComissoesPage() {
                         <td className="p-2">{v.tabela || "—"}</td>
                         <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
                         <td className="p-2">
-                          <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id} title="Gerar comissão desta venda">
+                          <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={genBusy === v.id}>
                             {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />} Gerar Comissão
                           </Button>
                         </td>
@@ -1693,12 +1600,7 @@ export default function ComissoesPage() {
                 <div className="flex flex-col gap-4 lg:flex-row lg:gap-6">
                   <div className="flex flex-col gap-2">
                     <Label>Data do Recibo</Label>
-                    <div className="flex items-center gap-2">
-                      <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
-                      <Button variant="outline" size="icon" title="Hoje" onClick={() => setReciboDate(toDateInput(new Date()))}>
-                        <CalendarIcon className="w-4 h-4" />
-                      </Button>
-                    </div>
+                    <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label>Imposto (%)</Label>
@@ -1707,7 +1609,6 @@ export default function ComissoesPage() {
                   <div className="flex items-end gap-3">
                     <Button onClick={downloadReceiptPDFPorData}><FileText className="w-4 h-4 mr-1" /> Recibo</Button>
                     <Button size="sm" variant="outline" onClick={() => setShowUnpaid((v) => !v)}>{showUnpaid ? "Ocultar" : "Expandir"}</Button>
-                    <Button size="sm" variant="outline" onClick={exportUnpaidCSV}><Download className="w-4 h-4 mr-1" /> CSV</Button>
                   </div>
                 </div>
               </div>
@@ -1719,17 +1620,14 @@ export default function ComissoesPage() {
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 pb-3">
                 <Input
                   placeholder="Buscar pelo nº da proposta"
-                  value={unpaidSearchInput}
-                  onChange={(e) => { setUnpaidSearchInput(e.target.value); }}
+                  value={unpaidPropSearch}
+                  onChange={(e) => { setUnpaidPropSearch(e.target.value); }}
                   className="w-[280px]"
                 />
-                <div className="ml-auto text-sm text-gray-700">
-                  Total (visível): <b>{BRL(totalAPagarVisivel)}</b>
-                </div>
               </div>
 
               <table className="min-w-[1200px] w-full text-sm">
-                <thead className="sticky top-0 z-10 shadow-sm">
+                <thead>
                   <tr className="bg-gray-50">
                     <th className="p-2 text-left">Data</th>
                     <th className="p-2 text-left">Vendedor</th>
@@ -1747,19 +1645,20 @@ export default function ComissoesPage() {
                 </thead>
                 <tbody>
                   {loading && (
-                    <tr><td colSpan={12} className="p-6">Carregando…</td></tr>
+                    <tr><td colSpan={12} className="p-6"><Loader2 className="animate-spin inline mr-2" /> Carregando...</td></tr>
                   )}
                   {!loading && rowsAPagar.length === 0 && (
                     <tr><td colSpan={12} className="p-6 text-gray-500">Sem registros.</td></tr>
                   )}
-                  {!loading && rowsAPagar.map((r, idx) => {
+                  {!loading && rowsAPagar.map((r) => {
                     const isConfirm = hasRegisteredButUnpaid(r.flow);
+                    // força as cores independente do tema
                     const chipClasses =
                       isConfirm
-                        ? "bg-[#1E293F] text-white hover:opacity-95"
-                        : "bg-[#A11C27] text-white hover:opacity-95";
+                        ? "!bg-[#1E293F] !text-white hover:!bg-[#1E293F]/90 focus-visible:!ring-[#1E293F]"
+                        : "!bg-[#A11C27] !text-white hover:!bg-[#A11C27]/90 focus-visible:!ring-[#A11C27]";
                     return (
-                      <tr key={r.id} className={`border-b hover:bg-gray-50 ${idx % 2 ? "bg-gray-50/40" : ""}`}>
+                      <tr key={r.id} className="border-b hover:bg-gray-50">
                         <td className="p-2">{r.data_venda ? formatISODateBR(r.data_venda) : "—"}</td>
                         <td className="p-2">{userLabel(r.vendedor_id)}</td>
                         <td className="p-2">{r.cliente_nome || "—"}</td>
@@ -1775,6 +1674,7 @@ export default function ComissoesPage() {
                           <div className="flex flex-col gap-2 sm:flex-row">
                             <Button
                               size="sm"
+                              variant="default"
                               className={chipClasses}
                               onClick={() => openPaymentFor(r)}
                               title={isConfirm ? "Existe pagamento registrado sem valor — confirmar" : "Registrar pagamento"}
@@ -1804,32 +1704,25 @@ export default function ComissoesPage() {
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:gap-4">
                 <Input
                   placeholder="Buscar por cliente ou nº proposta"
-                  value={paidSearchInput}
-                  onChange={(e) => { setPaidSearchInput(e.target.value); setPaidPage(1); }}
+                  value={paidSearch}
+                  onChange={(e) => { setPaidSearch(e.target.value); setPaidPage(1); }}
                   className="w-[280px]"
                 />
                 <div className="flex items-center gap-3">
                   <Button size="sm" variant="outline" onClick={() => setShowPaid((v) => !v)}>
                     {showPaid ? "Ocultar" : "Expandir"}
                   </Button>
-                  {isAdmin && (
-                    <Button size="sm" onClick={() => setOpenBulkRefund(true)} className="bg-[#A11C27] text-white hover:opacity-95" title="Estornar comissão">
-                      Estorno
-                    </Button>
-                  )}
-                  <Button size="sm" variant="outline" onClick={exportPaidCSV}><Download className="w-4 h-4 mr-1" /> CSV</Button>
+                  <Button size="sm" onClick={() => setOpenBulkRefund(true)} className="!bg-[#A11C27] !text-white hover:!bg-[#A11C27]/90">
+                    Estorno
+                  </Button>
                 </div>
               </div>
             </CardTitle>
           </CardHeader>
           {showPaid && (
             <CardContent className="overflow-x-auto">
-              <div className="flex items-center justify-between pb-3 text-sm text-gray-700">
-                <div>Mostrando {pagosPage.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageSize, pagosFiltered.length)} de {pagosFiltered.length}</div>
-                <div>Total (página): <b>{BRL(totalPagosVisivel)}</b> &nbsp; • &nbsp; Total (filtrado): <b>{BRL(totalPagosFiltrado)}</b></div>
-              </div>
               <table className="min-w-[1100px] w-full text-sm">
-                <thead className="sticky top-0 z-10 shadow-sm">
+                <thead>
                   <tr className="bg-gray-50">
                     <th className="p-2 text-left">Data Pagto</th>
                     <th className="p-2 text-left">Vendedor</th>
@@ -1844,8 +1737,8 @@ export default function ComissoesPage() {
                   {pagosPage.length === 0 && (
                     <tr><td colSpan={7} className="p-6 text-gray-500">Nenhum pagamento encontrado.</td></tr>
                   )}
-                  {pagosPage.map(({ flow, comm }, idx) => (
-                    <tr key={flow.id} className={`border-b ${idx % 2 ? "bg-gray-50/40" : ""}`}>
+                  {pagosPage.map(({ flow, comm }) => (
+                    <tr key={flow.id} className="border-b">
                       <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
                       <td className="p-2">{userLabel(comm.vendedor_id)}</td>
                       <td className="p-2">{comm.cliente_nome || "—"}</td>
@@ -1946,7 +1839,7 @@ export default function ComissoesPage() {
 
             <div className="border rounded-md max-h-[45vh] overflow-y-auto">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 sticky top-0 z-10">
+                <thead className="bg-gray-50 sticky top-0">
                   <tr>
                     <th className="p-2 text-left">Segmento</th>
                     <th className="p-2 text-left">Administradora</th>
@@ -1988,7 +1881,7 @@ export default function ComissoesPage() {
         {/* Pagamento (overlay) */}
         <Dialog open={openPay} onOpenChange={setOpenPay}>
           <DialogContent className="w-[98vw] max-w-[1400px]">
-            <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>Registrar pagamento ao vendedor</DialogHeader><DialogTitle /></DialogHeader>
             <Tabs defaultValue={payDefaultTab}>
               <TabsList className="mb-4">
                 <TabsTrigger value="selecionar">Selecionar parcelas</TabsTrigger>
@@ -1999,12 +1892,7 @@ export default function ComissoesPage() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div className="flex flex-col gap-2">
                     <Label>Data do pagamento</Label>
-                    <div className="flex items-center gap-2">
-                      <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
-                      <Button variant="outline" size="icon" title="Hoje" onClick={() => setPayDate(toDateInput(new Date()))}>
-                        <CalendarIcon className="w-4 h-4" />
-                      </Button>
-                    </div>
+                    <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label>Valor pago ao vendedor (opcional)</Label>
@@ -2043,7 +1931,7 @@ export default function ComissoesPage() {
 
                 <div className="overflow-x-auto">
                   <table className="min-w-[1300px] w-full text-sm">
-                    <thead className="sticky top-0 z-10 shadow-sm">
+                    <thead>
                       <tr className="bg-gray-50">
                         <th className="p-2 text-left">Sel.</th>
                         <th className="p-2 text-left">Mês</th>
@@ -2054,10 +1942,10 @@ export default function ComissoesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {payFlow.map((f, idx) => {
+                      {payFlow.map((f) => {
                         const isLocked = (f.valor_pago_vendedor ?? 0) > 0 || Boolean(f.recibo_vendedor_url) || Boolean(f.comprovante_pagto_url);
                         return (
-                          <tr key={f.id} className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""} ${idx % 2 ? "bg-gray-50/40" : ""}`}>
+                          <tr key={f.id} className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}>
                             <td className="p-2">
                               <Checkbox checked={!!paySelected[f.id]} onCheckedChange={(v) => setPaySelected((s) => ({ ...s, [f.id]: !!v }))} disabled={isLocked} />
                             </td>
@@ -2097,12 +1985,7 @@ export default function ComissoesPage() {
               </div>
               <div>
                 <Label>Data do estorno</Label>
-                <div className="flex items-center gap-2">
-                  <Input type="date" value={bulkRefundDate} onChange={(e) => setBulkRefundDate(e.target.value)} />
-                  <Button variant="outline" size="icon" title="Hoje" onClick={() => setBulkRefundDate(toDateInput(new Date()))}>
-                    <CalendarIcon className="w-4 h-4" />
-                  </Button>
-                </div>
+                <Input type="date" value={bulkRefundDate} onChange={(e) => setBulkRefundDate(e.target.value)} />
               </div>
             </div>
 
@@ -2114,7 +1997,7 @@ export default function ComissoesPage() {
                 </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-[700px] w-full text-sm">
-                    <thead className="sticky top-0 z-10 shadow-sm">
+                    <thead>
                       <tr className="bg-gray-50">
                         <th className="p-2 text-left">Parcela</th>
                         <th className="p-2 text-left">Data Pagto</th>
@@ -2122,8 +2005,8 @@ export default function ComissoesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {bulkRefundFound.flows.map((f, idx) => (
-                        <tr key={f.id} className={`border-b ${idx % 2 ? "bg-gray-50/40" : ""}`}>
+                      {bulkRefundFound.flows.map(f => (
+                        <tr key={f.id} className="border-b">
                           <td className="p-2">M{f.mes}</td>
                           <td className="p-2">{formatISODateBR(f.data_pagamento_vendedor)}</td>
                           <td className="p-2 text-right">{BRL(f.valor_pago_vendedor)}</td>
@@ -2160,7 +2043,7 @@ export default function ComissoesPage() {
 
             <DialogFooter className="pt-4">
               <Button variant="secondary" onClick={() => setOpenBulkRefund(false)}>Fechar</Button>
-              <Button disabled={!bulkRefundFound || busyRefund || !isAdmin} onClick={confirmBulkRefund} title={!isAdmin ? "Somente administradores" : "Confirmar estorno"}>
+              <Button disabled={!bulkRefundFound || busyRefund} onClick={confirmBulkRefund}>
                 {busyRefund ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Confirmar estorno
               </Button>
@@ -2193,12 +2076,7 @@ function UploadArea({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="flex flex-col gap-2">
           <Label>Data do pagamento</Label>
-          <div className="flex items-center gap-2">
-            <Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} />
-            <Button variant="outline" size="icon" title="Hoje" onClick={() => setDataPg(new Date().toISOString().slice(0,10))}>
-              <CalendarIcon className="w-4 h-4" />
-            </Button>
-          </div>
+          <Input type="date" value={dataPg} onChange={(e) => setDataPg(e.target.value)} />
         </div>
         <div className="flex flex-col gap-2">
           <Label>Valor pago ao vendedor (opcional)</Label>

@@ -22,10 +22,10 @@ const TermsLGPD               = React.lazy(() => import('./pages/TermsLGPD'));
 const AlterarSenha            = React.lazy(() => import('./pages/AlterarSenha'));
 const AdicionarAdministradora = React.lazy(() => import('./pages/AdicionarAdministradora'));
 
-// ✅ NOVO: Links Úteis
+// ✅ Links Úteis
 const LinksUteis              = React.lazy(() => import('./pages/LinksUteis'));
 
-// ✅ NOVO: Ranking dos Vendedores
+// ✅ Ranking dos Vendedores
 const RankingVendedores       = React.lazy(() => import('./pages/RankingVendedores'));
 
 function withSuspense(node: React.ReactNode) {
@@ -51,7 +51,7 @@ export const router = createBrowserRouter([
           // Home agora é Oportunidades
           { index: true, element: <Navigate to="/oportunidades" replace /> },
 
-          // 🔁 Redirect legacy: /leads -> /oportunidades
+          // 🔁 Redirect legado: /leads -> /oportunidades
           { path: 'leads', element: <Navigate to="/oportunidades" replace /> },
 
           { path: 'oportunidades',    element: withSuspense(<Oportunidades />) },
@@ -72,18 +72,23 @@ export const router = createBrowserRouter([
           { path: 'comissoes',         element: withSuspense(<Comissoes />) },
           { path: 'carteira',          element: withSuspense(<Carteira />) },
 
-          // ✅ NOVO: Ranking dos Vendedores
+          // ✅ Ranking dos Vendedores
           { path: 'ranking',           element: withSuspense(<RankingVendedores />) },
+
+          // 🔁 Redirects legados para o Ranking
+          { path: 'ranking-vendedores', element: <Navigate to="/ranking" replace /> },
+          { path: 'vendedores/ranking', element: <Navigate to="/ranking" replace /> },
+          { path: 'ranking-vendas',     element: <Navigate to="/ranking" replace /> },
 
           { path: 'usuarios',          element: withSuspense(<Usuarios />) },
           { path: 'gestao-de-grupos',  element: withSuspense(<GestaoDeGrupos />) },
           { path: 'parametros',        element: withSuspense(<Parametros />) },
           { path: 'lgpd',              element: withSuspense(<TermsLGPD />) },
 
-          // ✅ NOVO: Links Úteis
+          // ✅ Links Úteis
           { path: 'links',             element: withSuspense(<LinksUteis />) },
 
-          // 🔁 Redirects legados opcionais
+          // 🔁 Redirects legados opcionais para a nova guia de links
           { path: 'links-uteis',       element: <Navigate to="/links" replace /> },
           { path: 'linksuteis',        element: <Navigate to="/links" replace /> },
 

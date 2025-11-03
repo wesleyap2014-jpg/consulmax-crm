@@ -4,45 +4,83 @@ import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-// import { Badge } from "@/components/ui/badge"; // ❌ não existe no seu projeto
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Trophy, Crown, Sparkles, TrendingUp, Calendar as CalIcon } from "lucide-react";
-import clsx from "clsx";
+
+/* ====================== CONFIG (Consulmax) ====================== */
+const CONFIG = {
+  // Tabela de origem
+  DEALS_TABLE: "vendas",
+
+  // Filtro de período por coluna DATE
+  DEALS_CREATED_AT: "data_venda",       // usamos a sua coluna date
+  DEALS_USER_KEY: "vendedor_id",
+  DEALS_STATUS: "status",
+  STATUS_ENCARTEIRADA: ["encarteirada"],
+
+  // Valor
+  DEAL_VALUE_CANDIDATES: ["valor_venda"],
+
+  // Extras (opcionais)
+  DEALS_ENCARTEIRADA_AT: "encarteirada_em",
+  DEALS_NUMERO_PROPOSTA: "numero_proposta",
+  DEALS_SEGMENTO: "segmento",           // ou "produto" (ambos existem nos prints)
+  DEALS_ADMIN: "administradora",
+
+  // Usuários
+  USERS_TABLE: "users",
+  USER_ID: "id",
+  USER_NAME: "nome",
+  USER_EMAIL: "email",
+  USER_ROLE: "user_role",
+  USER_AVATAR_PATH_CANDIDATES: ["avatar_url", "photo_url"],
+  AVATARS_BUCKET: "avatars",
+};
+/* =============================================================== */
+
+/** -------- Avatar simples (fallback, sem dependências) -------- */
+type SimpleAvatarProps = {
+  src?: string | null;
+  alt?: string;
+  fallbackText?: string;
+  className?: string;
+  size?: number; // px
+};
+const SimpleAvatar: React.FC<SimpleAvatarProps> = ({ src, alt, fallbackText = "U", className = "", size = 32 }) => {
+  const [err, setErr] = useState(false);
+  const showFallback = err || !src;
+  return (
+    <div
+      className={`inline-flex items-center justify-center rounded-full overflow-hidden bg-white/80 text-[#1E293F] ${className}`}
+      style={{ width: size, height: size }}
+      title={alt}
+      aria-label={alt}
+    >
+      {showFallback ? (
+        <span className="text-xs font-semibold select-none">{fallbackText}</span>
+      ) : (
+        <img
+          src={src!}
+          alt={alt}
+          className="w-full h-full object-cover"
+          onError={() => setErr(true)}
+          loading="lazy"
+        />
+      )}
+    </div>
+  );
+};
 
 /** -------- Badge simples (fallback) -------- */
-type BadgeProps = React.HTMLAttributes<HTMLSpanElement> & {
-  variant?: "default" | "secondary";
-};
+type BadgeProps = React.HTMLAttributes<HTMLSpanElement> & { variant?: "default" | "secondary" };
 const Badge: React.FC<BadgeProps> = ({ variant = "default", className = "", ...rest }) => {
-  const base =
-    "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap";
-  const styles =
-    variant === "secondary"
-      ? "bg-slate-100 text-slate-800"
-      : "bg-[#A11C27] text-white";
+  const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap";
+  const styles = variant === "secondary" ? "bg-slate-100 text-slate-800" : "bg-[#A11C27] text-white";
   return <span className={`${base} ${styles} ${className}`} {...rest} />;
 };
 
-/* ====================== CONFIG ====================== */
-const CONFIG = {
-  DEALS_TABLE: "propostas",
-  DEALS_USER_KEY: "vendedor_id",
-  DEALS_CREATED_AT: "created_at",
-  DEALS_STATUS: "status",
-  STATUS_ENCARTEIRADA: ["encarteirada", "vendida", "fechada"],
-  DEAL_VALUE_CANDIDATES: ["valor", "valor_credito", "credito"],
-  USERS_TABLE: "users",
-  USER_ID: "id",
-  USER_NAME: "name",
-  USER_EMAIL: "email",
-  USER_AVATAR_PATH_CANDIDATES: ["avatarPath", "avatar_url", "avatar"],
-  AVATARS_BUCKET: "avatars",
-};
-/* ==================================================== */
-
-type RawUser = { id: string; name?: string | null; email?: string | null; [k: string]: any };
+/** -------- Utils -------- */
+type RawUser = Record<string, any>;
 type RawDeal = Record<string, any>;
-
 type RankRow = {
   userId: string;
   name: string;
@@ -64,10 +102,13 @@ function getInitials(name?: string, email?: string) {
 function formatCurrency(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
-function monthStartEnd(year: number, monthIndexZeroBased: number) {
-  const start = new Date(Date.UTC(year, monthIndexZeroBased, 1, 0, 0, 0));
-  const end = new Date(Date.UTC(year, monthIndexZeroBased + 1, 1, 0, 0, 0));
-  return { start, end };
+function ymStartEnd(year: number, monthIndexZero: number) {
+  const start = new Date(Date.UTC(year, monthIndexZero, 1, 0, 0, 0));
+  const end = new Date(Date.UTC(year, monthIndexZero + 1, 1, 0, 0, 0));
+  // Para filtro por coluna DATE, usamos 'YYYY-MM-DD'
+  const startStr = start.toISOString().slice(0, 10);
+  const endStr = end.toISOString().slice(0, 10);
+  return { start, end, startStr, endStr };
 }
 function pickFirstExisting(obj: any, keys: string[]): any {
   for (const k of keys) if (k in obj && obj[k] != null) return obj[k];
@@ -76,11 +117,9 @@ function pickFirstExisting(obj: any, keys: string[]): any {
 async function resolveAvatarUrl(user: RawUser): Promise<string | null> {
   const path = pickFirstExisting(user, CONFIG.USER_AVATAR_PATH_CANDIDATES);
   if (!path) return null;
-  if (typeof path === "string" && (path.startsWith("http://") || path.startsWith("https://"))) {
-    return path;
-  }
+  if (typeof path === "string" && (/^https?:\/\//i).test(path)) return path;
   try {
-    const { data } = supabase.storage.from(CONFIG.AVATARS_BUCKET).getPublicUrl(path);
+    const { data } = supabase.storage.from(CONFIG.AVATARS_BUCKET).getPublicUrl(String(path));
     return data?.publicUrl || null;
   } catch {
     return null;
@@ -99,12 +138,13 @@ function useAudio() {
   };
 }
 
+/** -------- Página -------- */
 export default function RankingVendedores() {
   const now = new Date();
   const [year, setYear] = useState(now.getUTCFullYear());
   const [month, setMonth] = useState(now.getUTCMonth());
   const [meta, setMeta] = useState<number>(100000);
-  const { start, end } = useMemo(() => monthStartEnd(year, month), [year, month]);
+  const { start, end, startStr, endStr } = useMemo(() => ymStartEnd(year, month), [year, month]);
 
   const [users, setUsers] = useState<RawUser[]>([]);
   const [deals, setDeals] = useState<RawDeal[]>([]);
@@ -112,86 +152,93 @@ export default function RankingVendedores() {
 
   const { playCash, playSuccess } = useAudio();
 
+  // Carregar usuários
   useEffect(() => {
-    let isCancelled = false;
+    let cancel = false;
     (async () => {
       const { data, error } = await supabase
         .from(CONFIG.USERS_TABLE)
         .select("*")
         .order(CONFIG.USER_NAME, { ascending: true });
       if (error) console.error(error);
-      if (!isCancelled) setUsers(data || []);
+      if (!cancel) setUsers(data || []);
     })();
-    return () => { isCancelled = true; };
+    return () => { cancel = true; };
   }, []);
 
+  // Carregar vendas do período (por data_venda)
   useEffect(() => {
-    let isCancelled = false;
+    let cancel = false;
     (async () => {
       setLoading(true);
       const { data, error } = await supabase
         .from(CONFIG.DEALS_TABLE)
         .select("*")
-        .gte(CONFIG.DEALS_CREATED_AT, start.toISOString())
-        .lt(CONFIG.DEALS_CREATED_AT, end.toISOString());
+        .gte(CONFIG.DEALS_CREATED_AT, startStr) // inclusive
+        .lt(CONFIG.DEALS_CREATED_AT, endStr);   // exclusivo
       if (error) console.error(error);
-      if (!isCancelled) setDeals(data || []);
+      if (!cancel) setDeals(data || []);
       setLoading(false);
     })();
-    return () => { isCancelled = true; };
-  }, [start.toISOString(), end.toISOString()]);
+    return () => { cancel = true; };
+  }, [startStr, endStr]);
 
+  // Realtime (insert/update no mês atual selecionado)
   useEffect(() => {
     const channel = supabase
       .channel("ranking-realtime")
-      .on("postgres_changes",
-        { event: "INSERT", schema: "public", table: CONFIG.DEALS_TABLE },
-        (payload) => {
-          const row = payload.new as RawDeal;
-          const createdAt = new Date(row[CONFIG.DEALS_CREATED_AT]);
-          if (createdAt >= start && createdAt < end) {
-            setDeals((prev) => [row, ...prev]);
-            playCash();
-          }
-        })
-      .on("postgres_changes",
-        { event: "UPDATE", schema: "public", table: CONFIG.DEALS_TABLE },
-        (payload) => {
-          const row = payload.new as RawDeal;
-          const createdAt = new Date(row[CONFIG.DEALS_CREATED_AT]);
-          if (!(createdAt >= start && createdAt < end)) return;
-          setDeals((prev) => {
-            const idx = prev.findIndex((d) => d.id === row.id);
-            const next = [...prev];
-            if (idx >= 0) next[idx] = row;
-            return next;
-          });
-          const status = String(row[CONFIG.DEALS_STATUS] ?? "").toLowerCase();
-          if (CONFIG.STATUS_ENCARTEIRADA.includes(status)) playSuccess();
-        })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: CONFIG.DEALS_TABLE }, (payload) => {
+        const row = payload.new as RawDeal;
+        const dateStr = String(row[CONFIG.DEALS_CREATED_AT] || "");
+        if (dateStr >= startStr && dateStr < endStr) {
+          setDeals((prev) => [row, ...prev]);
+          playCash();
+        }
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: CONFIG.DEALS_TABLE }, (payload) => {
+        const row = payload.new as RawDeal;
+        const dateStr = String(row[CONFIG.DEALS_CREATED_AT] || "");
+        if (!(dateStr >= startStr && dateStr < endStr)) return;
+        setDeals((prev) => {
+          const idx = prev.findIndex((d) => d.id === row.id);
+          const next = [...prev];
+          if (idx >= 0) next[idx] = row;
+          return next;
+        });
+        const status = String(row[CONFIG.DEALS_STATUS] ?? "").toLowerCase();
+        if (CONFIG.STATUS_ENCARTEIRADA.includes(status)) playSuccess();
+      })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [start.getTime(), end.getTime(), playCash, playSuccess]);
 
+    return () => { supabase.removeChannel(channel); };
+  }, [startStr, endStr, playCash, playSuccess]);
+
+  // Ranking
   const ranking: RankRow[] = useMemo(() => {
     const byUser: Record<string, RankRow> = {};
-    const valueKey = deals.length
-      ? CONFIG.DEAL_VALUE_CANDIDATES.find((k) => k in deals[0]) || CONFIG.DEAL_VALUE_CANDIDATES[0]
-      : CONFIG.DEAL_VALUE_CANDIDATES[0];
+    const valueKey = CONFIG.DEAL_VALUE_CANDIDATES[0];
 
     for (const d of deals) {
       const uid = d[CONFIG.DEALS_USER_KEY];
       if (!uid) continue;
+
       const u = users.find((x) => x[CONFIG.USER_ID] === uid);
       const name = (u?.[CONFIG.USER_NAME] as string) || "—";
       const email = (u?.[CONFIG.USER_EMAIL] as string) || undefined;
 
       if (!byUser[uid]) {
         byUser[uid] = {
-          userId: uid, name, email, avatarUrl: undefined,
-          vendasCount: 0, encarteiradasCount: 0, producao: 0, ticketMedio: 0,
+          userId: uid,
+          name,
+          email,
+          avatarUrl: undefined,
+          vendasCount: 0,
+          encarteiradasCount: 0,
+          producao: 0,
+          ticketMedio: 0,
         };
       }
+
       const status = String(d[CONFIG.DEALS_STATUS] ?? "").toLowerCase();
       const val = Number(d[valueKey] ?? 0) || 0;
 
@@ -208,21 +255,23 @@ export default function RankingVendedores() {
       if (b.encarteiradasCount !== a.encarteiradasCount) return b.encarteiradasCount - a.encarteiradasCount;
       return b.vendasCount - a.vendasCount;
     });
+
     return rows;
   }, [deals, users]);
 
+  // Avatares
   const [avatars, setAvatars] = useState<Record<string, string | null>>({});
   useEffect(() => {
-    let isCancelled = false;
+    let cancel = false;
     (async () => {
       const map: Record<string, string | null> = {};
       for (const u of users) {
         const url = await resolveAvatarUrl(u);
-        map[u.id] = url || null;
+        map[u[CONFIG.USER_ID]] = url || null;
       }
-      if (!isCancelled) setAvatars(map);
+      if (!cancel) setAvatars(map);
     })();
-    return () => { isCancelled = true; };
+    return () => { cancel = true; };
   }, [users]);
 
   const top3 = ranking.slice(0, 3);
@@ -232,18 +281,20 @@ export default function RankingVendedores() {
 
   return (
     <div className="p-4 md:p-6 animate-in fade-in slide-in-from-bottom-2">
+      {/* BG liquid glass */}
       <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute -top-16 -left-24 size-[420px] rounded-full blur-3xl opacity-25 bg-[#A11C27]" />
-        <div className="absolute top-10 right-10 size-[360px] rounded-full blur-3xl opacity-25 bg-[#1E293F]" />
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 size-[260px] rounded-full blur-3xl opacity-30 bg-[#E0CE8C]" />
+        <div className="absolute -top-16 -left-24 w-[420px] h-[420px] rounded-full blur-3xl opacity-25 bg-[#A11C27]" />
+        <div className="absolute top-10 right-10 w-[360px] h-[360px] rounded-full blur-3xl opacity-25 bg-[#1E293F]" />
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-[260px] h-[260px] rounded-full blur-3xl opacity-30 bg-[#E0CE8C]" />
       </div>
 
+      {/* Header / filtros */}
       <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-2">
             <Trophy className="h-7 w-7 text-yellow-400" />
             Ranking dos Vendedores
-            <Badge className="ml-2"> {months[month]}/{year} </Badge>
+            <Badge className="ml-2">{months[month]}/{year}</Badge>
           </h1>
           <p className="text-sm text-muted-foreground">
             Produção mensal, encarteiradas e ticket médio — com pódio e tempo real.
@@ -306,7 +357,7 @@ export default function RankingVendedores() {
           {top3.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               {top3.map((r, idx) => {
-                const height = Math.max(35, Math.round((r.producao / maxProducao) * 100));
+                const heightPct = Math.max(35, Math.round((r.producao / maxProducao) * 100));
                 const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉";
                 const bg =
                   idx === 0 ? "from-yellow-400/70 to-amber-600/70"
@@ -317,22 +368,20 @@ export default function RankingVendedores() {
                 return (
                   <div
                     key={r.userId}
-                    className={clsx(
-                      "relative rounded-2xl p-4 pb-6 text-center border",
-                      "bg-gradient-to-br", bg, "shadow-lg overflow-hidden"
-                    )}
+                    className={`relative rounded-2xl p-4 pb-6 text-center border bg-gradient-to-br ${bg} shadow-lg overflow-hidden`}
                   >
                     <div className="absolute -right-6 -top-6 text-5xl opacity-40 rotate-12 select-none">
                       {medal}
                     </div>
 
                     <div className="flex flex-col items-center gap-3">
-                      <Avatar className="size-16 ring-4 ring-white/70 shadow-md">
-                        <AvatarImage src={avatar || undefined} />
-                        <AvatarFallback className="bg-white/80 text-[#1E293F] font-semibold">
-                          {getInitials(r.name, r.email)}
-                        </AvatarFallback>
-                      </Avatar>
+                      <SimpleAvatar
+                        src={avatar || undefined}
+                        alt={r.name}
+                        fallbackText={getInitials(r.name, r.email)}
+                        className="ring-4 ring-white/70 shadow-md"
+                        size={64}
+                      />
 
                       <div className="font-semibold">{r.name}</div>
                       <div className="text-sm text-muted-foreground -mt-2">
@@ -342,7 +391,7 @@ export default function RankingVendedores() {
                       <div className="w-full h-24 flex items-end justify-center">
                         <div
                           className="w-16 rounded-t-2xl bg-white/90 border shadow-inner transition-all duration-700"
-                          style={{ height: `${height}%` }}
+                          style={{ height: `${heightPct}%` }}
                           title={formatCurrency(r.producao)}
                         />
                       </div>
@@ -376,7 +425,7 @@ export default function RankingVendedores() {
             <div className="p-10 text-center text-muted-foreground">Sem dados neste período.</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px]">
+              <table className="w-full min-w-[760px]">
                 <thead>
                   <tr className="text-left text-sm text-muted-foreground">
                     <th className="py-3">#</th>
@@ -396,20 +445,18 @@ export default function RankingVendedores() {
                     return (
                       <tr
                         key={r.userId}
-                        className={clsx(
-                          "border-t hover:bg-white/60 transition-colors",
-                          i < 3 && "bg-gradient-to-r from-transparent via-amber-50/40 to-transparent"
-                        )}
+                        className={`border-t hover:bg-white/60 transition-colors ${i < 3 ? "bg-gradient-to-r from-transparent via-amber-50/40 to-transparent" : ""}`}
                       >
                         <td className="py-3 px-2 font-semibold">{i + 1}</td>
                         <td className="py-3 px-2">
                           <div className="flex items-center gap-3">
-                            <Avatar className="size-8 ring-2 ring-white">
-                              <AvatarImage src={avatar || undefined} />
-                              <AvatarFallback className="bg-white/80 text-[#1E293F]">
-                                {getInitials(r.name, r.email)}
-                              </AvatarFallback>
-                            </Avatar>
+                            <SimpleAvatar
+                              src={avatar || undefined}
+                              alt={r.name}
+                              fallbackText={getInitials(r.name, r.email)}
+                              className="ring-2 ring-white"
+                              size={32}
+                            />
                             <div>
                               <div className="font-medium">{r.name}</div>
                               <div className="text-xs text-muted-foreground">{r.email}</div>
@@ -425,10 +472,7 @@ export default function RankingVendedores() {
                         <td className="py-3 px-2">
                           <div className="h-3 rounded-full bg-slate-200 overflow-hidden">
                             <div
-                              className={clsx(
-                                "h-full rounded-full transition-all",
-                                pct >= 100 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500"
-                              )}
+                              className={`h-full rounded-full transition-all ${pct >= 100 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500"}`}
                               style={{ width: `${pct}%` }}
                               title={`${pct}% da meta`}
                             />

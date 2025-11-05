@@ -1,5 +1,5 @@
 // src/pages/GestaoDeGrupos.tsx
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,13 +16,15 @@ import {
   Settings,
   X,
   Target,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 
 /* =========================================================
    TIPOS
    ========================================================= */
 
-type Administradora = "Embracon" | "HS" | string;
+type Administradora = "Embracon" | "HS" | "Maggi" | string;
 
 type SegmentoUI =
   | "Automóvel"
@@ -144,6 +146,7 @@ function normalizeAdmin(raw?: string | null): string {
     .trim();
   if (cleaned.includes("embracon")) return "Embracon";
   if (cleaned.includes("hs")) return "HS";
+  if (cleaned.includes("maggi")) return "Maggi";
   return (raw ?? "").toString().trim();
 }
 /** pega somente o número-base do grupo (antes de /, -, espaço) */
@@ -203,7 +206,14 @@ function referenciaPorAdministradora(params: {
   for (const premio of premios) {
     const p5 = sanitizeBilhete5(premio);
 
-    if (administradora.toLowerCase() === "embracon") {
+    // Maggi — regra solicitada: usar o último milhar do 1º prêmio (p5),
+    // desprezando a dezena de milhar, e reduzir pelos participantes até caber.
+    if (normalizeAdmin(administradora).toLowerCase() === "maggi") {
+      const milhar = parseInt(p5.slice(-4)); // ex.: 76478 => 6478
+      return reduceByCap(milhar, participantes);
+    }
+
+    if (normalizeAdmin(administradora).toLowerCase() === "embracon") {
       if (participantes <= 1000) {
         const tentativa = tryTresUltimosOuInicio(p5, participantes);
         if (tentativa != null) return tentativa;
@@ -219,7 +229,7 @@ function referenciaPorAdministradora(params: {
       }
     }
 
-    if (administradora.toLowerCase() === "hs") {
+    if (normalizeAdmin(administradora).toLowerCase() === "hs") {
       const quatro = parseInt(p5.slice(-4));
       return reduceByCap(quatro, participantes);
     }
@@ -307,7 +317,7 @@ function OverlayLoteria({
             <Percent className="h-5 w-5" />
             Informar resultados – Loteria Federal
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2">
+          <Button variant="secondary" onClick={onClose} className="gap-2 inline-flex items-center">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -510,7 +520,7 @@ function OverlayAssembleias({
           <h2 className="text-xl font-semibold flex items-center gap-2">
             <Settings className="h-5 w-5" /> Informar resultados da Assembleia
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2">
+          <Button variant="secondary" onClick={onClose} className="gap-2 inline-flex items-center">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -600,9 +610,9 @@ function OverlayAssembleias({
               )}
 
               <div className="flex justify-end pt-3">
-                <Button disabled={!podeSalvar || loading} onClick={handleSave}>
+                <Button disabled={!podeSalvar || loading} onClick={handleSave} className="inline-flex items-center gap-2">
                   {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  <Save className="h-4 w-4 mr-2" /> Salvar Resultados
+                  <Save className="h-4 w-4" /> Salvar Resultados
                 </Button>
               </div>
             </CardContent>
@@ -670,147 +680,142 @@ function OverlayOfertaLance({
         gruposDigits.add(normalizeGroupDigits(g.codigo));
       });
 
-    // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos)
-type VendasRow = { [key: string]: any };
+      // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos)
+      type VendasRow = { [key: string]: any };
 
-const { data: vds, error } = await supabase
-  .from("vendas")
-  .select("*") // pega todas as colunas; detectamos as chaves dinamicamente
-  .eq("status", "encarteirada")
-  .eq("contemplada", false)
-  .in("grupo", Array.from(gruposDigits));
+      const { data: vds, error } = await supabase
+        .from("vendas")
+        .select("*")
+        .eq("status", "encarteirada")
+        .eq("contemplada", false)
+        .in("grupo", Array.from(gruposDigits));
 
-if (error) throw error;
+      if (error) throw error;
 
-// Detecta dinamicamente as chaves de lead e de descrição existentes na tabela
-const sample: VendasRow = (vds ?? [])[0] ?? {};
-const leadCandidates = ["lead_id", "cliente_id", "id_lead", "id_cliente", "leadId", "clienteId"];
-const descCandidates = [
-  "vendas_descrecao",
-  "vendas_descricao",
-  "descricao",
-  "descrição",
-  "descricao_venda",
-  "descricaoVenda",
-  "venda_descricao",
-  "obs",
-  "observacao",
-  "observação",
-];
+      // Detecta dinamicamente as chaves de lead e de descrição existentes na tabela
+      const sample: VendasRow = (vds ?? [])[0] ?? {};
+      const leadCandidates = ["lead_id", "cliente_id", "id_lead", "id_cliente", "leadId", "clienteId"];
+      const descCandidates = [
+        "vendas_descrecao",
+        "vendas_descricao",
+        "descricao",
+        "descrição",
+        "descricao_venda",
+        "descricaoVenda",
+        "venda_descricao",
+        "obs",
+        "observacao",
+        "observação",
+      ];
 
-const leadKey: string | null = leadCandidates.find((k) => k in sample) ?? null;
-const descKey: string | null = descCandidates.find((k) => k in sample) ?? null;
+      const leadKey: string | null = leadCandidates.find((k) => k in sample) ?? null;
+      const descKey: string | null = descCandidates.find((k) => k in sample) ?? null;
 
-// 2b) resolver nomes dos leads sem relationship (join manual via IN)
-let nomesById = new Map<string, string>();
-if (leadKey) {
-  const leadIds = Array.from(
-    new Set(
-      (vds ?? [])
-        .map((v: VendasRow) => v?.[leadKey!])
-        .filter((x: any) => x !== null && x !== undefined)
-    )
-  );
+      // 2b) resolver nomes dos leads sem relationship (join manual via IN)
+      let nomesById = new Map<string, string>();
+      if (leadKey) {
+        const leadIds = Array.from(
+          new Set(
+            (vds ?? [])
+              .map((v: VendasRow) => v?.[leadKey!])
+              .filter((x: any) => x !== null && x !== undefined)
+          )
+        );
 
-  if (leadIds.length > 0) {
-    const { data: leadsData, error: errLeads } = await supabase
-      .from("leads")
-      .select("id, nome")
-      .in("id", leadIds);
+        if (leadIds.length > 0) {
+          const { data: leadsData, error: errLeads } = await supabase
+            .from("leads")
+            .select("id, nome")
+            .in("id", leadIds);
 
-    if (errLeads) throw errLeads;
+          if (errLeads) throw errLeads;
 
-    (leadsData ?? []).forEach((l: any) => {
-      nomesById.set(String(l.id), l.nome ?? "");
-    });
-  }
-}
+          (leadsData ?? []).forEach((l: any) => {
+            nomesById.set(String(l.id), l.nome ?? "");
+          });
+        }
+      }
 
-// 3) montar linhas por cota
-const out: OfertaRow[] = [];
-(vds ?? []).forEach((v: VendasRow) => {
-  const adm = normalizeAdmin(v.administradora);
-  const grpDigits = normalizeGroupDigits(v.grupo);
-  const k = keyDigits(adm, grpDigits);
-  const g = mapByKey.get(k);
-  if (!g) return; // ignora venda de grupo cuja assembleia != data
+      // 3) montar linhas por cota
+      const out: OfertaRow[] = [];
+      (vds ?? []).forEach((v: any) => {
+        const adm = normalizeAdmin(v.administradora);
+        const grpDigits = normalizeGroupDigits(v.grupo);
+        const k = keyDigits(adm, grpDigits);
+        const g = mapByKey.get(k);
+        if (!g) return; // ignora venda de grupo cuja assembleia != data
 
-  const asm = lastAsmByGroup.get(g.id);
-  const med = asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
-  const contem =
-    (asm?.fixed25_deliveries || 0) +
-    (asm?.fixed50_deliveries || 0) +
-    (asm?.ll_deliveries || 0);
+        const asm = lastAsmByGroup.get(g.id);
+        const med = asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
+        const contem =
+          (asm?.fixed25_deliveries || 0) +
+          (asm?.fixed50_deliveries || 0) +
+          (asm?.ll_deliveries || 0);
 
-  const bilhetes = g.prox_sorteio ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null : null;
-  const ref = referenciaPorAdministradora({
-    administradora: g.administradora,
-    participantes: g.participantes,
-    bilhetes,
-  });
+        const bilhetes = g.prox_sorteio ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null : null;
+        const ref = referenciaPorAdministradora({
+          administradora: g.administradora,
+          participantes: g.participantes,
+          bilhetes,
+        });
 
-  const leadVal = leadKey ? v?.[leadKey] : null;
-  const cliente = leadVal != null ? (nomesById.get(String(leadVal)) ?? null) : null;
+        const leadVal = leadKey ? v?.[leadKey] : null;
+        const cliente = leadVal != null ? (nomesById.get(String(leadVal)) ?? null) : null;
 
-  const descVal = descKey ? v?.[descKey] : null;
-  const descricao =
-    descVal ??
-    v?.vendas_descrecao ??
-    v?.vendas_descricao ??
-    v?.descricao ??
-    null;
+        const descVal = descKey ? v?.[descKey] : null;
+        const descricao =
+          descVal ??
+          v?.vendas_descrecao ??
+          v?.vendas_descricao ??
+          v?.descricao ??
+          null;
 
-  out.push({
-    administradora: g.administradora,
-    grupo: normalizeGroupDigits(g.codigo),
-    cota: v.cota != null ? String(v.cota) : null,
-    referencia: ref,
-    participantes: g.participantes,
-    mediana: med,
-    contemplados: contem,
-    cliente,
-    descricao,
-  });
-});
+        out.push({
+          administradora: g.administradora,
+          grupo: normalizeGroupDigits(g.codigo),
+          cota: v.cota != null ? String(v.cota) : null,
+          referencia: ref,
+          participantes: g.participantes,
+          mediana: med,
+          contemplados: contem,
+          cliente,
+          descricao,
+        });
+      });
 
-      // 4) ordenação estável
-      // 4) ordenação: 1º Cliente (A–Z), depois Administradora, Grupo, Cota
-function normName(s?: string | null) {
-  return stripAccents(String(s ?? "")).toLowerCase().trim();
-}
-function cmpNumLike(a: string | number | null, b: string | number | null) {
-  const sa = String(a ?? "");
-  const sb = String(b ?? "");
-  const na = parseInt(sa.replace(/\D+/g, ""), 10);
-  const nb = parseInt(sb.replace(/\D+/g, ""), 10);
-  const aIsNum = !Number.isNaN(na);
-  const bIsNum = !Number.isNaN(nb);
-  if (aIsNum && bIsNum && na !== nb) return na - nb;
-  return sa.localeCompare(sb);
-}
+      // 4) ordenação com prioridade Cliente, depois Administradora, Grupo, Cota
+      function normName(s?: string | null) {
+        return stripAccents(String(s ?? "")).toLowerCase().trim();
+      }
+      function cmpNumLike(a: string | number | null, b: string | number | null) {
+        const sa = String(a ?? "");
+        const sb = String(b ?? "");
+        const na = parseInt(sa.replace(/\D+/g, ""), 10);
+        const nb = parseInt(sb.replace(/\D+/g, ""), 10);
+        const aIsNum = !Number.isNaN(na);
+        const bIsNum = !Number.isNaN(nb);
+        if (aIsNum && bIsNum && na !== nb) return na - nb;
+        return sa.localeCompare(sb);
+      }
 
-out.sort((a, b) => {
-  // 1) Cliente (nomes vazios vão para o fim)
-  const ca = normName(a.cliente);
-  const cb = normName(b.cliente);
-  if (ca && cb) {
-    const c = ca.localeCompare(cb);
-    if (c !== 0) return c;
-  } else if (ca && !cb) return -1;
-  else if (!ca && cb) return 1;
+      out.sort((a, b) => {
+        const ca = normName(a.cliente);
+        const cb = normName(b.cliente);
+        if (ca && cb) {
+          const c = ca.localeCompare(cb);
+          if (c !== 0) return c;
+        } else if (ca && !cb) return -1;
+        else if (!ca && cb) return 1;
 
-  // 2) Administradora
-  const adm = String(a.administradora).localeCompare(String(b.administradora));
-  if (adm !== 0) return adm;
+        const adm = String(a.administradora).localeCompare(String(b.administradora));
+        if (adm !== 0) return adm;
 
-  // 3) Grupo (numérico quando possível)
-  const grp = cmpNumLike(a.grupo, b.grupo);
-  if (grp !== 0) return grp;
+        const grp = cmpNumLike(a.grupo, b.grupo);
+        if (grp !== 0) return grp;
 
-  // 4) Cota (numérica quando possível)
-  return cmpNumLike(a.cota, b.cota);
-});
-      
+        return cmpNumLike(a.cota, b.cota);
+      });
+
       setLinhas(out);
     } catch (e: any) {
       console.error(e);
@@ -821,116 +826,166 @@ out.sort((a, b) => {
   };
 
   const exportarPDF = () => {
-  const body = document.getElementById("oferta-grid-body");
-  if (!body) return;
+    const body = document.getElementById("oferta-grid-body");
+    if (!body) return;
 
-  const total = linhas.length;
-  const ymd = toYMD(dataAsm);
-  const dataLegivel = formatBR(ymd);
-  const geradoEm = new Date().toLocaleString("pt-BR");
+    const total = linhas.length;
+    const ymd = toYMD(dataAsm);
+    const dataLegivel = formatBR(ymd);
+    const geradoEm = new Date().toLocaleString("pt-BR");
 
-  const win = window.open("", "_blank", "width=1200,height=800");
-  if (!win) return;
+    const win = window.open("", "_blank", "width=1200,height=800");
+    if (!win) return;
 
-  const css = `<style>
-    @page { size: A4 landscape; margin: 12mm; }
-    @media print {
-      html, body { height: auto; }
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      thead { display: table-header-group; }
-      tr { page-break-inside: avoid; }
-      .footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 11px; color: #666; }
-    }
+    const css = `<style>
+      @page { size: A4 landscape; margin: 12mm; }
+      @media print {
+        html, body { height: auto; }
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        thead { display: table-header-group; }
+        tr { page-break-inside: avoid; }
+        .footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 11px; color: #666; }
+      }
 
-    body{font-family: Arial, Helvetica, sans-serif; padding: 24px}
-    h1{margin: 0 0 12px; font-size: 26px}
-    .meta{margin-bottom: 8px; font-size: 12px; color: #666}
+      :root {
+        --rubi: #A11C27;
+        --navy: #1E293F;
+        --gold: #E0CE8C;
+      }
 
-    table{width:100%; border-collapse: collapse; margin-top: 12px; table-layout: fixed}
-    th,td{border:1px solid #e6e6e6; padding: 7px 8px; font-size: 12px; vertical-align: top; word-wrap: break-word}
-    th{text-align:left; background:#fafafa; border-color:#e1e1e1}
+      body{font-family: Arial, Helvetica, sans-serif; padding: 24px}
+      .header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 10px; }
+      .brand { display:flex; align-items:center; gap:14px; }
+      .brand h1 { margin:0; font-size: 22px; color: var(--navy); }
+      .meta { margin-top: 2px; font-size: 12px; color: #666 }
 
-    /* Zebra na linha principal de cada registro (1ª linha; a 2ª é a descrição) */
-    tbody tr:nth-child(4n+1),
-    tbody tr:nth-child(4n+3) { background:#fbfbfb; }
-    /* Observação: como cada cota tem 2 linhas, o padrão 2x2 mantém o par junto. */
+      .logo { height: 34px; }
 
-    /* Colunas: larguras e alinhamento numérico */
-    th:nth-child(1), td:nth-child(1) { width: 15%; } /* Administradora */
-    th:nth-child(2), td:nth-child(2) { width: 10%; } /* Grupo */
-    th:nth-child(3), td:nth-child(3) { width: 8%;  } /* Cota */
-    th:nth-child(4), td:nth-child(4) { width: 20%; } /* Cliente */
-    th:nth-child(5), td:nth-child(5) { width: 10%; text-align: right; } /* Referência */
-    th:nth-child(6), td:nth-child(6) { width: 10%; text-align: right; } /* Participantes */
-    th:nth-child(7), td:nth-child(7) { width: 10%; text-align: right; } /* Mediana */
-    th:nth-child(8), td:nth-child(8) { width: 10%; text-align: right; } /* Contemplados */
+      .bar {
+        height: 4px;
+        background: linear-gradient(90deg, var(--rubi), var(--navy));
+        border-radius: 4px;
+        margin: 10px 0 6px;
+      }
 
-    /* Linha de descrição (segunda linha) com estilo sutil e sem borda superior pesada */
-    .descricao-row td { font-size: 11px; color:#444; border-top-color:#f0f0f0; }
-    .descricao-label { font-weight:600; color:#111; margin-right:6px; }
+      table{width:100%; border-collapse: collapse; margin-top: 6px; table-layout: fixed}
+      th,td{border:1px solid #e6e6e6; padding: 7px 8px; font-size: 12px; vertical-align: top; word-wrap: break-word}
+      th{text-align:left; background:#fafafa; border-color:#e1e1e1}
 
-    /* Espaço extra entre blocos (após a linha de descrição) */
-    tbody tr.descricao-row td { padding-bottom: 10px; }
-  </style>`;
+      /* Zebradas 2x2 (mantém par "descrição" junto) */
+      tbody tr:nth-child(4n+1),
+      tbody tr:nth-child(4n+3) { background:#fbfbfb; }
 
-  // Monta a tabela reaproveitando o corpo atual
-  const tableHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Administradora</th>
-          <th>Grupo</th>
-          <th>Cota</th>
-          <th>Cliente</th>
-          <th>Referência</th>
-          <th>Participantes</th>
-          <th>Mediana</th>
-          <th>Contemplados</th>
-        </tr>
-      </thead>
-      <tbody>${body.innerHTML}</tbody>
-    </table>
-  `;
+      th:nth-child(1), td:nth-child(1) { width: 15%; } /* Administradora */
+      th:nth-child(2), td:nth-child(2) { width: 10%; } /* Grupo */
+      th:nth-child(3), td:nth-child(3) { width: 8%;  } /* Cota */
+      th:nth-child(4), td:nth-child(4) { width: 20%; } /* Cliente */
+      th:nth-child(5), td:nth-child(5) { width: 10%; text-align: right; } /* Referência */
+      th:nth-child(6), td:nth-child(6) { width: 10%; text-align: right; } /* Participantes */
+      th:nth-child(7), td:nth-child(7) { width: 10%; text-align: right; } /* Mediana */
+      th:nth-child(8), td:nth-child(8) { width: 10%; text-align: right; } /* Contemplados */
 
-  win.document.write(
-    `<html>
-      <head><title>Oferta de Lance</title>${css}</head>
-      <body>
-        <h1>Oferta de Lance</h1>
-        <div class="meta">Data da Assembleia: ${dataLegivel} • Total de cotas: ${total}</div>
-        ${tableHTML}
-        <div class="footer">Gerado em ${geradoEm}</div>
+      .descricao-row td { font-size: 11px; color:#444; border-top-color:#f0f0f0; }
+      .descricao-label { font-weight:600; color:#111; margin-right:6px; }
+    </style>`;
 
-        <script>
-          // 1) Marca a segunda linha (descrição) com classe p/ estilização
-          Array.from(document.querySelectorAll("tbody tr")).forEach(function(tr, idx){
-            // linha de descrição são as pares do par de cada item (no HTML atual vem exatamente assim)
-            if ((idx % 2) === 1) tr.classList.add("descricao-row");
-          });
+    const tableHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Administradora</th>
+            <th>Grupo</th>
+            <th>Cota</th>
+            <th>Cliente</th>
+            <th>Referência</th>
+            <th>Participantes</th>
+            <th>Mediana</th>
+            <th>Contemplados</th>
+          </tr>
+        </thead>
+        <tbody>${body.innerHTML}</tbody>
+      </table>
+    `;
 
-          // 2) Oculta "Descrição: —" (linhas sem conteúdo útil)
-          Array.from(document.querySelectorAll("tbody tr.descricao-row td")).forEach(function(td){
-            var txt = (td.textContent || "").trim();
-            // esconde se a célula começa com "Descrição:" e termina em "—"
-            if (/^Descrição:\\s*—\\s*$/.test(txt)) {
-              td.parentElement.style.display = "none";
-            } else {
-              // dá um destaque leve ao rótulo "Descrição:"
-              td.innerHTML = td.innerHTML.replace(/^\\s*Descrição:\\s*/,'<span class="descricao-label">Descrição:</span>');
-            }
-          });
+    win.document.write(
+      `<html>
+        <head><title>Oferta de Lance</title>${css}</head>
+        <body>
+          <div class="header">
+            <div class="brand">
+              <img class="logo" src="/logo-consulmax.png" alt="Consulmax" />
+              <div>
+                <h1>Oferta de Lance</h1>
+                <div class="meta">Data da Assembleia: ${dataLegivel} • Total de cotas: ${total}</div>
+              </div>
+            </div>
+            <div class="meta">Gerado em ${geradoEm}</div>
+          </div>
+          <div class="bar"></div>
+          ${tableHTML}
+          <div class="footer">Consulmax – Maximize as suas conquistas.</div>
 
-          // 3) Só imprime quando renderizado
-          window.addEventListener('load', function () {
-            window.print();
-            setTimeout(function(){ window.close(); }, 300);
-          });
-        </script>
-      </body>
-    </html>`
-  );
-  win.document.close();
-};
+          <script>
+            Array.from(document.querySelectorAll("tbody tr")).forEach(function(tr, idx){
+              if ((idx % 2) === 1) tr.classList.add("descricao-row");
+            });
+            Array.from(document.querySelectorAll("tbody tr.descricao-row td")).forEach(function(td){
+              var txt = (td.textContent || "").trim();
+              if (/^Descrição:\\s*—\\s*$/.test(txt)) {
+                td.parentElement.style.display = "none";
+              } else {
+                td.innerHTML = td.innerHTML.replace(/^\\s*Descrição:\\s*/,'<span class="descricao-label">Descrição:</span>');
+              }
+            });
+            window.addEventListener('load', function () {
+              window.print();
+              setTimeout(function(){ window.close(); }, 300);
+            });
+          </script>
+        </body>
+      </html>`
+    );
+    win.document.close();
+  };
+
+  const exportarCSV = () => {
+    if (!linhas.length) return;
+    const header = [
+      "Administradora",
+      "Grupo",
+      "Cota",
+      "Cliente",
+      "Referência",
+      "Participantes",
+      "Mediana(%)",
+      "Contemplados",
+      "Descrição"
+    ];
+    const rows = linhas.map(o => [
+      o.administradora,
+      o.grupo,
+      o.cota ?? "",
+      (o.cliente ?? "").replaceAll('"', '""'),
+      o.referencia ?? "",
+      o.participantes ?? "",
+      o.mediana != null ? Number(o.mediana).toFixed(4).replace(".", ",") : "",
+      o.contemplados ?? "",
+      (o.descricao ?? "").replaceAll('"', '""')
+    ]);
+
+    const csv = [header, ...rows]
+      .map(cols => cols.map(c => `"${String(c)}"`).join(";"))
+      .join("\r\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const dataLegivel = formatBR(toYMD(dataAsm)) || "sem-data";
+    a.download = `oferta_lance_${dataLegivel}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const total = linhas.length;
 
@@ -941,7 +996,7 @@ out.sort((a, b) => {
           <h2 className="text-xl font-semibold flex items-center gap-2">
             <Target className="h-5 w-5" /> Oferta de Lance
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2">
+          <Button variant="secondary" onClick={onClose} className="gap-2 inline-flex items-center">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -953,12 +1008,15 @@ out.sort((a, b) => {
               <Input type="date" value={dataAsm} onChange={(e) => setDataAsm(e.target.value)} />
             </div>
             <div className="flex gap-2">
-              <Button onClick={listar} disabled={!dataAsm || loading}>
+              <Button onClick={listar} disabled={!dataAsm || loading} className="inline-flex items-center gap-2">
                 {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Listar
               </Button>
-              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0}>
+              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="inline-flex items-center gap-2">
                 Exportar PDF
+              </Button>
+              <Button variant="secondary" onClick={exportarCSV} disabled={total === 0} className="inline-flex items-center gap-2">
+                Exportar CSV
               </Button>
             </div>
           </div>
@@ -976,7 +1034,8 @@ out.sort((a, b) => {
             )}
           </div>
 
-          <div className="rounded-xl border overflow-auto">
+          {/* Linhas zebradas e rolagem no grid */}
+          <div className="rounded-xl border overflow-auto max-h-[60vh]">
             <table className="min-w-[1080px] w-full text-sm">
               <thead className="sticky top-0 bg-muted/60 backdrop-blur">
                 <tr>
@@ -1012,10 +1071,10 @@ out.sort((a, b) => {
                         <td className="p-2">{o.grupo}</td>
                         <td className="p-2">{o.cota ?? "—"}</td>
                         <td className="p-2">{o.cliente ?? "—"}</td>
-                        <td className="p-2">{o.referencia ?? "—"}</td>
-                        <td className="p-2">{o.participantes ?? "—"}</td>
-                        <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
-                        <td className="p-2">{o.contemplados ?? "—"}</td>
+                        <td className="p-2 text-right">{o.referencia ?? "—"}</td>
+                        <td className="p-2 text-right">{o.participantes ?? "—"}</td>
+                        <td className="p-2 text-right">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
+                        <td className="p-2 text-right">{o.contemplados ?? "—"}</td>
                       </tr>
                       <tr className="odd:bg-muted/30">
                         <td className="p-2 text-xs text-muted-foreground" colSpan={8}>
@@ -1068,6 +1127,9 @@ type LinhaUI = {
   referencia: number | null;
 };
 
+type SortCol = "prox_assembleia" | "prox_sorteio" | "prox_vencimento" | "prazo_encerramento_meses" | "mediana";
+type SortDir = "asc" | "desc";
+
 export default function GestaoDeGrupos() {
   const [loading, setLoading] = useState(true);
   const [grupos, setGrupos] = useState<Grupo[]>([]);
@@ -1082,6 +1144,12 @@ export default function GestaoDeGrupos() {
   const [fGrupo, setFGrupo] = useState("");
   const [fFaixa, setFFaixa] = useState("");
   const [fMedianaAlvo, setFMedianaAlvo] = useState("");
+
+  // Ordenação
+  const [sort, setSort] = useState<{ col: SortCol; dir: SortDir }>({
+    col: "prox_assembleia",
+    dir: "desc", // padrão: mais recente primeiro
+  });
 
   // edição inline
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1098,9 +1166,13 @@ export default function GestaoDeGrupos() {
   const [lfOpen, setLfOpen] = useState<boolean>(false);
   const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
 
-  // abaixo dos estados asmOpen/lfOpen/ofertaOpen
-const [editorOpen, setEditorOpen] = useState<boolean>(false);
-const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
+  // editor de grupo (mantido)
+  const [editorOpen, setEditorOpen] = useState<boolean>(false);
+  const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
+
+  // Alertas (notificações in-app e browser) – enviados uma vez por sessão
+  const [alertas, setAlertas] = useState<string[]>([]);
+  const notifiedRef = useRef<Set<string>>(new Set());
 
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
@@ -1183,14 +1255,13 @@ const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
       byKey.set(keyDigits(gr.administradora, gr.codigo), gr);
     }
 
-   // 2) vendas (inclui encarteiradas não contempladas OU quaisquer contempladas)
-// mantém grupos na gestão mesmo se todas as cotas estiverem contempladas
-const { data: vend, error: vErr } = await supabase
-  .from("vendas")
-  .select("administradora, segmento, grupo, status, contemplada")
-  .or("and(status.eq.encarteirada,contemplada.eq.false),contemplada.eq.true");
+    // 2) vendas (inclui encarteiradas não contempladas OU quaisquer contempladas)
+    const { data: vend, error: vErr } = await supabase
+      .from("vendas")
+      .select("administradora, segmento, grupo, status, contemplada")
+      .or("and(status.eq.encarteirada,contemplada.eq.false),contemplada.eq.true");
 
-if (vErr) console.error(vErr);
+    if (vErr) console.error(vErr);
 
     const distinct = new Map<string, { administradora: string; segmento: string; grupo: string }>();
     (vend || []).forEach((v: any) => {
@@ -1280,9 +1351,44 @@ if (vErr) console.error(vErr);
     carregar();
   }, []);
 
-  const handleSync = async () => {
-    await carregar();
-  };
+  // ALERTAS: dispara quando a data (assembleia/sorteio/vencimento) é hoje
+  useEffect(() => {
+    const today = toYMD(new Date());
+    if (!today) return;
+    const novos: string[] = [];
+    const doNotify = (key: string, titulo: string, corpo: string) => {
+      if (notifiedRef.current.has(key)) return;
+      notifiedRef.current.add(key);
+      // in-app (banner)
+      novos.push(`${titulo}: ${corpo}`);
+      // browser notification
+      if ("Notification" in window) {
+        if (Notification.permission === "granted") {
+          new Notification(titulo, { body: corpo, icon: "/logo-consulmax.png" });
+        } else if (Notification.permission !== "denied") {
+          Notification.requestPermission().then((perm) => {
+            if (perm === "granted") {
+              new Notification(titulo, { body: corpo, icon: "/logo-consulmax.png" });
+            }
+          });
+        }
+      }
+    };
+
+    rows.forEach((r) => {
+      if (sameDay(r.prox_assembleia, today)) {
+        doNotify(`asm::${r.id}::${today}`, "Assembleia hoje", `Grupo ${r.codigo} (${r.administradora}) – avise os clientes encarteirados.`);
+      }
+      if (sameDay(r.prox_sorteio, today)) {
+        doNotify(`sor::${r.id}::${today}`, "Sorteio hoje", `Grupo ${r.codigo} (${r.administradora}) – preparar comunicação de resultados.`);
+      }
+      if (sameDay(r.prox_vencimento, today)) {
+        doNotify(`ven::${r.id}::${today}`, "Vencimento hoje", `Grupo ${r.codigo} (${r.administradora}) – lembretes de pagamento.`);
+      }
+    });
+
+    if (novos.length) setAlertas((prev) => Array.from(new Set([...prev, ...novos])));
+  }, [rows]);
 
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
@@ -1298,7 +1404,35 @@ if (vErr) console.error(vErr);
     });
   }, [rows, fAdmin, fSeg, fGrupo, fFaixa, fMedianaAlvo]);
 
-  const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
+  // Ordenação (padrão: prox_assembleia desc)
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    const cmpDate = (a?: string | null, b?: string | null) => {
+      const A = toYMD(a) || "";
+      const B = toYMD(b) || "";
+      if (A === B) return 0;
+      return A < B ? -1 : 1;
+    };
+    const cmpNum = (a?: number | null, b?: number | null) => {
+      const A = a ?? -Infinity;
+      const B = b ?? -Infinity;
+      if (A === B) return 0;
+      return A < B ? -1 : 1;
+    };
+    const key = sort.col;
+    arr.sort((x, y) => {
+      let c = 0;
+      if (key === "prox_assembleia") c = cmpDate(x.prox_assembleia, y.prox_assembleia);
+      else if (key === "prox_sorteio") c = cmpDate(x.prox_sorteio, y.prox_sorteio);
+      else if (key === "prox_vencimento") c = cmpDate(x.prox_vencimento, y.prox_vencimento);
+      else if (key === "prazo_encerramento_meses") c = cmpNum(x.prazo_encerramento_meses, y.prazo_encerramento_meses);
+      else if (key === "mediana") c = cmpNum(x.mediana ?? null, y.mediana ?? null);
+      return sort.dir === "asc" ? c : -c;
+    });
+    return arr;
+  }, [filtered, sort]);
+
+  const totalEntregas = useMemo(() => sorted.reduce((acc, r) => acc + r.total_entregas, 0), [sorted]);
 
   // salvar edição inline
   const salvarLinha = async (id: string) => {
@@ -1322,31 +1456,35 @@ if (vErr) console.error(vErr);
     }
   };
 
+  const sortLabel = (label: string, active: boolean, dir: SortDir) => (
+    <span className="inline-flex items-center gap-1">
+      {label}
+      {active ? (dir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : null}
+    </span>
+  );
+  const toggleSort = (col: SortCol) => {
+    setSort((s) => (s.col === col ? { col, dir: s.dir === "asc" ? "desc" : "asc" } : { col, dir: "desc" }));
+  };
+
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Cabeçalho / Ações */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-        <Card className="lg:col-span-3">
-          <CardHeader className="pb-2 flex items-center justify-between">
-            <CardTitle className="text-xl">GESTÃO DE GRUPOS</CardTitle>
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={handleSync}>
-                <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
-              </Button>
-              <Button onClick={() => window.location.reload()}>
-                <Plus className="h-4 w-4 mr-2" /> Adicionar Grupo
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Visão consolidada por grupo: resultados de assembleias, filtros e referência do sorteio.
-          </CardContent>
-        </Card>
+      {/* ALERTAS in-app */}
+      {alertas.length > 0 && (
+        <div className="rounded-xl border bg-amber-50 text-amber-900 p-3">
+          <div className="font-semibold mb-1">Alertas de hoje</div>
+          <ul className="list-disc pl-5 space-y-1">
+            {alertas.map((a, i) => (<li key={i}>{a}</li>))}
+          </ul>
+        </div>
+      )}
 
-        <Card className="lg:col-span-3">
+      {/* Cabeçalho / Ações — REMOVIDO o card “Gestão de Grupos” conforme solicitado */}
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+        <Card className="lg:col-span-4">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setLfOpen(true)}>
+            <Button variant="secondary" className="gap-2 inline-flex items-center" onClick={() => setLfOpen(true)}>
               <Percent className="h-4 w-4" />
               Informar resultados
             </Button>
@@ -1361,10 +1499,10 @@ if (vErr) console.error(vErr);
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-3">
+        <Card className="lg:col-span-4">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setAsmOpen(true)}>
+            <Button variant="secondary" className="gap-2 inline-flex items-center" onClick={() => setAsmOpen(true)}>
               <Settings className="h-4 w-4" /> Informar resultados
             </Button>
           </CardHeader>
@@ -1373,16 +1511,16 @@ if (vErr) console.error(vErr);
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-3">
+        <Card className="lg:col-span-4">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setOfertaOpen(true)}>
+            <Button variant="secondary" className="gap-2 inline-flex items-center" onClick={() => setOfertaOpen(true)}>
               <Target className="h-4 w-4" />
               Abrir
             </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Lista **cotas** encarteiradas para os grupos com assembleia na data informada, com referência calculada.
+            Lista <b>cotas</b> encarteiradas para os grupos com assembleia na data informada, com referência calculada.
           </CardContent>
         </Card>
       </div>
@@ -1412,7 +1550,7 @@ if (vErr) console.error(vErr);
         <h3 className="text-base font-semibold">Relação de Grupos</h3>
       </div>
 
-      {/* Tabela principal */}
+      {/* Tabela principal – linhas zebradas + ordenação por cliques */}
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
@@ -1429,23 +1567,43 @@ if (vErr) console.error(vErr);
               <th className="p-2 text-left">ADMINISTRADORA</th>
               <th className="p-2 text-left">SEGMENTO</th>
               <th className="p-2 text-left">GRUPO</th>
-              <th className="p-2 text-right">PARTICIPANTES</th>
+              <th className="p-2 text-right">PARTIC.</th>
               <th className="p-2 text-center">FAIXA DE CRÉDITO</th>
-              <th className="p-2 text-right">Total Entregas</th>
+              <th className="p-2 text-right">Tot. Entr.</th>
               <th className="p-2 text-right">25% Entregas</th>
               <th className="p-2 text-right">25% Ofertas</th>
               <th className="p-2 text-right">50% Entregas</th>
               <th className="p-2 text-right">50% Ofertas</th>
               <th className="p-2 text-right">LL Entregas</th>
               <th className="p-2 text-right">LL Ofertas</th>
-              <th className="p-2 text-right">Maior %</th>
-              <th className="p-2 text-right">Menor %</th>
-              <th className="p-2 text-right">Mediana</th>
-              <th className="p-2 text-center">Apuração Dia</th>
-              <th className="p-2 text-center">Pz Enc</th>
-              <th className="p-2 text-center">Vencimento</th>
-              <th className="p-2 text-center">Sorteio</th>
-              <th className="p-2 text-center">Assembleia</th>
+              <th className="p-2 text-right">
+                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("mediana")}>
+                  {sortLabel("Maior % / Menor % / Mediana", sort.col === "mediana", sort.dir)}
+                </button>
+              </th>
+              <th className="p-2 text-right"></th>
+              <th className="p-2 text-right"></th>
+
+              <th className="p-2 text-center">
+                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prox_assembleia")}>
+                  {sortLabel("Assembleia", sort.col === "prox_assembleia", sort.dir)}
+                </button>
+              </th>
+              <th className="p-2 text-center">
+                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prazo_encerramento_meses")}>
+                  {sortLabel("Pz Enc", sort.col === "prazo_encerramento_meses", sort.dir)}
+                </button>
+              </th>
+              <th className="p-2 text-center">
+                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prox_vencimento")}>
+                  {sortLabel("Vencimento", sort.col === "prox_vencimento", sort.dir)}
+                </button>
+              </th>
+              <th className="p-2 text-center">
+                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prox_sorteio")}>
+                  {sortLabel("Sorteio", sort.col === "prox_sorteio", sort.dir)}
+                </button>
+              </th>
               <th className="p-2 text-right">Referência</th>
               <th className="p-2 text-center">Ações</th>
             </tr>
@@ -1453,10 +1611,10 @@ if (vErr) console.error(vErr);
           <tbody>
             {loading ? (
               <tr><td colSpan={22} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
-            ) : filtered.length === 0 ? (
+            ) : sorted.length === 0 ? (
               <tr><td colSpan={22} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
             ) : (
-              filtered.map((r) => {
+              sorted.map((r) => {
                 const isEditing = editingId === r.id;
                 return (
                   <tr key={r.id} className="odd:bg-muted/30">
@@ -1526,11 +1684,12 @@ if (vErr) console.error(vErr);
                     <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
                     <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
                     <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
+
                     <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                     <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
 
                     {/* VENC / SORTEIO / ASM */}
-                    {(["prox_vencimento","prox_sorteio","prox_assembleia"] as const).map((col, idx) => (
+                    {(["prox_vencimento","prox_sorteio","prox_assembleia"] as const).map((col) => (
                       <td key={col} className="p-2 text-center">
                         {isEditing ? (
                           <Input
@@ -1550,61 +1709,60 @@ if (vErr) console.error(vErr);
                     <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
 
                     {/* AÇÕES */}
-<td className="p-2 text-center">
-  {isStubId(r.id) ? (
-    <Button
-      variant="secondary"
-      className="gap-1"
-      onClick={() => {
-        // abre o EditorGrupo com os dados do stub já preenchidos
-        setEditorPrefill({
-          administradora: r.administradora,
-          segmento: r.segmento,
-          codigo: r.codigo,
-          participantes: r.participantes,
-          faixa_min: r.faixa_min,
-          faixa_max: r.faixa_max,
-          prox_vencimento: r.prox_vencimento,
-          prox_sorteio: r.prox_sorteio,
-          prox_assembleia: r.prox_assembleia,
-          prazo_encerramento_meses: r.prazo_encerramento_meses,
-        });
-        setEditorOpen(true);
-      }}
-    >
-      <Pencil className="h-4 w-4" /> Cadastrar
-    </Button>
-  ) : isEditing ? (
-    <div className="flex items-center justify-center gap-2">
-      <Button variant="secondary" onClick={() => { setEditingId(null); setEditDraft(null); }}>
-        <X className="h-4 w-4 mr-1" /> Cancelar
-      </Button>
-      <Button onClick={() => salvarLinha(r.id)}>
-        <Save className="h-4 w-4 mr-1" /> Salvar
-      </Button>
-    </div>
-  ) : (
-    <Button
-      variant="secondary"
-      className="gap-1"
-      onClick={() => {
-        const g = grupos.find((x) => x.id === r.id);
-        if (!g) return;
-        setEditingId(r.id);
-        setEditDraft({
-          participantes: g.participantes,
-          prox_vencimento: g.prox_vencimento,
-          prox_sorteio: g.prox_sorteio,
-          prox_assembleia: g.prox_assembleia,
-          faixa_min: g.faixa_min,
-          faixa_max: g.faixa_max,
-        });
-      }}
-    >
-      <Pencil className="h-4 w-4" /> Editar
-    </Button>
-  )}
-</td>
+                    <td className="p-2 text-center">
+                      {isStubId(r.id) ? (
+                        <Button
+                          variant="secondary"
+                          className="gap-2 inline-flex items-center"
+                          onClick={() => {
+                            setEditorPrefill({
+                              administradora: r.administradora,
+                              segmento: r.segmento,
+                              codigo: r.codigo,
+                              participantes: r.participantes,
+                              faixa_min: r.faixa_min,
+                              faixa_max: r.faixa_max,
+                              prox_vencimento: r.prox_vencimento,
+                              prox_sorteio: r.prox_sorteio,
+                              prox_assembleia: r.prox_assembleia,
+                              prazo_encerramento_meses: r.prazo_encerramento_meses,
+                            });
+                            setEditorOpen(true);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" /> Cadastrar
+                        </Button>
+                      ) : editingId === r.id ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => { setEditingId(null); setEditDraft(null); }}>
+                            <X className="h-4 w-4" /> Cancelar
+                          </Button>
+                          <Button className="inline-flex items-center gap-2" onClick={() => salvarLinha(r.id)}>
+                            <Save className="h-4 w-4" /> Salvar
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          className="gap-2 inline-flex items-center"
+                          onClick={() => {
+                            const g = grupos.find((x) => x.id === r.id);
+                            if (!g) return;
+                            setEditingId(r.id);
+                            setEditDraft({
+                              participantes: g.participantes,
+                              prox_vencimento: g.prox_vencimento,
+                              prox_sorteio: g.prox_sorteio,
+                              prox_assembleia: g.prox_assembleia,
+                              faixa_min: g.faixa_min,
+                              faixa_max: g.faixa_max,
+                            });
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" /> Editar
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 );
               })
@@ -1637,19 +1795,19 @@ if (vErr) console.error(vErr);
       )}
 
       {editorOpen && (
-  <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-    <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl p-4">
-      <EditorGrupo
-        group={null}
-        prefill={editorPrefill ?? {}}
-        onClose={() => { setEditorOpen(false); setEditorPrefill(null); }}
-        onSaved={async () => { await carregar(); }}
-      />
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl rounded-2xl bg-white shadow-xl p-4">
+            <EditorGrupo
+              group={null}
+              prefill={editorPrefill ?? {}}
+              onClose={() => { setEditorOpen(false); setEditorPrefill(null); }}
+              onSaved={async () => { await carregar(); }}
+            />
+          </div>
+        </div>
+      )}
     </div>
-  </div>
-)}
-</div>
-);
+  );
 }
 
 /* =========================================================
@@ -1824,8 +1982,12 @@ function EditorGrupo(props: EditorGrupoProps) {
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-        <Button onClick={handleSave}><Save className="h-4 w-4 mr-2" /> Salvar Grupo</Button>
+        <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
+          Cancelar
+        </Button>
+        <Button onClick={handleSave} className="inline-flex items-center gap-2">
+          <Save className="h-4 w-4" /> Salvar Grupo
+        </Button>
       </div>
     </div>
   );

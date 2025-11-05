@@ -9,9 +9,7 @@ import {
   Loader2,
   Filter as FilterIcon,
   Percent,
-  Plus,
   Pencil,
-  RefreshCw,
   Save,
   Settings,
   X,
@@ -96,7 +94,7 @@ function withinLLMedianFilter(mediana: number | null | undefined, alvo: number |
   return mediana >= min && mediana <= max;
 }
 
-/** Converte qualquer coisa em 'YYYY-MM-DD' (UTC-like). */
+/** Converte qualquer coisa em 'YYYY-MM-DD'. */
 function toYMD(d: string | Date | null | undefined): string | null {
   if (!d) return null;
   const s = typeof d === "string" ? d.trim() : (d as Date).toISOString();
@@ -633,7 +631,7 @@ function OverlayAssembleias({
 }
 
 /* =========================================================
-   OVERLAY: OFERTA DE LANCE (por COTA) — zebra + rolagem + PDF com logo
+   OVERLAY: OFERTA DE LANCE (por COTA)
    ========================================================= */
 
 type OfertaRow = {
@@ -646,6 +644,7 @@ type OfertaRow = {
   contemplados: number | null;
   cliente: string | null;
   descricao: string | null;
+  contemplada: boolean; // TAG no relatório
 };
 
 function OverlayOfertaLance({
@@ -690,11 +689,17 @@ function OverlayOfertaLance({
 
       type VendasRow = { [key: string]: any };
 
+      // ======= ATENÇÃO (pedido do Wesley) =======
+      // Excluir cotas canceladas do relatório de oferta de lances.
+      // Regra do schema: public.vendas
+      // - Canceladas: codigo != '00'
+      // - Ativas:     codigo = '00'
+      // Portanto, buscamos SOMENTE codigo = '00'.
       const { data: vds, error } = await supabase
         .from("vendas")
         .select("*")
         .eq("status", "encarteirada")
-        .eq("contemplada", false)
+        .eq("codigo", "00") // <- só ativas
         .in("grupo", Array.from(gruposDigits));
 
       if (error) throw error;
@@ -784,6 +789,9 @@ function OverlayOfertaLance({
           contemplados: contem,
           cliente,
           descricao,
+          // ======= TAG CONTEMPLADA (pedido do Wesley) =======
+          // public.vendas.contemplada = TRUE -> mostrar badge
+          contemplada: Boolean(v?.contemplada === true),
         });
       });
 
@@ -874,6 +882,8 @@ function OverlayOfertaLance({
 
       .descricao-row td { font-size: 11px; color:#444; border-top-color:#f0f0f0; }
       .descricao-label { font-weight:600; color:#111; margin-right:6px; }
+
+      .tag-contemplada { display:inline-block; padding:2px 6px; font-size:10px; border-radius:999px; border:1px solid #d4f1d6; background:#f0fbf1; color:#0f6b1b; margin-left:6px }
     </style>`;
 
     const tableHTML = `
@@ -907,9 +917,7 @@ function OverlayOfertaLance({
           <div class="footer">Gerado em ${geradoEm}</div>
 
           <script>
-            Array.from(document.querySelectorAll("tbody tr")).forEach(function(tr, idx){
-              if ((idx % 2) === 1) tr.classList.add("descricao-row");
-            });
+            // escondo linhas "Descrição: —"
             Array.from(document.querySelectorAll("tbody tr.descricao-row td")).forEach(function(td){
               var txt = (td.textContent || "").trim();
               if (/^Descrição:\\s*—\\s*$/.test(txt)) {
@@ -1008,13 +1016,20 @@ function OverlayOfertaLance({
                         <td className="p-2">{o.administradora}</td>
                         <td className="p-2">{o.grupo}</td>
                         <td className="p-2">{o.cota ?? "—"}</td>
-                        <td className="p-2">{o.cliente ?? "—"}</td>
+                        <td className="p-2">
+                          {o.cliente ?? "—"}
+                          {o.contemplada && (
+                            <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-2 py-[2px] rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700">
+                              Contemplada
+                            </span>
+                          )}
+                        </td>
                         <td className="p-2 text-right">{o.referencia ?? "—"}</td>
                         <td className="p-2 text-right">{o.participantes ?? "—"}</td>
                         <td className="p-2 text-right">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
                         <td className="p-2 text-right">{o.contemplados ?? "—"}</td>
                       </tr>
-                      <tr className="odd:bg-muted/30">
+                      <tr className="odd:bg-muted/30 descricao-row">
                         <td className="p-2 text-xs text-muted-foreground" colSpan={8}>
                           <span className="font-medium text-foreground">Descrição: </span>
                           {o.descricao?.trim() ? o.descricao : "—"}
@@ -1104,12 +1119,12 @@ export default function GestaoDeGrupos() {
   const [editorOpen, setEditorOpen] = useState<boolean>(false);
   const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
 
-  // ===== Ordenação padrão: Assembleia mais próxima da data atual
   const [sortKey, setSortKey] = useState<SortKey>("prox_assembleia");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  // Alertas (agrupados por tipo) — chaves por tipo+data
+  // Notificações de hoje + badge discreto
   const notifiedKeys = useRef<Set<string>>(new Set());
+  const [todayBadge, setTodayBadge] = useState<string>("");
 
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
@@ -1357,29 +1372,7 @@ export default function GestaoDeGrupos() {
     return copy;
   }, [filtered, sortKey, sortDir]);
 
-  // ===== Edição inline
-  const salvarLinha = async (id: string) => {
-    if (!editDraft) return;
-    try {
-      const payload = {
-        participantes: editDraft.participantes,
-        prox_vencimento: editDraft.prox_vencimento,
-        prox_sorteio: editDraft.prox_sorteio,
-        prox_assembleia: editDraft.prox_assembleia,
-        faixa_min: editDraft.faixa_min,
-        faixa_max: editDraft.faixa_max,
-      };
-      await supabase.from("groups").update(payload).eq("id", id);
-      setEditingId(null);
-      setEditDraft(null);
-      await carregar();
-    } catch (e: any) {
-      console.error(e);
-      alert(e.message ?? "Erro ao salvar o grupo.");
-    }
-  };
-
-  // ===== Notificações AGRUPADAS (somente D0 = HOJE) — um alerta por tipo
+  // ===== Notificações + Badge “Hoje: …”
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
@@ -1392,27 +1385,22 @@ export default function GestaoDeGrupos() {
     }
   }
 
-  function groupMessage(prefix: string, items: LinhaUI[], selector: (r: LinhaUI) => string | null) {
-    // agrupar por administradora -> lista de grupos (códigos)
+  function codesByAdm(items: LinhaUI[]) {
     const map = new Map<string, string[]>();
     items.forEach((r) => {
+      const adm = r.administradora;
       const code = normalizeGroupDigits(r.codigo);
       if (!code) return;
-      const adm = r.administradora;
       if (!map.has(adm)) map.set(adm, []);
       map.get(adm)!.push(code);
     });
     const parts: string[] = [];
-    map.forEach((codes, adm) => {
-      parts.push(`${adm} ${codes.join("; ")}`);
-    });
-    if (parts.length === 0) return null;
-    return `${prefix} ${parts.join("; ")}.`;
+    map.forEach((codes, adm) => parts.push(`${adm} ${codes.join("; ")}`));
+    return parts.join("; ");
   }
 
   useEffect(() => {
     const today = todayYMDLocal();
-
     const isToday = (d?: string | null) => !!d && toYMD(d) === today;
 
     const venc = sorted.filter((r) => isToday(r.prox_vencimento));
@@ -1425,30 +1413,23 @@ export default function GestaoDeGrupos() {
 
     if (venc.length > 0 && !notifiedKeys.current.has(keyV)) {
       notifiedKeys.current.add(keyV);
-      const msg = groupMessage("Hoje tem vencimento dos grupos", venc, (r) => r.prox_vencimento);
-      if (msg) {
-        console.info("[Alerta Consulmax]", msg);
-        pushBrowser("Vencimento hoje", msg);
-      }
+      pushBrowser("Vencimento hoje", `Vencimento ${codesByAdm(venc)}.`);
     }
-
     if (sort.length > 0 && !notifiedKeys.current.has(keyS)) {
       notifiedKeys.current.add(keyS);
-      const msg = groupMessage("Hoje tem sorteio dos grupos", sort, (r) => r.prox_sorteio);
-      if (msg) {
-        console.info("[Alerta Consulmax]", msg);
-        pushBrowser("Sorteio hoje", msg);
-      }
+      pushBrowser("Sorteio hoje", `Sorteio ${codesByAdm(sort)}.`);
     }
-
     if (asm.length > 0 && !notifiedKeys.current.has(keyA)) {
       notifiedKeys.current.add(keyA);
-      const msg = groupMessage("Hoje tem assembleia dos grupos", asm, (r) => r.prox_assembleia);
-      if (msg) {
-        console.info("[Alerta Consulmax]", msg);
-        pushBrowser("Assembleia hoje", msg);
-      }
+      pushBrowser("Assembleia hoje", `Assembleia ${codesByAdm(asm)}.`);
     }
+
+    const parts: string[] = [];
+    if (sort.length > 0) parts.push(`Sorteio ${codesByAdm(sort)}`);
+    if (venc.length > 0) parts.push(`Vencimento ${codesByAdm(venc)}`);
+    if (asm.length > 0) parts.push(`Assembleia ${codesByAdm(asm)}`);
+
+    setTodayBadge(parts.length > 0 ? `Hoje: ${parts.join(" • ")}` : "");
   }, [sorted]);
 
   // UI helpers sort
@@ -1465,7 +1446,6 @@ export default function GestaoDeGrupos() {
           if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
           else {
             setSortKey(key);
-            // quando mudar de coluna, default asc
             setSortDir("asc");
           }
         }}
@@ -1476,9 +1456,41 @@ export default function GestaoDeGrupos() {
     );
   }
 
+  async function salvarLinha(id: string) {
+    if (!editDraft) return;
+    const { error } = await supabase
+      .from("groups")
+      .update({
+        participantes: editDraft.participantes,
+        prox_vencimento: editDraft.prox_vencimento,
+        prox_sorteio: editDraft.prox_sorteio,
+        prox_assembleia: editDraft.prox_assembleia,
+        faixa_min: editDraft.faixa_min,
+        faixa_max: editDraft.faixa_max,
+      })
+      .eq("id", id);
+    if (error) {
+      console.error(error);
+      alert("Erro ao salvar.");
+      return;
+    }
+    setEditingId(null);
+    setEditDraft(null);
+    await carregar();
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Linha de cartões — REMOVIDO o card “Gestão de Grupos” */}
+      {/* Badge discreto de alertas do dia */}
+      {todayBadge && (
+        <div className="flex">
+          <div className="inline-flex items-center gap-2 text-xs px-3 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700">
+            <Bell className="h-3 w-3" />
+            <span className="font-medium">🔔 {todayBadge}</span>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
@@ -1518,11 +1530,10 @@ export default function GestaoDeGrupos() {
                 <Target className="h-4 w-4" />
                 Abrir
               </Button>
-              {/* Botão "Atualizar" removido conforme solicitado */}
             </div>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Lista <b>cotas</b> encarteiradas para os grupos com assembleia na data informada, com referência calculada.
+            Lista <b>cotas</b> encarteiradas (ativas) para os grupos com assembleia na data informada, com referência calculada.
           </CardContent>
         </Card>
       </div>
@@ -1540,10 +1551,10 @@ export default function GestaoDeGrupos() {
           <div><Label>Grupo</Label><Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" /></div>
           <div><Label>Faixa de Crédito</Label><Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" /></div>
           <div>
-            <Label>% Lance Livre (mediana ±15%)</Label>
+            <Label>% Lance Livre (mediana ±30%)</Label>
             <Input type="number" step="0.01" value={fMedianaAlvo} onChange={(e) => setFMedianaAlvo(e.target.value)} placeholder="ex.: 45" />
           </div>
-          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 30% e 60%.</div>
+          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 31,5% e 58,5%.</div>
         </CardContent>
       </Card>
 
@@ -1645,7 +1656,7 @@ export default function GestaoDeGrupos() {
                       ) : r.faixa_min != null && r.faixa_max != null ? (
                         r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) +
                         " — " +
-                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", "currency": "BRL" })
+                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
                       ) : (
                         "—"
                       )}

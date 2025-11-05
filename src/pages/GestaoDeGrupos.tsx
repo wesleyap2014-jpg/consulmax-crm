@@ -175,7 +175,7 @@ function makeStubId(adm?: string | null, grp?: string | number | null) {
 }
 
 /* =========================================================
-   REFERÊNCIA POR BILHETES (inclui regra da MAGGI)
+   REFERÊNCIA POR BILHETES (inclui regra Maggi)
    ========================================================= */
 
 function referenciaPorAdministradora(params: {
@@ -207,13 +207,15 @@ function referenciaPorAdministradora(params: {
   for (const premio of premios) {
     const p5 = sanitizeBilhete5(premio);
 
-    // Regra MAGGI: usa o último milhar (XXXX) e reduz por participantes até caber.
-    if (normalizeAdmin(administradora).toLowerCase() === "maggi") {
-      const milhar = parseInt(p5.slice(-4));
+    const adm = administradora.toLowerCase();
+
+    // MAGGI — usa o "último milhar" (4 últimos dígitos) e reduz por participantes
+    if (adm === "maggi") {
+      const milhar = parseInt(p5.slice(-4)); // ex.: 76478 -> 6478
       return reduceByCap(milhar, participantes);
     }
 
-    if (normalizeAdmin(administradora).toLowerCase() === "embracon") {
+    if (adm === "embracon") {
       if (participantes <= 1000) {
         const tentativa = tryTresUltimosOuInicio(p5, participantes);
         if (tentativa != null) return tentativa;
@@ -229,7 +231,7 @@ function referenciaPorAdministradora(params: {
       }
     }
 
-    if (normalizeAdmin(administradora).toLowerCase() === "hs") {
+    if (adm === "hs") {
       const quatro = parseInt(p5.slice(-4));
       return reduceByCap(quatro, participantes);
     }
@@ -359,8 +361,7 @@ function OverlayLoteria({
           <div className="flex justify-end">
             <Button disabled={!canSave || loading} onClick={handleSave} className="gap-2">
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-              <Save className="h-4 w-4" />
-              Salvar
+              <Save className="h-4 w-4" /> Salvar
             </Button>
           </div>
         </div>
@@ -625,7 +626,7 @@ function OverlayAssembleias({
 }
 
 /* =========================================================
-   OVERLAY: OFERTA DE LANCE (por COTA, com referência calculada)
+   OVERLAY: OFERTA DE LANCE (por COTA) — zebra + rolagem + PDF com logo
    ========================================================= */
 
 type OfertaRow = {
@@ -636,8 +637,8 @@ type OfertaRow = {
   participantes: number | null;
   mediana: number | null;
   contemplados: number | null;
-  cliente: string | null;   // novo
-  descricao: string | null; // novo
+  cliente: string | null;
+  descricao: string | null;
 };
 
 function OverlayOfertaLance({
@@ -681,7 +682,7 @@ function OverlayOfertaLance({
         gruposDigits.add(normalizeGroupDigits(g.codigo));
       });
 
-      // 2) buscar COTAS em 'vendas' (encarteiradas e não contempladas) desses grupos)
+      // 2) buscar COTAS em 'vendas' encarteiradas não contempladas
       type VendasRow = { [key: string]: any };
 
       const { data: vds, error } = await supabase
@@ -693,7 +694,7 @@ function OverlayOfertaLance({
 
       if (error) throw error;
 
-      // Detecta dinamicamente as chaves de lead e de descrição existentes na tabela
+      // Detecta dinamicamente chaves de lead e descrição
       const sample: VendasRow = (vds ?? [])[0] ?? {};
       const leadCandidates = ["lead_id", "cliente_id", "id_lead", "id_cliente", "leadId", "clienteId"];
       const descCandidates = [
@@ -712,7 +713,7 @@ function OverlayOfertaLance({
       const leadKey: string | null = leadCandidates.find((k) => k in sample) ?? null;
       const descKey: string | null = descCandidates.find((k) => k in sample) ?? null;
 
-      // 2b) resolver nomes dos leads sem relationship (join manual via IN)
+      // 2b) resolver nomes de leads (join manual)
       let nomesById = new Map<string, string>();
       if (leadKey) {
         const leadIds = Array.from(
@@ -784,7 +785,7 @@ function OverlayOfertaLance({
         });
       });
 
-      // 4) ordenação: Cliente (A–Z), depois Administradora, Grupo (numérico), Cota (numérico)
+      // 4) ordenação: Cliente (A–Z) > Adm > Grupo > Cota
       function normName(s?: string | null) {
         return stripAccents(String(s ?? "")).toLowerCase().trim();
       }
@@ -847,32 +848,32 @@ function OverlayOfertaLance({
         tr { page-break-inside: avoid; }
         .footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 11px; color: #666; }
       }
-      body{font-family: Arial, Helvetica, sans-serif; padding: 24px}
-      h1{margin: 0 0 12px; font-size: 24px; display:flex; align-items:center; gap:12px}
-      .meta{margin-bottom: 8px; font-size: 12px; color: #666}
-      .brand { height: 26px; }
 
-      table{width:100%; border-collapse: collapse; margin-top: 12px; table-layout: fixed}
+      body{font-family: Arial, Helvetica, sans-serif; padding: 18px 24px}
+      h1{margin: 0 0 6px; font-size: 22px}
+      .meta{margin: 0 0 8px; font-size: 12px; color: #555}
+      .brand{display:flex; align-items:center; gap:12px; margin-bottom:8px}
+      .brand img{height:28px}
+
+      table{width:100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed}
       th,td{border:1px solid #e6e6e6; padding: 7px 8px; font-size: 12px; vertical-align: top; word-wrap: break-word}
-      th{text-align:left; background:#fafafa; border-color:#e1e1e1}
+      th{text-align:left; background:#f6f8fb; border-color:#e1e1e1}
 
-      /* Zebra mantendo pares juntos (cada item tem 2 linhas) */
+      /* Zebra 2x2 (cada cota tem 2 linhas) */
       tbody tr:nth-child(4n+1),
       tbody tr:nth-child(4n+3) { background:#fbfbfb; }
 
-      /* Colunas */
       th:nth-child(1), td:nth-child(1) { width: 15%; } /* Administradora */
-      th:nth-child(2), td:nth-child(2) { width: 10%; } /* Grupo */
-      th:nth-child(3), td:nth-child(3) { width: 8%;  } /* Cota */
-      th:nth-child(4), td:nth-child(4) { width: 20%; } /* Cliente */
-      th:nth-child(5), td:nth-child(5) { width: 10%; text-align: right; } /* Referência */
-      th:nth-child(6), td:nth-child(6) { width: 10%; text-align: right; } /* Participantes */
-      th:nth-child(7), td:nth-child(7) { width: 10%; text-align: right; } /* Mediana */
-      th:nth-child(8), td:nth-child(8) { width: 10%; text-align: right; } /* Contemplados */
+      th:nth-child(2), td:nth-child(2) { width: 10%; }
+      th:nth-child(3), td:nth-child(3) { width: 8%;  }
+      th:nth-child(4), td:nth-child(4) { width: 20%; }
+      th:nth-child(5), td:nth-child(5) { width: 10%; text-align: right; }
+      th:nth-child(6), td:nth-child(6) { width: 10%; text-align: right; }
+      th:nth-child(7), td:nth-child(7) { width: 10%; text-align: right; }
+      th:nth-child(8), td:nth-child(8) { width: 10%; text-align: right; }
 
       .descricao-row td { font-size: 11px; color:#444; border-top-color:#f0f0f0; }
       .descricao-label { font-weight:600; color:#111; margin-right:6px; }
-      tbody tr.descricao-row td { padding-bottom: 10px; }
     </style>`;
 
     const tableHTML = `
@@ -897,11 +898,11 @@ function OverlayOfertaLance({
       `<html>
         <head><title>Oferta de Lance</title>${css}</head>
         <body>
-          <h1>
-            <img src="/logo-consulmax.png" class="brand" alt="Consulmax" />
-            Oferta de Lance
-          </h1>
-          <div class="meta">Data da Assembleia: ${dataLegivel} • Total de cotas: ${total}</div>
+          <div class="brand">
+            <img src="/logo-consulmax.png" alt="Consulmax" />
+            <h1>Oferta de Lance</h1>
+          </div>
+          <div class="meta">Data da Assembleia: <b>${dataLegivel}</b> • Total de cotas: <b>${total}</b></div>
           ${tableHTML}
           <div class="footer">Gerado em ${geradoEm}</div>
 
@@ -972,8 +973,7 @@ function OverlayOfertaLance({
             )}
           </div>
 
-          {/* Zebra + rolagem */}
-          <div className="rounded-xl border overflow-auto max-h-[54vh]">
+          <div className="rounded-xl border overflow-auto max-h-[52vh]">
             <table className="min-w-[1080px] w-full text-sm">
               <thead className="sticky top-0 bg-muted/60 backdrop-blur">
                 <tr>
@@ -1009,10 +1009,10 @@ function OverlayOfertaLance({
                         <td className="p-2">{o.grupo}</td>
                         <td className="p-2">{o.cota ?? "—"}</td>
                         <td className="p-2">{o.cliente ?? "—"}</td>
-                        <td className="p-2">{o.referencia ?? "—"}</td>
-                        <td className="p-2">{o.participantes ?? "—"}</td>
-                        <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
-                        <td className="p-2">{o.contemplados ?? "—"}</td>
+                        <td className="p-2 text-right">{o.referencia ?? "—"}</td>
+                        <td className="p-2 text-right">{o.participantes ?? "—"}</td>
+                        <td className="p-2 text-right">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
+                        <td className="p-2 text-right">{o.contemplados ?? "—"}</td>
                       </tr>
                       <tr className="odd:bg-muted/30">
                         <td className="p-2 text-xs text-muted-foreground" colSpan={8}>
@@ -1065,13 +1065,12 @@ type LinhaUI = {
   referencia: number | null;
 };
 
-type SortCol =
+type SortKey =
+  | "mediana"
   | "prox_assembleia"
   | "prox_sorteio"
   | "prox_vencimento"
-  | "prazo_encerramento_meses"
-  | "mediana";
-type SortDir = "asc" | "desc";
+  | "prazo_encerramento_meses";
 
 export default function GestaoDeGrupos() {
   const [loading, setLoading] = useState(true);
@@ -1103,16 +1102,15 @@ export default function GestaoDeGrupos() {
   const [lfOpen, setLfOpen] = useState<boolean>(false);
   const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
 
-  // Editor Grupo (para stubs)
   const [editorOpen, setEditorOpen] = useState<boolean>(false);
   const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
 
-  // Ordenação (padrão: Assembleia DESC)
-  const [sort, setSort] = useState<{ col: SortCol; dir: SortDir }>({ col: "prox_assembleia", dir: "desc" });
+  // Ordenação (default: Assembleia desc — mais recente primeiro)
+  const [sortKey, setSortKey] = useState<SortKey>("prox_assembleia");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  // Alertas (banner + Notification API)
-  const [alertsEnabled, setAlertsEnabled] = useState<boolean>(false);
-  const pendingNotifiedRef = useRef(false);
+  // Alertas
+  const notifiedKeys = useRef<Set<string>>(new Set());
 
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
@@ -1200,7 +1198,6 @@ export default function GestaoDeGrupos() {
       .from("vendas")
       .select("administradora, segmento, grupo, status, contemplada")
       .or("and(status.eq.encarteirada,contemplada.eq.false),contemplada.eq.true");
-
     if (vErr) console.error(vErr);
 
     const distinct = new Map<string, { administradora: string; segmento: string; grupo: string }>();
@@ -1236,7 +1233,7 @@ export default function GestaoDeGrupos() {
       }
     }
 
-    // 4) últimos resultados
+    // 4) últimos resultados (view)
     const reais = gruposBase.filter((g) => !isStubId(g.id)).map((g) => g.id);
     let byGroup = new Map<string, UltimoResultado>();
     if (reais.length > 0) {
@@ -1291,56 +1288,11 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
-  // Notificações (banner + Notification API)
-  const upcoming = useMemo(() => {
-    const today = new Date();
-    const inDays = (d: string | null | undefined) => {
-      const y = toYMD(d);
-      if (!y) return null;
-      const dt = new Date(`${y}T00:00:00Z`);
-      const diff = Math.floor((dt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      return diff;
-    };
-    const items: { id: string; tipo: "assembleia" | "vencimento" | "sorteio"; data: string }[] = [];
-    rows.forEach((r) => {
-      const a = inDays(r.prox_assembleia);
-      const v = inDays(r.prox_vencimento);
-      const s = inDays(r.prox_sorteio);
-      if (a !== null && a <= 3 && a >= 0 && r.prox_assembleia) items.push({ id: r.id, tipo: "assembleia", data: r.prox_assembleia });
-      if (v !== null && v <= 3 && v >= 0 && r.prox_vencimento) items.push({ id: r.id, tipo: "vencimento", data: r.prox_vencimento });
-      if (s !== null && s <= 3 && s >= 0 && r.prox_sorteio) items.push({ id: r.id, tipo: "sorteio", data: r.prox_sorteio });
-    });
-    return items;
-  }, [rows]);
-
-  useEffect(() => {
-    if (!alertsEnabled || pendingNotifiedRef.current) return;
-    if (!("Notification" in window)) return;
-
-    const fire = async () => {
-      const perm = await Notification.requestPermission();
-      if (perm !== "granted") return;
-      upcoming.slice(0, 5).forEach((item) => {
-        const title = "Consulmax – Alerta";
-        const when = formatBR(toYMD(item.data));
-        const body =
-          item.tipo === "assembleia"
-            ? `Assembleia em ${when}.`
-            : item.tipo === "vencimento"
-            ? `Vencimento em ${when}.`
-            : `Sorteio em ${when}.`;
-        new Notification(title, { body });
-      });
-      pendingNotifiedRef.current = true;
-    };
-    if (upcoming.length > 0) fire();
-  }, [alertsEnabled, upcoming]);
-
   const handleSync = async () => {
     await carregar();
   };
 
-  const filteredBase = useMemo(() => {
+  const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
       const faixaStr = `${r.faixa_min ?? ""}-${r.faixa_max ?? ""}`;
@@ -1354,27 +1306,51 @@ export default function GestaoDeGrupos() {
     });
   }, [rows, fAdmin, fSeg, fGrupo, fFaixa, fMedianaAlvo]);
 
-  // Ordenação aplicada sobre os filtrados
-  const filtered = useMemo(() => {
-    const arr = [...filteredBase];
-    const cmpDate = (a?: string | null, b?: string | null) => {
-      const ay = toYMD(a) || "";
-      const by = toYMD(b) || "";
-      return ay.localeCompare(by);
-    };
-    arr.sort((A, B) => {
-      let r = 0;
-      if (sort.col === "prox_assembleia") r = cmpDate(A.prox_assembleia, B.prox_assembleia);
-      else if (sort.col === "prox_sorteio") r = cmpDate(A.prox_sorteio, B.prox_sorteio);
-      else if (sort.col === "prox_vencimento") r = cmpDate(A.prox_vencimento, B.prox_vencimento);
-      else if (sort.col === "prazo_encerramento_meses") r = (A.prazo_encerramento_meses ?? -1) - (B.prazo_encerramento_meses ?? -1);
-      else if (sort.col === "mediana") r = (A.mediana ?? -1) - (B.mediana ?? -1);
-      return sort.dir === "asc" ? r : -r;
-    });
-    return arr;
-  }, [filteredBase, sort]);
-
   const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
+
+  // Ordenação - aplica sobre filtered
+  const sorted = useMemo(() => {
+    const copy = [...filtered];
+    const dir = sortDir === "asc" ? 1 : -1;
+
+    copy.sort((a, b) => {
+      let va: number | string | null = null;
+      let vb: number | string | null = null;
+
+      if (sortKey === "mediana") {
+        va = a.mediana ?? -9999;
+        vb = b.mediana ?? -9999;
+        return (Number(va) - Number(vb)) * dir;
+      }
+
+      if (sortKey === "prazo_encerramento_meses") {
+        va = a.prazo_encerramento_meses ?? -9999;
+        vb = b.prazo_encerramento_meses ?? -9999;
+        return (Number(va) - Number(vb)) * dir;
+      }
+
+      // datas
+      const da = toYMD(
+        sortKey === "prox_assembleia"
+          ? a.prox_assembleia
+          : sortKey === "prox_sorteio"
+          ? a.prox_sorteio
+          : a.prox_vencimento
+      );
+      const db = toYMD(
+        sortKey === "prox_assembleia"
+          ? b.prox_assembleia
+          : sortKey === "prox_sorteio"
+          ? b.prox_sorteio
+          : b.prox_vencimento
+      );
+      const na = da ? Date.parse(da) : -1;
+      const nb = db ? Date.parse(db) : -1;
+      return (na - nb) * dir;
+    });
+
+    return copy;
+  }, [filtered, sortKey, sortDir]);
 
   // salvar edição inline
   const salvarLinha = async (id: string) => {
@@ -1398,52 +1374,81 @@ export default function GestaoDeGrupos() {
     }
   };
 
-  const sortLabel = (label: string, active: boolean, dir: SortDir) => (
-    <span className="inline-flex items-center gap-1">
-      {label}
-      {active ? (dir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />) : null}
-    </span>
-  );
-  const toggleSort = (col: SortCol) => {
-    setSort((s) => (s.col === col ? { col, dir: s.dir === "asc" ? "desc" : "asc" } : { col, dir: "desc" }));
-  };
+  // ===== Notificações (tela + navegador) para assembleia / vencimento / sorteio (D-3, D-1, D0)
+  useEffect(() => {
+    // Solicita permissão uma única vez
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  function pushBrowser(title: string, body: string) {
+    if ("Notification" in window && Notification.permission === "granted") {
+      try { new Notification(title, { body, icon: "/logo-consulmax.png" }); } catch {}
+    }
+  }
+
+  function daysUntil(ymd?: string | null) {
+    if (!ymd) return Infinity;
+    const d = new Date(ymd + "T00:00:00Z");
+    const now = new Date();
+    const diff = Math.floor((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    return diff;
+  }
+
+  useEffect(() => {
+    // checa somente sobre a lista já ordenada/filtrada
+    sorted.forEach((r) => {
+      const checks: Array<{ key: string; label: string; date: string | null | undefined }> = [
+        { key: `${r.id}-asm-${r.prox_assembleia}`, label: "Assembleia", date: toYMD(r.prox_assembleia) },
+        { key: `${r.id}-venc-${r.prox_vencimento}`, label: "Vencimento", date: toYMD(r.prox_vencimento) },
+        { key: `${r.id}-sorteio-${r.prox_sorteio}`, label: "Sorteio", date: toYMD(r.prox_sorteio) },
+      ];
+
+      checks.forEach(({ key, label, date }) => {
+        if (!date) return;
+        const dleft = daysUntil(date);
+        if (dleft <= 3 && !notifiedKeys.current.has(key)) {
+          notifiedKeys.current.add(key);
+          const msg = `${label} do grupo ${r.codigo} (${r.administradora}) em ${formatBR(date)}.`;
+          // toast leve
+          try {
+            // Se usar algum sistema de toast global, chamar aqui. Fallback:
+            console.info("[Alerta Consulmax]", msg);
+          } catch {}
+          pushBrowser("Lembrete Consulmax", msg);
+        }
+      });
+    });
+  }, [sorted]);
+
+  // UI helpers sort
+  function headerSort(label: string, key: SortKey) {
+    const active = sortKey === key;
+    const dirIcon =
+      active ? (sortDir === "asc" ? <ChevronUp className="h-4 w-4 inline" /> : <ChevronDown className="h-4 w-4 inline" />) : null;
+
+    return (
+      <button
+        type="button"
+        className={`inline-flex items-center gap-1 ${active ? "text-foreground" : "text-muted-foreground"} hover:text-foreground`}
+        onClick={() => {
+          if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+          else {
+            setSortKey(key);
+            setSortDir("desc");
+          }
+        }}
+        title="Ordenar"
+      >
+        {label} {dirIcon}
+      </button>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Barra de ações rápida (removemos o card “Gestão de Grupos”) */}
-      <div className="flex flex-col md:flex-row gap-2 md:items-center justify-between">
-        <div className="text-sm text-muted-foreground">
-          Visão consolidada por grupo: resultados de assembleias, filtros e referência do sorteio.
-        </div>
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={handleSync} className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Atualizar
-          </Button>
-          {/* Habilitar alertas */}
-          <Button variant={alertsEnabled ? "secondary" : "default"} onClick={() => setAlertsEnabled((v) => !v)} className="gap-2">
-            <Bell className="h-4 w-4" />
-            {alertsEnabled ? "Alertas ativados" : "Ativar alertas"}
-          </Button>
-        </div>
-      </div>
-
-      {/* Alertas na tela */}
-      {upcoming.length > 0 && (
-        <div className="rounded-xl border p-3 bg-amber-50 text-amber-900">
-          <div className="font-medium mb-1">Alertas próximos (até 3 dias):</div>
-          <ul className="text-sm list-disc pl-5">
-            {upcoming.slice(0, 6).map((a, i) => (
-              <li key={a.id + i}>
-                {a.tipo === "assembleia" ? "Assembleia" : a.tipo === "vencimento" ? "Vencimento" : "Sorteio"} em{" "}
-                <b>{formatBR(toYMD(a.data))}</b>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Loteria / Assembleias / Oferta */}
+      {/* Linha de cartões — REMOVIDO o card “Gestão de Grupos” conforme solicitado */}
       <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
@@ -1467,8 +1472,7 @@ export default function GestaoDeGrupos() {
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
             <Button variant="secondary" className="gap-2" onClick={() => setAsmOpen(true)}>
-              <Settings className="h-4 w-4" />
-              Informar resultados
+              <Settings className="h-4 w-4" /> Informar resultados
             </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
@@ -1479,10 +1483,16 @@ export default function GestaoDeGrupos() {
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setOfertaOpen(true)}>
-              <Target className="h-4 w-4" />
-              Abrir
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="secondary" className="gap-2" onClick={() => setOfertaOpen(true)}>
+                <Target className="h-4 w-4" />
+                Abrir
+              </Button>
+              <Button variant="secondary" className="gap-2" onClick={handleSync}>
+                <RefreshCw className="h-4 w-4" />
+                Atualizar
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Lista <b>cotas</b> encarteiradas para os grupos com assembleia na data informada, com referência calculada.
@@ -1503,10 +1513,10 @@ export default function GestaoDeGrupos() {
           <div><Label>Grupo</Label><Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" /></div>
           <div><Label>Faixa de Crédito</Label><Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" /></div>
           <div>
-            <Label>% Lance Livre (mediana ±30%)</Label>
+            <Label>% Lance Livre (mediana ±15%)</Label>
             <Input type="number" step="0.01" value={fMedianaAlvo} onChange={(e) => setFMedianaAlvo(e.target.value)} placeholder="ex.: 45" />
           </div>
-          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 31,5% e 58,5%.</div>
+          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 30% e 60%.</div>
         </CardContent>
       </Card>
 
@@ -1519,17 +1529,6 @@ export default function GestaoDeGrupos() {
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
-            {/* Linha 1: agrupadores (21 colunas no total) */}
-            <tr className="text-xs">
-              <th className="p-2 text-left align-bottom" colSpan={5}></th>
-              <th className="p-2 text-center bg-muted/40" colSpan={1}></th>
-              <th className="p-2 text-center bg-muted/20" colSpan={2}>25%</th>
-              <th className="p-2 text-center bg-muted/20" colSpan={2}>50%</th>
-              <th className="p-2 text-center bg-muted/20" colSpan={5}>LL</th>
-              <th className="p-2 text-center" colSpan={5}></th>
-              <th className="p-2 text-center" colSpan={1}></th>
-            </tr>
-            {/* Linha 2: rótulos (21 colunas) */}
             <tr>
               <th className="p-2 text-left">ADMINISTRADORA</th>
               <th className="p-2 text-left">SEGMENTO</th>
@@ -1538,55 +1537,44 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-center">FAIXA DE CRÉDITO</th>
 
               <th className="p-2 text-right">Tot. Entr.</th>
-
               <th className="p-2 text-right">25% Entregas</th>
               <th className="p-2 text-right">25% Ofertas</th>
-
               <th className="p-2 text-right">50% Entregas</th>
               <th className="p-2 text-right">50% Ofertas</th>
 
               <th className="p-2 text-right">LL Entregas</th>
               <th className="p-2 text-right">LL Ofertas</th>
-              <th className="p-2 text-right">LL Maior %</th>
-              <th className="p-2 text-right">LL Menor %</th>
+              <th className="p-2 text-right">Maior %</th>
+              <th className="p-2 text-right">Menor %</th>
               <th className="p-2 text-right">
-                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("mediana")}>
-                  {sortLabel("LL Mediana", sort.col === "mediana", sort.dir)}
-                </button>
+                {headerSort("LL Mediana", "mediana")}
               </th>
 
+              {/* ORDEM CORRETA A PARTIR DAQUI */}
+              <th className="p-2 text-center">Apuração</th>
               <th className="p-2 text-center">
-                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prox_assembleia")}>
-                  {sortLabel("Assembleia", sort.col === "prox_assembleia", sort.dir)}
-                </button>
+                {headerSort("Pz Enc", "prazo_encerramento_meses")}
               </th>
               <th className="p-2 text-center">
-                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prazo_encerramento_meses")}>
-                  {sortLabel("Pz Enc", sort.col === "prazo_encerramento_meses", sort.dir)}
-                </button>
+                {headerSort("Vencimento", "prox_vencimento")}
               </th>
               <th className="p-2 text-center">
-                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prox_vencimento")}>
-                  {sortLabel("Vencimento", sort.col === "prox_vencimento", sort.dir)}
-                </button>
+                {headerSort("Sorteio", "prox_sorteio")}
               </th>
               <th className="p-2 text-center">
-                <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prox_sorteio")}>
-                  {sortLabel("Sorteio", sort.col === "prox_sorteio", sort.dir)}
-                </button>
+                {headerSort("Assembleia", "prox_assembleia")}
               </th>
-
-              <th className="p-2 text-right">Referência</th>
+              <th className="p-2 text-right">Ref</th>
               <th className="p-2 text-center">Ações</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={21} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={21} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
+              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
+            ) : sorted.length === 0 ? (
+              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
             ) : (
-              filtered.map((r) => {
+              sorted.map((r) => {
                 const isEditing = editingId === r.id;
                 return (
                   <tr key={r.id} className="odd:bg-muted/30">
@@ -1640,7 +1628,7 @@ export default function GestaoDeGrupos() {
                       ) : r.faixa_min != null && r.faixa_max != null ? (
                         r.faixa_min.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) +
                         " — " +
-                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+                        r.faixa_max.toLocaleString("pt-BR", { style: "currency", "currency": "BRL" })
                       ) : (
                         "—"
                       )}
@@ -1656,27 +1644,15 @@ export default function GestaoDeGrupos() {
                     <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
                     <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
                     <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
+
+                    {/* Apuração / Pz Enc / Venc / Sorteio / Assembleia */}
                     <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                     <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
+                    <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
+                    <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
+                    <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
 
-                    {/* VENC / SORTEIO / ASM */}
-                    {(["prox_vencimento","prox_sorteio","prox_assembleia"] as const).map((col) => (
-                      <td key={col} className="p-2 text-center">
-                        {isEditing ? (
-                          <Input
-                            className="h-8 w-[140px] mx-auto text-center"
-                            type="date"
-                            value={editDraft?.[col] ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({ ...(d as any), [col]: e.target.value || null }))
-                            }
-                          />
-                        ) : (
-                          formatBR(toYMD(r[col]))
-                        )}
-                      </td>
-                    ))}
-
+                    {/* Ref */}
                     <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
 
                     {/* AÇÕES */}
@@ -1703,12 +1679,12 @@ export default function GestaoDeGrupos() {
                         >
                           <Pencil className="h-4 w-4" /> Cadastrar
                         </Button>
-                      ) : isEditing ? (
+                      ) : editingId === r.id ? (
                         <div className="flex items-center justify-center gap-2">
-                          <Button variant="secondary" onClick={() => { setEditingId(null); setEditDraft(null); }} className="gap-2">
+                          <Button variant="secondary" className="gap-2" onClick={() => { setEditingId(null); setEditDraft(null); }}>
                             <X className="h-4 w-4" /> Cancelar
                           </Button>
-                          <Button onClick={() => salvarLinha(r.id)} className="gap-2">
+                          <Button className="gap-2" onClick={() => salvarLinha(r.id)}>
                             <Save className="h-4 w-4" /> Salvar
                           </Button>
                         </div>
@@ -1782,7 +1758,7 @@ export default function GestaoDeGrupos() {
 }
 
 /* =========================================================
-   EDITOR DE GRUPO (mantido)
+   EDITOR DE GRUPO (compatível)
    ========================================================= */
 
 type EditorGrupoProps = {
@@ -1953,12 +1929,8 @@ function EditorGrupo(props: EditorGrupoProps) {
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose} className="gap-2">
-          <X className="h-4 w-4" /> Cancelar
-        </Button>
-        <Button onClick={handleSave} className="gap-2">
-          <Save className="h-4 w-4" /> Salvar Grupo
-        </Button>
+        <Button variant="secondary" onClick={onClose} className="gap-2"><X className="h-4 w-4" /> Cancelar</Button>
+        <Button onClick={handleSave} className="gap-2"><Save className="h-4 w-4" /> Salvar Grupo</Button>
       </div>
     </div>
   );

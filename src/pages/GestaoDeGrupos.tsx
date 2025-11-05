@@ -18,6 +18,7 @@ import {
   Target,
   ChevronUp,
   ChevronDown,
+  Bell,
 } from "lucide-react";
 
 /* =========================================================
@@ -174,7 +175,7 @@ function makeStubId(adm?: string | null, grp?: string | number | null) {
 }
 
 /* =========================================================
-   REFERÊNCIA POR BILHETES (para grade principal e Oferta)
+   REFERÊNCIA POR BILHETES (inclui regra da MAGGI)
    ========================================================= */
 
 function referenciaPorAdministradora(params: {
@@ -206,10 +207,9 @@ function referenciaPorAdministradora(params: {
   for (const premio of premios) {
     const p5 = sanitizeBilhete5(premio);
 
-    // Maggi — regra solicitada: usar o último milhar do 1º prêmio (p5),
-    // desprezando a dezena de milhar, e reduzir pelos participantes até caber.
+    // Regra MAGGI: usa o último milhar (XXXX) e reduz por participantes até caber.
     if (normalizeAdmin(administradora).toLowerCase() === "maggi") {
-      const milhar = parseInt(p5.slice(-4)); // ex.: 76478 => 6478
+      const milhar = parseInt(p5.slice(-4));
       return reduceByCap(milhar, participantes);
     }
 
@@ -317,7 +317,7 @@ function OverlayLoteria({
             <Percent className="h-5 w-5" />
             Informar resultados – Loteria Federal
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2 inline-flex items-center">
+          <Button variant="secondary" onClick={onClose} className="gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -329,13 +329,13 @@ function OverlayLoteria({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[
+            {([
               ["primeiro", "Primeiro Prêmio"],
               ["segundo", "Segundo Prêmio"],
               ["terceiro", "Terceiro Prêmio"],
               ["quarto", "Quarto Prêmio"],
               ["quinto", "Quinto Prêmio"],
-            ].map(([key, label]) => (
+            ] as const).map(([key, label]) => (
               <div key={key} className="flex flex-col gap-1">
                 <Label>{label}</Label>
                 <Input
@@ -357,8 +357,9 @@ function OverlayLoteria({
           </div>
 
           <div className="flex justify-end">
-            <Button disabled={!canSave || loading} onClick={handleSave}>
-              {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            <Button disabled={!canSave || loading} onClick={handleSave} className="gap-2">
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+              <Save className="h-4 w-4" />
               Salvar
             </Button>
           </div>
@@ -520,7 +521,7 @@ function OverlayAssembleias({
           <h2 className="text-xl font-semibold flex items-center gap-2">
             <Settings className="h-5 w-5" /> Informar resultados da Assembleia
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2 inline-flex items-center">
+          <Button variant="secondary" onClick={onClose} className="gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -610,8 +611,8 @@ function OverlayAssembleias({
               )}
 
               <div className="flex justify-end pt-3">
-                <Button disabled={!podeSalvar || loading} onClick={handleSave} className="inline-flex items-center gap-2">
-                  {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Button disabled={!podeSalvar || loading} onClick={handleSave} className="gap-2">
+                  {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                   <Save className="h-4 w-4" /> Salvar Resultados
                 </Button>
               </div>
@@ -738,7 +739,7 @@ function OverlayOfertaLance({
 
       // 3) montar linhas por cota
       const out: OfertaRow[] = [];
-      (vds ?? []).forEach((v: any) => {
+      (vds ?? []).forEach((v: VendasRow) => {
         const adm = normalizeAdmin(v.administradora);
         const grpDigits = normalizeGroupDigits(v.grupo);
         const k = keyDigits(adm, grpDigits);
@@ -783,7 +784,7 @@ function OverlayOfertaLance({
         });
       });
 
-      // 4) ordenação com prioridade Cliente, depois Administradora, Grupo, Cota
+      // 4) ordenação: Cliente (A–Z), depois Administradora, Grupo (numérico), Cota (numérico)
       function normName(s?: string | null) {
         return stripAccents(String(s ?? "")).toLowerCase().trim();
       }
@@ -846,36 +847,20 @@ function OverlayOfertaLance({
         tr { page-break-inside: avoid; }
         .footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 11px; color: #666; }
       }
-
-      :root {
-        --rubi: #A11C27;
-        --navy: #1E293F;
-        --gold: #E0CE8C;
-      }
-
       body{font-family: Arial, Helvetica, sans-serif; padding: 24px}
-      .header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 10px; }
-      .brand { display:flex; align-items:center; gap:14px; }
-      .brand h1 { margin:0; font-size: 22px; color: var(--navy); }
-      .meta { margin-top: 2px; font-size: 12px; color: #666 }
+      h1{margin: 0 0 12px; font-size: 24px; display:flex; align-items:center; gap:12px}
+      .meta{margin-bottom: 8px; font-size: 12px; color: #666}
+      .brand { height: 26px; }
 
-      .logo { height: 34px; }
-
-      .bar {
-        height: 4px;
-        background: linear-gradient(90deg, var(--rubi), var(--navy));
-        border-radius: 4px;
-        margin: 10px 0 6px;
-      }
-
-      table{width:100%; border-collapse: collapse; margin-top: 6px; table-layout: fixed}
+      table{width:100%; border-collapse: collapse; margin-top: 12px; table-layout: fixed}
       th,td{border:1px solid #e6e6e6; padding: 7px 8px; font-size: 12px; vertical-align: top; word-wrap: break-word}
       th{text-align:left; background:#fafafa; border-color:#e1e1e1}
 
-      /* Zebradas 2x2 (mantém par "descrição" junto) */
+      /* Zebra mantendo pares juntos (cada item tem 2 linhas) */
       tbody tr:nth-child(4n+1),
       tbody tr:nth-child(4n+3) { background:#fbfbfb; }
 
+      /* Colunas */
       th:nth-child(1), td:nth-child(1) { width: 15%; } /* Administradora */
       th:nth-child(2), td:nth-child(2) { width: 10%; } /* Grupo */
       th:nth-child(3), td:nth-child(3) { width: 8%;  } /* Cota */
@@ -887,6 +872,7 @@ function OverlayOfertaLance({
 
       .descricao-row td { font-size: 11px; color:#444; border-top-color:#f0f0f0; }
       .descricao-label { font-weight:600; color:#111; margin-right:6px; }
+      tbody tr.descricao-row td { padding-bottom: 10px; }
     </style>`;
 
     const tableHTML = `
@@ -911,19 +897,13 @@ function OverlayOfertaLance({
       `<html>
         <head><title>Oferta de Lance</title>${css}</head>
         <body>
-          <div class="header">
-            <div class="brand">
-              <img class="logo" src="/logo-consulmax.png" alt="Consulmax" />
-              <div>
-                <h1>Oferta de Lance</h1>
-                <div class="meta">Data da Assembleia: ${dataLegivel} • Total de cotas: ${total}</div>
-              </div>
-            </div>
-            <div class="meta">Gerado em ${geradoEm}</div>
-          </div>
-          <div class="bar"></div>
+          <h1>
+            <img src="/logo-consulmax.png" class="brand" alt="Consulmax" />
+            Oferta de Lance
+          </h1>
+          <div class="meta">Data da Assembleia: ${dataLegivel} • Total de cotas: ${total}</div>
           ${tableHTML}
-          <div class="footer">Consulmax – Maximize as suas conquistas.</div>
+          <div class="footer">Gerado em ${geradoEm}</div>
 
           <script>
             Array.from(document.querySelectorAll("tbody tr")).forEach(function(tr, idx){
@@ -948,45 +928,6 @@ function OverlayOfertaLance({
     win.document.close();
   };
 
-  const exportarCSV = () => {
-    if (!linhas.length) return;
-    const header = [
-      "Administradora",
-      "Grupo",
-      "Cota",
-      "Cliente",
-      "Referência",
-      "Participantes",
-      "Mediana(%)",
-      "Contemplados",
-      "Descrição"
-    ];
-    const rows = linhas.map(o => [
-      o.administradora,
-      o.grupo,
-      o.cota ?? "",
-      (o.cliente ?? "").replaceAll('"', '""'),
-      o.referencia ?? "",
-      o.participantes ?? "",
-      o.mediana != null ? Number(o.mediana).toFixed(4).replace(".", ",") : "",
-      o.contemplados ?? "",
-      (o.descricao ?? "").replaceAll('"', '""')
-    ]);
-
-    const csv = [header, ...rows]
-      .map(cols => cols.map(c => `"${String(c)}"`).join(";"))
-      .join("\r\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const dataLegivel = formatBR(toYMD(dataAsm)) || "sem-data";
-    a.download = `oferta_lance_${dataLegivel}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const total = linhas.length;
 
   return (
@@ -996,7 +937,7 @@ function OverlayOfertaLance({
           <h2 className="text-xl font-semibold flex items-center gap-2">
             <Target className="h-5 w-5" /> Oferta de Lance
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2 inline-flex items-center">
+          <Button variant="secondary" onClick={onClose} className="gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -1008,15 +949,12 @@ function OverlayOfertaLance({
               <Input type="date" value={dataAsm} onChange={(e) => setDataAsm(e.target.value)} />
             </div>
             <div className="flex gap-2">
-              <Button onClick={listar} disabled={!dataAsm || loading} className="inline-flex items-center gap-2">
-                {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              <Button onClick={listar} disabled={!dataAsm || loading} className="gap-2">
+                {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                 Listar
               </Button>
-              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="inline-flex items-center gap-2">
+              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="gap-2">
                 Exportar PDF
-              </Button>
-              <Button variant="secondary" onClick={exportarCSV} disabled={total === 0} className="inline-flex items-center gap-2">
-                Exportar CSV
               </Button>
             </div>
           </div>
@@ -1034,8 +972,8 @@ function OverlayOfertaLance({
             )}
           </div>
 
-          {/* Linhas zebradas e rolagem no grid */}
-          <div className="rounded-xl border overflow-auto max-h-[60vh]">
+          {/* Zebra + rolagem */}
+          <div className="rounded-xl border overflow-auto max-h-[54vh]">
             <table className="min-w-[1080px] w-full text-sm">
               <thead className="sticky top-0 bg-muted/60 backdrop-blur">
                 <tr>
@@ -1071,10 +1009,10 @@ function OverlayOfertaLance({
                         <td className="p-2">{o.grupo}</td>
                         <td className="p-2">{o.cota ?? "—"}</td>
                         <td className="p-2">{o.cliente ?? "—"}</td>
-                        <td className="p-2 text-right">{o.referencia ?? "—"}</td>
-                        <td className="p-2 text-right">{o.participantes ?? "—"}</td>
-                        <td className="p-2 text-right">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
-                        <td className="p-2 text-right">{o.contemplados ?? "—"}</td>
+                        <td className="p-2">{o.referencia ?? "—"}</td>
+                        <td className="p-2">{o.participantes ?? "—"}</td>
+                        <td className="p-2">{o.mediana != null ? toPct4(Number(o.mediana)) : "—"}</td>
+                        <td className="p-2">{o.contemplados ?? "—"}</td>
                       </tr>
                       <tr className="odd:bg-muted/30">
                         <td className="p-2 text-xs text-muted-foreground" colSpan={8}>
@@ -1127,7 +1065,12 @@ type LinhaUI = {
   referencia: number | null;
 };
 
-type SortCol = "prox_assembleia" | "prox_sorteio" | "prox_vencimento" | "prazo_encerramento_meses" | "mediana";
+type SortCol =
+  | "prox_assembleia"
+  | "prox_sorteio"
+  | "prox_vencimento"
+  | "prazo_encerramento_meses"
+  | "mediana";
 type SortDir = "asc" | "desc";
 
 export default function GestaoDeGrupos() {
@@ -1145,12 +1088,6 @@ export default function GestaoDeGrupos() {
   const [fFaixa, setFFaixa] = useState("");
   const [fMedianaAlvo, setFMedianaAlvo] = useState("");
 
-  // Ordenação
-  const [sort, setSort] = useState<{ col: SortCol; dir: SortDir }>({
-    col: "prox_assembleia",
-    dir: "desc", // padrão: mais recente primeiro
-  });
-
   // edição inline
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
@@ -1166,13 +1103,16 @@ export default function GestaoDeGrupos() {
   const [lfOpen, setLfOpen] = useState<boolean>(false);
   const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
 
-  // editor de grupo (mantido)
+  // Editor Grupo (para stubs)
   const [editorOpen, setEditorOpen] = useState<boolean>(false);
   const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
 
-  // Alertas (notificações in-app e browser) – enviados uma vez por sessão
-  const [alertas, setAlertas] = useState<string[]>([]);
-  const notifiedRef = useRef<Set<string>>(new Set());
+  // Ordenação (padrão: Assembleia DESC)
+  const [sort, setSort] = useState<{ col: SortCol; dir: SortDir }>({ col: "prox_assembleia", dir: "desc" });
+
+  // Alertas (banner + Notification API)
+  const [alertsEnabled, setAlertsEnabled] = useState<boolean>(false);
+  const pendingNotifiedRef = useRef(false);
 
   const rebuildRows = useCallback(() => {
     const linhas: LinhaUI[] = grupos.map((g) => {
@@ -1351,46 +1291,56 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
-  // ALERTAS: dispara quando a data (assembleia/sorteio/vencimento) é hoje
-  useEffect(() => {
-    const today = toYMD(new Date());
-    if (!today) return;
-    const novos: string[] = [];
-    const doNotify = (key: string, titulo: string, corpo: string) => {
-      if (notifiedRef.current.has(key)) return;
-      notifiedRef.current.add(key);
-      // in-app (banner)
-      novos.push(`${titulo}: ${corpo}`);
-      // browser notification
-      if ("Notification" in window) {
-        if (Notification.permission === "granted") {
-          new Notification(titulo, { body: corpo, icon: "/logo-consulmax.png" });
-        } else if (Notification.permission !== "denied") {
-          Notification.requestPermission().then((perm) => {
-            if (perm === "granted") {
-              new Notification(titulo, { body: corpo, icon: "/logo-consulmax.png" });
-            }
-          });
-        }
-      }
+  // Notificações (banner + Notification API)
+  const upcoming = useMemo(() => {
+    const today = new Date();
+    const inDays = (d: string | null | undefined) => {
+      const y = toYMD(d);
+      if (!y) return null;
+      const dt = new Date(`${y}T00:00:00Z`);
+      const diff = Math.floor((dt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return diff;
     };
-
+    const items: { id: string; tipo: "assembleia" | "vencimento" | "sorteio"; data: string }[] = [];
     rows.forEach((r) => {
-      if (sameDay(r.prox_assembleia, today)) {
-        doNotify(`asm::${r.id}::${today}`, "Assembleia hoje", `Grupo ${r.codigo} (${r.administradora}) – avise os clientes encarteirados.`);
-      }
-      if (sameDay(r.prox_sorteio, today)) {
-        doNotify(`sor::${r.id}::${today}`, "Sorteio hoje", `Grupo ${r.codigo} (${r.administradora}) – preparar comunicação de resultados.`);
-      }
-      if (sameDay(r.prox_vencimento, today)) {
-        doNotify(`ven::${r.id}::${today}`, "Vencimento hoje", `Grupo ${r.codigo} (${r.administradora}) – lembretes de pagamento.`);
-      }
+      const a = inDays(r.prox_assembleia);
+      const v = inDays(r.prox_vencimento);
+      const s = inDays(r.prox_sorteio);
+      if (a !== null && a <= 3 && a >= 0 && r.prox_assembleia) items.push({ id: r.id, tipo: "assembleia", data: r.prox_assembleia });
+      if (v !== null && v <= 3 && v >= 0 && r.prox_vencimento) items.push({ id: r.id, tipo: "vencimento", data: r.prox_vencimento });
+      if (s !== null && s <= 3 && s >= 0 && r.prox_sorteio) items.push({ id: r.id, tipo: "sorteio", data: r.prox_sorteio });
     });
-
-    if (novos.length) setAlertas((prev) => Array.from(new Set([...prev, ...novos])));
+    return items;
   }, [rows]);
 
-  const filtered = useMemo(() => {
+  useEffect(() => {
+    if (!alertsEnabled || pendingNotifiedRef.current) return;
+    if (!("Notification" in window)) return;
+
+    const fire = async () => {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") return;
+      upcoming.slice(0, 5).forEach((item) => {
+        const title = "Consulmax – Alerta";
+        const when = formatBR(toYMD(item.data));
+        const body =
+          item.tipo === "assembleia"
+            ? `Assembleia em ${when}.`
+            : item.tipo === "vencimento"
+            ? `Vencimento em ${when}.`
+            : `Sorteio em ${when}.`;
+        new Notification(title, { body });
+      });
+      pendingNotifiedRef.current = true;
+    };
+    if (upcoming.length > 0) fire();
+  }, [alertsEnabled, upcoming]);
+
+  const handleSync = async () => {
+    await carregar();
+  };
+
+  const filteredBase = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
       const faixaStr = `${r.faixa_min ?? ""}-${r.faixa_max ?? ""}`;
@@ -1404,35 +1354,27 @@ export default function GestaoDeGrupos() {
     });
   }, [rows, fAdmin, fSeg, fGrupo, fFaixa, fMedianaAlvo]);
 
-  // Ordenação (padrão: prox_assembleia desc)
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
+  // Ordenação aplicada sobre os filtrados
+  const filtered = useMemo(() => {
+    const arr = [...filteredBase];
     const cmpDate = (a?: string | null, b?: string | null) => {
-      const A = toYMD(a) || "";
-      const B = toYMD(b) || "";
-      if (A === B) return 0;
-      return A < B ? -1 : 1;
+      const ay = toYMD(a) || "";
+      const by = toYMD(b) || "";
+      return ay.localeCompare(by);
     };
-    const cmpNum = (a?: number | null, b?: number | null) => {
-      const A = a ?? -Infinity;
-      const B = b ?? -Infinity;
-      if (A === B) return 0;
-      return A < B ? -1 : 1;
-    };
-    const key = sort.col;
-    arr.sort((x, y) => {
-      let c = 0;
-      if (key === "prox_assembleia") c = cmpDate(x.prox_assembleia, y.prox_assembleia);
-      else if (key === "prox_sorteio") c = cmpDate(x.prox_sorteio, y.prox_sorteio);
-      else if (key === "prox_vencimento") c = cmpDate(x.prox_vencimento, y.prox_vencimento);
-      else if (key === "prazo_encerramento_meses") c = cmpNum(x.prazo_encerramento_meses, y.prazo_encerramento_meses);
-      else if (key === "mediana") c = cmpNum(x.mediana ?? null, y.mediana ?? null);
-      return sort.dir === "asc" ? c : -c;
+    arr.sort((A, B) => {
+      let r = 0;
+      if (sort.col === "prox_assembleia") r = cmpDate(A.prox_assembleia, B.prox_assembleia);
+      else if (sort.col === "prox_sorteio") r = cmpDate(A.prox_sorteio, B.prox_sorteio);
+      else if (sort.col === "prox_vencimento") r = cmpDate(A.prox_vencimento, B.prox_vencimento);
+      else if (sort.col === "prazo_encerramento_meses") r = (A.prazo_encerramento_meses ?? -1) - (B.prazo_encerramento_meses ?? -1);
+      else if (sort.col === "mediana") r = (A.mediana ?? -1) - (B.mediana ?? -1);
+      return sort.dir === "asc" ? r : -r;
     });
     return arr;
-  }, [filtered, sort]);
+  }, [filteredBase, sort]);
 
-  const totalEntregas = useMemo(() => sorted.reduce((acc, r) => acc + r.total_entregas, 0), [sorted]);
+  const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
 
   // salvar edição inline
   const salvarLinha = async (id: string) => {
@@ -1468,23 +1410,45 @@ export default function GestaoDeGrupos() {
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* ALERTAS in-app */}
-      {alertas.length > 0 && (
-        <div className="rounded-xl border bg-amber-50 text-amber-900 p-3">
-          <div className="font-semibold mb-1">Alertas de hoje</div>
-          <ul className="list-disc pl-5 space-y-1">
-            {alertas.map((a, i) => (<li key={i}>{a}</li>))}
+      {/* Barra de ações rápida (removemos o card “Gestão de Grupos”) */}
+      <div className="flex flex-col md:flex-row gap-2 md:items-center justify-between">
+        <div className="text-sm text-muted-foreground">
+          Visão consolidada por grupo: resultados de assembleias, filtros e referência do sorteio.
+        </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={handleSync} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Atualizar
+          </Button>
+          {/* Habilitar alertas */}
+          <Button variant={alertsEnabled ? "secondary" : "default"} onClick={() => setAlertsEnabled((v) => !v)} className="gap-2">
+            <Bell className="h-4 w-4" />
+            {alertsEnabled ? "Alertas ativados" : "Ativar alertas"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Alertas na tela */}
+      {upcoming.length > 0 && (
+        <div className="rounded-xl border p-3 bg-amber-50 text-amber-900">
+          <div className="font-medium mb-1">Alertas próximos (até 3 dias):</div>
+          <ul className="text-sm list-disc pl-5">
+            {upcoming.slice(0, 6).map((a, i) => (
+              <li key={a.id + i}>
+                {a.tipo === "assembleia" ? "Assembleia" : a.tipo === "vencimento" ? "Vencimento" : "Sorteio"} em{" "}
+                <b>{formatBR(toYMD(a.data))}</b>
+              </li>
+            ))}
           </ul>
         </div>
       )}
 
-      {/* Cabeçalho / Ações — REMOVIDO o card “Gestão de Grupos” conforme solicitado */}
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-        <Card className="lg:col-span-4">
+      {/* Loteria / Assembleias / Oferta */}
+      <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
-            <Button variant="secondary" className="gap-2 inline-flex items-center" onClick={() => setLfOpen(true)}>
+            <Button variant="secondary" className="gap-2" onClick={() => setLfOpen(true)}>
               <Percent className="h-4 w-4" />
               Informar resultados
             </Button>
@@ -1499,11 +1463,12 @@ export default function GestaoDeGrupos() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-4">
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
-            <Button variant="secondary" className="gap-2 inline-flex items-center" onClick={() => setAsmOpen(true)}>
-              <Settings className="h-4 w-4" /> Informar resultados
+            <Button variant="secondary" className="gap-2" onClick={() => setAsmOpen(true)}>
+              <Settings className="h-4 w-4" />
+              Informar resultados
             </Button>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
@@ -1511,10 +1476,10 @@ export default function GestaoDeGrupos() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-4">
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
-            <Button variant="secondary" className="gap-2 inline-flex items-center" onClick={() => setOfertaOpen(true)}>
+            <Button variant="secondary" className="gap-2" onClick={() => setOfertaOpen(true)}>
               <Target className="h-4 w-4" />
               Abrir
             </Button>
@@ -1538,10 +1503,10 @@ export default function GestaoDeGrupos() {
           <div><Label>Grupo</Label><Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" /></div>
           <div><Label>Faixa de Crédito</Label><Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" /></div>
           <div>
-            <Label>% Lance Livre (mediana ±15%)</Label>
+            <Label>% Lance Livre (mediana ±30%)</Label>
             <Input type="number" step="0.01" value={fMedianaAlvo} onChange={(e) => setFMedianaAlvo(e.target.value)} placeholder="ex.: 45" />
           </div>
-          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 30% e 60%.</div>
+          <div className="self-end text-xs text-muted-foreground">Ex.: 45 → mostra grupos com mediana entre 31,5% e 58,5%.</div>
         </CardContent>
       </Card>
 
@@ -1550,10 +1515,11 @@ export default function GestaoDeGrupos() {
         <h3 className="text-base font-semibold">Relação de Grupos</h3>
       </div>
 
-      {/* Tabela principal – linhas zebradas + ordenação por cliques */}
+      {/* Tabela principal */}
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
+            {/* Linha 1: agrupadores (21 colunas no total) */}
             <tr className="text-xs">
               <th className="p-2 text-left align-bottom" colSpan={5}></th>
               <th className="p-2 text-center bg-muted/40" colSpan={1}></th>
@@ -1561,28 +1527,33 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-center bg-muted/20" colSpan={2}>50%</th>
               <th className="p-2 text-center bg-muted/20" colSpan={5}>LL</th>
               <th className="p-2 text-center" colSpan={5}></th>
-              <th className="p-2 text-center" colSpan={2}></th>
+              <th className="p-2 text-center" colSpan={1}></th>
             </tr>
+            {/* Linha 2: rótulos (21 colunas) */}
             <tr>
               <th className="p-2 text-left">ADMINISTRADORA</th>
               <th className="p-2 text-left">SEGMENTO</th>
               <th className="p-2 text-left">GRUPO</th>
               <th className="p-2 text-right">PARTIC.</th>
               <th className="p-2 text-center">FAIXA DE CRÉDITO</th>
+
               <th className="p-2 text-right">Tot. Entr.</th>
+
               <th className="p-2 text-right">25% Entregas</th>
               <th className="p-2 text-right">25% Ofertas</th>
+
               <th className="p-2 text-right">50% Entregas</th>
               <th className="p-2 text-right">50% Ofertas</th>
+
               <th className="p-2 text-right">LL Entregas</th>
               <th className="p-2 text-right">LL Ofertas</th>
+              <th className="p-2 text-right">LL Maior %</th>
+              <th className="p-2 text-right">LL Menor %</th>
               <th className="p-2 text-right">
                 <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("mediana")}>
-                  {sortLabel("Maior % / Menor % / Mediana", sort.col === "mediana", sort.dir)}
+                  {sortLabel("LL Mediana", sort.col === "mediana", sort.dir)}
                 </button>
               </th>
-              <th className="p-2 text-right"></th>
-              <th className="p-2 text-right"></th>
 
               <th className="p-2 text-center">
                 <button className="inline-flex items-center gap-1 hover:underline" onClick={() => toggleSort("prox_assembleia")}>
@@ -1604,17 +1575,18 @@ export default function GestaoDeGrupos() {
                   {sortLabel("Sorteio", sort.col === "prox_sorteio", sort.dir)}
                 </button>
               </th>
+
               <th className="p-2 text-right">Referência</th>
               <th className="p-2 text-center">Ações</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
-            ) : sorted.length === 0 ? (
-              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
+              <tr><td colSpan={21} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
+            ) : filtered.length === 0 ? (
+              <tr><td colSpan={21} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
             ) : (
-              sorted.map((r) => {
+              filtered.map((r) => {
                 const isEditing = editingId === r.id;
                 return (
                   <tr key={r.id} className="odd:bg-muted/30">
@@ -1684,7 +1656,6 @@ export default function GestaoDeGrupos() {
                     <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
                     <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
                     <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
-
                     <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                     <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
 
@@ -1713,7 +1684,7 @@ export default function GestaoDeGrupos() {
                       {isStubId(r.id) ? (
                         <Button
                           variant="secondary"
-                          className="gap-2 inline-flex items-center"
+                          className="gap-2"
                           onClick={() => {
                             setEditorPrefill({
                               administradora: r.administradora,
@@ -1732,19 +1703,19 @@ export default function GestaoDeGrupos() {
                         >
                           <Pencil className="h-4 w-4" /> Cadastrar
                         </Button>
-                      ) : editingId === r.id ? (
+                      ) : isEditing ? (
                         <div className="flex items-center justify-center gap-2">
-                          <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => { setEditingId(null); setEditDraft(null); }}>
+                          <Button variant="secondary" onClick={() => { setEditingId(null); setEditDraft(null); }} className="gap-2">
                             <X className="h-4 w-4" /> Cancelar
                           </Button>
-                          <Button className="inline-flex items-center gap-2" onClick={() => salvarLinha(r.id)}>
+                          <Button onClick={() => salvarLinha(r.id)} className="gap-2">
                             <Save className="h-4 w-4" /> Salvar
                           </Button>
                         </div>
                       ) : (
                         <Button
                           variant="secondary"
-                          className="gap-2 inline-flex items-center"
+                          className="gap-2"
                           onClick={() => {
                             const g = grupos.find((x) => x.id === r.id);
                             if (!g) return;
@@ -1811,7 +1782,7 @@ export default function GestaoDeGrupos() {
 }
 
 /* =========================================================
-   EDITOR DE GRUPO (mantido para compatibilidade — em uso)
+   EDITOR DE GRUPO (mantido)
    ========================================================= */
 
 type EditorGrupoProps = {
@@ -1982,10 +1953,10 @@ function EditorGrupo(props: EditorGrupoProps) {
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
-          Cancelar
+        <Button variant="secondary" onClick={onClose} className="gap-2">
+          <X className="h-4 w-4" /> Cancelar
         </Button>
-        <Button onClick={handleSave} className="inline-flex items-center gap-2">
+        <Button onClick={handleSave} className="gap-2">
           <Save className="h-4 w-4" /> Salvar Grupo
         </Button>
       </div>

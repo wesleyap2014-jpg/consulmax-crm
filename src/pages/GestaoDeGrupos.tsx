@@ -96,7 +96,7 @@ function withinLLMedianFilter(mediana: number | null | undefined, alvo: number |
   return mediana >= min && mediana <= max;
 }
 
-/** Converte qualquer coisa em 'YYYY-MM-DD' (UTC). */
+/** Converte qualquer coisa em 'YYYY-MM-DD' (UTC-like). */
 function toYMD(d: string | Date | null | undefined): string | null {
   if (!d) return null;
   const s = typeof d === "string" ? d.trim() : (d as Date).toISOString();
@@ -134,6 +134,14 @@ function toPct4(v: number | null | undefined): string {
   return `${str}%`;
 }
 
+function todayYMDLocal(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 /* ===== normalizações ===== */
 
 function stripAccents(s: string) {
@@ -165,8 +173,7 @@ function keyRaw(adm?: string | null, grp?: string | number | null) {
   return `${normalizeAdmin(adm)}::${String(grp ?? "").trim()}`;
 }
 
-/* ===== stubs (grupos vindos de vendas sem cadastro em groups) ===== */
-
+/* ===== stubs ===== */
 function isStubId(id: string) {
   return id.startsWith("stub:");
 }
@@ -209,9 +216,9 @@ function referenciaPorAdministradora(params: {
 
     const adm = administradora.toLowerCase();
 
-    // MAGGI — usa o "último milhar" (4 últimos dígitos) e reduz por participantes
+    // MAGGI — "último milhar" (4 últimos dígitos) reduzindo por participantes
     if (adm === "maggi") {
-      const milhar = parseInt(p5.slice(-4)); // ex.: 76478 -> 6478
+      const milhar = parseInt(p5.slice(-4));
       return reduceByCap(milhar, participantes);
     }
 
@@ -315,11 +322,11 @@ function OverlayLoteria({
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl">
         <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
+          <h2 className="text-lg font-semibold inline-flex items-center gap-2">
             <Percent className="h-5 w-5" />
             Informar resultados – Loteria Federal
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2">
+          <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -359,7 +366,7 @@ function OverlayLoteria({
           </div>
 
           <div className="flex justify-end">
-            <Button disabled={!canSave || loading} onClick={handleSave} className="gap-2">
+            <Button disabled={!canSave || loading} onClick={handleSave} className="inline-flex items-center gap-2">
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
               <Save className="h-4 w-4" /> Salvar
             </Button>
@@ -519,10 +526,10 @@ function OverlayAssembleias({
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
+          <h2 className="text-xl font-semibold inline-flex items-center gap-2">
             <Settings className="h-5 w-5" /> Informar resultados da Assembleia
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2">
+          <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -612,7 +619,7 @@ function OverlayAssembleias({
               )}
 
               <div className="flex justify-end pt-3">
-                <Button disabled={!podeSalvar || loading} onClick={handleSave} className="gap-2">
+                <Button disabled={!podeSalvar || loading} onClick={handleSave} className="inline-flex items-center gap-2">
                   {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                   <Save className="h-4 w-4" /> Salvar Resultados
                 </Button>
@@ -666,7 +673,6 @@ function OverlayOfertaLance({
     try {
       setLoading(true);
 
-      // 1) grupos elegíveis (assembleia == data informada)
       const elegiveis = gruposBase.filter((g) => !isStubId(g.id) && sameDay(g.prox_assembleia, ymd));
       if (elegiveis.length === 0) {
         setLinhas([]);
@@ -682,7 +688,6 @@ function OverlayOfertaLance({
         gruposDigits.add(normalizeGroupDigits(g.codigo));
       });
 
-      // 2) buscar COTAS em 'vendas' encarteiradas não contempladas
       type VendasRow = { [key: string]: any };
 
       const { data: vds, error } = await supabase
@@ -694,7 +699,6 @@ function OverlayOfertaLance({
 
       if (error) throw error;
 
-      // Detecta dinamicamente chaves de lead e descrição
       const sample: VendasRow = (vds ?? [])[0] ?? {};
       const leadCandidates = ["lead_id", "cliente_id", "id_lead", "id_cliente", "leadId", "clienteId"];
       const descCandidates = [
@@ -713,7 +717,6 @@ function OverlayOfertaLance({
       const leadKey: string | null = leadCandidates.find((k) => k in sample) ?? null;
       const descKey: string | null = descCandidates.find((k) => k in sample) ?? null;
 
-      // 2b) resolver nomes de leads (join manual)
       let nomesById = new Map<string, string>();
       if (leadKey) {
         const leadIds = Array.from(
@@ -738,14 +741,13 @@ function OverlayOfertaLance({
         }
       }
 
-      // 3) montar linhas por cota
       const out: OfertaRow[] = [];
       (vds ?? []).forEach((v: VendasRow) => {
         const adm = normalizeAdmin(v.administradora);
         const grpDigits = normalizeGroupDigits(v.grupo);
         const k = keyDigits(adm, grpDigits);
         const g = mapByKey.get(k);
-        if (!g) return; // ignora venda de grupo cuja assembleia != data
+        if (!g) return;
 
         const asm = lastAsmByGroup.get(g.id);
         const med = asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
@@ -785,7 +787,6 @@ function OverlayOfertaLance({
         });
       });
 
-      // 4) ordenação: Cliente (A–Z) > Adm > Grupo > Cota
       function normName(s?: string | null) {
         return stripAccents(String(s ?? "")).toLowerCase().trim();
       }
@@ -859,11 +860,10 @@ function OverlayOfertaLance({
       th,td{border:1px solid #e6e6e6; padding: 7px 8px; font-size: 12px; vertical-align: top; word-wrap: break-word}
       th{text-align:left; background:#f6f8fb; border-color:#e1e1e1}
 
-      /* Zebra 2x2 (cada cota tem 2 linhas) */
       tbody tr:nth-child(4n+1),
       tbody tr:nth-child(4n+3) { background:#fbfbfb; }
 
-      th:nth-child(1), td:nth-child(1) { width: 15%; } /* Administradora */
+      th:nth-child(1), td:nth-child(1) { width: 15%; }
       th:nth-child(2), td:nth-child(2) { width: 10%; }
       th:nth-child(3), td:nth-child(3) { width: 8%;  }
       th:nth-child(4), td:nth-child(4) { width: 20%; }
@@ -935,10 +935,10 @@ function OverlayOfertaLance({
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[88vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
+          <h2 className="text-xl font-semibold inline-flex items-center gap-2">
             <Target className="h-5 w-5" /> Oferta de Lance
           </h2>
-          <Button variant="secondary" onClick={onClose} className="gap-2">
+          <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
             <X className="h-4 w-4" /> Fechar
           </Button>
         </div>
@@ -950,11 +950,11 @@ function OverlayOfertaLance({
               <Input type="date" value={dataAsm} onChange={(e) => setDataAsm(e.target.value)} />
             </div>
             <div className="flex gap-2">
-              <Button onClick={listar} disabled={!dataAsm || loading} className="gap-2">
+              <Button onClick={listar} disabled={!dataAsm || loading} className="inline-flex items-center gap-2">
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                 Listar
               </Button>
-              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="gap-2">
+              <Button variant="secondary" onClick={exportarPDF} disabled={total === 0} className="inline-flex items-center gap-2">
                 Exportar PDF
               </Button>
             </div>
@@ -1087,7 +1087,6 @@ export default function GestaoDeGrupos() {
   const [fFaixa, setFFaixa] = useState("");
   const [fMedianaAlvo, setFMedianaAlvo] = useState("");
 
-  // edição inline
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
     participantes: number | null;
@@ -1105,11 +1104,11 @@ export default function GestaoDeGrupos() {
   const [editorOpen, setEditorOpen] = useState<boolean>(false);
   const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
 
-  // Ordenação (default: Assembleia desc — mais recente primeiro)
+  // ===== Ordenação padrão: Assembleia mais próxima da data atual
   const [sortKey, setSortKey] = useState<SortKey>("prox_assembleia");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  // Alertas
+  // Alertas (agrupados por tipo) — chaves por tipo+data
   const notifiedKeys = useRef<Set<string>>(new Set());
 
   const rebuildRows = useCallback(() => {
@@ -1165,7 +1164,6 @@ export default function GestaoDeGrupos() {
   const carregar = async () => {
     setLoading(true);
 
-    // 1) groups
     const { data: g, error: gErr } = await supabase
       .from("groups")
       .select(
@@ -1193,7 +1191,6 @@ export default function GestaoDeGrupos() {
       byKey.set(keyDigits(gr.administradora, gr.codigo), gr);
     }
 
-    // 2) vendas (inclui encarteiradas não contempladas OU quaisquer contempladas)
     const { data: vend, error: vErr } = await supabase
       .from("vendas")
       .select("administradora, segmento, grupo, status, contemplada")
@@ -1233,7 +1230,6 @@ export default function GestaoDeGrupos() {
       }
     }
 
-    // 4) últimos resultados (view)
     const reais = gruposBase.filter((g) => !isStubId(g.id)).map((g) => g.id);
     let byGroup = new Map<string, UltimoResultado>();
     if (reais.length > 0) {
@@ -1249,7 +1245,6 @@ export default function GestaoDeGrupos() {
     }
     setLastAsmByGroup(byGroup);
 
-    // 5) loteria para datas presentes em prox_sorteio
     const dateSet = new Set<string>();
     for (const gRow of gruposBase) {
       const ymd = toYMD(gRow.prox_sorteio);
@@ -1288,10 +1283,7 @@ export default function GestaoDeGrupos() {
     carregar();
   }, []);
 
-  const handleSync = async () => {
-    await carregar();
-  };
-
+  // ===== Filtros
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
@@ -1308,39 +1300,52 @@ export default function GestaoDeGrupos() {
 
   const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
 
-  // Ordenação - aplica sobre filtered
+  // ===== Ordenação — regra especial para "próxima assembleia mais perto de hoje"
+  function cmpDateNearestToToday(a?: string | null, b?: string | null): number {
+    const today = new Date(todayYMDLocal() + "T00:00:00");
+    const pa = a ? Date.parse(a) : NaN;
+    const pb = b ? Date.parse(b) : NaN;
+
+    const isFutureA = !isNaN(pa) && pa >= today.getTime();
+    const isFutureB = !isNaN(pb) && pb >= today.getTime();
+
+    if (isFutureA && !isFutureB) return -1;
+    if (!isFutureA && isFutureB) return 1;
+
+    const diffA = isNaN(pa) ? Number.POSITIVE_INFINITY : Math.abs(pa - today.getTime());
+    const diffB = isNaN(pb) ? Number.POSITIVE_INFINITY : Math.abs(pb - today.getTime());
+    return diffA - diffB;
+  }
+
   const sorted = useMemo(() => {
     const copy = [...filtered];
-    const dir = sortDir === "asc" ? 1 : -1;
 
     copy.sort((a, b) => {
-      let va: number | string | null = null;
-      let vb: number | string | null = null;
+      if (sortKey === "prox_assembleia") {
+        return cmpDateNearestToToday(toYMD(a.prox_assembleia), toYMD(b.prox_assembleia));
+      }
+
+      const dir = sortDir === "asc" ? 1 : -1;
 
       if (sortKey === "mediana") {
-        va = a.mediana ?? -9999;
-        vb = b.mediana ?? -9999;
-        return (Number(va) - Number(vb)) * dir;
+        const va = a.mediana ?? -9999;
+        const vb = b.mediana ?? -9999;
+        return (va - vb) * dir;
       }
 
       if (sortKey === "prazo_encerramento_meses") {
-        va = a.prazo_encerramento_meses ?? -9999;
-        vb = b.prazo_encerramento_meses ?? -9999;
-        return (Number(va) - Number(vb)) * dir;
+        const va = a.prazo_encerramento_meses ?? -9999;
+        const vb = b.prazo_encerramento_meses ?? -9999;
+        return (va - vb) * dir;
       }
 
-      // datas
       const da = toYMD(
-        sortKey === "prox_assembleia"
-          ? a.prox_assembleia
-          : sortKey === "prox_sorteio"
+        sortKey === "prox_sorteio"
           ? a.prox_sorteio
           : a.prox_vencimento
       );
       const db = toYMD(
-        sortKey === "prox_assembleia"
-          ? b.prox_assembleia
-          : sortKey === "prox_sorteio"
+        sortKey === "prox_sorteio"
           ? b.prox_sorteio
           : b.prox_vencimento
       );
@@ -1352,7 +1357,7 @@ export default function GestaoDeGrupos() {
     return copy;
   }, [filtered, sortKey, sortDir]);
 
-  // salvar edição inline
+  // ===== Edição inline
   const salvarLinha = async (id: string) => {
     if (!editDraft) return;
     try {
@@ -1374,9 +1379,8 @@ export default function GestaoDeGrupos() {
     }
   };
 
-  // ===== Notificações (tela + navegador) para assembleia / vencimento / sorteio (D-3, D-1, D0)
+  // ===== Notificações AGRUPADAS (somente D0 = HOJE) — um alerta por tipo
   useEffect(() => {
-    // Solicita permissão uma única vez
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
@@ -1388,38 +1392,63 @@ export default function GestaoDeGrupos() {
     }
   }
 
-  function daysUntil(ymd?: string | null) {
-    if (!ymd) return Infinity;
-    const d = new Date(ymd + "T00:00:00Z");
-    const now = new Date();
-    const diff = Math.floor((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    return diff;
+  function groupMessage(prefix: string, items: LinhaUI[], selector: (r: LinhaUI) => string | null) {
+    // agrupar por administradora -> lista de grupos (códigos)
+    const map = new Map<string, string[]>();
+    items.forEach((r) => {
+      const code = normalizeGroupDigits(r.codigo);
+      if (!code) return;
+      const adm = r.administradora;
+      if (!map.has(adm)) map.set(adm, []);
+      map.get(adm)!.push(code);
+    });
+    const parts: string[] = [];
+    map.forEach((codes, adm) => {
+      parts.push(`${adm} ${codes.join("; ")}`);
+    });
+    if (parts.length === 0) return null;
+    return `${prefix} ${parts.join("; ")}.`;
   }
 
   useEffect(() => {
-    // checa somente sobre a lista já ordenada/filtrada
-    sorted.forEach((r) => {
-      const checks: Array<{ key: string; label: string; date: string | null | undefined }> = [
-        { key: `${r.id}-asm-${r.prox_assembleia}`, label: "Assembleia", date: toYMD(r.prox_assembleia) },
-        { key: `${r.id}-venc-${r.prox_vencimento}`, label: "Vencimento", date: toYMD(r.prox_vencimento) },
-        { key: `${r.id}-sorteio-${r.prox_sorteio}`, label: "Sorteio", date: toYMD(r.prox_sorteio) },
-      ];
+    const today = todayYMDLocal();
 
-      checks.forEach(({ key, label, date }) => {
-        if (!date) return;
-        const dleft = daysUntil(date);
-        if (dleft <= 3 && !notifiedKeys.current.has(key)) {
-          notifiedKeys.current.add(key);
-          const msg = `${label} do grupo ${r.codigo} (${r.administradora}) em ${formatBR(date)}.`;
-          // toast leve
-          try {
-            // Se usar algum sistema de toast global, chamar aqui. Fallback:
-            console.info("[Alerta Consulmax]", msg);
-          } catch {}
-          pushBrowser("Lembrete Consulmax", msg);
-        }
-      });
-    });
+    const isToday = (d?: string | null) => !!d && toYMD(d) === today;
+
+    const venc = sorted.filter((r) => isToday(r.prox_vencimento));
+    const sort = sorted.filter((r) => isToday(r.prox_sorteio));
+    const asm  = sorted.filter((r) => isToday(r.prox_assembleia));
+
+    const keyV = `venc-${today}`;
+    const keyS = `sorteio-${today}`;
+    const keyA = `asm-${today}`;
+
+    if (venc.length > 0 && !notifiedKeys.current.has(keyV)) {
+      notifiedKeys.current.add(keyV);
+      const msg = groupMessage("Hoje tem vencimento dos grupos", venc, (r) => r.prox_vencimento);
+      if (msg) {
+        console.info("[Alerta Consulmax]", msg);
+        pushBrowser("Vencimento hoje", msg);
+      }
+    }
+
+    if (sort.length > 0 && !notifiedKeys.current.has(keyS)) {
+      notifiedKeys.current.add(keyS);
+      const msg = groupMessage("Hoje tem sorteio dos grupos", sort, (r) => r.prox_sorteio);
+      if (msg) {
+        console.info("[Alerta Consulmax]", msg);
+        pushBrowser("Sorteio hoje", msg);
+      }
+    }
+
+    if (asm.length > 0 && !notifiedKeys.current.has(keyA)) {
+      notifiedKeys.current.add(keyA);
+      const msg = groupMessage("Hoje tem assembleia dos grupos", asm, (r) => r.prox_assembleia);
+      if (msg) {
+        console.info("[Alerta Consulmax]", msg);
+        pushBrowser("Assembleia hoje", msg);
+      }
+    }
   }, [sorted]);
 
   // UI helpers sort
@@ -1436,7 +1465,8 @@ export default function GestaoDeGrupos() {
           if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
           else {
             setSortKey(key);
-            setSortDir("desc");
+            // quando mudar de coluna, default asc
+            setSortDir("asc");
           }
         }}
         title="Ordenar"
@@ -1448,12 +1478,12 @@ export default function GestaoDeGrupos() {
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Linha de cartões — REMOVIDO o card “Gestão de Grupos” conforme solicitado */}
+      {/* Linha de cartões — REMOVIDO o card “Gestão de Grupos” */}
       <div className="grid grid-cols-1 lg:grid-cols-9 gap-4 items-start">
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">LOTERIA FEDERAL</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setLfOpen(true)}>
+            <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => setLfOpen(true)}>
               <Percent className="h-4 w-4" />
               Informar resultados
             </Button>
@@ -1471,7 +1501,7 @@ export default function GestaoDeGrupos() {
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">ASSEMBLEIAS</CardTitle>
-            <Button variant="secondary" className="gap-2" onClick={() => setAsmOpen(true)}>
+            <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => setAsmOpen(true)}>
               <Settings className="h-4 w-4" /> Informar resultados
             </Button>
           </CardHeader>
@@ -1484,14 +1514,11 @@ export default function GestaoDeGrupos() {
           <CardHeader className="pb-2 flex items-center justify-between">
             <CardTitle className="text-base">OFERTA DE LANCE</CardTitle>
             <div className="flex gap-2">
-              <Button variant="secondary" className="gap-2" onClick={() => setOfertaOpen(true)}>
+              <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => setOfertaOpen(true)}>
                 <Target className="h-4 w-4" />
                 Abrir
               </Button>
-              <Button variant="secondary" className="gap-2" onClick={handleSync}>
-                <RefreshCw className="h-4 w-4" />
-                Atualizar
-              </Button>
+              {/* Botão "Atualizar" removido conforme solicitado */}
             </div>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
@@ -1503,7 +1530,7 @@ export default function GestaoDeGrupos() {
       {/* Filtros */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="inline-flex items-center gap-2 text-base">
             <FilterIcon className="h-4 w-4" /> Filtros
           </CardTitle>
         </CardHeader>
@@ -1546,24 +1573,14 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-right">LL Ofertas</th>
               <th className="p-2 text-right">Maior %</th>
               <th className="p-2 text-right">Menor %</th>
-              <th className="p-2 text-right">
-                {headerSort("LL Mediana", "mediana")}
-              </th>
+              <th className="p-2 text-right">{headerSort("LL Mediana", "mediana")}</th>
 
-              {/* ORDEM CORRETA A PARTIR DAQUI */}
+              {/* Ordem correta */}
               <th className="p-2 text-center">Apuração</th>
-              <th className="p-2 text-center">
-                {headerSort("Pz Enc", "prazo_encerramento_meses")}
-              </th>
-              <th className="p-2 text-center">
-                {headerSort("Vencimento", "prox_vencimento")}
-              </th>
-              <th className="p-2 text-center">
-                {headerSort("Sorteio", "prox_sorteio")}
-              </th>
-              <th className="p-2 text-center">
-                {headerSort("Assembleia", "prox_assembleia")}
-              </th>
+              <th className="p-2 text-center">{headerSort("Pz Enc", "prazo_encerramento_meses")}</th>
+              <th className="p-2 text-center">{headerSort("Vencimento", "prox_vencimento")}</th>
+              <th className="p-2 text-center">{headerSort("Sorteio", "prox_sorteio")}</th>
+              <th className="p-2 text-center">{headerSort("Assembleia", "prox_assembleia")}</th>
               <th className="p-2 text-right">Ref</th>
               <th className="p-2 text-center">Ações</th>
             </tr>
@@ -1660,7 +1677,7 @@ export default function GestaoDeGrupos() {
                       {isStubId(r.id) ? (
                         <Button
                           variant="secondary"
-                          className="gap-2"
+                          className="inline-flex items-center gap-2"
                           onClick={() => {
                             setEditorPrefill({
                               administradora: r.administradora,
@@ -1681,17 +1698,17 @@ export default function GestaoDeGrupos() {
                         </Button>
                       ) : editingId === r.id ? (
                         <div className="flex items-center justify-center gap-2">
-                          <Button variant="secondary" className="gap-2" onClick={() => { setEditingId(null); setEditDraft(null); }}>
+                          <Button variant="secondary" className="inline-flex items-center gap-2" onClick={() => { setEditingId(null); setEditDraft(null); }}>
                             <X className="h-4 w-4" /> Cancelar
                           </Button>
-                          <Button className="gap-2" onClick={() => salvarLinha(r.id)}>
+                          <Button className="inline-flex items-center gap-2" onClick={() => salvarLinha(r.id)}>
                             <Save className="h-4 w-4" /> Salvar
                           </Button>
                         </div>
                       ) : (
                         <Button
                           variant="secondary"
-                          className="gap-2"
+                          className="inline-flex items-center gap-2"
                           onClick={() => {
                             const g = grupos.find((x) => x.id === r.id);
                             if (!g) return;
@@ -1758,7 +1775,7 @@ export default function GestaoDeGrupos() {
 }
 
 /* =========================================================
-   EDITOR DE GRUPO (compatível)
+   EDITOR DE GRUPO
    ========================================================= */
 
 type EditorGrupoProps = {
@@ -1929,8 +1946,8 @@ function EditorGrupo(props: EditorGrupoProps) {
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose} className="gap-2"><X className="h-4 w-4" /> Cancelar</Button>
-        <Button onClick={handleSave} className="gap-2"><Save className="h-4 w-4" /> Salvar Grupo</Button>
+        <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2"><X className="h-4 w-4" /> Cancelar</Button>
+        <Button onClick={handleSave} className="inline-flex items-center gap-2"><Save className="h-4 w-4" /> Salvar Grupo</Button>
       </div>
     </div>
   );

@@ -150,6 +150,16 @@ function annualToMonthlyCompound(fracAnnual: number): number {
   return Math.pow(1 + (fracAnnual || 0), 1 / 12) - 1;
 }
 
+// PMT: parcela de financiamento com juros compostos (i = taxa/mês, n = prazo em meses, pv = principal)
+function pmt(i: number, n: number, pv: number): number {
+  const rate = Number(i) || 0;
+  const periods = Math.max(1, Math.round(Number(n) || 0));
+  const principal = Math.max(0, Number(pv) || 0);
+  if (rate === 0) return principal / periods;
+  const f = Math.pow(1 + rate, periods);
+  return principal * (rate * f) / (f - 1);
+}
+
 /* ==================== ENGINE (SSOT) ==================== */
 type EngineParams = {
   selic_anual: number;
@@ -187,7 +197,7 @@ type EngineOut = {
   nContemplacao: number;
   investido: number;
   creditoLiberado: number;
-  valorVenda: number; // agora representa APENAS o ganho (Crédito Liberado × Ganho%)
+  valorVenda: number; // ganho
   lucro: number;
   roi: number;
   rentabMes: number;
@@ -244,10 +254,10 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
     : 0;
 
   // ===== PROJEÇÃO NA VENDA (corrigido) =====
-  const creditoLiberado = Math.max(0, novoCredito);          // = Crédito – Embutido (já veio em novo_credito)
+  const creditoLiberado = Math.max(0, novoCredito);          // = Crédito – Embutido
   const reforcoPct = safe(p.reforco_pct);                    // Ganho na Venda (%) em fração
-  const valorVenda = creditoLiberado * reforcoPct;           // *** APENAS o ganho ***
-  const lucro = Math.max(0, valorVenda - investido);         // = Valor da Venda – Investido
+  const valorVenda = creditoLiberado * reforcoPct;           // ganho
+  const lucro = Math.max(0, valorVenda - investido);         // = Venda – Investido
 
   // ROI e métricas derivadas com guards
   const roi = investido > 0 ? safe(lucro / investido) : 0;
@@ -498,65 +508,28 @@ Grupo: ${r.grupo || "—"}`;
   /* ======================= PDF infra ======================= */
   const headerBand = (doc: jsPDF, title: string) => {
     const w = doc.internal.pageSize.getWidth();
-    doc.setFillColor(brand.header as any); doc.rect(0, 0, w, 140, "F");
-    doc.setFont("helvetica", "bold"); doc.setFontSize(26);
-    doc.setTextColor("#FFFFFF"); doc.text(title, 40, 90);
-  };
-  const addWatermark = (doc: jsPDF) => {
-    if (!logoDataUrl) return;
-    const w = doc.internal.pageSize.getWidth();
-    const h = doc.internal.pageSize.getHeight();
-    const props = (doc as any).getImageProperties(logoDataUrl);
-    const maxW = w * 0.6, maxH = h * 0.35;
-    const ratio = Math.min(maxW / props.width, maxH / props.height);
-    const iw = props.width * ratio, ih = props.height * ratio;
-    const x = (w - iw) / 2, y = (h - ih) / 2;
-    const hasG = (doc as any).GState && (doc as any).setGState;
-    if (hasG) {
-      const gLow = new (doc as any).GState({ opacity: 0.07 });
-      (doc as any).setGState(gLow); doc.addImage(logoDataUrl, "PNG", x, y, iw, ih);
-      const gFull = new (doc as any).GState({ opacity: 1 }); (doc as any).setGState(gFull);
-    } else { doc.addImage(logoDataUrl, "PNG", x, y, iw, ih); }
-  };
-  const addFooter = (doc: jsPDF) => {
-    const w = doc.internal.pageSize.getWidth();
-    const h = doc.internal.pageSize.getHeight();
-    const margin = 40, areaH = 80, yTop = h - areaH - 30;
-    doc.setDrawColor(220, 220, 220); doc.setLineWidth(1); doc.line(margin, yTop, w - margin, yTop);
+    doc.setFillColor(brand.header as any); doc.rect(0, 0, w, 90, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(22);
+    doc.setTextColor("#FFFFFF"); doc.text(title, 40, 60);
     if (logoDataUrl) {
       const props = (doc as any).getImageProperties(logoDataUrl);
       const ratio = Math.min(120 / props.width, 34 / props.height);
       const lw = props.width * ratio, lh = props.height * ratio;
-      const ly = yTop + (areaH - lh) / 2; doc.addImage(logoDataUrl, "PNG", margin, ly, lw, lh);
+      doc.addImage(logoDataUrl, "PNG", w - lw - 40, 30, lw, lh);
     }
-    doc.setFont("helvetica","normal"); doc.setTextColor(90,90,90); doc.setFontSize(10);
+  };
+  const addFooter = (doc: jsPDF) => {
+    const w = doc.internal.pageSize.getWidth();
+    const h = doc.internal.pageSize.getHeight();
+    const yTop = h - 70;
+    doc.setDrawColor(220, 220, 220); doc.setLineWidth(1); doc.line(40, yTop, w - 40, yTop);
+    doc.setFont("helvetica","normal"); doc.setTextColor(90,90,90); doc.setFontSize(9);
     const lines = [
       "Consulmax Consórcios e Investimentos • CNPJ: 57.942.043/0001-03",
-      "Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO • Cel/Whats: (69) 9 9302-9380",
-      "consulmaxconsorcios.com.br",
-      `Consultor responsável: ${seller.nome}`,
+      `Consultor responsável: ${seller.nome} • Whats: ${formatPhoneBR(seller.phone) || "-"}`,
+      "consulmaxconsorcios.com.br • Ji-Paraná/RO",
     ];
-    let y = yTop + 20; lines.forEach((t) => { doc.text(t, w - margin, y, { align: "right" as any }); y += 14; });
-  };
-  const sellerCard = (doc: jsPDF) => {
-    const w = doc.internal.pageSize.getWidth();
-    const cardW = Math.min(520, w - 80);
-    const x = (w - cardW) / 2, y = 150, h = 118;
-    doc.setDrawColor(240); doc.setFillColor(255, 255, 255); doc.roundedRect(x, y, cardW, h, 14, 14, "F");
-    const pad = 18; let xCursor = x + pad; const yMid = y + h / 2;
-    if (seller.avatar_url) { doc.setFillColor(245); doc.circle(xCursor + 34, yMid, 34, "F"); xCursor += 80; }
-    if (logoDataUrl) {
-      const props = (doc as any).getImageProperties(logoDataUrl);
-      const ratio = Math.min(80 / props.width, 40 / props.height);
-      const lw = props.width * ratio, lh = props.height * ratio;
-      doc.addImage(logoDataUrl, "PNG", xCursor, y + pad + 2, lw, lh); xCursor += lw + 14;
-    }
-    doc.setFont("helvetica","bold"); doc.setTextColor(0); doc.setFontSize(14);
-    doc.text(seller.nome || "Consultor Consulmax", xCursor, y + pad + 16);
-    doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(80);
-    const whats = formatPhoneBR(seller.phone) || "-";
-    doc.text(`Whats: ${whats}`, xCursor, y + pad + 36);
-    doc.text(`Consulmax • Consultoria Especializada`, xCursor, y + pad + 56);
+    let y = yTop + 18; lines.forEach((t) => { doc.text(t, w - 40, y, { align: "right" as any }); y += 12; });
   };
 
   /* ---------------- PDF (simplificado e completo) --------------- */
@@ -595,84 +568,213 @@ Grupo: ${r.grupo || "—"}`;
     doc.save(`${title.replace(/\s+/g,'_')}_${sim.code}.pdf`);
   }
 
+  // ======= PDF COMPLETO — Direcionada (1 página, conforme briefing) =======
   function gerarPDFDirecionada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
-    headerBand(doc, "Proposta Direcionada"); sellerCard(doc); addWatermark(doc); addFooter(doc);
-    doc.addPage(); headerBand(doc, "Proposta Direcionada"); addWatermark(doc);
-    const marginX = 40;
+    const w = doc.internal.pageSize.getWidth();
 
+    // Cabeçalho
+    headerBand(doc, "Proposta Direcionada");
+    doc.setFont("helvetica","normal"); doc.setTextColor(40); doc.setFontSize(10);
+    const disclaimerTop = "Essa proposta foi desenhada para quem busca um crédito alto com inteligência financeira, seja para compra de um veículo, ampliação patrimonial ou alavancagem de investimentos, com máxima eficiência.";
+    doc.text(disclaimerTop, 40, 100, { maxWidth: w - 80 });
+
+    const marginX = 36;
+
+    // 1) ESPECIFICAÇÕES (compacto)
     (doc as any).autoTable({
-      startY: 180,
-      head: [["Especificações", ""]],
+      startY: 120,
+      head: [["ESPECIFICAÇÕES DA PROPOSTA", ""]],
       body: [
-        ["Crédito", brMoney(out.credito)],
+        ["Crédito Contratado", brMoney(out.credito)],
         ["Prazo", out.prazo ? `${out.prazo} meses` : "—"],
-        ["Taxa de adm (total)", typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—"],
+        ["Taxa de Adm total", typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—"],
         ["Fundo Reserva", typeof out.fr === "number" ? formatPercentFraction(out.fr) : "—"],
-        ["Valor de Categoria", out.valorCategoria !== null ? brMoney(out.valorCategoria) : "—"],
-        ["Encargos (R$)", out.encargos !== null ? brMoney(out.encargos) : "—"],
+        ["Total de Encargos (R$)", out.encargos !== null ? brMoney(out.encargos!) : "—"],
+        ["Taxa total mensalizada", (typeof out.adm === "number" && out.prazo)
+          ? formatPercentFraction((out.adm || 0) / (out.prazo || 1))
+          : "—"],
       ],
-      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      headStyles: { fillColor: brand.primary, textColor: "#fff", halign: "left" },
+      styles: { fontSize: 9, cellPadding: 4 },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: marginX, right: marginX },
+      tableWidth: w - marginX * 2,
+    });
+
+    // 2) SIMULAÇÃO DE PARCELAS + observação
+    (doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 8,
+      head: [["SIMULAÇÃO DE PARCELAS", "Valor"]],
+      body: [
+        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
+        ["Demais", brMoney(out.parcelaDemaisValor)],
+      ],
+      headStyles: { fillColor: brand.accent, textColor: "#fff", halign: "left" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+      tableWidth: w - marginX * 2,
+    });
+    doc.setFontSize(8); doc.setTextColor(90);
+    doc.text(
+      "Observação: o valor total será proporcionalmente ajustado à taxa e fundo, diluído conforme a estratégia de lance.",
+      marginX, (doc as any).lastAutoTable.finalY + 10
+    );
+
+    // 3) Estratégia com lance + disclaimer
+    const yAfterParc = (doc as any).lastAutoTable.finalY + 24;
+    doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(30);
+    const pctLanceText = `${formatPercentFraction(out.lancePct)}`
+    doc.text(`Estratégia com Lance de ${pctLanceText}`, marginX, yAfterParc);
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90);
+    doc.text(
+      `A simulação abaixo prevê contemplação em ${out.nContemplacao || 0} meses.`,
+      marginX, yAfterParc + 14
+    );
+
+    // 3.1) Quadro comparativo (Financiamento × Consórcio)
+    // Financiamento (usa crédito liberado como base; taxa por segmento)
+    const taxaFinMensal =
+      out.segmento === "Automóvel" || out.segmento === "Motocicleta"
+        ? params.fin_veic_mensal
+        : annualToMonthlyCompound(params.fin_imob_anual);
+    const parcelaFin = pmt(taxaFinMensal, out.prazoApos || 0, out.creditoLiberado || 0);
+    const custoFinalFin = parcelaFin * (out.prazoApos || 0) - (out.creditoLiberado || 0);
+
+    // Consórcio
+    const custoFinalCons = out.encargos || 0;
+
+    // Tabelas lado a lado
+    const colW = (w - marginX * 2 - 12) / 2;
+    const leftMargin = marginX;
+    const rightMargin = marginX + colW + 12;
+
+    (doc as any).autoTable({
+      startY: yAfterParc + 28,
+      head: [["FINANCIAMENTO", ""]],
+      body: [
+        ["Crédito", brMoney(out.creditoLiberado)],
+        ["Parcela", brMoney(parcelaFin)],
+        ["Prazo", out.prazoApos ? `${out.prazoApos} meses` : "—"],
+        ["Custo Final (Parc × prazo − Crédito)", brMoney(custoFinalFin)],
+      ],
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      margin: { left: leftMargin, right: leftMargin + colW },
+      tableWidth: colW,
+      theme: "grid",
+      alternateRowStyles: { fillColor: brand.grayRow },
     });
 
     (doc as any).autoTable({
-      startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [["Parcelas até contemplação", "Valor", "Obs."]],
+      startY: yAfterParc + 28,
+      head: [["CONSÓRCIO", ""]],
       body: [
-        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor), "1ª parcela em até 3x no cartão"],
-        ["Demais", brMoney(out.parcelaDemaisValor), "Até a contemplação"],
+        ["Lance Pago", brMoney(out.lanceProprioValor)],
+        ["Parcelas após o lance", brMoney(out.parcelaAposValor)],
+        ["Prazo após o lance", out.prazoApos ? `${out.prazoApos} meses` : "—"],
+        ["Crédito Recebido", brMoney(out.creditoLiberado)],
+        ["Custo Final (Encargos)", brMoney(custoFinalCons)],
       ],
       headStyles: { fillColor: brand.accent, textColor: "#fff" },
-      alternateRowStyles: { fillColor: brand.grayRow },
+      styles: { fontSize: 9, cellPadding: 4 },
+      margin: { left: rightMargin, right: rightMargin + colW },
+      tableWidth: colW,
       theme: "grid",
-      margin: { left: marginX, right: marginX },
+      alternateRowStyles: { fillColor: brand.grayRow },
     });
 
+    // 3.2) Economia com o Consórcio (linha única)
+    const yAfterTables = Math.max(
+      (doc as any).lastAutoTable.finalY,
+      ((doc as any).lastAutoTable.finalY)
+    ) + 10;
+    const economia = Math.max(0, custoFinalFin - custoFinalCons);
     (doc as any).autoTable({
-      startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [["Estratégia", "Valor"]],
+      startY: yAfterTables,
+      head: [["COMPARATIVO DE CUSTOS", "Valor"]],
       body: [
-        ["Lance Embutido", brMoney(out.embutidoValor)],
-        ["Lance Próprio (pago)", brMoney(out.lanceProprioValor)],
-        ["Parcela após o lance", brMoney(out.parcelaAposValor)],
-        ["Prazo após o lance", out.prazoApos ? `${out.prazoApos} meses` : "—"],
-        ["Crédito Liberado", brMoney(out.creditoLiberado)],
+        ["Economia com o Consórcio (Fin − Consórcio)", brMoney(economia)],
       ],
       headStyles: { fillColor: brand.primary, textColor: "#fff" },
-      alternateRowStyles: { fillColor: brand.grayRow },
-      theme: "grid",
+      styles: { fontSize: 9, cellPadding: 4 },
       margin: { left: marginX, right: marginX },
+      tableWidth: w - marginX * 2,
+      theme: "grid",
+      alternateRowStyles: { fillColor: brand.grayRow },
     });
 
-    const yEnd = (doc as any).lastAutoTable.finalY + 18;
-    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(80,80,80);
+    // 4) Diferenciais + Resumo (somente PDF) — compactos para caber em 1 página
+    const yAfterComp = (doc as any).lastAutoTable.finalY + 8;
+    const mid = marginX + (w - marginX * 2) / 2 - 6;
+
+    // Diferenciais
+    (doc as any).autoTable({
+      startY: yAfterComp,
+      head: [["NOSSOS DIFERENCIAIS"]],
+      body: [
+        ["Sem juros: você economiza centenas de milhares ao longo dos anos;"],
+        ["Planejamento de Contemplação com estratégia de lance;"],
+        ["Acompanhamento completo até a entrega do bem;"],
+        ["Flexibilidade para uso do crédito: aquisição, venda com ágio, previdência aplicada, investimento, renda passiva etc."],
+      ],
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 8, cellPadding: 3 },
+      margin: { left: marginX, right: mid },
+      tableWidth: (w - marginX * 2) / 2 - 6,
+      theme: "grid",
+      columnStyles: { 0: { cellWidth: "wrap" } },
+    });
+
+    // Resumo
+    (doc as any).autoTable({
+      startY: yAfterComp,
+      head: [["RESUMO", "Valor"]],
+      body: [
+        ["Crédito", brMoney(out.credito)],
+        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
+        ["Demais (até a contemplação)", brMoney(out.parcelaDemaisValor)],
+        ["Taxa de adm total", typeof out.adm === "number" ? brMoney((out.credito || 0) * (out.adm || 0)) : "—"],
+        ["Fundo de Reserva (retorna ao final)", typeof out.fr === "number" ? brMoney((out.credito || 0) * (out.fr || 0)) : "—"],
+        ["Total do Plano", out.valorCategoria !== null ? brMoney(out.valorCategoria) : "—"],
+        ["Lance Sugerido", brMoney(out.lanceProprioValor + out.embutidoValor)],
+        ["Crédito sem embutido", brMoney(out.credito)],
+        ["Crédito com embutido", brMoney(out.creditoLiberado)],
+      ],
+      headStyles: { fillColor: brand.accent, textColor: "#fff" },
+      styles: { fontSize: 8, cellPadding: 3 },
+      margin: { left: mid + 12, right: marginX },
+      tableWidth: (w - marginX * 2) / 2 - 6,
+      theme: "grid",
+    });
+
+    // 5) Atenção (disclaimer final)
+    const yFinal = Math.max((doc as any).lastAutoTable.finalY, (doc as any).lastAutoTable.finalY) + 8;
+    doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(90);
     doc.text(
-      "Atenção: Simulação não é garantia de contemplação; esta pode ocorrer antes ou depois do prazo previsto.",
-      marginX, yEnd, { maxWidth: doc.internal.pageSize.getWidth() - marginX*2 }
+      "Atenção: A presente proposta refere-se a uma simulação, NÃO sendo configurada como promessa de contemplação, podendo a mesma ocorrer antes ou após o prazo previsto.",
+      marginX, yFinal, { maxWidth: w - marginX * 2 }
     );
+
     addFooter(doc);
     doc.save(`Proposta_Direcionada_${sim.code}.pdf`);
   }
 
-  // ======= PDF COMPLETO — Venda Contemplada (corrigido) =======
+  // ======= PDF COMPLETO — Venda Contemplada (mantido e corrigido) =======
   function gerarPDFVendaContemplada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
-    headerBand(doc, "Venda Contemplada"); sellerCard(doc); addWatermark(doc); addFooter(doc);
-
-    // Página 2 (conteúdo)
-    doc.addPage();
-    headerBand(doc, "Venda Contemplada"); addWatermark(doc);
+    headerBand(doc, "Venda Contemplada");
 
     const marginX = 40;
 
     // 1) ESPECIFICAÇÕES
     (doc as any).autoTable({
-      startY: 180,
+      startY: 120,
       head: [["Especificações", ""]],
       body: [
         ["Crédito contratado", brMoney(out.credito)],
@@ -683,13 +785,14 @@ Grupo: ${r.grupo || "—"}`;
       ],
       headStyles: { fillColor: brand.primary, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
+      styles: { fontSize: 9, cellPadding: 4 },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
 
     // 2) PARCELAS ATÉ A CONTEMPLAÇÃO
     (doc as any).autoTable({
-      startY: (doc as any).lastAutoTable.finalY + 16,
+      startY: (doc as any).lastAutoTable.finalY + 14,
       head: [["Parcelas até a contemplação", "Valor"]],
       body: [
         [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
@@ -697,13 +800,14 @@ Grupo: ${r.grupo || "—"}`;
       ],
       headStyles: { fillColor: brand.accent, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
+      styles: { fontSize: 9, cellPadding: 4 },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
 
     // 3) PROJEÇÃO NA VENDA — corrigido (valorVenda = créditoLiberado × ganho%)
     (doc as any).autoTable({
-      startY: (doc as any).lastAutoTable.finalY + 16,
+      startY: (doc as any).lastAutoTable.finalY + 14,
       head: [["Projeção na Venda", ""]],
       body: [
         ["Crédito Liberado (Crédito – Embutido)", brMoney(out.creditoLiberado)],
@@ -717,13 +821,14 @@ Grupo: ${r.grupo || "—"}`;
       ],
       headStyles: { fillColor: brand.primary, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
+      styles: { fontSize: 9, cellPadding: 4 },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
 
-    // 4) ESTRATÉGIA DE LANCE (mesma estrutura)
+    // 4) ESTRATÉGIA DE LANCE
     (doc as any).autoTable({
-      startY: (doc as any).lastAutoTable.finalY + 16,
+      startY: (doc as any).lastAutoTable.finalY + 14,
       head: [["Estratégia de Lance", "Valor"]],
       body: [
         ["Lance Embutido", brMoney(out.embutidoValor)],
@@ -732,13 +837,14 @@ Grupo: ${r.grupo || "—"}`;
       ],
       headStyles: { fillColor: brand.accent, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
+      styles: { fontSize: 9, cellPadding: 4 },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
 
-    // 5) OBSERVAÇÕES (disclaimer)
-    const yEnd = (doc as any).lastAutoTable.finalY + 18;
-    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(80,80,80);
+    // OBS
+    const yEnd = (doc as any).lastAutoTable.finalY + 12;
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(80,80,80);
     doc.text(
       "Atenção: Simulação não é garantia de contemplação; esta pode ocorrer antes ou depois do prazo previsto.",
       marginX, yEnd, { maxWidth: doc.internal.pageSize.getWidth() - marginX*2 }

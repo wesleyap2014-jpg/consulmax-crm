@@ -120,9 +120,9 @@ async function fetchAsDataURL(url: string): Promise<string | null> {
     const res = await fetch(url);
     const blob = await res.blob();
     return await new Promise<string>((resolve) => {
-      theReader.onload = () => resolve((theReader.result as string) || null);
-      const theReader = new FileReader();
-      theReader.readAsDataURL(blob);
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.readAsDataURL(blob);
     });
   } catch {
     return null;
@@ -162,7 +162,7 @@ type EngineParams = {
   fin_veic_mensal: number;
   fin_imob_anual: number;
 
-  reforco_pct: number;
+  reforco_pct: number; // "Ganho na Venda (%)" — fração (ex.: 0.20 = 20%)
 };
 
 type EngineOut = {
@@ -187,7 +187,7 @@ type EngineOut = {
   nContemplacao: number;
   investido: number;
   creditoLiberado: number;
-  valorVenda: number;
+  valorVenda: number; // agora representa APENAS o ganho (Crédito Liberado × Ganho%)
   lucro: number;
   roi: number;
   rentabMes: number;
@@ -202,15 +202,20 @@ function labelInicialFromQtd(qtd?: number | null) {
 }
 
 function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
-  const C = sim.credito ?? 0;
+  const safe = (n: any) => {
+    const v = Number(n);
+    return Number.isFinite(v) ? v : 0;
+  };
+
+  const C = safe(sim.credito);
   const seg = normalizeSegment(sim.segmento);
-  const prazo = sim.prazo_venda ?? 0;
+  const prazo = safe(sim.prazo_venda);
 
   // Captura automática da quantidade de antecipações
   const labelParcelaInicial = labelInicialFromQtd(sim.antecip_parcelas ?? 2);
 
-  const adm = typeof sim.adm_tax_pct === "number" ? sim.adm_tax_pct! : null;
-  const fr  = typeof sim.fr_tax_pct  === "number" ? sim.fr_tax_pct!  : null;
+  const adm = typeof sim.adm_tax_pct === "number" ? safe(sim.adm_tax_pct) : null;
+  const fr  = typeof sim.fr_tax_pct  === "number" ? safe(sim.fr_tax_pct)  : null;
 
   const valorCategoria =
     typeof adm === "number" && typeof fr === "number" ? C * (1 + adm + fr) : null;
@@ -218,27 +223,37 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
     typeof adm === "number" && typeof fr === "number" ? C * (adm + fr) : null;
 
   // Lance
-  const embutidoValor = Math.max(0, (sim.credito ?? 0) - (sim.novo_credito ?? 0));
-  const lancePct = sim.lance_ofertado_pct ?? (C > 0 ? (embutidoValor + (sim.lance_proprio_valor ?? 0)) / C : 0);
-  const lanceOfertadoValor = C * (lancePct || 0);
+  const novoCredito = safe(sim.novo_credito); // já é "Crédito – Embutido"
+  const embutidoValor = Math.max(0, C - novoCredito);
+
+  const lancePctInformado = sim.lance_ofertado_pct;
+  const lancePctCalc = C > 0 ? (embutidoValor + safe(sim.lance_proprio_valor)) / C : 0;
+  const lancePct = typeof lancePctInformado === "number" ? safe(lancePctInformado) : lancePctCalc;
+
+  const lanceOfertadoValor = C * lancePct;
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - embutidoValor);
 
-  // Investido até a contemplação (corrigido conforme regra 1 / 1 e 2 / 1 a 12)
-  const n = sim.parcela_contemplacao ?? 0;          // mês da contemplação
-  const p1 = sim.parcela_ate_1_ou_2 ?? 0;           // valor das parcelas iniciais (uma linha)
-  const pd = sim.parcela_demais ?? 0;               // valor das "demais" até contemplação
-  const qtdIniciais = Math.max(1, Math.min(n, Number(sim.antecip_parcelas || 1)));
+  // Investido até a contemplação (1 / 1 e 2 / 1 a 12)
+  const n = safe(sim.parcela_contemplacao);  // mês da contemplação
+  const p1 = safe(sim.parcela_ate_1_ou_2);   // valor do(s) iniciais
+  const pd = safe(sim.parcela_demais);       // valor das demais
+  const qtdIniciais = Math.max(1, Math.min(n || 0, safe(sim.antecip_parcelas || 1)));
+
   const investido = n > 0
     ? (p1 * qtdIniciais) + (pd * Math.max(0, n - qtdIniciais)) + lanceProprioValor
     : 0;
 
-  const creditoLiberado = Math.max(0, (sim.novo_credito ?? 0));           // = Crédito – Embutido
-  const valorVenda = creditoLiberado * (1 + (p.reforco_pct || 0));        // = Crédito Liberado × Ganho na Venda (%)
-  const lucro = Math.max(0, valorVenda - investido);                      // = Valor da Venda – Investido
-  const roi = investido > 0 ? (lucro / investido) : 0;                    // ROI
-  const cdiMensal = annualToMonthlyCompound(p.cdi_anual || 0);
-  const rentabMes = n > 0 ? Math.pow(1 + roi, 1 / n) - 1 : 0;             // Rentabilidade Mês
-  const pctCDI = cdiMensal > 0 ? (rentabMes / cdiMensal) : 0;             // % do CDI
+  // ===== PROJEÇÃO NA VENDA (corrigido) =====
+  const creditoLiberado = Math.max(0, novoCredito);          // = Crédito – Embutido (já veio em novo_credito)
+  const reforcoPct = safe(p.reforco_pct);                    // Ganho na Venda (%) em fração
+  const valorVenda = creditoLiberado * reforcoPct;           // *** APENAS o ganho ***
+  const lucro = Math.max(0, valorVenda - investido);         // = Valor da Venda – Investido
+
+  // ROI e métricas derivadas com guards
+  const roi = investido > 0 ? safe(lucro / investido) : 0;
+  const cdiMensal = annualToMonthlyCompound(safe(p.cdi_anual));
+  const rentabMes = n > 0 ? safe(Math.pow(1 + roi, 1 / n) - 1) : 0;
+  const pctCDI = cdiMensal > 0 ? safe(rentabMes / cdiMensal) : 0;
 
   return {
     credito: C,
@@ -247,15 +262,16 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
     labelParcelaInicial,
     parcelaInicialValor: p1,
     parcelaDemaisValor: pd,
-    parcelaAposValor: sim.parcela_escolhida ?? 0,
-    prazoApos: sim.novo_prazo ?? 0,
+    parcelaAposValor: safe(sim.parcela_escolhida),
+    prazoApos: safe(sim.novo_prazo),
     adm, fr, valorCategoria, encargos,
-    embutidoValor, lanceProprioValor, lancePct: lancePct || 0,
+    embutidoValor, lanceProprioValor, lancePct: safe(lancePct),
     nContemplacao: n,
     investido,
     creditoLiberado,
     valorVenda,
     lucro,
+    roi,
     rentabMes,
     pctCDI,
   };
@@ -353,7 +369,7 @@ export default function Propostas() {
     inpc12m: 0.0,
     fin_veic_mensal: 0.021,
     fin_imob_anual: 0.11,
-    reforco_pct: 0.05,
+    reforco_pct: 0.20, // exemplo: 20%
   };
   const [params, setParams] = useState<Params>(() => {
     try { const raw = localStorage.getItem("proposalParamsV4"); if (raw) return { ...DEFAULT_PARAMS, ...JSON.parse(raw) }; } catch {}
@@ -371,8 +387,7 @@ export default function Propostas() {
     setParamOpen(false);
   }
 
-  /* ---------- Modelo / Prévia ---------- *
-   */
+  /* ---------- Modelo / Prévia ---------- */
   const [model, setModel] = useState<ModelKey>("direcionada");
   const [active, setActive] = useState<SimRow | null>(null);
   useEffect(() => { setActive(pagedRows[0] ?? null); }, [pagedRows]);
@@ -565,7 +580,7 @@ Grupo: ${r.grupo || "—"}`;
         ["Lance Embutido", brMoney(out.embutidoValor)],
         ["Lance Próprio", brMoney(out.lanceProprioValor)],
         ["Crédito Liberado", brMoney(out.creditoLiberado)],
-        ["Valor da Venda", brMoney(out.valorVenda)],
+        ["Valor da Venda (Crédito Liberado × Ganho %)", brMoney(out.valorVenda)],
         ["Investido até contemplação", brMoney(out.investido)],
         ["Lucro Líquido", brMoney(out.lucro)],
         ["ROI", formatPercentFraction(out.roi)],
@@ -643,7 +658,7 @@ Grupo: ${r.grupo || "—"}`;
     doc.save(`Proposta_Direcionada_${sim.code}.pdf`);
   }
 
-  // ======= NOVO: PDF COMPLETO — Venda Contemplada conforme especificado =======
+  // ======= PDF COMPLETO — Venda Contemplada (corrigido) =======
   function gerarPDFVendaContemplada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
@@ -655,7 +670,7 @@ Grupo: ${r.grupo || "—"}`;
 
     const marginX = 40;
 
-    // 1) ESPECIFICAÇÕES (Crédito, Taxa Adm, Prazo, FR, Segmento)
+    // 1) ESPECIFICAÇÕES
     (doc as any).autoTable({
       startY: 180,
       head: [["Especificações", ""]],
@@ -672,7 +687,7 @@ Grupo: ${r.grupo || "—"}`;
       margin: { left: marginX, right: marginX },
     });
 
-    // 2) PARCELAS ATÉ A CONTEMPLAÇÃO (1 / 1 e 2 / 1 a 12 + Demais)
+    // 2) PARCELAS ATÉ A CONTEMPLAÇÃO
     (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 16,
       head: [["Parcelas até a contemplação", "Valor"]],
@@ -686,14 +701,14 @@ Grupo: ${r.grupo || "—"}`;
       margin: { left: marginX, right: marginX },
     });
 
-    // 3) PROJEÇÃO NA VENDA (fórmulas solicitadas)
+    // 3) PROJEÇÃO NA VENDA — corrigido (valorVenda = créditoLiberado × ganho%)
     (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 16,
       head: [["Projeção na Venda", ""]],
       body: [
         ["Crédito Liberado (Crédito – Embutido)", brMoney(out.creditoLiberado)],
         ["Ganho na Venda (%)", formatPercentFraction(params.reforco_pct)],
-        ["Valor da Venda", brMoney(out.valorVenda)],
+        ["Valor da Venda (Crédito Liberado × Ganho %)", brMoney(out.valorVenda)],
         ["Investido até a contemplação", brMoney(out.investido)],
         ["Lucro (Venda – Investido)", brMoney(out.lucro)],
         ["ROI", formatPercentFraction(out.roi)],
@@ -706,7 +721,7 @@ Grupo: ${r.grupo || "—"}`;
       margin: { left: marginX, right: marginX },
     });
 
-    // 4) ESTRATÉGIA DE LANCE (Embutido | Próprio | Parcela após o lance e prazo)
+    // 4) ESTRATÉGIA DE LANCE (mesma estrutura)
     (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 16,
       head: [["Estratégia de Lance", "Valor"]],
@@ -721,7 +736,7 @@ Grupo: ${r.grupo || "—"}`;
       margin: { left: marginX, right: marginX },
     });
 
-    // 5) OBSERVAÇÕES (disclaimer atual)
+    // 5) OBSERVAÇÕES (disclaimer)
     const yEnd = (doc as any).lastAutoTable.finalY + 18;
     doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(80,80,80);
     doc.text(
@@ -804,7 +819,7 @@ Grupo: ${r.grupo || "—"}`;
         <BlockCard title="Projeção na Venda">
           <div className="grid md:grid-cols-3 gap-3 text-sm">
             <div><div className="text-muted-foreground">Crédito Liberado</div><div className="font-semibold">{brMoney(out.creditoLiberado)}</div></div>
-            <div><div className="text-muted-foreground">Valor da Venda</div><div className="font-semibold">{brMoney(out.valorVenda)}</div></div>
+            <div><div className="text-muted-foreground">Valor da Venda (Crédito Liberado × Ganho %)</div><div className="font-semibold">{brMoney(out.valorVenda)}</div></div>
             <div><div className="text-muted-foreground">Investido</div><div className="font-semibold">{brMoney(out.investido)}</div></div>
             <div><div className="text-muted-foreground">Lucro</div><div className="font-semibold">{brMoney(out.lucro)}</div></div>
             <div><div className="text-muted-foreground">ROI</div><div className="font-semibold">{formatPercentFraction(out.roi)}</div></div>

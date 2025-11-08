@@ -6,27 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  CheckCircle2,
-  Loader2,
-  MessageCircle,
-  MousePointerClick,
-  ShieldCheck,
-  ShoppingCart,
-  Sparkles,
-  Car,
-  Bike,
-  Home,
-  Wrench,
-  Truck,
+  CheckCircle2, Loader2, MessageCircle, MousePointerClick, ShieldCheck,
+  ShoppingCart, Sparkles, Car, Bike, Home, Wrench, Truck,
 } from "lucide-react";
 
 /** IDs padrão (vendedor/owner) */
 const DEFAULT_VENDEDOR_ID = "d85c317a-d4a8-40b4-afec-b5393028f0f3";
-const DEFAULT_OWNER_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
+const DEFAULT_OWNER_ID    = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
 /** WhatsApp oficial Consulmax (E.164) */
 const CONSULMAX_WA = "5569993917465";
 
-/* ========== Helpers ========== */
+/* Helpers */
 function ts() {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -34,7 +24,6 @@ function ts() {
     d.getMinutes()
   )}:${pad(d.getSeconds())}`;
 }
-
 function formatPhoneBR(raw: string) {
   const digits = raw.replace(/\D/g, "").slice(0, 11);
   if (digits.length <= 2) return digits;
@@ -43,18 +32,11 @@ function formatPhoneBR(raw: string) {
 }
 
 /**
- * Insere o Lead (quando necessário) e nunca faz UPDATE (evita RLS).
- * Se já existir (email/telefone), apenas retorna o id.
+ * Insere o Lead (quando necessário) — sem UPDATE — e garante owner_id.
  */
 async function upsertLead({
-  nome,
-  email,
-  telefone,
-}: {
-  nome: string;
-  email: string;
-  telefone: string;
-}) {
+  nome, email, telefone,
+}: { nome: string; email: string; telefone: string; }) {
   let leadId: string | null = null;
 
   if (email) {
@@ -78,6 +60,7 @@ async function upsertLead({
         email,
         telefone: telefone.replace(/\D/g, ""),
         origem: "site_public_simulator",
+        owner_id: DEFAULT_OWNER_ID, // garante NOT NULL no seu schema
       })
       .select("id")
       .single();
@@ -90,12 +73,8 @@ async function upsertLead({
 
 /** Cria a oportunidade via RPC SECURITY DEFINER (bypass RLS). */
 async function createOpportunityNow({
-  leadId,
-  segmento,
-}: {
-  leadId: string;
-  segmento: string;
-}) {
+  leadId, segmento,
+}: { leadId: string; segmento: string; }) {
   const { data: rpcId, error: rpcErr } = await supabase.rpc("public_create_opportunity", {
     p_lead_id: leadId,
     p_segmento: segmento,
@@ -106,7 +85,7 @@ async function createOpportunityNow({
   return rpcId as string;
 }
 
-/** Acrescenta anotação via RPC SECURITY DEFINER (bypass RLS). */
+/** Acrescenta anotação via RPC SECURITY DEFINER. */
 async function safeAppendNote(opportunityId: string, note: string) {
   const { error } = await supabase.rpc("public_append_op_note", {
     p_op_id: opportunityId,
@@ -120,13 +99,12 @@ function currencyMask(v: string) {
   const n = Number(digits || "0");
   return (n / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
-
 function waLink(userPhoneDigits: string, text: string) {
   const to = userPhoneDigits.length >= 10 ? `55${userPhoneDigits}` : CONSULMAX_WA;
   return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
 }
 
-/* ========== Ícone Home com “+” (Imóvel Estendido) ========== */
+/* Ícone Home com “+” (Imóvel Estendido) */
 function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
   return (
     <span className="relative inline-block">
@@ -136,7 +114,7 @@ function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
   );
 }
 
-/* ========== UI: Segmentos em cards (formato do print) ========== */
+/* Segmentos */
 const SEGMENTOS: Array<{ id: string; rotulo: string; Icon: React.ComponentType<any> }> = [
   { id: "automovel", rotulo: "AUTOMÓVEIS", Icon: Car },
   { id: "motocicleta", rotulo: "MOTOCICLETAS", Icon: Bike },
@@ -147,16 +125,8 @@ const SEGMENTOS: Array<{ id: string; rotulo: string; Icon: React.ComponentType<a
 ];
 
 function SegmentCard({
-  active,
-  onClick,
-  children,
-  Icon,
-}: {
-  active?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  Icon: React.ComponentType<any>;
-}) {
+  active, onClick, children, Icon,
+}: { active?: boolean; onClick: () => void; children: React.ReactNode; Icon: React.ComponentType<any>; }) {
   return (
     <button
       type="button"
@@ -171,7 +141,7 @@ function SegmentCard({
   );
 }
 
-/* ========== Página ========== */
+/* Página */
 export default function PublicSimulador() {
   // Etapa 1
   const [nome, setNome] = useState("");
@@ -207,7 +177,7 @@ export default function PublicSimulador() {
     telefone.replace(/\D/g, "").length >= 10 &&
     !!segmento;
 
-  /* ===== Pré-cadastro → cria Lead + cria Oportunidade (Novo) já com segmento ===== */
+  /* Pré-cadastro */
   async function handlePreCadastro() {
     try {
       setSaving(true);
@@ -229,7 +199,7 @@ export default function PublicSimulador() {
     }
   }
 
-  /* ===== Registra preferências da simulação como anotação ===== */
+  /* Simular */
   async function handleSimular() {
     if (!opId) return;
     try {
@@ -252,17 +222,12 @@ export default function PublicSimulador() {
 
   async function handleContratar() {
     if (!opId) return;
-    setFinalMsg(
-      "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
-    );
+    setFinalMsg("Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento.");
 
-    // Tenta atualizar status (pode falhar por RLS; anotação garante rastreabilidade)
+    // tentativa “best-effort” (pode ser bloqueado por RLS)
     try {
-      await supabase.from("oportunidades").update({ status: "Contratar – solicitado" }).eq("id", opId);
       await supabase.from("opportunities").update({ estagio: "Contratar – solicitado" }).eq("id", opId);
-    } catch {
-      // ignora
-    }
+    } catch {}
     await safeAppendNote(opId, "Usuário clicou em CONTRATAR");
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
@@ -274,17 +239,11 @@ export default function PublicSimulador() {
 
   async function handleFalarComEspecialista() {
     if (!opId) return;
-    setFinalMsg(
-      "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
-    );
+    setFinalMsg("Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento.");
 
-    // Tenta atualizar status (pode falhar por RLS; anotação garante rastreabilidade)
     try {
-      await supabase.from("oportunidades").update({ status: "Aguardando contato" }).eq("id", opId);
       await supabase.from("opportunities").update({ estagio: "Aguardando contato" }).eq("id", opId);
-    } catch {
-      // ignora
-    }
+    } catch {}
     await safeAppendNote(opId, "Usuário clicou em FALAR COM UM ESPECIALISTA");
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
@@ -294,16 +253,14 @@ export default function PublicSimulador() {
     window.open(waLink(telefone.replace(/\D/g, ""), text), "_blank");
   }
 
-  /* ===== UI ===== */
+  /* UI */
   function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: boolean }) {
     return (
       <div
         className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border ${
-          active
-            ? "bg-[#1E293F] text-white border-[#1E293F]"
-            : done
-            ? "bg-[#B5A573] text-white border-[#B5A573]"
-            : "bg-white text-[#1E293F] border-[#1E293F]"
+          active ? "bg-[#1E293F] text-white border-[#1E293F]"
+                : done ? "bg-[#B5A573] text-white border-[#B5A573]"
+                       : "bg-white text-[#1E293F] border-[#1E293F]"
         }`}
       >
         {done ? <CheckCircle2 className="w-5 h-5" /> : n}
@@ -344,9 +301,7 @@ export default function PublicSimulador() {
         {/* Etapa 1 */}
         {step === 1 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
-            <CardHeader>
-              <CardTitle className="text-[#1E293F]">Comece pelo pré-cadastro</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-[#1E293F]">Comece pelo pré-cadastro</CardTitle></CardHeader>
             <CardContent className="grid gap-4">
               <div>
                 <Label>Nome completo</Label>
@@ -389,15 +344,10 @@ export default function PublicSimulador() {
         {/* Etapa 2 */}
         {step === 2 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
-            <CardHeader>
-              <CardTitle className="text-[#1E293F]">Personalize sua simulação</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-[#1E293F]">Personalize sua simulação</CardTitle></CardHeader>
             <CardContent className="grid gap-4">
               <div className="grid md:grid-cols-3 gap-4">
-                <div>
-                  <Label>Segmento</Label>
-                  <Input readOnly value={SEGMENTOS.find((s) => s.id === segmento)?.rotulo || ""} />
-                </div>
+                <div><Label>Segmento</Label><Input readOnly value={SEGMENTOS.find((s) => s.id === segmento)?.rotulo || ""} /></div>
                 <div>
                   <Label>Administradora</Label>
                   <select
@@ -409,50 +359,27 @@ export default function PublicSimulador() {
                     <option value="Outras">Outras</option>
                   </select>
                 </div>
-                <div>
-                  <Label>Prazo (meses)</Label>
-                  <Input value={prazo} onChange={(e) => setPrazo(e.target.value.replace(/\D/g, ""))} placeholder="120" />
-                </div>
+                <div><Label>Prazo (meses)</Label><Input value={prazo} onChange={(e) => setPrazo(e.target.value.replace(/\D/g, ""))} placeholder="120" /></div>
               </div>
 
               <div>
                 <Label>Tipo de simulação</Label>
                 <div className="flex gap-6 mt-1">
                   <label className="inline-flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="tipo"
-                      value="credito"
-                      checked={tipoSimulacao === "credito"}
-                      onChange={() => setTipoSimulacao("credito")}
-                      className="accent-[#A11C27]"
-                    />
+                    <input type="radio" name="tipo" value="credito" checked={tipoSimulacao === "credito"} onChange={() => setTipoSimulacao("credito")} className="accent-[#A11C27]" />
                     <span>Por crédito</span>
                   </label>
                   <label className="inline-flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="tipo"
-                      value="parcela"
-                      checked={tipoSimulacao === "parcela"}
-                      onChange={() => setTipoSimulacao("parcela")}
-                      className="accent-[#A11C27]"
-                    />
+                    <input type="radio" name="tipo" value="parcela" checked={tipoSimulacao === "parcela"} onChange={() => setTipoSimulacao("parcela")} className="accent-[#A11C27]" />
                     <span>Por parcela</span>
                   </label>
                 </div>
               </div>
 
               {tipoSimulacao === "credito" ? (
-                <div>
-                  <Label>Valor do crédito desejado</Label>
-                  <Input value={credito} onChange={(e) => setCredito(currencyMask(e.target.value))} placeholder="R$ 150.000,00" />
-                </div>
+                <div><Label>Valor do crédito desejado</Label><Input value={credito} onChange={(e) => setCredito(currencyMask(e.target.value))} placeholder="R$ 150.000,00" /></div>
               ) : (
-                <div>
-                  <Label>Valor da parcela desejada</Label>
-                  <Input value={parcela} onChange={(e) => setParcela(currencyMask(e.target.value))} placeholder="R$ 1.500,00" />
-                </div>
+                <div><Label>Valor da parcela desejada</Label><Input value={parcela} onChange={(e) => setParcela(currencyMask(e.target.value))} placeholder="R$ 1.500,00" /></div>
               )}
 
               <div>
@@ -471,14 +398,11 @@ export default function PublicSimulador() {
                   {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
                   Simular agora
                 </Button>
-                <Button variant="outline" onClick={() => setStep(1)}>
-                  Voltar
-                </Button>
+                <Button variant="outline" onClick={() => setStep(1)}>Voltar</Button>
               </div>
 
               <p className="text-xs text-[#1E293F]/60">
-                Ao clicar em “Simular agora”, registramos as preferências na sua oportunidade <strong>(Novo)</strong> e seguimos
-                com o atendimento.
+                Ao clicar em “Simular agora”, registramos as preferências na sua oportunidade <strong>(Novo)</strong> e seguimos com o atendimento.
               </p>
             </CardContent>
           </Card>
@@ -487,25 +411,20 @@ export default function PublicSimulador() {
         {/* Etapa 3 */}
         {step === 3 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
-            <CardHeader>
-              <CardTitle className="text-[#1E293F]">Pronto! Vamos ao próximo passo</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle className="text-[#1E293F]">Pronto! Vamos ao próximo passo</CardHeader></CardTitle>
             <CardContent className="grid gap-5">
               <div className="rounded-xl p-4 bg-white border border-[#1E293F]/10">
                 <p className="text-sm text-[#1E293F]/80">
-                  Sua simulação foi registrada. Um especialista pode te contatar para refinar a proposta ideal. Enquanto isso,
-                  escolha uma opção abaixo:
+                  Sua simulação foi registrada. Um especialista pode te contatar para refinar a proposta ideal. Enquanto isso, escolha uma opção abaixo:
                 </p>
               </div>
 
               <div className="grid md:grid-cols-2 gap-4">
                 <Button onClick={handleContratar} className="h-12 bg-[#A11C27] hover:bg-[#8c1822] text-base">
-                  <ShoppingCart className="w-5 h-5 mr-2" />
-                  Contratar
+                  <ShoppingCart className="w-5 h-5 mr-2" /> Contratar
                 </Button>
                 <Button onClick={handleFalarComEspecialista} variant="outline" className="h-12 text-base">
-                  <MessageCircle className="w-5 h-5 mr-2" />
-                  Falar com um Especialista
+                  <MessageCircle className="w-5 h-5 mr-2" /> Falar com um Especialista
                 </Button>
               </div>
 

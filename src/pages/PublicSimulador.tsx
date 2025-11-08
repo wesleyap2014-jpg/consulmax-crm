@@ -5,19 +5,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CheckCircle2, Loader2, MessageCircle, MousePointerClick, ShieldCheck, ShoppingCart, Sparkles } from "lucide-react";
 
 /**
- * Página pública (sem login) para pré-cadastro + simulação simples
- * Integra com Supabase criando/atualizando Lead e Oportunidade (status "Novo")
- * e registrando anotações a cada ação do usuário.
+ * Página pública (sem login) para pré-cadastro + simulação simples.
+ * Cria LEAD e OPORTUNIDADE (status "Novo") e registra anotações.
  *
- * Tabelas assumidas (ajuste conforme seu schema):
- *  - public.leads: { id, nome, email, telefone, origem, created_at }
- *  - public.oportunidades: { id, lead_id, status, origem, modalidade, tipo_simulacao, credito_desejado,
- *                            parcela_desejada, prazo, administradora, anotacoes, created_at }
+ * Tabelas esperadas (ajuste se necessário):
+ *  - public.leads: { id, nome, email, telefone, origem }
+ *  - public.oportunidades: { id, lead_id, status, origem, modalidade, tipo_simulacao,
+ *      credito_desejado, parcela_desejada, prazo, administradora, anotacoes }
  */
 
 function ts() {
@@ -234,6 +231,7 @@ export default function PublicSimulador() {
   return (
     <div className="min-h-screen bg-[#F5F5F5]">
       <div className="mx-auto max-w-3xl px-4 py-8">
+        {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <img src="/logo-consulmax.png" alt="Consulmax" className="h-10" />
           <div>
@@ -242,6 +240,7 @@ export default function PublicSimulador() {
           </div>
         </div>
 
+        {/* Stepper */}
         <div className="flex items-center gap-4 mb-6">
           <div className="flex items-center gap-2">
             <StepBadge n={1} active={step === 1} done={step > 1} />
@@ -259,6 +258,7 @@ export default function PublicSimulador() {
           </div>
         </div>
 
+        {/* Etapa 1 */}
         {step === 1 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
@@ -290,6 +290,7 @@ export default function PublicSimulador() {
           </Card>
         )}
 
+        {/* Etapa 2 */}
         {step === 2 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
@@ -299,30 +300,28 @@ export default function PublicSimulador() {
               <div className="grid md:grid-cols-3 gap-4">
                 <div>
                   <Label>Modalidade</Label>
-                  <Select value={modalidade} onValueChange={(v) => setModalidade(v)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modalidades.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <select
+                    value={modalidade}
+                    onChange={(e) => setModalidade(e.target.value)}
+                    className="w-full rounded-md border border-[#1E293F]/20 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#A11C27]/30"
+                  >
+                    {modalidades.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <Label>Administradora</Label>
-                  <Select value={admin} onValueChange={(v) => setAdmin(v)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Embracon">Embracon</SelectItem>
-                      <SelectItem value="Outras">Outras</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <select
+                    value={admin}
+                    onChange={(e) => setAdmin(e.target.value)}
+                    className="w-full rounded-md border border-[#1E293F]/20 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#A11C27]/30"
+                  >
+                    <option value="Embracon">Embracon</option>
+                    <option value="Outras">Outras</option>
+                  </select>
                 </div>
                 <div>
                   <Label>Prazo (meses)</Label>
@@ -332,16 +331,30 @@ export default function PublicSimulador() {
 
               <div>
                 <Label>Tipo de simulação</Label>
-                <RadioGroup value={tipoSimulacao} onValueChange={(v) => setTipoSimulacao(v as any)} className="flex gap-6 mt-1">
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="credito" id="r1" />
-                    <Label htmlFor="r1">Por crédito</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="parcela" id="r2" />
-                    <Label htmlFor="r2">Por parcela</Label>
-                  </div>
-                </RadioGroup>
+                <div className="flex gap-6 mt-1">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="tipo"
+                      value="credito"
+                      checked={tipoSimulacao === "credito"}
+                      onChange={() => setTipoSimulacao("credito")}
+                      className="accent-[#A11C27]"
+                    />
+                    <span>Por crédito</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="tipo"
+                      value="parcela"
+                      checked={tipoSimulacao === "parcela"}
+                      onChange={() => setTipoSimulacao("parcela")}
+                      className="accent-[#A11C27]"
+                    />
+                    <span>Por parcela</span>
+                  </label>
+                </div>
               </div>
 
               {tipoSimulacao === "credito" ? (
@@ -384,6 +397,7 @@ export default function PublicSimulador() {
           </Card>
         )}
 
+        {/* Etapa 3 */}
         {step === 3 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>

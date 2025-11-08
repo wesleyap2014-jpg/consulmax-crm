@@ -1,3 +1,4 @@
+// src/pages/PublicSimulador.tsx
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,22 +18,15 @@ import {
   Home,
   Wrench,
   Truck,
-  HomePlus,
 } from "lucide-react";
 
-/**
- * PublicSimulador.tsx
- * - Etapa 1: pré-cadastro + escolha do SEGMENTO (cards com ícones)
- *   → cria Lead e já cria a Oportunidade (estágio "Novo")
- * - Etapa 2: preferências (admin/prazo/tipo/valor) e anotações
- *   → atualiza as anotações da oportunidade
- * - Etapa 3: CTAs WhatsApp
- */
-
+/** IDs padrão (vendedor/owner) */
 const DEFAULT_VENDEDOR_ID = "d85c317a-d4a8-40b4-afec-b5393028f0f3";
 const DEFAULT_OWNER_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
-const CONSULMAX_WA = "5569993917465"; // número oficial
+/** WhatsApp oficial Consulmax (E.164) */
+const CONSULMAX_WA = "5569993917465";
 
+/* ========== Helpers ========== */
 function ts() {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -71,6 +65,7 @@ async function upsertLead({
       .maybeSingle();
     if (data?.id) leadId = data.id;
   }
+
   if (!leadId) {
     const { data, error } = await supabase
       .from("leads")
@@ -90,8 +85,7 @@ async function upsertLead({
   return leadId;
 }
 
-/** cria Oportunidade na tabela base `opportunities` (preferencial).
- *  Se não existir, tenta `oportunidades`. Preenche vendedor/owner padrão. */
+/** Tenta criar na tabela base `opportunities` (com vendedor/owner). Se falhar, usa `oportunidades`. */
 async function createOpportunityNow({
   leadId,
   segmento,
@@ -101,34 +95,39 @@ async function createOpportunityNow({
 }) {
   const anot = `[${ts()}] Oportunidade criada via simulador público. Segmento: ${segmento}.`;
 
-  // 1) Tenta na tabela base em inglês (que exige vendedor_id not null)
-  const base = {
-    lead_id: leadId,
-    vendedor_id: DEFAULT_VENDEDOR_ID,
-    owner_id: DEFAULT_OWNER_ID,
-    segmento,
-    estagio: "Novo",
-    stage: "novo",
-    origem: "site_public_simulator",
-    observacao: anot,
-  } as any;
-
+  // 1) Tabela base em inglês
   try {
-    const { data, error } = await supabase.from("opportunities").insert(base).select("id").single();
+    const { data, error } = await supabase
+      .from("opportunities")
+      .insert({
+        lead_id: leadId,
+        vendedor_id: DEFAULT_VENDEDOR_ID,
+        owner_id: DEFAULT_OWNER_ID,
+        segmento,
+        estagio: "Novo",
+        stage: "novo",
+        origem: "site_public_simulator",
+        observacao: anot,
+      } as any)
+      .select("id")
+      .single();
+
     if (error) throw error;
     return data.id as string;
-  } catch (e: any) {
-    // 2) Fallback: view/tabela em pt (sem vendedor se não existir o campo)
-    const alt = {
-      lead_id: leadId,
-      status: "Novo",
-      origem: "site_public_simulator",
-      modalidade: segmento, // compat
-      segmento,
-      anotacoes: anot,
-    } as any;
-
-    const { data, error } = await supabase.from("oportunidades").insert(alt).select("id").single();
+  } catch (_e) {
+    // 2) Fallback: estrutura pt
+    const { data, error } = await supabase
+      .from("oportunidades")
+      .insert({
+        lead_id: leadId,
+        status: "Novo",
+        origem: "site_public_simulator",
+        modalidade: segmento,
+        segmento,
+        anotacoes: anot,
+      } as any)
+      .select("id")
+      .single();
     if (error) throw error;
     return data.id as string;
   }
@@ -136,38 +135,50 @@ async function createOpportunityNow({
 
 async function safeAppendNote(opportunityId: string, note: string) {
   const stamp = `[${ts()}] ${note}`;
-  const { data } = await supabase
-    .from("oportunidades")
-    .select("anotacoes")
-    .eq("id", opportunityId)
-    .maybeSingle();
-
-  const prev = (data?.anotacoes as string) || "";
-  const next = prev ? `${prev}\n${stamp}` : stamp;
-
-  // tenta atualizar na tabela/view em pt
-  const updPt = await supabase
-    .from("oportunidades")
-    .update({ anotacoes: next })
-    .eq("id", opportunityId);
-
-  if (updPt.error) {
-    // fallback para tabela base em inglês (campo observacao)
-    await supabase.from("opportunities").update({ observacao: next }).eq("id", opportunityId);
+  // tenta em pt
+  const pt = await supabase.from("oportunidades").select("anotacoes").eq("id", opportunityId).maybeSingle();
+  if (pt.data) {
+    const prev = (pt.data?.anotacoes as string) || "";
+    const next = prev ? `${prev}\n${stamp}` : stamp;
+    await supabase.from("oportunidades").update({ anotacoes: next }).eq("id", opportunityId);
+    return;
   }
+  // fallback base (observacao)
+  const en = await supabase.from("opportunities").select("observacao").eq("id", opportunityId).maybeSingle();
+  const prev = (en.data?.observacao as string) || "";
+  const next = prev ? `${prev}\n${stamp}` : stamp;
+  await supabase.from("opportunities").update({ observacao: next }).eq("id", opportunityId);
 }
 
-const SEGMENTOS: Array<{
-  id: string;
-  rotulo: string;
-  Icon: React.ComponentType<any>;
-}> = [
+function currencyMask(v: string) {
+  const digits = v.replace(/\D/g, "");
+  const n = Number(digits || "0");
+  return (n / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function waLink(userPhoneDigits: string, text: string) {
+  const to = userPhoneDigits.length >= 10 ? `55${userPhoneDigits}` : CONSULMAX_WA;
+  return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
+}
+
+/* ========== Ícone Home com “+” (Imóvel Estendido) ========== */
+function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
+  return (
+    <span className="relative inline-block">
+      <Home {...props} />
+      <span className="absolute -top-1 -right-1 text-[10px] leading-none font-bold">+</span>
+    </span>
+  );
+}
+
+/* ========== UI: Segmentos em cards (formato do print) ========== */
+const SEGMENTOS: Array<{ id: string; rotulo: string; Icon: React.ComponentType<any> }> = [
   { id: "automovel", rotulo: "AUTOMÓVEIS", Icon: Car },
   { id: "motocicleta", rotulo: "MOTOCICLETAS", Icon: Bike },
   { id: "imovel", rotulo: "IMÓVEIS", Icon: Home },
   { id: "servicos", rotulo: "SERVIÇOS", Icon: Wrench },
   { id: "pesados", rotulo: "PESADOS", Icon: Truck },
-  { id: "imovel_estendido", rotulo: "IMÓVEL ESTENDIDO", Icon: HomePlus },
+  { id: "imovel_estendido", rotulo: "IMÓVEL ESTENDIDO", Icon: HomeWithPlus },
 ];
 
 function SegmentCard({
@@ -195,6 +206,7 @@ function SegmentCard({
   );
 }
 
+/* ========== Página ========== */
 export default function PublicSimulador() {
   // Etapa 1
   const [nome, setNome] = useState("");
@@ -230,43 +242,36 @@ export default function PublicSimulador() {
     telefone.replace(/\D/g, "").length >= 10 &&
     !!segmento;
 
+  /* ===== Pré-cadastro → cria Lead + cria Oportunidade (Novo) já com segmento ===== */
   async function handlePreCadastro() {
     try {
       setSaving(true);
       const lid = await upsertLead({ nome: nome.trim(), email: email.trim(), telefone });
       setLeadId(lid);
 
-      // cria a Oportunidade imediatamente (estágio "Novo")
       const newOpId = await createOpportunityNow({ leadId: lid, segmento });
       setOpId(newOpId);
-
-      // registra nota inicial
       await safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmento}.`);
 
       setStep(2);
     } catch (e: any) {
       console.error(e);
       alert(
-        "Não foi possível concluir o pré-cadastro/criar a oportunidade.\nVerifique as policies de INSERT/UPDATE em leads/opportunities e tente novamente."
+        "Não foi possível concluir o pré-cadastro/criar a oportunidade.\nVerifique as policies de INSERT/UPDATE e tente novamente."
       );
     } finally {
       setSaving(false);
     }
   }
 
-  function currencyMask(v: string) {
-    const digits = v.replace(/\D/g, "");
-    const n = Number(digits || "0");
-    return (n / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  }
-
+  /* ===== Registra preferências da simulação como anotação ===== */
   async function handleSimular() {
     if (!opId) return;
     try {
       setSaving(true);
       const anot =
         `Preferências → tipo: ${tipoSimulacao}; ` +
-        (tipoSimulacao === "credito" ? `crédito desejado: ${credito}` : `parcela desejada: ${parcela}`) +
+        (tipoSimulacao === "credito" ? `crédito: ${credito}` : `parcela: ${parcela}`) +
         (prazo ? `; prazo: ${prazo}` : "") +
         `; administradora: ${admin}` +
         (mensagem ? `; obs: ${mensagem}` : "");
@@ -280,24 +285,12 @@ export default function PublicSimulador() {
     }
   }
 
-  async function note(n: string) {
-    if (!opId) return;
-    await safeAppendNote(opId, n);
-  }
-
-  function waLink(text: string) {
-    const fone = telefone.replace(/\D/g, "");
-    const target = fone.length >= 10 ? `55${fone}` : CONSULMAX_WA;
-    return `https://wa.me/${target}?text=${encodeURIComponent(text)}`;
-  }
-
   async function handleContratar() {
     if (!opId) return;
     setFinalMsg(
       "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
     );
-    await note("Usuário clicou em CONTRATAR");
-    // tenta nas duas estruturas
+    await safeAppendNote(opId, "Usuário clicou em CONTRATAR");
     await supabase.from("oportunidades").update({ status: "Contratar – solicitado" }).eq("id", opId);
     await supabase.from("opportunities").update({ estagio: "Contratar – solicitado" }).eq("id", opId);
 
@@ -305,7 +298,7 @@ export default function PublicSimulador() {
     const text = `Olá! Quero contratar meu consórcio. Segmento: ${segRotulo}. ${
       tipoSimulacao === "credito" ? `Crédito: ${credito}` : `Parcela: ${parcela}`
     }. Prazo: ${prazo || "—"}. Administradora: ${admin}.`;
-    window.open(waLink(text), "_blank");
+    window.open(waLink(telefone.replace(/\D/g, ""), text), "_blank");
   }
 
   async function handleFalarComEspecialista() {
@@ -313,7 +306,7 @@ export default function PublicSimulador() {
     setFinalMsg(
       "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
     );
-    await note("Usuário clicou em FALAR COM UM ESPECIALISTA");
+    await safeAppendNote(opId, "Usuário clicou em FALAR COM UM ESPECIALISTA");
     await supabase.from("oportunidades").update({ status: "Aguardando contato" }).eq("id", opId);
     await supabase.from("opportunities").update({ estagio: "Aguardando contato" }).eq("id", opId);
 
@@ -321,9 +314,10 @@ export default function PublicSimulador() {
     const text = `Olá! Preciso falar com um especialista. Segmento: ${segRotulo}. ${
       tipoSimulacao === "credito" ? `Crédito: ${credito}` : `Parcela: ${parcela}`
     }. Prazo: ${prazo || "—"}. Administradora: ${admin}.`;
-    window.open(waLink(text), "_blank");
+    window.open(waLink(telefone.replace(/\D/g, ""), text), "_blank");
   }
 
+  /* ===== UI ===== */
   function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: boolean }) {
     return (
       <div
@@ -392,7 +386,7 @@ export default function PublicSimulador() {
                 </div>
               </div>
 
-              {/* Segmentos – cards com ícones (formato do print) */}
+              {/* Segmentos */}
               <div className="mt-2">
                 <Label className="mb-2 block">Bem desejado</Label>
                 <div className="flex flex-wrap gap-4">
@@ -409,8 +403,7 @@ export default function PublicSimulador() {
                 Continuar para simulação
               </Button>
               <p className="text-xs text-[#1E293F]/60 leading-relaxed">
-                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são
-                protegidos.
+                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são protegidos.
               </p>
             </CardContent>
           </Card>
@@ -425,7 +418,7 @@ export default function PublicSimulador() {
             <CardContent className="grid gap-4">
               <div className="grid md:grid-cols-3 gap-4">
                 <div>
-                  <Label>Segmento escolhido</Label>
+                  <Label>Segmento</Label>
                   <Input readOnly value={SEGMENTOS.find((s) => s.id === segmento)?.rotulo || ""} />
                 </div>
                 <div>
@@ -507,8 +500,8 @@ export default function PublicSimulador() {
               </div>
 
               <p className="text-xs text-[#1E293F]/60">
-                Ao clicar em “Simular agora”, registramos as preferências na sua oportunidade <strong>(Novo)</strong> e
-                seguimos com o atendimento.
+                Ao clicar em “Simular agora”, registramos as preferências na sua oportunidade <strong>(Novo)</strong> e seguimos
+                com o atendimento.
               </p>
             </CardContent>
           </Card>
@@ -523,8 +516,8 @@ export default function PublicSimulador() {
             <CardContent className="grid gap-5">
               <div className="rounded-xl p-4 bg-white border border-[#1E293F]/10">
                 <p className="text-sm text-[#1E293F]/80">
-                  Sua simulação foi registrada. Um especialista pode te contatar para refinar a proposta ideal para você.
-                  Enquanto isso, escolha uma opção abaixo:
+                  Sua simulação foi registrada. Um especialista pode te contatar para refinar a proposta ideal. Enquanto isso,
+                  escolha uma opção abaixo:
                 </p>
               </div>
 

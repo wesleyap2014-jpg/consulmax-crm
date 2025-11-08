@@ -120,9 +120,9 @@ async function fetchAsDataURL(url: string): Promise<string | null> {
     const res = await fetch(url);
     const blob = await res.blob();
     return await new Promise<string>((resolve) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.readAsDataURL(blob);
+      theReader.onload = () => resolve((theReader.result as string) || null);
+      const theReader = new FileReader();
+      theReader.readAsDataURL(blob);
     });
   } catch {
     return null;
@@ -223,20 +223,22 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
   const lanceOfertadoValor = C * (lancePct || 0);
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - embutidoValor);
 
-  // Investido até a contemplação
-  const n = sim.parcela_contemplacao ?? 0;
-  const p1 = sim.parcela_ate_1_ou_2 ?? 0;
-  const pd = sim.parcela_demais ?? 0;
-  const investido = n > 0 ? (p1 + pd * Math.max(0, n - 1) + lanceProprioValor) : 0;
+  // Investido até a contemplação (corrigido conforme regra 1 / 1 e 2 / 1 a 12)
+  const n = sim.parcela_contemplacao ?? 0;          // mês da contemplação
+  const p1 = sim.parcela_ate_1_ou_2 ?? 0;           // valor das parcelas iniciais (uma linha)
+  const pd = sim.parcela_demais ?? 0;               // valor das "demais" até contemplação
+  const qtdIniciais = Math.max(1, Math.min(n, Number(sim.antecip_parcelas || 1)));
+  const investido = n > 0
+    ? (p1 * qtdIniciais) + (pd * Math.max(0, n - qtdIniciais)) + lanceProprioValor
+    : 0;
 
-  const creditoLiberado = Math.max(0, (sim.novo_credito ?? 0));
-  const valorVenda = creditoLiberado * (1 + (p.reforco_pct || 0));
-  const lucro = Math.max(0, valorVenda - investido);
-  const roi = investido > 0 ? (lucro / investido) : 0;
-
+  const creditoLiberado = Math.max(0, (sim.novo_credito ?? 0));           // = Crédito – Embutido
+  const valorVenda = creditoLiberado * (1 + (p.reforco_pct || 0));        // = Crédito Liberado × Ganho na Venda (%)
+  const lucro = Math.max(0, valorVenda - investido);                      // = Valor da Venda – Investido
+  const roi = investido > 0 ? (lucro / investido) : 0;                    // ROI
   const cdiMensal = annualToMonthlyCompound(p.cdi_anual || 0);
-  const rentabMes = n > 0 ? Math.pow(1 + roi, 1 / n) - 1 : 0;
-  const pctCDI = cdiMensal > 0 ? (rentabMes / cdiMensal) : 0;
+  const rentabMes = n > 0 ? Math.pow(1 + roi, 1 / n) - 1 : 0;             // Rentabilidade Mês
+  const pctCDI = cdiMensal > 0 ? (rentabMes / cdiMensal) : 0;             // % do CDI
 
   return {
     credito: C,
@@ -481,7 +483,7 @@ Grupo: ${r.grupo || "—"}`;
   /* ======================= PDF infra ======================= */
   const headerBand = (doc: jsPDF, title: string) => {
     const w = doc.internal.pageSize.getWidth();
-    doc.setFillColor(brand.header); doc.rect(0, 0, w, 140, "F");
+    doc.setFillColor(brand.header as any); doc.rect(0, 0, w, 140, "F");
     doc.setFont("helvetica", "bold"); doc.setFontSize(26);
     doc.setTextColor("#FFFFFF"); doc.text(title, 40, 90);
   };
@@ -542,7 +544,7 @@ Grupo: ${r.grupo || "—"}`;
     doc.text(`Consulmax • Consultoria Especializada`, xCursor, y + pad + 56);
   };
 
-  /* ---------------- PDF (completo e simplificado) --------------- */
+  /* ---------------- PDF (simplificado e completo) --------------- */
   function pdfSimplificado(sim: SimRow, title: string) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
@@ -641,25 +643,28 @@ Grupo: ${r.grupo || "—"}`;
     doc.save(`Proposta_Direcionada_${sim.code}.pdf`);
   }
 
+  // ======= NOVO: PDF COMPLETO — Venda Contemplada conforme especificado =======
   function gerarPDFVendaContemplada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
     headerBand(doc, "Venda Contemplada"); sellerCard(doc); addWatermark(doc); addFooter(doc);
-    doc.addPage(); headerBand(doc, "Venda Contemplada"); addWatermark(doc);
+
+    // Página 2 (conteúdo)
+    doc.addPage();
+    headerBand(doc, "Venda Contemplada"); addWatermark(doc);
+
     const marginX = 40;
 
+    // 1) ESPECIFICAÇÕES (Crédito, Taxa Adm, Prazo, FR, Segmento)
     (doc as any).autoTable({
       startY: 180,
-      head: [["Proposta de Contratação", ""]],
+      head: [["Especificações", ""]],
       body: [
         ["Crédito contratado", brMoney(out.credito)],
-        ["Segmento", out.segmento],
-        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
-        ["Demais parcelas até a contemplação", brMoney(out.parcelaDemaisValor)],
+        ["Taxa de adm (total)", typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—"],
         ["Prazo", out.prazo ? `${out.prazo} meses` : "—"],
-        ["Mês da Contemplação", out.nContemplacao ? `${out.nContemplacao}º` : "—"],
-        ["Lance Embutido", brMoney(out.embutidoValor)],
-        ["Lance Próprio", brMoney(out.lanceProprioValor)],
+        ["Fundo de Reserva", typeof out.fr === "number" ? formatPercentFraction(out.fr) : "—"],
+        ["Segmento", out.segmento],
       ],
       headStyles: { fillColor: brand.primary, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
@@ -667,18 +672,13 @@ Grupo: ${r.grupo || "—"}`;
       margin: { left: marginX, right: marginX },
     });
 
+    // 2) PARCELAS ATÉ A CONTEMPLAÇÃO (1 / 1 e 2 / 1 a 12 + Demais)
     (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 16,
-      head: [["Projeção na Venda", ""]],
+      head: [["Parcelas até a contemplação", "Valor"]],
       body: [
-        ["Crédito Liberado", brMoney(out.creditoLiberado)],
-        ["Ganho na Venda (%)", formatPercentFraction(params.reforco_pct)],
-        ["Valor da Venda", brMoney(out.valorVenda)],
-        ["Total Investido", brMoney(out.investido)],
-        ["Lucro Líquido", brMoney(out.lucro)],
-        ["ROI", formatPercentFraction(out.roi)],
-        ["Rentab/mês", formatPercentFraction(out.rentabMes)],
-        ["% do CDI (mês)", `${(out.pctCDI * 100).toFixed(0)}%`],
+        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
+        ["Demais", brMoney(out.parcelaDemaisValor)],
       ],
       headStyles: { fillColor: brand.accent, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
@@ -686,12 +686,49 @@ Grupo: ${r.grupo || "—"}`;
       margin: { left: marginX, right: marginX },
     });
 
+    // 3) PROJEÇÃO NA VENDA (fórmulas solicitadas)
+    (doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 16,
+      head: [["Projeção na Venda", ""]],
+      body: [
+        ["Crédito Liberado (Crédito – Embutido)", brMoney(out.creditoLiberado)],
+        ["Ganho na Venda (%)", formatPercentFraction(params.reforco_pct)],
+        ["Valor da Venda", brMoney(out.valorVenda)],
+        ["Investido até a contemplação", brMoney(out.investido)],
+        ["Lucro (Venda – Investido)", brMoney(out.lucro)],
+        ["ROI", formatPercentFraction(out.roi)],
+        ["Rentabilidade Mês", formatPercentFraction(out.rentabMes)],
+        ["% do CDI (mês)", `${(out.pctCDI * 100).toFixed(0)}%`],
+      ],
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // 4) ESTRATÉGIA DE LANCE (Embutido | Próprio | Parcela após o lance e prazo)
+    (doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 16,
+      head: [["Estratégia de Lance", "Valor"]],
+      body: [
+        ["Lance Embutido", brMoney(out.embutidoValor)],
+        ["Lance Próprio (pago)", brMoney(out.lanceProprioValor)],
+        ["Parcela após o lance (e prazo)", `${brMoney(out.parcelaAposValor)} (${out.prazoApos || 0}x)`],
+      ],
+      headStyles: { fillColor: brand.accent, textColor: "#fff" },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // 5) OBSERVAÇÕES (disclaimer atual)
     const yEnd = (doc as any).lastAutoTable.finalY + 18;
     doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(80,80,80);
     doc.text(
       "Atenção: Simulação não é garantia de contemplação; esta pode ocorrer antes ou depois do prazo previsto.",
       marginX, yEnd, { maxWidth: doc.internal.pageSize.getWidth() - marginX*2 }
     );
+
     addFooter(doc);
     doc.save(`Venda_Contemplada_${sim.code}.pdf`);
   }
@@ -794,7 +831,7 @@ Grupo: ${r.grupo || "—"}`;
               </ResponsiveContainer>
             </div>
 
-            {/* Radial ROI com título interno (subi ~0,5cm) */}
+            {/* Radial ROI com título interno */}
             <div className="h-60 rounded-xl p-3 border relative"
                  style={{ background: "linear-gradient(120deg, rgba(161,28,39,0.10), rgba(245,245,245,0.6))", backdropFilter: "blur(6px)"}}>
               <div className="absolute left-1/2 -translate-x-1/2 top-2 text-xs font-semibold text-[#1E293F]">
@@ -1046,7 +1083,10 @@ Grupo: ${r.grupo || "—"}`;
                     variant="secondary"
                     className="rounded-2xl h-9 px-3 inline-flex items-center gap-2"
                     onClick={() =>
-                      pdfSimplificado(active, model === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada")
+                      pdfSimplificado(
+                        active,
+                        model === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada"
+                      )
                     }
                     title="Gerar PDF Simplificado"
                   >

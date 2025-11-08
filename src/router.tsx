@@ -42,6 +42,9 @@ function withSuspense(node: React.ReactNode) {
 export const router = createBrowserRouter([
   // ===== Rotas públicas (sem login) =====
   { path: '/publico/simulador', element: withSuspense(<PublicSimulador />) },
+  // aliases/atalhos públicos
+  { path: '/simular',           element: <Navigate to="/publico/simulador" replace /> },
+  { path: '/public/simulador',  element: <Navigate to="/publico/simulador" replace /> },
 
   // ===== Login =====
   { path: '/login', element: withSuspense(<Login />) },
@@ -76,29 +79,29 @@ export const router = createBrowserRouter([
             ],
           },
 
-          { path: 'propostas',         element: withSuspense(<Propostas />) },
-          { path: 'comissoes',         element: withSuspense(<Comissoes />) },
-          { path: 'carteira',          element: withSuspense(<Carteira />) },
+          { path: 'propostas',        element: withSuspense(<Propostas />) },
+          { path: 'comissoes',        element: withSuspense(<Comissoes />) },
+          { path: 'carteira',         element: withSuspense(<Carteira />) },
 
           // ✅ Ranking dos Vendedores
-          { path: 'ranking',           element: withSuspense(<RankingVendedores />) },
+          { path: 'ranking',          element: withSuspense(<RankingVendedores />) },
 
           // 🔁 Redirects legados para o Ranking
           { path: 'ranking-vendedores', element: <Navigate to="/ranking" replace /> },
           { path: 'vendedores/ranking', element: <Navigate to="/ranking" replace /> },
           { path: 'ranking-vendas',     element: <Navigate to="/ranking" replace /> },
 
-          { path: 'usuarios',          element: withSuspense(<Usuarios />) },
-          { path: 'gestao-de-grupos',  element: withSuspense(<GestaoDeGrupos />) },
-          { path: 'parametros',        element: withSuspense(<Parametros />) },
-          { path: 'lgpd',              element: withSuspense(<TermsLGPD />) },
+          { path: 'usuarios',         element: withSuspense(<Usuarios />) },
+          { path: 'gestao-de-grupos', element: withSuspense(<GestaoDeGrupos />) },
+          { path: 'parametros',       element: withSuspense(<Parametros />) },
+          { path: 'lgpd',             element: withSuspense(<TermsLGPD />) },
 
           // ✅ Links Úteis
-          { path: 'links',             element: withSuspense(<LinksUteis />) },
+          { path: 'links',            element: withSuspense(<LinksUteis />) },
 
           // 🔁 Redirects legados opcionais para a nova guia de links
-          { path: 'links-uteis',       element: <Navigate to="/links" replace /> },
-          { path: 'linksuteis',        element: <Navigate to="/links" replace /> },
+          { path: 'links-uteis',      element: <Navigate to="/links" replace /> },
+          { path: 'linksuteis',       element: <Navigate to="/links" replace /> },
 
           // Qualquer rota desconhecida logada volta para Oportunidades
           { path: '*', element: <Navigate to="/oportunidades" replace /> },

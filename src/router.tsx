@@ -107,6 +107,6 @@ export const router = createBrowserRouter([
     ],
   },
 
-  // Fallback global para público (mantido)
+  // Fallback global para público
   { path: '*', element: <Navigate to="/login" replace /> },
 ]);

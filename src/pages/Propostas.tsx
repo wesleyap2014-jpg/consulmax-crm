@@ -1,5 +1,5 @@
 // src/pages/Propostas.tsx
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,19 +7,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Calendar, ClipboardCopy, FileText, ExternalLink, Trash2, Megaphone,
-  ChevronDown, Search, X, Loader2, Check, SlidersHorizontal, Settings2,
-  GripVertical, Download
+  ChevronDown, Search, X, SlidersHorizontal, GripVertical, Download, Eye, EyeOff
 } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 
-// === Recharts (gráficos do preview) ===
+// Gráficos (preview)
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend,
-  RadialBarChart, RadialBar, PieChart, Pie, Cell
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, LabelList,
+  RadialBarChart, RadialBar
 } from "recharts";
 
-// === Drag and Drop (builder) ===
+// DnD Builder (blocos internos)
 import { DndContext, closestCenter } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -28,10 +27,8 @@ import { CSS } from "@dnd-kit/utilities";
 type SimRow = {
   code: number;
   created_at: string;
-
   lead_nome: string | null;
   lead_telefone: string | null;
-
   segmento: string | null;
   grupo: string | null;
 
@@ -49,24 +46,12 @@ type SimRow = {
   lance_proprio_valor: number | null;
   lance_ofertado_pct?: number | null;
 
-  adm_tax_pct?: number | null; // fração
-  fr_tax_pct?: number | null;  // fração
+  adm_tax_pct?: number | null;
+  fr_tax_pct?: number | null;
 
-  // Se um dia existir na tabela, prevalece:
-  // antecip_parcelas?: number | null;
+  // NOVO: captura automática da quantidade de antecipações
+  antecip_parcelas?: number | null;
 };
-
-type ModalItem = Pick<
-  SimRow,
-  | "code"
-  | "created_at"
-  | "lead_nome"
-  | "lead_telefone"
-  | "segmento"
-  | "novo_credito"
-  | "parcela_escolhida"
-  | "novo_prazo"
->;
 
 type ModelKey =
   | "direcionada"
@@ -144,7 +129,7 @@ async function fetchAsDataURL(url: string): Promise<string | null> {
   }
 }
 
-/* ============ Percent helpers (humanizado) ============== */
+/* ============ Percent helpers ============== */
 function parsePercentInput(raw: string): number {
   const s = (raw || "").toString().trim().replace(/\s+/g, "");
   if (!s) return 0;
@@ -160,15 +145,13 @@ function formatPercentFraction(frac: number, withSymbol = true): string {
   return withSymbol ? `${pct}%` : pct;
 }
 
-/* ============== Finance helpers (PMT etc.) ============== */
+/* ============== Finance helpers ============== */
 function annualToMonthlyCompound(fracAnnual: number): number {
   return Math.pow(1 + (fracAnnual || 0), 1 / 12) - 1;
 }
 
 /* ==================== ENGINE (SSOT) ==================== */
-// Tudo que a tela e os PDFs usam sai daqui.
 type EngineParams = {
-  // Indicadores
   selic_anual: number;
   cdi_anual: number;
   ipca12m: number;
@@ -176,17 +159,13 @@ type EngineParams = {
   incc12m: number;
   inpc12m: number;
 
-  // Financiamento
-  fin_veic_mensal: number; // a.m
-  fin_imob_anual: number;  // a.a
+  fin_veic_mensal: number;
+  fin_imob_anual: number;
 
-  // Outros
-  reforco_pct: number;     // "Ganho na Venda (%)"
-  antecip_iniciais_qtd: number; // 2 ou 12
+  reforco_pct: number;
 };
 
 type EngineOut = {
-  // básicos
   credito: number;
   prazo: number;
   segmento: string;
@@ -196,18 +175,15 @@ type EngineOut = {
   parcelaAposValor: number;
   prazoApos: number;
 
-  // taxas
   adm?: number | null;
   fr?: number | null;
   valorCategoria?: number | null;
   encargos?: number | null;
 
-  // lance
   embutidoValor: number;
   lanceProprioValor: number;
   lancePct: number;
 
-  // contemplação / projeção
   nContemplacao: number;
   investido: number;
   creditoLiberado: number;
@@ -218,9 +194,11 @@ type EngineOut = {
   pctCDI: number;
 };
 
-function computeLabelInicial(qtd: number) {
-  if (qtd <= 2) return "Parcela 1 e 2";
-  return `Parcelas 1 a ${qtd}`;
+function labelInicialFromQtd(qtd?: number | null) {
+  const n = Number(qtd || 0);
+  if (!n || n <= 1) return "Parcela 1";
+  if (n === 2) return "Parcela 1 e 2";
+  return `Parcelas 1 a ${n}`;
 }
 
 function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
@@ -228,9 +206,8 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
   const seg = normalizeSegment(sim.segmento);
   const prazo = sim.prazo_venda ?? 0;
 
-  // Antecipações iniciais: se vier do sim (futuro), prevalece. Senão usa params.
-  const antecipQtd = (sim as any)?.antecip_parcelas ?? p.antecip_iniciais_qtd ?? 2;
-  const labelInicial = computeLabelInicial(Number(antecipQtd) || 2);
+  // Captura automática da quantidade de antecipações
+  const labelParcelaInicial = labelInicialFromQtd(sim.antecip_parcelas ?? 2);
 
   const adm = typeof sim.adm_tax_pct === "number" ? sim.adm_tax_pct! : null;
   const fr  = typeof sim.fr_tax_pct  === "number" ? sim.fr_tax_pct!  : null;
@@ -252,7 +229,7 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
   const pd = sim.parcela_demais ?? 0;
   const investido = n > 0 ? (p1 + pd * Math.max(0, n - 1) + lanceProprioValor) : 0;
 
-  const creditoLiberado = Math.max(0, (sim.novo_credito ?? 0)); // contratado – embutido (já vem pós)
+  const creditoLiberado = Math.max(0, (sim.novo_credito ?? 0));
   const valorVenda = creditoLiberado * (1 + (p.reforco_pct || 0));
   const lucro = Math.max(0, valorVenda - investido);
   const roi = investido > 0 ? (lucro / investido) : 0;
@@ -265,7 +242,7 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
     credito: C,
     prazo,
     segmento: seg,
-    labelParcelaInicial: labelInicial,
+    labelParcelaInicial,
     parcelaInicialValor: p1,
     parcelaDemaisValor: pd,
     parcelaAposValor: sim.parcela_escolhida ?? 0,
@@ -343,6 +320,8 @@ export default function Propostas() {
         "novo_credito","parcela_escolhida","novo_prazo",
         "parcela_ate_1_ou_2","parcela_demais",
         "lance_proprio_valor","adm_tax_pct","fr_tax_pct","lance_ofertado_pct",
+        // NOVO campo para capturar automático
+        "antecip_parcelas",
       ].join(","))
       .order("created_at", { ascending: false })
       .limit(300);
@@ -362,7 +341,7 @@ export default function Propostas() {
   useEffect(() => { load(); }, []);
   useEffect(() => { const t = setTimeout(() => load(), 350); return () => clearTimeout(t); }, [q, dateFrom, dateTo]);
 
-  /* ---------- Parâmetros (ampliados) ---------- */
+  /* ---------- Parâmetros (sem antecip_iniciais_qtd) ---------- */
   type Params = EngineParams;
   const DEFAULT_PARAMS: Params = {
     selic_anual: 0.15,
@@ -374,10 +353,9 @@ export default function Propostas() {
     fin_veic_mensal: 0.021,
     fin_imob_anual: 0.11,
     reforco_pct: 0.05,
-    antecip_iniciais_qtd: 2,
   };
   const [params, setParams] = useState<Params>(() => {
-    try { const raw = localStorage.getItem("proposalParamsV3"); if (raw) return { ...DEFAULT_PARAMS, ...JSON.parse(raw) }; } catch {}
+    try { const raw = localStorage.getItem("proposalParamsV4"); if (raw) return { ...DEFAULT_PARAMS, ...JSON.parse(raw) }; } catch {}
     return DEFAULT_PARAMS;
   });
   const [paramOpen, setParamOpen] = useState(false);
@@ -386,17 +364,19 @@ export default function Propostas() {
   const igpmMensal = useMemo(() => (params.igpm12m || 0) / 12, [params.igpm12m]);
   const inccMensal = useMemo(() => (params.incc12m || 0) / 12, [params.incc12m]);
   const inpcMensal = useMemo(() => (params.inpc12m || 0) / 12, [params.inpc12m]);
-
   function saveParams(p: Params) {
     setParams(p);
-    try { localStorage.setItem("proposalParamsV3", JSON.stringify(p)); } catch {}
+    try { localStorage.setItem("proposalParamsV4", JSON.stringify(p)); } catch {}
     setParamOpen(false);
   }
 
-  /* ---------- Modelos / seleção / preview ---------- */
+  /* ---------- Modelo / Prévia ---------- */
   const [model, setModel] = useState<ModelKey>("direcionada");
   const [active, setActive] = useState<SimRow | null>(null);
   useEffect(() => { setActive(pagedRows[0] ?? null); }, [pagedRows]);
+
+  // Resultado: Ocultar/Exibir
+  const [resultsOpen, setResultsOpen] = useState(true);
 
   // ===== Builder (DnD) =====
   type BlockId = "header" | "specs" | "parcelas" | "lance" | "projecao" | "graficos" | "obs";
@@ -409,30 +389,16 @@ export default function Propostas() {
     credito_correcao: ["header","specs","graficos","obs"],
     extrato: ["header","specs","obs"],
   };
-  const [layout, setLayout] = useState<BlockId[]>(() => {
-    try {
-      const raw = localStorage.getItem("proposalLayoutsV1");
-      const parsed = raw ? JSON.parse(raw) as Record<ModelKey, BlockId[]> : null;
-      return parsed?.[model] ?? DEFAULT_LAYOUT[model];
-    } catch { return DEFAULT_LAYOUT[model]; }
-  });
-  useEffect(() => {
-    // Troca de modelo → busca layout salvo ou default
-    try {
-      const raw = localStorage.getItem("proposalLayoutsV1");
-      const parsed = raw ? JSON.parse(raw) as Record<ModelKey, BlockId[]> : null;
-      setLayout(parsed?.[model] ?? DEFAULT_LAYOUT[model]);
-    } catch { setLayout(DEFAULT_LAYOUT[model]); }
-  }, [model]);
+  const [layout, setLayout] = useState<BlockId[]>(() => DEFAULT_LAYOUT[model]);
+  useEffect(() => { setLayout(DEFAULT_LAYOUT[model]); }, [model]);
   const persistLayout = (arr: BlockId[]) => {
     try {
-      const raw = localStorage.getItem("proposalLayoutsV1");
+      const raw = localStorage.getItem("proposalLayoutsV2");
       const parsed = raw ? JSON.parse(raw) as Record<ModelKey, BlockId[]> : {} as Record<ModelKey, BlockId[]>;
       parsed[model] = arr;
-      localStorage.setItem("proposalLayoutsV1", JSON.stringify(parsed));
+      localStorage.setItem("proposalLayoutsV2", JSON.stringify(parsed));
     } catch {}
   };
-
   function SortableItem({ id, children }: { id: BlockId; children: React.ReactNode }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
     const style: React.CSSProperties = {
@@ -449,18 +415,16 @@ export default function Propostas() {
       </div>
     );
   }
-
   const onDragEnd = (event: any) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const oldIndex = layout.indexOf(active.id);
     const newIndex = layout.indexOf(over.id);
     const arr = arrayMove(layout, oldIndex, newIndex);
-    setLayout(arr);
-    persistLayout(arr);
+    setLayout(arr); persistLayout(arr);
   };
 
-  /* ---------- Funções auxiliares UI ---------- */
+  /* ---------- Ações UI ---------- */
   function copyOportunidadeText(r: SimRow) {
     const segNorm = normalizeSegment(r.segmento);
     const emoji = emojiBySegment(r.segmento);
@@ -548,7 +512,7 @@ Grupo: ${r.grupo || "—"}`;
       const lw = props.width * ratio, lh = props.height * ratio;
       const ly = yTop + (areaH - lh) / 2; doc.addImage(logoDataUrl, "PNG", margin, ly, lw, lh);
     }
-    doc.setFont("helvetica", "normal"); doc.setTextColor(90, 90, 90); doc.setFontSize(10);
+    doc.setFont("helvetica","normal"); doc.setTextColor(90,90,90); doc.setFontSize(10);
     const lines = [
       "Consulmax Consórcios e Investimentos • CNPJ: 57.942.043/0001-03",
       "Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO • Cel/Whats: (69) 9 9302-9380",
@@ -570,9 +534,9 @@ Grupo: ${r.grupo || "—"}`;
       const lw = props.width * ratio, lh = props.height * ratio;
       doc.addImage(logoDataUrl, "PNG", xCursor, y + pad + 2, lw, lh); xCursor += lw + 14;
     }
-    doc.setFont("helvetica", "bold"); doc.setTextColor(0); doc.setFontSize(14);
+    doc.setFont("helvetica","bold"); doc.setTextColor(0); doc.setFontSize(14);
     doc.text(seller.nome || "Consultor Consulmax", xCursor, y + pad + 16);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(80);
+    doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(80);
     const whats = formatPhoneBR(seller.phone) || "-";
     doc.text(`Whats: ${whats}`, xCursor, y + pad + 36);
     doc.text(`Consulmax • Consultoria Especializada`, xCursor, y + pad + 56);
@@ -617,11 +581,7 @@ Grupo: ${r.grupo || "—"}`;
   function gerarPDFDirecionada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
-
-    // Capa
     headerBand(doc, "Proposta Direcionada"); sellerCard(doc); addWatermark(doc); addFooter(doc);
-
-    // Conteúdo
     doc.addPage(); headerBand(doc, "Proposta Direcionada"); addWatermark(doc);
     const marginX = 40;
 
@@ -684,11 +644,7 @@ Grupo: ${r.grupo || "—"}`;
   function gerarPDFVendaContemplada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
-
-    // Capa
     headerBand(doc, "Venda Contemplada"); sellerCard(doc); addWatermark(doc); addFooter(doc);
-
-    // Página 2
     doc.addPage(); headerBand(doc, "Venda Contemplada"); addWatermark(doc);
     const marginX = 40;
 
@@ -747,17 +703,15 @@ Grupo: ${r.grupo || "—"}`;
 
     // dados para gráficos
     const barData = [
-      { name: "Venda", valor: out.valorVenda, tipo: "Venda" },
-      { name: "Investido", valor: out.investido, tipo: "Investido" },
-      { name: "Lucro", valor: out.lucro, tipo: "Lucro" },
+      { name: "Venda", valor: out.valorVenda },
+      { name: "Investido", valor: out.investido },
+      { name: "Lucro", valor: out.lucro },
     ];
-    const roiData = [{ name: "ROI", value: Math.min(100, Math.max(0, out.roi * 100)) }].concat(
-      [{ name: "Resto", value: Math.max(0, 100 - Math.min(100, Math.max(0, out.roi * 100))) }]
-    );
-    const COLORS = [brand.accent, brand.primary];
+    const roiPercent = Math.min(100, Math.max(0, out.roi * 100));
+    const roiData = [{ name: "ROI", value: roiPercent }, { name: "Resto", value: Math.max(0, 100 - roiPercent) }];
 
     const BlockCard = ({ children, title }: { children: React.ReactNode; title: string }) => (
-      <div className="rounded-2xl p-4 border relative overflow-hidden"
+      <div className="rounded-2xl p-4 border relative overflow-hidden transition-all"
            style={{ background: "linear-gradient(120deg, rgba(255,255,255,0.55), rgba(255,255,255,0.35))", backdropFilter: "blur(8px)", boxShadow: "0 8px 24px rgba(0,0,0,0.08)" }}>
         <div className="absolute inset-0 pointer-events-none"
              style={{ background: "radial-gradient(1200px 400px at -10% -10%, rgba(161,28,39,0.12), transparent 60%), radial-gradient(900px 300px at 110% 110%, rgba(30,41,63,0.12), transparent 60%)" }} />
@@ -768,7 +722,7 @@ Grupo: ${r.grupo || "—"}`;
       </div>
     );
 
-    const blocks: Record<BlockId, JSX.Element> = {
+    const blocks: Record<"header"|"specs"|"parcelas"|"lance"|"projecao"|"graficos"|"obs", JSX.Element> = {
       header: (
         <BlockCard title="Cabeçalho">
           <div className="flex items-center gap-4">
@@ -824,26 +778,36 @@ Grupo: ${r.grupo || "—"}`;
       graficos: (
         <BlockCard title="Demonstração Gráfica">
           <div className="grid md:grid-cols-2 gap-4">
-            <div className="h-56 rounded-xl p-3 border"
+            {/* Barras com labels sempre visíveis */}
+            <div className="h-60 rounded-xl p-3 border"
                  style={{ background: "linear-gradient(120deg, rgba(224,206,140,0.12), rgba(30,41,63,0.08))", backdropFilter: "blur(6px)"}}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData}>
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip />
+                  <Tooltip formatter={(v: number) => brMoney(v)} />
                   <Legend />
-                  <Bar dataKey="valor" radius={[8,8,0,0]} />
+                  <Bar dataKey="valor" radius={[8,8,0,0]}>
+                    <LabelList dataKey="valor" position="top" formatter={(v: number) => brMoney(v)} />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="h-56 rounded-xl p-3 border"
+
+            {/* Radial ROI com título interno (subi ~0,5cm) */}
+            <div className="h-60 rounded-xl p-3 border relative"
                  style={{ background: "linear-gradient(120deg, rgba(161,28,39,0.10), rgba(245,245,245,0.6))", backdropFilter: "blur(6px)"}}>
+              <div className="absolute left-1/2 -translate-x-1/2 top-2 text-xs font-semibold text-[#1E293F]">
+                ROI aproximado
+              </div>
               <ResponsiveContainer width="100%" height="100%">
                 <RadialBarChart innerRadius="60%" outerRadius="100%" data={roiData}>
                   <RadialBar dataKey="value" clockWise />
                 </RadialBarChart>
               </ResponsiveContainer>
-              <div className="text-center text-sm mt-2">ROI aproximado</div>
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-sm font-semibold">{roiPercent.toFixed(0)}%</div>
+              </div>
             </div>
           </div>
         </BlockCard>
@@ -862,7 +826,7 @@ Grupo: ${r.grupo || "—"}`;
         <SortableContext items={layout} strategy={verticalListSortingStrategy}>
           <div className="space-y-4">
             {layout.map((id) => (
-              <SortableItem key={id} id={id}>
+              <SortableItem key={id} id={id as any}>
                 {blocks[id]}
               </SortableItem>
             ))}
@@ -899,135 +863,173 @@ Grupo: ${r.grupo || "—"}`;
         </CardContent>
       </Card>
 
-      {/* Resultados + Preview */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Resultados (paginado) */}
-        <Card>
-          <CardHeader className="flex items-center justify-between">
-            <CardTitle>
-              Resultados <span className="text-muted-foreground text-sm">({rows.length})</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="overflow-auto rounded-lg border">
-              <table className="min-w-full text-sm">
-                <thead className="bg-muted/40">
-                  <tr>
-                    <th className="text-left p-2 w-10">#</th>
-                    <th className="text-left p-2">Criada</th>
-                    <th className="text-left p-2">Lead</th>
-                    <th className="text-left p-2">Segmento</th>
-                    <th className="text-left p-2">Crédito (após)</th>
-                    <th className="text-left p-2">Parcela (após)</th>
-                    <th className="text-left p-2">Prazo</th>
-                    <th className="text-center p-2">Op.</th>
-                    <th className="text-center p-2">Resumo</th>
-                    <th className="text-center p-2">PDF</th>
-                    <th className="text-center p-2">Abrir</th>
-                    <th className="text-center p-2">Excluir</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagedRows.map((r) => (
-                    <tr key={r.code} className={`border-t ${active?.code === r.code ? "bg-muted/30" : ""}`}>
-                      <td className="p-2">{r.code}</td>
-                      <td className="p-2 whitespace-nowrap">{new Date(r.created_at).toLocaleString("pt-BR")}</td>
-                      <td className="p-2">
-                        <div className="font-medium">{r.lead_nome || "—"}</div>
-                        <div className="text-xs text-muted-foreground">{r.lead_telefone || "—"}</div>
-                      </td>
-                      <td className="p-2">{normalizeSegment(r.segmento)}</td>
-                      <td className="p-2">{brMoney(r.novo_credito)}</td>
-                      <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
-                      <td className="p-2">{r.novo_prazo ?? 0}x</td>
+      {/* Grid responsivo com colunas variáveis conforme "Resultados" aberto/fechado */}
+      <div className={`grid gap-6 transition-all ${resultsOpen ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
+        {/* Resultados (paginado) - com Ocultar/Expandir */}
+        {resultsOpen && (
+          <Card className="transition-all">
+            <CardHeader className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                Resultados <span className="text-muted-foreground text-sm">({rows.length})</span>
+              </CardTitle>
+              <Button variant="secondary" size="sm" className="rounded-xl"
+                onClick={() => setResultsOpen(false)}>
+                <EyeOff className="h-4 w-4 mr-1" /> Ocultar
+              </Button>
+            </CardHeader>
 
-                      <td className="p-2 text-center">
-                        <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                                title="Copiar Oportunidade" onClick={() => copyOportunidadeText(r)}>
-                          <Megaphone className="h-4 w-4" />
-                        </button>
-                      </td>
-                      <td className="p-2 text-center">
-                        <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                                title="Copiar Resumo" onClick={() => copyResumoText(r)}>
-                          <ClipboardCopy className="h-4 w-4" />
-                        </button>
-                      </td>
-                      <td className="p-2 text-center">
-                        <div className="relative">
-                          <details className="group inline-block">
-                            <summary className="list-none">
-                              <Button variant="secondary" size="sm" className="rounded-xl h-8">Gerar PDF <ChevronDown className="h-4 w-4 ml-1" /></Button>
-                            </summary>
-                            <div className="absolute right-0 mt-2 w-64 bg-white border rounded-xl shadow z-10 p-1">
-                              {[
-                                { k: "direcionada", label: "Direcionada (completo)" },
-                                { k: "venda_contemplada", label: "Venda Contemplada (completo)" },
-                                { k: "simp_direcionada", label: "Direcionada (simplificado)" },
-                                { k: "simp_venda", label: "Venda Contemplada (simplificado)" },
-                              ].map((opt) => (
-                                <button key={opt.k} className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    if (opt.k === "direcionada") gerarPDFDirecionada(r);
-                                    else if (opt.k === "venda_contemplada") gerarPDFVendaContemplada(r);
-                                    else if (opt.k === "simp_direcionada") pdfSimplificado(r, "Proposta Direcionada");
-                                    else if (opt.k === "simp_venda") pdfSimplificado(r, "Venda Contemplada");
-                                  }}>
-                                  {opt.label}
-                                </button>
-                              ))}
-                            </div>
-                          </details>
-                        </div>
-                      </td>
-                      <td className="p-2 text-center">
-                        <button className="h-9 w-9 rounded-full bg-muted inline-flex items-center justify-center text-foreground/70"
-                                title="Pré-visualizar" onClick={() => setActive(r)}>
-                          <ExternalLink className="h-4 w-4" />
-                        </button>
-                      </td>
-                      <td className="p-2 text-center">
-                        <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                                title="Excluir" onClick={() => handleDelete(r.code)}>
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </td>
+            <CardContent className="space-y-3">
+              <div className="overflow-auto rounded-lg border">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="text-left p-2 w-10">#</th>
+                      <th className="text-left p-2">Criada</th>
+                      <th className="text-left p-2">Lead</th>
+                      <th className="text-left p-2">Segmento</th>
+                      <th className="text-left p-2">Crédito (após)</th>
+                      <th className="text-left p-2">Parcela (após)</th>
+                      <th className="text-left p-2">Prazo</th>
+                      <th className="text-center p-2">Op.</th>
+                      <th className="text-center p-2">Resumo</th>
+                      <th className="text-center p-2">PDF</th>
+                      <th className="text-center p-2">Abrir</th>
+                      <th className="text-center p-2">Excluir</th>
                     </tr>
-                  ))}
-                  {pagedRows.length === 0 && (
-                    <tr><td colSpan={12} className="p-6 text-center text-muted-foreground">
-                      {loading ? "Carregando..." : "Nenhum resultado para os filtros."}
-                    </td></tr>
+                  </thead>
+                  <tbody>
+                    {pagedRows.map((r) => (
+                      <tr key={r.code}
+                          className={`border-t ${active?.code === r.code ? "bg-muted/30" : ""}`}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("text/plain", String(r.code));
+                          }}>
+                        <td className="p-2">{r.code}</td>
+                        <td className="p-2 whitespace-nowrap">{new Date(r.created_at).toLocaleString("pt-BR")}</td>
+                        <td className="p-2">
+                          <div className="font-medium">{r.lead_nome || "—"}</div>
+                          <div className="text-xs text-muted-foreground">{r.lead_telefone || "—"}</div>
+                        </td>
+                        <td className="p-2">{normalizeSegment(r.segmento)}</td>
+                        <td className="p-2">{brMoney(r.novo_credito)}</td>
+                        <td className="p-2">{brMoney(r.parcela_escolhida)}</td>
+                        <td className="p-2">{r.novo_prazo ?? 0}x</td>
+
+                        <td className="p-2 text-center">
+                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                                  title="Copiar Oportunidade" onClick={() => copyOportunidadeText(r)}>
+                            <Megaphone className="h-4 w-4" />
+                          </button>
+                        </td>
+                        <td className="p-2 text-center">
+                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                                  title="Copiar Resumo" onClick={() => copyResumoText(r)}>
+                            <ClipboardCopy className="h-4 w-4" />
+                          </button>
+                        </td>
+                        <td className="p-2 text-center">
+                          <div className="relative">
+                            <details className="group inline-block">
+                              <summary className="list-none">
+                                <Button variant="secondary" size="sm" className="rounded-xl h-8">Gerar PDF <ChevronDown className="h-4 w-4 ml-1" /></Button>
+                              </summary>
+                              <div className="absolute right-0 mt-2 w-64 bg-white border rounded-xl shadow z-10 p-1">
+                                {[
+                                  { k: "direcionada", label: "Direcionada (completo)" },
+                                  { k: "venda_contemplada", label: "Venda Contemplada (completo)" },
+                                  { k: "simp_direcionada", label: "Direcionada (simplificado)" },
+                                  { k: "simp_venda", label: "Venda Contemplada (simplificado)" },
+                                ].map((opt) => (
+                                  <button key={opt.k} className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      if (opt.k === "direcionada") gerarPDFDirecionada(r);
+                                      else if (opt.k === "venda_contemplada") gerarPDFVendaContemplada(r);
+                                      else if (opt.k === "simp_direcionada") pdfSimplificado(r, "Proposta Direcionada");
+                                      else if (opt.k === "simp_venda") pdfSimplificado(r, "Venda Contemplada");
+                                    }}>
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </details>
+                          </div>
+                        </td>
+                        <td className="p-2 text-center">
+                          <button className="h-9 w-9 rounded-full bg-muted inline-flex items-center justify-center text-foreground/70"
+                                  title="Pré-visualizar" onClick={() => setActive(r)}>
+                            <ExternalLink className="h-4 w-4" />
+                          </button>
+                        </td>
+                        <td className="p-2 text-center">
+                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                                  title="Excluir" onClick={() => handleDelete(r.code)}>
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {pagedRows.length === 0 && (
+                      <tr><td colSpan={12} className="p-6 text-center text-muted-foreground">
+                        {loading ? "Carregando..." : "Nenhum resultado para os filtros."}
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Dropzone abaixo dos 10 itens da página */}
+              <div
+                className="mt-3 rounded-2xl border-2 border-dashed p-4 text-sm text-center"
+                style={{ borderColor: "#B5A573", background: "linear-gradient(120deg, rgba(245,245,245,0.7), rgba(224,206,140,0.12))" }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const codeStr = e.dataTransfer.getData("text/plain");
+                  const code = Number(codeStr);
+                  const found = rows.find((x) => x.code === code);
+                  if (found) setActive(found);
+                }}
+              >
+                Arraste aqui a proposta da lista acima para demonstrar no gráfico ao lado
+              </div>
+
+              {/* paginação */}
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  {rows.length > 0 && (
+                    <>Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)}</strong> de <strong>{rows.length}</strong></>
                   )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* paginação */}
-            <div className="flex items-center justify-between text-sm">
-              <div>
-                {rows.length > 0 && (
-                  <>Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)}</strong> de <strong>{rows.length}</strong></>
-                )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" className="h-9 rounded-xl px-3"
+                          onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
+                  <span>Página {page} de {totalPages}</span>
+                  <Button variant="secondary" className="h-9 rounded-xl px-3"
+                          onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Próxima</Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" className="h-9 rounded-xl px-3"
-                        onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
-                <span>Página {page} de {totalPages}</span>
-                <Button variant="secondary" className="h-9 rounded-xl px-3"
-                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Próxima</Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Preview + controles */}
-        <Card>
+        {/* Botão para reabrir Resultados quando oculto */}
+        {!resultsOpen && (
+          <div className="flex items-center">
+            <Button variant="secondary" size="sm" className="rounded-xl mb-2"
+              onClick={() => setResultsOpen(true)}>
+              <Eye className="h-4 w-4 mr-1" /> Mostrar Resultados
+            </Button>
+          </div>
+        )}
+
+        {/* Prévia da Proposta (expande quando resultados ocultos) */}
+        <Card className={`transition-all ${resultsOpen ? "" : "lg:col-span-1"}`}>
           <CardHeader className="flex items-center justify-between gap-4">
             <CardTitle className="flex items-center gap-3">
-              <span>Preview do Modelo</span>
-              {/* Chip de parâmetros (ícone ao lado do nome) */}
+              <span>Prévia da Proposta</span>
+              {/* Chip Parâmetros (ícone ao lado) */}
               <button
                 onClick={() => setParamOpen(true)}
                 className="inline-flex items-center gap-2 text-xs border rounded-full px-3 py-1 hover:bg-muted"
@@ -1068,7 +1070,17 @@ Grupo: ${r.grupo || "—"}`;
           </CardHeader>
           <CardContent>
             {!active ? (
-              <div className="p-8 text-center text-muted-foreground">Selecione uma simulação na tabela ao lado.</div>
+              <div
+                className="p-8 text-center text-muted-foreground rounded-xl border-2 border-dashed"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  const code = Number(e.dataTransfer.getData("text/plain"));
+                  const found = rows.find((x) => x.code === code);
+                  if (found) setActive(found);
+                }}
+              >
+                Selecione um item da lista ou arraste uma proposta para cá.
+              </div>
             ) : (
               <PreviewBlock sim={active} />
             )}
@@ -1076,118 +1088,7 @@ Grupo: ${r.grupo || "—"}`;
         </Card>
       </div>
 
-      {/* Propostas de Investimento (mantido) */}
-      <Card>
-        <CardHeader className="flex items-center justify-between gap-4">
-          <CardTitle>Propostas de Investimento</CardTitle>
-
-          <div className="ml-auto flex items-center gap-2">
-            {/* Chip de Parâmetros (mesmo padrão visual) */}
-            <button
-              onClick={() => setParamOpen(true)}
-              className="inline-flex items-center gap-2 text-xs border rounded-full px-3 py-1 hover:bg-muted"
-              title="Parâmetros"
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              Parâmetros
-            </button>
-
-            <select value={model} onChange={(e) => setModel(e.target.value as any)}
-                    className="h-10 rounded-2xl border px-3" title="Modelo">
-              <option value="direcionada">Direcionada</option>
-              <option value="venda_contemplada">Venda Contemplada</option>
-              <option value="alav_fin">Alav. Financeira</option>
-              <option value="alav_patr">Alav. Patrimonial</option>
-              <option value="previdencia">Previdência</option>
-              <option value="credito_correcao">Crédito c/ Correção</option>
-              <option value="extrato">Extrato</option>
-            </select>
-
-            <Button className="rounded-2xl h-10 px-4" variant="secondary"
-              onClick={() => {
-                const sel = rows.filter((x) => !!x); // placeholder
-                if (!active) return;
-                // Gera somente o ativo no preview por enquanto no botão topo.
-                // A geração em lote permanece no menu da tabela.
-              }}
-              disabled={!active}
-            >
-              Gerar (1)
-            </Button>
-          </div>
-        </CardHeader>
-
-        <CardContent>
-          <div className="text-sm text-muted-foreground mb-2">
-            Use a tabela da esquerda para selecionar a simulação a visualizar/gerar.
-          </div>
-
-          <div className="overflow-auto rounded-lg border">
-            <table className="min-w-full text-sm">
-              <thead className="bg-muted/40">
-                <tr>
-                  <th className="p-2 w-10"></th>
-                  <th className="text-left p-2">Criada</th>
-                  <th className="text-left p-2">Lead</th>
-                  <th className="text-left p-2">Segmento</th>
-                  <th className="text-left p-2">Crédito (após)</th>
-                  <th className="text-left p-2">Parcela (após)</th>
-                  <th className="text-left p-2">Prazo</th>
-                  <th className="text-center p-2">Gerar</th>
-                </tr>
-              </thead>
-              <tbody>
-                {active ? (
-                  <tr className="border-t">
-                    <td className="p-2 text-center"><input type="checkbox" checked readOnly /></td>
-                    <td className="p-2 whitespace-nowrap">{new Date(active.created_at).toLocaleString("pt-BR")}</td>
-                    <td className="p-2">
-                      <div className="font-medium">{active.lead_nome || "—"}</div>
-                      <div className="text-xs text-muted-foreground">{active.lead_telefone || "—"}</div>
-                    </td>
-                    <td className="p-2">{normalizeSegment(active.segmento)}</td>
-                    <td className="p-2">{brMoney(active.novo_credito)}</td>
-                    <td className="p-2">{brMoney(active.parcela_escolhida)}</td>
-                    <td className="p-2">{active.novo_prazo ?? 0}x</td>
-                    <td className="p-2 text-center">
-                      <div className="relative">
-                        <details className="group inline-block">
-                          <summary className="list-none">
-                            <Button variant="secondary" size="sm" className="rounded-xl h-8">
-                              Gerar... <ChevronDown className="h-4 w-4 ml-1" />
-                            </Button>
-                          </summary>
-                          <div className="absolute right-0 mt-2 w-56 bg-white border rounded-xl shadow z-10 p-1">
-                            {[
-                              { k: "direcionada", label: "Direcionada (completo)" },
-                              { k: "venda_contemplada", label: "Venda Contemplada (completo)" },
-                              { k: "simp", label: "PDF simplificado" },
-                            ].map((opt) => (
-                              <button key={opt.k} className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  if (opt.k === "direcionada") gerarPDFDirecionada(active);
-                                  else if (opt.k === "venda_contemplada") gerarPDFVendaContemplada(active);
-                                  else pdfSimplificado(active, model === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada");
-                                }}>
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
-                        </details>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">Nenhuma simulação selecionada.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* MODAL: Parâmetros */}
+      {/* MODAL: Parâmetros (sem qtd. de antecipação) */}
       {paramOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg overflow-hidden">
@@ -1202,7 +1103,6 @@ Grupo: ${r.grupo || "—"}`;
             </div>
 
             <div className="p-5 grid gap-5 md:grid-cols-3 text-sm">
-              {/* Linha 1 */}
               <div>
                 <Label>Selic Anual</Label>
                 <Input defaultValue={formatPercentFraction(params.selic_anual)} onBlur={(e) => {
@@ -1230,7 +1130,7 @@ Grupo: ${r.grupo || "—"}`;
                 }} />
               </div>
 
-              {/* Linha 2 — Inflação 12m */}
+              {/* Inflação 12m */}
               <div>
                 <Label>IPCA 12m</Label>
                 <Input defaultValue={formatPercentFraction(params.ipca12m)} onBlur={(e) => {
@@ -1275,7 +1175,7 @@ Grupo: ${r.grupo || "—"}`;
                 </div>
               </div>
 
-              {/* Linha 3 — Financiamento */}
+              {/* Financiamentos */}
               <div>
                 <Label>Juros Financiamento — Veículos (ao mês)</Label>
                 <Input defaultValue={formatPercentFraction(params.fin_veic_mensal)} onBlur={(e) => {
@@ -1290,18 +1190,6 @@ Grupo: ${r.grupo || "—"}`;
                   const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
                   setParams((p) => ({ ...p, fin_imob_anual: v }));
                 }} />
-              </div>
-
-              <div>
-                <Label>Qtd. Parcelas Iniciais (antecipação)</Label>
-                <Input defaultValue={String(params.antecip_iniciais_qtd)} onBlur={(e) => {
-                  const v = Math.max(1, Math.min(60, Number(e.target.value) || 2));
-                  e.currentTarget.value = String(v);
-                  setParams((p) => ({ ...p, antecip_iniciais_qtd: v }));
-                }} />
-                <div className="text-xs text-muted-foreground mt-1">
-                  Ex.: **2** (padrão) ou **12** quando houver antecipação em 12 parcelas.
-                </div>
               </div>
             </div>
 

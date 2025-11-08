@@ -8,13 +8,13 @@ import { Label } from "@/components/ui/label";
 import { CheckCircle2, Loader2, MessageCircle, MousePointerClick, ShieldCheck, ShoppingCart, Sparkles } from "lucide-react";
 
 /**
- * Página pública (sem login) — pré-cadastro + simulação.
- * Usa RPCs SECURITY DEFINER:
- *  - public_create_opportunity(p_*)
- *  - public_update_opportunity_stage(p_op_id, p_new_stage, p_append_note)
+ * Fluxo público:
+ *  Etapa 1  -> upsert LEAD e cria OPORTUNIDADE (Novo) via RPC public_create_opportunity
+ *  Etapa 2  -> registra a simulação anexando NOTA via RPC public_update_opportunity_stage
+ *  Botões   -> trocam estágio e também anexam NOTA via RPC
  */
 
-// ---------- Helpers ----------
+// -------- Helpers --------
 function ts() {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -60,7 +60,7 @@ async function upsertLead({ nome, email, telefone }: { nome: string; email: stri
   return leadId;
 }
 
-// ---------- UI data ----------
+// -------- UI data --------
 const modalidades = [
   { id: "imovel", label: "Imóvel" },
   { id: "veiculo", label: "Veículo" },
@@ -99,14 +99,14 @@ export default function PublicSimulador() {
 
   const canGoSimular = nome.trim().length >= 3 && /@/.test(email) && telefone.replace(/\D/g, "").length >= 10;
 
-  // === Etapa 1: cria Lead + Oportunidade (Novo) ===
+  // === Etapa 1: upsert LEAD e cria OPORTUNIDADE (Novo) ===
   async function handlePreCadastro() {
     try {
       setSaving(true);
       const lid = await upsertLead({ nome: nome.trim(), email: email.trim(), telefone });
       setLeadId(lid);
 
-      // cria oportunidade agora (para já aparecer em Oportunidades > Novo)
+      // cria a oportunidade AQUI (já aparece no CRM como "Novo")
       const { data, error } = await supabase.rpc("public_create_opportunity", {
         p_nome: nome.trim(),
         p_email: email.trim(),
@@ -123,8 +123,9 @@ export default function PublicSimulador() {
 
       setOpId(data as string);
       setStep(2);
-    } catch {
-      alert("Não foi possível concluir o pré-cadastro. Tente novamente.");
+    } catch (e: any) {
+      const msg = e?.message || e?.hint || e?.error?.message || "Não foi possível concluir o pré-cadastro.";
+      alert(`${msg}\n\nDica: verifique RLS/Policies de public.leads e se a RPC public_create_opportunity existe (SECURITY DEFINER).`);
     } finally {
       setSaving(false);
     }
@@ -149,15 +150,15 @@ export default function PublicSimulador() {
       if (error) throw error;
 
       setStep(3);
-    } catch (e) {
-      console.error(e);
-      alert("Não foi possível registrar a simulação. Tente novamente.");
+    } catch (e: any) {
+      const msg = e?.message || e?.hint || e?.error?.message || "Não foi possível registrar a simulação.";
+      alert(msg);
     } finally {
       setSaving(false);
     }
   }
 
-  // WhatsApp: tenta com o número do usuário; se não houver, usa oficial
+  // WhatsApp – usa o do usuário quando disponível; senão o oficial
   function waLink(text: string) {
     const fone = telefone.replace(/\D/g, "");
     const target = fone.length >= 10 ? `55${fone}` : "";
@@ -194,11 +195,11 @@ export default function PublicSimulador() {
   // ---------- UI ----------
   function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: boolean }) {
     return (
-      <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border ${
-          active ? "bg-[#1E293F] text-white border-[#1E293F]" : done ? "bg-[#B5A573] text-white border-[#B5A573]" : "bg-white text-[#1E293F] border-[#1E293F]"
-        }`}
-      >
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border ${
+        active ? "bg-[#1E293F] text-white border-[#1E293F]" :
+        done ? "bg-[#B5A573] text-white border-[#B5A573]" :
+        "bg-white text-[#1E293F] border-[#1E293F]"
+      }`}>
         {done ? <CheckCircle2 className="w-5 h-5" /> : n}
       </div>
     );
@@ -367,7 +368,7 @@ export default function PublicSimulador() {
               </div>
 
               <p className="text-xs text-[#1E293F]/60">
-                Ao clicar em “Simular agora”, sua oportunidade permanece como <strong>Novo</strong> e a simulação é registrada nas anotações.
+                Ao clicar em “Simular agora”, a sua oportunidade já criada permanece como <strong>Novo</strong> e a simulação é registrada nas anotações.
               </p>
             </CardContent>
           </Card>
@@ -411,7 +412,9 @@ export default function PublicSimulador() {
           </Card>
         )}
 
-        <footer className="text-center text-xs text-[#1E293F]/50 mt-8">Consulmax • Maximize as suas conquistas.</footer>
+        <footer className="text-center text-xs text-[#1E293F]/50 mt-8">
+          Consulmax • Maximize as suas conquistas.
+        </footer>
       </div>
     </div>
   );

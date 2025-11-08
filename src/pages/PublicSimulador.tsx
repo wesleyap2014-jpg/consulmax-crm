@@ -42,6 +42,10 @@ function formatPhoneBR(raw: string) {
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 }
 
+/**
+ * Insere o Lead (quando necessário) e nunca faz UPDATE (evita RLS).
+ * Se já existir (email/telefone), apenas retorna o id.
+ */
 async function upsertLead({
   nome,
   email,
@@ -79,13 +83,12 @@ async function upsertLead({
       .single();
     if (error) throw error;
     leadId = data.id;
-  } else {
-    await supabase.from("leads").update({ nome, email }).eq("id", leadId);
   }
+
   return leadId;
 }
 
-/** Tenta criar na tabela base `opportunities` (com vendedor/owner). Se falhar, usa `oportunidades`. */
+/** Cria a oportunidade via RPC SECURITY DEFINER (bypass RLS). */
 async function createOpportunityNow({
   leadId,
   segmento,
@@ -93,61 +96,23 @@ async function createOpportunityNow({
   leadId: string;
   segmento: string;
 }) {
-  const anot = `[${ts()}] Oportunidade criada via simulador público. Segmento: ${segmento}.`;
-
-  // 1) Tabela base em inglês
-  try {
-    const { data, error } = await supabase
-      .from("opportunities")
-      .insert({
-        lead_id: leadId,
-        vendedor_id: DEFAULT_VENDEDOR_ID,
-        owner_id: DEFAULT_OWNER_ID,
-        segmento,
-        estagio: "Novo",
-        stage: "novo",
-        origem: "site_public_simulator",
-        observacao: anot,
-      } as any)
-      .select("id")
-      .single();
-
-    if (error) throw error;
-    return data.id as string;
-  } catch (_e) {
-    // 2) Fallback: estrutura pt
-    const { data, error } = await supabase
-      .from("oportunidades")
-      .insert({
-        lead_id: leadId,
-        status: "Novo",
-        origem: "site_public_simulator",
-        modalidade: segmento,
-        segmento,
-        anotacoes: anot,
-      } as any)
-      .select("id")
-      .single();
-    if (error) throw error;
-    return data.id as string;
-  }
+  const { data: rpcId, error: rpcErr } = await supabase.rpc("public_create_opportunity", {
+    p_lead_id: leadId,
+    p_segmento: segmento,
+    p_vendedor_id: DEFAULT_VENDEDOR_ID,
+    p_owner_id: DEFAULT_OWNER_ID,
+  });
+  if (rpcErr) throw rpcErr;
+  return rpcId as string;
 }
 
+/** Acrescenta anotação via RPC SECURITY DEFINER (bypass RLS). */
 async function safeAppendNote(opportunityId: string, note: string) {
-  const stamp = `[${ts()}] ${note}`;
-  // tenta em pt
-  const pt = await supabase.from("oportunidades").select("anotacoes").eq("id", opportunityId).maybeSingle();
-  if (pt.data) {
-    const prev = (pt.data?.anotacoes as string) || "";
-    const next = prev ? `${prev}\n${stamp}` : stamp;
-    await supabase.from("oportunidades").update({ anotacoes: next }).eq("id", opportunityId);
-    return;
-  }
-  // fallback base (observacao)
-  const en = await supabase.from("opportunities").select("observacao").eq("id", opportunityId).maybeSingle();
-  const prev = (en.data?.observacao as string) || "";
-  const next = prev ? `${prev}\n${stamp}` : stamp;
-  await supabase.from("opportunities").update({ observacao: next }).eq("id", opportunityId);
+  const { error } = await supabase.rpc("public_append_op_note", {
+    p_op_id: opportunityId,
+    p_note: `[${ts()}] ${note}`,
+  });
+  if (error) throw error;
 }
 
 function currencyMask(v: string) {
@@ -257,7 +222,7 @@ export default function PublicSimulador() {
     } catch (e: any) {
       console.error(e);
       alert(
-        "Não foi possível concluir o pré-cadastro/criar a oportunidade.\nVerifique as policies de INSERT/UPDATE e tente novamente."
+        "Não foi possível concluir o pré-cadastro/criar a oportunidade.\nVerifique as policies e as RPCs no Supabase e tente novamente."
       );
     } finally {
       setSaving(false);
@@ -290,9 +255,15 @@ export default function PublicSimulador() {
     setFinalMsg(
       "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
     );
+
+    // Tenta atualizar status (pode falhar por RLS; anotação garante rastreabilidade)
+    try {
+      await supabase.from("oportunidades").update({ status: "Contratar – solicitado" }).eq("id", opId);
+      await supabase.from("opportunities").update({ estagio: "Contratar – solicitado" }).eq("id", opId);
+    } catch {
+      // ignora
+    }
     await safeAppendNote(opId, "Usuário clicou em CONTRATAR");
-    await supabase.from("oportunidades").update({ status: "Contratar – solicitado" }).eq("id", opId);
-    await supabase.from("opportunities").update({ estagio: "Contratar – solicitado" }).eq("id", opId);
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
     const text = `Olá! Quero contratar meu consórcio. Segmento: ${segRotulo}. ${
@@ -306,9 +277,15 @@ export default function PublicSimulador() {
     setFinalMsg(
       "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
     );
+
+    // Tenta atualizar status (pode falhar por RLS; anotação garante rastreabilidade)
+    try {
+      await supabase.from("oportunidades").update({ status: "Aguardando contato" }).eq("id", opId);
+      await supabase.from("opportunities").update({ estagio: "Aguardando contato" }).eq("id", opId);
+    } catch {
+      // ignora
+    }
     await safeAppendNote(opId, "Usuário clicou em FALAR COM UM ESPECIALISTA");
-    await supabase.from("oportunidades").update({ status: "Aguardando contato" }).eq("id", opId);
-    await supabase.from("opportunities").update({ estagio: "Aguardando contato" }).eq("id", opId);
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
     const text = `Olá! Preciso falar com um especialista. Segmento: ${segRotulo}. ${

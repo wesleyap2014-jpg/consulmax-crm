@@ -287,41 +287,58 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
 function buildPrevidencia(sim: SimRow, p: EngineParams, reajIndex: string): { core: PrevidenciaCalc; out: EngineOut } {
   const out = proposalEngine(sim, p);
 
+  // CDI mês e rentabilidade
   const cdiMes = annualToMonthlyCompound(p.cdi_anual);
-  const indiceCM = 0.99; // 99% do CDI mês (aplicado sobre o CDI mês)
+  const indiceCM = 0.99; // 99% do CDI mês
   const rentabMes = cdiMes * indiceCM;
+
+  // Prazo pós-contemplação e crédito líquido (C - embutido)
   const prazoAplicacao = Math.max(0, out.prazoApos || 0);
   const creditoLiquido = Math.max(0, out.creditoLiberado || 0);
 
-  // Seleção do índice de reajuste (anual, aplicado nas parcelas 13, 25, 37, ...)
+  // Índice de reajuste anual (12 em 12 meses)
   const idxAnnual =
     reajIndex === "igpm" ? (p.igpm12m || 0) :
     reajIndex === "incc" ? (p.incc12m || 0) :
     reajIndex === "inpc" ? (p.inpc12m || 0) : (p.ipca12m || 0);
 
-  // Gera a série de parcelas com reajustes anuais (a partir da 13ª, 25ª, ...)
+  // Extrato: regra solicitada
+  // Mês 1: Saldo = crédito líquido; Retorno = saldo * rentabMes; Capital = Saldo + Retorno
+  // Mês m>=2: Saldo(m) = Saldo(m-1) + Retorno(m-1); Capital(m) = Saldo(m) + Retorno(m)
+  // Parcela é listada à parte e NÃO reduz o saldo/capital do investimento (fluxo somado em "investimento").
   const extrato: Array<{ mes: number; saldo: number; retorno: number; parcela: number; capital: number }> = [];
-  let parcelaAtual = Math.max(0, out.parcelaAposValor || 0);
-  let saldo = creditoLiquido;
 
+  // Parcela após contemplação (base para reajustes)
+  let parcelaAtual = Math.max(0, out.parcelaAposValor || 0);
+
+  // Offset do calendário de reajuste considerando o contrato como um todo
+  // Reajustes contratuais em 13, 25, 37... (após contemplação aplicam-se na PARCELA consecutiva)
+  const nCont = Math.max(0, out.nContemplacao || 0);
+  const isReajusteContrato = (globalMes: number) => globalMes >= 13 && (globalMes === 13 || (globalMes - 13) % 12 === 0);
+
+  let saldo = creditoLiquido; // mês 1
   let investimentoSoma = Math.max(0, out.lanceProprioValor || 0);
 
   for (let m = 1; m <= prazoAplicacao; m++) {
-    // Reajuste anual nas parcelas: 13, 25, 37, ...
-    if (m > 1 && (m - 1) % 12 === 0) {
+    const globalMes = nCont + m; // mês no calendário total do grupo
+
+    // Aplica reajuste anual sobre a parcela (após contemplação)
+    if (isReajusteContrato(globalMes) && m > 1) {
       parcelaAtual = parcelaAtual * (1 + idxAnnual);
     }
 
     const retorno = saldo * rentabMes;
-    const capital = saldo + retorno - parcelaAtual;
+    const capital = saldo + retorno; // sem abatimento da parcela
 
-    investimentoSoma += parcelaAtual;
+    investimentoSoma += parcelaAtual; // fluxo de parcelas (efeito no caixa, não no saldo investido)
 
-    extrato.push({ mes: m, saldo, retorno, parcela: parcelaAtual, capital: Math.max(0, capital) });
+    extrato.push({ mes: m, saldo, retorno, parcela: parcelaAtual, capital });
 
-    saldo = Math.max(0, capital);
+    // Próximo mês: saldo vira o capital do mês anterior (regra do usuário)
+    saldo = capital;
   }
 
+  // Totais
   const retornoBruto = creditoLiquido * Math.pow(1 + rentabMes, prazoAplicacao);
   const investimento = investimentoSoma;
   const retornoLiquido = Math.max(0, retornoBruto - investimento);
@@ -343,6 +360,7 @@ function buildPrevidencia(sim: SimRow, p: EngineParams, reajIndex: string): { co
   };
 
   return { core, out };
+}
 }
 
 /* ========================= Página ======================== */
@@ -950,23 +968,25 @@ export default function Propostas() {
       margin: { left: marginX, right: marginX },
     });
 
-    // Extrato — primeira página apenas primeiros 18 meses para caber
+    // Extrato — tabela completa com paginação automática
     const head = [["Mês", "Saldo", "Retorno", "Parcela", "Capital"]];
-    const body = core.extrato.slice(0, 18).map(l => [
+    const bodyAll = core.extrato.map(l => [
       l.mes,
       brMoney(l.saldo),
       brMoney(l.retorno),
       brMoney(l.parcela),
       brMoney(l.capital),
     ]);
-    ;(doc as any).autoTable({
+    (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 12,
-      head, body,
+      head,
+      body: bodyAll,
       headStyles: { fillColor: brand.primary, textColor: "#fff" },
       styles: { fontSize: 8, cellPadding: 3 },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: marginX, right: marginX },
+      pageBreak: 'auto'
     });
 
     addFooter(doc);
@@ -1041,34 +1061,48 @@ export default function Propostas() {
       </div>
     );
 
-    // Extrato render para Previdência (primeiros 12 meses na prévia)
+    // Extrato render para Previdência — todo o prazo com paginação (15 linhas)
     const ExtratoPrev = () => {
       if (!prevCore) return null;
-      const first = prevCore.extrato.slice(0, 12);
+      const pageLen = 15;
+      const [pg, setPg] = React.useState(1);
+      const total = prevCore.extrato.length;
+      const totalPg = Math.max(1, Math.ceil(total / pageLen));
+      const slice = prevCore.extrato.slice((pg - 1) * pageLen, pg * pageLen);
       return (
-        <div className="overflow-auto rounded-lg border">
-          <table className="min-w-full text-xs">
-            <thead className="bg-muted/40">
-              <tr>
-                <th className="text-left p-2">Mês</th>
-                <th className="text-left p-2">Saldo</th>
-                <th className="text-left p-2">Retorno</th>
-                <th className="text-left p-2">Parcela</th>
-                <th className="text-left p-2">Capital</th>
-              </tr>
-            </thead>
-            <tbody>
-              {first.map(l => (
-                <tr key={l.mes} className="border-t">
-                  <td className="p-2">{l.mes}</td>
-                  <td className="p-2">{brMoney(l.saldo)}</td>
-                  <td className="p-2">{brMoney(l.retorno)}</td>
-                  <td className="p-2">{brMoney(l.parcela)}</td>
-                  <td className="p-2">{brMoney(l.capital)}</td>
+        <div className="space-y-2">
+          <div className="overflow-auto rounded-lg border">
+            <table className="min-w-full text-xs">
+              <thead className="bg-muted/40">
+                <tr>
+                  <th className="text-left p-2">Mês</th>
+                  <th className="text-left p-2">Saldo</th>
+                  <th className="text-left p-2">Retorno</th>
+                  <th className="text-left p-2">Parcela</th>
+                  <th className="text-left p-2">Capital</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {slice.map(l => (
+                  <tr key={l.mes} className="border-t">
+                    <td className="p-2">{l.mes}</td>
+                    <td className="p-2">{brMoney(l.saldo)}</td>
+                    <td className="p-2">{brMoney(l.retorno)}</td>
+                    <td className="p-2">{brMoney(l.parcela)}</td>
+                    <td className="p-2">{brMoney(l.capital)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between text-[11px]">
+            <div>Mostrando <strong>{(pg - 1) * pageLen + 1}–{Math.min(pg * pageLen, total)}</strong> de <strong>{total}</strong></div>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" className="h-7 rounded-lg px-2" disabled={pg===1} onClick={() => setPg(p => Math.max(1, p-1))}>Anterior</Button>
+              <span>Página {pg} de {totalPg}</span>
+              <Button variant="secondary" className="h-7 rounded-lg px-2" disabled={pg===totalPg} onClick={() => setPg(p => Math.min(totalPg, p+1))}>Próxima</Button>
+            </div>
+          </div>
         </div>
       );
     };

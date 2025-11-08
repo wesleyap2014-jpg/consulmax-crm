@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Calendar, ClipboardCopy, FileText, Trash2, Megaphone,
-  Search, X, SlidersHorizontal, GripVertical, Download, Eye, EyeOff
+  Search, X, SlidersHorizontal, GripVertical, Download, Eye, EyeOff, Home, Banknote, TrendingUp
 } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
@@ -159,6 +159,11 @@ type EngineParams = {
   fin_imob_anual: number;
 
   reforco_pct: number; // usado em "venda contemplada" e outros
+
+  // NOVOS (Alavancagem Patrimonial)
+  aluguel_pct: number;   // % do aluguel mensal sobre o crédito líquido
+  airbnb_pct: number;    // % taxa Airbnb sobre o aluguel mensal
+  condominio_pct: number; // % condomínio sobre o aluguel mensal
 };
 
 type EngineOut = {
@@ -204,6 +209,36 @@ type PrevidenciaCalc = {
   extrato: Array<{ mes: number; saldo: number; retorno: number; parcela: number; capital: number }>; // conforme tabela
 };
 
+type AlavPatrCalc = {
+  // Entradas base
+  creditoLiquido: number;         // crédito contrat. – embutido
+  prazoPos: number;               // novo prazo
+  parcelaPos: number;             // nova parcela
+  aluguelMesBase: number;         // créditoLiquido * aluguel_pct
+
+  // Fluxos (corrigidos por IGP-M anual)
+  valorImovelCorrigidoFinal: number;
+  totalAlugueisRecebidos: number;
+  pagoPeloConsorcio: number;      // parcelas pós + lance próprio
+  custoFinal: number;             // pagoPeloConsorcio – totalAlugueisRecebidos
+  valorPagoPeloImovel: number;    // igual custoFinal (sem sinal)
+  percPagoPeloImovel: number;     // quando custoFinal > 0 -> custoFinal / valorImovelCorrigidoFinal
+
+  // Fluxo de caixa (médias)
+  receitaMesMedia: number;
+  parcelaConsorcioMedia: number;
+  taxaAirbnbMes: number;
+  condominioMes: number;
+  lucroLiquidoMes: number;
+
+  // Resultado
+  retornoBruto: number;           // créditoLiquido*(1+rentabMes)^{prazoPos}
+  investimento: number;           // pagoPeloConsorcio
+  roi: number;
+  rentabMesUsada: number;
+};
+
+/* =============== Funções principais ================= */
 function labelInicialFromQtd(qtd?: number | null) {
   const n = Number(qtd || 0);
   if (!n || n <= 1) return "Parcela 1";
@@ -283,7 +318,6 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
 }
 
 // ======= Previdência – cálculos específicos =======
-// reajIndex: "ipca" | "igpm" | "incc" | "inpc"
 function buildPrevidencia(sim: SimRow, p: EngineParams, reajIndex: string): { core: PrevidenciaCalc; out: EngineOut } {
   const out = proposalEngine(sim, p);
 
@@ -302,17 +336,9 @@ function buildPrevidencia(sim: SimRow, p: EngineParams, reajIndex: string): { co
     reajIndex === "incc" ? (p.incc12m || 0) :
     reajIndex === "inpc" ? (p.inpc12m || 0) : (p.ipca12m || 0);
 
-  // Extrato: regra solicitada
-  // Mês 1: Saldo = crédito líquido; Retorno = saldo * rentabMes; Capital = Saldo + Retorno
-  // Mês m>=2: Saldo(m) = Saldo(m-1) + Retorno(m-1); Capital(m) = Saldo(m) + Retorno(m)
-  // Parcela é listada à parte e NÃO reduz o saldo/capital do investimento (fluxo somado em "investimento").
   const extrato: Array<{ mes: number; saldo: number; retorno: number; parcela: number; capital: number }> = [];
 
-  // Parcela após contemplação (base para reajustes)
   let parcelaAtual = Math.max(0, out.parcelaAposValor || 0);
-
-  // Offset do calendário de reajuste considerando o contrato como um todo
-  // Reajustes contratuais em 13, 25, 37... (após contemplação aplicam-se na PARCELA consecutiva)
   const nCont = Math.max(0, out.nContemplacao || 0);
   const isReajusteContrato = (globalMes: number) => globalMes >= 13 && (globalMes === 13 || (globalMes - 13) % 12 === 0);
 
@@ -320,25 +346,22 @@ function buildPrevidencia(sim: SimRow, p: EngineParams, reajIndex: string): { co
   let investimentoSoma = Math.max(0, out.lanceProprioValor || 0);
 
   for (let m = 1; m <= prazoAplicacao; m++) {
-    const globalMes = nCont + m; // mês no calendário total do grupo
+    const globalMes = nCont + m;
 
-    // Aplica reajuste anual sobre a parcela (após contemplação)
     if (isReajusteContrato(globalMes) && m > 1) {
       parcelaAtual = parcelaAtual * (1 + idxAnnual);
     }
 
     const retorno = saldo * rentabMes;
-    const capital = saldo + retorno; // sem abatimento da parcela
+    const capital = saldo + retorno;
 
-    investimentoSoma += parcelaAtual; // fluxo de parcelas (efeito no caixa, não no saldo investido)
+    investimentoSoma += parcelaAtual;
 
     extrato.push({ mes: m, saldo, retorno, parcela: parcelaAtual, capital });
 
-    // Próximo mês: saldo vira o capital do mês anterior (regra do usuário)
     saldo = capital;
   }
 
-  // Totais
   const retornoBruto = creditoLiquido * Math.pow(1 + rentabMes, prazoAplicacao);
   const investimento = investimentoSoma;
   const retornoLiquido = Math.max(0, retornoBruto - investimento);
@@ -357,6 +380,82 @@ function buildPrevidencia(sim: SimRow, p: EngineParams, reajIndex: string): { co
     roi,
     roiMes,
     extrato,
+  };
+
+  return { core, out };
+}
+
+/* ======= Alavancagem Patrimonial – cálculos ======= */
+function buildAlavPatr(sim: SimRow, p: EngineParams): { core: AlavPatrCalc; out: EngineOut } {
+  const out = proposalEngine(sim, p);
+
+  const creditoLiquido = Math.max(0, out.creditoLiberado || 0);
+  const prazoPos = Math.max(0, out.prazoApos || 0);
+  const parcelaPos = Math.max(0, out.parcelaAposValor || 0);
+
+  const aluguelMesBase = creditoLiquido * (p.aluguel_pct || 0);
+
+  // IGP-M aplicado anualmente (13º, 25º, ...)
+  const nCont = Math.max(0, out.nContemplacao || 0);
+  const isReajusteContrato = (globalMes: number) => globalMes >= 13 && (globalMes === 13 || (globalMes - 13) % 12 === 0);
+  const igpmAnnual = p.igpm12m || 0;
+
+  let alugAtual = aluguelMesBase;
+  let totalAlugueisRecebidos = 0;
+
+  // Valor do imóvel corrigido ao final do prazo (aplicando IGP-M anual)
+  let valorImovelCorrigido = creditoLiquido;
+
+  for (let m = 1; m <= prazoPos; m++) {
+    const globalMes = nCont + m;
+
+    if (isReajusteContrato(globalMes) && m > 1) {
+      alugAtual = alugAtual * (1 + igpmAnnual);
+      valorImovelCorrigido = valorImovelCorrigido * (1 + igpmAnnual);
+    }
+
+    totalAlugueisRecebidos += alugAtual;
+  }
+
+  const pagoPeloConsorcio = parcelaPos * prazoPos + Math.max(0, out.lanceProprioValor || 0);
+  const custoFinal = Math.max(0, pagoPeloConsorcio - totalAlugueisRecebidos);
+  const valorPagoPeloImovel = custoFinal;
+  const percPagoPeloImovel = valorImovelCorrigido > 0 && valorPagoPeloImovel > 0
+    ? Math.min(1, valorPagoPeloImovel / valorImovelCorrigido) : 0;
+
+  // Fluxo de caixa — médias mensais
+  const receitaMesMedia = prazoPos > 0 ? (totalAlugueisRecebidos / prazoPos) : 0;
+  const parcelaConsorcioMedia = parcelaPos;
+  const taxaAirbnbMes = receitaMesMedia * (p.airbnb_pct || 0);
+  const condominioMes = receitaMesMedia * (p.condominio_pct || 0);
+  const lucroLiquidoMes = receitaMesMedia - (parcelaConsorcioMedia + taxaAirbnbMes + condominioMes);
+
+  // Resultado
+  const rentabMesUsada = annualToMonthlyCompound(p.cdi_anual); // rentab mês via CDI
+  const retornoBruto = creditoLiquido * Math.pow(1 + rentabMesUsada, prazoPos);
+  const investimento = pagoPeloConsorcio;
+  const roi = investimento > 0 ? (retornoBruto - investimento) / investimento : 0;
+
+  const core: AlavPatrCalc = {
+    creditoLiquido,
+    prazoPos,
+    parcelaPos,
+    aluguelMesBase,
+    valorImovelCorrigidoFinal: valorImovelCorrigido,
+    totalAlugueisRecebidos,
+    pagoPeloConsorcio,
+    custoFinal,
+    valorPagoPeloImovel,
+    percPagoPeloImovel,
+    receitaMesMedia,
+    parcelaConsorcioMedia,
+    taxaAirbnbMes,
+    condominioMes,
+    lucroLiquidoMes,
+    retornoBruto,
+    investimento,
+    roi,
+    rentabMesUsada
   };
 
   return { core, out };
@@ -440,6 +539,9 @@ export default function Propostas() {
     fin_veic_mensal: 0.021,
     fin_imob_anual: 0.11,
     reforco_pct: 0.20,
+    aluguel_pct: 0.0065,      // 0,65% a.m. (exemplo)
+    airbnb_pct: 0.03,         // 3% sobre o aluguel
+    condominio_pct: 0.02      // 2% sobre o aluguel
   };
   const [params, setParams] = useState<Params>(() => {
     try { const raw = localStorage.getItem("proposalParamsV4"); if (raw) return { ...DEFAULT_PARAMS, ...JSON.parse(raw) }; } catch {}
@@ -475,7 +577,7 @@ export default function Propostas() {
     direcionada: ["header","specs","parcelas","lance","graficos","obs","projecao"],
     venda_contemplada: ["header","specs","parcelas","projecao","graficos","lance","obs"],
     alav_fin: ["header","specs","graficos","obs"],
-    alav_patr: ["header","specs","graficos","obs"],
+    alav_patr: ["header","specs","parcelas","projecao","graficos","lance","obs"], // mantém igual Direcionada + blocos próprios
     previdencia: ["header","specs","parcelas","lance","projecao","graficos","prev-extrato","obs"],
     credito_correcao: ["header","specs","graficos","obs"],
     extrato: ["header","specs","obs"],
@@ -597,9 +699,30 @@ export default function Propostas() {
         ["Prazo (pós)", `${core.prazoAplicacao} meses`],
         ["Retorno", brMoney(core.retornoBruto)],
         ["Investimento (parcelas + lance)", brMoney(core.investimento)],
-        ["Retorno Líquido", brMoney(core.retornoLiquido)],
+        ["Retorno Líquido", brMoney(core.retornoBruto - core.investimento)],
         ["ROI", formatPercentFraction(core.roi)],
         ["ROI Mês", formatPercentFraction(core.roiMes)],
+      );
+    } else if (modelKey === "alav_patr") {
+      const { core } = buildAlavPatr(sim, params);
+      baseRows.push(
+        ["Crédito (líquido)", brMoney(core.creditoLiquido)],
+        ["Prazo (pós)", `${core.prazoPos} meses`],
+        ["Parcela (pós)", brMoney(core.parcelaPos)],
+        ["Aluguel Mês (base)", brMoney(core.aluguelMesBase)],
+        ["Valor do Imóvel Corrigido", brMoney(core.valorImovelCorrigidoFinal)],
+        ["Aluguéis Recebidos (total)", brMoney(core.totalAlugueisRecebidos)],
+        ["Pago pelo Consórcio", brMoney(core.pagoPeloConsorcio)],
+        ["Custo Final (Consórcio – Aluguéis)", brMoney(core.custoFinal)],
+        ["% Pago pelo Imóvel", formatPercentFraction(core.percPagoPeloImovel)],
+        ["Receita Mês (média)", brMoney(core.receitaMesMedia)],
+        ["Parcela Consórcio (média)", brMoney(core.parcelaConsorcioMedia)],
+        ["Taxa Airbnb (mês)", brMoney(core.taxaAirbnbMes)],
+        ["Condomínio (mês)", brMoney(core.condominioMes)],
+        ["Lucro Líquido mês (média)", brMoney(core.lucroLiquidoMes)],
+        ["Retorno (bruto)", brMoney(core.retornoBruto)],
+        ["Investimento (parcelas + lance)", brMoney(core.investimento)],
+        ["ROI", formatPercentFraction(core.roi)]
       );
     } else if (modelKey !== "direcionada") {
       baseRows.push(
@@ -696,7 +819,6 @@ export default function Propostas() {
     const left = marginX;
     const right = marginX + colW + 12;
 
-    // Financiamento: cálculo da parcela com PMT
     const taxaFinMensal =
       out.segmento === "Automóvel" || out.segmento === "Motocicleta"
         ? params.fin_veic_mensal
@@ -898,8 +1020,7 @@ export default function Propostas() {
 
     headerBand(doc, "Previdência — Con contemplação aplicada");
 
-    // Especificações (iguais ao Direcionada)
-    ;(doc as any).autoTable({
+    (doc as any).autoTable({
       startY: 120,
       head: [["Especificações", ""]],
       body: [
@@ -916,8 +1037,7 @@ export default function Propostas() {
       margin: { left: marginX, right: marginX },
     });
 
-    // Parcelas até a contemplação
-    ;(doc as any).autoTable({
+    (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 12,
       head: [["Parcelas até a contemplação", "Valor"]],
       body: [[out.labelParcelaInicial, brMoney(out.parcelaInicialValor)], ["Demais", brMoney(out.parcelaDemaisValor)]],
@@ -928,8 +1048,7 @@ export default function Propostas() {
       margin: { left: marginX, right: marginX },
     });
 
-    // Estratégia de lance (igual Direcionada)
-    ;(doc as any).autoTable({
+    (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 12,
       head: [["Estratégia de Lance", "Valor"]],
       body: [
@@ -944,8 +1063,7 @@ export default function Propostas() {
       margin: { left: marginX, right: marginX },
     });
 
-    // Bloco Previdência — cálculo principal
-    ;(doc as any).autoTable({
+    (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 12,
       head: [["Previdência — Resultados", "Valor"]],
       body: [
@@ -956,7 +1074,7 @@ export default function Propostas() {
         ["Prazo de Aplicação (meses)", `${core.prazoAplicacao}`],
         ["Retorno (bruto)", brMoney(core.retornoBruto)],
         ["Investimento (parcelas + lance)", brMoney(core.investimento)],
-        ["Retorno Líquido", brMoney(core.retornoLiquido)],
+        ["Retorno Líquido", brMoney(core.retornoBruto - core.investimento)],
         ["ROI", formatPercentFraction(core.roi)],
         ["ROI Mês", formatPercentFraction(core.roiMes)],
       ],
@@ -967,7 +1085,7 @@ export default function Propostas() {
       margin: { left: marginX, right: marginX },
     });
 
-    // Extrato — tabela completa com paginação automática
+    // Extrato
     const head = [["Mês", "Saldo", "Retorno", "Parcela", "Capital"]];
     const bodyAll = core.extrato.map(l => [
       l.mes,
@@ -992,11 +1110,120 @@ export default function Propostas() {
     doc.save(`Previdencia_${sim.code}.pdf`);
   }
 
+  /* ======= PDF COMPLETO — Alavancagem Patrimonial ======= */
+  function gerarPDFAlavPatr(sim: SimRow) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const { core, out } = buildAlavPatr(sim, params);
+    const marginX = 40;
+
+    headerBand(doc, "Alavancagem Patrimonial");
+
+    // Especificações (iguais à Direcionada)
+    (doc as any).autoTable({
+      startY: 120,
+      head: [["Especificações", ""]],
+      body: [
+        ["Crédito Contratado", brMoney(out.credito)],
+        ["Prazo (contrato)", out.prazo ? `${out.prazo} meses` : "—"],
+        ["Taxa de Adm total", typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—"],
+        ["Fundo Reserva", typeof out.fr === "number" ? formatPercentFraction(out.fr) : "—"],
+        ["Segmento", out.segmento],
+      ],
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // Parcelas até a contemplação
+    (doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 12,
+      head: [["Parcelas até a contemplação", "Valor"]],
+      body: [
+        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
+        ["Demais", brMoney(out.parcelaDemaisValor)],
+      ],
+      headStyles: { fillColor: brand.accent, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // Estratégia de Lance (após)
+    (doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 12,
+      head: [["Estratégia de Lance (pós)", "Valor"]],
+      body: [
+        ["Lance Embutido", brMoney(out.embutidoValor)],
+        ["Lance Próprio", brMoney(out.lanceProprioValor)],
+        ["Parcela após o lance (e prazo)", `${brMoney(out.parcelaAposValor)} (${out.prazoApos || 0}x)`],
+      ],
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // Bloco Alavancagem Patrimonial — Fluxos & Resultado
+    (doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 12,
+      head: [["Fluxos", "Valor"]],
+      body: [
+        ["Crédito (líquido)", brMoney(core.creditoLiquido)],
+        ["Prazo (pós)", `${core.prazoPos} meses`],
+        ["Parcela (pós)", brMoney(core.parcelaPos)],
+        ["Aluguel Mês (base)", brMoney(core.aluguelMesBase)],
+        ["Valor do Imóvel Corrigido (final)", brMoney(core.valorImovelCorrigidoFinal)],
+        ["Aluguéis Recebidos (total)", brMoney(core.totalAlugueisRecebidos)],
+        ["Pago pelo Consórcio", brMoney(core.pagoPeloConsorcio)],
+        ["Custo Final (Consórcio – Aluguéis)", brMoney(core.custoFinal)],
+        ["% Pago pelo Imóvel", formatPercentFraction(core.percPagoPeloImovel)],
+        ["Receita Mês (média)", brMoney(core.receitaMesMedia)],
+        ["Parcela Consórcio (média)", brMoney(core.parcelaConsorcioMedia)],
+        ["Taxa Airbnb (mês)", brMoney(core.taxaAirbnbMes)],
+        ["Condomínio (mês)", brMoney(core.condominioMes)],
+        ["Lucro Líquido mês (média)", brMoney(core.lucroLiquidoMes)],
+      ],
+      headStyles: { fillColor: brand.accent, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    (doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 12,
+      head: [["Resultado", "Valor"]],
+      body: [
+        ["Retorno (bruto)", brMoney(core.retornoBruto)],
+        ["Investimento (parcelas + lance)", brMoney(core.investimento)],
+        ["ROI", formatPercentFraction(core.roi)],
+      ],
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(80,80,80);
+    doc.text(
+      "Observação: Aluguéis e imóvel são corrigidos anualmente pelo IGP-M informado em Parâmetros.",
+      marginX, (doc as any).lastAutoTable.finalY + 12,
+      { maxWidth: doc.internal.pageSize.getWidth() - marginX*2 }
+    );
+
+    addFooter(doc);
+    doc.save(`Alavancagem_Patrimonial_${sim.code}.pdf`);
+  }
+
   /* ================== PREVIEW (BLOCOS) ================== */
   const PreviewBlock = ({ sim, model }: { sim: SimRow; model: ModelKey }) => {
     if (!sim) return null;
 
-    // Para gráficos e cards, precisamos dos dados corretos
     const out = proposalEngine(sim, params);
 
     // === Gráficos: alinhar com o PDF ===
@@ -1004,11 +1231,15 @@ export default function Propostas() {
     let radialValuePct = 0;
     let radialLabel = "";
 
-    // Dados adicionais quando Previdência
+    // Dados adicionais
     let prevCore: PrevidenciaCalc | null = null;
+    let apCore: AlavPatrCalc | null = null;
+
     if (model === "previdencia") {
-      const built = buildPrevidencia(sim, params, reajIndex);
-      prevCore = built.core;
+      prevCore = buildPrevidencia(sim, params, reajIndex).core;
+    }
+    if (model === "alav_patr") {
+      apCore = buildAlavPatr(sim, params).core;
     }
 
     if (model === "direcionada") {
@@ -1032,10 +1263,18 @@ export default function Propostas() {
       barData = [
         { name: "Retorno", valor: prevCore.retornoBruto },
         { name: "Investimento", valor: prevCore.investimento },
-        { name: "Ret. Líquido", valor: prevCore.retornoLiquido },
+        { name: "Ret. Líquido", valor: prevCore.retornoBruto - prevCore.investimento },
       ];
       radialValuePct = Math.min(100, Math.max(0, prevCore.roi * 100));
       radialLabel = "ROI aproximado";
+    } else if (model === "alav_patr" && apCore) {
+      barData = [
+        { name: "Aluguéis (tot.)", valor: apCore.totalAlugueisRecebidos },
+        { name: "Pagos Consórcio", valor: apCore.pagoPeloConsorcio },
+        { name: "Custo Final", valor: apCore.custoFinal },
+      ];
+      radialValuePct = Math.min(100, Math.max(0, apCore.percPagoPeloImovel * 100));
+      radialLabel = "% pago pelo imóvel";
     } else {
       barData = [
         { name: "Venda", valor: out.valorVenda },
@@ -1048,19 +1287,21 @@ export default function Propostas() {
 
     const roiData = [{ name: "KPI", value: radialValuePct }, { name: "Resto", value: Math.max(0, 100 - radialValuePct) }];
 
-    const BlockCard = ({ children, title }: { children: React.ReactNode; title: string }) => (
+    const BlockCard = ({ children, title, icon }: { children: React.ReactNode; title: string; icon?: React.ReactNode }) => (
       <div className="rounded-2xl p-4 border relative overflow-hidden transition-all"
            style={{ background: "linear-gradient(120deg, rgba(255,255,255,0.55), rgba(255,255,255,0.35))", backdropFilter: "blur(8px)", boxShadow: "0 8px 24px rgba(0,0,0,0.08)" }}>
         <div className="absolute inset-0 pointer-events-none"
              style={{ background: "radial-gradient(1200px 400px at -10% -10%, rgba(161,28,39,0.12), transparent 60%), radial-gradient(900px 300px at 110% 110%, rgba(30,41,63,0.12), transparent 60%)" }} />
         <div className="relative">
-          <div className="text-sm font-semibold text-[#1E293F] mb-3">{title}</div>
+          <div className="text-sm font-semibold text-[#1E293F] mb-3 inline-flex items-center gap-2">
+            {icon}{title}
+          </div>
           {children}
         </div>
       </div>
     );
 
-    // Extrato render para Previdência — todo o prazo com paginação (15 linhas)
+    // Extrato render para Previdência
     const ExtratoPrev = () => {
       if (!prevCore) return null;
       const pageLen = 15;
@@ -1108,7 +1349,7 @@ export default function Propostas() {
 
     const blocks: Record<BlockId, JSX.Element> = {
       header: (
-        <BlockCard title="Cabeçalho">
+        <BlockCard title="Cabeçalho" icon={<Home className="h-4 w-4 text-[#1E293F]" />}>
           <div className="flex items-center gap-4">
             <img src={LOGO_URL} alt="logo" className="h-10" />
             <div>
@@ -1119,7 +1360,7 @@ export default function Propostas() {
         </BlockCard>
       ),
       specs: (
-        <BlockCard title="Especificações">
+        <BlockCard title="Especificações" icon={<FileText className="h-4 w-4 text-[#1E293F]" />}>
           <div className="grid md:grid-cols-3 gap-3 text-sm">
             <div><div className="text-muted-foreground">Crédito</div><div className="font-semibold">{brMoney(out.credito)}</div></div>
             <div><div className="text-muted-foreground">Prazo</div><div className="font-semibold">{out.prazo || 0} meses</div></div>
@@ -1131,7 +1372,7 @@ export default function Propostas() {
         </BlockCard>
       ),
       parcelas: (
-        <BlockCard title="Parcelas até a contemplação">
+        <BlockCard title="Parcelas até a contemplação" icon={<Banknote className="h-4 w-4 text-[#1E293F]" />}>
           <div className="grid md:grid-cols-2 gap-3 text-sm">
             <div><div className="text-muted-foreground">{out.labelParcelaInicial}</div><div className="font-semibold">{brMoney(out.parcelaInicialValor)}</div></div>
             <div><div className="text-muted-foreground">Demais</div><div className="font-semibold">{brMoney(out.parcelaDemaisValor)}</div></div>
@@ -1139,7 +1380,7 @@ export default function Propostas() {
         </BlockCard>
       ),
       lance: (
-        <BlockCard title="Estratégia de Lance">
+        <BlockCard title="Estratégia de Lance" icon={<TrendingUp className="h-4 w-4 text-[#1E293F]" />}>
           <div className="grid md:grid-cols-3 gap-3 text-sm">
             <div><div className="text-muted-foreground">Lance Embutido</div><div className="font-semibold">{brMoney(out.embutidoValor)}</div></div>
             <div><div className="text-muted-foreground">Lance Próprio</div><div className="font-semibold">{brMoney(out.lanceProprioValor)}</div></div>
@@ -1148,7 +1389,10 @@ export default function Propostas() {
         </BlockCard>
       ),
       projecao: (
-        <BlockCard title={model === "previdencia" ? "Previdência" : (model === "direcionada" ? "Comparativo de Custos" : "Projeção na Venda")}>
+        <BlockCard title={
+          model === "previdencia" ? "Previdência" :
+          model === "direcionada" ? "Comparativo de Custos" :
+          model === "alav_patr" ? "Alavancagem Patrimonial" : "Projeção na Venda"}>
           {model === "direcionada" ? (
             <div className="grid md:grid-cols-3 gap-3 text-sm">
               <div><div className="text-muted-foreground">Crédito Liberado</div><div className="font-semibold">{brMoney(out.creditoLiberado)}</div></div>
@@ -1164,8 +1408,20 @@ export default function Propostas() {
               <div><div className="text-muted-foreground">Prazo (pós)</div><div className="font-semibold">{out.prazoApos || 0} meses</div></div>
               <div><div className="text-muted-foreground">Investimento (parcelas + lance)</div><div className="font-semibold">{brMoney(prevCore.investimento)}</div></div>
               <div><div className="text-muted-foreground">Retorno</div><div className="font-semibold">{brMoney(prevCore.retornoBruto)}</div></div>
-              <div><div className="text-muted-foreground">Retorno Líquido</div><div className="font-semibold">{brMoney(prevCore.retornoLiquido)}</div></div>
+              <div><div className="text-muted-foreground">Retorno Líquido</div><div className="font-semibold">{brMoney(prevCore.retornoBruto - prevCore.investimento)}</div></div>
               <div><div className="text-muted-foreground">ROI</div><div className="font-semibold">{formatPercentFraction(prevCore.roi)}</div></div>
+            </div>
+          ) : model === "alav_patr" && apCore ? (
+            <div className="grid md:grid-cols-3 gap-3 text-sm">
+              <div><div className="text-muted-foreground">Crédito (líquido)</div><div className="font-semibold">{brMoney(apCore.creditoLiquido)}</div></div>
+              <div><div className="text-muted-foreground">Prazo (pós)</div><div className="font-semibold">{apCore.prazoPos} meses</div></div>
+              <div><div className="text-muted-foreground">Parcela (pós)</div><div className="font-semibold">{brMoney(apCore.parcelaPos)}</div></div>
+              <div><div className="text-muted-foreground">Aluguel Mês (base)</div><div className="font-semibold">{brMoney(apCore.aluguelMesBase)}</div></div>
+              <div><div className="text-muted-foreground">Imóvel Corrigido</div><div className="font-semibold">{brMoney(apCore.valorImovelCorrigidoFinal)}</div></div>
+              <div><div className="text-muted-foreground">% pago pelo imóvel</div><div className="font-semibold">{formatPercentFraction(apCore.percPagoPeloImovel)}</div></div>
+              <div><div className="text-muted-foreground">Receita Mês (média)</div><div className="font-semibold">{brMoney(apCore.receitaMesMedia)}</div></div>
+              <div><div className="text-muted-foreground">Taxas (Airbnb+Cond.)</div><div className="font-semibold">{brMoney(apCore.taxaAirbnbMes + apCore.condominioMes)}</div></div>
+              <div><div className="text-muted-foreground">Lucro Líquido mês</div><div className="font-semibold">{brMoney(apCore.lucroLiquidoMes)}</div></div>
             </div>
           ) : (
             <div className="grid md:grid-cols-3 gap-3 text-sm">
@@ -1430,6 +1686,7 @@ export default function Propostas() {
                     onClick={() => {
                       if (model === "venda_contemplada") gerarPDFVendaContemplada(active);
                       else if (model === "previdencia") gerarPDFPrevidencia(active);
+                      else if (model === "alav_patr") gerarPDFAlavPatr(active);
                       else gerarPDFDirecionada(active);
                     }}
                     title="Gerar PDF Completo"
@@ -1509,6 +1766,20 @@ export default function Propostas() {
               <div>
                 <Label>Juros Financiamento — Imob./Rural (ao ano)</Label>
                 <Input defaultValue={formatPercentFraction(params.fin_imob_anual)} onBlur={(e) => { const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v); setParams((p) => ({ ...p, fin_imob_anual: v })); }} />
+              </div>
+
+              {/* NOVOS PARÂMETROS — Alavancagem Patrimonial */}
+              <div>
+                <Label>% do Aluguel (ao mês, sobre o crédito líquido)</Label>
+                <Input defaultValue={formatPercentFraction(params.aluguel_pct)} onBlur={(e) => { const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v); setParams((p)=>({ ...p, aluguel_pct: v })); }} />
+              </div>
+              <div>
+                <Label>Taxa Airbnb (sobre o aluguel)</Label>
+                <Input defaultValue={formatPercentFraction(params.airbnb_pct)} onBlur={(e) => { const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v); setParams((p)=>({ ...p, airbnb_pct: v })); }} />
+              </div>
+              <div>
+                <Label>Taxa de Condomínio (sobre o aluguel)</Label>
+                <Input defaultValue={formatPercentFraction(params.condominio_pct)} onBlur={(e) => { const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v); setParams((p)=>({ ...p, condominio_pct: v })); }} />
               </div>
             </div>
 

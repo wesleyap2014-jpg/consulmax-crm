@@ -361,7 +361,6 @@ function buildPrevidencia(sim: SimRow, p: EngineParams, reajIndex: string): { co
 
   return { core, out };
 }
-}
 
 /* ========================= Página ======================== */
 export default function Propostas() {

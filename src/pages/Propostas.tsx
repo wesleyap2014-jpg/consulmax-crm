@@ -489,33 +489,44 @@ Grupo: ${r.grupo || "—"}`;
     let y = yTop + 18; lines.forEach((t) => { doc.text(t, w - 40, y, { align: "right" as any }); y += 12; });
   };
 
-  function pdfSimplificado(sim: SimRow, title: string) {
+  // ====== PDF SIMPLIFICADO (com regras por modelo) ======
+  function pdfSimplificado(sim: SimRow, modelKey: ModelKey) {
+    const title = modelKey === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada";
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
+
     doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.text(title, 40, 60);
     doc.setFont("helvetica","normal"); doc.setFontSize(12);
 
-    (doc as any).autoTable({
-      startY: 90,
-      head: [["Campo", "Valor"]],
-      body: [
-        ["Crédito", brMoney(out.credito)],
-        ["Prazo", `${out.prazo || 0} meses`],
-        ["Segmento", out.segmento],
-        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
-        ["Demais até contemplação", brMoney(out.parcelaDemaisValor)],
-        ["Parcela após o lance", brMoney(out.parcelaAposValor)],
-        ["Prazo após o lance", out.prazoApos ? `${out.prazoApos} meses` : "—"],
-        ["Lance Embutido", brMoney(out.embutidoValor)],
-        ["Lance Próprio", brMoney(out.lanceProprioValor)],
-        ["Crédito Liberado", brMoney(out.creditoLiberado)],
-        ["Valor da Venda (Crédito Liberado × Ganho %)", brMoney(out.valorVenda)],
-        ["Investido até contemplação", brMoney(out.investido)],
+    const baseRows: (string | number)[][] = [
+      ["Crédito", brMoney(out.credito)],
+      ["Prazo", `${out.prazo || 0} meses`],
+      ["Segmento", out.segmento],
+      [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
+      ["Demais até contemplação", brMoney(out.parcelaDemaisValor)],
+      ["Parcela após o lance", brMoney(out.parcelaAposValor)],
+      ["Prazo após o lance", out.prazoApos ? `${out.prazoApos} meses` : "—"],
+      ["Lance Embutido", brMoney(out.embutidoValor)],
+      ["Lance Próprio", brMoney(out.lanceProprioValor)],
+      ["Crédito Liberado", brMoney(out.creditoLiberado)],
+      ["Valor da Venda (Crédito Liberado × Ganho %)", brMoney(out.valorVenda)],
+      ["Investido até contemplação", brMoney(out.investido)],
+    ];
+
+    // Somente para modelos que NÃO são "direcionada", mantemos métricas de performance
+    if (modelKey !== "direcionada") {
+      baseRows.push(
         ["Lucro Líquido", brMoney(out.lucro)],
         ["ROI", formatPercentFraction(out.roi)],
         ["Rentab/mês", formatPercentFraction(out.rentabMes)],
         ["% do CDI (mês)", `${(out.pctCDI * 100).toFixed(0)}%`],
-      ],
+      );
+    }
+
+    (doc as any).autoTable({
+      startY: 90,
+      head: [["Campo", "Valor"]],
+      body: baseRows as any,
       styles: { font: "helvetica", fontSize: 10, halign: "left" },
       theme: "grid",
       margin: { left: 40, right: 40 },
@@ -605,10 +616,10 @@ Grupo: ${r.grupo || "—"}`;
       startY: yTitle + 28,
       head: [["FINANCIAMENTO", ""]],
       body: [
-        ["Crédito", brMoney(out.creditoLiberado)],                         // Base de cálculo do Crédito após a contemplação
-        ["Parcelas", brMoney(parcelaFin)],                                  // Valor das parcelas projetas
-        ["Prazo", out.prazoApos ? `${out.prazoApos} meses` : "—"],          // Prazo restante após a contemplação
-        ["Custo Final", brMoney(custoFinalFin)],                             // Parcelas * prazo – Crédito
+        ["Crédito", brMoney(out.creditoLiberado)],
+        ["Parcelas", brMoney(parcelaFin)],
+        ["Prazo", out.prazoApos ? `${out.prazoApos} meses` : "—"],
+        ["Custo Final", brMoney(custoFinalFin)],
       ],
       headStyles: { fillColor: brand.primary, textColor: "#fff" },
       styles: { fontSize: 9, cellPadding: 4 },
@@ -792,17 +803,45 @@ Grupo: ${r.grupo || "—"}`;
   }
 
   /* ================== PREVIEW (BLOCOS) ================== */
-  const PreviewBlock = ({ sim }: { sim: SimRow }) => {
+  const PreviewBlock = ({ sim, model }: { sim: SimRow; model: ModelKey }) => {
     if (!sim) return null;
     const out = proposalEngine(sim, params);
 
-    const barData = [
-      { name: "Venda", valor: out.valorVenda },
-      { name: "Investido", valor: out.investido },
-      { name: "Lucro", valor: out.lucro },
-    ];
-    const roiPercent = Math.min(100, Math.max(0, out.roi * 100));
-    const roiData = [{ name: "ROI", value: roiPercent }, { name: "Resto", value: Math.max(0, 100 - roiPercent) }];
+    // === Gráficos: alinhar com o PDF Completo ===
+    let barData: { name: string; valor: number }[] = [];
+    let radialValuePct = 0;
+    let radialLabel = "";
+
+    if (model === "direcionada") {
+      // No PDF completo (direcionada) comparamos custos do financiamento vs consórcio e a economia
+      const taxaFinMensal =
+        out.segmento === "Automóvel" || out.segmento === "Motocicleta"
+          ? params.fin_veic_mensal
+          : annualToMonthlyCompound(params.fin_imob_anual);
+      const parcelaFin = pmt(taxaFinMensal, out.prazoApos || 0, out.creditoLiberado || 0);
+      const custoFinalFin = parcelaFin * (out.prazoApos || 0) - (out.creditoLiberado || 0);
+      const custoFinalCons = out.encargos || 0;
+      const economia = Math.max(0, custoFinalFin - custoFinalCons);
+
+      barData = [
+        { name: "Custo Financ.", valor: custoFinalFin },
+        { name: "Custo Consórcio", valor: custoFinalCons },
+        { name: "Economia", valor: economia },
+      ];
+      radialValuePct = custoFinalFin > 0 ? (economia / custoFinalFin) * 100 : 0;
+      radialLabel = "Economia vs Financ.";
+    } else {
+      // Demais modelos: mantemos o gráfico padrão (Venda x Investido x Lucro + ROI)
+      barData = [
+        { name: "Venda", valor: out.valorVenda },
+        { name: "Investido", valor: out.investido },
+        { name: "Lucro", valor: out.lucro },
+      ];
+      radialValuePct = Math.min(100, Math.max(0, out.roi * 100));
+      radialLabel = "ROI aproximado";
+    }
+
+    const roiData = [{ name: "KPI", value: radialValuePct }, { name: "Resto", value: Math.max(0, 100 - radialValuePct) }];
 
     const BlockCard = ({ children, title }: { children: React.ReactNode; title: string }) => (
       <div className="rounded-2xl p-4 border relative overflow-hidden transition-all"
@@ -858,15 +897,23 @@ Grupo: ${r.grupo || "—"}`;
         </BlockCard>
       ),
       projecao: (
-        <BlockCard title="Projeção na Venda">
-          <div className="grid md:grid-cols-3 gap-3 text-sm">
-            <div><div className="text-muted-foreground">Crédito Liberado</div><div className="font-semibold">{brMoney(out.creditoLiberado)}</div></div>
-            <div><div className="text-muted-foreground">Valor da Venda (Crédito Liberado × Ganho %)</div><div className="font-semibold">{brMoney(out.valorVenda)}</div></div>
-            <div><div className="text-muted-foreground">Investido</div><div className="font-semibold">{brMoney(out.investido)}</div></div>
-            <div><div className="text-muted-foreground">Lucro</div><div className="font-semibold">{brMoney(out.lucro)}</div></div>
-            <div><div className="text-muted-foreground">ROI</div><div className="font-semibold">{formatPercentFraction(out.roi)}</div></div>
-            <div><div className="text-muted-foreground">% do CDI (mês)</div><div className="font-semibold">{(out.pctCDI * 100).toFixed(0)}%</div></div>
-          </div>
+        <BlockCard title={model === "direcionada" ? "Comparativo de Custos" : "Projeção na Venda"}>
+          {model === "direcionada" ? (
+            <div className="grid md:grid-cols-3 gap-3 text-sm">
+              <div><div className="text-muted-foreground">Crédito Liberado</div><div className="font-semibold">{brMoney(out.creditoLiberado)}</div></div>
+              <div><div className="text-muted-foreground">Encargos (Consórcio)</div><div className="font-semibold">{brMoney(out.encargos || 0)}</div></div>
+              <div><div className="text-muted-foreground">Lance Pago</div><div className="font-semibold">{brMoney(out.lanceProprioValor)}</div></div>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-3 gap-3 text-sm">
+              <div><div className="text-muted-foreground">Crédito Liberado</div><div className="font-semibold">{brMoney(out.creditoLiberado)}</div></div>
+              <div><div className="text-muted-foreground">Valor da Venda (Crédito Liberado × Ganho %)</div><div className="font-semibold">{brMoney(out.valorVenda)}</div></div>
+              <div><div className="text-muted-foreground">Investido</div><div className="font-semibold">{brMoney(out.investido)}</div></div>
+              <div><div className="text-muted-foreground">Lucro</div><div className="font-semibold">{brMoney(out.lucro)}</div></div>
+              <div><div className="text-muted-foreground">ROI</div><div className="font-semibold">{formatPercentFraction(out.roi)}</div></div>
+              <div><div className="text-muted-foreground">% do CDI (mês)</div><div className="font-semibold">{(out.pctCDI * 100).toFixed(0)}%</div></div>
+            </div>
+          )}
         </BlockCard>
       ),
       graficos: (
@@ -889,7 +936,7 @@ Grupo: ${r.grupo || "—"}`;
             <div className="h-60 rounded-xl p-3 border relative"
                  style={{ background: "linear-gradient(120deg, rgba(161,28,39,0.10), rgba(245,245,245,0.6))", backdropFilter: "blur(6px)"}}>
               <div className="absolute left-1/2 -translate-x-1/2 top-2 text-xs font-semibold text-[#1E293F]">
-                ROI aproximado
+                {radialLabel}
               </div>
               <ResponsiveContainer width="100%" height="100%">
                 <RadialBarChart innerRadius="60%" outerRadius="100%" data={roiData}>
@@ -897,7 +944,7 @@ Grupo: ${r.grupo || "—"}`;
                 </RadialBarChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="text-sm font-semibold">{roiPercent.toFixed(0)}%</div>
+                <div className="text-sm font-semibold">{radialValuePct.toFixed(0)}%</div>
               </div>
             </div>
           </div>
@@ -1045,7 +1092,9 @@ Grupo: ${r.grupo || "—"}`;
 
               <div className="flex items-center justify-between text-sm">
                 <div>
-                  {rows.length > 0 && (<>Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)}</strong> de <strong>{rows.length}</strong></>)}
+                  {rows.length > 0 && (<>
+                    Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)}</strong> de <strong>{rows.length}</strong>
+                  </>)}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="secondary" className="h-9 rounded-xl px-3"
@@ -1092,7 +1141,7 @@ Grupo: ${r.grupo || "—"}`;
                   <Button
                     variant="secondary"
                     className="rounded-2xl h-9 px-3 inline-flex items-center gap-2"
-                    onClick={() => pdfSimplificado(active, model === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada")}
+                    onClick={() => pdfSimplificado(active, model)}
                     title="Gerar PDF Simplificado"
                   >
                     <Download className="h-4 w-4" /> PDF Simplificado
@@ -1117,7 +1166,7 @@ Grupo: ${r.grupo || "—"}`;
                 Selecione um item da lista ou arraste uma proposta para cá.
               </div>
             ) : (
-              <PreviewBlock sim={active} />
+              <PreviewBlock sim={active} model={model} />
             )}
           </CardContent>
         </Card>

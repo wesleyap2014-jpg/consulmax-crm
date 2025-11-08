@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Calendar, ClipboardCopy, FileText, ExternalLink, Trash2, Megaphone,
-  ChevronDown, Search, X, SlidersHorizontal, GripVertical, Download, Eye, EyeOff
+  Calendar, ClipboardCopy, FileText, Trash2, Megaphone,
+  Search, X, SlidersHorizontal, GripVertical, Download, Eye, EyeOff
 } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
@@ -254,7 +254,6 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
     creditoLiberado,
     valorVenda,
     lucro,
-    roi,
     rentabMes,
     pctCDI,
   };
@@ -341,7 +340,7 @@ export default function Propostas() {
   useEffect(() => { load(); }, []);
   useEffect(() => { const t = setTimeout(() => load(), 350); return () => clearTimeout(t); }, [q, dateFrom, dateTo]);
 
-  /* ---------- Parâmetros (sem antecip_iniciais_qtd) ---------- */
+  /* ---------- Parâmetros ---------- */
   type Params = EngineParams;
   const DEFAULT_PARAMS: Params = {
     selic_anual: 0.15,
@@ -370,7 +369,8 @@ export default function Propostas() {
     setParamOpen(false);
   }
 
-  /* ---------- Modelo / Prévia ---------- */
+  /* ---------- Modelo / Prévia ---------- *
+   */
   const [model, setModel] = useState<ModelKey>("direcionada");
   const [active, setActive] = useState<SimRow | null>(null);
   useEffect(() => { setActive(pagedRows[0] ?? null); }, [pagedRows]);
@@ -839,7 +839,7 @@ Grupo: ${r.grupo || "—"}`;
   /* ========================= UI ========================= */
   return (
     <div className="p-6 space-y-6">
-      {/* Filtros */}
+      {/* Filtros — alinhados */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -847,16 +847,16 @@ Grupo: ${r.grupo || "—"}`;
             Filtros
           </CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-4">
-          <div className="md:col-span-2">
+        <CardContent className="grid gap-3 md:grid-cols-12 items-end">
+          <div className="md:col-span-6">
             <Label>Buscar por nome ou telefone</Label>
             <Input placeholder="ex.: Maria / 11 9..." value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          <div>
+          <div className="md:col-span-3">
             <Label className="flex items-center gap-2"><Calendar className="h-4 w-4" /> De</Label>
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </div>
-          <div>
+          <div className="md:col-span-3">
             <Label className="flex items-center gap-2"><Calendar className="h-4 w-4" /> Até</Label>
             <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
@@ -897,8 +897,6 @@ Grupo: ${r.grupo || "—"}`;
                       <th className="text-left p-2">Prazo</th>
                       <th className="text-center p-2">Op.</th>
                       <th className="text-center p-2">Resumo</th>
-                      <th className="text-center p-2">PDF</th>
-                      <th className="text-center p-2">Abrir</th>
                       <th className="text-center p-2">Excluir</th>
                     </tr>
                   </thead>
@@ -911,6 +909,7 @@ Grupo: ${r.grupo || "—"}`;
                         onDragStart={(e) => {
                           e.dataTransfer.setData("text/plain", String(r.code));
                         }}
+                        onClick={() => setActive(r)}
                       >
                         <td className="p-2">{r.code}</td>
                         <td className="p-2 whitespace-nowrap">{new Date(r.created_at).toLocaleString("pt-BR")}</td>
@@ -927,7 +926,7 @@ Grupo: ${r.grupo || "—"}`;
                           <button
                             className="h-9 px-3 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center gap-2 hover:opacity-95"
                             title="Copiar Oportunidade"
-                            onClick={() => copyOportunidadeText(r)}
+                            onClick={(e) => { e.stopPropagation(); copyOportunidadeText(r); }}
                           >
                             <Megaphone className="h-4 w-4" />
                             Oportunidade
@@ -937,65 +936,17 @@ Grupo: ${r.grupo || "—"}`;
                           <button
                             className="h-9 px-3 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center gap-2 hover:opacity-95"
                             title="Copiar Resumo"
-                            onClick={() => copyResumoText(r)}
+                            onClick={(e) => { e.stopPropagation(); copyResumoText(r); }}
                           >
                             <ClipboardCopy className="h-4 w-4" />
                             Resumo
                           </button>
                         </td>
                         <td className="p-2 text-center">
-                          <div className="relative">
-                            <details className="group inline-block">
-                              <summary className="list-none">
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  className="rounded-xl h-8 inline-flex items-center gap-2"
-                                >
-                                  <FileText className="h-4 w-4" />
-                                  Gerar PDF
-                                  <ChevronDown className="h-4 w-4" />
-                                </Button>
-                              </summary>
-                              <div className="absolute right-0 mt-2 w-64 bg-white border rounded-xl shadow z-10 p-1">
-                                {[
-                                  { k: "direcionada", label: "Direcionada (completo)" },
-                                  { k: "venda_contemplada", label: "Venda Contemplada (completo)" },
-                                  { k: "simp_direcionada", label: "Direcionada (simplificado)" },
-                                  { k: "simp_venda", label: "Venda Contemplada (simplificado)" },
-                                ].map((opt) => (
-                                  <button
-                                    key={opt.k}
-                                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      if (opt.k === "direcionada") gerarPDFDirecionada(r);
-                                      else if (opt.k === "venda_contemplada") gerarPDFVendaContemplada(r);
-                                      else if (opt.k === "simp_direcionada") pdfSimplificado(r, "Proposta Direcionada");
-                                      else if (opt.k === "simp_venda") pdfSimplificado(r, "Venda Contemplada");
-                                    }}
-                                  >
-                                    {opt.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </details>
-                          </div>
-                        </td>
-                        <td className="p-2 text-center">
-                          <button
-                            className="h-9 w-9 rounded-full bg-muted inline-flex items-center justify-center text-foreground/70"
-                            title="Pré-visualizar"
-                            onClick={() => setActive(r)}
-                          >
-                            <ExternalLink className="h-4 w-4" />
-                          </button>
-                        </td>
-                        <td className="p-2 text-center">
                           <button
                             className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
                             title="Excluir"
-                            onClick={() => handleDelete(r.code)}
+                            onClick={(e) => { e.stopPropagation(); handleDelete(r.code); }}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -1003,7 +954,7 @@ Grupo: ${r.grupo || "—"}`;
                       </tr>
                     ))}
                     {pagedRows.length === 0 && (
-                      <tr><td colSpan={12} className="p-6 text-center text-muted-foreground">
+                      <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">
                         {loading ? "Carregando..." : "Nenhum resultado para os filtros."}
                       </td></tr>
                     )}
@@ -1061,7 +1012,7 @@ Grupo: ${r.grupo || "—"}`;
           </div>
         )}
 
-        {/* Prévia da Proposta (expande quando resultados ocultos) */}
+        {/* Prévia da Proposta */}
         <Card className={`transition-all ${resultsOpen ? "" : "lg:col-span-1"}`}>
           <CardHeader className="flex items-center justify-between gap-4">
             <CardTitle className="flex items-center gap-3">
@@ -1090,7 +1041,7 @@ Grupo: ${r.grupo || "—"}`;
 
               {active && (
                 <>
-                  {/* CHIP: PDF Simplificado — Ícone ao lado do texto */}
+                  {/* CHIP: PDF Simplificado — ícone neutro ao lado do texto */}
                   <Button
                     variant="secondary"
                     className="rounded-2xl h-9 px-3 inline-flex items-center gap-2"
@@ -1099,7 +1050,7 @@ Grupo: ${r.grupo || "—"}`;
                     }
                     title="Gerar PDF Simplificado"
                   >
-                    <span aria-hidden>⬇️</span>
+                    <Download className="h-4 w-4" />
                     PDF Simplificado
                   </Button>
 
@@ -1139,7 +1090,7 @@ Grupo: ${r.grupo || "—"}`;
         </Card>
       </div>
 
-      {/* MODAL: Parâmetros (sem qtd. de antecipação) */}
+      {/* MODAL: Parâmetros */}
       {paramOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg overflow-hidden">

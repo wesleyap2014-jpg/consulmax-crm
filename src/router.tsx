@@ -28,6 +28,9 @@ const LinksUteis              = React.lazy(() => import('./pages/LinksUteis'));
 // ✅ Ranking dos Vendedores
 const RankingVendedores       = React.lazy(() => import('./pages/RankingVendedores'));
 
+// ✅ Página pública do simulador (sem login)
+const PublicSimulador         = React.lazy(() => import('./pages/PublicSimulador'));
+
 function withSuspense(node: React.ReactNode) {
   return (
     <React.Suspense fallback={<div className="p-4 text-sm text-gray-600">Carregando…</div>}>
@@ -37,8 +40,13 @@ function withSuspense(node: React.ReactNode) {
 }
 
 export const router = createBrowserRouter([
+  // ===== Rotas públicas (sem login) =====
+  { path: '/publico/simulador', element: withSuspense(<PublicSimulador />) },
+
+  // ===== Login =====
   { path: '/login', element: withSuspense(<Login />) },
 
+  // ===== Rotas autenticadas =====
   {
     path: '/',
     element: <RequireAuth />,
@@ -99,6 +107,6 @@ export const router = createBrowserRouter([
     ],
   },
 
-  // Fallback global para público
+  // Fallback global para público (mantido)
   { path: '*', element: <Navigate to="/login" replace /> },
 ]);

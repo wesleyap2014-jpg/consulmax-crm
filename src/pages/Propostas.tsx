@@ -872,9 +872,14 @@ Grupo: ${r.grupo || "—"}`;
               <CardTitle className="flex items-center gap-2">
                 Resultados <span className="text-muted-foreground text-sm">({rows.length})</span>
               </CardTitle>
-              <Button variant="secondary" size="sm" className="rounded-xl"
-                onClick={() => setResultsOpen(false)}>
-                <EyeOff className="h-4 w-4 mr-1" /> Ocultar
+              <Button
+                variant="secondary"
+                size="sm"
+                className="rounded-xl inline-flex items-center gap-2"
+                onClick={() => setResultsOpen(false)}
+              >
+                <EyeOff className="h-4 w-4" />
+                Ocultar
               </Button>
             </CardHeader>
 
@@ -899,12 +904,14 @@ Grupo: ${r.grupo || "—"}`;
                   </thead>
                   <tbody>
                     {pagedRows.map((r) => (
-                      <tr key={r.code}
-                          className={`border-t ${active?.code === r.code ? "bg-muted/30" : ""}`}
-                          draggable
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData("text/plain", String(r.code));
-                          }}>
+                      <tr
+                        key={r.code}
+                        className={`border-t ${active?.code === r.code ? "bg-muted/30" : ""}`}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", String(r.code));
+                        }}
+                      >
                         <td className="p-2">{r.code}</td>
                         <td className="p-2 whitespace-nowrap">{new Date(r.created_at).toLocaleString("pt-BR")}</td>
                         <td className="p-2">
@@ -917,22 +924,38 @@ Grupo: ${r.grupo || "—"}`;
                         <td className="p-2">{r.novo_prazo ?? 0}x</td>
 
                         <td className="p-2 text-center">
-                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                                  title="Copiar Oportunidade" onClick={() => copyOportunidadeText(r)}>
+                          <button
+                            className="h-9 px-3 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center gap-2 hover:opacity-95"
+                            title="Copiar Oportunidade"
+                            onClick={() => copyOportunidadeText(r)}
+                          >
                             <Megaphone className="h-4 w-4" />
+                            Oportunidade
                           </button>
                         </td>
                         <td className="p-2 text-center">
-                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                                  title="Copiar Resumo" onClick={() => copyResumoText(r)}>
+                          <button
+                            className="h-9 px-3 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center gap-2 hover:opacity-95"
+                            title="Copiar Resumo"
+                            onClick={() => copyResumoText(r)}
+                          >
                             <ClipboardCopy className="h-4 w-4" />
+                            Resumo
                           </button>
                         </td>
                         <td className="p-2 text-center">
                           <div className="relative">
                             <details className="group inline-block">
                               <summary className="list-none">
-                                <Button variant="secondary" size="sm" className="rounded-xl h-8">Gerar PDF <ChevronDown className="h-4 w-4 ml-1" /></Button>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="rounded-xl h-8 inline-flex items-center gap-2"
+                                >
+                                  <FileText className="h-4 w-4" />
+                                  Gerar PDF
+                                  <ChevronDown className="h-4 w-4" />
+                                </Button>
                               </summary>
                               <div className="absolute right-0 mt-2 w-64 bg-white border rounded-xl shadow z-10 p-1">
                                 {[
@@ -941,14 +964,17 @@ Grupo: ${r.grupo || "—"}`;
                                   { k: "simp_direcionada", label: "Direcionada (simplificado)" },
                                   { k: "simp_venda", label: "Venda Contemplada (simplificado)" },
                                 ].map((opt) => (
-                                  <button key={opt.k} className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
+                                  <button
+                                    key={opt.k}
+                                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
                                     onClick={(e) => {
                                       e.preventDefault();
                                       if (opt.k === "direcionada") gerarPDFDirecionada(r);
                                       else if (opt.k === "venda_contemplada") gerarPDFVendaContemplada(r);
                                       else if (opt.k === "simp_direcionada") pdfSimplificado(r, "Proposta Direcionada");
                                       else if (opt.k === "simp_venda") pdfSimplificado(r, "Venda Contemplada");
-                                    }}>
+                                    }}
+                                  >
                                     {opt.label}
                                   </button>
                                 ))}
@@ -957,14 +983,20 @@ Grupo: ${r.grupo || "—"}`;
                           </div>
                         </td>
                         <td className="p-2 text-center">
-                          <button className="h-9 w-9 rounded-full bg-muted inline-flex items-center justify-center text-foreground/70"
-                                  title="Pré-visualizar" onClick={() => setActive(r)}>
+                          <button
+                            className="h-9 w-9 rounded-full bg-muted inline-flex items-center justify-center text-foreground/70"
+                            title="Pré-visualizar"
+                            onClick={() => setActive(r)}
+                          >
                             <ExternalLink className="h-4 w-4" />
                           </button>
                         </td>
                         <td className="p-2 text-center">
-                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                                  title="Excluir" onClick={() => handleDelete(r.code)}>
+                          <button
+                            className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                            title="Excluir"
+                            onClick={() => handleDelete(r.code)}
+                          >
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </td>
@@ -1017,9 +1049,14 @@ Grupo: ${r.grupo || "—"}`;
         {/* Botão para reabrir Resultados quando oculto */}
         {!resultsOpen && (
           <div className="flex items-center">
-            <Button variant="secondary" size="sm" className="rounded-xl mb-2"
-              onClick={() => setResultsOpen(true)}>
-              <Eye className="h-4 w-4 mr-1" /> Mostrar Resultados
+            <Button
+              variant="secondary"
+              size="sm"
+              className="rounded-xl mb-2 inline-flex items-center gap-2"
+              onClick={() => setResultsOpen(true)}
+            >
+              <Eye className="h-4 w-4" />
+              Mostrar Resultados
             </Button>
           </div>
         )}
@@ -1053,16 +1090,30 @@ Grupo: ${r.grupo || "—"}`;
 
               {active && (
                 <>
-                  <Button variant="secondary" className="rounded-2xl h-9 px-3"
-                    onClick={() => pdfSimplificado(active, model === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada")}>
-                    <Download className="h-4 w-4 mr-1" /> PDF Simplificado
+                  {/* CHIP: PDF Simplificado — Ícone ao lado do texto */}
+                  <Button
+                    variant="secondary"
+                    className="rounded-2xl h-9 px-3 inline-flex items-center gap-2"
+                    onClick={() =>
+                      pdfSimplificado(active, model === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada")
+                    }
+                    title="Gerar PDF Simplificado"
+                  >
+                    <span aria-hidden>⬇️</span>
+                    PDF Simplificado
                   </Button>
-                  <Button className="rounded-2xl h-9 px-3"
+
+                  {/* CHIP: PDF Completo — Ícone ao lado do texto */}
+                  <Button
+                    className="rounded-2xl h-9 px-3 inline-flex items-center gap-2"
                     onClick={() => {
                       if (model === "venda_contemplada") gerarPDFVendaContemplada(active);
                       else gerarPDFDirecionada(active);
-                    }}>
-                    <FileText className="h-4 w-4 mr-1" /> PDF Completo
+                    }}
+                    title="Gerar PDF Completo"
+                  >
+                    <FileText className="h-4 w-4" />
+                    PDF Completo
                   </Button>
                 </>
               )}

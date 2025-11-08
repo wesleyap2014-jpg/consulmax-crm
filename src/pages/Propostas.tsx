@@ -158,7 +158,7 @@ type EngineParams = {
   fin_veic_mensal: number;
   fin_imob_anual: number;
 
-  reforco_pct: number;
+  reforco_pct: number; // usado em "venda contemplada" e outros
 };
 
 type EngineOut = {
@@ -181,13 +181,27 @@ type EngineOut = {
   lancePct: number;
 
   nContemplacao: number;
-  investido: number;
+  investido: number; // para "direcionada" e "venda contemplada" (até a contemplação)
   creditoLiberado: number;
-  valorVenda: number;
+  valorVenda: number; // usado em VC
   lucro: number;
   roi: number;
   rentabMes: number;
   pctCDI: number;
+};
+
+type PrevidenciaCalc = {
+  cdiMes: number;
+  indiceCM: number; // 99% do CDI mês
+  rentabMes: number; // cdiMes * 0.99
+  prazoAplicacao: number; // novo prazo
+  creditoLiquido: number; // novo_credito
+  investimento: number; // soma das parcelas pós + lance próprio (com reajustes)
+  retornoBruto: number; // creditoLiquido*(1+rentabMes)^{prazo}
+  retornoLiquido: number; // retornoBruto - investimento
+  roi: number;
+  roiMes: number;
+  extrato: Array<{ mes: number; saldo: number; retorno: number; parcela: number; capital: number }>; // conforme tabela
 };
 
 function labelInicialFromQtd(qtd?: number | null) {
@@ -266,6 +280,69 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
     rentabMes,
     pctCDI,
   };
+}
+
+// ======= Previdência – cálculos específicos =======
+// reajIndex: "ipca" | "igpm" | "incc" | "inpc"
+function buildPrevidencia(sim: SimRow, p: EngineParams, reajIndex: string): { core: PrevidenciaCalc; out: EngineOut } {
+  const out = proposalEngine(sim, p);
+
+  const cdiMes = annualToMonthlyCompound(p.cdi_anual);
+  const indiceCM = 0.99; // 99% do CDI mês (aplicado sobre o CDI mês)
+  const rentabMes = cdiMes * indiceCM;
+  const prazoAplicacao = Math.max(0, out.prazoApos || 0);
+  const creditoLiquido = Math.max(0, out.creditoLiberado || 0);
+
+  // Seleção do índice de reajuste (anual, aplicado nas parcelas 13, 25, 37, ...)
+  const idxAnnual =
+    reajIndex === "igpm" ? (p.igpm12m || 0) :
+    reajIndex === "incc" ? (p.incc12m || 0) :
+    reajIndex === "inpc" ? (p.inpc12m || 0) : (p.ipca12m || 0);
+
+  // Gera a série de parcelas com reajustes anuais (a partir da 13ª, 25ª, ...)
+  const extrato: Array<{ mes: number; saldo: number; retorno: number; parcela: number; capital: number }> = [];
+  let parcelaAtual = Math.max(0, out.parcelaAposValor || 0);
+  let saldo = creditoLiquido;
+
+  let investimentoSoma = Math.max(0, out.lanceProprioValor || 0);
+
+  for (let m = 1; m <= prazoAplicacao; m++) {
+    // Reajuste anual nas parcelas: 13, 25, 37, ...
+    if (m > 1 && (m - 1) % 12 === 0) {
+      parcelaAtual = parcelaAtual * (1 + idxAnnual);
+    }
+
+    const retorno = saldo * rentabMes;
+    const capital = saldo + retorno - parcelaAtual;
+
+    investimentoSoma += parcelaAtual;
+
+    extrato.push({ mes: m, saldo, retorno, parcela: parcelaAtual, capital: Math.max(0, capital) });
+
+    saldo = Math.max(0, capital);
+  }
+
+  const retornoBruto = creditoLiquido * Math.pow(1 + rentabMes, prazoAplicacao);
+  const investimento = investimentoSoma;
+  const retornoLiquido = Math.max(0, retornoBruto - investimento);
+  const roi = investimento > 0 ? retornoLiquido / investimento : 0;
+  const roiMes = prazoAplicacao > 0 ? (Math.pow(1 + roi, 1 / prazoAplicacao) - 1) : 0;
+
+  const core: PrevidenciaCalc = {
+    cdiMes,
+    indiceCM,
+    rentabMes,
+    prazoAplicacao,
+    creditoLiquido,
+    investimento,
+    retornoBruto,
+    retornoLiquido,
+    roi,
+    roiMes,
+    extrato,
+  };
+
+  return { core, out };
 }
 
 /* ========================= Página ======================== */
@@ -369,13 +446,20 @@ export default function Propostas() {
 
   const [resultsOpen, setResultsOpen] = useState(true);
 
-  type BlockId = "header" | "specs" | "parcelas" | "lance" | "projecao" | "graficos" | "obs";
+  // Índice de reajuste (somente para Previdência)
+  type ReajIndex = "ipca" | "igpm" | "incc" | "inpc";
+  const [reajIndex, setReajIndex] = useState<ReajIndex>(() => {
+    try { return (localStorage.getItem("prevReajIndex") as ReajIndex) || "ipca"; } catch { return "ipca"; }
+  });
+  useEffect(() => { try { localStorage.setItem("prevReajIndex", reajIndex); } catch {} }, [reajIndex]);
+
+  type BlockId = "header" | "specs" | "parcelas" | "lance" | "projecao" | "graficos" | "obs" | "prev-extrato";
   const DEFAULT_LAYOUT: Record<ModelKey, BlockId[]> = {
     direcionada: ["header","specs","parcelas","lance","graficos","obs","projecao"],
     venda_contemplada: ["header","specs","parcelas","projecao","graficos","lance","obs"],
     alav_fin: ["header","specs","graficos","obs"],
     alav_patr: ["header","specs","graficos","obs"],
-    previdencia: ["header","specs","graficos","obs"],
+    previdencia: ["header","specs","parcelas","lance","projecao","graficos","prev-extrato","obs"],
     credito_correcao: ["header","specs","graficos","obs"],
     extrato: ["header","specs","obs"],
   };
@@ -413,46 +497,14 @@ export default function Propostas() {
   function copyOportunidadeText(r: SimRow) {
     const segNorm = normalizeSegment(r.segmento);
     const emoji = emojiBySegment(r.segmento);
-    const text = `🚨OPORTUNIDADE 🚨
-
-🔥 PROPOSTA EMBRACON🔥
-
-Proposta ${segNorm}
-
-${emoji} Crédito: ${brMoney(r.novo_credito)}
-💰 Parcela 1: ${brMoney(r.parcela_ate_1_ou_2)} (Em até 3x no cartão)
-📆 + ${r.novo_prazo ?? 0}x de ${brMoney(r.parcela_escolhida)}
-💵 Lance Próprio: ${brMoney(r.lance_proprio_valor)}
-📢 Grupo: ${r.grupo || "—"}
-
-🚨 POUCAS VAGAS DISPONÍVEIS🚨
-
-Assembleia 15/10
-
-📲 Garanta sua vaga agora!
-${formatPhoneBR(seller.phone) || "-"}
-
-Vantagens
-✅ Primeira parcela em até 3x no cartão
-✅ Parcelas acessíveis
-✅ Alta taxa de contemplação`;
+    const text = `🚨OPORTUNIDADE 🚨\n\n🔥 PROPOSTA EMBRACON🔥\n\nProposta ${segNorm}\n\n${emoji} Crédito: ${brMoney(r.novo_credito)}\n💰 Parcela 1: ${brMoney(r.parcela_ate_1_ou_2)} (Em até 3x no cartão)\n📆 + ${r.novo_prazo ?? 0}x de ${brMoney(r.parcela_escolhida)}\n💵 Lance Próprio: ${brMoney(r.lance_proprio_valor)}\n📢 Grupo: ${r.grupo || "—"}\n\n🚨 POUCAS VAGAS DISPONÍVEIS🚨\n\nAssembleia 15/10\n\n📲 Garanta sua vaga agora!\n${formatPhoneBR(seller.phone) || "-"}\n\nVantagens\n✅ Primeira parcela em até 3x no cartão\n✅ Parcelas acessíveis\n✅ Alta taxa de contemplação`;
     navigator.clipboard.writeText(text).then(() => alert("Oportunidade copiada!"))
       .catch(() => alert("Não foi possível copiar."));
   }
   function copyResumoText(r: SimRow) {
     const segNorm = normalizeSegment(r.segmento);
     const { labelParcelaInicial } = proposalEngine(r, params);
-    const text = `Resumo da Proposta — ${segNorm}
-
-Crédito contratado: ${brMoney(r.credito)}
-${labelParcelaInicial} (até contemplação): ${brMoney(r.parcela_ate_1_ou_2)}
-Demais até a contemplação: ${brMoney(r.parcela_demais)}
-— Após a contemplação —
-Crédito líquido: ${brMoney(r.novo_credito)}
-Parcela escolhida: ${brMoney(r.parcela_escolhida)}
-Prazo restante: ${r.novo_prazo ?? 0} meses
-Lance próprio: ${brMoney(r.lance_proprio_valor)}
-Grupo: ${r.grupo || "—"}`;
+    const text = `Resumo da Proposta — ${segNorm}\n\nCrédito contratado: ${brMoney(r.credito)}\n${labelParcelaInicial} (até contemplação): ${brMoney(r.parcela_ate_1_ou_2)}\nDemais até a contemplação: ${brMoney(r.parcela_demais)}\n— Após a contemplação —\nCrédito líquido: ${brMoney(r.novo_credito)}\nParcela escolhida: ${brMoney(r.parcela_escolhida)}\nPrazo restante: ${r.novo_prazo ?? 0} meses\nLance próprio: ${brMoney(r.lance_proprio_valor)}\nGrupo: ${r.grupo || "—"}`;
     navigator.clipboard.writeText(text).then(() => alert("Resumo copiado!"))
       .catch(() => alert("Não foi possível copiar."));
   }
@@ -491,11 +543,19 @@ Grupo: ${r.grupo || "—"}`;
 
   // ====== PDF SIMPLIFICADO (com regras por modelo) ======
   function pdfSimplificado(sim: SimRow, modelKey: ModelKey) {
-    const title = modelKey === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada";
+    const titleMap: Record<ModelKey, string> = {
+      direcionada: "Proposta Direcionada",
+      venda_contemplada: "Venda Contemplada",
+      alav_fin: "Alavancagem Financeira",
+      alav_patr: "Alavancagem Patrimonial",
+      previdencia: "Previdência",
+      credito_correcao: "Crédito c/ Correção",
+      extrato: "Extrato",
+    };
+
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
-
-    doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.text(title, 40, 60);
+    doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.text(titleMap[modelKey], 40, 60);
     doc.setFont("helvetica","normal"); doc.setFontSize(12);
 
     const baseRows: (string | number)[][] = [
@@ -508,19 +568,34 @@ Grupo: ${r.grupo || "—"}`;
       ["Prazo após o lance", out.prazoApos ? `${out.prazoApos} meses` : "—"],
       ["Lance Embutido", brMoney(out.embutidoValor)],
       ["Lance Próprio", brMoney(out.lanceProprioValor)],
-      ["Crédito Liberado", brMoney(out.creditoLiberado)],
-      ["Valor da Venda (Crédito Liberado × Ganho %)", brMoney(out.valorVenda)],
-      ["Investido até contemplação", brMoney(out.investido)],
     ];
 
-    // Somente para modelos que NÃO são "direcionada", mantemos métricas de performance
-    if (modelKey !== "direcionada") {
+    if (modelKey === "previdencia") {
+      const { core } = buildPrevidencia(sim, params, reajIndex);
       baseRows.push(
+        ["Crédito (líquido)", brMoney(core.creditoLiquido)],
+        ["CDI Mês", formatPercentFraction(core.cdiMes)],
+        ["Índice CM", "99% do CDI"],
+        ["Rentabilidade Mês", formatPercentFraction(core.rentabMes)],
+        ["Prazo (pós)", `${core.prazoAplicacao} meses`],
+        ["Retorno", brMoney(core.retornoBruto)],
+        ["Investimento (parcelas + lance)", brMoney(core.investimento)],
+        ["Retorno Líquido", brMoney(core.retornoLiquido)],
+        ["ROI", formatPercentFraction(core.roi)],
+        ["ROI Mês", formatPercentFraction(core.roiMes)],
+      );
+    } else if (modelKey !== "direcionada") {
+      baseRows.push(
+        ["Crédito Liberado", brMoney(out.creditoLiberado)],
+        ["Valor da Venda (Crédito Liberado × Ganho %)", brMoney(out.valorVenda)],
+        ["Investido até contemplação", brMoney(out.investido)],
         ["Lucro Líquido", brMoney(out.lucro)],
         ["ROI", formatPercentFraction(out.roi)],
         ["Rentab/mês", formatPercentFraction(out.rentabMes)],
         ["% do CDI (mês)", `${(out.pctCDI * 100).toFixed(0)}%`],
       );
+    } else {
+      baseRows.push(["Crédito Liberado", brMoney(out.creditoLiberado)]);
     }
 
     (doc as any).autoTable({
@@ -532,10 +607,10 @@ Grupo: ${r.grupo || "—"}`;
       margin: { left: 40, right: 40 },
     });
 
-    doc.save(`${title.replace(/\s+/g,'_')}_${sim.code}.pdf`);
+    doc.save(`${titleMap[modelKey].replace(/\s+/g,'_')}_${sim.code}.pdf`);
   }
 
-  /* ======= PDF COMPLETO — DIRECIONADA (1 lauda A4, rótulos exatos) ======= */
+  /* ======= PDF COMPLETO — DIRECIONADA ======= */
   function gerarPDFDirecionada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
@@ -592,7 +667,7 @@ Grupo: ${r.grupo || "—"}`;
       marginX, (doc as any).lastAutoTable.finalY + 10
     );
 
-    // ===== ESTRATÉGIA COM LANCE DE X% =====
+    // ===== ESTRATÉGIA COM LANCE =====
     const yTitle = (doc as any).lastAutoTable.finalY + 26;
     doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(30);
     doc.text(`ESTRATÉGIA COM LANCE DE ${formatPercentFraction(out.lancePct)}`, marginX, yTitle);
@@ -648,7 +723,6 @@ Grupo: ${r.grupo || "—"}`;
       alternateRowStyles: { fillColor: brand.grayRow },
     });
 
-    // Comparativo final
     const yAfterTables = Math.max((doc as any).lastAutoTable.finalY, (doc as any).lastAutoTable.finalY) + 10;
     const economia = Math.max(0, custoFinalFin - custoFinalCons);
     (doc as any).autoTable({
@@ -663,7 +737,6 @@ Grupo: ${r.grupo || "—"}`;
       alternateRowStyles: { fillColor: brand.grayRow },
     });
 
-    // ===== NOSSOS DIFERENCIAIS (somente no PDF) =====
     const mid = marginX + (w - marginX * 2) / 2 - 6;
     const yDiff = (doc as any).lastAutoTable.finalY + 8;
     (doc as any).autoTable({
@@ -683,7 +756,6 @@ Grupo: ${r.grupo || "—"}`;
       columnStyles: { 0: { cellWidth: "wrap" } },
     });
 
-    // ===== RESUMO (somente no PDF) =====
     (doc as any).autoTable({
       startY: yDiff,
       head: [["RESUMO", "Valor"]],
@@ -705,7 +777,6 @@ Grupo: ${r.grupo || "—"}`;
       theme: "grid",
     });
 
-    // Atenção
     const yFinal = Math.max((doc as any).lastAutoTable.finalY, (doc as any).lastAutoTable.finalY) + 8;
     doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(90);
     doc.text(
@@ -717,7 +788,7 @@ Grupo: ${r.grupo || "—"}`;
     doc.save(`Proposta_Direcionada_${sim.code}.pdf`);
   }
 
-  /* ======= PDF COMPLETO — Venda Contemplada (mantido) ======= */
+  /* ======= PDF COMPLETO — Venda Contemplada ======= */
   function gerarPDFVendaContemplada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
@@ -802,18 +873,126 @@ Grupo: ${r.grupo || "—"}`;
     doc.save(`Venda_Contemplada_${sim.code}.pdf`);
   }
 
+  /* ======= PDF COMPLETO — Previdência ======= */
+  function gerarPDFPrevidencia(sim: SimRow) {
+    const { core, out } = buildPrevidencia(sim, params, reajIndex);
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const marginX = 40;
+
+    headerBand(doc, "Previdência — Con contemplação aplicada");
+
+    // Especificações (iguais ao Direcionada)
+    ;(doc as any).autoTable({
+      startY: 120,
+      head: [["Especificações", ""]],
+      body: [
+        ["Crédito Contratado", brMoney(out.credito)],
+        ["Prazo (contrato)", out.prazo ? `${out.prazo} meses` : "—"],
+        ["Taxa de Adm total", typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—"],
+        ["Fundo Reserva", typeof out.fr === "number" ? formatPercentFraction(out.fr) : "—"],
+        ["Segmento", out.segmento],
+      ],
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // Parcelas até a contemplação
+    ;(doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 12,
+      head: [["Parcelas até a contemplação", "Valor"]],
+      body: [[out.labelParcelaInicial, brMoney(out.parcelaInicialValor)], ["Demais", brMoney(out.parcelaDemaisValor)]],
+      headStyles: { fillColor: brand.accent, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // Estratégia de lance (igual Direcionada)
+    ;(doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 12,
+      head: [["Estratégia de Lance", "Valor"]],
+      body: [
+        ["Lance Embutido", brMoney(out.embutidoValor)],
+        ["Lance Próprio", brMoney(out.lanceProprioValor)],
+        ["Parcela após o lance (e prazo)", `${brMoney(out.parcelaAposValor)} (${out.prazoApos}x)`],
+      ],
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // Bloco Previdência — cálculo principal
+    ;(doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 12,
+      head: [["Previdência — Resultados", "Valor"]],
+      body: [
+        ["Crédito (líquido)", brMoney(core.creditoLiquido)],
+        ["CDI Mês", formatPercentFraction(core.cdiMes)],
+        ["Índice CM", "99% do CDI"],
+        ["Rentabilidade Mês", formatPercentFraction(core.rentabMes)],
+        ["Prazo de Aplicação (meses)", `${core.prazoAplicacao}`],
+        ["Retorno (bruto)", brMoney(core.retornoBruto)],
+        ["Investimento (parcelas + lance)", brMoney(core.investimento)],
+        ["Retorno Líquido", brMoney(core.retornoLiquido)],
+        ["ROI", formatPercentFraction(core.roi)],
+        ["ROI Mês", formatPercentFraction(core.roiMes)],
+      ],
+      headStyles: { fillColor: brand.accent, textColor: "#fff" },
+      styles: { fontSize: 9, cellPadding: 4 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    // Extrato — primeira página apenas primeiros 18 meses para caber
+    const head = [["Mês", "Saldo", "Retorno", "Parcela", "Capital"]];
+    const body = core.extrato.slice(0, 18).map(l => [
+      l.mes,
+      brMoney(l.saldo),
+      brMoney(l.retorno),
+      brMoney(l.parcela),
+      brMoney(l.capital),
+    ]);
+    ;(doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 12,
+      head, body,
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 8, cellPadding: 3 },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      theme: "grid",
+      margin: { left: marginX, right: marginX },
+    });
+
+    addFooter(doc);
+    doc.save(`Previdencia_${sim.code}.pdf`);
+  }
+
   /* ================== PREVIEW (BLOCOS) ================== */
   const PreviewBlock = ({ sim, model }: { sim: SimRow; model: ModelKey }) => {
     if (!sim) return null;
+
+    // Para gráficos e cards, precisamos dos dados corretos
     const out = proposalEngine(sim, params);
 
-    // === Gráficos: alinhar com o PDF Completo ===
+    // === Gráficos: alinhar com o PDF ===
     let barData: { name: string; valor: number }[] = [];
     let radialValuePct = 0;
     let radialLabel = "";
 
+    // Dados adicionais quando Previdência
+    let prevCore: PrevidenciaCalc | null = null;
+    if (model === "previdencia") {
+      const built = buildPrevidencia(sim, params, reajIndex);
+      prevCore = built.core;
+    }
+
     if (model === "direcionada") {
-      // No PDF completo (direcionada) comparamos custos do financiamento vs consórcio e a economia
       const taxaFinMensal =
         out.segmento === "Automóvel" || out.segmento === "Motocicleta"
           ? params.fin_veic_mensal
@@ -830,8 +1009,15 @@ Grupo: ${r.grupo || "—"}`;
       ];
       radialValuePct = custoFinalFin > 0 ? (economia / custoFinalFin) * 100 : 0;
       radialLabel = "Economia vs Financ.";
+    } else if (model === "previdencia" && prevCore) {
+      barData = [
+        { name: "Retorno", valor: prevCore.retornoBruto },
+        { name: "Investimento", valor: prevCore.investimento },
+        { name: "Ret. Líquido", valor: prevCore.retornoLiquido },
+      ];
+      radialValuePct = Math.min(100, Math.max(0, prevCore.roi * 100));
+      radialLabel = "ROI aproximado";
     } else {
-      // Demais modelos: mantemos o gráfico padrão (Venda x Investido x Lucro + ROI)
       barData = [
         { name: "Venda", valor: out.valorVenda },
         { name: "Investido", valor: out.investido },
@@ -855,7 +1041,39 @@ Grupo: ${r.grupo || "—"}`;
       </div>
     );
 
-    const blocks: Record<"header"|"specs"|"parcelas"|"lance"|"projecao"|"graficos"|"obs", JSX.Element> = {
+    // Extrato render para Previdência (primeiros 12 meses na prévia)
+    const ExtratoPrev = () => {
+      if (!prevCore) return null;
+      const first = prevCore.extrato.slice(0, 12);
+      return (
+        <div className="overflow-auto rounded-lg border">
+          <table className="min-w-full text-xs">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="text-left p-2">Mês</th>
+                <th className="text-left p-2">Saldo</th>
+                <th className="text-left p-2">Retorno</th>
+                <th className="text-left p-2">Parcela</th>
+                <th className="text-left p-2">Capital</th>
+              </tr>
+            </thead>
+            <tbody>
+              {first.map(l => (
+                <tr key={l.mes} className="border-t">
+                  <td className="p-2">{l.mes}</td>
+                  <td className="p-2">{brMoney(l.saldo)}</td>
+                  <td className="p-2">{brMoney(l.retorno)}</td>
+                  <td className="p-2">{brMoney(l.parcela)}</td>
+                  <td className="p-2">{brMoney(l.capital)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    };
+
+    const blocks: Record<BlockId, JSX.Element> = {
       header: (
         <BlockCard title="Cabeçalho">
           <div className="flex items-center gap-4">
@@ -897,12 +1115,24 @@ Grupo: ${r.grupo || "—"}`;
         </BlockCard>
       ),
       projecao: (
-        <BlockCard title={model === "direcionada" ? "Comparativo de Custos" : "Projeção na Venda"}>
+        <BlockCard title={model === "previdencia" ? "Previdência" : (model === "direcionada" ? "Comparativo de Custos" : "Projeção na Venda")}>
           {model === "direcionada" ? (
             <div className="grid md:grid-cols-3 gap-3 text-sm">
               <div><div className="text-muted-foreground">Crédito Liberado</div><div className="font-semibold">{brMoney(out.creditoLiberado)}</div></div>
               <div><div className="text-muted-foreground">Encargos (Consórcio)</div><div className="font-semibold">{brMoney(out.encargos || 0)}</div></div>
               <div><div className="text-muted-foreground">Lance Pago</div><div className="font-semibold">{brMoney(out.lanceProprioValor)}</div></div>
+            </div>
+          ) : model === "previdencia" && prevCore ? (
+            <div className="grid md:grid-cols-3 gap-3 text-sm">
+              <div><div className="text-muted-foreground">Crédito (líquido)</div><div className="font-semibold">{brMoney(prevCore.creditoLiquido)}</div></div>
+              <div><div className="text-muted-foreground">CDI Mês</div><div className="font-semibold">{formatPercentFraction(prevCore.cdiMes)}</div></div>
+              <div><div className="text-muted-foreground">Índice CM</div><div className="font-semibold">99% do CDI</div></div>
+              <div><div className="text-muted-foreground">Rentabilidade Mês</div><div className="font-semibold">{formatPercentFraction(prevCore.rentabMes)}</div></div>
+              <div><div className="text-muted-foreground">Prazo (pós)</div><div className="font-semibold">{out.prazoApos || 0} meses</div></div>
+              <div><div className="text-muted-foreground">Investimento (parcelas + lance)</div><div className="font-semibold">{brMoney(prevCore.investimento)}</div></div>
+              <div><div className="text-muted-foreground">Retorno</div><div className="font-semibold">{brMoney(prevCore.retornoBruto)}</div></div>
+              <div><div className="text-muted-foreground">Retorno Líquido</div><div className="font-semibold">{brMoney(prevCore.retornoLiquido)}</div></div>
+              <div><div className="text-muted-foreground">ROI</div><div className="font-semibold">{formatPercentFraction(prevCore.roi)}</div></div>
             </div>
           ) : (
             <div className="grid md:grid-cols-3 gap-3 text-sm">
@@ -948,6 +1178,11 @@ Grupo: ${r.grupo || "—"}`;
               </div>
             </div>
           </div>
+        </BlockCard>
+      ),
+      "prev-extrato": (
+        <BlockCard title="Extrato (primeiros 12 meses)">
+          <ExtratoPrev />
         </BlockCard>
       ),
       obs: (
@@ -1136,6 +1371,16 @@ Grupo: ${r.grupo || "—"}`;
                 <option value="extrato">Extrato</option>
               </select>
 
+              {/* Se modelo = Previdência, escolher índice de reajuste */}
+              {model === "previdencia" && (
+                <select value={reajIndex} onChange={(e) => setReajIndex(e.target.value as any)} className="h-9 rounded-2xl border px-3" title="Índice de reajuste anual das parcelas após a contemplação">
+                  <option value="ipca">Reajuste: IPCA</option>
+                  <option value="igpm">Reajuste: IGP-M</option>
+                  <option value="incc">Reajuste: INCC</option>
+                  <option value="inpc">Reajuste: INPC</option>
+                </select>
+              )}
+
               {active && (
                 <>
                   <Button
@@ -1149,7 +1394,11 @@ Grupo: ${r.grupo || "—"}`;
 
                   <Button
                     className="rounded-2xl h-9 px-3 inline-flex items-center gap-2"
-                    onClick={() => { if (model === "venda_contemplada") gerarPDFVendaContemplada(active); else gerarPDFDirecionada(active); }}
+                    onClick={() => {
+                      if (model === "venda_contemplada") gerarPDFVendaContemplada(active);
+                      else if (model === "previdencia") gerarPDFPrevidencia(active);
+                      else gerarPDFDirecionada(active);
+                    }}
                     title="Gerar PDF Completo"
                   >
                     <FileText className="h-4 w-4" /> PDF Completo

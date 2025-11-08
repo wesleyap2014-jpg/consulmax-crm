@@ -6,73 +6,73 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Calendar,
-  ClipboardCopy,
-  FileText,
-  ExternalLink,
-  Trash2,
-  Megaphone,
-  ChevronDown,
-  Search,
-  X,
-  Loader2,
-  SlidersHorizontal,
-  EyeOff,
-  Eye,
-  Download,
+  Calendar, ClipboardCopy, FileText, ExternalLink, Trash2, Megaphone,
+  ChevronDown, Search, X, SlidersHorizontal, GripVertical, Download, Eye, EyeOff
 } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
+
+// Gráficos (preview)
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, LabelList,
+  RadialBarChart, RadialBar
+} from "recharts";
+
+// DnD Builder (blocos internos)
+import { DndContext, closestCenter } from "@dnd-kit/core";
+import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 /* ========================= Tipos ========================= */
 type SimRow = {
   code: number;
   created_at: string;
-
   lead_nome: string | null;
   lead_telefone: string | null;
-
   segmento: string | null;
   grupo: string | null;
 
-  // entradas principais
   credito: number | null;
-  prazo_venda: number | null; // <- usar como "Prazo" visível (pedido)
+  prazo_venda: number | null;
   parcela_contemplacao: number | null;
 
-  // pós-lance
   novo_credito: number | null;
   parcela_escolhida: number | null;
   novo_prazo: number | null;
 
-  // até contemplação
   parcela_ate_1_ou_2: number | null;
   parcela_demais: number | null;
 
-  // lance
   lance_proprio_valor: number | null;
   lance_ofertado_pct?: number | null;
 
-  // taxas gravadas na simulação
-  adm_tax_pct?: number | null;  // fração
-  fr_tax_pct?: number | null;   // fração
+  adm_tax_pct?: number | null;
+  fr_tax_pct?: number | null;
 
-  // NOVO — quantidade de parcelas antecipadas gravada pelo simulador
+  // NOVO: captura automática da quantidade de antecipações
   antecip_parcelas?: number | null;
 };
 
 type ModelKey =
   | "direcionada"
-  | "venda_contemplada";
+  | "venda_contemplada"
+  | "alav_fin"
+  | "alav_patr"
+  | "previdencia"
+  | "credito_correcao"
+  | "extrato";
 
 /* ======================= Helpers ========================= */
 const brand = {
-  header: "#0F1E36", // azul escuro da capa
+  header: "#0F1E36",
   primary: "#1E293F",
   accent: "#A11C27",
   grayRow: "#F3F4F6",
-  glassBg: "rgba(255,255,255,0.18)",
-  glassBorder: "rgba(255,255,255,0.35)",
+  barGrey: "#7a8593",
+  barInvest: "#1E293F",
+  barProfit: "#A11C27",
+  gold: "#B5A573",
+  off: "#F5F5F5",
 };
 
 const LOGO_URL = "/logo-consulmax.png";
@@ -129,7 +129,7 @@ async function fetchAsDataURL(url: string): Promise<string | null> {
   }
 }
 
-/* ============ Percent helpers (humanizado) ============== */
+/* ============ Percent helpers ============== */
 function parsePercentInput(raw: string): number {
   const s = (raw || "").toString().trim().replace(/\s+/g, "");
   if (!s) return 0;
@@ -145,17 +145,119 @@ function formatPercentFraction(frac: number, withSymbol = true): string {
   return withSymbol ? `${pct}%` : pct;
 }
 
-/* ============== Finance helpers (PMT etc.) ============== */
-function pmtMonthly(rate: number, nper: number, pv: number): number {
-  if (!rate || rate <= 0 || !nper || nper <= 0) {
-    return nper > 0 ? pv / nper : 0;
-  }
-  const num = rate * pv;
-  const den = 1 - Math.pow(1 + rate, -nper);
-  return den === 0 ? pv / nper : num / den;
-}
+/* ============== Finance helpers ============== */
 function annualToMonthlyCompound(fracAnnual: number): number {
   return Math.pow(1 + (fracAnnual || 0), 1 / 12) - 1;
+}
+
+/* ==================== ENGINE (SSOT) ==================== */
+type EngineParams = {
+  selic_anual: number;
+  cdi_anual: number;
+  ipca12m: number;
+  igpm12m: number;
+  incc12m: number;
+  inpc12m: number;
+
+  fin_veic_mensal: number;
+  fin_imob_anual: number;
+
+  reforco_pct: number;
+};
+
+type EngineOut = {
+  credito: number;
+  prazo: number;
+  segmento: string;
+  labelParcelaInicial: string;
+  parcelaInicialValor: number;
+  parcelaDemaisValor: number;
+  parcelaAposValor: number;
+  prazoApos: number;
+
+  adm?: number | null;
+  fr?: number | null;
+  valorCategoria?: number | null;
+  encargos?: number | null;
+
+  embutidoValor: number;
+  lanceProprioValor: number;
+  lancePct: number;
+
+  nContemplacao: number;
+  investido: number;
+  creditoLiberado: number;
+  valorVenda: number;
+  lucro: number;
+  roi: number;
+  rentabMes: number;
+  pctCDI: number;
+};
+
+function labelInicialFromQtd(qtd?: number | null) {
+  const n = Number(qtd || 0);
+  if (!n || n <= 1) return "Parcela 1";
+  if (n === 2) return "Parcela 1 e 2";
+  return `Parcelas 1 a ${n}`;
+}
+
+function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
+  const C = sim.credito ?? 0;
+  const seg = normalizeSegment(sim.segmento);
+  const prazo = sim.prazo_venda ?? 0;
+
+  // Captura automática da quantidade de antecipações
+  const labelParcelaInicial = labelInicialFromQtd(sim.antecip_parcelas ?? 2);
+
+  const adm = typeof sim.adm_tax_pct === "number" ? sim.adm_tax_pct! : null;
+  const fr  = typeof sim.fr_tax_pct  === "number" ? sim.fr_tax_pct!  : null;
+
+  const valorCategoria =
+    typeof adm === "number" && typeof fr === "number" ? C * (1 + adm + fr) : null;
+  const encargos =
+    typeof adm === "number" && typeof fr === "number" ? C * (adm + fr) : null;
+
+  // Lance
+  const embutidoValor = Math.max(0, (sim.credito ?? 0) - (sim.novo_credito ?? 0));
+  const lancePct = sim.lance_ofertado_pct ?? (C > 0 ? (embutidoValor + (sim.lance_proprio_valor ?? 0)) / C : 0);
+  const lanceOfertadoValor = C * (lancePct || 0);
+  const lanceProprioValor = Math.max(0, lanceOfertadoValor - embutidoValor);
+
+  // Investido até a contemplação
+  const n = sim.parcela_contemplacao ?? 0;
+  const p1 = sim.parcela_ate_1_ou_2 ?? 0;
+  const pd = sim.parcela_demais ?? 0;
+  const investido = n > 0 ? (p1 + pd * Math.max(0, n - 1) + lanceProprioValor) : 0;
+
+  const creditoLiberado = Math.max(0, (sim.novo_credito ?? 0));
+  const valorVenda = creditoLiberado * (1 + (p.reforco_pct || 0));
+  const lucro = Math.max(0, valorVenda - investido);
+  const roi = investido > 0 ? (lucro / investido) : 0;
+
+  const cdiMensal = annualToMonthlyCompound(p.cdi_anual || 0);
+  const rentabMes = n > 0 ? Math.pow(1 + roi, 1 / n) - 1 : 0;
+  const pctCDI = cdiMensal > 0 ? (rentabMes / cdiMensal) : 0;
+
+  return {
+    credito: C,
+    prazo,
+    segmento: seg,
+    labelParcelaInicial,
+    parcelaInicialValor: p1,
+    parcelaDemaisValor: pd,
+    parcelaAposValor: sim.parcela_escolhida ?? 0,
+    prazoApos: sim.novo_prazo ?? 0,
+    adm, fr, valorCategoria, encargos,
+    embutidoValor, lanceProprioValor, lancePct: lancePct || 0,
+    nContemplacao: n,
+    investido,
+    creditoLiberado,
+    valorVenda,
+    lucro,
+    roi,
+    rentabMes,
+    pctCDI,
+  };
 }
 
 /* ========================= Página ======================== */
@@ -181,15 +283,10 @@ export default function Propostas() {
   );
   useEffect(() => setPage(1), [rows.length]);
 
-  // privacidade: mostrar/ocultar resultados
-  const [showResults, setShowResults] = useState(true);
-
-  // dados do usuário (vendedor) -> public.user
-  const [seller, setSeller] = useState<{
-    nome: string;
-    phone: string;
-    avatar_url?: string | null;
-  }>({ nome: "Consultor Consulmax", phone: "" });
+  // dados do usuário (vendedor)
+  const [seller, setSeller] = useState<{ nome: string; phone: string; avatar_url?: string | null; }>(
+    { nome: "Consultor Consulmax", phone: "" }
+  );
 
   useEffect(() => {
     (async () => {
@@ -211,41 +308,21 @@ export default function Propostas() {
 
   // logo p/ PDF
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
-  useEffect(() => {
-    fetchAsDataURL(LOGO_URL).then(setLogoDataUrl);
-  }, []);
-
-  // item selecionado para prévia
-  const [preview, setPreview] = useState<SimRow | null>(null);
+  useEffect(() => { fetchAsDataURL(LOGO_URL).then(setLogoDataUrl); }, []);
 
   async function load() {
     setLoading(true);
     let query = supabase
       .from("sim_simulations")
-      .select(
-        [
-          "code",
-          "created_at",
-          "lead_nome",
-          "lead_telefone",
-          "segmento",
-          "grupo",
-          "credito",
-          "prazo_venda",
-          "parcela_contemplacao",
-          "novo_credito",
-          "parcela_escolhida",
-          "novo_prazo",
-          "parcela_ate_1_ou_2",
-          "parcela_demais",
-          "lance_proprio_valor",
-          "adm_tax_pct",
-          "fr_tax_pct",
-          "lance_ofertado_pct",
-          // novo campo que o simulador gravará
-          "antecip_parcelas"
-        ].join(",")
-      )
+      .select([
+        "code","created_at","lead_nome","lead_telefone","segmento","grupo",
+        "credito","prazo_venda","parcela_contemplacao",
+        "novo_credito","parcela_escolhida","novo_prazo",
+        "parcela_ate_1_ou_2","parcela_demais",
+        "lance_proprio_valor","adm_tax_pct","fr_tax_pct","lance_ofertado_pct",
+        // NOVO campo para capturar automático
+        "antecip_parcelas",
+      ].join(","))
       .order("created_at", { ascending: false })
       .limit(300);
 
@@ -258,97 +335,14 @@ export default function Propostas() {
 
     const { data, error } = await query;
     setLoading(false);
-    if (error) {
-      alert("Erro ao carregar simulações: " + error.message);
-      return;
-    }
+    if (error) { alert("Erro ao carregar simulações: " + error.message); return; }
     setRows((data || []) as SimRow[]);
   }
-  useEffect(() => {
-    load();
-  }, []);
-  useEffect(() => {
-    const t = setTimeout(() => load(), 350);
-    return () => clearTimeout(t);
-  }, [q, dateFrom, dateTo]);
+  useEffect(() => { load(); }, []);
+  useEffect(() => { const t = setTimeout(() => load(), 350); return () => clearTimeout(t); }, [q, dateFrom, dateTo]);
 
-  /* ---------- Textos de ação ---------- */
-  function copyOportunidadeText(r: SimRow) {
-    const segNorm = normalizeSegment(r.segmento);
-    const emoji = emojiBySegment(r.segmento);
-
-    const text = `🚨OPORTUNIDADE 🚨
-
-🔥 PROPOSTA EMBRACON🔥
-
-Proposta ${segNorm}
-
-${emoji} Crédito: ${brMoney(r.novo_credito)}
-💰 ${labelParcelaInicial(r)}: ${brMoney(r.parcela_ate_1_ou_2)} (Em até 3x no cartão)
-📆 + ${r.novo_prazo ?? 0}x de ${brMoney(r.parcela_escolhida)}
-💵 Lance Próprio: ${brMoney(r.lance_proprio_valor)}
-📢 Grupo: ${r.grupo || "—"}
-
-🚨 POUCAS VAGAS DISPONÍVEIS🚨
-Assembleia 15/10
-
-📲 Garanta sua vaga agora!
-${formatPhoneBR(seller.phone) || "-"}
-
-Vantagens
-✅ Primeira parcela em até 3x no cartão
-✅ Parcelas acessíveis
-✅ Alta taxa de contemplação`;
-
-    navigator.clipboard
-      .writeText(text)
-      .then(() => alert("Oportunidade copiada!"))
-      .catch(() => alert("Não foi possível copiar."));
-  }
-  function copyResumoText(r: SimRow) {
-    const segNorm = normalizeSegment(r.segmento);
-    const text = `Resumo da Proposta — ${segNorm}
-
-Crédito contratado: ${brMoney(r.credito)}
-${labelParcelaInicial(r)} (até contemplação): ${brMoney(r.parcela_ate_1_ou_2)}
-Demais até a contemplação: ${brMoney(r.parcela_demais)}
-— Após a contemplação —
-Crédito líquido: ${brMoney(r.novo_credito)}
-Parcela escolhida: ${brMoney(r.parcela_escolhida)}
-Prazo restante: ${r.novo_prazo ?? 0} meses
-Lance próprio: ${brMoney(r.lance_proprio_valor)}
-Grupo: ${r.grupo || "—"}`;
-
-    navigator.clipboard
-      .writeText(text)
-      .then(() => alert("Resumo copiado!"))
-      .catch(() => alert("Não foi possível copiar."));
-  }
-  async function handleDelete(code: number) {
-    if (!confirm(`Excluir a simulação #${code}?`)) return;
-    const { error } = await supabase.from("sim_simulations").delete().eq("code", code);
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-      return;
-    }
-    setRows((prev) => prev.filter((x) => x.code !== code));
-    if (preview?.code === code) setPreview(null);
-  }
-
-  /* ---------- Parâmetros (apenas indicadores/finanças) ---------- */
-  type Params = {
-    selic_anual: number;
-    cdi_anual: number;
-    ipca12m: number;
-    igpm12m: number;
-    incc12m: number;
-    inpc12m: number;
-
-    fin_veic_mensal: number; // a.m.
-    fin_imob_anual: number;  // a.a. (composto -> mês)
-
-    reforco_pct: number;     // "Ganho na Venda (%)"
-  };
+  /* ---------- Parâmetros (sem antecip_iniciais_qtd) ---------- */
+  type Params = EngineParams;
   const DEFAULT_PARAMS: Params = {
     selic_anual: 0.15,
     cdi_anual: 0.149,
@@ -361,464 +355,488 @@ Grupo: ${r.grupo || "—"}`;
     reforco_pct: 0.05,
   };
   const [params, setParams] = useState<Params>(() => {
-    try {
-      const raw = localStorage.getItem("proposalParamsV3");
-      if (raw) return { ...DEFAULT_PARAMS, ...JSON.parse(raw) };
-    } catch {}
+    try { const raw = localStorage.getItem("proposalParamsV4"); if (raw) return { ...DEFAULT_PARAMS, ...JSON.parse(raw) }; } catch {}
     return DEFAULT_PARAMS;
   });
   const [paramOpen, setParamOpen] = useState(false);
+  const cdiMensal = useMemo(() => annualToMonthlyCompound(params.cdi_anual), [params.cdi_anual]);
+  const ipcaMensal = useMemo(() => (params.ipca12m || 0) / 12, [params.ipca12m]);
+  const igpmMensal = useMemo(() => (params.igpm12m || 0) / 12, [params.igpm12m]);
+  const inccMensal = useMemo(() => (params.incc12m || 0) / 12, [params.incc12m]);
+  const inpcMensal = useMemo(() => (params.inpc12m || 0) / 12, [params.inpc12m]);
   function saveParams(p: Params) {
     setParams(p);
-    try {
-      localStorage.setItem("proposalParamsV3", JSON.stringify(p));
-    } catch {}
+    try { localStorage.setItem("proposalParamsV4", JSON.stringify(p)); } catch {}
     setParamOpen(false);
   }
 
-  const cdiMensal = useMemo(() => annualToMonthlyCompound(params.cdi_anual), [params.cdi_anual]);
-  const ipcaMensal = useMemo(() => (params.ipca12m || 0) / 12, [params.ipca12m]);
+  /* ---------- Modelo / Prévia ---------- */
+  const [model, setModel] = useState<ModelKey>("direcionada");
+  const [active, setActive] = useState<SimRow | null>(null);
+  useEffect(() => { setActive(pagedRows[0] ?? null); }, [pagedRows]);
 
-  /* ========================= PDF infra ========================= */
+  // Resultado: Ocultar/Exibir
+  const [resultsOpen, setResultsOpen] = useState(true);
+
+  // ===== Builder (DnD) =====
+  type BlockId = "header" | "specs" | "parcelas" | "lance" | "projecao" | "graficos" | "obs";
+  const DEFAULT_LAYOUT: Record<ModelKey, BlockId[]> = {
+    direcionada: ["header","specs","parcelas","lance","graficos","obs","projecao"],
+    venda_contemplada: ["header","specs","parcelas","projecao","graficos","lance","obs"],
+    alav_fin: ["header","specs","graficos","obs"],
+    alav_patr: ["header","specs","graficos","obs"],
+    previdencia: ["header","specs","graficos","obs"],
+    credito_correcao: ["header","specs","graficos","obs"],
+    extrato: ["header","specs","obs"],
+  };
+  const [layout, setLayout] = useState<BlockId[]>(() => DEFAULT_LAYOUT[model]);
+  useEffect(() => { setLayout(DEFAULT_LAYOUT[model]); }, [model]);
+  const persistLayout = (arr: BlockId[]) => {
+    try {
+      const raw = localStorage.getItem("proposalLayoutsV2");
+      const parsed = raw ? JSON.parse(raw) as Record<ModelKey, BlockId[]> : {} as Record<ModelKey, BlockId[]>;
+      parsed[model] = arr;
+      localStorage.setItem("proposalLayoutsV2", JSON.stringify(parsed));
+    } catch {}
+  };
+  function SortableItem({ id, children }: { id: BlockId; children: React.ReactNode }) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+    const style: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.8 : 1,
+    };
+    return (
+      <div ref={setNodeRef} style={style} className="relative">
+        <div className="absolute -left-3 -top-3 text-muted-foreground/70 cursor-grab">
+          <span {...attributes} {...listeners}><GripVertical className="h-4 w-4" /></span>
+        </div>
+        {children}
+      </div>
+    );
+  }
+  const onDragEnd = (event: any) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = layout.indexOf(active.id);
+    const newIndex = layout.indexOf(over.id);
+    const arr = arrayMove(layout, oldIndex, newIndex);
+    setLayout(arr); persistLayout(arr);
+  };
+
+  /* ---------- Ações UI ---------- */
+  function copyOportunidadeText(r: SimRow) {
+    const segNorm = normalizeSegment(r.segmento);
+    const emoji = emojiBySegment(r.segmento);
+    const text = `🚨OPORTUNIDADE 🚨
+
+🔥 PROPOSTA EMBRACON🔥
+
+Proposta ${segNorm}
+
+${emoji} Crédito: ${brMoney(r.novo_credito)}
+💰 Parcela 1: ${brMoney(r.parcela_ate_1_ou_2)} (Em até 3x no cartão)
+📆 + ${r.novo_prazo ?? 0}x de ${brMoney(r.parcela_escolhida)}
+💵 Lance Próprio: ${brMoney(r.lance_proprio_valor)}
+📢 Grupo: ${r.grupo || "—"}
+
+🚨 POUCAS VAGAS DISPONÍVEIS🚨
+
+Assembleia 15/10
+
+📲 Garanta sua vaga agora!
+${formatPhoneBR(seller.phone) || "-"}
+
+Vantagens
+✅ Primeira parcela em até 3x no cartão
+✅ Parcelas acessíveis
+✅ Alta taxa de contemplação`;
+    navigator.clipboard.writeText(text).then(() => alert("Oportunidade copiada!"))
+      .catch(() => alert("Não foi possível copiar."));
+  }
+  function copyResumoText(r: SimRow) {
+    const segNorm = normalizeSegment(r.segmento);
+    const { labelParcelaInicial } = proposalEngine(r, params);
+    const text = `Resumo da Proposta — ${segNorm}
+
+Crédito contratado: ${brMoney(r.credito)}
+${labelParcelaInicial} (até contemplação): ${brMoney(r.parcela_ate_1_ou_2)}
+Demais até a contemplação: ${brMoney(r.parcela_demais)}
+— Após a contemplação —
+Crédito líquido: ${brMoney(r.novo_credito)}
+Parcela escolhida: ${brMoney(r.parcela_escolhida)}
+Prazo restante: ${r.novo_prazo ?? 0} meses
+Lance próprio: ${brMoney(r.lance_proprio_valor)}
+Grupo: ${r.grupo || "—"}`;
+    navigator.clipboard.writeText(text).then(() => alert("Resumo copiado!"))
+      .catch(() => alert("Não foi possível copiar."));
+  }
+  async function handleDelete(code: number) {
+    if (!confirm(`Excluir a simulação #${code}?`)) return;
+    const { error } = await supabase.from("sim_simulations").delete().eq("code", code);
+    if (error) { alert("Erro ao excluir: " + error.message); return; }
+    setRows((prev) => prev.filter((x) => x.code !== code));
+  }
+
+  /* ======================= PDF infra ======================= */
   const headerBand = (doc: jsPDF, title: string) => {
     const w = doc.internal.pageSize.getWidth();
-    doc.setFillColor(brand.header);
-    doc.rect(0, 0, w, 140, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(26);
-    doc.setTextColor("#FFFFFF");
-    doc.text(title, 40, 90);
+    doc.setFillColor(brand.header); doc.rect(0, 0, w, 140, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(26);
+    doc.setTextColor("#FFFFFF"); doc.text(title, 40, 90);
   };
   const addWatermark = (doc: jsPDF) => {
     if (!logoDataUrl) return;
     const w = doc.internal.pageSize.getWidth();
     const h = doc.internal.pageSize.getHeight();
     const props = (doc as any).getImageProperties(logoDataUrl);
-    const maxW = w * 0.6;
-    const maxH = h * 0.35;
+    const maxW = w * 0.6, maxH = h * 0.35;
     const ratio = Math.min(maxW / props.width, maxH / props.height);
-    const iw = props.width * ratio;
-    const ih = props.height * ratio;
-    const x = (w - iw) / 2;
-    const y = (h - ih) / 2;
+    const iw = props.width * ratio, ih = props.height * ratio;
+    const x = (w - iw) / 2, y = (h - ih) / 2;
     const hasG = (doc as any).GState && (doc as any).setGState;
     if (hasG) {
       const gLow = new (doc as any).GState({ opacity: 0.07 });
-      (doc as any).setGState(gLow);
-      doc.addImage(logoDataUrl, "PNG", x, y, iw, ih);
-      const gFull = new (doc as any).GState({ opacity: 1 });
-      (doc as any).setGState(gFull);
-    } else {
-      doc.addImage(logoDataUrl, "PNG", x, y, iw, ih);
-    }
+      (doc as any).setGState(gLow); doc.addImage(logoDataUrl, "PNG", x, y, iw, ih);
+      const gFull = new (doc as any).GState({ opacity: 1 }); (doc as any).setGState(gFull);
+    } else { doc.addImage(logoDataUrl, "PNG", x, y, iw, ih); }
   };
   const addFooter = (doc: jsPDF) => {
     const w = doc.internal.pageSize.getWidth();
     const h = doc.internal.pageSize.getHeight();
-    const margin = 40;
-    const areaH = 80;
-    const yTop = h - areaH - 30;
-
-    doc.setDrawColor(220, 220, 220);
-    doc.setLineWidth(1);
-    doc.line(margin, yTop, w - margin, yTop);
-
+    const margin = 40, areaH = 80, yTop = h - areaH - 30;
+    doc.setDrawColor(220, 220, 220); doc.setLineWidth(1); doc.line(margin, yTop, w - margin, yTop);
     if (logoDataUrl) {
       const props = (doc as any).getImageProperties(logoDataUrl);
-      const maxW = 120;
-      const maxH = 34;
-      const ratio = Math.min(maxW / props.width, maxH / props.height);
-      const lw = props.width * ratio;
-      const lh = props.height * ratio;
-      const ly = yTop + (areaH - lh) / 2;
-      doc.addImage(logoDataUrl, "PNG", margin, ly, lw, lh);
+      const ratio = Math.min(120 / props.width, 34 / props.height);
+      const lw = props.width * ratio, lh = props.height * ratio;
+      const ly = yTop + (areaH - lh) / 2; doc.addImage(logoDataUrl, "PNG", margin, ly, lw, lh);
     }
-
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(90, 90, 90);
-    doc.setFontSize(10);
+    doc.setFont("helvetica","normal"); doc.setTextColor(90,90,90); doc.setFontSize(10);
     const lines = [
       "Consulmax Consórcios e Investimentos • CNPJ: 57.942.043/0001-03",
       "Av. Menezes Filho, 3174, Casa Preta, Ji-Paraná/RO • Cel/Whats: (69) 9 9302-9380",
       "consulmaxconsorcios.com.br",
       `Consultor responsável: ${seller.nome}`,
     ];
-    let y = yTop + 20;
-    lines.forEach((t) => {
-      doc.text(t, w - margin, y, { align: "right" as any });
-      y += 14;
-    });
+    let y = yTop + 20; lines.forEach((t) => { doc.text(t, w - margin, y, { align: "right" as any }); y += 14; });
   };
   const sellerCard = (doc: jsPDF) => {
     const w = doc.internal.pageSize.getWidth();
     const cardW = Math.min(520, w - 80);
-    const x = (w - cardW) / 2;
-    const y = 150; // abaixo da barra de título
-    const h = 118;
-
-    // sombra leve
-    doc.setDrawColor(240);
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(x, y, cardW, h, 14, 14, "F");
-
-    // avatar (placeholder)
-    const pad = 18;
-    let xCursor = x + pad;
-    const yMid = y + h / 2;
-
-    if (seller.avatar_url) {
-      doc.setFillColor(245);
-      doc.circle(xCursor + 34, yMid, 34, "F");
-      xCursor += 80;
-    }
-
+    const x = (w - cardW) / 2, y = 150, h = 118;
+    doc.setDrawColor(240); doc.setFillColor(255, 255, 255); doc.roundedRect(x, y, cardW, h, 14, 14, "F");
+    const pad = 18; let xCursor = x + pad; const yMid = y + h / 2;
+    if (seller.avatar_url) { doc.setFillColor(245); doc.circle(xCursor + 34, yMid, 34, "F"); xCursor += 80; }
     if (logoDataUrl) {
       const props = (doc as any).getImageProperties(logoDataUrl);
       const ratio = Math.min(80 / props.width, 40 / props.height);
-      const lw = props.width * ratio;
-      const lh = props.height * ratio;
-      doc.addImage(logoDataUrl, "PNG", xCursor, y + pad + 2, lw, lh);
-      xCursor += lw + 14;
+      const lw = props.width * ratio, lh = props.height * ratio;
+      doc.addImage(logoDataUrl, "PNG", xCursor, y + pad + 2, lw, lh); xCursor += lw + 14;
     }
-
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(0);
-    doc.setFontSize(14);
+    doc.setFont("helvetica","bold"); doc.setTextColor(0); doc.setFontSize(14);
     doc.text(seller.nome || "Consultor Consulmax", xCursor, y + pad + 16);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(11);
-    doc.setTextColor(80);
+    doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(80);
     const whats = formatPhoneBR(seller.phone) || "-";
     doc.text(`Whats: ${whats}`, xCursor, y + pad + 36);
     doc.text(`Consulmax • Consultoria Especializada`, xCursor, y + pad + 56);
   };
 
-  function firstName(full?: string | null) {
-    const s = (full || "").trim();
-    if (!s) return "Cliente";
-    return s.split(/\s+/)[0];
+  /* ---------------- PDF (completo e simplificado) --------------- */
+  function pdfSimplificado(sim: SimRow, title: string) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const out = proposalEngine(sim, params);
+    doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.text(title, 40, 60);
+    doc.setFont("helvetica","normal"); doc.setFontSize(12);
+
+    (doc as any).autoTable({
+      startY: 90,
+      head: [["Campo", "Valor"]],
+      body: [
+        ["Crédito", brMoney(out.credito)],
+        ["Prazo", `${out.prazo || 0} meses`],
+        ["Segmento", out.segmento],
+        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
+        ["Demais até contemplação", brMoney(out.parcelaDemaisValor)],
+        ["Parcela após o lance", brMoney(out.parcelaAposValor)],
+        ["Prazo após o lance", out.prazoApos ? `${out.prazoApos} meses` : "—"],
+        ["Lance Embutido", brMoney(out.embutidoValor)],
+        ["Lance Próprio", brMoney(out.lanceProprioValor)],
+        ["Crédito Liberado", brMoney(out.creditoLiberado)],
+        ["Valor da Venda", brMoney(out.valorVenda)],
+        ["Investido até contemplação", brMoney(out.investido)],
+        ["Lucro Líquido", brMoney(out.lucro)],
+        ["ROI", formatPercentFraction(out.roi)],
+        ["Rentab/mês", formatPercentFraction(out.rentabMes)],
+        ["% do CDI (mês)", `${(out.pctCDI * 100).toFixed(0)}%`],
+      ],
+      styles: { font: "helvetica", fontSize: 10, halign: "left" },
+      theme: "grid",
+      margin: { left: 40, right: 40 },
+    });
+
+    doc.save(`${title.replace(/\s+/g,'_')}_${sim.code}.pdf`);
   }
 
-  const labelParcelaInicial = (sim: SimRow) => {
-    const n = Number(sim.antecip_parcelas ?? 1);
-    if (!Number.isFinite(n) || n <= 1) return "Parcela 1";
-    if (n === 2) return "Parcelas 1 e 2";
-    return `Parcelas 1 a ${n}`;
-  };
-
-  /* ==================== PDF: Direcionada ==================== */
   function gerarPDFDirecionada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-    // Capa
-    headerBand(doc, "Proposta Direcionada");
-    sellerCard(doc);
-    addWatermark(doc);
-    addFooter(doc);
-
-    // Página de conteúdo
-    doc.addPage();
-    headerBand(doc, "Proposta Direcionada");
-    addWatermark(doc);
-
-    const pageW = doc.internal.pageSize.getWidth();
+    const out = proposalEngine(sim, params);
+    headerBand(doc, "Proposta Direcionada"); sellerCard(doc); addWatermark(doc); addFooter(doc);
+    doc.addPage(); headerBand(doc, "Proposta Direcionada"); addWatermark(doc);
     const marginX = 40;
 
-    // Intro
-    const nome = firstName(sim.lead_nome);
-    const introY = 180;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(0, 0, 0);
-    doc.text(`Plano estratégico e personalizado para ${nome}`, marginX, introY);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(12);
-    const frase =
-      "Ideal para quem busca crédito alto com inteligência financeira, seja para compra do bem, ampliação patrimonial ou alavancagem de investimentos.";
-    doc.text(frase, marginX, introY + 18, { maxWidth: pageW - marginX * 2 });
-
-    // Especificações (usa apenas as taxas gravadas)
-    const C = sim.credito ?? 0;
-    const adm = sim.adm_tax_pct;
-    const fr = sim.fr_tax_pct;
-    const hasAF = typeof adm === "number" && typeof fr === "number";
-    const valorCategoria = hasAF ? C * (1 + (adm as number) + (fr as number)) : null;
-    const totalEncargos = hasAF ? C * ((adm as number) + (fr as number)) : null;
-    const prazoApos = sim.novo_prazo ?? 0;
-    const taxaTotalMensalizada =
-      hasAF && prazoApos > 0 ? (((adm as number) + (fr as number)) / prazoApos) : null;
-
     (doc as any).autoTable({
-      startY: 240,
-      head: [["Especificações da Proposta", ""]],
+      startY: 180,
+      head: [["Especificações", ""]],
       body: [
-        ["Crédito Total", brMoney(C)],
-        ["Prazo após o lance", prazoApos ? `${prazoApos} meses` : "—"],
-        ["Taxa de adm (total)", typeof adm === "number" ? formatPercentFraction(adm) : "—"],
-        ["Fundo Reserva", typeof fr === "number" ? formatPercentFraction(fr) : "—"],
-        ["Total de Encargos", totalEncargos !== null ? brMoney(totalEncargos) : "—"],
-        ["Taxa total mensalizada", taxaTotalMensalizada !== null ? formatPercentFraction(taxaTotalMensalizada) : "—"],
+        ["Crédito", brMoney(out.credito)],
+        ["Prazo", out.prazo ? `${out.prazo} meses` : "—"],
+        ["Taxa de adm (total)", typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—"],
+        ["Fundo Reserva", typeof out.fr === "number" ? formatPercentFraction(out.fr) : "—"],
+        ["Valor de Categoria", out.valorCategoria !== null ? brMoney(out.valorCategoria) : "—"],
+        ["Encargos (R$)", out.encargos !== null ? brMoney(out.encargos) : "—"],
       ],
-      styles: { font: "helvetica", fontSize: 10, halign: "left" },
-      headStyles: { fillColor: brand.primary, textColor: "#FFFFFF" },
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
 
-    // Simulação de Parcelas (até a contemplação)
-    const y1 = (doc as any).lastAutoTable?.finalY ?? 310;
     (doc as any).autoTable({
-      startY: y1 + 18,
-      head: [["Simulação de Parcelas", "Valor", "Observações"]],
+      startY: (doc as any).lastAutoTable.finalY + 16,
+      head: [["Parcelas até contemplação", "Valor", "Obs."]],
       body: [
-        [labelParcelaInicial(sim), brMoney(sim.parcela_ate_1_ou_2), "1ª parcela em até 3x no cartão"],
-        ["Demais", brMoney(sim.parcela_demais), "Até a contemplação"],
+        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor), "1ª parcela em até 3x no cartão"],
+        ["Demais", brMoney(out.parcelaDemaisValor), "Até a contemplação"],
       ],
-      styles: { font: "helvetica", fontSize: 10, halign: "left" },
-      headStyles: { fillColor: brand.accent, textColor: "#FFFFFF" },
+      headStyles: { fillColor: brand.accent, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
 
-    // Estratégia / Custo final consórcio
-    const y2 = (doc as any).lastAutoTable?.finalY ?? y1 + 18;
-    const embutidoValor = Math.max(0, (sim.credito ?? 0) - (sim.novo_credito ?? 0));
-    const lanceProprioValor = sim.lance_proprio_valor ?? 0;
-    const lanceOfertadoPct =
-      sim.lance_ofertado_pct ?? (C > 0 ? (embutidoValor + lanceProprioValor) / C : 0);
-    const lanceOfertadoValor =
-      (C * (lanceOfertadoPct || 0)) || (embutidoValor + lanceProprioValor);
-    const lancePagoValor = Math.max(0, lanceOfertadoValor - embutidoValor);
-    const custoFinalCons = hasAF && valorCategoria !== null ? (valorCategoria - embutidoValor) : null;
-
     (doc as any).autoTable({
-      startY: y2 + 18,
-      head: [["Estratégia do Consórcio", "Valor"]],
+      startY: (doc as any).lastAutoTable.finalY + 16,
+      head: [["Estratégia", "Valor"]],
       body: [
-        ["Lance Pago (recursos próprios)", brMoney(lancePagoValor)],
-        ["Lance Embutido", brMoney(embutidoValor)],
-        ["Parcela após o lance", brMoney(sim.parcela_escolhida)],
-        ["Prazo após o lance", sim.novo_prazo ? `${sim.novo_prazo} meses` : "—"],
-        ["Crédito Recebido", brMoney(sim.novo_credito)],
-        ["Custo Final (Consórcio)", custoFinalCons !== null ? brMoney(custoFinalCons) : "—"],
+        ["Lance Embutido", brMoney(out.embutidoValor)],
+        ["Lance Próprio (pago)", brMoney(out.lanceProprioValor)],
+        ["Parcela após o lance", brMoney(out.parcelaAposValor)],
+        ["Prazo após o lance", out.prazoApos ? `${out.prazoApos} meses` : "—"],
+        ["Crédito Liberado", brMoney(out.creditoLiberado)],
       ],
-      styles: { font: "helvetica", fontSize: 10, halign: "left" },
-      headStyles: { fillColor: brand.primary, textColor: "#FFFFFF" },
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
 
-    // Resumo
-    const y3 = (doc as any).lastAutoTable?.finalY ?? y2 + 18;
-    (doc as any).autoTable({
-      startY: y3 + 18,
-      head: [["RESUMO", "Valor"]],
-      body: [
-        ["Crédito", brMoney(C)],
-        [labelParcelaInicial(sim), brMoney(sim.parcela_ate_1_ou_2)],
-        ["Demais", `${brMoney(sim.parcela_demais)} (até a contemplação)`],
-        [
-          "Taxa de adm (total)",
-          typeof adm === "number" ? `${formatPercentFraction(adm)} (${brMoney((adm as number) * C)})` : "—",
-        ],
-        [
-          "Fundo de Reserva",
-          typeof fr === "number" ? `${formatPercentFraction(fr)} (${brMoney((fr as number) * C)})` : "—",
-        ],
-        ["Valor de Categoria", valorCategoria !== null ? brMoney(valorCategoria) : "—"],
-        ["Custo Final (Consórcio)", custoFinalCons !== null ? brMoney(custoFinalCons) : "—"],
-        ["Lance Sugerido", brMoney(lanceOfertadoValor)],
-        ["Crédito sem embutido", brMoney(C)],
-        ["Crédito com embutido", brMoney(sim.novo_credito)],
-      ],
-      styles: { font: "helvetica", fontSize: 10, halign: "left" },
-      headStyles: { fillColor: brand.primary, textColor: "#FFFFFF" },
-      alternateRowStyles: { fillColor: brand.grayRow },
-      theme: "grid",
-      margin: { left: marginX, right: marginX },
-    });
-
-    const yEnd = (doc as any).lastAutoTable?.finalY ?? y3;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.setTextColor(80, 80, 80);
-    const disclaimer =
-      "Atenção: A presente proposta refere-se a uma simulação, NÃO sendo configurada como promessa de contemplação, podendo a mesma ocorrer antes ou após o prazo previsto.";
-    doc.text(disclaimer, marginX, yEnd + 18, { maxWidth: pageW - marginX * 2 });
-
+    const yEnd = (doc as any).lastAutoTable.finalY + 18;
+    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(80,80,80);
+    doc.text(
+      "Atenção: Simulação não é garantia de contemplação; esta pode ocorrer antes ou depois do prazo previsto.",
+      marginX, yEnd, { maxWidth: doc.internal.pageSize.getWidth() - marginX*2 }
+    );
     addFooter(doc);
     doc.save(`Proposta_Direcionada_${sim.code}.pdf`);
   }
 
-  /* ============== PDF: Venda Contemplada ============== */
   function gerarPDFVendaContemplada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const pageW = doc.internal.pageSize.getWidth();
+    const out = proposalEngine(sim, params);
+    headerBand(doc, "Venda Contemplada"); sellerCard(doc); addWatermark(doc); addFooter(doc);
+    doc.addPage(); headerBand(doc, "Venda Contemplada"); addWatermark(doc);
     const marginX = 40;
 
-    // Capa
-    headerBand(doc, "Venda Contemplada");
-    sellerCard(doc);
-    addWatermark(doc);
-    addFooter(doc);
-
-    // Página 2 — Proposta + Projeção
-    doc.addPage();
-    headerBand(doc, "Venda Contemplada");
-    addWatermark(doc);
-
-    // Texto topo
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(12);
-    doc.setTextColor(0, 0, 0);
-    const fraseTopo =
-      "Ideal para investidores que desejam maximizar ganhos em cotas contempladas, unindo segurança, liquidez e procura consistente.";
-    doc.text(fraseTopo, marginX, 170, { maxWidth: pageW - marginX * 2 });
-
-    // ===== Proposta de Contratação =====
-    const C = sim.credito ?? 0;
-    const seg = normalizeSegment(sim.segmento);
-    const labelInicial = labelParcelaInicial(sim);
-    const prazoVenda = sim.prazo_venda ?? 0;
-    const lancePct = sim.lance_ofertado_pct ?? 0;
-    const embutidoValor = Math.max(0, (sim.credito ?? 0) - (sim.novo_credito ?? 0));
-    const lanceProprioValor = sim.lance_proprio_valor ?? 0;
-
     (doc as any).autoTable({
-      startY: 190,
+      startY: 180,
       head: [["Proposta de Contratação", ""]],
       body: [
-        ["Crédito contratado", brMoney(C)],
-        ["Segmento", seg],
-        [labelInicial, brMoney(sim.parcela_ate_1_ou_2)],
-        ["Demais parcelas até a contemplação", brMoney(sim.parcela_demais)],
-        ["Prazo", prazoVenda ? `${prazoVenda} meses` : "—"],
-        [
-          "Lance",
-          `${formatPercentFraction(lancePct)} | ${brMoney(C * (lancePct || 0))}  |  Lance Embutido: ${formatPercentFraction(embutidoValor / C || 0)} | ${brMoney(embutidoValor)}  |  Lance Próprio: ${brMoney(lanceProprioValor)}`,
-        ],
-        ["Mês da Contemplação", sim.parcela_contemplacao ? `${sim.parcela_contemplacao}º` : "—"],
-        [
-          "Total Investido (R$)",
-          (() => {
-            const n = sim.parcela_contemplacao ?? 0;
-            const p1 = sim.parcela_ate_1_ou_2 ?? 0;
-            const pd = sim.parcela_demais ?? 0;
-            const investido = n > 0 ? (p1 + pd * Math.max(0, n - 1) + (sim.lance_proprio_valor ?? 0)) : 0;
-            return brMoney(investido);
-          })(),
-        ],
+        ["Crédito contratado", brMoney(out.credito)],
+        ["Segmento", out.segmento],
+        [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
+        ["Demais parcelas até a contemplação", brMoney(out.parcelaDemaisValor)],
+        ["Prazo", out.prazo ? `${out.prazo} meses` : "—"],
+        ["Mês da Contemplação", out.nContemplacao ? `${out.nContemplacao}º` : "—"],
+        ["Lance Embutido", brMoney(out.embutidoValor)],
+        ["Lance Próprio", brMoney(out.lanceProprioValor)],
       ],
-      styles: { font: "helvetica", fontSize: 10, halign: "left" },
-      headStyles: { fillColor: brand.primary, textColor: "#FFFFFF" },
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
-
-    // ===== Projeção na Venda =====
-    const yProj = (doc as any).lastAutoTable?.finalY ?? 280;
-
-    const creditoLiberado = Math.max(0, (sim.novo_credito ?? 0));
-    const ganhoPct = params.reforco_pct;
-    const valorVenda = creditoLiberado * (1 + ganhoPct);
-    const n = sim.parcela_contemplacao ?? 0;
-    const investido =
-      n > 0
-        ? ((sim.parcela_ate_1_ou_2 ?? 0) + (sim.parcela_demais ?? 0) * Math.max(0, n - 1) + (sim.lance_proprio_valor ?? 0))
-        : 0;
-    const lucroLiquido = Math.max(0, valorVenda - investido);
-    const roi = investido > 0 ? (lucroLiquido / investido) : 0;
 
     (doc as any).autoTable({
-      startY: yProj + 18,
+      startY: (doc as any).lastAutoTable.finalY + 16,
       head: [["Projeção na Venda", ""]],
       body: [
-        ["Crédito Liberado", brMoney(creditoLiberado)],
-        ["Ganho na Venda (%)", formatPercentFraction(ganhoPct)],
-        ["Valor da Venda", brMoney(valorVenda)],
-        ["Total Investido", brMoney(investido)],
-        ["Lucro Líquido", brMoney(lucroLiquido)],
-        ["ROI", formatPercentFraction(roi)],
+        ["Crédito Liberado", brMoney(out.creditoLiberado)],
+        ["Ganho na Venda (%)", formatPercentFraction(params.reforco_pct)],
+        ["Valor da Venda", brMoney(out.valorVenda)],
+        ["Total Investido", brMoney(out.investido)],
+        ["Lucro Líquido", brMoney(out.lucro)],
+        ["ROI", formatPercentFraction(out.roi)],
+        ["Rentab/mês", formatPercentFraction(out.rentabMes)],
+        ["% do CDI (mês)", `${(out.pctCDI * 100).toFixed(0)}%`],
       ],
-      styles: { font: "helvetica", fontSize: 10, halign: "left" },
-      headStyles: { fillColor: brand.accent, textColor: "#FFFFFF" },
+      headStyles: { fillColor: brand.accent, textColor: "#fff" },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: marginX, right: marginX },
     });
 
-    // Disclaimer
-    const yEnd = (doc as any).lastAutoTable?.finalY ?? yProj + 18;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.setTextColor(80, 80, 80);
-    const disclaimer =
-      "Atenção: A presente proposta refere-se a uma simulação, NÃO sendo configurada como promessa de contemplação, podendo a mesma ocorrer antes ou após o prazo previsto.";
-    doc.text(disclaimer, marginX, yEnd + 18, { maxWidth: pageW - marginX * 2 });
-
+    const yEnd = (doc as any).lastAutoTable.finalY + 18;
+    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(80,80,80);
+    doc.text(
+      "Atenção: Simulação não é garantia de contemplação; esta pode ocorrer antes ou depois do prazo previsto.",
+      marginX, yEnd, { maxWidth: doc.internal.pageSize.getWidth() - marginX*2 }
+    );
     addFooter(doc);
     doc.save(`Venda_Contemplada_${sim.code}.pdf`);
   }
 
-  /* ========================= UI ========================= */
+  /* ================== PREVIEW (BLOCOS) ================== */
+  const PreviewBlock = ({ sim }: { sim: SimRow }) => {
+    if (!sim) return null;
+    const out = proposalEngine(sim, params);
 
-  // --- Drag & Drop helpers ---
-  const onDragStartRow = (row: SimRow) => (ev: React.DragEvent<HTMLTableRowElement>) => {
-    ev.dataTransfer.setData("text/plain", String(row.code));
-    ev.dataTransfer.effectAllowed = "copyMove";
-  };
-  const onDropPreview = async (ev: React.DragEvent<HTMLDivElement>) => {
-    ev.preventDefault();
-    const codeStr = ev.dataTransfer.getData("text/plain");
-    const code = Number(codeStr);
-    if (!code) return;
-    const found = rows.find((r) => r.code === code);
-    if (found) setPreview(found);
-  };
-  const allowDrop = (ev: React.DragEvent<HTMLDivElement>) => ev.preventDefault();
+    // dados para gráficos
+    const barData = [
+      { name: "Venda", valor: out.valorVenda },
+      { name: "Investido", valor: out.investido },
+      { name: "Lucro", valor: out.lucro },
+    ];
+    const roiPercent = Math.min(100, Math.max(0, out.roi * 100));
+    const roiData = [{ name: "ROI", value: roiPercent }, { name: "Resto", value: Math.max(0, 100 - roiPercent) }];
 
-  // --- Gráfico inline estilo "liquid glass" ---
-  function GlassBar({
-    label,
-    value,
-  }: { label: string; value: string }) {
-    return (
-      <div
-        className="rounded-2xl p-3 mb-3"
-        style={{
-          background: brand.glassBg,
-          border: `1px solid ${brand.glassBorder}`,
-          boxShadow: "0 6px 24px rgba(16,24,40,0.15), inset 0 1px 0 rgba(255,255,255,0.3)",
-          backdropFilter: "blur(10px)",
-        }}
-      >
-        <div className="text-xs text-white/80">{label}</div>
-        <div className="text-lg font-semibold text-white">{value}</div>
+    const BlockCard = ({ children, title }: { children: React.ReactNode; title: string }) => (
+      <div className="rounded-2xl p-4 border relative overflow-hidden transition-all"
+           style={{ background: "linear-gradient(120deg, rgba(255,255,255,0.55), rgba(255,255,255,0.35))", backdropFilter: "blur(8px)", boxShadow: "0 8px 24px rgba(0,0,0,0.08)" }}>
+        <div className="absolute inset-0 pointer-events-none"
+             style={{ background: "radial-gradient(1200px 400px at -10% -10%, rgba(161,28,39,0.12), transparent 60%), radial-gradient(900px 300px at 110% 110%, rgba(30,41,63,0.12), transparent 60%)" }} />
+        <div className="relative">
+          <div className="text-sm font-semibold text-[#1E293F] mb-3">{title}</div>
+          {children}
+        </div>
       </div>
     );
-  }
 
-  // cálculo para a prévia + gráfico
-  const previewCalc = useMemo(() => {
-    if (!preview) return null;
-    const C = preview.credito ?? 0;
-    const creditoLiberado = Math.max(0, (preview.novo_credito ?? 0));
-    const valorVenda = creditoLiberado * (1 + params.reforco_pct);
-    const n = preview.parcela_contemplacao ?? 0;
-    const investido =
-      n > 0
-        ? ((preview.parcela_ate_1_ou_2 ?? 0) + (preview.parcela_demais ?? 0) * Math.max(0, n - 1) + (preview.lance_proprio_valor ?? 0))
-        : 0;
-    const lucro = Math.max(0, valorVenda - investido);
-    const roi = investido > 0 ? (lucro / investido) : 0;
-    return { C, creditoLiberado, valorVenda, investido, lucro, roi };
-  }, [preview, params.reforco_pct]);
+    const blocks: Record<"header"|"specs"|"parcelas"|"lance"|"projecao"|"graficos"|"obs", JSX.Element> = {
+      header: (
+        <BlockCard title="Cabeçalho">
+          <div className="flex items-center gap-4">
+            <img src={LOGO_URL} alt="logo" className="h-10" />
+            <div>
+              <div className="font-semibold text-lg">{normalizeSegment(sim.segmento)} • Proposta #{sim.code}</div>
+              <div className="text-sm text-muted-foreground">{seller.nome} • Whats {formatPhoneBR(seller.phone) || "-"}</div>
+            </div>
+          </div>
+        </BlockCard>
+      ),
+      specs: (
+        <BlockCard title="Especificações">
+          <div className="grid md:grid-cols-3 gap-3 text-sm">
+            <div><div className="text-muted-foreground">Crédito</div><div className="font-semibold">{brMoney(out.credito)}</div></div>
+            <div><div className="text-muted-foreground">Prazo</div><div className="font-semibold">{out.prazo || 0} meses</div></div>
+            <div><div className="text-muted-foreground">Segmento</div><div className="font-semibold">{out.segmento}</div></div>
+            <div><div className="text-muted-foreground">Taxa Adm</div><div className="font-semibold">{typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—"}</div></div>
+            <div><div className="text-muted-foreground">Fundo Reserva</div><div className="font-semibold">{typeof out.fr === "number" ? formatPercentFraction(out.fr) : "—"}</div></div>
+            <div><div className="text-muted-foreground">Valor de Categoria</div><div className="font-semibold">{out.valorCategoria !== null ? brMoney(out.valorCategoria) : "—"}</div></div>
+          </div>
+        </BlockCard>
+      ),
+      parcelas: (
+        <BlockCard title="Parcelas até a contemplação">
+          <div className="grid md:grid-cols-2 gap-3 text-sm">
+            <div><div className="text-muted-foreground">{out.labelParcelaInicial}</div><div className="font-semibold">{brMoney(out.parcelaInicialValor)}</div></div>
+            <div><div className="text-muted-foreground">Demais</div><div className="font-semibold">{brMoney(out.parcelaDemaisValor)}</div></div>
+          </div>
+        </BlockCard>
+      ),
+      lance: (
+        <BlockCard title="Estratégia de Lance">
+          <div className="grid md:grid-cols-3 gap-3 text-sm">
+            <div><div className="text-muted-foreground">Lance Embutido</div><div className="font-semibold">{brMoney(out.embutidoValor)}</div></div>
+            <div><div className="text-muted-foreground">Lance Próprio</div><div className="font-semibold">{brMoney(out.lanceProprioValor)}</div></div>
+            <div><div className="text-muted-foreground">Parcela após o lance</div><div className="font-semibold">{brMoney(out.parcelaAposValor)} ({out.prazoApos || 0}x)</div></div>
+          </div>
+        </BlockCard>
+      ),
+      projecao: (
+        <BlockCard title="Projeção na Venda">
+          <div className="grid md:grid-cols-3 gap-3 text-sm">
+            <div><div className="text-muted-foreground">Crédito Liberado</div><div className="font-semibold">{brMoney(out.creditoLiberado)}</div></div>
+            <div><div className="text-muted-foreground">Valor da Venda</div><div className="font-semibold">{brMoney(out.valorVenda)}</div></div>
+            <div><div className="text-muted-foreground">Investido</div><div className="font-semibold">{brMoney(out.investido)}</div></div>
+            <div><div className="text-muted-foreground">Lucro</div><div className="font-semibold">{brMoney(out.lucro)}</div></div>
+            <div><div className="text-muted-foreground">ROI</div><div className="font-semibold">{formatPercentFraction(out.roi)}</div></div>
+            <div><div className="text-muted-foreground">% do CDI (mês)</div><div className="font-semibold">{(out.pctCDI * 100).toFixed(0)}%</div></div>
+          </div>
+        </BlockCard>
+      ),
+      graficos: (
+        <BlockCard title="Demonstração Gráfica">
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* Barras com labels sempre visíveis */}
+            <div className="h-60 rounded-xl p-3 border"
+                 style={{ background: "linear-gradient(120deg, rgba(224,206,140,0.12), rgba(30,41,63,0.08))", backdropFilter: "blur(6px)"}}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barData}>
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip formatter={(v: number) => brMoney(v)} />
+                  <Legend />
+                  <Bar dataKey="valor" radius={[8,8,0,0]}>
+                    <LabelList dataKey="valor" position="top" formatter={(v: number) => brMoney(v)} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
 
+            {/* Radial ROI com título interno (subi ~0,5cm) */}
+            <div className="h-60 rounded-xl p-3 border relative"
+                 style={{ background: "linear-gradient(120deg, rgba(161,28,39,0.10), rgba(245,245,245,0.6))", backdropFilter: "blur(6px)"}}>
+              <div className="absolute left-1/2 -translate-x-1/2 top-2 text-xs font-semibold text-[#1E293F]">
+                ROI aproximado
+              </div>
+              <ResponsiveContainer width="100%" height="100%">
+                <RadialBarChart innerRadius="60%" outerRadius="100%" data={roiData}>
+                  <RadialBar dataKey="value" clockWise />
+                </RadialBarChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-sm font-semibold">{roiPercent.toFixed(0)}%</div>
+              </div>
+            </div>
+          </div>
+        </BlockCard>
+      ),
+      obs: (
+        <BlockCard title="Observações">
+          <div className="text-xs text-muted-foreground">
+            Atenção: Simulação não é garantia de contemplação; esta pode ocorrer antes ou depois do prazo previsto.
+          </div>
+        </BlockCard>
+      ),
+    };
+
+    return (
+      <DndContext collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={layout} strategy={verticalListSortingStrategy}>
+          <div className="space-y-4">
+            {layout.map((id) => (
+              <SortableItem key={id} id={id as any}>
+                {blocks[id]}
+              </SortableItem>
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+    );
+  };
+
+  /* ========================= UI ========================= */
   return (
     <div className="p-6 space-y-6">
       {/* Filtros */}
@@ -832,69 +850,32 @@ Grupo: ${r.grupo || "—"}`;
         <CardContent className="grid gap-3 md:grid-cols-4">
           <div className="md:col-span-2">
             <Label>Buscar por nome ou telefone</Label>
-            <Input
-              placeholder="ex.: Maria / 11 9..."
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
+            <Input placeholder="ex.: Maria / 11 9..." value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <div>
-            <Label className="flex items-center gap-2">
-              <Calendar className="h-4 w-4" /> De
-            </Label>
-            <Input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
+            <Label className="flex items-center gap-2"><Calendar className="h-4 w-4" /> De</Label>
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </div>
           <div>
-            <Label className="flex items-center gap-2">
-              <Calendar className="h-4 w-4" /> Até
-            </Label>
-            <Input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-            />
+            <Label className="flex items-center gap-2"><Calendar className="h-4 w-4" /> Até</Label>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
         </CardContent>
       </Card>
 
-      {/* Layout: Results + Preview */}
-      <div className={`grid gap-6 ${showResults ? "lg:grid-cols-2" : "grid-cols-1"}`}>
-        {/* Resultados (paginado) */}
-        {showResults && (
-          <Card>
+      {/* Grid responsivo com colunas variáveis conforme "Resultados" aberto/fechado */}
+      <div className={`grid gap-6 transition-all ${resultsOpen ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
+        {/* Resultados (paginado) - com Ocultar/Expandir */}
+        {resultsOpen && (
+          <Card className="transition-all">
             <CardHeader className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
-                Resultados{" "}
-                <span className="text-muted-foreground text-sm">({rows.length})</span>
+                Resultados <span className="text-muted-foreground text-sm">({rows.length})</span>
               </CardTitle>
-
-              <div className="flex items-center gap-2">
-                {/* Chip: PDF Simplificado (placeholder visual — ícone ao lado) */}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="rounded-2xl h-9 px-3"
-                  title="PDF Simplificado"
-                >
-                  <Download className="h-4 w-4 mr-1" />
-                  PDF Simplificado
-                </Button>
-
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="rounded-2xl h-9 px-3"
-                  onClick={() => setShowResults(false)}
-                  title="Ocultar resultados"
-                >
-                  <EyeOff className="h-4 w-4 mr-1" />
-                  Ocultar
-                </Button>
-              </div>
+              <Button variant="secondary" size="sm" className="rounded-xl"
+                onClick={() => setResultsOpen(false)}>
+                <EyeOff className="h-4 w-4 mr-1" /> Ocultar
+              </Button>
             </CardHeader>
 
             <CardContent className="space-y-3">
@@ -918,22 +899,17 @@ Grupo: ${r.grupo || "—"}`;
                   </thead>
                   <tbody>
                     {pagedRows.map((r) => (
-                      <tr
-                        key={r.code}
-                        className="border-t hover:bg-muted/30 cursor-grab"
-                        draggable
-                        onDragStart={onDragStartRow(r)}
-                        onDoubleClick={() => setPreview(r)}
-                      >
+                      <tr key={r.code}
+                          className={`border-t ${active?.code === r.code ? "bg-muted/30" : ""}`}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("text/plain", String(r.code));
+                          }}>
                         <td className="p-2">{r.code}</td>
-                        <td className="p-2 whitespace-nowrap">
-                          {new Date(r.created_at).toLocaleString("pt-BR")}
-                        </td>
+                        <td className="p-2 whitespace-nowrap">{new Date(r.created_at).toLocaleString("pt-BR")}</td>
                         <td className="p-2">
                           <div className="font-medium">{r.lead_nome || "—"}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {r.lead_telefone || "—"}
-                          </div>
+                          <div className="text-xs text-muted-foreground">{r.lead_telefone || "—"}</div>
                         </td>
                         <td className="p-2">{normalizeSegment(r.segmento)}</td>
                         <td className="p-2">{brMoney(r.novo_credito)}</td>
@@ -941,20 +917,14 @@ Grupo: ${r.grupo || "—"}`;
                         <td className="p-2">{r.novo_prazo ?? 0}x</td>
 
                         <td className="p-2 text-center">
-                          <button
-                            className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                            title="Copiar Oportunidade"
-                            onClick={() => copyOportunidadeText(r)}
-                          >
+                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                                  title="Copiar Oportunidade" onClick={() => copyOportunidadeText(r)}>
                             <Megaphone className="h-4 w-4" />
                           </button>
                         </td>
                         <td className="p-2 text-center">
-                          <button
-                            className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                            title="Copiar Resumo"
-                            onClick={() => copyResumoText(r)}
-                          >
+                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                                  title="Copiar Resumo" onClick={() => copyResumoText(r)}>
                             <ClipboardCopy className="h-4 w-4" />
                           </button>
                         </td>
@@ -962,24 +932,23 @@ Grupo: ${r.grupo || "—"}`;
                           <div className="relative">
                             <details className="group inline-block">
                               <summary className="list-none">
-                                <Button variant="secondary" size="sm" className="rounded-xl h-8">
-                                  Gerar PDF <ChevronDown className="h-4 w-4 ml-1" />
-                                </Button>
+                                <Button variant="secondary" size="sm" className="rounded-xl h-8">Gerar PDF <ChevronDown className="h-4 w-4 ml-1" /></Button>
                               </summary>
                               <div className="absolute right-0 mt-2 w-64 bg-white border rounded-xl shadow z-10 p-1">
                                 {[
-                                  { k: "direcionada", label: "Direcionada" },
-                                  { k: "venda_contemplada", label: "Venda Contemplada" },
+                                  { k: "direcionada", label: "Direcionada (completo)" },
+                                  { k: "venda_contemplada", label: "Venda Contemplada (completo)" },
+                                  { k: "simp_direcionada", label: "Direcionada (simplificado)" },
+                                  { k: "simp_venda", label: "Venda Contemplada (simplificado)" },
                                 ].map((opt) => (
-                                  <button
-                                    key={opt.k}
-                                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
+                                  <button key={opt.k} className="w-full text-left px-3 py-2 rounded-lg hover:bg-muted/70"
                                     onClick={(e) => {
                                       e.preventDefault();
                                       if (opt.k === "direcionada") gerarPDFDirecionada(r);
-                                      else gerarPDFVendaContemplada(r);
-                                    }}
-                                  >
+                                      else if (opt.k === "venda_contemplada") gerarPDFVendaContemplada(r);
+                                      else if (opt.k === "simp_direcionada") pdfSimplificado(r, "Proposta Direcionada");
+                                      else if (opt.k === "simp_venda") pdfSimplificado(r, "Venda Contemplada");
+                                    }}>
                                     {opt.label}
                                   </button>
                                 ))}
@@ -987,43 +956,41 @@ Grupo: ${r.grupo || "—"}`;
                             </details>
                           </div>
                         </td>
-
                         <td className="p-2 text-center">
-                          <button
-                            className="h-9 w-9 rounded-full bg-muted inline-flex items-center justify-center text-foreground/70"
-                            title="Pré-visualizar"
-                            onClick={() => setPreview(r)}
-                          >
+                          <button className="h-9 w-9 rounded-full bg-muted inline-flex items-center justify-center text-foreground/70"
+                                  title="Pré-visualizar" onClick={() => setActive(r)}>
                             <ExternalLink className="h-4 w-4" />
                           </button>
                         </td>
                         <td className="p-2 text-center">
-                          <button
-                            className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
-                            title="Excluir"
-                            onClick={() => handleDelete(r.code)}
-                          >
+                          <button className="h-9 w-9 rounded-full bg-[#A11C27] text-white inline-flex items-center justify-center hover:opacity-95"
+                                  title="Excluir" onClick={() => handleDelete(r.code)}>
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </td>
                       </tr>
                     ))}
                     {pagedRows.length === 0 && (
-                      <tr>
-                        <td colSpan={12} className="p-6 text-center text-muted-foreground">
-                          {loading ? "Carregando..." : "Nenhum resultado para os filtros."}
-                        </td>
-                      </tr>
+                      <tr><td colSpan={12} className="p-6 text-center text-muted-foreground">
+                        {loading ? "Carregando..." : "Nenhum resultado para os filtros."}
+                      </td></tr>
                     )}
                   </tbody>
                 </table>
               </div>
 
-              {/* Zona de drop sob a tabela */}
+              {/* Dropzone abaixo dos 10 itens da página */}
               <div
-                onDragOver={allowDrop}
-                onDrop={onDropPreview}
-                className="rounded-xl border border-dashed p-3 text-sm text-muted-foreground text-center"
+                className="mt-3 rounded-2xl border-2 border-dashed p-4 text-sm text-center"
+                style={{ borderColor: "#B5A573", background: "linear-gradient(120deg, rgba(245,245,245,0.7), rgba(224,206,140,0.12))" }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const codeStr = e.dataTransfer.getData("text/plain");
+                  const code = Number(codeStr);
+                  const found = rows.find((x) => x.code === code);
+                  if (found) setActive(found);
+                }}
               >
                 Arraste aqui a proposta da lista acima para demonstrar no gráfico ao lado
               </div>
@@ -1032,361 +999,203 @@ Grupo: ${r.grupo || "—"}`;
               <div className="flex items-center justify-between text-sm">
                 <div>
                   {rows.length > 0 && (
-                    <>
-                      Mostrando{" "}
-                      <strong>
-                        {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)}
-                      </strong>{" "}
-                      de <strong>{rows.length}</strong>
-                    </>
+                    <>Mostrando <strong>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)}</strong> de <strong>{rows.length}</strong></>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    className="h-9 rounded-xl px-3"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  >
-                    Anterior
-                  </Button>
-                  <span>
-                    Página {page} de {totalPages}
-                  </span>
-                  <Button
-                    variant="secondary"
-                    className="h-9 rounded-xl px-3"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                  >
-                    Próxima
-                  </Button>
+                  <Button variant="secondary" className="h-9 rounded-xl px-3"
+                          onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Anterior</Button>
+                  <span>Página {page} de {totalPages}</span>
+                  <Button variant="secondary" className="h-9 rounded-xl px-3"
+                          onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Próxima</Button>
                 </div>
               </div>
             </CardContent>
           </Card>
         )}
 
-        {/* Prévia da Proposta */}
-        <Card
-          onDragOver={allowDrop}
-          onDrop={onDropPreview}
-          className={`${showResults ? "" : "lg:col-span-2"} transition-all`}
-          style={{
-            transition: "all .25s ease",
-          }}
-        >
-          <CardHeader className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">Prévia da Proposta</CardTitle>
+        {/* Botão para reabrir Resultados quando oculto */}
+        {!resultsOpen && (
+          <div className="flex items-center">
+            <Button variant="secondary" size="sm" className="rounded-xl mb-2"
+              onClick={() => setResultsOpen(true)}>
+              <Eye className="h-4 w-4 mr-1" /> Mostrar Resultados
+            </Button>
+          </div>
+        )}
 
-            <div className="flex items-center gap-2">
-              {/* Chip Parâmetros com ícone ao lado */}
-              <Button
-                variant="secondary"
-                className="rounded-2xl h-9 px-3"
+        {/* Prévia da Proposta (expande quando resultados ocultos) */}
+        <Card className={`transition-all ${resultsOpen ? "" : "lg:col-span-1"}`}>
+          <CardHeader className="flex items-center justify-between gap-4">
+            <CardTitle className="flex items-center gap-3">
+              <span>Prévia da Proposta</span>
+              {/* Chip Parâmetros (ícone ao lado) */}
+              <button
                 onClick={() => setParamOpen(true)}
+                className="inline-flex items-center gap-2 text-xs border rounded-full px-3 py-1 hover:bg-muted"
                 title="Parâmetros"
               >
-                <SlidersHorizontal className="h-4 w-4 mr-1" />
+                <SlidersHorizontal className="h-4 w-4" />
                 Parâmetros
-              </Button>
+              </button>
+            </CardTitle>
 
-              {/* Mostrar resultados (quando ocultos) */}
-              {!showResults && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="rounded-2xl h-9 px-3"
-                  onClick={() => setShowResults(true)}
-                  title="Mostrar resultados"
-                >
-                  <Eye className="h-4 w-4 mr-1" />
-                  Mostrar
-                </Button>
+            <div className="ml-auto flex items-center gap-2">
+              <select value={model} onChange={(e) => setModel(e.target.value as any)} className="h-9 rounded-2xl border px-3">
+                <option value="direcionada">Direcionada</option>
+                <option value="venda_contemplada">Venda Contemplada</option>
+                <option value="alav_fin">Alav. Financeira</option>
+                <option value="alav_patr">Alav. Patrimonial</option>
+                <option value="previdencia">Previdência</option>
+                <option value="credito_correcao">Crédito c/ Correção</option>
+                <option value="extrato">Extrato</option>
+              </select>
+
+              {active && (
+                <>
+                  <Button variant="secondary" className="rounded-2xl h-9 px-3"
+                    onClick={() => pdfSimplificado(active, model === "venda_contemplada" ? "Venda Contemplada" : "Proposta Direcionada")}>
+                    <Download className="h-4 w-4 mr-1" /> PDF Simplificado
+                  </Button>
+                  <Button className="rounded-2xl h-9 px-3"
+                    onClick={() => {
+                      if (model === "venda_contemplada") gerarPDFVendaContemplada(active);
+                      else gerarPDFDirecionada(active);
+                    }}>
+                    <FileText className="h-4 w-4 mr-1" /> PDF Completo
+                  </Button>
+                </>
               )}
             </div>
           </CardHeader>
-
           <CardContent>
-            {!preview && (
-              <div className="h-[220px] rounded-xl border border-dashed grid place-items-center text-sm text-muted-foreground">
-                Selecione um item da lista ou arraste uma proposta para cá.
-              </div>
-            )}
-
-            {preview && (
+            {!active ? (
               <div
-                className="rounded-2xl p-5"
-                style={{
-                  background:
-                    "linear-gradient(135deg, rgba(30,41,63,0.9), rgba(161,28,39,0.85))",
-                  color: "white",
+                className="p-8 text-center text-muted-foreground rounded-xl border-2 border-dashed"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  const code = Number(e.dataTransfer.getData("text/plain"));
+                  const found = rows.find((x) => x.code === code);
+                  if (found) setActive(found);
                 }}
               >
-                <div className="flex items-center justify-between gap-3 mb-4">
-                  <div className="text-lg font-semibold flex items-center gap-2">
-                    {emojiBySegment(preview.segmento)} {normalizeSegment(preview.segmento)}
-                    <span className="text-white/70 text-sm">• #{preview.code}</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="rounded-xl"
-                      onClick={() => gerarPDFDirecionada(preview)}
-                      title="Gerar PDF (Direcionada)"
-                    >
-                      <FileText className="h-4 w-4 mr-1" />
-                      Direcionada
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="rounded-xl"
-                      onClick={() => gerarPDFVendaContemplada(preview)}
-                      title="Gerar PDF (Venda Contemplada)"
-                    >
-                      <FileText className="h-4 w-4 mr-1" />
-                      Venda Contemplada
-                    </Button>
-                  </div>
-                </div>
-
-                {/* blocos “glass” com valores chave */}
-                <div className="grid md:grid-cols-3 gap-3 mb-4">
-                  <GlassBar label="Crédito (após lance)" value={brMoney(preview.novo_credito)} />
-                  <GlassBar label="Parcela (após lance)" value={brMoney(preview.parcela_escolhida)} />
-                  <GlassBar label="Prazo (após lance)" value={`${preview.novo_prazo ?? 0} meses`} />
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-5">
-                  {/* Tabela simples (texto) */}
-                  <div
-                    className="rounded-2xl p-4"
-                    style={{
-                      background: brand.glassBg,
-                      border: `1px solid ${brand.glassBorder}`,
-                      boxShadow: "0 6px 24px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.35)",
-                      backdropFilter: "blur(10px)",
-                    }}
-                  >
-                    <div className="font-semibold mb-3">Simulação de Parcelas (até contemplação)</div>
-                    <div className="text-sm space-y-1">
-                      <div className="flex justify-between">
-                        <span>{labelParcelaInicial(preview)}</span>
-                        <span>{brMoney(preview.parcela_ate_1_ou_2)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Demais</span>
-                        <span>{brMoney(preview.parcela_demais)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Prazo do pedido</span>
-                        <span>{preview.prazo_venda ?? 0} meses</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Gráfico SVG sempre com valores visíveis */}
-                  <div
-                    className="rounded-2xl p-4"
-                    style={{
-                      background: brand.glassBg,
-                      border: `1px solid ${brand.glassBorder}`,
-                      boxShadow: "0 6px 24px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.35)",
-                      backdropFilter: "blur(10px)",
-                    }}
-                  >
-                    <div className="font-semibold mb-1">Demonstração Gráfica</div>
-                    {previewCalc && (
-                      <div className="text-xs text-white/80 mb-2" style={{ transform: "translateY(-6px)" }}>
-                        ROI aproximado: <strong className="text-white">{formatPercentFraction(previewCalc.roi)}</strong>
-                      </div>
-                    )}
-                    <svg width="100%" height="180">
-                      {(() => {
-                        if (!previewCalc) return null;
-                        const W = 560; // canvas virtual
-                        const H = 160;
-                        const pad = 20;
-                        const venda = previewCalc.valorVenda;
-                        const invest = previewCalc.investido;
-                        const lucro = previewCalc.lucro;
-                        const max = Math.max(venda, invest + lucro, 1);
-
-                        const scale = (v: number) => (v / max) * (W - pad * 2);
-
-                        // Barra 1 (Venda)
-                        const y1 = 20;
-                        return (
-                          <>
-                            {/* Venda */}
-                            <rect x={pad} y={y1} rx="14" ry="14" width={scale(venda)} height="26" fill="#7a8593" />
-                            <text x={pad + 10} y={y1 + 18} fill="#fff" fontSize="12" fontWeight="700">
-                              {`Venda: ${brMoney(venda)}`}
-                            </text>
-
-                            {/* Investido + Lucro */}
-                            <rect x={pad} y={y1 + 50} rx="14" ry="14" width={scale(invest)} height="26" fill="#162843" />
-                            <text x={pad + 10} y={y1 + 68} fill="#fff" fontSize="12" fontWeight="700">
-                              {`Investido: ${brMoney(invest)}`}
-                            </text>
-
-                            <rect x={pad + scale(invest)} y={y1 + 50} rx="14" ry="14" width={scale(lucro)} height="26" fill="#A11C27" />
-                            <text x={pad + scale(invest) + 10} y={y1 + 68} fill="#fff" fontSize="12" fontWeight="700">
-                              {`Lucro: ${brMoney(lucro)}`}
-                            </text>
-                          </>
-                        );
-                      })()}
-                    </svg>
-                  </div>
-                </div>
+                Selecione um item da lista ou arraste uma proposta para cá.
               </div>
+            ) : (
+              <PreviewBlock sim={active} />
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* MODAL: Parâmetros */}
+      {/* MODAL: Parâmetros (sem qtd. de antecipação) */}
       {paramOpen && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-lg overflow-hidden">
+          <div className="bg-white rounded-2xl w-full max-w-4xl shadow-lg overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b">
-              <div className="font-semibold">Parâmetros das propostas</div>
+              <div className="font-semibold flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4" />
+                Parâmetros das propostas
+              </div>
               <button className="p-1 rounded hover:bg-muted" onClick={() => setParamOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="p-5 grid gap-5 md:grid-cols-2 text-sm">
+            <div className="p-5 grid gap-5 md:grid-cols-3 text-sm">
               <div>
                 <Label>Selic Anual</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.selic_anual)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, selic_anual: v }));
-                  }}
-                />
+                <Input defaultValue={formatPercentFraction(params.selic_anual)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, selic_anual: v }));
+                }} />
               </div>
 
               <div>
                 <Label>CDI Anual</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.cdi_anual)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, cdi_anual: v }));
-                  }}
-                />
+                <Input defaultValue={formatPercentFraction(params.cdi_anual)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, cdi_anual: v }));
+                }} />
                 <div className="text-xs text-muted-foreground mt-1">
                   CDI Mensal (composto): <strong>{formatPercentFraction(cdiMensal)}</strong>
                 </div>
               </div>
 
               <div>
-                <Label>IPCA 12 Meses</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.ipca12m)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, ipca12m: v }));
-                  }}
-                />
+                <Label>Ganho na Venda (%)</Label>
+                <Input defaultValue={formatPercentFraction(params.reforco_pct)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, reforco_pct: v }));
+                }} />
+              </div>
+
+              {/* Inflação 12m */}
+              <div>
+                <Label>IPCA 12m</Label>
+                <Input defaultValue={formatPercentFraction(params.ipca12m)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, ipca12m: v }));
+                }} />
                 <div className="text-xs text-muted-foreground mt-1">
                   IPCA mês (média): <strong>{formatPercentFraction(ipcaMensal)}</strong>
                 </div>
               </div>
 
               <div>
-                <Label>IGP-M 12 Meses</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.igpm12m)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, igpm12m: v }));
-                  }}
-                />
+                <Label>IGP-M 12m</Label>
+                <Input defaultValue={formatPercentFraction(params.igpm12m)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, igpm12m: v }));
+                }} />
+                <div className="text-xs text-muted-foreground mt-1">
+                  IGP-M mês (média): <strong>{formatPercentFraction(igpmMensal)}</strong>
+                </div>
               </div>
 
               <div>
-                <Label>INCC 12 Meses</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.incc12m)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, incc12m: v }));
-                  }}
-                />
+                <Label>INCC 12m</Label>
+                <Input defaultValue={formatPercentFraction(params.incc12m)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, incc12m: v }));
+                }} />
+                <div className="text-xs text-muted-foreground mt-1">
+                  INCC mês (média): <strong>{formatPercentFraction(inccMensal)}</strong>
+                </div>
               </div>
 
               <div>
-                <Label>INPC 12 Meses</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.inpc12m)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, inpc12m: v }));
-                  }}
-                />
+                <Label>INPC 12m</Label>
+                <Input defaultValue={formatPercentFraction(params.inpc12m)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, inpc12m: v }));
+                }} />
+                <div className="text-xs text-muted-foreground mt-1">
+                  INPC mês (média): <strong>{formatPercentFraction(inpcMensal)}</strong>
+                </div>
               </div>
 
+              {/* Financiamentos */}
               <div>
                 <Label>Juros Financiamento — Veículos (ao mês)</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.fin_veic_mensal)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, fin_veic_mensal: v }));
-                  }}
-                />
+                <Input defaultValue={formatPercentFraction(params.fin_veic_mensal)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, fin_veic_mensal: v }));
+                }} />
               </div>
 
               <div>
-                <Label>Juros Financiamento — Imobiliário/Rural (ao ano)</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.fin_imob_anual)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, fin_imob_anual: v }));
-                  }}
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <Label>Ganho na Venda (%)</Label>
-                <Input
-                  defaultValue={formatPercentFraction(params.reforco_pct)}
-                  onBlur={(e) => {
-                    const v = parsePercentInput(e.target.value);
-                    e.currentTarget.value = formatPercentFraction(v);
-                    setParams((p) => ({ ...p, reforco_pct: v }));
-                  }}
-                />
+                <Label>Juros Financiamento — Imob./Rural (ao ano)</Label>
+                <Input defaultValue={formatPercentFraction(params.fin_imob_anual)} onBlur={(e) => {
+                  const v = parsePercentInput(e.target.value); e.currentTarget.value = formatPercentFraction(v);
+                  setParams((p) => ({ ...p, fin_imob_anual: v }));
+                }} />
               </div>
             </div>
 
             <div className="px-5 pb-5 flex items-center justify-end gap-2">
-              <Button
-                variant="secondary"
-                className="rounded-2xl"
-                onClick={() => setParamOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button className="rounded-2xl" onClick={() => saveParams(params)}>
-                Salvar
-              </Button>
+              <Button variant="secondary" className="rounded-2xl" onClick={() => setParamOpen(false)}>Cancelar</Button>
+              <Button className="rounded-2xl" onClick={() => saveParams(params)}>Salvar</Button>
             </div>
           </div>
         </div>

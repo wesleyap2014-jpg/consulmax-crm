@@ -24,8 +24,8 @@ import {
  *  =========================
  *  A RPC v2 usa auth_user_id nas FKs de opportunities (vendedor_id/owner_id).
  */
-const DEFAULT_VENDEDOR_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7cb0b";
-const DEFAULT_OWNER_AUTH_ID   = "524f9d55-48c0-4c56-9ab8-7e6115e7cb0b";
+const DEFAULT_VENDEDOR_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
+const DEFAULT_OWNER_AUTH_ID   = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
 
 /** WhatsApp oficial Consulmax (E.164) */
 const CONSULMAX_WA = "5569993917465";

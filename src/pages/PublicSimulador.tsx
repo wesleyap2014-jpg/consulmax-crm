@@ -20,9 +20,15 @@ import {
   Truck,
 } from "lucide-react";
 
-/** IDs padrão (Wesley/Owner Consulmax) */
-const DEFAULT_VENDEDOR_ID = "d85c317a-d4a8-40b4-afec-b5393028f0f3";
-const DEFAULT_OWNER_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
+/** =========================
+ *  IDs padrão (AUTH USER ID)
+ *  =========================
+ *  Atenção: a RPC v2 usa auth_user_id nas FKs de opportunities (vendedor_id/owner_id).
+ *  O padrão que você pediu é o do Wesley: 524f9d55-...-7e6115e7cb0b
+ */
+const DEFAULT_VENDEDOR_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7cb0b";
+const DEFAULT_OWNER_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7cb0b";
+
 /** WhatsApp oficial Consulmax (E.164) */
 const CONSULMAX_WA = "5569993917465";
 
@@ -53,80 +59,6 @@ function waLink(userPhoneDigits: string, text: string) {
   return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
 }
 
-/* ========= Lead & Opportunity ========= */
-/**
- * Busca por email/telefone e, se não existir, insere o Lead com owner_id (sem updates).
- * RLS: precisa existir a policy de INSERT em leads com origem = 'site_public_simulator'.
- */
-async function upsertLead({
-  nome,
-  email,
-  telefone,
-}: {
-  nome: string;
-  email: string;
-  telefone: string;
-}) {
-  let leadId: string | null = null;
-
-  if (email) {
-    const { data } = await supabase.from("leads").select("id").ilike("email", email).maybeSingle();
-    if (data?.id) leadId = data.id;
-  }
-  if (!leadId && telefone) {
-    const { data } = await supabase
-      .from("leads")
-      .select("id")
-      .eq("telefone", telefone.replace(/\D/g, ""))
-      .maybeSingle();
-    if (data?.id) leadId = data.id;
-  }
-
-  if (!leadId) {
-    const { data, error } = await supabase
-      .from("leads")
-      .insert({
-        nome,
-        email,
-        telefone: telefone.replace(/\D/g, ""),
-        origem: "site_public_simulator",
-        owner_id: DEFAULT_OWNER_ID, // NOT NULL no seu schema
-      })
-      .select("id")
-      .single();
-    if (error) throw error;
-    leadId = data.id;
-  }
-  return leadId;
-}
-
-/** Cria a oportunidade via RPC (SECURITY DEFINER) na tabela public.opportunities */
-async function createOpportunityNow({
-  leadId,
-  segmento,
-}: {
-  leadId: string;
-  segmento: string;
-}) {
-  const { data, error } = await supabase.rpc("public_create_opportunity", {
-    p_lead_id: leadId,
-    p_segmento: segmento,
-    p_vendedor_id: DEFAULT_VENDEDOR_ID,
-    p_owner_id: DEFAULT_OWNER_ID,
-  });
-  if (error) throw error;
-  return data as string;
-}
-
-/** Acrescenta nota via RPC (SECURITY DEFINER) em public.opportunities.observacao */
-async function safeAppendNote(opportunityId: string, note: string) {
-  const { error } = await supabase.rpc("public_append_op_note", {
-    p_op_id: opportunityId,
-    p_note: `[${ts()}] ${note}`,
-  });
-  if (error) throw error;
-}
-
 /* ========= Ícone Home com “+” (Imóvel Estendido) ========= */
 function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
   return (
@@ -138,38 +70,57 @@ function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
 }
 
 /* ========= UI: Segmentos ========= */
-const SEGMENTOS: Array<{ id: string; rotulo: string; Icon: React.ComponentType<any> }> = [
-  { id: "automovel", rotulo: "AUTOMÓVEIS", Icon: Car },
-  { id: "motocicleta", rotulo: "MOTOCICLETAS", Icon: Bike },
-  { id: "imovel", rotulo: "IMÓVEIS", Icon: Home },
-  { id: "servicos", rotulo: "SERVIÇOS", Icon: Wrench },
-  { id: "pesados", rotulo: "PESADOS", Icon: Truck },
-  { id: "imovel_estendido", rotulo: "IMÓVEL ESTENDIDO", Icon: HomeWithPlus },
+const SEGMENTOS: Array<{ id: string; rotulo: string; rotuloRPC: string; Icon: React.ComponentType<any> }> = [
+  { id: "automovel", rotulo: "AUTOMÓVEIS", rotuloRPC: "Automóvel", Icon: Car },
+  { id: "motocicleta", rotulo: "MOTOCICLETAS", rotuloRPC: "Motocicleta", Icon: Bike },
+  { id: "imovel", rotulo: "IMÓVEIS", rotuloRPC: "Imóvel", Icon: Home },
+  { id: "servicos", rotulo: "SERVIÇOS", rotuloRPC: "Serviços", Icon: Wrench },
+  { id: "pesados", rotulo: "PESADOS", rotuloRPC: "Pesados", Icon: Truck },
+  { id: "imovel_estendido", rotulo: "IMÓVEL ESTENDIDO", rotuloRPC: "Imóvel Estendido", Icon: HomeWithPlus },
 ];
 
-function SegmentCard({
-  active,
-  onClick,
-  children,
-  Icon,
+function segmentLabelFromId(id: string): string {
+  return SEGMENTOS.find((s) => s.id === id)?.rotuloRPC ?? id;
+}
+
+/* ========= RPCs ========= */
+/** Cria a oportunidade e (se lead_id = null) cria o lead internamente – via SECURITY DEFINER */
+async function createOpportunityV2({
+  nome,
+  email,
+  telefone,
+  segmentoRPC,
+  vendedorAuthId = DEFAULT_VENDEDOR_AUTH_ID,
+  ownerAuthId = DEFAULT_OWNER_AUTH_ID,
 }: {
-  active?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  Icon: React.ComponentType<any>;
+  nome: string;
+  email: string;
+  telefone: string;
+  segmentoRPC: string;
+  vendedorAuthId?: string;
+  ownerAuthId?: string;
 }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-2 rounded-xl border p-5 min-w-[130px] transition
-        ${active ? "border-[#A11C27] text-[#A11C27] bg-white shadow" : "border-[#A11C27] text-[#A11C27] bg-white/0 hover:bg-white"}`}
-      style={{ boxShadow: active ? "0 2px 10px rgba(161,28,39,0.12)" : undefined }}
-    >
-      <Icon className="w-10 h-10" />
-      <span className="text-xs font-semibold text-center">{children}</span>
-    </button>
-  );
+  const tel = telefone.replace(/\D/g, "");
+  const { data, error } = await supabase.rpc("public_create_opportunity_v2", {
+    p_lead_id: null,
+    p_nome: nome,
+    p_email: email,
+    p_telefone: tel,
+    p_segmento: segmentoRPC,
+    p_vendedor_auth_id: vendedorAuthId,
+    p_owner_auth_id: ownerAuthId,
+  });
+  if (error) throw error;
+  return data as string; // new_opportunity_id
+}
+
+/** Acrescenta nota via RPC (SECURITY DEFINER) em public.opportunities.observacao */
+async function safeAppendNote(opportunityId: string, note: string) {
+  const { error } = await supabase.rpc("public_append_op_note", {
+    p_op_id: opportunityId,
+    p_note: `[${ts()}] ${note}`,
+  });
+  if (error) throw error;
 }
 
 /* ========= Página ========= */
@@ -185,7 +136,6 @@ export default function PublicSimulador() {
   const [saving, setSaving] = useState(false);
 
   // IDs
-  const [leadId, setLeadId] = useState<string | null>(null);
   const [opId, setOpId] = useState<string | null>(null);
 
   // Etapa 2
@@ -208,22 +158,30 @@ export default function PublicSimulador() {
     telefone.replace(/\D/g, "").length >= 10 &&
     !!segmento;
 
-  /* ===== Pré-cadastro → cria Lead + cria Oportunidade (Novo) com segmento ===== */
+  /* ===== Pré-cadastro → cria Oportunidade (Novo) + Lead via RPC v2 ===== */
   async function handlePreCadastro() {
     try {
       setSaving(true);
-      const lid = await upsertLead({ nome: nome.trim(), email: email.trim(), telefone });
-      setLeadId(lid);
 
-      const newOpId = await createOpportunityNow({ leadId: lid, segmento });
+      const segmentoRPC = segmentLabelFromId(segmento);
+
+      const newOpId = await createOpportunityV2({
+        nome: nome.trim(),
+        email: email.trim(),
+        telefone,
+        segmentoRPC,
+        vendedorAuthId: DEFAULT_VENDEDOR_AUTH_ID,
+        ownerAuthId: DEFAULT_OWNER_AUTH_ID,
+      });
+
       setOpId(newOpId);
-      await safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmento}.`);
+      await safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`);
 
       setStep(2);
     } catch (e: any) {
       console.error(e);
       alert(
-        "Não foi possível concluir o pré-cadastro/criar a oportunidade.\nVerifique as policies e as RPCs no Supabase e tente novamente."
+        "Não foi possível concluir o pré-cadastro/criar a oportunidade.\nVerifique as policies/RPCs no Supabase e tente novamente."
       );
     } finally {
       setSaving(false);
@@ -256,7 +214,7 @@ export default function PublicSimulador() {
     setFinalMsg(
       "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
     );
-    // Atualização best-effort (pode ser bloqueada por RLS; a anotação via RPC sempre funciona)
+    // best-effort: se RLS bloquear, a anotação já garante o evento
     try {
       await supabase.from("opportunities").update({ estagio: "Contratar – solicitado" }).eq("id", opId);
     } catch {}
@@ -372,7 +330,8 @@ export default function PublicSimulador() {
                 Continuar para simulação
               </Button>
               <p className="text-xs text-[#1E293F]/60 leading-relaxed">
-                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são protegidos.
+                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são
+                protegidos.
               </p>
             </CardContent>
           </Card>
@@ -388,7 +347,10 @@ export default function PublicSimulador() {
               <div className="grid md:grid-cols-3 gap-4">
                 <div>
                   <Label>Segmento</Label>
-                  <Input readOnly value={SEGMENTOS.find((s) => s.id === segmento)?.rotulo || ""} />
+                  <Input
+                    readOnly
+                    value={SEGMENTOS.find((s) => s.id === segmento)?.rotulo || ""}
+                  />
                 </div>
                 <div>
                   <Label>Administradora</Label>
@@ -518,5 +480,31 @@ export default function PublicSimulador() {
         <footer className="text-center text-xs text-[#1E293F]/50 mt-8">Consulmax • Maximize as suas conquistas.</footer>
       </div>
     </div>
+  );
+}
+
+/* ====== Components locais ====== */
+function SegmentCard({
+  active,
+  onClick,
+  children,
+  Icon,
+}: {
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  Icon: React.ComponentType<any>;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-col items-center justify-center gap-2 rounded-xl border p-5 min-w-[130px] transition
+        ${active ? "border-[#A11C27] text-[#A11C27] bg-white shadow" : "border-[#A11C27] text-[#A11C27] bg-white/0 hover:bg-white"}`}
+      style={{ boxShadow: active ? "0 2px 10px rgba(161,28,39,0.12)" : undefined }}
+    >
+      <Icon className="w-10 h-10" />
+      <span className="text-xs font-semibold text-center">{children}</span>
+    </button>
   );
 }

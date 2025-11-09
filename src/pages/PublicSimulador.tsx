@@ -343,8 +343,6 @@ export default function PublicSimulador() {
 
   // Etapa 2
   const [parcelKind, setParcelKind] = useState<ParcelKind>("cheia");
-  const [admin, setAdmin] = useState<string>("Embracon");
-  const [mensagem, setMensagem] = useState<string>("");
 
   // slider de crédito por segmento
   const segCfg = SEGMENT_CFG[segmento];
@@ -394,7 +392,6 @@ export default function PublicSimulador() {
       setOpId(newOpId);
       safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`).catch(() => {});
       setStep(2);
-      // rolar para topo (útil em mobile)
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
       const msg = e?.message || e?.hint || e?.details || "Falha ao executar a RPC public_create_opportunity_v2.";
@@ -426,13 +423,10 @@ export default function PublicSimulador() {
       const resumo =
         `Escolha do cliente → Segmento: ${segmentLabelFromId(segmento)}; ` +
         `Crédito: ${BRL(credito)}; Parcelamento: ${parcelKind === "cheia" ? "Parcela Cheia" : "Parcela Reduzida 50%"}; ` +
-        `Opção: ${opt.id} | Prazo: ${opt.prazo}m | Adm: ${(opt.admPct * 100).toFixed(2)}% | FR: ${(opt.frPct * 100).toFixed(
-          2
-        )}% | Antecipação: ${(opt.antecipPct * 100).toFixed(2)}% em ${opt.antecipParcelas}x; ` +
+        `Opção: ${opt.id} | Prazo: ${opt.prazo}m; ` +
         (antecipParcelas > 0
           ? `Parc. 1–${antecipParcelas}: ${BRL(parcelaComAntecipacao)} | Demais: ${BRL(parcelaSemAntecipacao)}`
-          : `Parcela mensal: ${BRL(parcelaSemAntecipacao)}`) +
-        (mensagem ? ` | Obs: ${mensagem}` : "");
+          : `Parcela mensal: ${BRL(parcelaSemAntecipacao)}`);
 
       await safeAppendNote(opId, resumo);
 
@@ -468,8 +462,7 @@ export default function PublicSimulador() {
 Segmento: ${segRotulo}.
 Crédito: ${BRL(credito)}.
 Parcela: ${parcelKind === "cheia" ? "Cheia" : "Reduzida 50%"}.
-Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).
-Admin: ${admin}.`;
+Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
     window.open(waLink(onlyDigits(telefone), text), "_blank");
   }
 
@@ -486,8 +479,7 @@ Admin: ${admin}.`;
 Segmento: ${segRotulo}.
 Crédito: ${BRL(credito)}.
 Parcela: ${parcelKind === "cheia" ? "Cheia" : "Reduzida 50%"}.
-Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).
-Admin: ${admin}.`;
+Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
     window.open(waLink(onlyDigits(telefone), text), "_blank");
   }
 
@@ -517,12 +509,12 @@ Admin: ${admin}.`;
     setCredito(clampToStep(v, min, max, step));
   }
 
-  /* ===== Ações do CTA flutuante por etapa ===== */
+  /* ===== CTA flutuante por etapa ===== */
   function floatingCTALabel() {
     if (step === 1) return "Continuar";
     if (step === 2) return "Ver opções";
     return "Falar com Especialista";
-  }
+    }
   const floatingCTADisabled = step === 1 ? (!canContinueStep1 || saving) : false;
 
   function onFloatingCTA() {
@@ -592,25 +584,23 @@ Admin: ${admin}.`;
           </div>
         </div>
 
-        {/* Etapa 1 — card mais largo e chips em linha única */}
+        {/* Etapa 1 — chips centralizados */}
         {step === 1 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader className="pb-2">
               <CardTitle className="text-[#1E293F]">Comece pelo pré-cadastro</CardTitle>
             </CardHeader>
 
-            {/* Chips — linha única com rolagem horizontal (não perde cards) */}
+            {/* Chips — 1 linha centralizada */}
             <div className="px-6 pb-2">
               <Label className="mb-2 block">Bem desejado</Label>
-              <div className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 [-ms-overflow-style:none] [scrollbar-width:none]"
-                   style={{ scrollbarWidth: "none" }}>
+              <div
+                className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 justify-center [-ms-overflow-style:none] [scrollbar-width:none]"
+                style={{ scrollbarWidth: "none" }}
+              >
                 {SEGMENTOS.map(({ id, rotulo, Icon }) => (
                   <span key={id} className="inline-block shrink-0">
-                    <SegmentCard
-                      Icon={Icon}
-                      active={segmento === id}
-                      onClick={() => setSegmento(id)}
-                    >
+                    <SegmentCard Icon={Icon} active={segmento === id} onClick={() => setSegmento(id)}>
                       {rotulo}
                     </SegmentCard>
                   </span>
@@ -656,6 +646,7 @@ Admin: ${admin}.`;
                 </div>
               </div>
 
+              {/* Botão desktop (no mobile o CTA flutua) */}
               <Button
                 disabled={!canContinueStep1 || saving}
                 onClick={handlePreCadastro}
@@ -674,24 +665,23 @@ Admin: ${admin}.`;
           </Card>
         )}
 
-        {/* Etapa 2 — chips em linha única + container largo */}
+        {/* Etapa 2 — chips centralizados, sem "Administradora", sem "Comentário" e sem linha técnica */}
         {step === 2 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
               <CardTitle className="text-[#1E293F]">Personalize sua simulação</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4">
+              {/* Segmento chips centralizados */}
               <div>
                 <Label className="mb-2 block">Segmento</Label>
-                <div className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 [-ms-overflow-style:none] [scrollbar-width:none]"
-                     style={{ scrollbarWidth: "none" }}>
+                <div
+                  className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 justify-center [-ms-overflow-style:none] [scrollbar-width:none]"
+                  style={{ scrollbarWidth: "none" }}
+                >
                   {SEGMENTOS.map(({ id, rotulo, Icon }) => (
                     <span key={id} className="inline-block shrink-0">
-                      <SegmentCard
-                        Icon={Icon}
-                        active={segmento === id}
-                        onClick={() => setSegmento(id)}
-                      >
+                      <SegmentCard Icon={Icon} active={segmento === id} onClick={() => setSegmento(id)}>
                         {rotulo}
                       </SegmentCard>
                     </span>
@@ -699,31 +689,19 @@ Admin: ${admin}.`;
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-3 gap-4">
-                <div>
-                  <Label>Administradora</Label>
-                  <select
-                    value={admin}
-                    onChange={(e) => setAdmin(e.target.value)}
-                    className="w-full rounded-md border border-[#1E293F]/20 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#A11C27]/30"
-                  >
-                    <option value="Embracon">Embracon</option>
-                    <option value="Outras">Outras</option>
-                  </select>
+              {/* Tipo de parcela */}
+              <div>
+                <Label>Tipo de parcela</Label>
+                <div className="flex gap-2 mt-2 justify-center">
+                  <Chip active={parcelKind === "cheia"} onClick={() => setParcelKind("cheia")} label="Parcela Cheia" />
+                  <Chip active={parcelKind === "reduzida50"} onClick={() => setParcelKind("reduzida50")} label="Parcela Reduzida" />
                 </div>
-
-                <div className="md:col-span-2">
-                  <Label>Tipo de parcela</Label>
-                  <div className="flex gap-2 mt-2">
-                    <Chip active={parcelKind === "cheia"} onClick={() => setParcelKind("cheia")} label="Parcela Cheia" />
-                    <Chip active={parcelKind === "reduzida50"} onClick={() => setParcelKind("reduzida50")} label="Parcela Reduzida (50%)" />
-                  </div>
-                  <p className="text-xs text-[#1E293F]/60 mt-1">
-                    Na parcela reduzida (50%), o desconto aplica-se sobre o Fundo Comum até a contemplação; os encargos (Adm + FR) permanecem integrais.
-                  </p>
-                </div>
+                <p className="text-xs text-[#1E293F]/60 mt-1 text-center">
+                  Na Parcela Reduzida, o desconto aplica-se sobre o Fundo Comum até a contemplação; os encargos permanecem integrais.
+                </p>
               </div>
 
+              {/* Slider de crédito */}
               <div>
                 <div className="flex items-center justify-between">
                   <Label>Valor do crédito</Label>
@@ -744,18 +722,7 @@ Admin: ${admin}.`;
                 </div>
               </div>
 
-              <div>
-                <Label>Deixe um comentário (opcional)</Label>
-                <textarea
-                  value={mensagem}
-                  onChange={(e) => setMensagem(e.target.value)}
-                  rows={3}
-                  className="w-full rounded-md border border-[#1E293F]/20 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#A11C27]/30"
-                  placeholder="Ex.: Quero usar lance, posso antecipar parcelas, etc."
-                />
-              </div>
-
-              {/* Lista de opções calculadas */}
+              {/* Lista de opções calculadas — sem linha técnica */}
               <div ref={optionsRef} className="grid gap-3">
                 {opcoesFiltradas.map((opt) => {
                   const calc = calcularParcelas({
@@ -776,12 +743,6 @@ Admin: ${admin}.`;
                       <div className="space-y-1">
                         <div className="text-sm font-semibold text-[#1E293F]">
                           Opção {opt.id.toUpperCase()} • Prazo {opt.prazo} meses
-                        </div>
-                        <div className="text-xs text-[#1E293F]/70">
-                          Adm {(opt.admPct * 100).toFixed(2)}% • FR {(opt.frPct * 100).toFixed(2)}% • Antecipação{" "}
-                          {(opt.antecipPct * 100).toFixed(2)}% {opt.antecipParcelas > 0 ? `em ${opt.antecipParcelas}x` : "(não há)"}
-                          {opt.onlyReduction ? " • Só com redução" : opt.allowReduction ? " • Permite redução" : " • Sem redução"}
-                          {opt.visibleIfCreditMin ? ` • (Exibe a partir de ${BRL(opt.visibleIfCreditMin)})` : ""}
                         </div>
 
                         {opt.antecipParcelas > 0 ? (
@@ -814,15 +775,11 @@ Admin: ${admin}.`;
               <div className="flex flex-wrap gap-3">
                 <Button variant="outline" onClick={() => setStep(1)}>Voltar</Button>
               </div>
-
-              <p className="text-xs text-[#1E293F]/60">
-                As parcelas reduzidas (quando aplicável) são válidas até a contemplação; após, aplicam-se as regras do grupo.
-              </p>
             </CardContent>
           </Card>
         )}
 
-        {/* Etapa 3 — largo + ajuste CTA mobile */}
+        {/* Etapa 3 — mensagem nova + redes/links + "Nova Simulação" */}
         {step === 3 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
@@ -831,8 +788,8 @@ Admin: ${admin}.`;
             <CardContent className="grid gap-5">
               <div className="rounded-xl p-4 bg-white border border-[#1E293F]/10">
                 <p className="text-sm text-[#1E293F]/80">
-                  Sua simulação foi registrada. Um especialista pode te contatar para refinar a proposta ideal. Enquanto isso,
-                  escolha uma opção abaixo:
+                  Sua simulação foi registrada com sucesso. Em breve um dos nossos especialistas irá entrar em contato para te prestar todo o apoio.
+                  Enquanto isso, escolha uma opção abaixo:
                 </p>
               </div>
 
@@ -847,16 +804,55 @@ Admin: ${admin}.`;
                 </Button>
               </div>
 
+              {/* Links úteis / redes sociais */}
+              <div className="rounded-xl p-4 bg-white border border-[#1E293F]/10">
+                <h4 className="font-semibold text-[#1E293F] mb-2">Siga-nos nas redes sociais</h4>
+                <ul className="text-sm text-[#1E293F]/80 space-y-1">
+                  <li>
+                    Instagram:{" "}
+                    <a className="underline hover:no-underline" target="_blank" href="https://www.instagram.com/consulmax.consorcios/">
+                      @consulmax.consorcios
+                    </a>
+                  </li>
+                  <li>
+                    Facebook:{" "}
+                    <a className="underline hover:no-underline" target="_blank" href="https://www.facebook.com/profile.php?id=61583481749603">
+                      Consulmax Consórcios
+                    </a>
+                  </li>
+                  <li>
+                    Falar com o Suporte:{" "}
+                    <a className="underline hover:no-underline" target="_blank" href={waLink("69993917465", "Olá, preciso de suporte.")}>
+                      WhatsApp (69) 9 9391-7465
+                    </a>
+                  </li>
+                  <li>
+                    Quem Somos:{" "}
+                    <a className="underline hover:no-underline" target="_blank" href="https://consulmaxconsorcios.com.br/nossa-historia/">
+                      consorcios.com.br/nossa-historia
+                    </a>
+                  </li>
+                </ul>
+
+                <div className="mt-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setStep(2);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                  >
+                    Nova Simulação
+                  </Button>
+                </div>
+              </div>
+
               {finalMsg && (
                 <div className="flex items-start gap-2 rounded-xl p-4 bg-[#E0CE8C]/20 border border-[#E0CE8C]">
                   <ShieldCheck className="w-5 h-5 mt-0.5" />
                   <p className="text-sm text-[#1E293F]">{finalMsg}</p>
                 </div>
               )}
-
-              <div className="text-xs text-[#1E293F]/60">
-                Dica: deixe seu WhatsApp disponível. Nós não pedimos senha para usar esta página.
-              </div>
             </CardContent>
           </Card>
         )}

@@ -8,16 +8,17 @@ import { Label } from "@/components/ui/label";
 import {
   CheckCircle2,
   Loader2,
-  MessageCircle,
   MousePointerClick,
   ShieldCheck,
-  ShoppingCart,
   Sparkles,
   Car,
   Bike,
   Home,
   Wrench,
   Truck,
+  Instagram,
+  Facebook,
+  ExternalLink,
 } from "lucide-react";
 
 /** =========================
@@ -28,7 +29,7 @@ import {
 const DEFAULT_VENDEDOR_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
 const DEFAULT_OWNER_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
 
-/** WhatsApp oficial Consulmax (E.164) */
+/** WhatsApp oficial Consulmax (E.164) — (69) 9 9391-7465 */
 const CONSULMAX_WA = "5569993917465";
 
 /* ========= Helpers ========= */
@@ -114,7 +115,7 @@ function useSEO() {
       logo: "https://crm.consulmaxconsorcios.com.br/logo-consulmax.png",
       sameAs: [
         "https://www.instagram.com/consulmax.consorcios",
-        "https://www.linkedin.com/company/consulmax",
+        "https://www.facebook.com/profile.php?id=61583481749603",
       ],
     };
     const script = document.createElement("script");
@@ -363,10 +364,7 @@ export default function PublicSimulador() {
   // Refs para CTA flutuante
   const optionsRef = useRef<HTMLDivElement | null>(null);
 
-  // Formatter de input telefone na carga
   useEffect(() => setTelefone((t) => formatPhoneBR(t)), []);
-
-  // Ajusta crédito para range ao trocar segmento
   useEffect(() => {
     const cfg = SEGMENT_CFG[segmento];
     setCredito((prev) => clampToStep(prev, cfg.min, cfg.max, cfg.step));
@@ -449,55 +447,7 @@ export default function PublicSimulador() {
     }
   }
 
-  async function handleContratar() {
-    if (!opId || !selecionado) return;
-    setFinalMsg("Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento.");
-    try {
-      await supabase.from("opportunities").update({ estagio: "Contratar – solicitado" }).eq("id", opId);
-    } catch (e) { console.warn("[handleContratar] update best-effort bloqueado por RLS:", e); }
-    await safeAppendNote(opId, "Usuário clicou em CONTRATAR");
-
-    const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
-    const text = `Olá! Quero contratar meu consórcio.
-Segmento: ${segRotulo}.
-Crédito: ${BRL(credito)}.
-Parcela: ${parcelKind === "cheia" ? "Cheia" : "Reduzida 50%"}.
-Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
-    window.open(waLink(onlyDigits(telefone), text), "_blank");
-  }
-
-  async function handleFalarComEspecialista() {
-    if (!opId || !selecionado) return;
-    setFinalMsg("Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento.");
-    try {
-      await supabase.from("opportunities").update({ estagio: "Aguardando contato" }).eq("id", opId);
-    } catch (e) { console.warn("[handleFalarComEspecialista] update best-effort bloqueado por RLS:", e); }
-    await safeAppendNote(opId, "Usuário clicou em FALAR COM UM ESPECIALISTA");
-
-    const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
-    const text = `Olá! Preciso falar com um especialista.
-Segmento: ${segRotulo}.
-Crédito: ${BRL(credito)}.
-Parcela: ${parcelKind === "cheia" ? "Cheia" : "Reduzida 50%"}.
-Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
-    window.open(waLink(onlyDigits(telefone), text), "_blank");
-  }
-
-  /* ====== Cálculos / opções filtradas (Etapa 2) ====== */
-  const opcoesFiltradas = useMemo(() => {
-    const cfg = SEGMENT_CFG[segmento];
-    return cfg.options.filter((o) => {
-      if (o.visibleIfCreditMin && credito < o.visibleIfCreditMin) return false;
-      if (parcelKind === "reduzida50") {
-        if (!o.allowReduction && !o.onlyReduction) return false;
-        return true;
-      } else {
-        if (o.onlyReduction) return false;
-        return true;
-      }
-    });
-  }, [segmento, parcelKind, credito]);
-
+  /* ===== util ===== */
   function clampToStep(v: number, min: number, max: number, step: number) {
     const clamped = Math.max(min, Math.min(max, v));
     const snapped = Math.round((clamped - min) / step) * step + min;
@@ -513,8 +463,8 @@ Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
   function floatingCTALabel() {
     if (step === 1) return "Continuar";
     if (step === 2) return "Ver opções";
-    return "Falar com Especialista";
-    }
+    return "Finalizar";
+  }
   const floatingCTADisabled = step === 1 ? (!canContinueStep1 || saving) : false;
 
   function onFloatingCTA() {
@@ -523,7 +473,8 @@ Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
       optionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    return handleFalarComEspecialista();
+    // Etapa 3 → Finalizar
+    window.location.href = "https://consulmaxconsorcios.com.br/";
   }
 
   /* ====================== RENDER ====================== */
@@ -637,7 +588,7 @@ Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
                     onBlur={() => setTouchedPhone(true)}
                     onChange={(e) => setTelefone(formatPhoneBR(e.target.value))}
                     inputMode="tel"
-                    placeholder="(69) 9 9999-9999"
+                    placeholder="(69) 9 9391-7465"
                     className={!isValidBRPhone(telefone) && touchedPhone ? "border-red-400 focus:ring-red-200" : ""}
                   />
                   {!isValidBRPhone(telefone) && touchedPhone && (
@@ -779,7 +730,7 @@ Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
           </Card>
         )}
 
-        {/* Etapa 3 — mensagem nova + redes/links + "Nova Simulação" */}
+        {/* Etapa 3 — mensagem nova + redes/links como ícones + "Nova Simulação" + "Finalizar" */}
         {step === 3 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
@@ -793,56 +744,65 @@ Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).`;
                 </p>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
-                <Button onClick={handleContratar} className="h-12 bg-[#A11C27] hover:bg-[#8c1822] text-base">
-                  <ShoppingCart className="w-5 h-5 mr-2" />
-                  Contratar
-                </Button>
-                <Button onClick={handleFalarComEspecialista} variant="outline" className="h-12 text-base">
-                  <MessageCircle className="w-5 h-5 mr-2" />
-                  Falar com um Especialista
-                </Button>
-              </div>
-
-              {/* Links úteis / redes sociais */}
+              {/* Ícones de redes sociais */}
               <div className="rounded-xl p-4 bg-white border border-[#1E293F]/10">
-                <h4 className="font-semibold text-[#1E293F] mb-2">Siga-nos nas redes sociais</h4>
-                <ul className="text-sm text-[#1E293F]/80 space-y-1">
-                  <li>
-                    Instagram:{" "}
-                    <a className="underline hover:no-underline" target="_blank" href="https://www.instagram.com/consulmax.consorcios/">
-                      @consulmax.consorcios
-                    </a>
-                  </li>
-                  <li>
-                    Facebook:{" "}
-                    <a className="underline hover:no-underline" target="_blank" href="https://www.facebook.com/profile.php?id=61583481749603">
-                      Consulmax Consórcios
-                    </a>
-                  </li>
-                  <li>
-                    Falar com o Suporte:{" "}
-                    <a className="underline hover:no-underline" target="_blank" href={waLink("69993917465", "Olá, preciso de suporte.")}>
-                      WhatsApp (69) 9 9391-7465
-                    </a>
-                  </li>
-                  <li>
-                    Quem Somos:{" "}
-                    <a className="underline hover:no-underline" target="_blank" href="https://consulmaxconsorcios.com.br/nossa-historia/">
-                      consorcios.com.br/nossa-historia
-                    </a>
-                  </li>
-                </ul>
+                <h4 className="font-semibold text-[#1E293F] mb-3">Siga-nos nas redes sociais</h4>
+                <div className="flex items-center gap-4">
+                  <a
+                    href="https://www.instagram.com/consulmax.consorcios/"
+                    target="_blank"
+                    aria-label="Instagram Consulmax"
+                    className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40"
+                  >
+                    <Instagram className="w-6 h-6" />
+                  </a>
+                  <a
+                    href="https://www.facebook.com/profile.php?id=61583481749603"
+                    target="_blank"
+                    aria-label="Facebook Consulmax"
+                    className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40"
+                  >
+                    <Facebook className="w-6 h-6" />
+                  </a>
+                  <a
+                    href={waLink("6993917465", "Olá, preciso de suporte.")}
+                    target="_blank"
+                    aria-label="Falar com o Suporte no WhatsApp"
+                    className="inline-flex items-center justify-center px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm"
+                  >
+                    WhatsApp Suporte
+                  </a>
+                  <a
+                    href="https://consulmaxconsorcios.com.br/nossa-historia/"
+                    target="_blank"
+                    aria-label="Quem Somos - Consulmax"
+                    className="inline-flex items-center gap-2 px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm"
+                  >
+                    <ExternalLink className="w-4 h-4" /> Quem Somos
+                  </a>
+                </div>
 
-                <div className="mt-3">
+                <div className="mt-4 flex gap-3">
                   <Button
                     variant="outline"
                     onClick={() => {
+                      // reset leve para nova simulação
                       setStep(2);
+                      setSelecionado(null);
+                      setParcelKind("cheia");
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     }}
                   >
                     Nova Simulação
+                  </Button>
+
+                  <Button
+                    className="bg-[#A11C27] hover:bg-[#8c1822]"
+                    onClick={() => {
+                      window.location.href = "https://consulmaxconsorcios.com.br/";
+                    }}
+                  >
+                    Finalizar
                   </Button>
                 </div>
               </div>

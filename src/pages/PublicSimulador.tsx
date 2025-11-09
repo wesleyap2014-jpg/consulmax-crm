@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+// src/pages/PublicSimulador.tsx
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ import {
  *  A RPC v2 usa auth_user_id nas FKs de opportunities (vendedor_id/owner_id).
  */
 const DEFAULT_VENDEDOR_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
-const DEFAULT_OWNER_AUTH_ID   = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
+const DEFAULT_OWNER_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
 
 /** WhatsApp oficial Consulmax (E.164) */
 const CONSULMAX_WA = "5569993917465";
@@ -56,6 +57,10 @@ function currencyMask(v: string) {
   return (n / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function BRL(n: number) {
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
 function waLink(userPhoneDigits: string, text: string) {
   const to = userPhoneDigits.length >= 10 ? `55${userPhoneDigits}` : CONSULMAX_WA;
   return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
@@ -72,18 +77,112 @@ function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
 }
 
 /* ========= UI: Segmentos ========= */
-const SEGMENTOS: Array<{ id: string; rotulo: string; rotuloRPC: string; Icon: React.ComponentType<any> }> = [
-  { id: "automovel",         rotulo: "AUTOMÓVEIS",        rotuloRPC: "Automóvel",         Icon: Car },
-  { id: "motocicleta",       rotulo: "MOTOCICLETAS",      rotuloRPC: "Motocicleta",       Icon: Bike },
-  { id: "imovel",            rotulo: "IMÓVEIS",           rotuloRPC: "Imóvel",            Icon: Home },
-  { id: "servicos",          rotulo: "SERVIÇOS",          rotuloRPC: "Serviços",          Icon: Wrench },
-  { id: "pesados",           rotulo: "PESADOS",           rotuloRPC: "Pesados",           Icon: Truck },
-  { id: "imovel_estendido",  rotulo: "IMÓVEL ESTENDIDO",  rotuloRPC: "Imóvel Estendido",  Icon: HomeWithPlus },
+type SegmentId =
+  | "automovel"
+  | "motocicleta"
+  | "imovel"
+  | "servicos"
+  | "pesados"
+  | "imovel_estendido";
+
+const SEGMENTOS: Array<{ id: SegmentId; rotulo: string; rotuloRPC: string; Icon: React.ComponentType<any> }> = [
+  { id: "automovel", rotulo: "AUTOMÓVEIS", rotuloRPC: "Automóvel", Icon: Car },
+  { id: "motocicleta", rotulo: "MOTOCICLETAS", rotuloRPC: "Motocicleta", Icon: Bike },
+  { id: "imovel", rotulo: "IMÓVEIS", rotuloRPC: "Imóvel", Icon: Home },
+  { id: "servicos", rotulo: "SERVIÇOS", rotuloRPC: "Serviços", Icon: Wrench },
+  { id: "pesados", rotulo: "PESADOS", rotuloRPC: "Pesados", Icon: Truck },
+  { id: "imovel_estendido", rotulo: "IMÓVEL ESTENDIDO", rotuloRPC: "Imóvel Estendido", Icon: HomeWithPlus },
 ];
 
-function segmentLabelFromId(id: string): string {
+function segmentLabelFromId(id: SegmentId): string {
   return SEGMENTOS.find((s) => s.id === id)?.rotuloRPC ?? id;
 }
+
+/* ========= Tipos de parcela (chip) ========= */
+type ParcelKind = "cheia" | "reduzida50";
+
+/* ========= Configurações por segmento ========= */
+type OptionCfg = {
+  id: string;
+  prazo: number;
+  admPct: number; // 0.14 => 14%
+  frPct: number; // 0.03 => 3%
+  antecipPct: number; // 0.02 => 2%
+  antecipParcelas: number; // 0, 1, 2, 12...
+  allowReduction?: boolean; // permite redução 50% (se chip ativa e opção permitir)
+  onlyReduction?: boolean; // só existe se estiver com redução 50% selecionada
+  visibleIfCreditMin?: number; // mostra somente se crédito >= este valor
+};
+
+type SegmentCfg = {
+  min: number;
+  max: number;
+  step: number;
+  options: OptionCfg[];
+};
+
+const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
+  automovel: {
+    min: 45000,
+    max: 180000,
+    step: 5000,
+    options: [
+      { id: "auto1", prazo: 80, admPct: 0.14, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
+      { id: "auto2", prazo: 80, admPct: 0.17, frPct: 0.03, antecipPct: 0.01, antecipParcelas: 2, allowReduction: false },
+      { id: "auto3", prazo: 100, admPct: 0.16, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 1, allowReduction: true },
+      { id: "auto4", prazo: 100, admPct: 0.20, frPct: 0.03, antecipPct: 0.01, antecipParcelas: 1, allowReduction: true },
+      { id: "auto5", prazo: 100, admPct: 0.22, frPct: 0.03, antecipPct: 0.012, antecipParcelas: 12, allowReduction: true },
+    ],
+  },
+  motocicleta: {
+    min: 15000,
+    max: 30000,
+    step: 1000,
+    options: [
+      { id: "moto1", prazo: 70, admPct: 0.20, frPct: 0.05, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false },
+    ],
+  },
+  servicos: {
+    min: 15000,
+    max: 30000,
+    step: 1000,
+    options: [
+      { id: "serv1", prazo: 40, admPct: 0.21, frPct: 0.05, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false },
+    ],
+  },
+  pesados: {
+    min: 200000,
+    max: 700000,
+    step: 10000,
+    options: [
+      { id: "pes1", prazo: 100, admPct: 0.14, frPct: 0.03, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false },
+      { id: "pes2", prazo: 100, admPct: 0.12, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
+      { id: "pes3", prazo: 100, admPct: 0.14, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 1, allowReduction: true, onlyReduction: true },
+      { id: "pes4", prazo: 100, admPct: 0.18, frPct: 0.03, antecipPct: 0.012, antecipParcelas: 12, allowReduction: true, onlyReduction: true },
+    ],
+  },
+  imovel: {
+    min: 100000,
+    max: 1200000,
+    step: 10000,
+    options: [
+      { id: "imo1", prazo: 180, admPct: 0.18, frPct: 0.02, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
+      { id: "imo2", prazo: 165, admPct: 0.21, frPct: 0.02, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false },
+      { id: "imo3", prazo: 180, admPct: 0.21, frPct: 0.02, antecipPct: 0.01, antecipParcelas: 1, allowReduction: false, visibleIfCreditMin: 250000 },
+    ],
+  },
+  imovel_estendido: {
+    min: 120000,
+    max: 2000000,
+    step: 10000,
+    options: [
+      { id: "ime1", prazo: 240, admPct: 0.22, frPct: 0.02, antecipPct: 0.02, antecipParcelas: 1, allowReduction: true },
+      { id: "ime2", prazo: 240, admPct: 0.26, frPct: 0.02, antecipPct: 0.01, antecipParcelas: 1, allowReduction: true },
+      { id: "ime3", prazo: 240, admPct: 0.20, frPct: 0.02, antecipPct: 0.02, antecipParcelas: 1, allowReduction: true, visibleIfCreditMin: 600000 },
+      { id: "ime4", prazo: 240, admPct: 0.28, frPct: 0.02, antecipPct: 0.012, antecipParcelas: 12, allowReduction: true },
+    ],
+  },
+};
 
 /* ========= RPCs ========= */
 async function createOpportunityV2({
@@ -103,7 +202,7 @@ async function createOpportunityV2({
 }) {
   const tel = onlyDigits(telefone);
   const payload = {
-    p_lead_id: null as any, // importante enviar null (não undefined)
+    p_lead_id: null as any,
     p_nome: nome,
     p_email: email,
     p_telefone: tel,
@@ -114,7 +213,6 @@ async function createOpportunityV2({
 
   const { data, error } = await supabase.rpc("public_create_opportunity_v2", payload);
   if (error) {
-    // Log completo para debug (console do navegador)
     console.error("[public_create_opportunity_v2] payload:", payload);
     console.error("[public_create_opportunity_v2] error:", error);
     throw error;
@@ -133,13 +231,53 @@ async function safeAppendNote(opportunityId: string, note: string) {
   }
 }
 
+/* ========= Funções de cálculo ========= */
+/**
+ * Regra base (sem seguro):
+ * - Fundo Comum mensal = C / prazo
+ * - Encargos (Adm + FR) mensais = (C * (adm + fr)) / prazo
+ * - Parcela Cheia = FC + Encargos
+ * - Parcela Reduzida 50% = (FC * 0.5) + Encargos
+ * - Antecipação: valor total = C * antecipPct; rateado nas primeiras N parcelas
+ */
+function calcularParcelas({
+  credito,
+  prazo,
+  admPct,
+  frPct,
+  antecipPct,
+  antecipParcelas,
+  kind,
+}: {
+  credito: number;
+  prazo: number;
+  admPct: number;
+  frPct: number;
+  antecipPct: number;
+  antecipParcelas: number;
+  kind: ParcelKind;
+}) {
+  const fc = credito / prazo; // fundo comum mensal
+  const encargos = (credito * (admPct + frPct)) / prazo; // adm + fr mensalizados
+  const parcelaBase = kind === "cheia" ? fc + encargos : fc * 0.5 + encargos;
+
+  const antecipTotal = credito * antecipPct;
+  const antecipMensal = antecipParcelas > 0 ? antecipTotal / antecipParcelas : 0;
+
+  return {
+    parcelaComAntecipacao: antecipParcelas > 0 ? parcelaBase + antecipMensal : parcelaBase,
+    parcelaSemAntecipacao: parcelaBase,
+    antecipParcelas,
+  };
+}
+
 /* ========= Página ========= */
 export default function PublicSimulador() {
   // Etapa 1
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [telefone, setTelefone] = useState("");
-  const [segmento, setSegmento] = useState<string>("");
+  const [segmento, setSegmento] = useState<SegmentId>("automovel");
 
   // Etapas
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -148,31 +286,45 @@ export default function PublicSimulador() {
   // Oportunidade criada
   const [opId, setOpId] = useState<string | null>(null);
 
-  // Etapa 2
-  const [tipoSimulacao, setTipoSimulacao] = useState<"credito" | "parcela">("credito");
-  const [credito, setCredito] = useState<string>("");
-  const [parcela, setParcela] = useState<string>("");
-  const [prazo, setPrazo] = useState<string>("");
+  // Etapa 2 (novo)
+  const [parcelKind, setParcelKind] = useState<ParcelKind>("cheia");
   const [admin, setAdmin] = useState<string>("Embracon");
   const [mensagem, setMensagem] = useState<string>("");
 
+  // slider de crédito por segmento
+  const segCfg = SEGMENT_CFG[segmento];
+  const [credito, setCredito] = useState<number>(segCfg.min);
+
+  // Seleção final para etapa 3
+  const [selecionado, setSelecionado] = useState<{
+    optionId: string;
+    prazo: number;
+    admPct: number;
+    frPct: number;
+    antecipPct: number;
+    antecipParcelas: number;
+  } | null>(null);
+
   const [finalMsg, setFinalMsg] = useState<string>("");
 
+  // Formatter de input telefone na carga
   useEffect(() => {
     setTelefone((t) => formatPhoneBR(t));
   }, []);
 
-  const canContinue =
-    nome.trim().length >= 3 &&
-    /@/.test(email) &&
-    onlyDigits(telefone).length >= 10 &&
-    !!segmento;
+  // Ajusta crédito para range ao trocar segmento
+  useEffect(() => {
+    const cfg = SEGMENT_CFG[segmento];
+    setCredito((prev) => clampToStep(prev, cfg.min, cfg.max, cfg.step));
+  }, [segmento]);
+
+  const canContinueStep1 =
+    nome.trim().length >= 3 && /@/.test(email) && onlyDigits(telefone).length >= 10 && !!segmento;
 
   /* ===== Pré-cadastro → cria Oportunidade (Novo) + Lead via RPC v2 ===== */
   async function handlePreCadastro() {
     try {
       setSaving(true);
-
       const segmentoRPC = segmentLabelFromId(segmento);
       const newOpId = await createOpportunityV2({
         nome: nome.trim(),
@@ -180,20 +332,11 @@ export default function PublicSimulador() {
         telefone,
         segmentoRPC,
       });
-
       setOpId(newOpId);
-
-      // Anotação: não bloqueia o fluxo se falhar
       safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`).catch(() => {});
-
       setStep(2);
     } catch (e: any) {
-      // Mostra o motivo real do erro
-      const msg =
-        e?.message ||
-        e?.hint ||
-        e?.details ||
-        "Falha ao executar a RPC public_create_opportunity_v2.";
+      const msg = e?.message || e?.hint || e?.details || "Falha ao executar a RPC public_create_opportunity_v2.";
       alert(
         `Não foi possível concluir o pré-cadastro/criar a oportunidade.\n\nDetalhes: ${msg}\n\nVeja o console do navegador para diagnóstico completo.`
       );
@@ -203,29 +346,55 @@ export default function PublicSimulador() {
     }
   }
 
-  /* ===== Registra preferências da simulação ===== */
-  async function handleSimular() {
+  /* ===== Escolher uma opção calculada (vai para Etapa 3) ===== */
+  async function handleEscolherOpcao(opt: OptionCfg) {
     if (!opId) return;
     try {
       setSaving(true);
-      const anot =
-        `Preferências → tipo: ${tipoSimulacao}; ` +
-        (tipoSimulacao === "credito" ? `crédito: ${credito}` : `parcela: ${parcela}`) +
-        (prazo ? `; prazo: ${prazo}` : "") +
-        `; administradora: ${admin}` +
-        (mensagem ? `; obs: ${mensagem}` : "");
-      await safeAppendNote(opId, anot);
+
+      const { parcelaComAntecipacao, parcelaSemAntecipacao, antecipParcelas } = calcularParcelas({
+        credito,
+        prazo: opt.prazo,
+        admPct: opt.admPct,
+        frPct: opt.frPct,
+        antecipPct: opt.antecipPct,
+        antecipParcelas: opt.antecipParcelas,
+        kind: parcelKind,
+      });
+
+      const resumo =
+        `Escolha do cliente → Segmento: ${segmentLabelFromId(segmento)}; ` +
+        `Crédito: ${BRL(credito)}; Parcelamento: ${parcelKind === "cheia" ? "Parcela Cheia" : "Parcela Reduzida 50%"}; ` +
+        `Opção: ${opt.id} | Prazo: ${opt.prazo}m | Adm: ${(opt.admPct * 100).toFixed(2)}% | FR: ${(opt.frPct * 100).toFixed(
+          2
+        )}% | Antecipação: ${(opt.antecipPct * 100).toFixed(2)}% em ${opt.antecipParcelas}x; ` +
+        (antecipParcelas > 0
+          ? `Parc. 1–${antecipParcelas}: ${BRL(parcelaComAntecipacao)} | Demais: ${BRL(parcelaSemAntecipacao)}`
+          : `Parcela mensal: ${BRL(parcelaSemAntecipacao)}`) +
+        (mensagem ? ` | Obs: ${mensagem}` : "");
+
+      await safeAppendNote(opId, resumo);
+
+      setSelecionado({
+        optionId: opt.id,
+        prazo: opt.prazo,
+        admPct: opt.admPct,
+        frPct: opt.frPct,
+        antecipPct: opt.antecipPct,
+        antecipParcelas: opt.antecipParcelas,
+      });
+
       setStep(3);
     } catch (e) {
-      console.error("[handleSimular] erro:", e);
-      alert("Não foi possível registrar a simulação. Tente novamente.");
+      console.error("[handleEscolherOpcao] erro:", e);
+      alert("Não foi possível registrar a escolha. Tente novamente.");
     } finally {
       setSaving(false);
     }
   }
 
   async function handleContratar() {
-    if (!opId) return;
+    if (!opId || !selecionado) return;
     setFinalMsg(
       "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
     );
@@ -237,14 +406,17 @@ export default function PublicSimulador() {
     await safeAppendNote(opId, "Usuário clicou em CONTRATAR");
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
-    const text = `Olá! Quero contratar meu consórcio. Segmento: ${segRotulo}. ${
-      tipoSimulacao === "credito" ? `Crédito: ${credito}` : `Parcela: ${parcela}`
-    }. Prazo: ${prazo || "—"}. Administradora: ${admin}.`;
+    const text = `Olá! Quero contratar meu consórcio.
+Segmento: ${segRotulo}.
+Crédito: ${BRL(credito)}.
+Parcela: ${parcelKind === "cheia" ? "Cheia" : "Reduzida 50%"}.
+Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).
+Admin: ${admin}.`;
     window.open(waLink(onlyDigits(telefone), text), "_blank");
   }
 
   async function handleFalarComEspecialista() {
-    if (!opId) return;
+    if (!opId || !selecionado) return;
     setFinalMsg(
       "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
     );
@@ -256,28 +428,48 @@ export default function PublicSimulador() {
     await safeAppendNote(opId, "Usuário clicou em FALAR COM UM ESPECIALISTA");
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
-    const text = `Olá! Preciso falar com um especialista. Segmento: ${segRotulo}. ${
-      tipoSimulacao === "credito" ? `Crédito: ${credito}` : `Parcela: ${parcela}`
-    }. Prazo: ${prazo || "—"}. Administradora: ${admin}.`;
+    const text = `Olá! Preciso falar com um especialista.
+Segmento: ${segRotulo}.
+Crédito: ${BRL(credito)}.
+Parcela: ${parcelKind === "cheia" ? "Cheia" : "Reduzida 50%"}.
+Opção: ${selecionado.optionId} (Prazo ${selecionado.prazo}).
+Admin: ${admin}.`;
     window.open(waLink(onlyDigits(telefone), text), "_blank");
   }
 
-  function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: boolean }) {
-    return (
-      <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border ${
-          active
-            ? "bg-[#1E293F] text-white border-[#1E293F]"
-            : done
-            ? "bg-[#B5A573] text-white border-[#B5A573]"
-            : "bg-white text-[#1E293F] border-[#1E293F]"
-        }`}
-      >
-        {done ? <CheckCircle2 className="w-5 h-5" /> : n}
-      </div>
-    );
+  /* ====== Cálculos / opções filtradas (Etapa 2) ====== */
+  const opcoesFiltradas = useMemo(() => {
+    const cfg = SEGMENT_CFG[segmento];
+    return cfg.options.filter((o) => {
+      // Condição de crédito mínimo quando houver
+      if (o.visibleIfCreditMin && credito < o.visibleIfCreditMin) return false;
+
+      // Se usuário escolheu Reduzida 50%:
+      if (parcelKind === "reduzida50") {
+        // esconder as opções que NÃO permitem redução
+        if (!o.allowReduction && !o.onlyReduction) return false;
+        // ok: permite redução OU é somente com redução
+        return true;
+      } else {
+        // Parcelas Cheias -> ocultar as opções marcadas como somente redução
+        if (o.onlyReduction) return false;
+        return true;
+      }
+    });
+  }, [segmento, parcelKind, credito]);
+
+  function clampToStep(v: number, min: number, max: number, step: number) {
+    const clamped = Math.max(min, Math.min(max, v));
+    const snapped = Math.round((clamped - min) / step) * step + min;
+    return Math.min(max, Math.max(min, snapped));
   }
 
+  function handleSlider(v: number) {
+    const { min, max, step } = SEGMENT_CFG[segmento];
+    setCredito(clampToStep(v, min, max, step));
+  }
+
+  /* ====================== RENDER ====================== */
   return (
     <div className="min-h-screen bg-[#F5F5F5]">
       <div className="mx-auto max-w-3xl px-4 py-8">
@@ -296,12 +488,12 @@ export default function PublicSimulador() {
             <StepBadge n={1} active={step === 1} done={step > 1} />
             <span className="text-sm font-medium text-[#1E293F]">Seus dados</span>
           </div>
-            <div className="h-px bg-[#1E293F]/20 flex-1" />
+          <div className="h-px bg-[#1E293F]/20 flex-1" />
           <div className="flex items-center gap-2">
             <StepBadge n={2} active={step === 2} done={step > 2} />
             <span className="text-sm font-medium text-[#1E293F]">Preferências</span>
           </div>
-            <div className="h-px bg-[#1E293F]/20 flex-1" />
+          <div className="h-px bg-[#1E293F]/20 flex-1" />
           <div className="flex items-center gap-2">
             <StepBadge n={3} active={step === 3} done={false} />
             <span className="text-sm font-medium text-[#1E293F]">Próximos passos</span>
@@ -335,19 +527,29 @@ export default function PublicSimulador() {
                 <Label className="mb-2 block">Bem desejado</Label>
                 <div className="flex flex-wrap gap-4">
                   {SEGMENTOS.map(({ id, rotulo, Icon }) => (
-                    <SegmentCard key={id} Icon={Icon} active={segmento === id} onClick={() => setSegmento(id)}>
+                    <SegmentCard
+                      key={id}
+                      Icon={Icon}
+                      active={segmento === id}
+                      onClick={() => setSegmento(id)}
+                    >
                       {rotulo}
                     </SegmentCard>
                   ))}
                 </div>
               </div>
 
-              <Button disabled={!canContinue || saving} onClick={handlePreCadastro} className="bg-[#A11C27] hover:bg-[#8c1822]">
+              <Button
+                disabled={!canContinueStep1 || saving}
+                onClick={handlePreCadastro}
+                className="bg-[#A11C27] hover:bg-[#8c1822]"
+              >
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MousePointerClick className="w-4 h-4 mr-2" />}
                 Continuar para simulação
               </Button>
               <p className="text-xs text-[#1E293F]/60 leading-relaxed">
-                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são protegidos.
+                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são
+                protegidos.
               </p>
             </CardContent>
           </Card>
@@ -360,11 +562,25 @@ export default function PublicSimulador() {
               <CardTitle className="text-[#1E293F]">Personalize sua simulação</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4">
-              <div className="grid md:grid-cols-3 gap-4">
-                <div>
-                  <Label>Segmento</Label>
-                  <Input readOnly value={SEGMENTOS.find((s) => s.id === segmento)?.rotulo || ""} />
+              {/* Segmentos também aqui (pode trocar nesta etapa) */}
+              <div>
+                <Label className="mb-2 block">Segmento</Label>
+                <div className="flex flex-wrap gap-3">
+                  {SEGMENTOS.map(({ id, rotulo, Icon }) => (
+                    <SegmentCard
+                      key={id}
+                      Icon={Icon}
+                      active={segmento === id}
+                      onClick={() => setSegmento(id)}
+                    >
+                      {rotulo}
+                    </SegmentCard>
+                  ))}
                 </div>
+              </div>
+
+              {/* Administradora + Chip de tipo de parcela */}
+              <div className="grid md:grid-cols-3 gap-4">
                 <div>
                   <Label>Administradora</Label>
                   <select
@@ -376,52 +592,49 @@ export default function PublicSimulador() {
                     <option value="Outras">Outras</option>
                   </select>
                 </div>
-                <div>
-                  <Label>Prazo (meses)</Label>
-                  <Input value={prazo} onChange={(e) => setPrazo(e.target.value.replace(/\D/g, ""))} placeholder="120" />
+
+                <div className="md:col-span-2">
+                  <Label>Tipo de parcela</Label>
+                  <div className="flex gap-2 mt-2">
+                    <Chip
+                      active={parcelKind === "cheia"}
+                      onClick={() => setParcelKind("cheia")}
+                      label="Parcela Cheia"
+                    />
+                    <Chip
+                      active={parcelKind === "reduzida50"}
+                      onClick={() => setParcelKind("reduzida50")}
+                      label="Parcela Reduzida (50%)"
+                    />
+                  </div>
+                  <p className="text-xs text-[#1E293F]/60 mt-1">
+                    Na parcela reduzida (50%), o desconto aplica-se sobre o Fundo Comum até a contemplação; os encargos (Adm + FR) permanecem integrais.
+                  </p>
                 </div>
               </div>
 
+              {/* Slider de crédito */}
               <div>
-                <Label>Tipo de simulação</Label>
-                <div className="flex gap-6 mt-1">
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="tipo"
-                      value="credito"
-                      checked={tipoSimulacao === "credito"}
-                      onChange={() => setTipoSimulacao("credito")}
-                      className="accent-[#A11C27]"
-                    />
-                    <span>Por crédito</span>
-                  </label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="tipo"
-                      value="parcela"
-                      checked={tipoSimulacao === "parcela"}
-                      onChange={() => setTipoSimulacao("parcela")}
-                      className="accent-[#A11C27]"
-                    />
-                    <span>Por parcela</span>
-                  </label>
+                <div className="flex items-center justify-between">
+                  <Label>Valor do crédito</Label>
+                  <strong className="text-[#1E293F]">{BRL(credito)}</strong>
+                </div>
+                <input
+                  type="range"
+                  min={segCfg.min}
+                  max={segCfg.max}
+                  step={segCfg.step}
+                  value={credito}
+                  onChange={(e) => handleSlider(Number(e.target.value))}
+                  className="w-full accent-[#A11C27] mt-2"
+                />
+                <div className="flex justify-between text-xs text-[#1E293F]/60">
+                  <span>{BRL(segCfg.min)}</span>
+                  <span>{BRL(segCfg.max)}</span>
                 </div>
               </div>
 
-              {tipoSimulacao === "credito" ? (
-                <div>
-                  <Label>Valor do crédito desejado</Label>
-                  <Input value={credito} onChange={(e) => setCredito(currencyMask(e.target.value))} placeholder="R$ 150.000,00" />
-                </div>
-              ) : (
-                <div>
-                  <Label>Valor da parcela desejada</Label>
-                  <Input value={parcela} onChange={(e) => setParcela(currencyMask(e.target.value))} placeholder="R$ 1.500,00" />
-                </div>
-              )}
-
+              {/* Observações do cliente */}
               <div>
                 <Label>Deixe um comentário (opcional)</Label>
                 <textarea
@@ -433,19 +646,74 @@ export default function PublicSimulador() {
                 />
               </div>
 
+              {/* Lista de opções calculadas */}
+              <div className="grid gap-3">
+                {opcoesFiltradas.map((opt) => {
+                  const calc = calcularParcelas({
+                    credito,
+                    prazo: opt.prazo,
+                    admPct: opt.admPct,
+                    frPct: opt.frPct,
+                    antecipPct: opt.antecipPct,
+                    antecipParcelas: opt.antecipParcelas,
+                    kind: parcelKind,
+                  });
+
+                  return (
+                    <div
+                      key={opt.id}
+                      className="rounded-xl border border-[#1E293F]/15 bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+                    >
+                      <div className="space-y-1">
+                        <div className="text-sm font-semibold text-[#1E293F]">
+                          Opção {opt.id.toUpperCase()} • Prazo {opt.prazo} meses
+                        </div>
+                        <div className="text-xs text-[#1E293F]/70">
+                          Adm {(opt.admPct * 100).toFixed(2)}% • FR {(opt.frPct * 100).toFixed(2)}% • Antecipação{" "}
+                          {(opt.antecipPct * 100).toFixed(2)}% {opt.antecipParcelas > 0 ? `em ${opt.antecipParcelas}x` : "(não há)"}
+                          {opt.onlyReduction ? " • Só com redução" : opt.allowReduction ? " • Permite redução" : " • Sem redução"}
+                          {opt.visibleIfCreditMin ? ` • (Exibe a partir de ${BRL(opt.visibleIfCreditMin)})` : ""}
+                        </div>
+
+                        {opt.antecipParcelas > 0 ? (
+                          <div className="text-sm text-[#1E293F]">
+                            Parcelas 1–{opt.antecipParcelas}: <strong>{BRL(calc.parcelaComAntecipacao)}</strong>{" "}
+                            • Demais: <strong>{BRL(calc.parcelaSemAntecipacao)}</strong>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-[#1E293F]">
+                            Parcela mensal: <strong>{BRL(calc.parcelaSemAntecipacao)}</strong>
+                          </div>
+                        )}
+                      </div>
+
+                      <Button
+                        onClick={() => handleEscolherOpcao(opt)}
+                        className="bg-[#A11C27] hover:bg-[#8c1822]"
+                        disabled={saving}
+                      >
+                        {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                        Escolher esta opção
+                      </Button>
+                    </div>
+                  );
+                })}
+
+                {opcoesFiltradas.length === 0 && (
+                  <div className="rounded-xl border border-[#1E293F]/15 bg-white p-4 text-sm text-[#1E293F]/70">
+                    Nenhuma opção disponível para os filtros atuais. Ajuste o segmento, o tipo de parcela ou o valor do crédito.
+                  </div>
+                )}
+              </div>
+
               <div className="flex flex-wrap gap-3">
-                <Button disabled={saving} onClick={handleSimular} className="bg-[#A11C27] hover:bg-[#8c1822]">
-                  {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                  Simular agora
-                </Button>
                 <Button variant="outline" onClick={() => setStep(1)}>
                   Voltar
                 </Button>
               </div>
 
               <p className="text-xs text-[#1E293F]/60">
-                Ao clicar em “Simular agora”, registramos as preferências na sua oportunidade <strong>(Novo)</strong> e seguimos
-                com o atendimento.
+                As parcelas reduzidas (quando aplicável) são válidas até a contemplação; após, aplicam-se as regras do grupo.
               </p>
             </CardContent>
           </Card>
@@ -497,6 +765,22 @@ export default function PublicSimulador() {
 }
 
 /* ====== Components locais ====== */
+function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: boolean }) {
+  return (
+    <div
+      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border ${
+        active
+          ? "bg-[#1E293F] text-white border-[#1E293F]"
+          : done
+          ? "bg-[#B5A573] text-white border-[#B5A573]"
+          : "bg-white text-[#1E293F] border-[#1E293F]"
+      }`}
+    >
+      {done ? <CheckCircle2 className="w-5 h-5" /> : n}
+    </div>
+  );
+}
+
 function SegmentCard({
   active,
   onClick,
@@ -518,6 +802,22 @@ function SegmentCard({
     >
       <Icon className="w-10 h-10" />
       <span className="text-xs font-semibold text-center">{children}</span>
+    </button>
+  );
+}
+
+function Chip({ active, onClick, label }: { active?: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+        active
+          ? "bg-[#A11C27] text-white border-[#A11C27]"
+          : "bg-white text-[#1E293F] border-[#1E293F]/30 hover:border-[#1E293F]"
+      }`}
+    >
+      {label}
     </button>
   );
 }

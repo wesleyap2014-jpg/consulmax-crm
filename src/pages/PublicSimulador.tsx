@@ -1,4 +1,3 @@
-// src/pages/PublicSimulador.tsx
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,11 +22,10 @@ import {
 /** =========================
  *  IDs padrão (AUTH USER ID)
  *  =========================
- *  Atenção: a RPC v2 usa auth_user_id nas FKs de opportunities (vendedor_id/owner_id).
- *  O padrão que você pediu é o do Wesley: 524f9d55-...-7e6115e7cb0b
+ *  A RPC v2 usa auth_user_id nas FKs de opportunities (vendedor_id/owner_id).
  */
 const DEFAULT_VENDEDOR_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7cb0b";
-const DEFAULT_OWNER_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7cb0b";
+const DEFAULT_OWNER_AUTH_ID   = "524f9d55-48c0-4c56-9ab8-7e6115e7cb0b";
 
 /** WhatsApp oficial Consulmax (E.164) */
 const CONSULMAX_WA = "5569993917465";
@@ -41,8 +39,12 @@ function ts() {
   )}:${pad(d.getSeconds())}`;
 }
 
+function onlyDigits(s: string) {
+  return s.replace(/\D/g, "");
+}
+
 function formatPhoneBR(raw: string) {
-  const digits = raw.replace(/\D/g, "").slice(0, 11);
+  const digits = onlyDigits(raw).slice(0, 11);
   if (digits.length <= 2) return digits;
   if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
@@ -59,7 +61,7 @@ function waLink(userPhoneDigits: string, text: string) {
   return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
 }
 
-/* ========= Ícone Home com “+” (Imóvel Estendido) ========= */
+/* ========= Ícone Home com “+” ========= */
 function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
   return (
     <span className="relative inline-block">
@@ -71,12 +73,12 @@ function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
 
 /* ========= UI: Segmentos ========= */
 const SEGMENTOS: Array<{ id: string; rotulo: string; rotuloRPC: string; Icon: React.ComponentType<any> }> = [
-  { id: "automovel", rotulo: "AUTOMÓVEIS", rotuloRPC: "Automóvel", Icon: Car },
-  { id: "motocicleta", rotulo: "MOTOCICLETAS", rotuloRPC: "Motocicleta", Icon: Bike },
-  { id: "imovel", rotulo: "IMÓVEIS", rotuloRPC: "Imóvel", Icon: Home },
-  { id: "servicos", rotulo: "SERVIÇOS", rotuloRPC: "Serviços", Icon: Wrench },
-  { id: "pesados", rotulo: "PESADOS", rotuloRPC: "Pesados", Icon: Truck },
-  { id: "imovel_estendido", rotulo: "IMÓVEL ESTENDIDO", rotuloRPC: "Imóvel Estendido", Icon: HomeWithPlus },
+  { id: "automovel",         rotulo: "AUTOMÓVEIS",        rotuloRPC: "Automóvel",         Icon: Car },
+  { id: "motocicleta",       rotulo: "MOTOCICLETAS",      rotuloRPC: "Motocicleta",       Icon: Bike },
+  { id: "imovel",            rotulo: "IMÓVEIS",           rotuloRPC: "Imóvel",            Icon: Home },
+  { id: "servicos",          rotulo: "SERVIÇOS",          rotuloRPC: "Serviços",          Icon: Wrench },
+  { id: "pesados",           rotulo: "PESADOS",           rotuloRPC: "Pesados",           Icon: Truck },
+  { id: "imovel_estendido",  rotulo: "IMÓVEL ESTENDIDO",  rotuloRPC: "Imóvel Estendido",  Icon: HomeWithPlus },
 ];
 
 function segmentLabelFromId(id: string): string {
@@ -84,7 +86,6 @@ function segmentLabelFromId(id: string): string {
 }
 
 /* ========= RPCs ========= */
-/** Cria a oportunidade e (se lead_id = null) cria o lead internamente – via SECURITY DEFINER */
 async function createOpportunityV2({
   nome,
   email,
@@ -100,27 +101,36 @@ async function createOpportunityV2({
   vendedorAuthId?: string;
   ownerAuthId?: string;
 }) {
-  const tel = telefone.replace(/\D/g, "");
-  const { data, error } = await supabase.rpc("public_create_opportunity_v2", {
-    p_lead_id: null,
+  const tel = onlyDigits(telefone);
+  const payload = {
+    p_lead_id: null as any, // importante enviar null (não undefined)
     p_nome: nome,
     p_email: email,
     p_telefone: tel,
     p_segmento: segmentoRPC,
     p_vendedor_auth_id: vendedorAuthId,
     p_owner_auth_id: ownerAuthId,
-  });
-  if (error) throw error;
+  };
+
+  const { data, error } = await supabase.rpc("public_create_opportunity_v2", payload);
+  if (error) {
+    // Log completo para debug (console do navegador)
+    console.error("[public_create_opportunity_v2] payload:", payload);
+    console.error("[public_create_opportunity_v2] error:", error);
+    throw error;
+  }
   return data as string; // new_opportunity_id
 }
 
-/** Acrescenta nota via RPC (SECURITY DEFINER) em public.opportunities.observacao */
+/** Nota na oportunidade (não bloqueia o fluxo em caso de falha) */
 async function safeAppendNote(opportunityId: string, note: string) {
   const { error } = await supabase.rpc("public_append_op_note", {
     p_op_id: opportunityId,
     p_note: `[${ts()}] ${note}`,
   });
-  if (error) throw error;
+  if (error) {
+    console.warn("[public_append_op_note] erro ao anotar:", error);
+  }
 }
 
 /* ========= Página ========= */
@@ -135,7 +145,7 @@ export default function PublicSimulador() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [saving, setSaving] = useState(false);
 
-  // IDs
+  // Oportunidade criada
   const [opId, setOpId] = useState<string | null>(null);
 
   // Etapa 2
@@ -155,7 +165,7 @@ export default function PublicSimulador() {
   const canContinue =
     nome.trim().length >= 3 &&
     /@/.test(email) &&
-    telefone.replace(/\D/g, "").length >= 10 &&
+    onlyDigits(telefone).length >= 10 &&
     !!segmento;
 
   /* ===== Pré-cadastro → cria Oportunidade (Novo) + Lead via RPC v2 ===== */
@@ -164,31 +174,36 @@ export default function PublicSimulador() {
       setSaving(true);
 
       const segmentoRPC = segmentLabelFromId(segmento);
-
       const newOpId = await createOpportunityV2({
         nome: nome.trim(),
         email: email.trim(),
         telefone,
         segmentoRPC,
-        vendedorAuthId: DEFAULT_VENDEDOR_AUTH_ID,
-        ownerAuthId: DEFAULT_OWNER_AUTH_ID,
       });
 
       setOpId(newOpId);
-      await safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`);
+
+      // Anotação: não bloqueia o fluxo se falhar
+      safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`).catch(() => {});
 
       setStep(2);
     } catch (e: any) {
-      console.error(e);
+      // Mostra o motivo real do erro
+      const msg =
+        e?.message ||
+        e?.hint ||
+        e?.details ||
+        "Falha ao executar a RPC public_create_opportunity_v2.";
       alert(
-        "Não foi possível concluir o pré-cadastro/criar a oportunidade.\nVerifique as policies/RPCs no Supabase e tente novamente."
+        `Não foi possível concluir o pré-cadastro/criar a oportunidade.\n\nDetalhes: ${msg}\n\nVeja o console do navegador para diagnóstico completo.`
       );
+      console.error("[handlePreCadastro] erro:", e);
     } finally {
       setSaving(false);
     }
   }
 
-  /* ===== Registra preferências da simulação como anotação ===== */
+  /* ===== Registra preferências da simulação ===== */
   async function handleSimular() {
     if (!opId) return;
     try {
@@ -202,7 +217,7 @@ export default function PublicSimulador() {
       await safeAppendNote(opId, anot);
       setStep(3);
     } catch (e) {
-      console.error(e);
+      console.error("[handleSimular] erro:", e);
       alert("Não foi possível registrar a simulação. Tente novamente.");
     } finally {
       setSaving(false);
@@ -214,17 +229,18 @@ export default function PublicSimulador() {
     setFinalMsg(
       "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
     );
-    // best-effort: se RLS bloquear, a anotação já garante o evento
     try {
       await supabase.from("opportunities").update({ estagio: "Contratar – solicitado" }).eq("id", opId);
-    } catch {}
+    } catch (e) {
+      console.warn("[handleContratar] update best-effort bloqueado por RLS:", e);
+    }
     await safeAppendNote(opId, "Usuário clicou em CONTRATAR");
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
     const text = `Olá! Quero contratar meu consórcio. Segmento: ${segRotulo}. ${
       tipoSimulacao === "credito" ? `Crédito: ${credito}` : `Parcela: ${parcela}`
     }. Prazo: ${prazo || "—"}. Administradora: ${admin}.`;
-    window.open(waLink(telefone.replace(/\D/g, ""), text), "_blank");
+    window.open(waLink(onlyDigits(telefone), text), "_blank");
   }
 
   async function handleFalarComEspecialista() {
@@ -234,17 +250,18 @@ export default function PublicSimulador() {
     );
     try {
       await supabase.from("opportunities").update({ estagio: "Aguardando contato" }).eq("id", opId);
-    } catch {}
+    } catch (e) {
+      console.warn("[handleFalarComEspecialista] update best-effort bloqueado por RLS:", e);
+    }
     await safeAppendNote(opId, "Usuário clicou em FALAR COM UM ESPECIALISTA");
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
     const text = `Olá! Preciso falar com um especialista. Segmento: ${segRotulo}. ${
       tipoSimulacao === "credito" ? `Crédito: ${credito}` : `Parcela: ${parcela}`
     }. Prazo: ${prazo || "—"}. Administradora: ${admin}.`;
-    window.open(waLink(telefone.replace(/\D/g, ""), text), "_blank");
+    window.open(waLink(onlyDigits(telefone), text), "_blank");
   }
 
-  /* ===== UI ===== */
   function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: boolean }) {
     return (
       <div
@@ -279,12 +296,12 @@ export default function PublicSimulador() {
             <StepBadge n={1} active={step === 1} done={step > 1} />
             <span className="text-sm font-medium text-[#1E293F]">Seus dados</span>
           </div>
-          <div className="h-px bg-[#1E293F]/20 flex-1" />
+            <div className="h-px bg-[#1E293F]/20 flex-1" />
           <div className="flex items-center gap-2">
             <StepBadge n={2} active={step === 2} done={step > 2} />
             <span className="text-sm font-medium text-[#1E293F]">Preferências</span>
           </div>
-          <div className="h-px bg-[#1E293F]/20 flex-1" />
+            <div className="h-px bg-[#1E293F]/20 flex-1" />
           <div className="flex items-center gap-2">
             <StepBadge n={3} active={step === 3} done={false} />
             <span className="text-sm font-medium text-[#1E293F]">Próximos passos</span>
@@ -330,8 +347,7 @@ export default function PublicSimulador() {
                 Continuar para simulação
               </Button>
               <p className="text-xs text-[#1E293F]/60 leading-relaxed">
-                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são
-                protegidos.
+                Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são protegidos.
               </p>
             </CardContent>
           </Card>
@@ -347,10 +363,7 @@ export default function PublicSimulador() {
               <div className="grid md:grid-cols-3 gap-4">
                 <div>
                   <Label>Segmento</Label>
-                  <Input
-                    readOnly
-                    value={SEGMENTOS.find((s) => s.id === segmento)?.rotulo || ""}
-                  />
+                  <Input readOnly value={SEGMENTOS.find((s) => s.id === segmento)?.rotulo || ""} />
                 </div>
                 <div>
                   <Label>Administradora</Label>

@@ -66,6 +66,80 @@ function waLink(userPhoneDigits: string, text: string) {
   return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
 }
 
+/* ======== Validators (anti-contato fake) ======== */
+function isValidEmail(email: string) {
+  const e = email.trim();
+  // Regras anti-fake simples:
+  if (!e || e.endsWith("@example.com") || e.endsWith("@exemplo.com")) return false;
+  // Regex razoável para e-mail comum
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
+}
+
+function isValidBRPhone(raw: string) {
+  const d = onlyDigits(raw);
+  // Aceita 10 (fixo) ou 11 (celular). Evita sequências óbvias e números repetidos.
+  if (d.length < 10 || d.length > 11) return false;
+  const blackList = ["0000000000", "00000000000", "11111111111", "1234567890", "12345678901"];
+  if (blackList.includes(d)) return false;
+  // Validação leve: se 11 dígitos, nono dígito deve ser 9 (padrão celular)
+  if (d.length === 11 && d[2] !== "9") return false;
+  return true;
+}
+
+/* ======= Lightweight SEO (sem dependências) ======= */
+function useSEO() {
+  useEffect(() => {
+    const title = "Simulador de Consórcio | Consulmax – Sem juros, rápido e seguro";
+    const desc =
+      "Simule agora seu consórcio de imóveis, automóveis, pesados, motos e serviços. Sem juros, com planejamento inteligente e suporte humano. Resposta rápida.";
+    const canonical = "https://crm.consulmaxconsorcios.com.br/publico/simulador";
+
+    document.title = title;
+
+    const setMeta = (name: string, content: string) => {
+      let el = document.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
+      if (!el) {
+        el = document.createElement("meta");
+        el.setAttribute("name", name);
+        document.head.appendChild(el);
+      }
+      el.setAttribute("content", content);
+    };
+    setMeta("description", desc);
+    setMeta("robots", "index,follow");
+
+    // Canonical
+    let link = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "canonical";
+      document.head.appendChild(link);
+    }
+    link.href = canonical;
+
+    // JSON-LD Organization
+    const ld = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: "Consulmax Consórcios",
+      url: "https://consulmaxconsorcios.com.br",
+      logo: "https://crm.consulmaxconsorcios.com.br/logo-consulmax.png",
+      sameAs: [
+        "https://www.instagram.com/consulmax.consorcios",
+        "https://www.linkedin.com/company/consulmax",
+      ],
+    };
+    const script = document.createElement("script");
+    script.type = "application/ld+json";
+    script.text = JSON.stringify(ld);
+    document.head.appendChild(script);
+
+    return () => {
+      if (script && script.parentNode) script.parentNode.removeChild(script);
+    };
+  }, []);
+}
+
 /* ========= Ícone Home com “+” ========= */
 function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
   return (
@@ -109,9 +183,9 @@ type OptionCfg = {
   frPct: number; // 0.03 => 3%
   antecipPct: number; // 0.02 => 2%
   antecipParcelas: number; // 0, 1, 2, 12...
-  allowReduction?: boolean; // permite redução 50% (se chip ativa e opção permitir)
-  onlyReduction?: boolean; // só existe se estiver com redução 50% selecionada
-  visibleIfCreditMin?: number; // mostra somente se crédito >= este valor
+  allowReduction?: boolean;
+  onlyReduction?: boolean;
+  visibleIfCreditMin?: number;
 };
 
 type SegmentCfg = {
@@ -273,11 +347,17 @@ function calcularParcelas({
 
 /* ========= Página ========= */
 export default function PublicSimulador() {
+  useSEO();
+
   // Etapa 1
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [telefone, setTelefone] = useState("");
   const [segmento, setSegmento] = useState<SegmentId>("automovel");
+
+  // Validações visuais
+  const [touchedEmail, setTouchedEmail] = useState(false);
+  const [touchedPhone, setTouchedPhone] = useState(false);
 
   // Etapas
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -318,8 +398,11 @@ export default function PublicSimulador() {
     setCredito((prev) => clampToStep(prev, cfg.min, cfg.max, cfg.step));
   }, [segmento]);
 
-  const canContinueStep1 =
-    nome.trim().length >= 3 && /@/.test(email) && onlyDigits(telefone).length >= 10 && !!segmento;
+  const emailOk = isValidEmail(email);
+  const phoneOk = isValidBRPhone(telefone);
+  const nomeOk = nome.trim().length >= 3;
+
+  const canContinueStep1 = nomeOk && emailOk && phoneOk && !!segmento;
 
   /* ===== Pré-cadastro → cria Oportunidade (Novo) + Lead via RPC v2 ===== */
   async function handlePreCadastro() {
@@ -441,17 +524,11 @@ Admin: ${admin}.`;
   const opcoesFiltradas = useMemo(() => {
     const cfg = SEGMENT_CFG[segmento];
     return cfg.options.filter((o) => {
-      // Condição de crédito mínimo quando houver
       if (o.visibleIfCreditMin && credito < o.visibleIfCreditMin) return false;
-
-      // Se usuário escolheu Reduzida 50%:
       if (parcelKind === "reduzida50") {
-        // esconder as opções que NÃO permitem redução
         if (!o.allowReduction && !o.onlyReduction) return false;
-        // ok: permite redução OU é somente com redução
         return true;
       } else {
-        // Parcelas Cheias -> ocultar as opções marcadas como somente redução
         if (o.onlyReduction) return false;
         return true;
       }
@@ -474,12 +551,22 @@ Admin: ${admin}.`;
     <div className="min-h-screen bg-[#F5F5F5]">
       <div className="mx-auto max-w-3xl px-4 py-8">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <img src="/logo-consulmax.png" alt="Consulmax" className="h-10" />
+        <div className="flex items-center gap-3 mb-4">
+          <img src="/logo-consulmax.png" alt="Consulmax" className="h-20" />
           <div>
             <h1 className="text-xl md:text-2xl font-bold text-[#1E293F]">Simule seu Consórcio</h1>
             <p className="text-sm text-[#1E293F]/70">Sem juros. Sem complicação. Resposta rápida.</p>
           </div>
+        </div>
+
+        {/* Barra de benefícios (estimula conversão) */}
+        <div className="mb-6 flex flex-wrap items-center gap-3 text-xs text-[#1E293F]/80">
+          <span className="px-2 py-1 rounded-full bg-white border border-[#1E293F]/15">Sem juros</span>
+          <span className="px-2 py-1 rounded-full bg-white border border-[#1E293F]/15">Planejamento inteligente</span>
+          <span className="px-2 py-1 rounded-full bg-white border border-[#1E293F]/15">Suporte humano</span>
+          <span className="ml-auto flex items-center gap-1 text-[#1E293F]/60">
+            <ShieldCheck className="w-4 h-4" /> Seus dados são protegidos
+          </span>
         </div>
 
         {/* Stepper */}
@@ -503,39 +590,70 @@ Admin: ${admin}.`;
         {/* Etapa 1 */}
         {step === 1 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-[#1E293F]">Comece pelo pré-cadastro</CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-4">
-              <div>
-                <Label>Nome completo</Label>
-                <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Seu nome" />
-              </div>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <Label>E-mail</Label>
-                  <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="voce@exemplo.com" />
-                </div>
-                <div>
-                  <Label>WhatsApp</Label>
-                  <Input value={telefone} onChange={(e) => setTelefone(e.target.value)} placeholder="(69) 9 9999-9999" />
-                </div>
-              </div>
 
-              {/* Segmentos */}
-              <div className="mt-2">
-                <Label className="mb-2 block">Bem desejado</Label>
-                <div className="flex flex-wrap gap-4">
-                  {SEGMENTOS.map(({ id, rotulo, Icon }) => (
+            {/* Chips — linha única com rolagem horizontal */}
+            <div className="px-6 pb-2">
+              <Label className="mb-2 block">Bem desejado</Label>
+              <div className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 [-ms-overflow-style:none] [scrollbar-width:none]"
+                   style={{ scrollbarWidth: "none" }} >
+                {SEGMENTOS.map(({ id, rotulo, Icon }) => (
+                  <span key={id} className="inline-block shrink-0">
                     <SegmentCard
-                      key={id}
                       Icon={Icon}
                       active={segmento === id}
                       onClick={() => setSegmento(id)}
                     >
                       {rotulo}
                     </SegmentCard>
-                  ))}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <CardContent className="grid gap-4 pt-0">
+              <div>
+                <Label>Nome completo</Label>
+                <Input
+                  value={nome}
+                  onChange={(e) => setNome(e.target.value)}
+                  placeholder="Seu nome"
+                />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <Label>E-mail</Label>
+                  <Input
+                    value={email}
+                    onBlur={() => setTouchedEmail(true)}
+                    onChange={(e) => setEmail(e.target.value)}
+                    inputMode="email"
+                    type="email"
+                    placeholder="voce@seuemail.com"
+                    className={!emailOk && touchedEmail ? "border-red-400 focus:ring-red-200" : ""}
+                  />
+                  {!emailOk && touchedEmail && (
+                    <p className="text-xs text-red-600 mt-1">Informe um e-mail válido (evite domínios de teste).</p>
+                  )}
+                </div>
+                <div>
+                  <Label>WhatsApp</Label>
+                  <Input
+                    value={telefone}
+                    onBlur={() => setTouchedPhone(true)}
+                    onChange={(e) => setTelefone(formatPhoneBR(e.target.value))}
+                    inputMode="tel"
+                    placeholder="(69) 9 9999-9999"
+                    className={!phoneOk && touchedPhone ? "border-red-400 focus:ring-red-200" : ""}
+                  />
+                  {!phoneOk && touchedPhone && (
+                    <p className="text-xs text-red-600 mt-1">
+                      Informe um WhatsApp válido (10–11 dígitos; celular com 9 após o DDD).
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -543,13 +661,15 @@ Admin: ${admin}.`;
                 disabled={!canContinueStep1 || saving}
                 onClick={handlePreCadastro}
                 className="bg-[#A11C27] hover:bg-[#8c1822]"
+                aria-disabled={!canContinueStep1 || saving}
               >
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MousePointerClick className="w-4 h-4 mr-2" />}
                 Continuar para simulação
               </Button>
+
               <p className="text-xs text-[#1E293F]/60 leading-relaxed">
                 Ao continuar, você concorda em ser contatado pela Consulmax para apresentação de propostas. Seus dados são
-                protegidos.
+                protegidos e nunca pediremos sua senha.
               </p>
             </CardContent>
           </Card>
@@ -562,19 +682,21 @@ Admin: ${admin}.`;
               <CardTitle className="text-[#1E293F]">Personalize sua simulação</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4">
-              {/* Segmentos também aqui (pode trocar nesta etapa) */}
+              {/* Segmentos também aqui */}
               <div>
                 <Label className="mb-2 block">Segmento</Label>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 [-ms-overflow-style:none] [scrollbar-width:none]"
+                     style={{ scrollbarWidth: "none" }}>
                   {SEGMENTOS.map(({ id, rotulo, Icon }) => (
-                    <SegmentCard
-                      key={id}
-                      Icon={Icon}
-                      active={segmento === id}
-                      onClick={() => setSegmento(id)}
-                    >
-                      {rotulo}
-                    </SegmentCard>
+                    <span key={id} className="inline-block shrink-0">
+                      <SegmentCard
+                        Icon={Icon}
+                        active={segmento === id}
+                        onClick={() => setSegmento(id)}
+                      >
+                        {rotulo}
+                      </SegmentCard>
+                    </span>
                   ))}
                 </div>
               </div>
@@ -796,9 +918,10 @@ function SegmentCard({
     <button
       type="button"
       onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-2 rounded-xl border p-5 min-w-[130px] transition
+      className={`inline-flex shrink-0 flex-col items-center justify-center gap-2 rounded-xl border p-5 min-w-[130px] transition
         ${active ? "border-[#A11C27] text-[#A11C27] bg-white shadow" : "border-[#A11C27] text-[#A11C27] bg-white/0 hover:bg-white"}`}
       style={{ boxShadow: active ? "0 2px 10px rgba(161,28,39,0.12)" : undefined }}
+      aria-pressed={!!active}
     >
       <Icon className="w-10 h-10" />
       <span className="text-xs font-semibold text-center">{children}</span>
@@ -816,6 +939,7 @@ function Chip({ active, onClick, label }: { active?: boolean; onClick: () => voi
           ? "bg-[#A11C27] text-white border-[#A11C27]"
           : "bg-white text-[#1E293F] border-[#1E293F]/30 hover:border-[#1E293F]"
       }`}
+      aria-pressed={!!active}
     >
       {label}
     </button>

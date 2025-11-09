@@ -1,5 +1,5 @@
 // src/pages/PublicSimulador.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -51,12 +51,6 @@ function formatPhoneBR(raw: string) {
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 }
 
-function currencyMask(v: string) {
-  const digits = v.replace(/\D/g, "");
-  const n = Number(digits || "0");
-  return (n / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
 function BRL(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -69,19 +63,15 @@ function waLink(userPhoneDigits: string, text: string) {
 /* ======== Validators (anti-contato fake) ======== */
 function isValidEmail(email: string) {
   const e = email.trim();
-  // Regras anti-fake simples:
   if (!e || e.endsWith("@example.com") || e.endsWith("@exemplo.com")) return false;
-  // Regex razoável para e-mail comum
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 }
 
 function isValidBRPhone(raw: string) {
   const d = onlyDigits(raw);
-  // Aceita 10 (fixo) ou 11 (celular). Evita sequências óbvias e números repetidos.
   if (d.length < 10 || d.length > 11) return false;
-  const blackList = ["0000000000", "00000000000", "11111111111", "1234567890", "12345678901"];
-  if (blackList.includes(d)) return false;
-  // Validação leve: se 11 dígitos, nono dígito deve ser 9 (padrão celular)
+  const blackList = new Set(["0000000000", "00000000000", "11111111111", "1234567890", "12345678901"]);
+  if (blackList.has(d)) return false;
   if (d.length === 11 && d[2] !== "9") return false;
   return true;
 }
@@ -108,7 +98,6 @@ function useSEO() {
     setMeta("description", desc);
     setMeta("robots", "index,follow");
 
-    // Canonical
     let link = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
     if (!link) {
       link = document.createElement("link");
@@ -117,7 +106,6 @@ function useSEO() {
     }
     link.href = canonical;
 
-    // JSON-LD Organization
     const ld = {
       "@context": "https://schema.org",
       "@type": "Organization",
@@ -179,10 +167,10 @@ type ParcelKind = "cheia" | "reduzida50";
 type OptionCfg = {
   id: string;
   prazo: number;
-  admPct: number; // 0.14 => 14%
-  frPct: number; // 0.03 => 3%
-  antecipPct: number; // 0.02 => 2%
-  antecipParcelas: number; // 0, 1, 2, 12...
+  admPct: number;
+  frPct: number;
+  antecipPct: number;
+  antecipParcelas: number;
   allowReduction?: boolean;
   onlyReduction?: boolean;
   visibleIfCreditMin?: number;
@@ -212,17 +200,13 @@ const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
     min: 15000,
     max: 30000,
     step: 1000,
-    options: [
-      { id: "moto1", prazo: 70, admPct: 0.20, frPct: 0.05, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false },
-    ],
+    options: [{ id: "moto1", prazo: 70, admPct: 0.20, frPct: 0.05, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false }],
   },
   servicos: {
     min: 15000,
     max: 30000,
     step: 1000,
-    options: [
-      { id: "serv1", prazo: 40, admPct: 0.21, frPct: 0.05, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false },
-    ],
+    options: [{ id: "serv1", prazo: 40, admPct: 0.21, frPct: 0.05, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false }],
   },
   pesados: {
     min: 200000,
@@ -291,7 +275,7 @@ async function createOpportunityV2({
     console.error("[public_create_opportunity_v2] error:", error);
     throw error;
   }
-  return data as string; // new_opportunity_id
+  return data as string;
 }
 
 /** Nota na oportunidade (não bloqueia o fluxo em caso de falha) */
@@ -306,14 +290,6 @@ async function safeAppendNote(opportunityId: string, note: string) {
 }
 
 /* ========= Funções de cálculo ========= */
-/**
- * Regra base (sem seguro):
- * - Fundo Comum mensal = C / prazo
- * - Encargos (Adm + FR) mensais = (C * (adm + fr)) / prazo
- * - Parcela Cheia = FC + Encargos
- * - Parcela Reduzida 50% = (FC * 0.5) + Encargos
- * - Antecipação: valor total = C * antecipPct; rateado nas primeiras N parcelas
- */
 function calcularParcelas({
   credito,
   prazo,
@@ -331,10 +307,9 @@ function calcularParcelas({
   antecipParcelas: number;
   kind: ParcelKind;
 }) {
-  const fc = credito / prazo; // fundo comum mensal
-  const encargos = (credito * (admPct + frPct)) / prazo; // adm + fr mensalizados
+  const fc = credito / prazo;
+  const encargos = (credito * (admPct + frPct)) / prazo;
   const parcelaBase = kind === "cheia" ? fc + encargos : fc * 0.5 + encargos;
-
   const antecipTotal = credito * antecipPct;
   const antecipMensal = antecipParcelas > 0 ? antecipTotal / antecipParcelas : 0;
 
@@ -366,7 +341,7 @@ export default function PublicSimulador() {
   // Oportunidade criada
   const [opId, setOpId] = useState<string | null>(null);
 
-  // Etapa 2 (novo)
+  // Etapa 2
   const [parcelKind, setParcelKind] = useState<ParcelKind>("cheia");
   const [admin, setAdmin] = useState<string>("Embracon");
   const [mensagem, setMensagem] = useState<string>("");
@@ -387,10 +362,11 @@ export default function PublicSimulador() {
 
   const [finalMsg, setFinalMsg] = useState<string>("");
 
+  // Refs para CTA flutuante
+  const optionsRef = useRef<HTMLDivElement | null>(null);
+
   // Formatter de input telefone na carga
-  useEffect(() => {
-    setTelefone((t) => formatPhoneBR(t));
-  }, []);
+  useEffect(() => setTelefone((t) => formatPhoneBR(t)), []);
 
   // Ajusta crédito para range ao trocar segmento
   useEffect(() => {
@@ -404,7 +380,7 @@ export default function PublicSimulador() {
 
   const canContinueStep1 = nomeOk && emailOk && phoneOk && !!segmento;
 
-  /* ===== Pré-cadastro → cria Oportunidade (Novo) + Lead via RPC v2 ===== */
+  /* ===== Pré-cadastro → cria Oportunidade ===== */
   async function handlePreCadastro() {
     try {
       setSaving(true);
@@ -418,6 +394,8 @@ export default function PublicSimulador() {
       setOpId(newOpId);
       safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`).catch(() => {});
       setStep(2);
+      // rolar para topo (útil em mobile)
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
       const msg = e?.message || e?.hint || e?.details || "Falha ao executar a RPC public_create_opportunity_v2.";
       alert(
@@ -468,6 +446,7 @@ export default function PublicSimulador() {
       });
 
       setStep(3);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       console.error("[handleEscolherOpcao] erro:", e);
       alert("Não foi possível registrar a escolha. Tente novamente.");
@@ -478,14 +457,10 @@ export default function PublicSimulador() {
 
   async function handleContratar() {
     if (!opId || !selecionado) return;
-    setFinalMsg(
-      "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
-    );
+    setFinalMsg("Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento.");
     try {
       await supabase.from("opportunities").update({ estagio: "Contratar – solicitado" }).eq("id", opId);
-    } catch (e) {
-      console.warn("[handleContratar] update best-effort bloqueado por RLS:", e);
-    }
+    } catch (e) { console.warn("[handleContratar] update best-effort bloqueado por RLS:", e); }
     await safeAppendNote(opId, "Usuário clicou em CONTRATAR");
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
@@ -500,14 +475,10 @@ Admin: ${admin}.`;
 
   async function handleFalarComEspecialista() {
     if (!opId || !selecionado) return;
-    setFinalMsg(
-      "Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento."
-    );
+    setFinalMsg("Recebemos a sua solicitação, em breve um dos nossos especialistas irá entrar em contato com você para concluir o seu atendimento.");
     try {
       await supabase.from("opportunities").update({ estagio: "Aguardando contato" }).eq("id", opId);
-    } catch (e) {
-      console.warn("[handleFalarComEspecialista] update best-effort bloqueado por RLS:", e);
-    }
+    } catch (e) { console.warn("[handleFalarComEspecialista] update best-effort bloqueado por RLS:", e); }
     await safeAppendNote(opId, "Usuário clicou em FALAR COM UM ESPECIALISTA");
 
     const segRotulo = SEGMENTOS.find((s) => s.id === segmento)?.rotulo || segmento;
@@ -546,10 +517,44 @@ Admin: ${admin}.`;
     setCredito(clampToStep(v, min, max, step));
   }
 
+  /* ===== Ações do CTA flutuante por etapa ===== */
+  function floatingCTALabel() {
+    if (step === 1) return "Continuar";
+    if (step === 2) return "Ver opções";
+    return "Falar com Especialista";
+  }
+  const floatingCTADisabled = step === 1 ? (!canContinueStep1 || saving) : false;
+
+  function onFloatingCTA() {
+    if (step === 1) return handlePreCadastro();
+    if (step === 2) {
+      optionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    return handleFalarComEspecialista();
+  }
+
   /* ====================== RENDER ====================== */
   return (
     <div className="min-h-screen bg-[#F5F5F5]">
-      <div className="mx-auto max-w-3xl px-4 py-8">
+      {/* Mini-wizard fixo (mobile) */}
+      <div className="md:hidden sticky top-0 z-30 bg-[#F5F5F5]/95 backdrop-blur border-b border-[#1E293F]/10">
+        <div className="mx-auto max-w-5xl px-4 py-2 flex items-center gap-4">
+          <span className="text-sm font-semibold text-[#1E293F]">Etapa</span>
+          <div className="flex items-center gap-3 text-xs">
+            <StepDot active={step === 1} done={step > 1} label="1" />
+            <div className="w-10 h-[2px] bg-[#1E293F]/20" />
+            <StepDot active={step === 2} done={step > 2} label="2" />
+            <div className="w-10 h-[2px] bg-[#1E293F]/20" />
+            <StepDot active={step === 3} done={false} label="3" />
+          </div>
+          <div className="ml-auto text-[11px] text-[#1E293F]/70 flex items-center gap-1">
+            <ShieldCheck className="w-4 h-4" /> Seguro
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-5xl px-4 py-8">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
           <img src="/logo-consulmax.png" alt="Consulmax" className="h-20" />
@@ -559,7 +564,7 @@ Admin: ${admin}.`;
           </div>
         </div>
 
-        {/* Barra de benefícios (estimula conversão) */}
+        {/* Barra de benefícios */}
         <div className="mb-6 flex flex-wrap items-center gap-3 text-xs text-[#1E293F]/80">
           <span className="px-2 py-1 rounded-full bg-white border border-[#1E293F]/15">Sem juros</span>
           <span className="px-2 py-1 rounded-full bg-white border border-[#1E293F]/15">Planejamento inteligente</span>
@@ -569,8 +574,8 @@ Admin: ${admin}.`;
           </span>
         </div>
 
-        {/* Stepper */}
-        <div className="flex items-center gap-4 mb-6">
+        {/* Stepper (desktop) */}
+        <div className="hidden md:flex items-center gap-4 mb-6">
           <div className="flex items-center gap-2">
             <StepBadge n={1} active={step === 1} done={step > 1} />
             <span className="text-sm font-medium text-[#1E293F]">Seus dados</span>
@@ -587,18 +592,18 @@ Admin: ${admin}.`;
           </div>
         </div>
 
-        {/* Etapa 1 */}
+        {/* Etapa 1 — card mais largo e chips em linha única */}
         {step === 1 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader className="pb-2">
               <CardTitle className="text-[#1E293F]">Comece pelo pré-cadastro</CardTitle>
             </CardHeader>
 
-            {/* Chips — linha única com rolagem horizontal */}
+            {/* Chips — linha única com rolagem horizontal (não perde cards) */}
             <div className="px-6 pb-2">
               <Label className="mb-2 block">Bem desejado</Label>
               <div className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 [-ms-overflow-style:none] [scrollbar-width:none]"
-                   style={{ scrollbarWidth: "none" }} >
+                   style={{ scrollbarWidth: "none" }}>
                 {SEGMENTOS.map(({ id, rotulo, Icon }) => (
                   <span key={id} className="inline-block shrink-0">
                     <SegmentCard
@@ -616,11 +621,7 @@ Admin: ${admin}.`;
             <CardContent className="grid gap-4 pt-0">
               <div>
                 <Label>Nome completo</Label>
-                <Input
-                  value={nome}
-                  onChange={(e) => setNome(e.target.value)}
-                  placeholder="Seu nome"
-                />
+                <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Seu nome" />
               </div>
 
               <div className="grid md:grid-cols-2 gap-4">
@@ -633,9 +634,9 @@ Admin: ${admin}.`;
                     inputMode="email"
                     type="email"
                     placeholder="voce@seuemail.com"
-                    className={!emailOk && touchedEmail ? "border-red-400 focus:ring-red-200" : ""}
+                    className={!isValidEmail(email) && touchedEmail ? "border-red-400 focus:ring-red-200" : ""}
                   />
-                  {!emailOk && touchedEmail && (
+                  {!isValidEmail(email) && touchedEmail && (
                     <p className="text-xs text-red-600 mt-1">Informe um e-mail válido (evite domínios de teste).</p>
                   )}
                 </div>
@@ -647,12 +648,10 @@ Admin: ${admin}.`;
                     onChange={(e) => setTelefone(formatPhoneBR(e.target.value))}
                     inputMode="tel"
                     placeholder="(69) 9 9999-9999"
-                    className={!phoneOk && touchedPhone ? "border-red-400 focus:ring-red-200" : ""}
+                    className={!isValidBRPhone(telefone) && touchedPhone ? "border-red-400 focus:ring-red-200" : ""}
                   />
-                  {!phoneOk && touchedPhone && (
-                    <p className="text-xs text-red-600 mt-1">
-                      Informe um WhatsApp válido (10–11 dígitos; celular com 9 após o DDD).
-                    </p>
+                  {!isValidBRPhone(telefone) && touchedPhone && (
+                    <p className="text-xs text-red-600 mt-1">Informe um WhatsApp válido (10–11 dígitos; celular com 9 após o DDD).</p>
                   )}
                 </div>
               </div>
@@ -660,7 +659,7 @@ Admin: ${admin}.`;
               <Button
                 disabled={!canContinueStep1 || saving}
                 onClick={handlePreCadastro}
-                className="bg-[#A11C27] hover:bg-[#8c1822]"
+                className="hidden md:inline-flex bg-[#A11C27] hover:bg-[#8c1822]"
                 aria-disabled={!canContinueStep1 || saving}
               >
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MousePointerClick className="w-4 h-4 mr-2" />}
@@ -675,14 +674,13 @@ Admin: ${admin}.`;
           </Card>
         )}
 
-        {/* Etapa 2 */}
+        {/* Etapa 2 — chips em linha única + container largo */}
         {step === 2 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
               <CardTitle className="text-[#1E293F]">Personalize sua simulação</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4">
-              {/* Segmentos também aqui */}
               <div>
                 <Label className="mb-2 block">Segmento</Label>
                 <div className="flex gap-3 overflow-x-auto whitespace-nowrap pb-2 [-ms-overflow-style:none] [scrollbar-width:none]"
@@ -701,7 +699,6 @@ Admin: ${admin}.`;
                 </div>
               </div>
 
-              {/* Administradora + Chip de tipo de parcela */}
               <div className="grid md:grid-cols-3 gap-4">
                 <div>
                   <Label>Administradora</Label>
@@ -718,16 +715,8 @@ Admin: ${admin}.`;
                 <div className="md:col-span-2">
                   <Label>Tipo de parcela</Label>
                   <div className="flex gap-2 mt-2">
-                    <Chip
-                      active={parcelKind === "cheia"}
-                      onClick={() => setParcelKind("cheia")}
-                      label="Parcela Cheia"
-                    />
-                    <Chip
-                      active={parcelKind === "reduzida50"}
-                      onClick={() => setParcelKind("reduzida50")}
-                      label="Parcela Reduzida (50%)"
-                    />
+                    <Chip active={parcelKind === "cheia"} onClick={() => setParcelKind("cheia")} label="Parcela Cheia" />
+                    <Chip active={parcelKind === "reduzida50"} onClick={() => setParcelKind("reduzida50")} label="Parcela Reduzida (50%)" />
                   </div>
                   <p className="text-xs text-[#1E293F]/60 mt-1">
                     Na parcela reduzida (50%), o desconto aplica-se sobre o Fundo Comum até a contemplação; os encargos (Adm + FR) permanecem integrais.
@@ -735,7 +724,6 @@ Admin: ${admin}.`;
                 </div>
               </div>
 
-              {/* Slider de crédito */}
               <div>
                 <div className="flex items-center justify-between">
                   <Label>Valor do crédito</Label>
@@ -756,7 +744,6 @@ Admin: ${admin}.`;
                 </div>
               </div>
 
-              {/* Observações do cliente */}
               <div>
                 <Label>Deixe um comentário (opcional)</Label>
                 <textarea
@@ -769,7 +756,7 @@ Admin: ${admin}.`;
               </div>
 
               {/* Lista de opções calculadas */}
-              <div className="grid gap-3">
+              <div ref={optionsRef} className="grid gap-3">
                 {opcoesFiltradas.map((opt) => {
                   const calc = calcularParcelas({
                     credito,
@@ -799,8 +786,8 @@ Admin: ${admin}.`;
 
                         {opt.antecipParcelas > 0 ? (
                           <div className="text-sm text-[#1E293F]">
-                            Parcelas 1–{opt.antecipParcelas}: <strong>{BRL(calc.parcelaComAntecipacao)}</strong>{" "}
-                            • Demais: <strong>{BRL(calc.parcelaSemAntecipacao)}</strong>
+                            Parcelas 1–{opt.antecipParcelas}: <strong>{BRL(calc.parcelaComAntecipacao)}</strong> • Demais:{" "}
+                            <strong>{BRL(calc.parcelaSemAntecipacao)}</strong>
                           </div>
                         ) : (
                           <div className="text-sm text-[#1E293F]">
@@ -809,11 +796,7 @@ Admin: ${admin}.`;
                         )}
                       </div>
 
-                      <Button
-                        onClick={() => handleEscolherOpcao(opt)}
-                        className="bg-[#A11C27] hover:bg-[#8c1822]"
-                        disabled={saving}
-                      >
+                      <Button onClick={() => handleEscolherOpcao(opt)} className="bg-[#A11C27] hover:bg-[#8c1822]" disabled={saving}>
                         {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
                         Escolher esta opção
                       </Button>
@@ -829,9 +812,7 @@ Admin: ${admin}.`;
               </div>
 
               <div className="flex flex-wrap gap-3">
-                <Button variant="outline" onClick={() => setStep(1)}>
-                  Voltar
-                </Button>
+                <Button variant="outline" onClick={() => setStep(1)}>Voltar</Button>
               </div>
 
               <p className="text-xs text-[#1E293F]/60">
@@ -841,7 +822,7 @@ Admin: ${admin}.`;
           </Card>
         )}
 
-        {/* Etapa 3 */}
+        {/* Etapa 3 — largo + ajuste CTA mobile */}
         {step === 3 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
@@ -882,6 +863,18 @@ Admin: ${admin}.`;
 
         <footer className="text-center text-xs text-[#1E293F]/50 mt-8">Consulmax • Maximize as suas conquistas.</footer>
       </div>
+
+      {/* CTA flutuante (mobile) */}
+      <div className="md:hidden fixed right-4 bottom-5 z-30">
+        <Button
+          onClick={onFloatingCTA}
+          disabled={floatingCTADisabled}
+          className={`h-12 px-5 rounded-full shadow-lg ${floatingCTADisabled ? "bg-[#A11C27]/60" : "bg-[#A11C27] hover:bg-[#8c1822]"}`}
+        >
+          {saving && step === 1 ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+          {floatingCTALabel()}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -891,14 +884,22 @@ function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: bo
   return (
     <div
       className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border ${
-        active
-          ? "bg-[#1E293F] text-white border-[#1E293F]"
-          : done
-          ? "bg-[#B5A573] text-white border-[#B5A573]"
-          : "bg-white text-[#1E293F] border-[#1E293F]"
+        active ? "bg-[#1E293F] text-white border-[#1E293F]" : done ? "bg-[#B5A573] text-white border-[#B5A573]" : "bg-white text-[#1E293F] border-[#1E293F]"
       }`}
     >
       {done ? <CheckCircle2 className="w-5 h-5" /> : n}
+    </div>
+  );
+}
+
+function StepDot({ active, done, label }: { active?: boolean; done?: boolean; label: string }) {
+  return (
+    <div
+      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
+        active ? "bg-[#1E293F] text-white" : done ? "bg-[#B5A573] text-white" : "bg-white text-[#1E293F] border border-[#1E293F]"
+      }`}
+    >
+      {label}
     </div>
   );
 }
@@ -935,9 +936,7 @@ function Chip({ active, onClick, label }: { active?: boolean; onClick: () => voi
       type="button"
       onClick={onClick}
       className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
-        active
-          ? "bg-[#A11C27] text-white border-[#A11C27]"
-          : "bg-white text-[#1E293F] border-[#1E293F]/30 hover:border-[#1E293F]"
+        active ? "bg-[#A11C27] text-white border-[#A11C27]" : "bg-white text-[#1E293F] border-[#1E293F]/30 hover:border-[#1E293F]"
       }`}
       aria-pressed={!!active}
     >

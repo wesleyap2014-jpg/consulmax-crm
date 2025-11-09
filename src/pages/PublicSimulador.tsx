@@ -24,7 +24,6 @@ import {
 /** =========================
  *  IDs padrão (AUTH USER ID)
  *  =========================
- *  A RPC v2 usa auth_user_id nas FKs de opportunities (vendedor_id/owner_id).
  */
 const DEFAULT_VENDEDOR_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
 const DEFAULT_OWNER_AUTH_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
@@ -40,34 +39,25 @@ function ts() {
     d.getMinutes()
   )}:${pad(d.getSeconds())}`;
 }
-
-function onlyDigits(s: string) {
-  return s.replace(/\D/g, "");
-}
-
+function onlyDigits(s: string) { return s.replace(/\D/g, ""); }
 function formatPhoneBR(raw: string) {
   const digits = onlyDigits(raw).slice(0, 11);
   if (digits.length <= 2) return digits;
   if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 }
-
-function BRL(n: number) {
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
+function BRL(n: number) { return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 function waLink(userPhoneDigits: string, text: string) {
   const to = userPhoneDigits.length >= 10 ? `55${userPhoneDigits}` : CONSULMAX_WA;
   return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
 }
 
-/* ======== Validators (anti-contato fake) ======== */
+/* ======== Validators ======== */
 function isValidEmail(email: string) {
   const e = email.trim();
   if (!e || e.endsWith("@example.com") || e.endsWith("@exemplo.com")) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 }
-
 function isValidBRPhone(raw: string) {
   const d = onlyDigits(raw);
   if (d.length < 10 || d.length > 11) return false;
@@ -77,14 +67,13 @@ function isValidBRPhone(raw: string) {
   return true;
 }
 
-/* ======= Lightweight SEO (sem dependências) ======= */
+/* ======= Lightweight SEO ======= */
 function useSEO() {
   useEffect(() => {
     const title = "Simulador de Consórcio | Consulmax – Sem juros, rápido e seguro";
     const desc =
       "Simule agora seu consórcio de imóveis, automóveis, pesados, motos e serviços. Sem juros, com planejamento inteligente e suporte humano. Resposta rápida.";
     const canonical = "https://crm.consulmaxconsorcios.com.br/publico/simulador";
-
     document.title = title;
 
     const setMeta = (name: string, content: string) => {
@@ -122,10 +111,7 @@ function useSEO() {
     script.type = "application/ld+json";
     script.text = JSON.stringify(ld);
     document.head.appendChild(script);
-
-    return () => {
-      if (script && script.parentNode) script.parentNode.removeChild(script);
-    };
+    return () => { if (script && script.parentNode) script.parentNode.removeChild(script); };
   }, []);
 }
 
@@ -140,14 +126,7 @@ function HomeWithPlus(props: React.ComponentProps<typeof Home>) {
 }
 
 /* ========= UI: Segmentos ========= */
-type SegmentId =
-  | "automovel"
-  | "motocicleta"
-  | "imovel"
-  | "servicos"
-  | "pesados"
-  | "imovel_estendido";
-
+type SegmentId = "automovel" | "motocicleta" | "imovel" | "servicos" | "pesados" | "imovel_estendido";
 const SEGMENTOS: Array<{ id: SegmentId; rotulo: string; rotuloRPC: string; Icon: React.ComponentType<any> }> = [
   { id: "automovel", rotulo: "AUTOMÓVEIS", rotuloRPC: "Automóvel", Icon: Car },
   { id: "motocicleta", rotulo: "MOTOCICLETAS", rotuloRPC: "Motocicleta", Icon: Bike },
@@ -156,12 +135,11 @@ const SEGMENTOS: Array<{ id: SegmentId; rotulo: string; rotuloRPC: string; Icon:
   { id: "pesados", rotulo: "PESADOS", rotuloRPC: "Pesados", Icon: Truck },
   { id: "imovel_estendido", rotulo: "IMÓVEL ESTENDIDO", rotuloRPC: "Imóvel Estendido", Icon: HomeWithPlus },
 ];
-
 function segmentLabelFromId(id: SegmentId): string {
   return SEGMENTOS.find((s) => s.id === id)?.rotuloRPC ?? id;
 }
 
-/* ========= Tipos de parcela (chip) ========= */
+/* ========= Tipos de parcela ========= */
 type ParcelKind = "cheia" | "reduzida50";
 
 /* ========= Configurações por segmento ========= */
@@ -176,19 +154,11 @@ type OptionCfg = {
   onlyReduction?: boolean;
   visibleIfCreditMin?: number;
 };
-
-type SegmentCfg = {
-  min: number;
-  max: number;
-  step: number;
-  options: OptionCfg[];
-};
+type SegmentCfg = { min: number; max: number; step: number; options: OptionCfg[]; };
 
 const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
   automovel: {
-    min: 45000,
-    max: 180000,
-    step: 5000,
+    min: 45000, max: 180000, step: 5000,
     options: [
       { id: "auto1", prazo: 80, admPct: 0.14, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
       { id: "auto2", prazo: 80, admPct: 0.17, frPct: 0.03, antecipPct: 0.01, antecipParcelas: 2, allowReduction: false },
@@ -198,42 +168,32 @@ const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
     ],
   },
   motocicleta: {
-    min: 15000,
-    max: 30000,
-    step: 1000,
-    options: [{ id: "moto1", prazo: 70, admPct: 0.20, frPct: 0.05, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false }],
+    min: 15000, max: 30000, step: 1000,
+    options: [{ id: "moto1", prazo: 70, admPct: 0.20, frPct: 0.05, antecipPct: 0, antecipParcelas: 0, allowReduction: false }],
   },
   servicos: {
-    min: 15000,
-    max: 30000,
-    step: 1000,
-    options: [{ id: "serv1", prazo: 40, admPct: 0.21, frPct: 0.05, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false }],
+    min: 15000, max: 30000, step: 1000,
+    options: [{ id: "serv1", prazo: 40, admPct: 0.21, frPct: 0.05, antecipPct: 0, antecipParcelas: 0, allowReduction: false }],
   },
   pesados: {
-    min: 200000,
-    max: 700000,
-    step: 10000,
+    min: 200000, max: 700000, step: 10000,
     options: [
-      { id: "pes1", prazo: 100, admPct: 0.14, frPct: 0.03, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false },
+      { id: "pes1", prazo: 100, admPct: 0.14, frPct: 0.03, antecipPct: 0, antecipParcelas: 0, allowReduction: false },
       { id: "pes2", prazo: 100, admPct: 0.12, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
       { id: "pes3", prazo: 100, admPct: 0.14, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 1, allowReduction: true, onlyReduction: true },
       { id: "pes4", prazo: 100, admPct: 0.18, frPct: 0.03, antecipPct: 0.012, antecipParcelas: 12, allowReduction: true, onlyReduction: true },
     ],
   },
   imovel: {
-    min: 100000,
-    max: 1200000,
-    step: 10000,
+    min: 100000, max: 1200000, step: 10000,
     options: [
       { id: "imo1", prazo: 180, admPct: 0.18, frPct: 0.02, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
-      { id: "imo2", prazo: 165, admPct: 0.21, frPct: 0.02, antecipPct: 0.0, antecipParcelas: 0, allowReduction: false },
+      { id: "imo2", prazo: 165, admPct: 0.21, frPct: 0.02, antecipPct: 0, antecipParcelas: 0, allowReduction: false },
       { id: "imo3", prazo: 180, admPct: 0.21, frPct: 0.02, antecipPct: 0.01, antecipParcelas: 1, allowReduction: false, visibleIfCreditMin: 250000 },
     ],
   },
   imovel_estendido: {
-    min: 120000,
-    max: 2000000,
-    step: 10000,
+    min: 120000, max: 2000000, step: 10000,
     options: [
       { id: "ime1", prazo: 240, admPct: 0.22, frPct: 0.02, antecipPct: 0.02, antecipParcelas: 1, allowReduction: true },
       { id: "ime2", prazo: 240, admPct: 0.26, frPct: 0.02, antecipPct: 0.01, antecipParcelas: 1, allowReduction: true },
@@ -245,19 +205,12 @@ const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
 
 /* ========= RPCs ========= */
 async function createOpportunityV2({
-  nome,
-  email,
-  telefone,
-  segmentoRPC,
+  nome, email, telefone, segmentoRPC,
   vendedorAuthId = DEFAULT_VENDEDOR_AUTH_ID,
   ownerAuthId = DEFAULT_OWNER_AUTH_ID,
 }: {
-  nome: string;
-  email: string;
-  telefone: string;
-  segmentoRPC: string;
-  vendedorAuthId?: string;
-  ownerAuthId?: string;
+  nome: string; email: string; telefone: string; segmentoRPC: string;
+  vendedorAuthId?: string; ownerAuthId?: string;
 }) {
   const tel = onlyDigits(telefone);
   const payload = {
@@ -269,56 +222,25 @@ async function createOpportunityV2({
     p_vendedor_auth_id: vendedorAuthId,
     p_owner_auth_id: ownerAuthId,
   };
-
   const { data, error } = await supabase.rpc("public_create_opportunity_v2", payload);
-  if (error) {
-    console.error("[public_create_opportunity_v2] payload:", payload);
-    console.error("[public_create_opportunity_v2] error:", error);
-    throw error;
-  }
+  if (error) { console.error("[public_create_opportunity_v2] payload:", payload); console.error(error); throw error; }
   return data as string;
 }
-
-/** Nota na oportunidade (não bloqueia o fluxo em caso de falha) */
+/** Nota na oportunidade */
 async function safeAppendNote(opportunityId: string, note: string) {
-  const { error } = await supabase.rpc("public_append_op_note", {
-    p_op_id: opportunityId,
-    p_note: `[${ts()}] ${note}`,
-  });
-  if (error) {
-    console.warn("[public_append_op_note] erro ao anotar:", error);
-  }
+  const { error } = await supabase.rpc("public_append_op_note", { p_op_id: opportunityId, p_note: `[${ts()}] ${note}` });
+  if (error) console.warn("[public_append_op_note] erro:", error);
 }
 
-/* ========= Funções de cálculo ========= */
-function calcularParcelas({
-  credito,
-  prazo,
-  admPct,
-  frPct,
-  antecipPct,
-  antecipParcelas,
-  kind,
-}: {
-  credito: number;
-  prazo: number;
-  admPct: number;
-  frPct: number;
-  antecipPct: number;
-  antecipParcelas: number;
-  kind: ParcelKind;
-}) {
+/* ========= Cálculo ========= */
+type ParcelKindInput = { credito: number; prazo: number; admPct: number; frPct: number; antecipPct: number; antecipParcelas: number; kind: ParcelKind; };
+function calcularParcelas({ credito, prazo, admPct, frPct, antecipPct, antecipParcelas, kind }: ParcelKindInput) {
   const fc = credito / prazo;
   const encargos = (credito * (admPct + frPct)) / prazo;
   const parcelaBase = kind === "cheia" ? fc + encargos : fc * 0.5 + encargos;
   const antecipTotal = credito * antecipPct;
   const antecipMensal = antecipParcelas > 0 ? antecipTotal / antecipParcelas : 0;
-
-  return {
-    parcelaComAntecipacao: antecipParcelas > 0 ? parcelaBase + antecipMensal : parcelaBase,
-    parcelaSemAntecipacao: parcelaBase,
-    antecipParcelas,
-  };
+  return { parcelaComAntecipacao: antecipParcelas > 0 ? parcelaBase + antecipMensal : parcelaBase, parcelaSemAntecipacao: parcelaBase, antecipParcelas };
 }
 
 /* ========= Página ========= */
@@ -351,17 +273,12 @@ export default function PublicSimulador() {
 
   // Seleção final para etapa 3
   const [selecionado, setSelecionado] = useState<{
-    optionId: string;
-    prazo: number;
-    admPct: number;
-    frPct: number;
-    antecipPct: number;
-    antecipParcelas: number;
+    optionId: string; prazo: number; admPct: number; frPct: number; antecipPct: number; antecipParcelas: number;
   } | null>(null);
 
   const [finalMsg, setFinalMsg] = useState<string>("");
 
-  // Refs para CTA flutuante
+  // Refs
   const optionsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => setTelefone((t) => formatPhoneBR(t)), []);
@@ -373,49 +290,46 @@ export default function PublicSimulador() {
   const emailOk = isValidEmail(email);
   const phoneOk = isValidBRPhone(telefone);
   const nomeOk = nome.trim().length >= 3;
-
   const canContinueStep1 = nomeOk && emailOk && phoneOk && !!segmento;
 
-  /* ===== Pré-cadastro → cria Oportunidade ===== */
+  /* ======= opcoesFiltradas — declarado antes do render/uso ======= */
+  const opcoesFiltradas = useMemo(() => {
+    const cfg = SEGMENT_CFG[segmento];
+    return cfg.options.filter((o) => {
+      if (o.visibleIfCreditMin && credito < o.visibleIfCreditMin) return false;
+      if (parcelKind === "reduzida50") {
+        if (!o.allowReduction && !o.onlyReduction) return false;
+        return true;
+      } else {
+        if (o.onlyReduction) return false;
+        return true;
+      }
+    });
+  }, [segmento, parcelKind, credito]);
+
+  /* ===== Ações ===== */
   async function handlePreCadastro() {
     try {
       setSaving(true);
       const segmentoRPC = segmentLabelFromId(segmento);
-      const newOpId = await createOpportunityV2({
-        nome: nome.trim(),
-        email: email.trim(),
-        telefone,
-        segmentoRPC,
-      });
+      const newOpId = await createOpportunityV2({ nome: nome.trim(), email: email.trim(), telefone, segmentoRPC });
       setOpId(newOpId);
       safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`).catch(() => {});
       setStep(2);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
       const msg = e?.message || e?.hint || e?.details || "Falha ao executar a RPC public_create_opportunity_v2.";
-      alert(
-        `Não foi possível concluir o pré-cadastro/criar a oportunidade.\n\nDetalhes: ${msg}\n\nVeja o console do navegador para diagnóstico completo.`
-      );
+      alert(`Não foi possível concluir o pré-cadastro/criar a oportunidade.\n\nDetalhes: ${msg}\n\nVeja o console do navegador para diagnóstico completo.`);
       console.error("[handlePreCadastro] erro:", e);
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   }
 
-  /* ===== Escolher uma opção calculada (vai para Etapa 3) ===== */
   async function handleEscolherOpcao(opt: OptionCfg) {
     if (!opId) return;
     try {
       setSaving(true);
-
       const { parcelaComAntecipacao, parcelaSemAntecipacao, antecipParcelas } = calcularParcelas({
-        credito,
-        prazo: opt.prazo,
-        admPct: opt.admPct,
-        frPct: opt.frPct,
-        antecipPct: opt.antecipPct,
-        antecipParcelas: opt.antecipParcelas,
-        kind: parcelKind,
+        credito, prazo: opt.prazo, admPct: opt.admPct, frPct: opt.frPct, antecipPct: opt.antecipPct, antecipParcelas: opt.antecipParcelas, kind: parcelKind,
       });
 
       const resumo =
@@ -427,24 +341,13 @@ export default function PublicSimulador() {
           : `Parcela mensal: ${BRL(parcelaSemAntecipacao)}`);
 
       await safeAppendNote(opId, resumo);
-
-      setSelecionado({
-        optionId: opt.id,
-        prazo: opt.prazo,
-        admPct: opt.admPct,
-        frPct: opt.frPct,
-        antecipPct: opt.antecipPct,
-        antecipParcelas: opt.antecipParcelas,
-      });
-
+      setSelecionado({ optionId: opt.id, prazo: opt.prazo, admPct: opt.admPct, frPct: opt.frPct, antecipPct: opt.antecipPct, antecipParcelas: opt.antecipParcelas });
       setStep(3);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       console.error("[handleEscolherOpcao] erro:", e);
       alert("Não foi possível registrar a escolha. Tente novamente.");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   }
 
   /* ===== util ===== */
@@ -453,34 +356,24 @@ export default function PublicSimulador() {
     const snapped = Math.round((clamped - min) / step) * step + min;
     return Math.min(max, Math.max(min, snapped));
   }
-
   function handleSlider(v: number) {
     const { min, max, step } = SEGMENT_CFG[segmento];
     setCredito(clampToStep(v, min, max, step));
   }
 
   /* ===== CTA flutuante por etapa ===== */
-  function floatingCTALabel() {
-    if (step === 1) return "Continuar";
-    if (step === 2) return "Ver opções";
-    return "Finalizar";
-  }
+  function floatingCTALabel() { if (step === 1) return "Continuar"; if (step === 2) return "Ver opções"; return "Finalizar"; }
   const floatingCTADisabled = step === 1 ? (!canContinueStep1 || saving) : false;
-
   function onFloatingCTA() {
     if (step === 1) return handlePreCadastro();
-    if (step === 2) {
-      optionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      return;
-    }
-    // Etapa 3 → Finalizar
+    if (step === 2) { optionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     window.location.href = "https://consulmaxconsorcios.com.br/";
   }
 
   /* ====================== RENDER ====================== */
   return (
     <div className="min-h-screen bg-[#F5F5F5]">
-      {/* Mini-wizard fixo (mobile) */}
+      {/* Wizard mobile */}
       <div className="md:hidden sticky top-0 z-30 bg-[#F5F5F5]/95 backdrop-blur border-b border-[#1E293F]/10">
         <div className="mx-auto max-w-5xl px-4 py-2 flex items-center gap-4">
           <span className="text-sm font-semibold text-[#1E293F]">Etapa</span>
@@ -507,7 +400,7 @@ export default function PublicSimulador() {
           </div>
         </div>
 
-        {/* Barra de benefícios */}
+        {/* Benefícios */}
         <div className="mb-6 flex flex-wrap items-center gap-3 text-xs text-[#1E293F]/80">
           <span className="px-2 py-1 rounded-full bg-white border border-[#1E293F]/15">Sem juros</span>
           <span className="px-2 py-1 rounded-full bg-white border border-[#1E293F]/15">Planejamento inteligente</span>
@@ -517,7 +410,7 @@ export default function PublicSimulador() {
           </span>
         </div>
 
-        {/* Stepper (desktop) */}
+        {/* Stepper desktop */}
         <div className="hidden md:flex items-center gap-4 mb-6">
           <div className="flex items-center gap-2">
             <StepBadge n={1} active={step === 1} done={step > 1} />
@@ -535,14 +428,14 @@ export default function PublicSimulador() {
           </div>
         </div>
 
-        {/* Etapa 1 — chips centralizados */}
+        {/* Etapa 1 */}
         {step === 1 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader className="pb-2">
               <CardTitle className="text-[#1E293F]">Comece pelo pré-cadastro</CardTitle>
             </CardHeader>
 
-            {/* Chips — 1 linha centralizada */}
+            {/* Chips Segmento */}
             <div className="px-6 pb-2">
               <Label className="mb-2 block">Bem desejado</Label>
               <div
@@ -597,7 +490,6 @@ export default function PublicSimulador() {
                 </div>
               </div>
 
-              {/* Botão desktop (no mobile o CTA flutua) */}
               <Button
                 disabled={!canContinueStep1 || saving}
                 onClick={handlePreCadastro}
@@ -616,14 +508,14 @@ export default function PublicSimulador() {
           </Card>
         )}
 
-        {/* Etapa 2 — chips centralizados, sem "Administradora", sem "Comentário" e sem linha técnica */}
+        {/* Etapa 2 */}
         {step === 2 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
               <CardTitle className="text-[#1E293F]">Personalize sua simulação</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4">
-              {/* Segmento chips centralizados */}
+              {/* Segmento */}
               <div>
                 <Label className="mb-2 block">Segmento</Label>
                 <div
@@ -652,7 +544,7 @@ export default function PublicSimulador() {
                 </p>
               </div>
 
-              {/* Slider de crédito */}
+              {/* Slider */}
               <div>
                 <div className="flex items-center justify-between">
                   <Label>Valor do crédito</Label>
@@ -673,29 +565,18 @@ export default function PublicSimulador() {
                 </div>
               </div>
 
-              {/* Lista de opções calculadas — sem linha técnica */}
+              {/* Opções calculadas */}
               <div ref={optionsRef} className="grid gap-3">
                 {opcoesFiltradas.map((opt) => {
                   const calc = calcularParcelas({
-                    credito,
-                    prazo: opt.prazo,
-                    admPct: opt.admPct,
-                    frPct: opt.frPct,
-                    antecipPct: opt.antecipPct,
-                    antecipParcelas: opt.antecipParcelas,
-                    kind: parcelKind,
+                    credito, prazo: opt.prazo, admPct: opt.admPct, frPct: opt.frPct, antecipPct: opt.antecipPct, antecipParcelas: opt.antecipParcelas, kind: parcelKind,
                   });
-
                   return (
-                    <div
-                      key={opt.id}
-                      className="rounded-xl border border-[#1E293F]/15 bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
-                    >
+                    <div key={opt.id} className="rounded-xl border border-[#1E293F]/15 bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div className="space-y-1">
                         <div className="text-sm font-semibold text-[#1E293F]">
                           Opção {opt.id.toUpperCase()} • Prazo {opt.prazo} meses
                         </div>
-
                         {opt.antecipParcelas > 0 ? (
                           <div className="text-sm text-[#1E293F]">
                             Parcelas 1–{opt.antecipParcelas}: <strong>{BRL(calc.parcelaComAntecipacao)}</strong> • Demais:{" "}
@@ -707,7 +588,6 @@ export default function PublicSimulador() {
                           </div>
                         )}
                       </div>
-
                       <Button onClick={() => handleEscolherOpcao(opt)} className="bg-[#A11C27] hover:bg-[#8c1822]" disabled={saving}>
                         {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
                         Escolher esta opção
@@ -715,7 +595,6 @@ export default function PublicSimulador() {
                     </div>
                   );
                 })}
-
                 {opcoesFiltradas.length === 0 && (
                   <div className="rounded-xl border border-[#1E293F]/15 bg-white p-4 text-sm text-[#1E293F]/70">
                     Nenhuma opção disponível para os filtros atuais. Ajuste o segmento, o tipo de parcela ou o valor do crédito.
@@ -730,7 +609,7 @@ export default function PublicSimulador() {
           </Card>
         )}
 
-        {/* Etapa 3 — mensagem nova + redes/links como ícones + "Nova Simulação" + "Finalizar" */}
+        {/* Etapa 3 */}
         {step === 3 && (
           <Card className="rounded-2xl shadow-sm border-[#1E293F]/10">
             <CardHeader>
@@ -744,40 +623,24 @@ export default function PublicSimulador() {
                 </p>
               </div>
 
-              {/* Ícones de redes sociais */}
+              {/* Ícones das redes / ações */}
               <div className="rounded-xl p-4 bg-white border border-[#1E293F]/10">
-                <h4 className="font-semibold text-[#1E293F] mb-3">Siga-nos nas redes sociais</h4>
+                <h4 className="font-semibold text-[#1E293F] mb-3">Siga-nos</h4>
                 <div className="flex items-center gap-4">
-                  <a
-                    href="https://www.instagram.com/consulmax.consorcios/"
-                    target="_blank"
-                    aria-label="Instagram Consulmax"
-                    className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40"
-                  >
+                  <a href="https://www.instagram.com/consulmax.consorcios/" target="_blank" aria-label="Instagram Consulmax"
+                     className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40">
                     <Instagram className="w-6 h-6" />
                   </a>
-                  <a
-                    href="https://www.facebook.com/profile.php?id=61583481749603"
-                    target="_blank"
-                    aria-label="Facebook Consulmax"
-                    className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40"
-                  >
+                  <a href="https://www.facebook.com/profile.php?id=61583481749603" target="_blank" aria-label="Facebook Consulmax"
+                     className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40">
                     <Facebook className="w-6 h-6" />
                   </a>
-                  <a
-                    href={waLink("6993917465", "Olá, preciso de suporte.")}
-                    target="_blank"
-                    aria-label="Falar com o Suporte no WhatsApp"
-                    className="inline-flex items-center justify-center px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm"
-                  >
+                  <a href={waLink("6993917465", "Olá, preciso de suporte.")} target="_blank" aria-label="WhatsApp Suporte"
+                     className="inline-flex items-center justify-center px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm">
                     WhatsApp Suporte
                   </a>
-                  <a
-                    href="https://consulmaxconsorcios.com.br/nossa-historia/"
-                    target="_blank"
-                    aria-label="Quem Somos - Consulmax"
-                    className="inline-flex items-center gap-2 px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm"
-                  >
+                  <a href="https://consulmaxconsorcios.com.br/nossa-historia/" target="_blank" aria-label="Quem Somos - Consulmax"
+                     className="inline-flex items-center gap-2 px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm">
                     <ExternalLink className="w-4 h-4" /> Quem Somos
                   </a>
                 </div>
@@ -786,7 +649,6 @@ export default function PublicSimulador() {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      // reset leve para nova simulação
                       setStep(2);
                       setSelecionado(null);
                       setParcelKind("cheia");
@@ -795,13 +657,7 @@ export default function PublicSimulador() {
                   >
                     Nova Simulação
                   </Button>
-
-                  <Button
-                    className="bg-[#A11C27] hover:bg-[#8c1822]"
-                    onClick={() => {
-                      window.location.href = "https://consulmaxconsorcios.com.br/";
-                    }}
-                  >
+                  <Button className="bg-[#A11C27] hover:bg-[#8c1822]" onClick={() => { window.location.href = "https://consulmaxconsorcios.com.br/"; }}>
                     Finalizar
                   </Button>
                 </div>
@@ -847,7 +703,6 @@ function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: bo
     </div>
   );
 }
-
 function StepDot({ active, done, label }: { active?: boolean; done?: boolean; label: string }) {
   return (
     <div
@@ -859,18 +714,7 @@ function StepDot({ active, done, label }: { active?: boolean; done?: boolean; la
     </div>
   );
 }
-
-function SegmentCard({
-  active,
-  onClick,
-  children,
-  Icon,
-}: {
-  active?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  Icon: React.ComponentType<any>;
-}) {
+function SegmentCard({ active, onClick, children, Icon }: { active?: boolean; onClick: () => void; children: React.ReactNode; Icon: React.ComponentType<any>; }) {
   return (
     <button
       type="button"
@@ -885,7 +729,6 @@ function SegmentCard({
     </button>
   );
 }
-
 function Chip({ active, onClick, label }: { active?: boolean; onClick: () => void; label: string }) {
   return (
     <button

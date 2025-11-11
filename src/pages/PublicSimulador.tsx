@@ -39,14 +39,18 @@ function ts() {
     d.getMinutes()
   )}:${pad(d.getSeconds())}`;
 }
-function onlyDigits(s: string) { return s.replace(/\D/g, ""); }
+function onlyDigits(s: string) {
+  return s.replace(/\D/g, "");
+}
 function formatPhoneBR(raw: string) {
   const digits = onlyDigits(raw).slice(0, 11);
   if (digits.length <= 2) return digits;
   if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 }
-function BRL(n: number) { return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
+function BRL(n: number) {
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
 function waLink(userPhoneDigits: string, text: string) {
   const to = userPhoneDigits.length >= 10 ? `55${userPhoneDigits}` : CONSULMAX_WA;
   return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
@@ -111,7 +115,9 @@ function useSEO() {
     script.type = "application/ld+json";
     script.text = JSON.stringify(ld);
     document.head.appendChild(script);
-    return () => { if (script && script.parentNode) script.parentNode.removeChild(script); };
+    return () => {
+      if (script && script.parentNode) script.parentNode.removeChild(script);
+    };
   }, []);
 }
 
@@ -154,11 +160,13 @@ type OptionCfg = {
   onlyReduction?: boolean;
   visibleIfCreditMin?: number;
 };
-type SegmentCfg = { min: number; max: number; step: number; options: OptionCfg[]; };
+type SegmentCfg = { min: number; max: number; step: number; options: OptionCfg[] };
 
 const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
   automovel: {
-    min: 45000, max: 180000, step: 5000,
+    min: 45000,
+    max: 180000,
+    step: 5000,
     options: [
       { id: "auto1", prazo: 80, admPct: 0.14, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
       { id: "auto2", prazo: 80, admPct: 0.17, frPct: 0.03, antecipPct: 0.01, antecipParcelas: 2, allowReduction: false },
@@ -168,15 +176,21 @@ const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
     ],
   },
   motocicleta: {
-    min: 15000, max: 30000, step: 1000,
+    min: 15000,
+    max: 30000,
+    step: 1000,
     options: [{ id: "moto1", prazo: 70, admPct: 0.20, frPct: 0.05, antecipPct: 0, antecipParcelas: 0, allowReduction: false }],
   },
   servicos: {
-    min: 15000, max: 30000, step: 1000,
+    min: 15000,
+    max: 30000,
+    step: 1000,
     options: [{ id: "serv1", prazo: 40, admPct: 0.21, frPct: 0.05, antecipPct: 0, antecipParcelas: 0, allowReduction: false }],
   },
   pesados: {
-    min: 200000, max: 700000, step: 10000,
+    min: 200000,
+    max: 700000,
+    step: 10000,
     options: [
       { id: "pes1", prazo: 100, admPct: 0.14, frPct: 0.03, antecipPct: 0, antecipParcelas: 0, allowReduction: false },
       { id: "pes2", prazo: 100, admPct: 0.12, frPct: 0.03, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
@@ -185,7 +199,9 @@ const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
     ],
   },
   imovel: {
-    min: 100000, max: 1200000, step: 10000,
+    min: 100000,
+    max: 1200000,
+    step: 10000,
     options: [
       { id: "imo1", prazo: 180, admPct: 0.18, frPct: 0.02, antecipPct: 0.02, antecipParcelas: 2, allowReduction: false },
       { id: "imo2", prazo: 165, admPct: 0.21, frPct: 0.02, antecipPct: 0, antecipParcelas: 0, allowReduction: false },
@@ -193,7 +209,9 @@ const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
     ],
   },
   imovel_estendido: {
-    min: 120000, max: 2000000, step: 10000,
+    min: 120000,
+    max: 2000000,
+    step: 10000,
     options: [
       { id: "ime1", prazo: 240, admPct: 0.22, frPct: 0.02, antecipPct: 0.02, antecipParcelas: 1, allowReduction: true },
       { id: "ime2", prazo: 240, admPct: 0.26, frPct: 0.02, antecipPct: 0.01, antecipParcelas: 1, allowReduction: true },
@@ -205,12 +223,19 @@ const SEGMENT_CFG: Record<SegmentId, SegmentCfg> = {
 
 /* ========= RPCs ========= */
 async function createOpportunityV2({
-  nome, email, telefone, segmentoRPC,
+  nome,
+  email,
+  telefone,
+  segmentoRPC,
   vendedorAuthId = DEFAULT_VENDEDOR_AUTH_ID,
   ownerAuthId = DEFAULT_OWNER_AUTH_ID,
 }: {
-  nome: string; email: string; telefone: string; segmentoRPC: string;
-  vendedorAuthId?: string; ownerAuthId?: string;
+  nome: string;
+  email: string;
+  telefone: string;
+  segmentoRPC: string;
+  vendedorAuthId?: string;
+  ownerAuthId?: string;
 }) {
   const tel = onlyDigits(telefone);
   const payload = {
@@ -223,7 +248,11 @@ async function createOpportunityV2({
     p_owner_auth_id: ownerAuthId,
   };
   const { data, error } = await supabase.rpc("public_create_opportunity_v2", payload);
-  if (error) { console.error("[public_create_opportunity_v2] payload:", payload); console.error(error); throw error; }
+  if (error) {
+    console.error("[public_create_opportunity_v2] payload:", payload);
+    console.error(error);
+    throw error;
+  }
   return data as string;
 }
 /** Nota na oportunidade */
@@ -234,13 +263,23 @@ async function safeAppendNote(opportunityId: string, note: string) {
 
 /* ========= Tracking (Meta Pixel já está no index.html) ========= */
 function fbqSafe(...args: any[]) {
-  try { (window as any).fbq?.apply(null, args as any); } catch { /* ignore */ }
+  try {
+    (window as any).fbq?.apply(null, args as any);
+  } catch {
+    /* ignore */
+  }
 }
 function trackLead(segmento: string, credit: number) {
   // LGPD: sem PII; só categoria e valor aproximado
   fbqSafe("track", "Lead", { content_category: segmento, value: credit, currency: "BRL" });
 }
-function trackSelectOption(params: { optionId: string; segmento: string; parcel_kind: string; credit: number; prazo: number }) {
+function trackSelectOption(params: {
+  optionId: string;
+  segmento: string;
+  parcel_kind: string;
+  credit: number;
+  prazo: number;
+}) {
   fbqSafe("trackCustom", "SelectOption", {
     option_id: params.optionId,
     content_category: params.segmento,
@@ -255,14 +294,26 @@ function trackClickContact(channel: "whatsapp" | "quem_somos") {
 }
 
 /* ========= Cálculo ========= */
-type ParcelKindInput = { credito: number; prazo: number; admPct: number; frPct: number; antecipPct: number; antecipParcelas: number; kind: ParcelKind; };
+type ParcelKindInput = {
+  credito: number;
+  prazo: number;
+  admPct: number;
+  frPct: number;
+  antecipPct: number;
+  antecipParcelas: number;
+  kind: ParcelKind;
+};
 function calcularParcelas({ credito, prazo, admPct, frPct, antecipPct, antecipParcelas, kind }: ParcelKindInput) {
   const fc = credito / prazo;
   const encargos = (credito * (admPct + frPct)) / prazo;
   const parcelaBase = kind === "cheia" ? fc + encargos : fc * 0.5 + encargos;
   const antecipTotal = credito * antecipPct;
   const antecipMensal = antecipParcelas > 0 ? antecipTotal / antecipParcelas : 0;
-  return { parcelaComAntecipacao: antecipParcelas > 0 ? parcelaBase + antecipMensal : parcelaBase, parcelaSemAntecipacao: parcelaBase, antecipParcelas };
+  return {
+    parcelaComAntecipacao: antecipParcelas > 0 ? parcelaBase + antecipMensal : parcelaBase,
+    parcelaSemAntecipacao: parcelaBase,
+    antecipParcelas,
+  };
 }
 
 /* ========= Página ========= */
@@ -295,7 +346,12 @@ export default function PublicSimulador() {
 
   // Seleção final para etapa 3
   const [selecionado, setSelecionado] = useState<{
-    optionId: string; prazo: number; admPct: number; frPct: number; antecipPct: number; antecipParcelas: number;
+    optionId: string;
+    prazo: number;
+    admPct: number;
+    frPct: number;
+    antecipPct: number;
+    antecipParcelas: number;
   } | null>(null);
 
   const [finalMsg, setFinalMsg] = useState<string>("");
@@ -334,7 +390,12 @@ export default function PublicSimulador() {
     try {
       setSaving(true);
       const segmentoRPC = segmentLabelFromId(segmento);
-      const newOpId = await createOpportunityV2({ nome: nome.trim(), email: email.trim(), telefone, segmentoRPC });
+      const newOpId = await createOpportunityV2({
+        nome: nome.trim(),
+        email: email.trim(),
+        telefone,
+        segmentoRPC,
+      });
       setOpId(newOpId);
 
       // Tracking (Lead)
@@ -345,9 +406,13 @@ export default function PublicSimulador() {
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
       const msg = e?.message || e?.hint || e?.details || "Falha ao executar a RPC public_create_opportunity_v2.";
-      alert(`Não foi possível concluir o pré-cadastro/criar a oportunidade.\n\nDetalhes: ${msg}\n\nVeja o console do navegador para diagnóstico completo.`);
+      alert(
+        `Não foi possível concluir o pré-cadastro/criar a oportunidade.\n\nDetalhes: ${msg}\n\nVeja o console do navegador para diagnóstico completo.`
+      );
       console.error("[handlePreCadastro] erro:", e);
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleEscolherOpcao(opt: OptionCfg) {
@@ -355,7 +420,13 @@ export default function PublicSimulador() {
     try {
       setSaving(true);
       const { parcelaComAntecipacao, parcelaSemAntecipacao, antecipParcelas } = calcularParcelas({
-        credito, prazo: opt.prazo, admPct: opt.admPct, frPct: opt.frPct, antecipPct: opt.antecipPct, antecipParcelas: opt.antecipParcelas, kind: parcelKind,
+        credito,
+        prazo: opt.prazo,
+        admPct: opt.admPct,
+        frPct: opt.frPct,
+        antecipPct: opt.antecipPct,
+        antecipParcelas: opt.antecipParcelas,
+        kind: parcelKind,
       });
 
       const resumo =
@@ -377,13 +448,22 @@ export default function PublicSimulador() {
         prazo: opt.prazo,
       });
 
-      setSelecionado({ optionId: opt.id, prazo: opt.prazo, admPct: opt.admPct, frPct: opt.frPct, antecipPct: opt.antecipPct, antecipParcelas: opt.antecipParcelas });
+      setSelecionado({
+        optionId: opt.id,
+        prazo: opt.prazo,
+        admPct: opt.admPct,
+        frPct: opt.frPct,
+        antecipPct: opt.antecipPct,
+        antecipParcelas: opt.antecipParcelas,
+      });
       setStep(3);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       console.error("[handleEscolherOpcao] erro:", e);
       alert("Não foi possível registrar a escolha. Tente novamente.");
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   }
 
   /* ===== util ===== */
@@ -398,11 +478,18 @@ export default function PublicSimulador() {
   }
 
   /* ===== CTA flutuante por etapa ===== */
-  function floatingCTALabel() { if (step === 1) return "Continuar"; if (step === 2) return "Ver opções"; return "Finalizar"; }
-  const floatingCTADisabled = step === 1 ? (!canContinueStep1 || saving) : false;
+  function floatingCTALabel() {
+    if (step === 1) return "Continuar";
+    if (step === 2) return "Ver opções";
+    return "Finalizar";
+  }
+  const floatingCTADisabled = step === 1 ? !canContinueStep1 || saving : false;
   function onFloatingCTA() {
     if (step === 1) return handlePreCadastro();
-    if (step === 2) { optionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    if (step === 2) {
+      optionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     window.location.href = "https://consulmaxconsorcios.com.br/";
   }
 
@@ -521,7 +608,9 @@ export default function PublicSimulador() {
                     className={!isValidBRPhone(telefone) && touchedPhone ? "border-red-400 focus:ring-red-200" : ""}
                   />
                   {!isValidBRPhone(telefone) && touchedPhone && (
-                    <p className="text-xs text-red-600 mt-1">Informe um WhatsApp válido (10–11 dígitos; celular com 9 após o DDD).</p>
+                    <p className="text-xs text-red-600 mt-1">
+                      Informe um WhatsApp válido (10–11 dígitos; celular com 9 após o DDD).
+                    </p>
                   )}
                 </div>
               </div>
@@ -605,10 +694,19 @@ export default function PublicSimulador() {
               <div ref={optionsRef} className="grid gap-3">
                 {opcoesFiltradas.map((opt) => {
                   const calc = calcularParcelas({
-                    credito, prazo: opt.prazo, admPct: opt.admPct, frPct: opt.frPct, antecipPct: opt.antecipPct, antecipParcelas: opt.antecipParcelas, kind: parcelKind,
+                    credito,
+                    prazo: opt.prazo,
+                    admPct: opt.admPct,
+                    frPct: opt.frPct,
+                    antecipPct: opt.antecipPct,
+                    antecipParcelas: opt.antecipParcelas,
+                    kind: parcelKind,
                   });
                   return (
-                    <div key={opt.id} className="rounded-xl border border-[#1E293F]/15 bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div
+                      key={opt.id}
+                      className="rounded-xl border border-[#1E293F]/15 bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+                    >
                       <div className="space-y-1">
                         <div className="text-sm font-semibold text-[#1E293F]">
                           Opção {opt.id.toUpperCase()} • Prazo {opt.prazo} meses
@@ -639,7 +737,9 @@ export default function PublicSimulador() {
               </div>
 
               <div className="flex flex-wrap gap-3">
-                <Button variant="outline" onClick={() => setStep(1)}>Voltar</Button>
+                <Button variant="outline" onClick={() => setStep(1)}>
+                  Voltar
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -654,8 +754,8 @@ export default function PublicSimulador() {
             <CardContent className="grid gap-5">
               <div className="rounded-xl p-4 bg-white border border-[#1E293F]/10">
                 <p className="text-sm text-[#1E293F]/80">
-                  Sua simulação foi registrada com sucesso. Em breve um dos nossos especialistas irá entrar em contato para te prestar todo o apoio.
-                  Enquanto isso, escolha uma opção abaixo:
+                  Sua simulação foi registrada com sucesso. Em breve um dos nossos especialistas irá entrar em contato para te
+                  prestar todo o apoio. Enquanto isso, escolha uma opção abaixo:
                 </p>
               </div>
 
@@ -663,12 +763,20 @@ export default function PublicSimulador() {
               <div className="rounded-xl p-4 bg-white border border-[#1E293F]/10">
                 <h4 className="font-semibold text-[#1E293F] mb-3">Siga-nos</h4>
                 <div className="flex items-center gap-4">
-                  <a href="https://www.instagram.com/consulmax.consorcios/" target="_blank" aria-label="Instagram Consulmax"
-                     className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40">
+                  <a
+                    href="https://www.instagram.com/consulmax.consorcios/"
+                    target="_blank"
+                    aria-label="Instagram Consulmax"
+                    className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40"
+                  >
                     <Instagram className="w-6 h-6" />
                   </a>
-                  <a href="https://www.facebook.com/profile.php?id=61583481749603" target="_blank" aria-label="Facebook Consulmax"
-                     className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40">
+                  <a
+                    href="https://www.facebook.com/profile.php?id=61583481749603"
+                    target="_blank"
+                    aria-label="Facebook Consulmax"
+                    className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40"
+                  >
                     <Facebook className="w-6 h-6" />
                   </a>
                   <a
@@ -703,7 +811,12 @@ export default function PublicSimulador() {
                   >
                     Nova Simulação
                   </Button>
-                  <Button className="bg-[#A11C27] hover:bg-[#8c1822]" onClick={() => { window.location.href = "https://consulmaxconsorcios.com.br/"; }}>
+                  <Button
+                    className="bg-[#A11C27] hover:bg-[#8c1822]"
+                    onClick={() => {
+                      window.location.href = "https://consulmaxconsorcios.com.br/";
+                    }}
+                  >
                     Finalizar
                   </Button>
                 </div>
@@ -742,7 +855,11 @@ function StepBadge({ n, active, done }: { n: number; active?: boolean; done?: bo
   return (
     <div
       className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border ${
-        active ? "bg-[#1E293F] text-white border-[#1E293F]" : done ? "bg-[#B5A573] text-white border-[#B5A573]" : "bg-white text-[#1E293F] border-[#1E293F]"
+        active
+          ? "bg-[#1E293F] text-white border-[#1E293F]"
+          : done
+          ? "bg-[#B5A573] text-white border-[#B5A573]"
+          : "bg-white text-[#1E293F] border-[#1E293F]"
       }`}
     >
       {done ? <CheckCircle2 className="w-5 h-5" /> : n}
@@ -760,7 +877,17 @@ function StepDot({ active, done, label }: { active?: boolean; done?: boolean; la
     </div>
   );
 }
-function SegmentCard({ active, onClick, children, Icon }: { active?: boolean; onClick: () => void; children: React.ReactNode; Icon: React.ComponentType<any>; }) {
+function SegmentCard({
+  active,
+  onClick,
+  children,
+  Icon,
+}: {
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  Icon: React.ComponentType<any>;
+}) {
   return (
     <button
       type="button"

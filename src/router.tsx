@@ -31,6 +31,9 @@ const RankingVendedores       = React.lazy(() => import('./pages/RankingVendedor
 // ✅ Página pública do simulador (sem login)
 const PublicSimulador         = React.lazy(() => import('./pages/PublicSimulador'));
 
+// ✅ NOVO: Giro de Carteira
+const GiroDeCarteira          = React.lazy(() => import('./pages/GiroDeCarteira'));
+
 function withSuspense(node: React.ReactNode) {
   return (
     <React.Suspense fallback={<div className="p-4 text-sm text-gray-600">Carregando…</div>}>
@@ -82,6 +85,11 @@ export const router = createBrowserRouter([
           { path: 'propostas',        element: withSuspense(<Propostas />) },
           { path: 'comissoes',        element: withSuspense(<Comissoes />) },
           { path: 'carteira',         element: withSuspense(<Carteira />) },
+
+          // ✅ NOVO: Giro de Carteira
+          { path: 'giro-de-carteira', element: withSuspense(<GiroDeCarteira />) },
+          // atalhos/legados
+          { path: 'giro',             element: <Navigate to="/giro-de-carteira" replace /> },
 
           // ✅ Ranking dos Vendedores
           { path: 'ranking',          element: withSuspense(<RankingVendedores />) },

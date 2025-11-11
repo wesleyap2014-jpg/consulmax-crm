@@ -73,8 +73,8 @@ function waLink(phone?: string | null, text?: string) {
 
 const canalOptions = [
   { key: "whatsapp", label: "WhatsApp", icon: MessageCircle },
-  { key: "ligacao", label: "Ligação", icon: Phone },
-  { key: "email", label: "E-mail", icon: Mail },
+  { key: "ligacao",  label: "Ligação",  icon: Phone },
+  { key: "email",    label: "E-mail",   icon: Mail },
   { key: "presencial", label: "Presencial", icon: Users },
 ] as const;
 
@@ -104,7 +104,7 @@ export default function GiroDeCarteira() {
   async function fetchAll() {
     setLoading(true);
     try {
-      const [{ data: adminFlag }, { data: dueCount }, { data: batch, error: batchErr }] = await Promise.all([
+      const [{ data: adminFlag }, { data: dueCount }, { data: batch }] = await Promise.all([
         supabase.rpc("current_user_is_admin"),
         supabase.rpc("giro_due_count"),
         supabase.rpc("next_giro_batch"),
@@ -117,13 +117,7 @@ export default function GiroDeCarteira() {
       setTasks(list);
 
       // carregar clientes para as tasks
-      const ids = Array.from(
-        new Set(
-          list
-            .map((t) => t.cliente_id)
-            .filter((id): id is string => !!id)
-        )
-      );
+      const ids = Array.from(new Set(list.map(t => t.cliente_id).filter((id): id is string => !!id)));
       if (ids.length) {
         const { data: cls } = await supabase
           .from("clientes")
@@ -135,10 +129,6 @@ export default function GiroDeCarteira() {
       } else {
         setClientes({});
       }
-
-      if (batchErr) {
-        // opcional: console.warn("next_giro_batch error", batchErr);
-      }
     } finally {
       setLoading(false);
     }
@@ -147,7 +137,6 @@ export default function GiroDeCarteira() {
   async function doRefresh() {
     setRefreshing(true);
     try {
-      // atualiza o contador e batch novamente
       const [{ data: dueCount }, { data: batch }] = await Promise.all([
         supabase.rpc("giro_due_count"),
         supabase.rpc("next_giro_batch"),
@@ -157,14 +146,7 @@ export default function GiroDeCarteira() {
       const list = Array.isArray(batch) ? (batch as GiroTask[]) : [];
       setTasks(list);
 
-      // repopula clientes
-      const ids = Array.from(
-        new Set(
-          list
-            .map((t) => t.cliente_id)
-            .filter((id): id is string => !!id)
-        )
-      );
+      const ids = Array.from(new Set(list.map(t => t.cliente_id).filter((id): id is string => !!id)));
       if (ids.length) {
         const { data: cls } = await supabase
           .from("clientes")
@@ -189,7 +171,7 @@ export default function GiroDeCarteira() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return tasks;
-    return tasks.filter((t) => {
+    return tasks.filter(t => {
       const c = t.cliente_id ? clientes[t.cliente_id] : undefined;
       const name = (c?.nome || "").toLowerCase();
       const tel = onlyDigits(c?.telefone);

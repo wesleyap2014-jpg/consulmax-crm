@@ -87,9 +87,10 @@ export const router = createBrowserRouter([
           { path: 'carteira',         element: withSuspense(<Carteira />) },
 
           // ✅ NOVO: Giro de Carteira
-          { path: 'giro-de-carteira', element: withSuspense(<GiroDeCarteira />) },
+          { path: 'giro-de-carteira',   element: withSuspense(<GiroDeCarteira />) },
           // atalhos/legados
-          { path: 'giro',             element: <Navigate to="/giro-de-carteira" replace /> },
+          { path: 'giro',               element: <Navigate to="/giro-de-carteira" replace /> },
+          { path: 'giro-de-carteira/',  element: <Navigate to="/giro-de-carteira" replace /> },
 
           // ✅ Ranking dos Vendedores
           { path: 'ranking',          element: withSuspense(<RankingVendedores />) },

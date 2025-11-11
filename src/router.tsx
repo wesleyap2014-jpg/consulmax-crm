@@ -1,38 +1,39 @@
 // src/router.tsx
-import React from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import React from "react";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 
-import RequireAuth from './components/auth/RequireAuth';
-import App from './App';
+import RequireAuth from "./components/auth/RequireAuth";
+import App from "./App";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 // ===== Lazy pages =====
-const Login                   = React.lazy(() => import('./pages/Login'));
-// const Leads               = React.lazy(() => import('./pages/Leads')); // ❌ removido
-const Clientes                = React.lazy(() => import('./pages/Clientes'));
-const Oportunidades           = React.lazy(() => import('./pages/Oportunidades'));
-const Agenda                  = React.lazy(() => import('./pages/Agenda'));
-const Simuladores             = React.lazy(() => import('./pages/Simuladores'));
-const Propostas               = React.lazy(() => import('./pages/Propostas'));
-const Comissoes               = React.lazy(() => import('./pages/Comissoes'));
-const Carteira                = React.lazy(() => import('./pages/Carteira'));
-const Usuarios                = React.lazy(() => import('./pages/Usuarios'));
-const GestaoDeGrupos          = React.lazy(() => import('./pages/GestaoDeGrupos'));
-const Parametros              = React.lazy(() => import('./pages/Parametros'));
-const TermsLGPD               = React.lazy(() => import('./pages/TermsLGPD'));
-const AlterarSenha            = React.lazy(() => import('./pages/AlterarSenha'));
-const AdicionarAdministradora = React.lazy(() => import('./pages/AdicionarAdministradora'));
+const Login                   = React.lazy(() => import("./pages/Login"));
+// const Leads               = React.lazy(() => import("./pages/Leads")); // ❌ removido
+const Clientes                = React.lazy(() => import("./pages/Clientes"));
+const Oportunidades           = React.lazy(() => import("./pages/Oportunidades"));
+const Agenda                  = React.lazy(() => import("./pages/Agenda"));
+const Simuladores             = React.lazy(() => import("./pages/Simuladores"));
+const Propostas               = React.lazy(() => import("./pages/Propostas"));
+const Comissoes               = React.lazy(() => import("./pages/Comissoes"));
+const Carteira                = React.lazy(() => import("./pages/Carteira"));
+const Usuarios                = React.lazy(() => import("./pages/Usuarios"));
+const GestaoDeGrupos          = React.lazy(() => import("./pages/GestaoDeGrupos"));
+const Parametros              = React.lazy(() => import("./pages/Parametros"));
+const TermsLGPD               = React.lazy(() => import("./pages/TermsLGPD"));
+const AlterarSenha            = React.lazy(() => import("./pages/AlterarSenha"));
+const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdministradora"));
 
 // ✅ Links Úteis
-const LinksUteis              = React.lazy(() => import('./pages/LinksUteis'));
+const LinksUteis              = React.lazy(() => import("./pages/LinksUteis"));
 
 // ✅ Ranking dos Vendedores
-const RankingVendedores       = React.lazy(() => import('./pages/RankingVendedores'));
+const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedores"));
 
 // ✅ Página pública do simulador (sem login)
-const PublicSimulador         = React.lazy(() => import('./pages/PublicSimulador'));
+const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
 
 // ✅ NOVO: Giro de Carteira
-const GiroDeCarteira          = React.lazy(() => import('./pages/GiroDeCarteira'));
+const GiroDeCarteira          = React.lazy(() => import("./pages/GiroDeCarteira"));
 
 function withSuspense(node: React.ReactNode) {
   return (
@@ -44,20 +45,20 @@ function withSuspense(node: React.ReactNode) {
 
 export const router = createBrowserRouter([
   // ===== Rotas públicas (sem login) =====
-  { path: '/publico/simulador', element: withSuspense(<PublicSimulador />) },
+  { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   // aliases/atalhos públicos
-  { path: '/simular',           element: <Navigate to="/publico/simulador" replace /> },
-  { path: '/public/simulador',  element: <Navigate to="/publico/simulador" replace /> },
+  { path: "/simular",          element: <Navigate to="/publico/simulador" replace /> },
+  { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
 
   // ===== Login =====
-  { path: '/login', element: withSuspense(<Login />) },
+  { path: "/login", element: withSuspense(<Login />) },
 
   // ===== Rotas autenticadas =====
   {
-    path: '/',
+    path: "/",
     element: <RequireAuth />,
     children: [
-      { path: 'alterar-senha', element: withSuspense(<AlterarSenha />) },
+      { path: "alterar-senha", element: withSuspense(<AlterarSenha />) },
 
       {
         element: <App />, // layout principal
@@ -66,59 +67,66 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="/oportunidades" replace /> },
 
           // 🔁 Redirect legado: /leads -> /oportunidades
-          { path: 'leads', element: <Navigate to="/oportunidades" replace /> },
+          { path: "leads", element: <Navigate to="/oportunidades" replace /> },
 
-          { path: 'oportunidades',    element: withSuspense(<Oportunidades />) },
-          { path: 'clientes',         element: withSuspense(<Clientes />) },
-          { path: 'agenda',           element: withSuspense(<Agenda />) },
+          { path: "oportunidades",    element: withSuspense(<Oportunidades />) },
+          { path: "clientes",         element: withSuspense(<Clientes />) },
+          { path: "agenda",           element: withSuspense(<Agenda />) },
 
           {
-            path: 'simuladores',
+            path: "simuladores",
             children: [
               { index: true,      element: withSuspense(<Simuladores />) },
-              { path: 'embracon', element: withSuspense(<Simuladores />) }, // atalho legado (opcional)
-              { path: 'add',      element: withSuspense(<AdicionarAdministradora />) },
-              { path: ':id',      element: withSuspense(<Simuladores />) },
+              { path: "embracon", element: withSuspense(<Simuladores />) }, // atalho legado (opcional)
+              { path: "add",      element: withSuspense(<AdicionarAdministradora />) },
+              { path: ":id",      element: withSuspense(<Simuladores />) },
             ],
           },
 
-          { path: 'propostas',        element: withSuspense(<Propostas />) },
-          { path: 'comissoes',        element: withSuspense(<Comissoes />) },
-          { path: 'carteira',         element: withSuspense(<Carteira />) },
+          { path: "propostas",        element: withSuspense(<Propostas />) },
+          { path: "comissoes",        element: withSuspense(<Comissoes />) },
+          { path: "carteira",         element: withSuspense(<Carteira />) },
 
-          // ✅ NOVO: Giro de Carteira
-          { path: 'giro-de-carteira',   element: withSuspense(<GiroDeCarteira />) },
+          // ✅ NOVO: Giro de Carteira (com ErrorBoundary para evitar tela branca)
+          {
+            path: "giro-de-carteira",
+            element: withSuspense(
+              <ErrorBoundary title="Erro no Giro de Carteira">
+                <GiroDeCarteira />
+              </ErrorBoundary>
+            ),
+          },
           // atalhos/legados
-          { path: 'giro',               element: <Navigate to="/giro-de-carteira" replace /> },
-          { path: 'giro-de-carteira/',  element: <Navigate to="/giro-de-carteira" replace /> },
+          { path: "giro",              element: <Navigate to="/giro-de-carteira" replace /> },
+          { path: "giro-de-carteira/", element: <Navigate to="/giro-de-carteira" replace /> },
 
           // ✅ Ranking dos Vendedores
-          { path: 'ranking',          element: withSuspense(<RankingVendedores />) },
+          { path: "ranking",          element: withSuspense(<RankingVendedores />) },
 
           // 🔁 Redirects legados para o Ranking
-          { path: 'ranking-vendedores', element: <Navigate to="/ranking" replace /> },
-          { path: 'vendedores/ranking', element: <Navigate to="/ranking" replace /> },
-          { path: 'ranking-vendas',     element: <Navigate to="/ranking" replace /> },
+          { path: "ranking-vendedores", element: <Navigate to="/ranking" replace /> },
+          { path: "vendedores/ranking", element: <Navigate to="/ranking" replace /> },
+          { path: "ranking-vendas",     element: <Navigate to="/ranking" replace /> },
 
-          { path: 'usuarios',         element: withSuspense(<Usuarios />) },
-          { path: 'gestao-de-grupos', element: withSuspense(<GestaoDeGrupos />) },
-          { path: 'parametros',       element: withSuspense(<Parametros />) },
-          { path: 'lgpd',             element: withSuspense(<TermsLGPD />) },
+          { path: "usuarios",         element: withSuspense(<Usuarios />) },
+          { path: "gestao-de-grupos", element: withSuspense(<GestaoDeGrupos />) },
+          { path: "parametros",       element: withSuspense(<Parametros />) },
+          { path: "lgpd",             element: withSuspense(<TermsLGPD />) },
 
           // ✅ Links Úteis
-          { path: 'links',            element: withSuspense(<LinksUteis />) },
+          { path: "links",            element: withSuspense(<LinksUteis />) },
 
           // 🔁 Redirects legados opcionais para a nova guia de links
-          { path: 'links-uteis',      element: <Navigate to="/links" replace /> },
-          { path: 'linksuteis',       element: <Navigate to="/links" replace /> },
+          { path: "links-uteis",      element: <Navigate to="/links" replace /> },
+          { path: "linksuteis",       element: <Navigate to="/links" replace /> },
 
           // Qualquer rota desconhecida logada volta para Oportunidades
-          { path: '*', element: <Navigate to="/oportunidades" replace /> },
+          { path: "*", element: <Navigate to="/oportunidades" replace /> },
         ],
       },
     ],
   },
 
   // Fallback global para público
-  { path: '*', element: <Navigate to="/login" replace /> },
+  { path: "*", element: <Navigate to="/login" replace /> },
 ]);

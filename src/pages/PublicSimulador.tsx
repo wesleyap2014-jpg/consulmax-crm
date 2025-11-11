@@ -232,6 +232,28 @@ async function safeAppendNote(opportunityId: string, note: string) {
   if (error) console.warn("[public_append_op_note] erro:", error);
 }
 
+/* ========= Tracking (Meta Pixel já está no index.html) ========= */
+function fbqSafe(...args: any[]) {
+  try { (window as any).fbq?.apply(null, args as any); } catch { /* ignore */ }
+}
+function trackLead(segmento: string, credit: number) {
+  // LGPD: sem PII; só categoria e valor aproximado
+  fbqSafe("track", "Lead", { content_category: segmento, value: credit, currency: "BRL" });
+}
+function trackSelectOption(params: { optionId: string; segmento: string; parcel_kind: string; credit: number; prazo: number }) {
+  fbqSafe("trackCustom", "SelectOption", {
+    option_id: params.optionId,
+    content_category: params.segmento,
+    parcel_kind: params.parcel_kind,
+    value: params.credit,
+    prazo: params.prazo,
+    currency: "BRL",
+  });
+}
+function trackClickContact(channel: "whatsapp" | "quem_somos") {
+  fbqSafe("trackCustom", "ClickContact", { channel });
+}
+
 /* ========= Cálculo ========= */
 type ParcelKindInput = { credito: number; prazo: number; admPct: number; frPct: number; antecipPct: number; antecipParcelas: number; kind: ParcelKind; };
 function calcularParcelas({ credito, prazo, admPct, frPct, antecipPct, antecipParcelas, kind }: ParcelKindInput) {
@@ -314,6 +336,10 @@ export default function PublicSimulador() {
       const segmentoRPC = segmentLabelFromId(segmento);
       const newOpId = await createOpportunityV2({ nome: nome.trim(), email: email.trim(), telefone, segmentoRPC });
       setOpId(newOpId);
+
+      // Tracking (Lead)
+      trackLead(segmentoRPC, credito);
+
       safeAppendNote(newOpId, `Lead confirmado no pré-cadastro. Segmento: ${segmentoRPC}.`).catch(() => {});
       setStep(2);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -341,6 +367,16 @@ export default function PublicSimulador() {
           : `Parcela mensal: ${BRL(parcelaSemAntecipacao)}`);
 
       await safeAppendNote(opId, resumo);
+
+      // Tracking (SelectOption)
+      trackSelectOption({
+        optionId: opt.id,
+        segmento: segmentLabelFromId(segmento),
+        parcel_kind: parcelKind,
+        credit: credito,
+        prazo: opt.prazo,
+      });
+
       setSelecionado({ optionId: opt.id, prazo: opt.prazo, admPct: opt.admPct, frPct: opt.frPct, antecipPct: opt.antecipPct, antecipParcelas: opt.antecipParcelas });
       setStep(3);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -635,12 +671,22 @@ export default function PublicSimulador() {
                      className="inline-flex items-center justify-center w-12 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40">
                     <Facebook className="w-6 h-6" />
                   </a>
-                  <a href={waLink("6993917465", "Olá, preciso de suporte.")} target="_blank" aria-label="WhatsApp Suporte"
-                     className="inline-flex items-center justify-center px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm">
+                  <a
+                    href={waLink("6993917465", "Olá, preciso de suporte.")}
+                    target="_blank"
+                    aria-label="WhatsApp Suporte"
+                    onClick={() => trackClickContact("whatsapp")}
+                    className="inline-flex items-center justify-center px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm"
+                  >
                     WhatsApp Suporte
                   </a>
-                  <a href="https://consulmaxconsorcios.com.br/nossa-historia/" target="_blank" aria-label="Quem Somos - Consulmax"
-                     className="inline-flex items-center gap-2 px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm">
+                  <a
+                    href="https://consulmaxconsorcios.com.br/nossa-historia/"
+                    target="_blank"
+                    aria-label="Quem Somos - Consulmax"
+                    onClick={() => trackClickContact("quem_somos")}
+                    className="inline-flex items-center gap-2 px-4 h-12 rounded-full border border-[#1E293F]/20 hover:border-[#1E293F]/40 text-sm"
+                  >
                     <ExternalLink className="w-4 h-4" /> Quem Somos
                   </a>
                 </div>

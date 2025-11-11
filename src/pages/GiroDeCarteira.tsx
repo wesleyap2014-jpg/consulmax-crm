@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-// UI básicos (nossos shadcn-lite locais)
+// UI (locais)
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,28 +10,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-// Ícones
 import {
   Loader2, RefreshCcw, Phone, MessageCircle, Mail, CheckCircle2,
   CalendarClock, Users, ArrowRight, Info, Link as LinkIcon,
 } from "lucide-react";
 
-// Dialog — se der problema aqui, a página continua renderizando
-let Dialog: any, DialogContent: any, DialogDescription: any, DialogFooter: any, DialogHeader: any, DialogTitle: any, DialogTrigger: any;
-try {
-  // lazy import do nosso wrapper (evita quebrar o render se faltar algo)
-  // OBS: mantemos import estático no projeto real; isso é só para diagnosticar
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mod = require("@/components/ui/dialog");
-  Dialog = mod.Dialog; DialogContent = mod.DialogContent; DialogDescription = mod.DialogDescription;
-  DialogFooter = mod.DialogFooter; DialogHeader = mod.DialogHeader; DialogTitle = mod.DialogTitle; DialogTrigger = mod.DialogTrigger;
-} catch {
-  // no-op
-}
-
 import { cn } from "@/lib/utils";
 
-/* ======================== Tipos ======================== */
+/* =============== Tipos ================= */
 type GiroTask = {
   id: string;
   cliente_id: string | null;
@@ -54,7 +40,7 @@ type Cliente = {
   observacoes: string | null;
 };
 
-/* ======================== Helpers ======================== */
+/* =============== Helpers ================= */
 function brMoney(n: number | null | undefined) {
   if (n == null || isNaN(Number(n))) return "R$ 0,00";
   try { return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -87,14 +73,16 @@ const canalOptions = [
   { key: "presencial", label: "Presencial", icon: Users },
 ] as const;
 
-/* =================== Error Boundary =================== */
+/* =============== Error Boundary local ================= */
 class PageErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error?: Error }
 > {
   constructor(props: any) { super(props); this.state = { error: undefined }; }
   static getDerivedStateFromError(error: Error) { return { error }; }
-  componentDidCatch(error: any, info: any) { console.error("[GiroDeCarteira] runtime error:", error, info); }
+  componentDidCatch(error: any, info: any) {
+    console.error("[GiroDeCarteira] runtime error:", error, info);
+  }
   render() {
     if (this.state.error) {
       return (
@@ -114,7 +102,37 @@ class PageErrorBoundary extends React.Component<
   }
 }
 
-/* =================== Componente =================== */
+/* =============== Hook: dialog seguro (lazy + try/catch) ================= */
+function useSafeDialog() {
+  const [dlg, setDlg] = useState<null | {
+    Dialog: any; DialogContent: any; DialogDescription: any; DialogFooter: any;
+    DialogHeader: any; DialogTitle: any; DialogTrigger: any;
+  }>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const mod = await import("@/components/ui/dialog");
+        if (!alive) return;
+        setDlg({
+          Dialog: mod.Dialog,
+          DialogContent: mod.DialogContent,
+          DialogDescription: mod.DialogDescription,
+          DialogFooter: mod.DialogFooter,
+          DialogHeader: mod.DialogHeader,
+          DialogTitle: mod.DialogTitle,
+          DialogTrigger: mod.DialogTrigger,
+        });
+      } catch (e) {
+        console.warn("[GiroDeCarteira] dialog não disponível, seguindo sem modal.", e);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+  return dlg;
+}
+
+/* =============== Componente ================= */
 export default function GiroDeCarteira() {
   return (
     <PageErrorBoundary>
@@ -140,6 +158,8 @@ function InnerGiroDeCarteira() {
   const [saving, setSaving] = useState(false);
 
   const [lastError, setLastError] = useState<string | null>(null);
+
+  const dlg = useSafeDialog();
 
   const openFor = (taskId: string) => {
     setOpenId(taskId);
@@ -167,7 +187,7 @@ function InnerGiroDeCarteira() {
       }
       setTasks(list);
 
-      // carregar clientes em lote (se houver)
+      // carregar clientes
       const ids = Array.from(new Set(list.map(t => t?.cliente_id).filter(Boolean) as string[]));
       if (ids.length) {
         const { data: cls, error } = await supabase
@@ -205,7 +225,6 @@ function InnerGiroDeCarteira() {
       }
       setTasks(list);
 
-      // repopula clientes
       const ids = Array.from(new Set(list.map(t => t?.cliente_id).filter(Boolean) as string[]));
       if (ids.length) {
         const { data: cls, error } = await supabase
@@ -285,7 +304,7 @@ function InnerGiroDeCarteira() {
         </div>
       </div>
 
-      {/* Aviso de erro (não bloqueia a tela) */}
+      {/* Aviso de erro leve */}
       {lastError && (
         <Card>
           <CardContent className="text-sm text-red-700">
@@ -337,7 +356,7 @@ function InnerGiroDeCarteira() {
             </CardContent>
           </Card>
         ) : (
-          filtered.map((t) => {
+          filtered.map((t, idx) => {
             const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
             const phoneClean = onlyDigits(c?.telefone);
             const msg = [
@@ -347,8 +366,10 @@ function InnerGiroDeCarteira() {
             ].join(" ");
             const wa = waLink(c?.telefone, msg);
 
+            const key = t?.id || `task-${idx}`;
+
             return (
-              <Card key={t.id || Math.random()} className="relative overflow-hidden">
+              <Card key={key} className="relative overflow-hidden">
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -366,8 +387,7 @@ function InnerGiroDeCarteira() {
                       <div className={cn(
                         "text-sm font-medium",
                         t?.due_date && new Date(t.due_date).toDateString() === new Date().toDateString()
-                          ? "text-[#A11C27]"
-                          : ""
+                          ? "text-[#A11C27]" : ""
                       )}>
                         {fmtDateISO(t?.due_date)}
                       </div>
@@ -414,21 +434,21 @@ function InnerGiroDeCarteira() {
                       </a>
                     )}
 
-                    {Dialog ? (
-                      <Dialog open={openId === t.id} onOpenChange={(v: boolean) => setOpenId(v ? (t.id as string) : null)}>
-                        <DialogTrigger asChild>
+                    {dlg ? (
+                      <dlg.Dialog open={openId === t.id} onOpenChange={(v: boolean) => setOpenId(v ? (t.id as string) : null)}>
+                        <dlg.DialogTrigger asChild>
                           <Button onClick={() => openFor(String(t.id))} className="bg-[#A11C27] hover:bg-[#8f1822]">
                             <CheckCircle2 className="w-4 h-4 mr-2" />
                             Registrar Giro
                           </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Registrar Giro</DialogTitle>
-                            <DialogDescription>
+                        </dlg.DialogTrigger>
+                        <dlg.DialogContent>
+                          <dlg.DialogHeader>
+                            <dlg.DialogTitle>Registrar Giro</dlg.DialogTitle>
+                            <dlg.DialogDescription>
                               Confirme o contato realizado e agendaremos a próxima data automaticamente.
-                            </DialogDescription>
-                          </DialogHeader>
+                            </dlg.DialogDescription>
+                          </dlg.DialogHeader>
 
                           <div className="grid gap-3">
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -470,7 +490,7 @@ function InnerGiroDeCarteira() {
                             </div>
                           </div>
 
-                          <DialogFooter className="mt-2">
+                          <dlg.DialogFooter className="mt-2">
                             <Button variant="outline" onClick={() => setOpenId(null)}>
                               Cancelar
                             </Button>
@@ -478,11 +498,11 @@ function InnerGiroDeCarteira() {
                               {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ArrowRight className="w-4 h-4 mr-2" />}
                               Confirmar
                             </Button>
-                          </DialogFooter>
-                        </DialogContent>
-                      </Dialog>
+                          </dlg.DialogFooter>
+                        </dlg.DialogContent>
+                      </dlg.Dialog>
                     ) : (
-                      // fallback se dialog não estiver disponível (não quebra a página)
+                      // fallback
                       <Button onClick={() => openFor(String(t.id))} className="bg-[#A11C27] hover:bg-[#8f1822]">
                         <CheckCircle2 className="w-4 h-4 mr-2" />
                         Registrar Giro

@@ -4,20 +4,23 @@ import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from
 import { supabase } from '@/lib/supabaseClient'
 import {
   UserCheck, Briefcase, Calendar, Calculator, FileText, Wallet, Layers, UserCog,
-  SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight, Trophy
+  SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight, Trophy,
+  CalendarClock, // ✅ novo ícone para Giro de Carteira
 } from 'lucide-react'
 
 type SidebarProps = { onNavigate?: () => void }
 
+// ✅ adicionamos o “Giro de Carteira” na lista
 const items = [
   { to: '/oportunidades',   label: 'Oportunidades',    icon: Briefcase },
   { to: '/propostas',        label: 'Propostas',        icon: FileText },
   { to: '/carteira',         label: 'Carteira',         icon: Wallet },
+  { to: '/giro-de-carteira', label: 'Giro de Carteira', icon: CalendarClock }, // ← novo
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos', icon: Layers },
   { to: '/clientes',         label: 'Clientes',         icon: UserCheck },
   { to: '/agenda',           label: 'Agenda',           icon: Calendar },
   { to: '/comissoes',        label: 'Comissões',        icon: BarChart3 },
-  { to: '/ranking',          label: 'Ranking',          icon: Trophy }, // NOVO
+  { to: '/ranking',          label: 'Ranking',          icon: Trophy },
   { to: '/usuarios',         label: 'Usuários',         icon: UserCog },
   { to: '/parametros',       label: 'Parâmetros',       icon: SlidersHorizontal },
   { to: '/links',            label: 'Links Úteis',      icon: LinkIcon },
@@ -251,18 +254,18 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
               {!adminsLoading && admins.length > 0 && admins.map((ad) => (
                 <NavLink
-                  key={ad.id}
-                  to={`/simuladores/${ad.id}`}
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                  }
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={() => onNavigate?.()}
-                >
-                  {ad.name}
-                </NavLink>
+                    key={ad.id}
+                    to={`/simuladores/${ad.id}`}
+                    className={({ isActive }) =>
+                      `${pillPadding} py-2.5 rounded-2xl transition-colors
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                       ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                    }
+                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                    onClick={() => onNavigate?.()}
+                  >
+                    {ad.name}
+                  </NavLink>
               ))}
 
               {!adminsLoading && admins.length === 0 && embraconId && (
@@ -313,7 +316,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           {!collapsed && 'Propostas'}
         </NavLink>
 
-        {/* Demais itens (inclui /ranking) */}
+        {/* Demais itens (inclui Giro de Carteira e Ranking) */}
         {items
           .filter(i => i.to !== '/oportunidades' && i.to !== '/propostas')
           .map((i) => (

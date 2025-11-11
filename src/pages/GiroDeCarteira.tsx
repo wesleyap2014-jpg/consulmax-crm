@@ -54,9 +54,9 @@ function fmtDateISO(d?: string | null) {
   if (!d) return "-";
   try {
     const dt = new Date(d);
-    return dt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    return dt.toLocaleDateString("pt-BR", { timeZone: "America/Porto_Velho" });
   } catch {
-    return d;
+    return d as string;
   }
 }
 
@@ -104,7 +104,7 @@ export default function GiroDeCarteira() {
   async function fetchAll() {
     setLoading(true);
     try {
-      const [{ data: adminFlag }, { data: dueCount }, { data: batch }] = await Promise.all([
+      const [{ data: adminFlag }, { data: dueCount }, { data: batch, error: batchErr }] = await Promise.all([
         supabase.rpc("current_user_is_admin"),
         supabase.rpc("giro_due_count"),
         supabase.rpc("next_giro_batch"),
@@ -112,13 +112,15 @@ export default function GiroDeCarteira() {
 
       setIsAdmin(Boolean(adminFlag));
       setCount(Number(dueCount || 0));
-      setTasks(Array.isArray(batch) ? (batch as GiroTask[]) : []);
+
+      const list = Array.isArray(batch) ? (batch as GiroTask[]) : [];
+      setTasks(list);
 
       // carregar clientes para as tasks
       const ids = Array.from(
         new Set(
-          (batch as GiroTask[])
-            .map(t => t.cliente_id)
+          list
+            .map((t) => t.cliente_id)
             .filter((id): id is string => !!id)
         )
       );
@@ -132,6 +134,10 @@ export default function GiroDeCarteira() {
         setClientes(map);
       } else {
         setClientes({});
+      }
+
+      if (batchErr) {
+        // opcional: console.warn("next_giro_batch error", batchErr);
       }
     } finally {
       setLoading(false);
@@ -147,13 +153,15 @@ export default function GiroDeCarteira() {
         supabase.rpc("next_giro_batch"),
       ]);
       setCount(Number(dueCount || 0));
-      setTasks(Array.isArray(batch) ? (batch as GiroTask[]) : []);
+
+      const list = Array.isArray(batch) ? (batch as GiroTask[]) : [];
+      setTasks(list);
 
       // repopula clientes
       const ids = Array.from(
         new Set(
-          (batch as GiroTask[])
-            .map(t => t.cliente_id)
+          list
+            .map((t) => t.cliente_id)
             .filter((id): id is string => !!id)
         )
       );
@@ -181,7 +189,7 @@ export default function GiroDeCarteira() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return tasks;
-    return tasks.filter(t => {
+    return tasks.filter((t) => {
       const c = t.cliente_id ? clientes[t.cliente_id] : undefined;
       const name = (c?.nome || "").toLowerCase();
       const tel = onlyDigits(c?.telefone);
@@ -220,7 +228,7 @@ export default function GiroDeCarteira() {
           <Badge
             className={cn(
               "text-sm px-3 py-1",
-              count > 0 ? "bg-[#A11C27] hover:bg-[#8f1822]" : "bg-muted text-foreground"
+              count > 0 ? "bg-[#A11C27] hover:bg-[#8f1822] text-white" : "bg-muted text-foreground"
             )}
           >
             🔔 Pendências de hoje: {count}
@@ -253,7 +261,7 @@ export default function GiroDeCarteira() {
           <div className="min-w-[220px]">
             <Label>Perfil</Label>
             <div className="mt-2">
-              <Badge variant="secondary" className="px-3 py-1">
+              <Badge className="px-3 py-1 bg-gray-100">
                 {isAdmin ? "Admin — vê todas" : "Vendedor — só suas tarefas"}
               </Badge>
             </div>
@@ -294,19 +302,21 @@ export default function GiroDeCarteira() {
                         {c?.nome || "Cliente sem cadastro"}
                       </CardTitle>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                        <Badge variant="outline">Faixa: {t.faixa}</Badge>
-                        <Badge variant="outline">Carteira: {brMoney(t.carteira_total)}</Badge>
-                        <Badge variant="outline">Periodicidade: {t.periodicidade_meses} meses</Badge>
+                        <Badge className="bg-gray-100">Faixa: {t.faixa}</Badge>
+                        <Badge className="bg-gray-100">Carteira: {brMoney(t.carteira_total)}</Badge>
+                        <Badge className="bg-gray-100">Periodicidade: {t.periodicidade_meses} meses</Badge>
                       </div>
                     </div>
                     <div className="text-right">
                       <div className="text-xs text-muted-foreground">Vence hoje?</div>
-                      <div className={cn(
-                        "text-sm font-medium",
-                        new Date(t.due_date).toDateString() === new Date().toDateString()
-                          ? "text-[#A11C27]"
-                          : ""
-                      )}>
+                      <div
+                        className={cn(
+                          "text-sm font-medium",
+                          new Date(t.due_date).toDateString() === new Date().toDateString()
+                            ? "text-[#A11C27]"
+                            : ""
+                        )}
+                      >
                         {fmtDateISO(t.due_date)}
                       </div>
                     </div>

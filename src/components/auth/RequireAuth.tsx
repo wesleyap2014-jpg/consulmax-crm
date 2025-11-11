@@ -1,60 +1,69 @@
 // src/components/auth/RequireAuth.tsx
 import { useEffect, useState } from "react";
 import { Outlet, Navigate, useLocation } from "react-router-dom";
-import { supabase } from "@/lib/supabaseClient"; // ajuste o caminho se o seu client for outro
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabaseClient";
 
 export default function RequireAuth() {
-  const [ready, setReady] = useState(false);
-  const [session, setSession] = useState<Awaited<
-    ReturnType<typeof supabase.auth.getSession>
-  >["data"]["session"] | null>(null);
-
   const location = useLocation();
+
+  // Controla carregamento e sessão
+  const [ready, setReady] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
 
-    // 1) Sessão atual
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session ?? null);
-      setReady(true);
-    });
+    // 1) Busca sessão atual (evita flash/tela em branco)
+    supabase.auth
+      .getSession()
+      .then(({ data, error }) => {
+        if (error) {
+          console.warn("[RequireAuth] getSession error:", error.message);
+        }
+        setSession(data?.session ?? null);
+      })
+      .finally(() => setReady(true));
 
-    // 2) Mudanças de auth (login/logout)
-    const { data } = supabase.auth.onAuthStateChange((_evt, s) => {
+    // 2) Observa mudanças de autenticação (login/logout/refresh)
+    const { data } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s ?? null);
       setReady(true);
     });
-
     unsub = () => data.subscription.unsubscribe();
-    return () => unsub?.();
+
+    return () => {
+      try {
+        unsub?.();
+      } catch {}
+    };
   }, []);
 
-  // Loading "seguro" (evita tela branca)
+  // Loading “seguro”
   if (!ready) {
     return (
-      <div style={{ padding: 24, fontFamily: "Inter, system-ui, Arial" }}>
+      <div className="p-6 text-sm text-gray-600">
         Carregando…
       </div>
     );
   }
 
-  // Não logado → login
+  // Sem sessão -> mandar para login, preservando a rota atual
   if (!session) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  // Flags que pedem troca de senha (considera os dois nomes)
+  // Checagem de flags para troca de senha
   const meta = session.user?.user_metadata || {};
-  const needsChange =
+  const mustChange =
     meta.must_change_password === true ||
     meta.require_password_change === true;
 
-  // Só redireciona se AINDA precisa trocar e NÃO estamos já na página de troca
-  if (needsChange && location.pathname !== "/alterar-senha") {
+  // Redireciona para "Alterar Senha" se necessário (evita loop quando já está lá)
+  if (mustChange && location.pathname !== "/alterar-senha") {
     return <Navigate to="/alterar-senha" replace />;
   }
 
-  // Se as flags já foram limpas pela tela AlterarSenha, libera o app normalmente
+  // Autenticado e ok
   return <Outlet />;
 }

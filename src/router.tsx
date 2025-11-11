@@ -6,9 +6,8 @@ import RequireAuth from "./components/auth/RequireAuth";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 
-// ===== Lazy pages =====
+// ==== Lazy pages ====
 const Login                   = React.lazy(() => import("./pages/Login"));
-// const Leads               = React.lazy(() => import("./pages/Leads")); // ❌ removido
 const Clientes                = React.lazy(() => import("./pages/Clientes"));
 const Oportunidades           = React.lazy(() => import("./pages/Oportunidades"));
 const Agenda                  = React.lazy(() => import("./pages/Agenda"));
@@ -22,19 +21,12 @@ const Parametros              = React.lazy(() => import("./pages/Parametros"));
 const TermsLGPD               = React.lazy(() => import("./pages/TermsLGPD"));
 const AlterarSenha            = React.lazy(() => import("./pages/AlterarSenha"));
 const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdministradora"));
-
-// ✅ Links Úteis
 const LinksUteis              = React.lazy(() => import("./pages/LinksUteis"));
-
-// ✅ Ranking dos Vendedores
 const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedores"));
-
-// ✅ Página pública do simulador (sem login)
 const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
-
-// ✅ NOVO: Giro de Carteira
 const GiroDeCarteira          = React.lazy(() => import("./pages/GiroDeCarteira"));
 
+// Wrapper simples para Suspense
 function withSuspense(node: React.ReactNode) {
   return (
     <React.Suspense fallback={<div className="p-4 text-sm text-gray-600">Carregando…</div>}>
@@ -44,16 +36,16 @@ function withSuspense(node: React.ReactNode) {
 }
 
 export const router = createBrowserRouter([
-  // ===== Rotas públicas (sem login) =====
+  // ==== Rotas públicas (sem login) ====
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
-  // aliases/atalhos públicos
+  // atalhos públicos
   { path: "/simular",          element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
 
-  // ===== Login =====
+  // Login
   { path: "/login", element: withSuspense(<Login />) },
 
-  // ===== Rotas autenticadas =====
+  // ==== Rotas autenticadas ====
   {
     path: "/",
     element: <RequireAuth />,
@@ -63,31 +55,31 @@ export const router = createBrowserRouter([
       {
         element: <App />, // layout principal
         children: [
-          // Home agora é Oportunidades
+          // Home -> Oportunidades
           { index: true, element: <Navigate to="/oportunidades" replace /> },
 
-          // 🔁 Redirect legado: /leads -> /oportunidades
+          // legado /leads
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },
 
-          { path: "oportunidades",    element: withSuspense(<Oportunidades />) },
-          { path: "clientes",         element: withSuspense(<Clientes />) },
-          { path: "agenda",           element: withSuspense(<Agenda />) },
+          { path: "oportunidades", element: withSuspense(<Oportunidades />) },
+          { path: "clientes",      element: withSuspense(<Clientes />) },
+          { path: "agenda",        element: withSuspense(<Agenda />) },
 
           {
             path: "simuladores",
             children: [
               { index: true,      element: withSuspense(<Simuladores />) },
-              { path: "embracon", element: withSuspense(<Simuladores />) }, // atalho legado (opcional)
+              { path: "embracon", element: withSuspense(<Simuladores />) }, // atalho legado
               { path: "add",      element: withSuspense(<AdicionarAdministradora />) },
               { path: ":id",      element: withSuspense(<Simuladores />) },
             ],
           },
 
-          { path: "propostas",        element: withSuspense(<Propostas />) },
-          { path: "comissoes",        element: withSuspense(<Comissoes />) },
-          { path: "carteira",         element: withSuspense(<Carteira />) },
+          { path: "propostas",  element: withSuspense(<Propostas />) },
+          { path: "comissoes",  element: withSuspense(<Comissoes />) },
+          { path: "carteira",   element: withSuspense(<Carteira />) },
 
-          // ✅ NOVO: Giro de Carteira (com ErrorBoundary para evitar tela branca)
+          // Giro de Carteira com ErrorBoundary para evitar tela branca
           {
             path: "giro-de-carteira",
             element: withSuspense(
@@ -100,10 +92,9 @@ export const router = createBrowserRouter([
           { path: "giro",              element: <Navigate to="/giro-de-carteira" replace /> },
           { path: "giro-de-carteira/", element: <Navigate to="/giro-de-carteira" replace /> },
 
-          // ✅ Ranking dos Vendedores
-          { path: "ranking",          element: withSuspense(<RankingVendedores />) },
-
-          // 🔁 Redirects legados para o Ranking
+          // Ranking
+          { path: "ranking", element: withSuspense(<RankingVendedores />) },
+          // legados para ranking
           { path: "ranking-vendedores", element: <Navigate to="/ranking" replace /> },
           { path: "vendedores/ranking", element: <Navigate to="/ranking" replace /> },
           { path: "ranking-vendas",     element: <Navigate to="/ranking" replace /> },
@@ -113,20 +104,18 @@ export const router = createBrowserRouter([
           { path: "parametros",       element: withSuspense(<Parametros />) },
           { path: "lgpd",             element: withSuspense(<TermsLGPD />) },
 
-          // ✅ Links Úteis
-          { path: "links",            element: withSuspense(<LinksUteis />) },
+          // Links úteis
+          { path: "links",       element: withSuspense(<LinksUteis />) },
+          { path: "links-uteis", element: <Navigate to="/links" replace /> },
+          { path: "linksuteis",  element: <Navigate to="/links" replace /> },
 
-          // 🔁 Redirects legados opcionais para a nova guia de links
-          { path: "links-uteis",      element: <Navigate to="/links" replace /> },
-          { path: "linksuteis",       element: <Navigate to="/links" replace /> },
-
-          // Qualquer rota desconhecida logada volta para Oportunidades
+          // 404 dentro da área autenticada
           { path: "*", element: <Navigate to="/oportunidades" replace /> },
         ],
       },
     ],
   },
 
-  // Fallback global para público
+  // Fallback global (fora da área autenticada)
   { path: "*", element: <Navigate to="/login" replace /> },
 ]);

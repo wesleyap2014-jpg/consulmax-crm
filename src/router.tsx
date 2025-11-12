@@ -6,7 +6,7 @@ import RequireAuth from "./components/auth/RequireAuth";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 
-// ==== Lazy pages ====
+// ==== Lazy pages (mantém lazy em TODO o resto) ====
 const Login                   = React.lazy(() => import("./pages/Login"));
 const Clientes                = React.lazy(() => import("./pages/Clientes"));
 const Oportunidades           = React.lazy(() => import("./pages/Oportunidades"));
@@ -24,12 +24,16 @@ const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdmini
 const LinksUteis              = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
-const GiroDeCarteira          = React.lazy(() => import("./pages/GiroDeCarteira"));
+
+// ==== Giro de Carteira SEM lazy (força import direto) ====
+import GiroDeCarteira from "./pages/GiroDeCarteira";
 
 // Wrapper simples para Suspense
 function withSuspense(node: React.ReactNode) {
   return (
-    <React.Suspense fallback={<div className="p-4 text-sm text-gray-600">Carregando…</div>}>
+    <React.Suspense fallback={
+      <div className="p-6 text-sm text-gray-700">Carregando…</div>
+    }>
       {node}
     </React.Suspense>
   );
@@ -75,17 +79,17 @@ export const router = createBrowserRouter([
           { path: "comissoes",  element: withSuspense(<Comissoes />) },
           { path: "carteira",   element: withSuspense(<Carteira />) },
 
-          // ===== Opção 1 aplicada aqui: ErrorBoundary POR FORA do Suspense =====
+          // ===== Giro de Carteira: import direto + ErrorBoundary por fora =====
           {
             path: "giro-de-carteira",
             element: (
               <ErrorBoundary title="Erro no Giro de Carteira">
-                {withSuspense(<GiroDeCarteira />)}
+                <GiroDeCarteira />
               </ErrorBoundary>
             ),
           },
-          { path: "giro",              element: <Navigate to="/giro-de-carteira" replace /> },
-          { path: "giro-de-carteira/", element: <Navigate to="/giro-de-carteira" replace /> },
+          { path: "giro",               element: <Navigate to="/giro-de-carteira" replace /> },
+          { path: "giro-de-carteira/",  element: <Navigate to="/giro-de-carteira" replace /> },
 
           { path: "ranking", element: withSuspense(<RankingVendedores />) },
           { path: "ranking-vendedores", element: <Navigate to="/ranking" replace /> },

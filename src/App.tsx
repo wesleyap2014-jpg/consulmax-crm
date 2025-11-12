@@ -1,14 +1,10 @@
 // src/App.tsx
 import React from "react";
-import { Outlet, useLocation } from "react-router-dom";
 import Header from "@/components/layout/Header";
 import Sidebar from "@/components/layout/Sidebar";
-
-const SHOW_DEBUG = String((import.meta as any)?.env?.VITE_APP_DEBUG || "") === "1";
+import { Outlet } from "react-router-dom";
 
 export default function App() {
-  const location = useLocation();
-
   return (
     <div className="min-h-screen w-full bg-white text-foreground">
       <Header />
@@ -34,23 +30,24 @@ export default function App() {
             @keyframes float2{0%{transform:translate(0,0) scale(1)}50%{transform:translate(-16px,-10px) scale(1.05)}100%{transform:translate(0,0) scale(1)}}
           `}</style>
 
-          {/* fundo líquido (atrás do conteúdo) */}
+          {/* fundo líquido */}
           <div className="liquid-bg">
             <span className="blob b1" />
             <span className="blob b2" />
             <span className="gold" />
           </div>
 
-          {/* Conteúdo acima do fundo */}
+          {/* conteúdo acima do fundo */}
           <div className="relative z-[1]">
-            {SHOW_DEBUG && (
-              <div className="mb-2 rounded bg-slate-900 text-white text-xs px-3 py-2">
-                App Debug — path={location.pathname}
-              </div>
-            )}
-
-            {/* Força remontagem quando a rota muda para evitar estados “presos” */}
-            <Outlet key={location.pathname} />
+            <React.Suspense
+              fallback={
+                <div className="p-4 text-sm text-gray-600">
+                  Carregando conteúdo…
+                </div>
+              }
+            >
+              <Outlet />
+            </React.Suspense>
           </div>
         </main>
       </div>

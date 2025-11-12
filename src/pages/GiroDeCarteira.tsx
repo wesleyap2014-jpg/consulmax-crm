@@ -5,7 +5,6 @@ import { supabase } from "@/lib/supabaseClient";
 // UI (locais)
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,14 +16,29 @@ import {
 
 import { cn } from "@/lib/utils";
 
+/* =============== Pill (substitui Badge) ================= */
+function Pill({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+        "bg-gray-100 text-gray-800 border-gray-200",
+        className
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 /* =============== Tipos ================= */
 type GiroTask = {
-  id: string | null;
+  id: string;
   cliente_id: string | null;
   lead_id: string | null;
   owner_auth_id: string | null;
   carteira_total: number | null;
-  faixa: string | null;
+  faixa: string;
   periodicidade_meses: number | null;
   due_date: string | null;
   last_done_at: string | null;
@@ -43,22 +57,16 @@ type Cliente = {
 /* =============== Helpers ================= */
 function brMoney(n: number | null | undefined) {
   if (n == null || isNaN(Number(n))) return "R$ 0,00";
-  try {
-    return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  } catch {
-    return `R$ ${Number(n).toFixed(2)}`;
-  }
+  try { return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
+  catch { return `R$ ${Number(n).toFixed(2)}`; }
 }
 
 function fmtDateISO(d?: string | null) {
   if (!d) return "-";
   const dt = new Date(d);
   if (isNaN(dt.getTime())) return "-";
-  try {
-    return dt.toLocaleDateString("pt-BR", { timeZone: "America/Porto_Velho" });
-  } catch {
-    return dt.toLocaleDateString("pt-BR");
-  }
+  try { return dt.toLocaleDateString("pt-BR", { timeZone: "America/Porto_Velho" }); }
+  catch { return dt.toLocaleDateString("pt-BR"); }
 }
 
 function onlyDigits(s?: string | null) {
@@ -67,8 +75,7 @@ function onlyDigits(s?: string | null) {
 
 function waLink(phone?: string | null, text?: string) {
   const digits = onlyDigits(phone);
-  // evita link inválido (precisa ter DDD+9 dígitos no BR)
-  if (!digits || digits.length < 10) return null;
+  if (!digits) return null;
   const encoded = encodeURIComponent(text || "");
   return `https://wa.me/55${digits}?text=${encoded}`;
 }
@@ -109,13 +116,12 @@ class PageErrorBoundary extends React.Component<
   }
 }
 
-/* =============== Hook: dialog seguro (lazy) ================= */
+/* =============== Hook: dialog seguro (lazy + try/catch) ================= */
 function useSafeDialog() {
   const [dlg, setDlg] = useState<null | {
     Dialog: any; DialogContent: any; DialogDescription: any; DialogFooter: any;
     DialogHeader: any; DialogTitle: any; DialogTrigger: any;
   }>(null);
-
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -137,7 +143,6 @@ function useSafeDialog() {
     })();
     return () => { alive = false; };
   }, []);
-
   return dlg;
 }
 
@@ -167,6 +172,7 @@ function InnerGiroDeCarteira() {
   const [saving, setSaving] = useState(false);
 
   const [lastError, setLastError] = useState<string | null>(null);
+
   const dlg = useSafeDialog();
 
   const openFor = (taskId: string) => {
@@ -179,7 +185,6 @@ function InnerGiroDeCarteira() {
   async function fetchAll() {
     setLoading(true);
     setLastError(null);
-    let alive = true;
     try {
       const [adminRes, countRes, batchRes] = await Promise.allSettled([
         supabase.rpc("current_user_is_admin"),
@@ -187,26 +192,12 @@ function InnerGiroDeCarteira() {
         supabase.rpc("next_giro_batch"),
       ]);
 
-      if (!alive) return;
-
       if (adminRes.status === "fulfilled") setIsAdmin(Boolean(adminRes.value.data));
       if (countRes.status === "fulfilled") setCount(Number(countRes.value.data || 0));
 
       let list: GiroTask[] = [];
       if (batchRes.status === "fulfilled" && Array.isArray(batchRes.value.data)) {
-        list = (batchRes.value.data as any[]).map((r) => ({
-          id: r?.id ?? null,
-          cliente_id: r?.cliente_id ?? null,
-          lead_id: r?.lead_id ?? null,
-          owner_auth_id: r?.owner_auth_id ?? null,
-          carteira_total: r?.carteira_total ?? null,
-          faixa: r?.faixa ?? null,
-          periodicidade_meses: r?.periodicidade_meses ?? null,
-          due_date: r?.due_date ?? null,
-          last_done_at: r?.last_done_at ?? null,
-          created_at: r?.created_at ?? null,
-          updated_at: r?.updated_at ?? null,
-        })) as GiroTask[];
+        list = batchRes.value.data as GiroTask[];
       }
       setTasks(list);
 
@@ -217,7 +208,6 @@ function InnerGiroDeCarteira() {
           .from("clientes")
           .select("id,nome,telefone,email,observacoes")
           .in("id", ids);
-        if (!alive) return;
         if (error) throw error;
         const map: Record<string, Cliente> = {};
         (cls || []).forEach((c: any) => { if (c?.id) map[c.id] = c; });
@@ -229,41 +219,23 @@ function InnerGiroDeCarteira() {
       console.error("[GiroDeCarteira] fetchAll error:", e);
       setLastError(String(e?.message || e));
     } finally {
-      if (alive) setLoading(false);
+      setLoading(false);
     }
-
-    return () => { alive = false; };
   }
 
   async function doRefresh() {
     setRefreshing(true);
     setLastError(null);
-    let alive = true;
     try {
       const [countRes, batchRes] = await Promise.allSettled([
         supabase.rpc("giro_due_count"),
         supabase.rpc("next_giro_batch"),
       ]);
-
-      if (!alive) return;
-
       if (countRes.status === "fulfilled") setCount(Number(countRes.value.data || 0));
 
       let list: GiroTask[] = [];
       if (batchRes.status === "fulfilled" && Array.isArray(batchRes.value.data)) {
-        list = (batchRes.value.data as any[]).map((r) => ({
-          id: r?.id ?? null,
-          cliente_id: r?.cliente_id ?? null,
-          lead_id: r?.lead_id ?? null,
-          owner_auth_id: r?.owner_auth_id ?? null,
-          carteira_total: r?.carteira_total ?? null,
-          faixa: r?.faixa ?? null,
-          periodicidade_meses: r?.periodicidade_meses ?? null,
-          due_date: r?.due_date ?? null,
-          last_done_at: r?.last_done_at ?? null,
-          created_at: r?.created_at ?? null,
-          updated_at: r?.updated_at ?? null,
-        })) as GiroTask[];
+        list = batchRes.value.data as GiroTask[];
       }
       setTasks(list);
 
@@ -273,7 +245,6 @@ function InnerGiroDeCarteira() {
           .from("clientes")
           .select("id,nome,telefone,email,observacoes")
           .in("id", ids);
-        if (!alive) return;
         if (error) throw error;
         const map: Record<string, Cliente> = {};
         (cls || []).forEach((c: any) => { if (c?.id) map[c.id] = c; });
@@ -285,13 +256,11 @@ function InnerGiroDeCarteira() {
       console.error("[GiroDeCarteira] refresh error:", e);
       setLastError(String(e?.message || e));
     } finally {
-      if (alive) setRefreshing(false);
+      setRefreshing(false);
     }
-
-    return () => { alive = false; };
   }
 
-  useEffect(() => { fetchAll(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => { fetchAll(); }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -338,14 +307,9 @@ function InnerGiroDeCarteira() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge
-            className={cn(
-              "text-sm px-3 py-1",
-              count > 0 ? "bg-[#A11C27] hover:bg-[#8f1822] text-white" : "bg-gray-100 text-gray-800"
-            )}
-          >
+          <Pill className={count > 0 ? "bg-[#A11C27] text-white border-[#8f1822]" : ""}>
             🔔 Pendências de hoje: {count}
-          </Badge>
+          </Pill>
           <Button variant="outline" onClick={doRefresh}>
             {refreshing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
             Atualizar
@@ -383,9 +347,7 @@ function InnerGiroDeCarteira() {
           <div className="min-w-[220px]">
             <Label>Perfil</Label>
             <div className="mt-2">
-              <Badge className="px-3 py-1 bg-gray-100">
-                {isAdmin ? "Admin — vê todas" : "Vendedor — só suas tarefas"}
-              </Badge>
+              <Pill>{isAdmin ? "Admin — vê todas" : "Vendedor — só suas tarefas"}</Pill>
             </div>
           </div>
         </CardContent>
@@ -415,7 +377,7 @@ function InnerGiroDeCarteira() {
             ].join(" ");
             const wa = waLink(c?.telefone, msg);
 
-            const key = t?.id ?? `${t?.cliente_id ?? "x"}-${t?.due_date ?? "y"}-${idx}`;
+            const key = t?.id || `task-${idx}`;
 
             return (
               <Card key={key} className="relative overflow-hidden">
@@ -426,21 +388,18 @@ function InnerGiroDeCarteira() {
                         {c?.nome || "Cliente sem cadastro"}
                       </CardTitle>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
-                        <Badge className="bg-gray-100">Faixa: {t?.faixa || "-"}</Badge>
-                        <Badge className="bg-gray-100">Carteira: {brMoney(t?.carteira_total)}</Badge>
-                        <Badge className="bg-gray-100">Periodicidade: {t?.periodicidade_meses || 0} meses</Badge>
+                        <Pill>Faixa: {t?.faixa || "-"}</Pill>
+                        <Pill>Carteira: {brMoney(t?.carteira_total)}</Pill>
+                        <Pill>Periodicidade: {t?.periodicidade_meses || 0} meses</Pill>
                       </div>
                     </div>
                     <div className="text-right">
                       <div className="text-xs text-gray-500">Data</div>
-                      <div
-                        className={cn(
-                          "text-sm font-medium",
-                          t?.due_date && new Date(t.due_date).toDateString() === new Date().toDateString()
-                            ? "text-[#A11C27]"
-                            : ""
-                        )}
-                      >
+                      <div className={cn(
+                        "text-sm font-medium",
+                        t?.due_date && new Date(t.due_date).toDateString() === new Date().toDateString()
+                          ? "text-[#A11C27]" : ""
+                      )}>
                         {fmtDateISO(t?.due_date)}
                       </div>
                     </div>
@@ -487,12 +446,9 @@ function InnerGiroDeCarteira() {
                     )}
 
                     {dlg ? (
-                      <dlg.Dialog
-                        open={openId === (t.id ?? "")}
-                        onOpenChange={(v: boolean) => setOpenId(v ? String(t.id ?? "") : null)}
-                      >
+                      <dlg.Dialog open={openId === t.id} onOpenChange={(v: boolean) => setOpenId(v ? (t.id as string) : null)}>
                         <dlg.DialogTrigger asChild>
-                          <Button onClick={() => openFor(String(t.id ?? ""))} className="bg-[#A11C27] hover:bg-[#8f1822]">
+                          <Button onClick={() => openFor(String(t.id))} className="bg-[#A11C27] hover:bg-[#8f1822]">
                             <CheckCircle2 className="w-4 h-4 mr-2" />
                             Registrar Giro
                           </Button>
@@ -558,7 +514,7 @@ function InnerGiroDeCarteira() {
                       </dlg.Dialog>
                     ) : (
                       // fallback
-                      <Button onClick={() => openFor(String(t.id ?? ""))} className="bg-[#A11C27] hover:bg-[#8f1822]">
+                      <Button onClick={() => openFor(String(t.id))} className="bg-[#A11C27] hover:bg-[#8f1822]">
                         <CheckCircle2 className="w-4 h-4 mr-2" />
                         Registrar Giro
                       </Button>

@@ -16,6 +16,9 @@ import {
 
 import { cn } from "@/lib/utils";
 
+/** Debug controlável por env: defina VITE_GIRO_DEBUG=1 para mostrar barra de debug */
+const SHOW_DEBUG = String((import.meta as any)?.env?.VITE_GIRO_DEBUG || "") === "1";
+
 /* =============== Pill (substitui Badge) ================= */
 function Pill({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
@@ -106,7 +109,7 @@ class PageErrorBoundary extends React.Component<
               <CardTitle>Erro ao carregar “Giro de Carteira”</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-red-700">
-              {String(this.state.error.message || this.state.error)}
+              {String((this.state.error as any)?.message || this.state.error)}
             </CardContent>
           </Card>
         </div>
@@ -175,6 +178,22 @@ function InnerGiroDeCarteira() {
 
   const dlg = useSafeDialog();
 
+  // Loga montagem e segurança contra loading infinito
+  useEffect(() => {
+    console.log("[GiroDeCarteira] montou");
+  }, []);
+
+  useEffect(() => {
+    if (!loading) return;
+    const watchdog = setTimeout(() => {
+      if (loading) {
+        console.warn("[GiroDeCarteira] safety timeout: forçando loading=false após 8s");
+        setLoading(false);
+      }
+    }, 8000);
+    return () => clearTimeout(watchdog);
+  }, [loading]);
+
   const openFor = (taskId: string) => {
     setOpenId(taskId);
     setCanal("whatsapp");
@@ -215,6 +234,12 @@ function InnerGiroDeCarteira() {
       } else {
         setClientes({});
       }
+
+      console.log("[GiroDeCarteira] fetchAll ok", {
+        isAdmin: adminRes.status === "fulfilled" ? adminRes.value.data : "NA",
+        count: countRes.status === "fulfilled" ? countRes.value.data : "NA",
+        tasks: list.length,
+      });
     } catch (e: any) {
       console.error("[GiroDeCarteira] fetchAll error:", e);
       setLastError(String(e?.message || e));
@@ -252,6 +277,11 @@ function InnerGiroDeCarteira() {
       } else {
         setClientes({});
       }
+
+      console.log("[GiroDeCarteira] refresh ok", {
+        count: countRes.status === "fulfilled" ? countRes.value.data : "NA",
+        tasks: list.length,
+      });
     } catch (e: any) {
       console.error("[GiroDeCarteira] refresh error:", e);
       setLastError(String(e?.message || e));
@@ -298,6 +328,13 @@ function InnerGiroDeCarteira() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
+      {/* Debug bar fixa (controlada por env) */}
+      {SHOW_DEBUG && (
+        <div className="mb-2 rounded-md bg-[#1E293F] text-white text-xs px-3 py-2">
+          Debug Giro — loading={String(loading)} • refreshing={String(refreshing)} • tasks={tasks.length} • admin={String(isAdmin)} • count={count}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
@@ -537,10 +574,12 @@ function InnerGiroDeCarteira() {
         )}
       </div>
 
-      {/* Debug leve — remova quando estabilizar */}
-      <div className="text-[11px] text-gray-500">
-        debug: tasks={tasks.length} • admin={String(isAdmin)} • count={count}
-      </div>
+      {/* Debug leve — deixei condicionado pela env para não poluir produção */}
+      {SHOW_DEBUG && (
+        <div className="text-[11px] text-gray-500">
+          debug: tasks={tasks.length} • admin={String(isAdmin)} • count={count}
+        </div>
+      )}
     </div>
   );
 }

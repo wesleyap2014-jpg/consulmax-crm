@@ -75,11 +75,12 @@ export const router = createBrowserRouter([
           { path: "comissoes",  element: withSuspense(<Comissoes />) },
           { path: "carteira",   element: withSuspense(<Carteira />) },
 
+          // ===== Opção 1 aplicada aqui: ErrorBoundary POR FORA do Suspense =====
           {
             path: "giro-de-carteira",
-            element: withSuspense(
+            element: (
               <ErrorBoundary title="Erro no Giro de Carteira">
-                <GiroDeCarteira />
+                {withSuspense(<GiroDeCarteira />)}
               </ErrorBoundary>
             ),
           },

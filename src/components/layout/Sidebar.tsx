@@ -5,17 +5,16 @@ import { supabase } from '@/lib/supabaseClient'
 import {
   UserCheck, Briefcase, Calendar, Calculator, FileText, Wallet, Layers, UserCog,
   SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight, Trophy,
-  CalendarClock, // ✅ novo ícone para Giro de Carteira
+  CalendarClock,
 } from 'lucide-react'
 
 type SidebarProps = { onNavigate?: () => void }
 
-// ✅ adicionamos o “Giro de Carteira” na lista
 const items = [
   { to: '/oportunidades',   label: 'Oportunidades',    icon: Briefcase },
   { to: '/propostas',        label: 'Propostas',        icon: FileText },
   { to: '/carteira',         label: 'Carteira',         icon: Wallet },
-  { to: '/giro-de-carteira', label: 'Giro de Carteira', icon: CalendarClock }, // ← novo
+  { to: '/giro-de-carteira', label: 'Giro de Carteira', icon: CalendarClock },
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos', icon: Layers },
   { to: '/clientes',         label: 'Clientes',         icon: UserCheck },
   { to: '/agenda',           label: 'Agenda',           icon: Calendar },
@@ -24,7 +23,7 @@ const items = [
   { to: '/usuarios',         label: 'Usuários',         icon: UserCog },
   { to: '/parametros',       label: 'Parâmetros',       icon: SlidersHorizontal },
   { to: '/links',            label: 'Links Úteis',      icon: LinkIcon },
-]
+] as const
 
 const LOGO_URL = '/logo-consulmax.png?v=3'
 const FALLBACK_URL = '/favicon.ico?v=3'
@@ -55,7 +54,7 @@ const glassHoverPill: CSSProperties = {
 }
 
 const SidebarLiquidBG: FC = () => (
-  <div style={sbLiquidCanvas}>
+  <div style={sbLiquidCanvas} aria-hidden>
     <style>{sbLiquidKeyframes}</style>
     <span style={{ ...sbBlob, ...sbBlob1 }} />
     <span style={{ ...sbBlob, ...sbBlob2 }} />
@@ -117,7 +116,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive)
   useEffect(() => { setSimGroupOpen(simuladoresActive) }, [simuladoresActive])
 
-  useEffect(() => { onNavigate?.() }, [location.pathname]) // fecha drawer no mobile
+  // fecha drawer no mobile ao navegar
+  useEffect(() => { onNavigate?.() }, [location.pathname, onNavigate])
 
   // Carregar administradoras
   const [admins, setAdmins] = useState<AdminRow[]>([])
@@ -128,19 +128,26 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     let alive = true
     ;(async () => {
       setAdminsLoading(true)
-      const { data, error } = await supabase
-        .from('sim_admins').select('id, name, slug').order('name', { ascending: true })
-      if (!alive) return
-      if (error) {
-        console.error('Erro ao carregar administradoras:', error.message)
+      try {
+        const { data, error } = await supabase
+          .from('sim_admins').select('id, name, slug').order('name', { ascending: true })
+        if (!alive) return
+        if (error) {
+          console.error('Erro ao carregar administradoras:', error.message)
+          setAdmins([]); setEmbraconId(null)
+        } else {
+          const list = (data ?? [])
+          setAdmins(list as AdminRow[])
+          const embr = list.find(a => (a as AdminRow).name?.toLowerCase?.() === 'embracon') as AdminRow | undefined
+          setEmbraconId(embr?.id ?? null)
+        }
+      } catch (e: any) {
+        if (!alive) return
+        console.error('Erro inesperado ao carregar administradoras:', e?.message || e)
         setAdmins([]); setEmbraconId(null)
-      } else {
-        const list = (data ?? [])
-        setAdmins(list)
-        const embr = list.find(a => a.name?.toLowerCase() === 'embracon')
-        setEmbraconId(embr?.id ?? null)
+      } finally {
+        if (alive) setAdminsLoading(false)
       }
-      setAdminsLoading(false)
     })()
     return () => { alive = false }
   }, [location.pathname])
@@ -167,6 +174,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         to="/oportunidades"
         className="relative z-[1] flex items-center gap-3 mb-2"
         onClick={() => onNavigate?.()}
+        aria-label="Ir para Oportunidades"
       >
         <img
           src={LOGO_URL}
@@ -215,6 +223,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
           onClick={() => onNavigate?.()}
           title="Oportunidades"
+          end
         >
           <Briefcase className="h-4 w-4" />
           {!collapsed && 'Oportunidades'}
@@ -254,18 +263,18 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
               {!adminsLoading && admins.length > 0 && admins.map((ad) => (
                 <NavLink
-                    key={ad.id}
-                    to={`/simuladores/${ad.id}`}
-                    className={({ isActive }) =>
-                      `${pillPadding} py-2.5 rounded-2xl transition-colors
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                       ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                    }
-                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                    onClick={() => onNavigate?.()}
-                  >
-                    {ad.name}
-                  </NavLink>
+                  key={ad.id}
+                  to={`/simuladores/${ad.id}`}
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                >
+                  {ad.name}
+                </NavLink>
               ))}
 
               {!adminsLoading && admins.length === 0 && embraconId && (
@@ -311,12 +320,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
           onClick={() => onNavigate?.()}
           title="Propostas"
+          end
         >
           <FileText className="h-4 w-4" />
           {!collapsed && 'Propostas'}
         </NavLink>
 
-        {/* Demais itens (inclui Giro de Carteira e Ranking) */}
+        {/* Demais itens */}
         {items
           .filter(i => i.to !== '/oportunidades' && i.to !== '/propostas')
           .map((i) => (
@@ -332,6 +342,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
               style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
               onClick={() => onNavigate?.()}
               title={i.label}
+              end
             >
               <i.icon className="h-4 w-4" />
               {!collapsed && i.label}

@@ -1,6 +1,6 @@
 // src/router.tsx
 import React from "react";
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, useLocation } from "react-router-dom";
 
 import RequireAuth from "./components/auth/RequireAuth";
 import App from "./App";
@@ -34,6 +34,16 @@ function withSuspense(node: React.ReactNode) {
     <React.Suspense fallback={<div className="p-4 text-sm text-gray-600">Carregando…</div>}>
       {node}
     </React.Suspense>
+  );
+}
+
+/** ErrorBoundary que reseta ao mudar a rota (pathname) */
+function EB({ title, children }: { title?: string; children: React.ReactNode }) {
+  const location = useLocation();
+  return (
+    <ErrorBoundary title={title} resetKeys={[location.pathname]}>
+      {children}
+    </ErrorBoundary>
   );
 }
 
@@ -77,13 +87,13 @@ export const router = createBrowserRouter([
           { path: "comissoes",  element: withSuspense(<Comissoes />) },
           { path: "carteira",   element: withSuspense(<Carteira />) },
 
-          // ===== Import direto + ErrorBoundary por fora (sem Suspense) =====
+          // Giro de Carteira: import direto + ErrorBoundary com reset por rota
           {
             path: "giro-de-carteira",
             element: (
-              <ErrorBoundary title="Erro no Giro de Carteira">
+              <EB title="Erro no Giro de Carteira">
                 <GiroDeCarteira />
-              </ErrorBoundary>
+              </EB>
             ),
           },
           { path: "giro",              element: <Navigate to="/giro-de-carteira" replace /> },

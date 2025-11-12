@@ -26,9 +26,7 @@ const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedor
 const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
 const GiroDeCarteira          = React.lazy(() => import("./pages/GiroDeCarteira"));
 
-// ✅ Health (sem underscore)
-const Health                  = React.lazy(() => import("./pages/Health"));
-
+// Wrapper simples para Suspense
 function withSuspense(node: React.ReactNode) {
   return (
     <React.Suspense fallback={<div className="p-4 text-sm text-gray-600">Carregando…</div>}>
@@ -38,25 +36,23 @@ function withSuspense(node: React.ReactNode) {
 }
 
 export const router = createBrowserRouter([
-  // públicas
+  // ==== Rotas públicas (sem login) ====
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   { path: "/simular",          element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
 
-  // ✅ rota de saúde
-  { path: "/health", element: withSuspense(<Health />) },
-
-  // login
+  // Login
   { path: "/login", element: withSuspense(<Login />) },
 
-  // autenticadas
+  // ==== Rotas autenticadas ====
   {
     path: "/",
     element: <RequireAuth />,
     children: [
       { path: "alterar-senha", element: withSuspense(<AlterarSenha />) },
+
       {
-        element: <App />,
+        element: <App />, // layout principal
         children: [
           { index: true, element: <Navigate to="/oportunidades" replace /> },
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },

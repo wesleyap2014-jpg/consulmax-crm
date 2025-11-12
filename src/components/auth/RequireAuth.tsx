@@ -1,69 +1,54 @@
-// src/components/auth/RequireAuth.tsx
-import { useEffect, useState } from "react";
-import { Outlet, Navigate, useLocation } from "react-router-dom";
-import type { Session } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabaseClient";
+// src/components/auth/RequireAuth.tsx (EXEMPLO)
+import React from "react";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 export default function RequireAuth() {
   const location = useLocation();
+  // pegue do seu contexto/estado real:
+  const isAuthed = true;              // <-- ajuste ao seu caso
+  const userScopes: string[] = [];    // <-- ajuste ao seu caso
 
-  // Controla carregamento e sessão
-  const [ready, setReady] = useState(false);
-  const [session, setSession] = useState<Session | null>(null);
+  // Rotas públicas
+  const PUBLIC = new Set(["/login", "/publico/simulador", "/simular", "/public/simulador"]);
 
-  useEffect(() => {
-    let unsub: (() => void) | undefined;
+  // ⚠️ TEMP: liberar giro até ajustar mapeamento de escopos
+  const TEMP_ALLOW = new Set(["/giro-de-carteira"]);
 
-    // 1) Busca sessão atual (evita flash/tela em branco)
-    supabase.auth
-      .getSession()
-      .then(({ data, error }) => {
-        if (error) {
-          console.warn("[RequireAuth] getSession error:", error.message);
-        }
-        setSession(data?.session ?? null);
-      })
-      .finally(() => setReady(true));
+  if (!isAuthed && !PUBLIC.has(location.pathname)) {
+    return <Navigate to="/login" replace />;
+  }
 
-    // 2) Observa mudanças de autenticação (login/logout/refresh)
-    const { data } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s ?? null);
-      setReady(true);
-    });
-    unsub = () => data.subscription.unsubscribe();
+  // === checagem de escopo (exemplo) ===
+  const path = location.pathname;
 
-    return () => {
-      try {
-        unsub?.();
-      } catch {}
-    };
-  }, []);
+  const needScope = (p: string) => {
+    // seu mapeamento real aqui:
+    if (p.startsWith("/oportunidades")) return "oportunidades";
+    if (p.startsWith("/clientes")) return "leads";
+    if (p.startsWith("/gestao-de-grupos")) return "gestao_grupos";
+    if (p.startsWith("/comissoes")) return "comissoes";
+    if (p.startsWith("/usuarios")) return "usuarios";
+    if (p.startsWith("/parametros")) return "parametros";
 
-  // Loading “seguro”
-  if (!ready) {
+    if (p.startsWith("/giro-de-carteira")) return "giro"; // <-- novo escopo (se usar)
+    return null; // sem escopo específico
+  };
+
+  const required = needScope(path);
+
+  if (!TEMP_ALLOW.has(path) && required && !userScopes.includes(required)) {
+    console.warn("[RequireAuth] Bloqueado por escopo", { path, required, userScopes });
     return (
-      <div className="p-6 text-sm text-gray-600">
-        Carregando…
+      <div className="p-6">
+        <div className="max-w-xl mx-auto rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h2 className="font-semibold text-amber-800">Acesso restrito</h2>
+          <p className="text-sm text-amber-700 mt-1">
+            Você não possui permissão para acessar <code>{path}</code>.
+          </p>
+        </div>
       </div>
     );
   }
 
-  // Sem sessão -> mandar para login, preservando a rota atual
-  if (!session) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
-  }
-
-  // Checagem de flags para troca de senha
-  const meta = session.user?.user_metadata || {};
-  const mustChange =
-    meta.must_change_password === true ||
-    meta.require_password_change === true;
-
-  // Redireciona para "Alterar Senha" se necessário (evita loop quando já está lá)
-  if (mustChange && location.pathname !== "/alterar-senha") {
-    return <Navigate to="/alterar-senha" replace />;
-  }
-
-  // Autenticado e ok
   return <Outlet />;
 }

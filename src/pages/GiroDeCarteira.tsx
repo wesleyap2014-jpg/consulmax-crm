@@ -6,12 +6,17 @@ export default function GiroDeCarteira() {
     <div
       style={{
         padding: 24,
-        fontSize: 28,
-        fontWeight: 700,
-        textAlign: "center",
+        background: "rgba(255,230,0,0.35)",
+        color: "#111",                 // <- força texto escuro
+        fontSize: 32,
+        fontWeight: 800,
+        border: "2px dashed #111",     // <- contorno visível
+        minHeight: "50vh",
+        position: "relative",
+        zIndex: 2,                     // <- acima de qualquer fundo
       }}
     >
-      Wesley Lindo
+      Wesley Lindo (SMOKE)
     </div>
   );
 }

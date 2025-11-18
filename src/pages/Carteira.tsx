@@ -50,6 +50,7 @@ type Venda = {
   created_at: string;
   segmento?: string | null;
   data_nascimento?: string | null;
+  inad?: boolean | null; // NOVO: flag de inadimplência
 };
 
 type UserRow = { id: string; nome: string | null; email: string | null; role?: string | null };
@@ -75,7 +76,17 @@ const PRODUTOS: Produto[] = [
 const FORMAS: FormaVenda[] = ["Parcela Cheia", "Reduzida 25%", "Reduzida 50%"];
 
 const currency = (n: number) =>
-  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 }).format(n);
+  new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 2,
+  }).format(n);
+
+const formatNumberBR = (n: number) =>
+  new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
@@ -134,11 +145,19 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
     <tr className="border-t">
       <td className="p-2">
         <div className="flex items-center gap-2">
-          <button title="Ver venda" className="text-gray-500 hover:text-gray-800" onClick={() => onViewVenda(venda, lead)}>
+          <button
+            title="Ver venda"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onViewVenda(venda, lead)}
+          >
             👁️
           </button>
           <div className="font-medium">{lead?.nome ?? "—"}</div>
-          <button title="Editar pendente" className="text-gray-500 hover:text-gray-800" onClick={() => onOpenEditarVenda(venda)}>
+          <button
+            title="Editar pendente"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onOpenEditarVenda(venda)}
+          >
             ✏️
           </button>
         </div>
@@ -147,19 +166,38 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
       <td className="p-2">{venda.administradora}</td>
       <td className="p-2">{venda.numero_proposta}</td>
       <td className="p-2">
-        <input value={grupo} onChange={(e) => setGrupo(e.target.value)} className="border rounded px-2 py-1 w-28" disabled={!canEncarteirar} />
+        <input
+          value={grupo}
+          onChange={(e) => setGrupo(e.target.value)}
+          className="border rounded px-2 py-1 w-28"
+          disabled={!canEncarteirar}
+        />
       </td>
       <td className="p-2">
-        <input value={cota} onChange={(e) => setCota(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!canEncarteirar} />
+        <input
+          value={cota}
+          onChange={(e) => setCota(e.target.value)}
+          className="border rounded px-2 py-1 w-20"
+          disabled={!canEncarteirar}
+        />
       </td>
       <td className="p-2">
-        <input value={codigo} onChange={(e) => setCodigo(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!canEncarteirar} />
+        <input
+          value={codigo}
+          onChange={(e) => setCodigo(e.target.value)}
+          className="border rounded px-2 py-1 w-20"
+          disabled={!canEncarteirar}
+        />
       </td>
       <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
       <td className="p-2">
         <div className="flex gap-2">
           <button
-            className={`px-3 py-1 rounded ${canEncarteirar ? "bg-[#A11C27] text-white hover:opacity-90" : "bg-gray-200 text-gray-500 cursor-not-allowed"}`}
+            className={`px-3 py-1 rounded ${
+              canEncarteirar
+                ? "bg-[#A11C27] text-white hover:opacity-90"
+                : "bg-gray-200 text-gray-500 cursor-not-allowed"
+            }`}
             disabled={!canEncarteirar}
             onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
           >
@@ -195,28 +233,51 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, isAdm
   const [adm, setAdm] = useState<Administradora>(venda.administradora);
   const [flagCont, setFlagCont] = useState<boolean>(!!venda.contemplada);
   const [dataCont, setDataCont] = useState<string>(venda.data_contemplacao ?? "");
+  const [flagInad, setFlagInad] = useState<boolean>(!!venda.inad); // NOVO: estado inadimplente
 
   const saveEdit = async () => {
     setEdit(false);
     const segmento = normalizeProdutoToSegmento(venda.produto);
-    await onSave({ grupo, cota, codigo, valor_venda: valor, administradora: adm, segmento: segmento ?? undefined });
+    await onSave({
+      grupo,
+      cota,
+      codigo,
+      valor_venda: valor,
+      administradora: adm,
+      segmento: segmento ?? undefined,
+    });
   };
-  const saveContemplacao = async () => {
+
+  const saveSituacao = async () => {
     if (flagCont && !dataCont) {
       alert("Informe a data da contemplação.");
       return;
     }
-    await onSave({ contemplada: flagCont, data_contemplacao: flagCont ? dataCont : null });
+    await onSave({
+      contemplada: flagCont,
+      data_contemplacao: flagCont ? dataCont : null,
+      inad: flagInad,
+    });
   };
 
   return (
     <tr className="border-t">
       <td className="p-2">
-        <span className={`px-2 py-1 rounded-full text-xs ${ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{ativa ? "Ativa" : "Cancelada"}</span>
+        <span
+          className={`px-2 py-1 rounded-full text-xs ${
+            ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+          }`}
+        >
+          {ativa ? "Ativa" : "Cancelada"}
+        </span>
       </td>
       <td className="p-2">
         {edit ? (
-          <select className="border rounded px-2 py-1" value={adm} onChange={(e) => setAdm(e.target.value as Administradora)}>
+          <select
+            className="border rounded px-2 py-1"
+            value={adm}
+            onChange={(e) => setAdm(e.target.value as Administradora)}
+          >
             <option value={adm}>{adm}</option>
           </select>
         ) : (
@@ -225,30 +286,85 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, isAdm
       </td>
       <td className="p-2">
         <div className="flex items-center gap-2">
-          <button title="Ver venda" className="text-gray-500 hover:text-gray-800" onClick={() => onViewVenda(venda)}>
+          <button
+            title="Ver venda"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onViewVenda(venda)}
+          >
             👁️
           </button>
           <span>{venda.numero_proposta}</span>
         </div>
       </td>
       <td className="p-2">{venda.produto}</td>
-      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-24" value={grupo} onChange={(e) => setGrupo(e.target.value)} /> : venda.grupo ?? "—"}</td>
-      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-20" value={cota} onChange={(e) => setCota(e.target.value)} /> : venda.cota ?? "—"}</td>
-      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-20" value={codigo} onChange={(e) => setCodigo(e.target.value)} /> : venda.codigo ?? "—"}</td>
-      <td className="p-2">{edit ? <input className="border rounded px-2 py-1 w-28" value={valor} onChange={(e) => setValor(Number(e.target.value))} type="number" step="0.01" /> : currency(venda.valor_venda ?? 0)}</td>
+      <td className="p-2">
+        {edit ? (
+          <input
+            className="border rounded px-2 py-1 w-24"
+            value={grupo}
+            onChange={(e) => setGrupo(e.target.value)}
+          />
+        ) : (
+          venda.grupo ?? "—"
+        )}
+      </td>
+      <td className="p-2">
+        {edit ? (
+          <input
+            className="border rounded px-2 py-1 w-20"
+            value={cota}
+            onChange={(e) => setCota(e.target.value)}
+          />
+        ) : (
+          venda.cota ?? "—"
+        )}
+      </td>
+      <td className="p-2">
+        {edit ? (
+          <input
+            className="border rounded px-2 py-1 w-20"
+            value={codigo}
+            onChange={(e) => setCodigo(e.target.value)}
+          />
+        ) : (
+          venda.codigo ?? "—"
+        )}
+      </td>
+      <td className="p-2">
+        {edit ? (
+          <input
+            className="border rounded px-2 py-1 w-28"
+            value={valor}
+            onChange={(e) => setValor(Number(e.target.value))}
+            type="number"
+            step="0.01"
+          />
+        ) : (
+          currency(venda.valor_venda ?? 0)
+        )}
+      </td>
       <td className="p-2">
         {isAdmin ? (
           edit ? (
             <div className="flex gap-2">
-              <button className="px-3 py-1 rounded bg-[#1E293F] text-white hover:opacity-90" onClick={saveEdit}>
+              <button
+                className="px-3 py-1 rounded bg-[#1E293F] text-white hover:opacity-90"
+                onClick={saveEdit}
+              >
                 Salvar
               </button>
-              <button className="px-3 py-1 rounded border" onClick={() => setEdit(false)}>
+              <button
+                className="px-3 py-1 rounded border"
+                onClick={() => setEdit(false)}
+              >
                 Cancelar
               </button>
             </div>
           ) : (
-            <button className="px-3 py-1 rounded border" onClick={() => setEdit(true)}>
+            <button
+              className="px-3 py-1 rounded border"
+              onClick={() => setEdit(true)}
+            >
               ✏️ Editar
             </button>
           )
@@ -257,33 +373,64 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, isAdm
         )}
       </td>
       <td className="p-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="text-sm">
-            <input type="checkbox" className="mr-1" checked={flagCont} onChange={(e) => setFlagCont(e.target.checked)} />
+            <input
+              type="checkbox"
+              className="mr-1"
+              checked={flagCont}
+              onChange={(e) => setFlagCont(e.target.checked)}
+            />
             Contemplada
           </label>
           {flagCont && (
-            <>
-              <input type="date" className="border rounded px-2 py-1" value={dataCont} onChange={(e) => setDataCont(e.target.value)} />
-              <button className="px-2 py-1 rounded border hover:bg-gray-50" onClick={saveContemplacao}>
-                Salvar
-              </button>
-            </>
+            <input
+              type="date"
+              className="border rounded px-2 py-1"
+              value={dataCont}
+              onChange={(e) => setDataCont(e.target.value)}
+            />
           )}
+          <label className="text-sm">
+            <input
+              type="checkbox"
+              className="mr-1"
+              checked={flagInad}
+              onChange={(e) => setFlagInad(e.target.checked)}
+            />
+            Inadimplente
+          </label>
+          <button
+            className="px-2 py-1 rounded border hover:bg-gray-50"
+            onClick={saveSituacao}
+          >
+            Salvar
+          </button>
         </div>
       </td>
     </tr>
   );
 };
 
-type ClienteGroup = { cliente: Lead; itens: Venda[]; totalAtivas: number; qtdAtivas: number; segmentos: Set<string> };
+type ClienteGroup = {
+  cliente: Lead;
+  itens: Venda[];
+  totalAtivas: number;
+  qtdAtivas: number;
+  segmentos: Set<string>;
+};
 type ClienteBlocoProps = {
   group: ClienteGroup;
   onSaveVenda: (v: Venda, patch: Partial<Venda>) => Promise<void>;
   onViewVenda: (v: Venda) => void;
   isAdmin: boolean;
 };
-const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewVenda, isAdmin }) => {
+const ClienteBloco: React.FC<ClienteBlocoProps> = ({
+  group,
+  onSaveVenda,
+  onViewVenda,
+  isAdmin,
+}) => {
   const [open, setOpen] = useState(false);
   const segs = Array.from(group.segmentos).join("; ");
   return (
@@ -292,13 +439,20 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewV
         <button className="text-left" onClick={() => setOpen((o) => !o)}>
           <div className="font-medium">
             {group.cliente.nome}
-            <span className="text-xs text-gray-500 ml-2">{group.cliente.telefone ?? ""}</span>
+            <span className="text-xs text-gray-500 ml-2">
+              {group.cliente.telefone ?? ""}
+            </span>
           </div>
           <div className="text-sm text-gray-600">
-            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
+            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd:{" "}
+            <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
           </div>
         </button>
-        <button title="Ver descrições" className="text-gray-500 hover:text-gray-800" onClick={() => setOpen(true)}>
+        <button
+          title="Ver descrições"
+          className="text-gray-500 hover:text-gray-800"
+          onClick={() => setOpen(true)}
+        >
           👁️
         </button>
       </div>
@@ -316,12 +470,18 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onSaveVenda, onViewV
                 <th className="text-left p-2">Código</th>
                 <th className="text-left p-2">Valor</th>
                 <th className="text-left p-2">Editar</th>
-                <th className="text-left p-2">Contemplação</th>
+                <th className="text-left p-2">Contemplação / Inadimplência</th>
               </tr>
             </thead>
             <tbody>
               {group.itens.map((v) => (
-                <LinhaCota key={v.id} venda={v} onSave={(patch) => onSaveVenda(v, patch)} onViewVenda={onViewVenda} isAdmin={isAdmin} />
+                <LinhaCota
+                  key={v.id}
+                  venda={v}
+                  onSave={(patch) => onSaveVenda(v, patch)}
+                  onViewVenda={onViewVenda}
+                  isAdmin={isAdmin}
+                />
               ))}
             </tbody>
           </table>
@@ -362,14 +522,33 @@ const Carteira: React.FC = () => {
     data_nascimento: "",
   });
 
-  const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
-  const [viewVendaModal, setViewVendaModal] = useState<{ open: boolean; venda?: Venda; lead?: Lead }>({ open: false });
+  const [editVendaModal, setEditVendaModal] = useState<{
+    open: boolean;
+    venda?: Venda;
+  }>({ open: false });
+  const [viewVendaModal, setViewVendaModal] = useState<{
+    open: boolean;
+    venda?: Venda;
+    lead?: Lead;
+  }>({ open: false });
 
-  const [descModal, setDescModal] = useState<{ open: boolean; title: string; text: string }>({ open: false, title: "", text: "" });
+  const [descModal, setDescModal] = useState<{
+    open: boolean;
+    title: string;
+    text: string;
+  }>({ open: false, title: "", text: "" });
 
   const [simAdmins, setSimAdmins] = useState<Array<{ id: string; name: string }>>([]);
   const [simTables, setSimTables] = useState<
-    Array<{ id: string; admin_id: string; segmento: string; nome_tabela: string; faixa_min?: number | null; faixa_max?: number | null; prazo_limite?: number | null }>
+    Array<{
+      id: string;
+      admin_id: string;
+      segmento: string;
+      nome_tabela: string;
+      faixa_min?: number | null;
+      faixa_max?: number | null;
+      prazo_limite?: number | null;
+    }>
   >([]);
 
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -385,99 +564,166 @@ const Carteira: React.FC = () => {
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
   const [realizadoMensal, setRealizadoMensal] = useState<number[]>(Array(12).fill(0));
   const metaAnual = useMemo(() => metaMensal.reduce((a, b) => a + b, 0), [metaMensal]);
-  const realizadoAnual = useMemo(() => realizadoMensal.reduce((a, b) => a + b, 0), [realizadoMensal]);
-  const pct = metaAnual > 0 ? Math.max(0, Math.min(100, Math.round((realizadoAnual / metaAnual) * 100))) : 0;
+  const realizadoAnual = useMemo(
+    () => realizadoMensal.reduce((a, b) => a + b, 0),
+    [realizadoMensal]
+  );
+  const pct =
+    metaAnual > 0
+      ? Math.max(0, Math.min(100, Math.round((realizadoAnual / metaAnual) * 100)))
+      : 0;
+
+  const [leadSearch, setLeadSearch] = useState<string>(""); // NOVO: busca de lead no modal
 
   useEffect(() => {
     setForm((f) => ({ ...f, tabela: "" }));
   }, [form.produto]);
 
   useEffect(() => {
-  (async () => {
-    try {
-      setLoading(true);
-      setErr("");
-
-      // Auth
-      const { data: authData } = await supabase.auth.getUser();
-      const uid = authData.user?.id ?? "";
-      const uemail = authData.user?.email ?? "";
-      setUserId(uid);
-      setUserEmail(uemail);
-      setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
-
-      // Flag admin (tabela users)
-      let adminFlag = false;
+    (async () => {
       try {
-        const { data } = await supabase.from("users").select("email, role").eq("email", uemail).maybeSingle();
-        adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
-      } catch {}
-      setIsAdmin(adminFlag);
+        setLoading(true);
+        setErr("");
 
-      // Carrega listas em paralelo
-      const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] =
-  await Promise.all([
-    supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
-    (async () => {
-      const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-      if (!adminFlag) q.eq("vendedor_id", uid); // vendedor_id = auth_user_id
-      const { data } = await q;
-      return data; // retorna array
-    })(),
-    (async () => {
-      const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
-      if (!adminFlag) q.eq("vendedor_id", uid);
-      const { data } = await q;
-      return data; // retorna array
-    })(),
-    supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-    supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
-    supabase.from("users").select("id,nome,email,role,auth_user_id").order("nome", { ascending: true }),
-  ]);
+        // Auth
+        const { data: authData } = await supabase.auth.getUser();
+        const uid = authData.user?.id ?? "";
+        const uemail = authData.user?.email ?? "";
+        setUserId(uid);
+        setUserEmail(uemail);
+        setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
 
-      // Leads + mapa
-const leadsArr = lds ?? [];
-setLeads(leadsArr);
-setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
+        // Flag admin (tabela users)
+        let adminFlag = false;
+        try {
+          const { data } = await supabase
+            .from("users")
+            .select("email, role")
+            .eq("email", uemail)
+            .maybeSingle();
+          adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
+        } catch {}
+        setIsAdmin(adminFlag);
 
-// Vendas
-setPendentes(pend ?? []);
-setEncarteiradas(enc ?? []);
+        // Carrega listas em paralelo
+        const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] =
+          await Promise.all([
+            supabase
+              .from("leads")
+              .select("id,nome,telefone,email")
+              .order("nome", { ascending: true }),
+            (async () => {
+              const q = supabase
+                .from("vendas")
+                .select("*")
+                .eq("status", "nova")
+                .order("created_at", { ascending: false });
+              if (!adminFlag) q.eq("vendedor_id", uid); // vendedor_id = auth_user_id
+              const { data } = await q;
+              return data; // retorna array
+            })(),
+            (async () => {
+              const q = supabase
+                .from("vendas")
+                .select("*")
+                .eq("status", "encarteirada")
+                .order("created_at", { ascending: false });
+              if (!adminFlag) q.eq("vendedor_id", uid);
+              const { data } = await q;
+              return data; // retorna array
+            })(),
+            supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+            supabase
+              .from("sim_tables")
+              .select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
+            supabase
+              .from("users")
+              .select("id,nome,email,role,auth_user_id")
+              .order("nome", { ascending: true }),
+          ]);
 
-      // Simuladores + Users
-      setSimAdmins(admins ?? []);
-      setSimTables(tables ?? []);
-      setUsers((us ?? []) as AppUser[]);
+        // Leads + mapa
+        const leadsArr = lds ?? [];
+        setLeads(leadsArr);
+        setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
 
-      // Ajuste chave: selectedSeller deve usar users.id (não auth_user_id)
-      const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
-      setSelectedSeller(adminFlag ? "" : (myUserRow?.id ?? ""));
-    } catch (e: any) {
-      setErr(e.message || "Falha ao carregar Carteira.");
-    } finally {
-      setLoading(false);
-    }
-  })();
-}, []);
+        // Vendas
+        setPendentes(pend ?? []);
+        setEncarteiradas(enc ?? []);
 
-  const pendentesComNome = useMemo(() => pendentes.map((v) => ({ venda: v, lead: leadMap[v.lead_id] })), [pendentes, leadMap]);
+        // Simuladores + Users
+        setSimAdmins(admins ?? []);
+        setSimTables(tables ?? []);
+        setUsers((us ?? []) as AppUser[]);
+
+        // Ajuste chave: selectedSeller deve usar users.id (não auth_user_id)
+        const myUserRow = (us ?? []).find(
+          (u: any) => u.auth_user_id === uid || u.email === uemail
+        );
+        setSelectedSeller(adminFlag ? "" : myUserRow?.id ?? "");
+      } catch (e: any) {
+        setErr(e.message || "Falha ao carregar Carteira.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const pendentesComNome = useMemo(
+    () =>
+      pendentes.map((v) => ({
+        venda: v,
+        lead: leadMap[v.lead_id],
+      })),
+    [pendentes, leadMap]
+  );
 
   const encarteiradasFiltradas = useMemo(() => {
     if (!q.trim()) return encarteiradas;
     const s = q.toLowerCase();
-    return encarteiradas.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
+    return encarteiradas.filter((v) =>
+      leadMap[v.lead_id]?.nome?.toLowerCase().includes(s)
+    );
   }, [q, encarteiradas, leadMap]);
 
-  const totalAtivas = useMemo(() => encarteiradas.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradas]);
-  const totalCanceladas = useMemo(() => encarteiradas.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0), [encarteiradas]);
-  const totalContempladas = useMemo(() => encarteiradas.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0), [encarteiradas]);
+  const totalAtivas = useMemo(
+    () =>
+      encarteiradas.reduce(
+        (a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a),
+        0
+      ),
+    [encarteiradas]
+  );
+  const totalCanceladas = useMemo(
+    () =>
+      encarteiradas.reduce(
+        (a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a),
+        0
+      ),
+    [encarteiradas]
+  );
+  const totalContempladas = useMemo(
+    () =>
+      encarteiradas.reduce(
+        (a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a),
+        0
+      ),
+    [encarteiradas]
+  );
 
   const porCliente: ClienteGroup[] = useMemo(() => {
     const map: Record<string, ClienteGroup> = {};
     for (const v of encarteiradasFiltradas) {
       const lead = leadMap[v.lead_id];
       if (!lead) continue;
-      if (!map[lead.id]) map[lead.id] = { cliente: lead, itens: [], totalAtivas: 0, qtdAtivas: 0, segmentos: new Set() };
+      if (!map[lead.id])
+        map[lead.id] = {
+          cliente: lead,
+          itens: [],
+          totalAtivas: 0,
+          qtdAtivas: 0,
+          segmentos: new Set(),
+        };
       map[lead.id].itens.push(v);
       if (isAtiva(v.codigo)) {
         map[lead.id].totalAtivas += v.valor_venda || 0;
@@ -485,31 +731,49 @@ setEncarteiradas(enc ?? []);
       }
       map[lead.id].segmentos.add(v.produto);
     }
-    return Object.values(map).sort((a, b) => a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" }));
+    return Object.values(map).sort((a, b) =>
+      a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", {
+        sensitivity: "base",
+      })
+    );
   }, [encarteiradasFiltradas, leadMap]);
 
-  const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
+  const onFormChange = (k: keyof Venda, val: any) =>
+    setForm((f) => ({ ...f, [k]: val }));
 
   async function insertVenda(payload: any) {
     let { error } = await supabase.from("vendas").insert(payload as any);
     if (error && /data_nascimento/.test(error.message || "")) {
-      const { error: e2 } = await supabase.from("vendas").insert({ ...payload, data_nascimento: undefined } as any);
+      const { error: e2 } = await supabase
+        .from("vendas")
+        .insert({ ...payload, data_nascimento: undefined } as any);
       if (e2) throw e2;
     } else if (error) throw error;
   }
   async function updateVenda(id: string, patch: any) {
     let { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
     if (error && /data_nascimento/.test(error.message || "")) {
-      const { error: e2 } = await supabase.from("vendas").update({ ...patch, data_nascimento: undefined } as any).eq("id", id);
+      const { error: e2 } = await supabase
+        .from("vendas")
+        .update({ ...patch, data_nascimento: undefined } as any)
+        .eq("id", id);
       if (e2) throw e2;
     } else if (error) throw error;
   }
 
   const prefillFromLead = async (leadId: string) => {
     if (!leadId) return;
-    const { data: cliente } = await supabase.from("clientes").select("cpf,data_nascimento").eq("lead_id", leadId).maybeSingle();
+    const { data: cliente } = await supabase
+      .from("clientes")
+      .select("cpf,data_nascimento")
+      .eq("lead_id", leadId)
+      .maybeSingle();
     if (cliente?.cpf || cliente?.data_nascimento) {
-      setForm((f) => ({ ...f, cpf: cliente.cpf ?? f.cpf, data_nascimento: cliente.data_nascimento ?? f.data_nascimento }));
+      setForm((f) => ({
+        ...f,
+        cpf: cliente.cpf ?? f.cpf,
+        data_nascimento: cliente.data_nascimento ?? f.data_nascimento,
+      }));
       return;
     }
     const { data: lastVenda } = await supabase
@@ -537,8 +801,11 @@ setEncarteiradas(enc ?? []);
       if (!form.lead_id) throw new Error("Selecione o Lead.");
       if (!form.cpf?.trim()) throw new Error("CPF é obrigatório.");
       if (!validateCPF(form.cpf)) throw new Error("CPF inválido.");
-      if (!form.numero_proposta?.trim()) throw new Error("Número da proposta é obrigatório.");
-      const valor = Number((form.valor_venda as any)?.toString().replace(/\./g, "").replace(",", "."));
+      if (!form.numero_proposta?.trim())
+        throw new Error("Número da proposta é obrigatório.");
+      const valor = Number(
+        (form.valor_venda as any)?.toString().replace(/\./g, "").replace(",", ".")
+      );
       if (Number.isNaN(valor)) throw new Error("Valor inválido.");
 
       const segmento = normalizeProdutoToSegmento(form.produto as Produto);
@@ -561,10 +828,15 @@ setEncarteiradas(enc ?? []);
         grupo: form.tipo_venda === "Bolsão" ? form.grupo || "" : null,
         codigo: "00",
       };
-      if (form.tipo_venda === "Bolsão" && !form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão).");
+      if (form.tipo_venda === "Bolsão" && !form.grupo?.trim())
+        throw new Error("Informe o número do Grupo (Bolsão).");
 
       await insertVenda(payload);
-      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      const pendQuery = supabase
+        .from("vendas")
+        .select("*")
+        .eq("status", "nova")
+        .order("created_at", { ascending: false });
       if (!isAdmin) pendQuery.eq("vendedor_id", userId);
       const { data: pend } = await pendQuery;
       setPendentes(pend ?? []);
@@ -580,35 +852,61 @@ setEncarteiradas(enc ?? []);
         tabela: "",
         data_nascimento: "",
       });
+      setLeadSearch("");
       setShowModal(false);
     } catch (e: any) {
       alert(e.message ?? "Erro ao registrar venda.");
     }
   };
 
-  const encarteirar = async (vendaId: string, grupo: string, cota: string, codigo: string) => {
+  const encarteirar = async (
+    vendaId: string,
+    grupo: string,
+    cota: string,
+    codigo: string
+  ) => {
     try {
       if (!isAdmin) throw new Error("Somente administradores podem encarteirar.");
-      if (!grupo?.trim() || !cota?.trim() || !codigo?.trim()) throw new Error("Preencha Grupo, Cota e Código.");
+      if (!grupo?.trim() || !cota?.trim() || !codigo?.trim())
+        throw new Error("Preencha Grupo, Cota e Código.");
 
-      const { data: vOne, error: selErr } = await supabase.from("vendas").select("produto").eq("id", vendaId).maybeSingle();
+      const { data: vOne, error: selErr } = await supabase
+        .from("vendas")
+        .select("produto")
+        .eq("id", vendaId)
+        .maybeSingle();
       if (selErr) throw selErr;
       const segmento = normalizeProdutoToSegmento(vOne?.produto as Produto);
 
       const { error } = await supabase
         .from("vendas")
-        .update({ grupo, cota, codigo, status: "encarteirada", encarteirada_em: new Date().toISOString(), segmento: segmento ?? undefined })
+        .update({
+          grupo,
+          cota,
+          codigo,
+          status: "encarteirada",
+          encarteirada_em: new Date().toISOString(),
+          segmento: segmento ?? undefined,
+        })
         .eq("id", vendaId);
       if (error) throw error;
 
       const [{ data: pend }, { data: enc }] = await Promise.all([
         (async () => {
-          const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+          const q = supabase
+            .from("vendas")
+            .select("*")
+            .eq("status", "nova")
+            .order("created_at", { ascending: false });
           if (!isAdmin) q.eq("vendedor_id", userId);
           return await q;
         })(),
         (async () => {
-          const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+          const q = supabase
+            .from("vendas")
+            .select("*")
+            .eq("status", "encarteirada")
+            .order("created_at", { ascending: false });
           if (!isAdmin) q.eq("vendedor_id", userId);
           return await q;
         })(),
@@ -625,7 +923,11 @@ setEncarteiradas(enc ?? []);
     try {
       const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
       if (error) throw error;
-      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      const pendQuery = supabase
+        .from("vendas")
+        .select("*")
+        .eq("status", "nova")
+        .order("created_at", { ascending: false });
       if (!isAdmin) pendQuery.eq("vendedor_id", userId);
       const { data: pend } = await pendQuery;
       setPendentes(pend ?? []);
@@ -638,7 +940,11 @@ setEncarteiradas(enc ?? []);
     try {
       const seg = normalizeProdutoToSegmento(v.produto);
       await updateVenda(v.id, { ...patch, segmento: seg ?? undefined });
-      const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+      const encQuery = supabase
+        .from("vendas")
+        .select("*")
+        .eq("status", "encarteirada")
+        .order("created_at", { ascending: false });
       if (!isAdmin) encQuery.eq("vendedor_id", userId);
       const { data: enc } = await encQuery;
       setEncarteiradas(enc ?? []);
@@ -651,7 +957,8 @@ setEncarteiradas(enc ?? []);
   const salvarEdicaoPendente = async (venda: Venda, novo: Partial<Venda>) => {
     try {
       if (novo.cpf && !validateCPF(novo.cpf)) throw new Error("CPF inválido.");
-      if (novo.numero_proposta && !novo.numero_proposta.trim()) throw new Error("Informe o número da proposta.");
+      if (novo.numero_proposta && !novo.numero_proposta.trim())
+        throw new Error("Informe o número da proposta.");
       const patch: any = { ...novo };
       if (patch.cpf) patch.cpf = onlyDigits(patch.cpf);
       if (patch.valor_venda != null) {
@@ -661,7 +968,11 @@ setEncarteiradas(enc ?? []);
       }
       if (patch.produto) patch.segmento = normalizeProdutoToSegmento(patch.produto as Produto);
       await updateVenda(venda.id, patch);
-      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      const pendQuery = supabase
+        .from("vendas")
+        .select("*")
+        .eq("status", "nova")
+        .order("created_at", { ascending: false });
       if (!isAdmin) pendQuery.eq("vendedor_id", userId);
       const { data: pend } = await pendQuery;
       setPendentes(pend ?? []);
@@ -675,10 +986,20 @@ setEncarteiradas(enc ?? []);
     const prod = (form.produto as Produto) || "Automóvel";
     const admName = (form.administradora as string) || "";
     const admId = simAdmins.find((a) => a.name === admName)?.id;
-    return simTables.filter((t) => (!admId || t.admin_id === admId) && (t.segmento === prod || t.segmento === normalizeProdutoToSegmento(prod)));
+    return simTables.filter(
+      (t) =>
+        (!admId || t.admin_id === admId) &&
+        (t.segmento === prod || t.segmento === normalizeProdutoToSegmento(prod))
+    );
   }, [form.produto, form.administradora, simTables, simAdmins]);
 
   const adminOptions = useMemo(() => simAdmins.map((a) => a.name), [simAdmins]);
+
+  const filteredLeads = useMemo(() => {
+    if (!leadSearch.trim()) return leads;
+    const s = leadSearch.toLowerCase();
+    return leads.filter((l) => l.nome.toLowerCase().includes(s));
+  }, [leadSearch, leads]);
 
   const onSelectLead = async (leadId: string) => {
     onFormChange("lead_id", leadId);
@@ -686,9 +1007,120 @@ setEncarteiradas(enc ?? []);
   };
 
   const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
-  // ===== Metas (metas_vendedores) =====
-  if (sellerId) {
-    // sellerId = users.id (id da tabela users)
+    // ===== Metas (metas_vendedores) =====
+    if (sellerId) {
+      // sellerId = users.id (id da tabela users)
+      const { data: metasRow } = await supabase
+        .from("metas_vendedores")
+        .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+        .eq("vendedor_id", sellerId)
+        .eq("ano", year)
+        .maybeSingle();
+
+      const m = metasRow
+        ? [
+            metasRow.m01,
+            metasRow.m02,
+            metasRow.m03,
+            metasRow.m04,
+            metasRow.m05,
+            metasRow.m06,
+            metasRow.m07,
+            metasRow.m08,
+            metasRow.m09,
+            metasRow.m10,
+            metasRow.m11,
+            metasRow.m12,
+          ].map((x: any) => Number(x || 0))
+        : Array(12).fill(0);
+      setMetaMensal(m);
+    } else {
+      // Soma metas de todos os vendedores no ano
+      const { data: metasAll } = await supabase
+        .from("metas_vendedores")
+        .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+        .eq("ano", year);
+
+      const sum = Array(12).fill(0);
+      (metasAll ?? []).forEach((row: any) => {
+        const arr = [
+          row.m01,
+          row.m02,
+          row.m03,
+          row.m04,
+          row.m05,
+          row.m06,
+          row.m07,
+          row.m08,
+          row.m09,
+          row.m10,
+          row.m11,
+          row.m12,
+        ].map((x: any) => Number(x || 0));
+        for (let i = 0; i < 12; i++) sum[i] += arr[i];
+      });
+      setMetaMensal(sum);
+    }
+
+    // ===== Realizado (vendas encarteiradas - canceladas) =====
+    const ativasBase = supabase
+      .from("vendas")
+      .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
+      .eq("status", "encarteirada")
+      .eq("codigo", "00") // ativas
+      .gte("encarteirada_em", `${year}-01-01`)
+      .lte("encarteirada_em", `${year}-12-31T23:59:59`);
+
+    const cancBase = supabase
+      .from("vendas")
+      .select("valor_venda, cancelada_em, vendedor_id, codigo, status")
+      .eq("status", "encarteirada")
+      .neq("codigo", "00") // canceladas
+      .gte("cancelada_em", `${year}-01-01`)
+      .lte("cancelada_em", `${year}-12-31T23:59:59`);
+
+    // sellerId é users.id, mas vendas.vendedor_id guarda auth_user_id
+    const authIdToFilter = sellerId
+      ? users.find((u) => u.id === sellerId)?.auth_user_id || ""
+      : "";
+
+    const qAtivas = sellerId ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase;
+    const qCanc = sellerId ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase;
+
+    const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([
+      qAtivas,
+      qCanc,
+    ]);
+
+    const vendido = Array(12).fill(0);
+    (vendasAtivas ?? []).forEach((v: any) => {
+      const d = v.encarteirada_em ? new Date(v.encarteirada_em) : null;
+      if (!d || isNaN(d.getTime())) return;
+      vendido[d.getMonth()] += Number(v.valor_venda || 0);
+    });
+
+    const cancelado = Array(12).fill(0);
+    (vendasCanc ?? []).forEach((v: any) => {
+      const d = v.cancelada_em ? new Date(v.cancelada_em) : null;
+      if (!d || isNaN(d.getTime())) return;
+      cancelado[d.getMonth()] += Number(v.valor_venda || 0);
+    });
+
+    const realizado = vendido.map((v: number, i: number) => v - cancelado[i]);
+    setRealizadoMensal(realizado);
+  };
+
+  const loadMetaForForm = async (sellerId: string, year: number): Promise<void> => {
+    if (!sellerId) {
+      setMetaForm((prev) => ({
+        ...prev,
+        vendedor_id: sellerId,
+        ano: year,
+        m: Array(12).fill(0),
+      }));
+      return;
+    }
+
     const { data: metasRow } = await supabase
       .from("metas_vendedores")
       .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
@@ -696,80 +1128,35 @@ setEncarteiradas(enc ?? []);
       .eq("ano", year)
       .maybeSingle();
 
-    const m = metasRow
+    const arr = metasRow
       ? [
-          metasRow.m01, metasRow.m02, metasRow.m03, metasRow.m04, metasRow.m05, metasRow.m06,
-          metasRow.m07, metasRow.m08, metasRow.m09, metasRow.m10, metasRow.m11, metasRow.m12,
+          metasRow.m01,
+          metasRow.m02,
+          metasRow.m03,
+          metasRow.m04,
+          metasRow.m05,
+          metasRow.m06,
+          metasRow.m07,
+          metasRow.m08,
+          metasRow.m09,
+          metasRow.m10,
+          metasRow.m11,
+          metasRow.m12,
         ].map((x: any) => Number(x || 0))
       : Array(12).fill(0);
-    setMetaMensal(m);
-  } else {
-    // Soma metas de todos os vendedores no ano
-    const { data: metasAll } = await supabase
-      .from("metas_vendedores")
-      .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-      .eq("ano", year);
 
-    const sum = Array(12).fill(0);
-    (metasAll ?? []).forEach((row: any) => {
-      const arr = [
-        row.m01, row.m02, row.m03, row.m04, row.m05, row.m06,
-        row.m07, row.m08, row.m09, row.m10, row.m11, row.m12,
-      ].map((x: any) => Number(x || 0));
-      for (let i = 0; i < 12; i++) sum[i] += arr[i];
-    });
-    setMetaMensal(sum);
-  }
-
-  // ===== Realizado (vendas encarteiradas - canceladas) =====
-  const ativasBase = supabase
-    .from("vendas")
-    .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
-    .eq("status", "encarteirada")
-    .eq("codigo", "00") // ativas
-    .gte("encarteirada_em", `${year}-01-01`)
-    .lte("encarteirada_em", `${year}-12-31T23:59:59`);
-
-  const cancBase = supabase
-    .from("vendas")
-    .select("valor_venda, cancelada_em, vendedor_id, codigo, status")
-    .eq("status", "encarteirada")
-    .neq("codigo", "00") // canceladas
-    .gte("cancelada_em", `${year}-01-01`)
-    .lte("cancelada_em", `${year}-12-31T23:59:59`);
-
-  // sellerId é users.id, mas vendas.vendedor_id guarda auth_user_id
-  const authIdToFilter = sellerId
-    ? (users.find((u) => u.id === sellerId)?.auth_user_id || "")
-    : "";
-
-  const qAtivas = sellerId ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase;
-  const qCanc   = sellerId ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase;
-
-  const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([qAtivas, qCanc]);
-
-  const vendido = Array(12).fill(0);
-  (vendasAtivas ?? []).forEach((v: any) => {
-    const d = v.encarteirada_em ? new Date(v.encarteirada_em) : null;
-    if (!d || isNaN(d.getTime())) return;
-    vendido[d.getMonth()] += Number(v.valor_venda || 0);
-  });
-
-  const cancelado = Array(12).fill(0);
-  (vendasCanc ?? []).forEach((v: any) => {
-    const d = v.cancelada_em ? new Date(v.cancelada_em) : null;
-    if (!d || isNaN(d.getTime())) return;
-    cancelado[d.getMonth()] += Number(v.valor_venda || 0);
-  });
-
-  const realizado = vendido.map((v: number, i: number) => v - cancelado[i]);
-  setRealizadoMensal(realizado);
-};
+    setMetaForm((prev) => ({
+      ...prev,
+      vendedor_id: sellerId,
+      ano: year,
+      m: arr,
+    }));
+  };
 
   useEffect(() => {
-  loadMetrics(selectedSeller, selectedYear);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [selectedSeller, selectedYear, users]);
+    loadMetrics(selectedSeller, selectedYear);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSeller, selectedYear, users]);
 
   const donutData = useMemo(() => {
     const reached = Math.max(0, Math.min(realizadoAnual, metaAnual));
@@ -783,7 +1170,20 @@ setEncarteiradas(enc ?? []);
   const lineData = useMemo(
     () =>
       Array.from({ length: 12 }).map((_, i) => ({
-        name: ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"][i],
+        name: [
+          "Jan",
+          "Fev",
+          "Mar",
+          "Abr",
+          "Mai",
+          "Jun",
+          "Jul",
+          "Ago",
+          "Set",
+          "Out",
+          "Nov",
+          "Dez",
+        ][i],
         Meta: metaMensal[i] || 0,
         Realizado: realizadoMensal[i] || 0,
       })),
@@ -791,26 +1191,30 @@ setEncarteiradas(enc ?? []);
   );
 
   const handleOpenMeta = () => {
-  // garante que a lista de usuários já foi carregada
-  if (!users || users.length === 0) {
-    alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
-    return;
-  }
+    // garante que a lista de usuários já foi carregada
+    if (!users || users.length === 0) {
+      alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
+      return;
+    }
 
-  // busca o registro do usuário logado dentro da tabela users
-  const myUserRow = users.find(
-    (u) => u.auth_user_id === userId || u.email === userEmail
-  );
-  const baseSeller = isAdmin ? "" : myUserRow?.id ?? "";
+    // busca o registro do usuário logado dentro da tabela users
+    const myUserRow = users.find(
+      (u) => u.auth_user_id === userId || u.email === userEmail
+    );
+    const baseSeller = isAdmin ? "" : myUserRow?.id ?? "";
 
-  setMetaForm({
-    vendedor_id: baseSeller,
-    ano: selectedYear,
-    m: Array.from(metaMensal),
-  });
+    setMetaForm({
+      vendedor_id: baseSeller,
+      ano: selectedYear,
+      m: Array(12).fill(0),
+    });
 
-  setMetaOverlay({ open: true });
-};
+    if (baseSeller) {
+      loadMetaForForm(baseSeller, selectedYear);
+    }
+
+    setMetaOverlay({ open: true });
+  };
 
   const saveMeta = async () => {
     try {
@@ -832,16 +1236,26 @@ setEncarteiradas(enc ?? []);
         m11: metaForm.m[10],
         m12: metaForm.m[11],
       };
-      const { data: exists } = await supabase.from("metas_vendedores").select("id").eq("vendedor_id", metaForm.vendedor_id).eq("ano", metaForm.ano).maybeSingle();
+      const { data: exists } = await supabase
+        .from("metas_vendedores")
+        .select("id")
+        .eq("vendedor_id", metaForm.vendedor_id)
+        .eq("ano", metaForm.ano)
+        .maybeSingle();
       if (exists?.id) {
-        const { error } = await supabase.from("metas_vendedores").update(payload).eq("id", exists.id);
+        const { error } = await supabase
+          .from("metas_vendedores")
+          .update(payload)
+          .eq("id", exists.id);
         if (error) throw error;
       } else {
         const { error } = await supabase.from("metas_vendedores").insert(payload);
         if (error) throw error;
       }
       setMetaOverlay({ open: false });
-      if ((isAdmin ? selectedSeller : userId) === metaForm.vendedor_id && selectedYear === metaForm.ano) {
+
+      // Se a meta salva for do contexto atual, reflete nos gráficos
+      if (selectedSeller === metaForm.vendedor_id && selectedYear === metaForm.ano) {
         setMetaMensal([...metaForm.m]);
       }
     } catch (e: any) {
@@ -849,13 +1263,17 @@ setEncarteiradas(enc ?? []);
     }
   };
 
-  const openViewVenda = (v: Venda, lead?: Lead) => setViewVendaModal({ open: true, venda: v, lead });
+  const openViewVenda = (v: Venda, lead?: Lead) =>
+    setViewVendaModal({ open: true, venda: v, lead });
 
-  if (loading) return <div className="p-6 text-sm text-gray-600">Carregando carteira…</div>;
+  if (loading)
+    return <div className="p-6 text-sm text-gray-600">Carregando carteira…</div>;
   if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
 
   const tabelaOptionsForForm = tabelaOptions;
-  const adminNames = adminOptions.length ? adminOptions : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
+  const adminNames = adminOptions.length
+    ? adminOptions
+    : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
 
   return (
     <div className="p-6 space-y-6">
@@ -865,61 +1283,75 @@ setEncarteiradas(enc ?? []);
           <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowModal(true)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">
+          <button
+            onClick={() => setShowModal(true)}
+            className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+          >
             + Nova Venda
           </button>
-          <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
+          <button
+            onClick={handleOpenMeta}
+            className="px-4 py-2 rounded-xl border hover:bg-gray-50"
+          >
             Cadastrar Meta
           </button>
         </div>
       </div>
 
       <section className="space-y-4">
-  <div className="flex items-center justify-between">
-    <h2 className="text-lg font-medium">Metas</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Metas</h2>
 
-    <div className="flex items-center gap-2">
-      <select
-        className="border rounded-xl px-3 py-2"
-        value={selectedYear}
-        onChange={(e) => setSelectedYear(Number(e.target.value))}
-      >
-        {Array.from({ length: 6 }).map((_, i) => {
-          const y = new Date().getFullYear() - 1 + i;
-          return (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          );
-        })}
-      </select>
+          <div className="flex items-center gap-2">
+            <select
+              className="border rounded-xl px-3 py-2"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+            >
+              {Array.from({ length: 6 }).map((_, i) => {
+                const y = new Date().getFullYear() - 1 + i;
+                return (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                );
+              })}
+            </select>
 
-      {isAdmin && (
-  <select
-    className="border rounded-xl px-3 py-2"
-    value={selectedSeller}
-    onChange={(e) => setSelectedSeller(e.target.value)}
-  >
-    <option value="">Todos (selecione um vendedor)</option>
-    {users.map((u) => (
-      <option key={u.id} value={u.id}>
-        {u.nome || u.email || u.id}
-      </option>
-    ))}
-  </select>
-)}
-
-    </div>
-  </div>
+            {isAdmin && (
+              <select
+                className="border rounded-xl px-3 py-2"
+                value={selectedSeller}
+                onChange={(e) => setSelectedSeller(e.target.value)}
+              >
+                <option value="">Todos (selecione um vendedor)</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nome || u.email || u.id}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="border rounded-2xl p-4 flex items-center justify-center relative">
-            <div className="absolute top-3 left-4 text-sm text-gray-500">Meta anual: {currency(metaAnual)}</div>
-            <div className="absolute top-3 right-4 text-sm text-gray-500">Atingido: {currency(realizadoAnual)}</div>
+            <div className="absolute top-3 left-4 text-sm text-gray-500">
+              Meta anual: {currency(metaAnual)}
+            </div>
+            <div className="absolute top-3 right-4 text-sm text-gray-500">
+              Atingido: {currency(realizadoAnual)}
+            </div>
             <div className="w-full h-64">
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={donutData} innerRadius={80} outerRadius={110} dataKey="value">
+                  <Pie
+                    data={donutData}
+                    innerRadius={80}
+                    outerRadius={110}
+                    dataKey="value"
+                  >
                     <Cell key="atingido" fill="#1E293F" />
                     <Cell key="restante" fill="#A11C27" />
                   </Pie>
@@ -933,13 +1365,28 @@ setEncarteiradas(enc ?? []);
           <div className="lg:col-span-2 border rounded-2xl p-4">
             <div className="w-full h-64">
               <ResponsiveContainer>
-                <LineChart data={lineData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
+                <LineChart
+                  data={lineData}
+                  margin={{ left: 10, right: 20, top: 10, bottom: 10 }}
+                >
                   <XAxis dataKey="name" />
                   <YAxis />
                   <Tooltip formatter={(v: any) => currency(Number(v || 0))} />
                   <Legend />
-                  <Line type="monotone" dataKey="Realizado" stroke="#1E293F" strokeWidth={3} dot={false} />
-                  <Line type="monotone" dataKey="Meta" stroke="#A11C27" strokeWidth={3} dot={false} />
+                  <Line
+                    type="monotone"
+                    dataKey="Realizado"
+                    stroke="#1E293F"
+                    strokeWidth={3}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="Meta"
+                    stroke="#A11C27"
+                    strokeWidth={3}
+                    dot={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -948,13 +1395,20 @@ setEncarteiradas(enc ?? []);
       </section>
 
       <div className="flex items-center gap-3">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pesquisar cliente pelo nome…" className="w-full border rounded-xl px-3 py-2 outline-none focus:ring" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Pesquisar cliente pelo nome…"
+          className="w-full border rounded-xl px-3 py-2 outline-none focus:ring"
+        />
       </div>
 
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Encarteirar</h2>
-          <span className="text-sm text-gray-500">{pendentes.length} nova(s) venda(s)</span>
+          <span className="text-sm text-gray-500">
+            {pendentes.length} nova(s) venda(s)
+          </span>
         </div>
         <div className="overflow-auto">
           <table className="min-w-[860px] w-full border border-gray-200 rounded-xl">
@@ -987,7 +1441,9 @@ setEncarteiradas(enc ?? []);
                   onSubmit={encarteirar}
                   onDelete={excluirVenda}
                   onViewVenda={(v, l) => openViewVenda(v, l)}
-                  onOpenEditarVenda={(v) => setEditVendaModal({ open: true, venda: v })}
+                  onOpenEditarVenda={(v) =>
+                    setEditVendaModal({ open: true, venda: v })
+                  }
                 />
               ))}
             </tbody>
@@ -1000,12 +1456,17 @@ setEncarteiradas(enc ?? []);
           Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong>
         </div>
         <div className="px-4 py-3 rounded-2xl bg-gray-100">
-          Canceladas: <strong className="ml-1">{currency(totalCanceladas)}</strong>
+          Canceladas:{" "}
+          <strong className="ml-1">{currency(totalCanceladas)}</strong>
         </div>
         <div className="px-4 py-3 rounded-2xl bg-amber-100 text-amber-900">
-          Contempladas: <strong className="ml-1">{currency(totalContempladas)}</strong>
+          Contempladas:{" "}
+          <strong className="ml-1">{currency(totalContempladas)}</strong>
         </div>
-        <button className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50" onClick={() => setShowCarteira((s) => !s)}>
+        <button
+          className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
+          onClick={() => setShowCarteira((s) => !s)}
+        >
           {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
         </button>
       </div>
@@ -1013,9 +1474,17 @@ setEncarteiradas(enc ?? []);
       {showCarteira && (
         <section className="space-y-3">
           <h2 className="text-lg font-medium">Carteira</h2>
-          {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
+          {porCliente.length === 0 && (
+            <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>
+          )}
           {porCliente.map((group) => (
-            <ClienteBloco key={group.cliente.id} group={group} onSaveVenda={salvarEdicao} isAdmin={isAdmin} onViewVenda={(v) => openViewVenda(v, leadMap[v.lead_id])} />
+            <ClienteBloco
+              key={group.cliente.id}
+              group={group}
+              onSaveVenda={salvarEdicao}
+              isAdmin={isAdmin}
+              onViewVenda={(v) => openViewVenda(v, leadMap[v.lead_id])}
+            />
           ))}
         </section>
       )}
@@ -1025,66 +1494,121 @@ setEncarteiradas(enc ?? []);
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Nova Venda</h3>
-              <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-gray-800">
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setLeadSearch("");
+                }}
+                className="text-gray-500 hover:text-gray-800"
+              >
                 ✕
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Pessoa (Lead)</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.lead_id ?? ""} onChange={(e) => onSelectLead(e.target.value)}>
-                  <option value="">Selecione um lead…</option>
-                  {leads.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.nome} {l.telefone ? `• ${l.telefone}` : ""}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex flex-col gap-2">
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    placeholder="Buscar pelo nome do lead…"
+                    value={leadSearch}
+                    onChange={(e) => setLeadSearch(e.target.value)}
+                  />
+                  <select
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={form.lead_id ?? ""}
+                    onChange={(e) => onSelectLead(e.target.value)}
+                  >
+                    <option value="">Selecione um lead…</option>
+                    {filteredLeads.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.nome} {l.telefone ? `• ${l.telefone}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[form.lead_id as string]?.telefone ?? ""} readOnly />
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={leadMap[form.lead_id as string]?.telefone ?? ""}
+                  readOnly
+                />
               </div>
               <div>
                 <label className="text-sm text-gray-600">CPF *</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(form.cpf ?? "")} onChange={(e) => onFormChange("cpf", e.target.value)} placeholder="000.000.000-00" />
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={formatCPF(form.cpf ?? "")}
+                  onChange={(e) => onFormChange("cpf", e.target.value)}
+                  placeholder="000.000.000-00"
+                />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Data da Venda</label>
-                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_venda ?? ""} onChange={(e) => onFormChange("data_venda", e.target.value)} />
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.data_venda ?? ""}
+                  onChange={(e) => onFormChange("data_venda", e.target.value)}
+                />
               </div>
               <div>
                 <label className="text-sm text-gray-600">Data de Nascimento</label>
-                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_nascimento ?? ""} onChange={(e) => onFormChange("data_nascimento", e.target.value)} />
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.data_nascimento ?? ""}
+                  onChange={(e) => onFormChange("data_nascimento", e.target.value)}
+                />
               </div>
               <div>
                 <label className="text-sm text-gray-600">Vendedor</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly />
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={userName}
+                  readOnly
+                />
               </div>
 
-              <div>
-                <label className="text-sm text-gray-600">Produto (Segmento)</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.produto as Produto} onChange={(e) => onFormChange("produto", e.target.value as Produto)}>
-                  {PRODUTOS.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
+              {/* Ordem: Administradora -> Produto -> Tabela */}
               <div>
                 <label className="text-sm text-gray-600">Administradora</label>
                 <select
                   className="w-full border rounded-xl px-3 py-2"
                   value={(form.administradora as string) ?? ""}
-                  onChange={(e) => onFormChange("administradora", e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setForm((f) => ({ ...f, administradora: value, tabela: "" }));
+                  }}
                 >
-                  <option value="">{adminNames.length ? "Selecione a administradora…" : "Selecione a administradora…"}</option>
+                  <option value="">
+                    {adminNames.length
+                      ? "Selecione a administradora…"
+                      : "Selecione a administradora…"}
+                  </option>
                   {adminNames.map((a) => (
                     <option key={a} value={a}>
                       {a}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Produto (Segmento)</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.produto as Produto}
+                  onChange={(e) =>
+                    onFormChange("produto", e.target.value as Produto)
+                  }
+                >
+                  {PRODUTOS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
                     </option>
                   ))}
                 </select>
@@ -1098,7 +1622,11 @@ setEncarteiradas(enc ?? []);
                   onChange={(e) => onFormChange("tabela", e.target.value)}
                   disabled={tabelaOptionsForForm.length === 0}
                 >
-                  <option value="">{tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
+                  <option value="">
+                    {tabelaOptionsForForm.length
+                      ? "Selecione a tabela…"
+                      : "Sem tabelas para este segmento"}
+                  </option>
                   {tabelaOptionsForForm.map((t) => (
                     <option key={t.id} value={t.nome_tabela}>
                       {t.nome_tabela}
@@ -1109,7 +1637,13 @@ setEncarteiradas(enc ?? []);
 
               <div>
                 <label className="text-sm text-gray-600">Forma da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.forma_venda as FormaVenda} onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.forma_venda as FormaVenda}
+                  onChange={(e) =>
+                    onFormChange("forma_venda", e.target.value as FormaVenda)
+                  }
+                >
                   {FORMAS.map((f) => (
                     <option key={f} value={f}>
                       {f}
@@ -1120,16 +1654,29 @@ setEncarteiradas(enc ?? []);
 
               <div>
                 <label className="text-sm text-gray-600">Número da Proposta *</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={form.numero_proposta ?? ""} onChange={(e) => onFormChange("numero_proposta", e.target.value)} />
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.numero_proposta ?? ""}
+                  onChange={(e) => onFormChange("numero_proposta", e.target.value)}
+                />
               </div>
               <div>
                 <label className="text-sm text-gray-600">Valor da Venda</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={(form.valor_venda as any) ?? ""} onChange={(e) => onFormChange("valor_venda", e.target.value)} placeholder="R$ 0,00" />
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={(form.valor_venda as any) ?? ""}
+                  onChange={(e) => onFormChange("valor_venda", e.target.value)}
+                  placeholder="R$ 0,00"
+                />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Tipo da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.tipo_venda ?? "Normal"} onChange={(e) => onFormChange("tipo_venda", e.target.value)}>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.tipo_venda ?? "Normal"}
+                  onChange={(e) => onFormChange("tipo_venda", e.target.value)}
+                >
                   <option>Normal</option>
                   <option>Contemplada</option>
                   <option>Bolsão</option>
@@ -1139,21 +1686,41 @@ setEncarteiradas(enc ?? []);
               {form.tipo_venda === "Bolsão" && (
                 <div>
                   <label className="text-sm text-gray-600">Grupo (Bolsão)</label>
-                  <input className="w-full border rounded-xl px-3 py-2" value={form.grupo ?? ""} onChange={(e) => onFormChange("grupo", e.target.value)} placeholder="Informe o número do grupo" />
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={form.grupo ?? ""}
+                    onChange={(e) => onFormChange("grupo", e.target.value)}
+                    placeholder="Informe o número do grupo"
+                  />
                 </div>
               )}
 
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Descrição da Venda</label>
-                <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={form.descricao ?? ""} onChange={(e) => onFormChange("descricao", e.target.value)} placeholder="Estratégias de contemplação, observações…" />
+                <textarea
+                  className="w-full border rounded-xl px-3 py-2"
+                  rows={3}
+                  value={form.descricao ?? ""}
+                  onChange={(e) => onFormChange("descricao", e.target.value)}
+                  placeholder="Estratégias de contemplação, observações…"
+                />
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-3">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded-xl border">
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setLeadSearch("");
+                }}
+                className="px-4 py-2 rounded-xl border"
+              >
                 Cancelar
               </button>
-              <button onClick={registrarVenda} className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90">
+              <button
+                onClick={registrarVenda}
+                className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
+              >
                 Registrar Venda
               </button>
             </div>
@@ -1165,8 +1732,13 @@ setEncarteiradas(enc ?? []);
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-xl font-semibold">Venda • {editVendaModal.venda.numero_proposta}</h3>
-              <button onClick={() => setEditVendaModal({ open: false })} className="text-gray-500 hover:text-gray-800">
+              <h3 className="text-xl font-semibold">
+                Venda • {editVendaModal.venda.numero_proposta}
+              </h3>
+              <button
+                onClick={() => setEditVendaModal({ open: false })}
+                className="text-gray-500 hover:text-gray-800"
+              >
                 ✕
               </button>
             </div>
@@ -1192,7 +1764,13 @@ setEncarteiradas(enc ?? []);
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
                       <label className="text-sm text-gray-600">Pessoa (Lead)</label>
-                      <select className="w-full border rounded-xl px-3 py-2" value={tmp.lead_id ?? ""} onChange={(e) => setTmp((p) => ({ ...p, lead_id: e.target.value }))}>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.lead_id ?? ""}
+                        onChange={(e) =>
+                          setTmp((p) => ({ ...p, lead_id: e.target.value }))
+                        }
+                      >
                         <option value="">Selecione um lead…</option>
                         {leads.map((l) => (
                           <option key={l.id} value={l.id}>
@@ -1203,19 +1781,53 @@ setEncarteiradas(enc ?? []);
                     </div>
                     <div>
                       <label className="text-sm text-gray-600">CPF</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(tmp.cpf ?? "")} onChange={(e) => setTmp((p) => ({ ...p, cpf: e.target.value }))} />
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={formatCPF(tmp.cpf ?? "")}
+                        onChange={(e) =>
+                          setTmp((p) => ({ ...p, cpf: e.target.value }))
+                        }
+                      />
                     </div>
                     <div>
                       <label className="text-sm text-gray-600">Data da Venda</label>
-                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={tmp.data_venda ?? ""} onChange={(e) => setTmp((p) => ({ ...p, data_venda: e.target.value }))} />
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.data_venda ?? ""}
+                        onChange={(e) =>
+                          setTmp((p) => ({ ...p, data_venda: e.target.value }))
+                        }
+                      />
                     </div>
                     <div>
-                      <label className="text-sm text-gray-600">Data de Nascimento</label>
-                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={tmp.data_nascimento ?? ""} onChange={(e) => setTmp((p) => ({ ...p, data_nascimento: e.target.value }))} />
+                      <label className="text-sm text-gray-600">
+                        Data de Nascimento
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.data_nascimento ?? ""}
+                        onChange={(e) =>
+                          setTmp((p) => ({
+                            ...p,
+                            data_nascimento: e.target.value,
+                          }))
+                        }
+                      />
                     </div>
                     <div>
                       <label className="text-sm text-gray-600">Produto</label>
-                      <select className="w-full border rounded-xl px-3 py-2" value={tmp.produto as Produto} onChange={(e) => setTmp((p) => ({ ...p, produto: e.target.value as Produto }))}>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.produto as Produto}
+                        onChange={(e) =>
+                          setTmp((p) => ({
+                            ...p,
+                            produto: e.target.value as Produto,
+                          }))
+                        }
+                      >
                         {PRODUTOS.map((p) => (
                           <option key={p} value={p}>
                             {p}
@@ -1225,15 +1837,39 @@ setEncarteiradas(enc ?? []);
                     </div>
                     <div>
                       <label className="text-sm text-gray-600">Tabela</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={tmp.tabela ?? ""} onChange={(e) => setTmp((p) => ({ ...p, tabela: e.target.value }))} />
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.tabela ?? ""}
+                        onChange={(e) =>
+                          setTmp((p) => ({ ...p, tabela: e.target.value }))
+                        }
+                      />
                     </div>
                     <div>
                       <label className="text-sm text-gray-600">Administradora</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={tmp.administradora as string} onChange={(e) => setTmp((p) => ({ ...p, administradora: e.target.value }))} />
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.administradora as string}
+                        onChange={(e) =>
+                          setTmp((p) => ({
+                            ...p,
+                            administradora: e.target.value,
+                          }))
+                        }
+                      />
                     </div>
                     <div>
                       <label className="text-sm text-gray-600">Forma da Venda</label>
-                      <select className="w-full border rounded-xl px-3 py-2" value={tmp.forma_venda as FormaVenda} onChange={(e) => setTmp((p) => ({ ...p, forma_venda: e.target.value as FormaVenda }))}>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.forma_venda as FormaVenda}
+                        onChange={(e) =>
+                          setTmp((p) => ({
+                            ...p,
+                            forma_venda: e.target.value as FormaVenda,
+                          }))
+                        }
+                      >
                         {FORMAS.map((f) => (
                           <option key={f} value={f}>
                             {f}
@@ -1242,23 +1878,61 @@ setEncarteiradas(enc ?? []);
                       </select>
                     </div>
                     <div>
-                      <label className="text-sm text-gray-600">Número da Proposta</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={tmp.numero_proposta ?? ""} onChange={(e) => setTmp((p) => ({ ...p, numero_proposta: e.target.value }))} />
+                      <label className="text-sm text-gray-600">
+                        Número da Proposta
+                      </label>
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={tmp.numero_proposta ?? ""}
+                        onChange={(e) =>
+                          setTmp((p) => ({
+                            ...p,
+                            numero_proposta: e.target.value,
+                          }))
+                        }
+                      />
                     </div>
                     <div>
                       <label className="text-sm text-gray-600">Valor da Venda</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={(tmp.valor_venda as any) ?? ""} onChange={(e) => setTmp((p) => ({ ...p, valor_venda: Number(e.target.value) }))} type="number" step="0.01" />
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={(tmp.valor_venda as any) ?? ""}
+                        onChange={(e) =>
+                          setTmp((p) => ({
+                            ...p,
+                            valor_venda: Number(e.target.value),
+                          }))
+                        }
+                        type="number"
+                        step="0.01"
+                      />
                     </div>
                     <div className="md:col-span-2">
                       <label className="text-sm text-gray-600">Descrição</label>
-                      <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={tmp.descricao ?? ""} onChange={(e) => setTmp((p) => ({ ...p, descricao: e.target.value }))} />
+                      <textarea
+                        className="w-full border rounded-xl px-3 py-2"
+                        rows={3}
+                        value={tmp.descricao ?? ""}
+                        onChange={(e) =>
+                          setTmp((p) => ({
+                            ...p,
+                            descricao: e.target.value,
+                          }))
+                        }
+                      />
                     </div>
                   </div>
                   <div className="text-right mt-3">
-                    <button className="px-4 py-2 rounded-xl border mr-2" onClick={() => setEditVendaModal({ open: false })}>
+                    <button
+                      className="px-4 py-2 rounded-xl border mr-2"
+                      onClick={() => setEditVendaModal({ open: false })}
+                    >
                       Cancelar
                     </button>
-                    <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={() => salvarEdicaoPendente(v, tmp)}>
+                    <button
+                      className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+                      onClick={() => salvarEdicaoPendente(v, tmp)}
+                    >
                       Salvar
                     </button>
                   </div>
@@ -1275,13 +1949,22 @@ setEncarteiradas(enc ?? []);
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Detalhes da Venda</h3>
-              <button onClick={() => setViewVendaModal({ open: false })} className="text-gray-500 hover:text-gray-800">
+              <button
+                onClick={() => setViewVendaModal({ open: false })}
+                className="text-gray-500 hover:text-gray-800"
+              >
                 ✕
               </button>
             </div>
             {(() => {
               const v = viewVendaModal.venda!;
               const lead = viewVendaModal.lead;
+              const vendedor = users.find(
+                (u) => u.auth_user_id === v.vendedor_id
+              );
+              const vendedorNome =
+                vendedor?.nome || vendedor?.email || v.vendedor_id;
+
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                   <div>
@@ -1306,7 +1989,7 @@ setEncarteiradas(enc ?? []);
                   </div>
                   <div>
                     <div className="text-gray-500">Vendedor</div>
-                    <div>{v.vendedor_id}</div>
+                    <div>{vendedorNome}</div>
                   </div>
                   <div>
                     <div className="text-gray-500">Segmento</div>
@@ -1350,13 +2033,18 @@ setEncarteiradas(enc ?? []);
                   </div>
                   <div className="md:col-span-2">
                     <div className="text-gray-500">Descrição</div>
-                    <div className="whitespace-pre-wrap">{v.descricao ?? "—"}</div>
+                    <div className="whitespace-pre-wrap">
+                      {v.descricao ?? "—"}
+                    </div>
                   </div>
                 </div>
               );
             })()}
             <div className="text-right">
-              <button className="px-4 py-2 rounded-xl border" onClick={() => setViewVendaModal({ open: false })}>
+              <button
+                className="px-4 py-2 rounded-xl border"
+                onClick={() => setViewVendaModal({ open: false })}
+              >
                 Fechar
               </button>
             </div>
@@ -1369,7 +2057,10 @@ setEncarteiradas(enc ?? []);
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Cadastrar Meta</h3>
-              <button onClick={() => setMetaOverlay({ open: false })} className="text-gray-500 hover:text-gray-800">
+              <button
+                onClick={() => setMetaOverlay({ open: false })}
+                className="text-gray-500 hover:text-gray-800"
+              >
                 ✕
               </button>
             </div>
@@ -1379,7 +2070,19 @@ setEncarteiradas(enc ?? []);
                 <select
                   className="w-full border rounded-xl px-3 py-2"
                   value={metaForm.vendedor_id}
-                  onChange={(e) => setMetaForm((p) => ({ ...p, vendedor_id: e.target.value }))}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setMetaForm((p) => ({ ...p, vendedor_id: id }));
+                    if (id) {
+                      loadMetaForForm(id, metaForm.ano);
+                    } else {
+                      setMetaForm((p) => ({
+                        ...p,
+                        vendedor_id: "",
+                        m: Array(12).fill(0),
+                      }));
+                    }
+                  }}
                   disabled={!isAdmin}
                 >
                   <option value="">Selecione</option>
@@ -1395,7 +2098,13 @@ setEncarteiradas(enc ?? []);
                 <select
                   className="w-full border rounded-xl px-3 py-2"
                   value={metaForm.ano}
-                  onChange={(e) => setMetaForm((p) => ({ ...p, ano: Number(e.target.value) }))}
+                  onChange={(e) => {
+                    const newYear = Number(e.target.value);
+                    setMetaForm((p) => ({ ...p, ano: newYear }));
+                    if (metaForm.vendedor_id) {
+                      loadMetaForForm(metaForm.vendedor_id, newYear);
+                    }
+                  }}
                 >
                   {Array.from({ length: 6 }).map((_, i) => {
                     const y = new Date().getFullYear() - 1 + i;
@@ -1409,18 +2118,36 @@ setEncarteiradas(enc ?? []);
               </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"].map((m, i) => (
+              {[
+                "Jan",
+                "Fev",
+                "Mar",
+                "Abr",
+                "Mai",
+                "Jun",
+                "Jul",
+                "Ago",
+                "Set",
+                "Out",
+                "Nov",
+                "Dez",
+              ].map((m, i) => (
                 <div key={i}>
                   <label className="text-sm text-gray-600">{m}</label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
                     className="w-full border rounded-xl px-3 py-2"
-                    value={metaForm.m[i]}
+                    value={formatNumberBR(metaForm.m[i] || 0)}
                     onChange={(e) =>
                       setMetaForm((p) => {
                         const arr = [...p.m];
-                        arr[i] = Number(e.target.value || 0);
+                        const raw = e.target.value;
+                        const normalized = raw
+                          .replace(/\./g, "")
+                          .replace(",", ".")
+                          .replace(/[^\d.]/g, "");
+                        const n = normalized ? Number(normalized) : 0;
+                        arr[i] = Number.isNaN(n) ? 0 : n;
                         return { ...p, m: arr };
                       })
                     }
@@ -1429,10 +2156,16 @@ setEncarteiradas(enc ?? []);
               ))}
             </div>
             <div className="flex items-center justify-end gap-3">
-              <button className="px-4 py-2 rounded-xl border" onClick={() => setMetaOverlay({ open: false })}>
+              <button
+                className="px-4 py-2 rounded-xl border"
+                onClick={() => setMetaOverlay({ open: false })}
+              >
                 Cancelar
               </button>
-              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={saveMeta}>
+              <button
+                className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
+                onClick={saveMeta}
+              >
                 Salvar
               </button>
             </div>

@@ -50,7 +50,7 @@ type Venda = {
   created_at: string;
   segmento?: string | null;
   data_nascimento?: string | null;
-  inad?: boolean | null; // NOVO: flag de inadimplência
+  inad?: boolean | null; // flag de inadimplência
 };
 
 type UserRow = { id: string; nome: string | null; email: string | null; role?: string | null };
@@ -117,6 +117,16 @@ function normalizeProdutoToSegmento(produto: Produto | string | null | undefined
   if (p === "Imóvel Estendido") return "Imóvel";
   if (p === "Serviço") return "Serviços";
   return p;
+}
+
+// normaliza rótulos de segmento ("IMÓVEL", "Imóvel", "IMÓVEL ESTENDIDO" etc.)
+function normalizeSegmentLabel(s: string | null | undefined): string {
+  return (s || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 type LinhaEncarteirarProps = {
@@ -233,7 +243,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, isAdm
   const [adm, setAdm] = useState<Administradora>(venda.administradora);
   const [flagCont, setFlagCont] = useState<boolean>(!!venda.contemplada);
   const [dataCont, setDataCont] = useState<string>(venda.data_contemplacao ?? "");
-  const [flagInad, setFlagInad] = useState<boolean>(!!venda.inad); // NOVO: estado inadimplente
+  const [flagInad, setFlagInad] = useState<boolean>(!!venda.inad); // estado inadimplente
 
   const saveEdit = async () => {
     setEdit(false);
@@ -353,18 +363,12 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, isAdm
               >
                 Salvar
               </button>
-              <button
-                className="px-3 py-1 rounded border"
-                onClick={() => setEdit(false)}
-              >
+              <button className="px-3 py-1 rounded border" onClick={() => setEdit(false)}>
                 Cancelar
               </button>
             </div>
           ) : (
-            <button
-              className="px-3 py-1 rounded border"
-              onClick={() => setEdit(true)}
-            >
+            <button className="px-3 py-1 rounded border" onClick={() => setEdit(true)}>
               ✏️ Editar
             </button>
           )
@@ -400,10 +404,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, isAdm
             />
             Inadimplente
           </label>
-          <button
-            className="px-2 py-1 rounded border hover:bg-gray-50"
-            onClick={saveSituacao}
-          >
+          <button className="px-2 py-1 rounded border hover:bg-gray-50" onClick={saveSituacao}>
             Salvar
           </button>
         </div>
@@ -573,7 +574,7 @@ const Carteira: React.FC = () => {
       ? Math.max(0, Math.min(100, Math.round((realizadoAnual / metaAnual) * 100)))
       : 0;
 
-  const [leadSearch, setLeadSearch] = useState<string>(""); // NOVO: busca de lead no modal
+  const [leadSearch, setLeadSearch] = useState<string>(""); // busca de lead no modal
 
   useEffect(() => {
     setForm((f) => ({ ...f, tabela: "" }));
@@ -706,6 +707,14 @@ const Carteira: React.FC = () => {
     () =>
       encarteiradas.reduce(
         (a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a),
+        0
+      ),
+    [encarteiradas]
+  );
+  const totalInadimplentes = useMemo(
+    () =>
+      encarteiradas.reduce(
+        (a, v) => (v.inad ? a + (v.valor_venda || 0) : a),
         0
       ),
     [encarteiradas]
@@ -982,16 +991,42 @@ const Carteira: React.FC = () => {
     }
   };
 
+  // opções de tabelas filtradas por Administradora + Segmento (case/acento-insensível)
   const tabelaOptions = useMemo(() => {
     const prod = (form.produto as Produto) || "Automóvel";
+    const segFromProduto = normalizeProdutoToSegmento(prod) ?? prod;
+    const prodNorm = normalizeSegmentLabel(segFromProduto);
+
     const admName = (form.administradora as string) || "";
     const admId = simAdmins.find((a) => a.name === admName)?.id;
-    return simTables.filter(
-      (t) =>
-        (!admId || t.admin_id === admId) &&
-        (t.segmento === prod || t.segmento === normalizeProdutoToSegmento(prod))
-    );
+
+    return simTables.filter((t) => {
+      if (admId && t.admin_id !== admId) return false;
+      if (!prodNorm) return true;
+      const segNorm = normalizeSegmentLabel(t.segmento);
+      return segNorm === prodNorm;
+    });
   }, [form.produto, form.administradora, simTables, simAdmins]);
+
+  // opções de Produto condicionadas à Administradora selecionada
+  const produtoOptionsForAdmin: Produto[] = useMemo(() => {
+    const admName = (form.administradora as string) || "";
+    const admId = simAdmins.find((a) => a.name === admName)?.id;
+    if (!admId) return PRODUTOS;
+
+    const segSet = new Set(
+      simTables
+        .filter((t) => t.admin_id === admId)
+        .map((t) => normalizeSegmentLabel(t.segmento))
+    );
+
+    const filtered = PRODUTOS.filter((p) => {
+      const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
+      return segSet.has(seg);
+    });
+
+    return filtered.length ? filtered : PRODUTOS;
+  }, [form.administradora, simAdmins, simTables]);
 
   const adminOptions = useMemo(() => simAdmins.map((a) => a.name), [simAdmins]);
 
@@ -1463,6 +1498,10 @@ const Carteira: React.FC = () => {
           Contempladas:{" "}
           <strong className="ml-1">{currency(totalContempladas)}</strong>
         </div>
+        <div className="px-4 py-3 rounded-2xl bg-red-100 text-red-900">
+          Inadimplentes:{" "}
+          <strong className="ml-1">{currency(totalInadimplentes)}</strong>
+        </div>
         <button
           className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
           onClick={() => setShowCarteira((s) => !s)}
@@ -1581,7 +1620,29 @@ const Carteira: React.FC = () => {
                   value={(form.administradora as string) ?? ""}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setForm((f) => ({ ...f, administradora: value, tabela: "" }));
+                    setForm((f) => {
+                      const admId = simAdmins.find((a) => a.name === value)?.id;
+                      let nextProduto = f.produto as Produto;
+
+                      if (admId) {
+                        const segSet = new Set(
+                          simTables
+                            .filter((t) => t.admin_id === admId)
+                            .map((t) => normalizeSegmentLabel(t.segmento))
+                        );
+                        const allowed = PRODUTOS.filter((p) => {
+                          const seg = normalizeSegmentLabel(
+                            normalizeProdutoToSegmento(p) ?? p
+                          );
+                          return segSet.has(seg);
+                        });
+                        if (allowed.length && !allowed.includes(nextProduto as Produto)) {
+                          nextProduto = allowed[0];
+                        }
+                      }
+
+                      return { ...f, administradora: value, produto: nextProduto, tabela: "" };
+                    });
                   }}
                 >
                   <option value="">
@@ -1606,7 +1667,7 @@ const Carteira: React.FC = () => {
                     onFormChange("produto", e.target.value as Produto)
                   }
                 >
-                  {PRODUTOS.map((p) => (
+                  {produtoOptionsForAdmin.map((p) => (
                     <option key={p} value={p}>
                       {p}
                     </option>
@@ -2052,7 +2113,7 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {metaOverlay.open && (
+     {metaOverlay.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">

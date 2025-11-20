@@ -51,12 +51,11 @@ type CorrectionParams = {
 };
 
 type FlowRow = {
-  tipo: "parcela" | "lance";
-  numero?: number;
-  descricao: string;
-  valor: number;
-  amortizacao: number;
-  saldoApos: number;
+  numero: number;
+  creditoAtual: number;
+  valorParcela: number;
+  investimentoAcumulado: number;
+  saldoDevedor: number;
 };
 
 /* ======================= Helpers ========================= */
@@ -104,6 +103,33 @@ function resolveIndicePct(
   if (raw.startsWith("INCC")) return { label: "INCC", pct: params.INCC ?? 0 };
   if (raw.startsWith("INPC")) return { label: "INPC", pct: params.INPC ?? 0 };
   return { label: null, pct: 0 };
+}
+
+function normalizarSegmento(seg?: string) {
+  const s = (seg || "").toLowerCase();
+  if (s.includes("imó")) return "Imóvel";
+  if (s.includes("auto")) return "Automóvel";
+  if (s.includes("moto")) return "Motocicleta";
+  if (s.includes("serv")) return "Serviços";
+  if (s.includes("pesad")) return "Pesados";
+  return seg || "Automóvel";
+}
+function emojiDoSegmento(seg?: string) {
+  const s = (seg || "").toLowerCase();
+  if (s.includes("imó")) return "🏠";
+  if (s.includes("moto")) return "🏍️";
+  if (s.includes("serv")) return "✈️";
+  if (s.includes("pesad")) return "🚚";
+  return "🚗";
+}
+
+function loadLogoImage(): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = "/logo-consulmax.png";
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+  });
 }
 
 /* ========== Percent Input (cursor estável) ========== */
@@ -337,32 +363,43 @@ function calcularSimulacao(i: CalcInput) {
   if (has2aAntecipDepois) saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipCada));
   const novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
 
-  // ===== Extrato: fluxos até a contemplação + lance =====
+  // ===== Extrato projetado (até o final do prazo) =====
   const flows: FlowRow[] = [];
-  let saldoExtrato = valorCategoria;
+  const totalMeses = parcelasPagas + novoPrazo;
+  let investimentoAcum = 0;
 
-  for (let n = 1; n <= parcelasPagas; n++) {
-    const amortizacao = baseMensalPre + (n <= antParc ? antecipCada : 0);
-    const valorParcela = amortizacao + seguroMensal;
-    saldoExtrato = Math.max(0, saldoExtrato - amortizacao);
-    flows.push({
-      tipo: "parcela",
-      numero: n,
-      descricao: `Parcela ${n}`,
-      valor: valorParcela,
-      amortizacao,
-      saldoApos: saldoExtrato,
-    });
-  }
+  for (let mes = 1; mes <= totalMeses; mes++) {
+    const corrCount = indicePct > 0 ? Math.floor((mes - 1) / 12) : 0;
+    const fatorMes = indicePct > 0 ? Math.pow(1 + indicePct, corrCount) : 1;
 
-  if (lanceOfertadoValor > 0) {
-    saldoExtrato = Math.max(0, saldoExtrato - lanceOfertadoValor);
+    const creditoAtual = baseCredito * fatorMes;
+    const valorCategoriaAtual = creditoAtual * (1 + taxaAdmFull + frPct);
+
+    let baseParcela: number;
+    if (mes === 1) {
+      baseParcela = parcelaAte;
+    } else if (mes <= parcelasPagas) {
+      baseParcela = parcelaDemais;
+    } else {
+      baseParcela = parcelaEscolhida;
+    }
+
+    let valorParcela = baseParcela * fatorMes;
+
+    // No mês da contemplação, incluímos o lance próprio como aporte extra
+    if (mes === parcelasPagas && lanceProprioValor > 0) {
+      valorParcela += lanceProprioValor;
+    }
+
+    investimentoAcum += valorParcela;
+    const saldoDevedor = Math.max(0, valorCategoriaAtual - investimentoAcum);
+
     flows.push({
-      tipo: "lance",
-      descricao: "Lance ofertado",
-      valor: lanceOfertadoValor,
-      amortizacao: lanceOfertadoValor,
-      saldoApos: saldoExtrato,
+      numero: mes,
+      creditoAtual,
+      valorParcela,
+      investimentoAcumulado: investimentoAcum,
+      saldoDevedor,
     });
   }
 
@@ -403,7 +440,9 @@ function MoneyInput({
   value,
   onChange,
   ...rest
-}: { value: number; onChange: (n: number) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
+}: { value: number; onChange: (n: number) => void } & React.InputHTMLAttributes<
+  HTMLInputElement
+>) {
   return (
     <Input
       {...rest}
@@ -849,24 +888,6 @@ ${wa}`
     } catch {
       alert("Não foi possível copiar o resumo.");
     }
-  }
-
-  function normalizarSegmento(seg?: string) {
-    const s = (seg || "").toLowerCase();
-    if (s.includes("imó")) return "Imóvel";
-    if (s.includes("auto")) return "Automóvel";
-    if (s.includes("moto")) return "Motocicleta";
-    if (s.includes("serv")) return "Serviços";
-    if (s.includes("pesad")) return "Pesados";
-    return seg || "Automóvel";
-  }
-  function emojiDoSegmento(seg?: string) {
-    const s = (seg || "").toLowerCase();
-    if (s.includes("imó")) return "🏠";
-    if (s.includes("moto")) return "🏍️";
-    if (s.includes("serv")) return "✈️";
-    if (s.includes("pesad")) return "🚚";
-    return "🚗";
   }
 
   const propostaTexto = useMemo(() => {
@@ -1806,42 +1827,68 @@ function ExtratoModal({
 }) {
   const flows = calc.flows || [];
 
-  function handleDownloadPDF() {
+  const segmentoLabel = normalizarSegmento(tabela?.segmento);
+  const admPctText = tabela ? pctHuman(tabela.taxa_adm_pct) : "0,0000%";
+  const frPctText = tabela ? pctHuman(tabela.fundo_reserva_pct) : "0,0000%";
+  const antecipPctText = tabela ? pctHuman(tabela.antecip_pct) : "0,0000%";
+  const antecipParcText = tabela ? `${tabela.antecip_parcelas || 0}x` : "0x";
+
+  const headerResumo = `Crédito: ${brMoney(credito)} | Segmento: ${
+    segmentoLabel || "—"
+  } | Tabela: ${tabela ? tabela.nome_tabela : "—"} | Adm: ${admPctText} | Fundo Reserva: ${frPctText} | Taxa Antecipada: ${antecipPctText} em ${antecipParcText}`;
+
+  const disclaimer =
+    "Este extrato é uma projeção aproximada e não garante contemplação nem rentabilidade futura. Os valores podem variar conforme o regulamento do grupo, critérios da administradora e índices de correção aplicados.";
+
+  async function handleDownloadPDF() {
     const doc = new jsPDF();
 
-    doc.setFontSize(12);
-    doc.text("Extrato projetado da simulação", 14, 16);
+    const logo = await loadLogoImage();
+    if (logo) {
+      try {
+        doc.addImage(logo, "PNG", 180, 8, 16, 16);
+      } catch {
+        // se der erro na logo, segue sem ela
+      }
+    }
+
+    doc.setFontSize(14);
+    doc.text("Extrato Projetado da Simulação", 14, 16);
 
     doc.setFontSize(10);
-    doc.text(`Crédito: ${brMoney(credito)}`, 14, 24);
-    if (tabela) {
-      doc.text(`Tabela: ${tabela.segmento} - ${tabela.nome_tabela}`, 14, 30);
-    }
+    doc.text(headerResumo, 14, 24);
+
+    let nextY = 30;
+
     if (calc.indiceLabel && calc.indicePct && calc.indicePct > 0) {
       doc.text(
-        `Índice: ${calc.indiceLabel} (${(calc.indicePct * 100).toFixed(2).replace(".", ",")}% a.a.)`,
+        `Índice considerado: ${calc.indiceLabel} (${(calc.indicePct * 100)
+          .toFixed(2)
+          .replace(".", ",")}% a.a.), com atualização aproximada a cada 13 meses.`,
         14,
-        36
+        nextY
       );
+      nextY += 8;
     }
 
     const body = flows.map((f) => [
-      f.tipo === "parcela" ? f.numero ?? "" : "",
-      f.descricao,
-      brMoney(f.valor),
-      brMoney(f.amortizacao),
-      brMoney(f.saldoApos),
+      f.numero,
+      brMoney(f.creditoAtual),
+      brMoney(f.valorParcela),
+      brMoney(f.investimentoAcumulado),
+      brMoney(f.saldoDevedor),
     ]);
 
     autoTable(doc as any, {
-      head: [["Parcela", "Descrição", "Valor da parcela", "Amortização", "Saldo após"]],
+      head: [["Parcela", "Crédito atual", "Valor da parcela", "Investimento acumulado", "Saldo devedor"]],
       body,
-      startY: 42,
+      startY: nextY,
       styles: { fontSize: 9 },
       headStyles: { fillColor: [30, 41, 63] },
     });
 
-    const finalY = (doc as any).lastAutoTable?.finalY || 42;
+    const finalY = (doc as any).lastAutoTable?.finalY || nextY;
+
     doc.setFontSize(10);
     doc.text(
       `Saldo devedor final estimado (após correções): ${brMoney(calc.saldoDevedorFinal)}`,
@@ -1856,12 +1903,20 @@ function ExtratoModal({
       finalY + 14
     );
 
+    const disclaimerLines = doc.splitTextToSize(disclaimer, 180);
+    doc.text(disclaimerLines, 14, finalY + 24);
+
     doc.save(`extrato_simulacao_${Date.now()}.pdf`);
   }
 
   return (
-    <ModalBase onClose={onClose} title="Detalhamento da Simulação">
-      <div className="p-4 space-y-3">
+    <ModalBase onClose={onClose} title="Extrato Projetado da Simulação">
+      <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+        <div className="space-y-1">
+          <div className="text-sm font-semibold">Extrato Projetado da Simulação</div>
+          <div className="text-xs text-muted-foreground">{headerResumo}</div>
+        </div>
+
         <div className="grid gap-2 md:grid-cols-3 text-sm">
           <div>
             <div className="text-muted-foreground">Crédito</div>
@@ -1878,8 +1933,9 @@ function ExtratoModal({
         </div>
 
         <div className="text-xs text-muted-foreground">
-          Os saldos abaixo consideram amortização apenas sobre o valor de crédito + taxas (sem seguro). O saldo
-          devedor final mostrado considera as correções configuradas.
+          Os valores abaixo representam uma projeção linear do fluxo de pagamentos, considerando crédito, taxas e
+          eventuais correções informadas na simulação. Na prática, os valores efetivos podem sofrer ajustes pela
+          administradora do consórcio.
         </div>
 
         <div className="mt-2 overflow-auto rounded-lg border">
@@ -1887,22 +1943,20 @@ function ExtratoModal({
             <thead className="bg-muted/40">
               <tr>
                 <th className="text-left p-2">Parcela</th>
-                <th className="text-left p-2">Descrição</th>
+                <th className="text-right p-2">Crédito atual</th>
                 <th className="text-right p-2">Valor da parcela</th>
-                <th className="text-right p-2">Amortização</th>
-                <th className="text-right p-2">Saldo após</th>
+                <th className="text-right p-2">Investimento acumulado</th>
+                <th className="text-right p-2">Saldo devedor</th>
               </tr>
             </thead>
             <tbody>
-              {flows.map((f, idx) => (
-                <tr key={idx} className="border-t">
-                  <td className="p-2">
-                    {f.tipo === "parcela" ? f.numero : f.tipo === "lance" ? "—" : ""}
-                  </td>
-                  <td className="p-2">{f.descricao}</td>
-                  <td className="p-2 text-right">{brMoney(f.valor)}</td>
-                  <td className="p-2 text-right">{brMoney(f.amortizacao)}</td>
-                  <td className="p-2 text-right">{brMoney(f.saldoApos)}</td>
+              {flows.map((f) => (
+                <tr key={f.numero} className="border-t">
+                  <td className="p-2">{f.numero}</td>
+                  <td className="p-2 text-right">{brMoney(f.creditoAtual)}</td>
+                  <td className="p-2 text-right">{brMoney(f.valorParcela)}</td>
+                  <td className="p-2 text-right">{brMoney(f.investimentoAcumulado)}</td>
+                  <td className="p-2 text-right">{brMoney(f.saldoDevedor)}</td>
                 </tr>
               ))}
               {flows.length === 0 && (
@@ -1914,6 +1968,10 @@ function ExtratoModal({
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="text-[11px] text-muted-foreground leading-relaxed">
+          {disclaimer}
         </div>
 
         <div className="flex items-center justify-end gap-2 mt-3">
@@ -2232,7 +2290,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                   </div>
                   <div>
                     Limitador Parcela (tabela):{" "}
-                      <strong>{pctHuman(p.tabelaSelecionada.limitador_parcela_pct)}</strong>
+                    <strong>{pctHuman(p.tabelaSelecionada.limitador_parcela_pct)}</strong>
                   </div>
                 </div>
               )}

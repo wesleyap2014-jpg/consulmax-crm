@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Loader2, Plus, Pencil, Trash2, X, ChevronsUpDown, Search } from "lucide-react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { Popover, PopoverButton, PopoverContent, PopoverClose } from "@/components/ui/popover";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 /* ========================= Tipos ========================= */
 type UUID = string;
@@ -46,6 +48,15 @@ type CorrectionParams = {
   IGPM: number;
   INCC: number;
   INPC: number;
+};
+
+type FlowRow = {
+  tipo: "parcela" | "lance";
+  numero?: number;
+  descricao: string;
+  valor: number;
+  amortizacao: number;
+  saldoApos: number;
 };
 
 /* ======================= Helpers ========================= */
@@ -218,19 +229,27 @@ function calcularSimulacao(i: CalcInput) {
   const parcelasPagas = Math.max(0, Math.min(parcContemplacao, prazo));
   const prazoRestante = Math.max(1, prazo - parcelasPagas);
 
-  // índice de correção aplicado sobre o crédito (até a contemplação)
+  // Índice de correção
   const indicePct = inIndicePct && inIndicePct > 0 ? inIndicePct : 0;
   const indiceLabel = inIndiceLabel ?? null;
-  let fatorIndice = 1;
-  if (indicePct > 0 && parcContemplacao > 12) {
-    const correcoes = Math.floor((parcContemplacao - 1) / 12); // 13º, 25º, 37º...
-    if (correcoes > 0) {
-      fatorIndice = Math.pow(1 + indicePct, correcoes);
-    }
+
+  let fatorIndicePre = 1;
+  let fatorIndicePos = 1;
+
+  if (indicePct > 0) {
+    const mesesPre = parcelasPagas;
+    const mesesTotal = parcelasPagas + prazoRestante;
+
+    const corrPre = mesesPre > 0 ? Math.floor((mesesPre - 1) / 12) : 0;
+    const corrTotal = mesesTotal > 0 ? Math.floor((mesesTotal - 1) / 12) : 0;
+    const corrPos = Math.max(0, corrTotal - corrPre);
+
+    if (corrPre > 0) fatorIndicePre = Math.pow(1 + indicePct, corrPre);
+    if (corrPos > 0) fatorIndicePos = Math.pow(1 + indicePct, corrPos);
   }
 
-  // Crédito ajustado pelo índice até a contemplação
-  const C = baseCredito * fatorIndice;
+  // Crédito corrigido até a contemplação
+  const C = baseCredito * fatorIndicePre;
 
   const valorCategoria = C * (1 + taxaAdmFull + frPct);
 
@@ -254,7 +273,8 @@ function calcularSimulacao(i: CalcInput) {
   const parcelaAte = baseMensalPre + (antParc > 0 ? antecipCada : 0) + seguroMensal;
   const parcelaDemais = baseMensalPre + seguroMensal;
 
-  const totalPagoSemSeguro = baseMensalPre * parcelasPagas + antecipCada * Math.min(parcelasPagas, antParc);
+  const totalPagoSemSeguro =
+    baseMensalPre * parcelasPagas + antecipCada * Math.min(parcelasPagas, antParc);
   const totalPagoComSeguro = totalPagoSemSeguro + seguroMensal * parcelasPagas;
 
   // ===== Lances =====
@@ -283,7 +303,14 @@ function calcularSimulacao(i: CalcInput) {
   const lanceProprioValor = Math.max(0, lanceOfertadoValor - lanceEmbutidoValor);
   const novoCredito = Math.max(0, C - lanceEmbutidoValor);
 
-  const saldoDevedorFinal = Math.max(0, valorCategoria - totalPagoSemSeguro - lanceOfertadoValor);
+  // Saldo devedor sem correção pós-contemplação (base correta)
+  const saldoDevedorSemIndice = Math.max(
+    0,
+    valorCategoria - totalPagoSemSeguro - lanceOfertadoValor
+  );
+
+  // Corrigir saldo devedor após a contemplação com base nos meses restantes
+  const saldoDevedorFinal = saldoDevedorSemIndice * fatorIndicePos;
 
   const novaParcelaSemLimite = saldoDevedorFinal / prazoRestante;
   const parcelaLimitante = limitEnabled ? valorCategoria * limitadorPct : 0;
@@ -302,11 +329,42 @@ function calcularSimulacao(i: CalcInput) {
   }
 
   const has2aAntecipDepois = antParc >= 2 && parcContemplacao === 1;
-  const segundaParcelaComAntecipacao = has2aAntecipDepois ? parcelaEscolhida + antecipCada : null;
+  const segundaParcelaComAntecipacao = has2aAntecipDepois
+    ? parcelaEscolhida + antecipCada + seguroMensal
+    : null;
 
   let saldoParaPrazo = saldoDevedorFinal;
   if (has2aAntecipDepois) saldoParaPrazo = Math.max(0, saldoParaPrazo - (parcelaEscolhida + antecipCada));
   const novoPrazo = Math.max(1, Math.ceil(saldoParaPrazo / parcelaEscolhida));
+
+  // ===== Extrato: fluxos até a contemplação + lance =====
+  const flows: FlowRow[] = [];
+  let saldoExtrato = valorCategoria;
+
+  for (let n = 1; n <= parcelasPagas; n++) {
+    const amortizacao = baseMensalPre + (n <= antParc ? antecipCada : 0);
+    const valorParcela = amortizacao + seguroMensal;
+    saldoExtrato = Math.max(0, saldoExtrato - amortizacao);
+    flows.push({
+      tipo: "parcela",
+      numero: n,
+      descricao: `Parcela ${n}`,
+      valor: valorParcela,
+      amortizacao,
+      saldoApos: saldoExtrato,
+    });
+  }
+
+  if (lanceOfertadoValor > 0) {
+    saldoExtrato = Math.max(0, saldoExtrato - lanceOfertadoValor);
+    flows.push({
+      tipo: "lance",
+      descricao: "Lance ofertado",
+      valor: lanceOfertadoValor,
+      amortizacao: lanceOfertadoValor,
+      saldoApos: saldoExtrato,
+    });
+  }
 
   return {
     valorCategoria,
@@ -321,6 +379,7 @@ function calcularSimulacao(i: CalcInput) {
     novaParcelaSemLimite,
     parcelaLimitante,
     parcelaEscolhida,
+    saldoDevedorSemIndice,
     saldoDevedorFinal,
     novoPrazo,
     TA_efetiva: Math.max(0, taxaAdmFull - antecipPct),
@@ -333,7 +392,9 @@ function calcularSimulacao(i: CalcInput) {
     totalPagoComSeguro,
     indiceLabel,
     indicePct,
-    fatorIndice,
+    fatorIndicePre,
+    fatorIndicePos,
+    flows,
   } as const;
 }
 
@@ -417,6 +478,7 @@ export default function Simuladores() {
   }, [routeAdminId, activeAdminId, admins]);
 
   const [mgrOpen, setMgrOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const [leadId, setLeadId] = useState<string>("");
   const [leadInfo, setLeadInfo] = useState<{ nome: string; telefone?: string | null } | null>(null);
@@ -974,6 +1036,16 @@ Vantagens
               {salvando && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Salvar Simulação
             </Button>
+
+            <Button
+              variant="secondary"
+              className="h-10 rounded-2xl px-4"
+              disabled={!calc}
+              onClick={() => setDetailOpen(true)}
+            >
+              Ver detalhamento
+            </Button>
+
             {simCode && (
               <span className="text-sm">
                 ✅ Salvo como <strong>Simulação #{simCode}</strong>
@@ -1087,6 +1159,15 @@ Vantagens
           onDeleted={handleTableDeleted}
           correctionParams={correctionParams}
           onUpdateCorrectionParams={updateCorrectionParams}
+        />
+      )}
+
+      {detailOpen && calc && (
+        <ExtratoModal
+          onClose={() => setDetailOpen(false)}
+          calc={calc}
+          credito={credito}
+          tabela={tabelaSelecionada}
         />
       )}
     </div>
@@ -1711,6 +1792,143 @@ function TableFormOverlay({
   );
 }
 
+/* ===== Modal de Extrato / Detalhamento ===== */
+function ExtratoModal({
+  calc,
+  credito,
+  tabela,
+  onClose,
+}: {
+  calc: ReturnType<typeof calcularSimulacao>;
+  credito: number;
+  tabela: SimTable | null;
+  onClose: () => void;
+}) {
+  const flows = calc.flows || [];
+
+  function handleDownloadPDF() {
+    const doc = new jsPDF();
+
+    doc.setFontSize(12);
+    doc.text("Extrato projetado da simulação", 14, 16);
+
+    doc.setFontSize(10);
+    doc.text(`Crédito: ${brMoney(credito)}`, 14, 24);
+    if (tabela) {
+      doc.text(`Tabela: ${tabela.segmento} - ${tabela.nome_tabela}`, 14, 30);
+    }
+    if (calc.indiceLabel && calc.indicePct && calc.indicePct > 0) {
+      doc.text(
+        `Índice: ${calc.indiceLabel} (${(calc.indicePct * 100).toFixed(2).replace(".", ",")}% a.a.)`,
+        14,
+        36
+      );
+    }
+
+    const body = flows.map((f) => [
+      f.tipo === "parcela" ? f.numero ?? "" : "",
+      f.descricao,
+      brMoney(f.valor),
+      brMoney(f.amortizacao),
+      brMoney(f.saldoApos),
+    ]);
+
+    autoTable(doc as any, {
+      head: [["Parcela", "Descrição", "Valor da parcela", "Amortização", "Saldo após"]],
+      body,
+      startY: 42,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [30, 41, 63] },
+    });
+
+    const finalY = (doc as any).lastAutoTable?.finalY || 42;
+    doc.setFontSize(10);
+    doc.text(
+      `Saldo devedor final estimado (após correções): ${brMoney(calc.saldoDevedorFinal)}`,
+      14,
+      finalY + 8
+    );
+    doc.text(
+      `Parcela projetada após contemplação: ${brMoney(calc.parcelaEscolhida)} • Prazo restante: ${
+        calc.novoPrazo
+      } meses`,
+      14,
+      finalY + 14
+    );
+
+    doc.save(`extrato_simulacao_${Date.now()}.pdf`);
+  }
+
+  return (
+    <ModalBase onClose={onClose} title="Detalhamento da Simulação">
+      <div className="p-4 space-y-3">
+        <div className="grid gap-2 md:grid-cols-3 text-sm">
+          <div>
+            <div className="text-muted-foreground">Crédito</div>
+            <div className="font-medium">{brMoney(credito)}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Valor de categoria</div>
+            <div className="font-medium">{brMoney(calc.valorCategoria)}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Saldo devedor final (corrigido)</div>
+            <div className="font-medium">{brMoney(calc.saldoDevedorFinal)}</div>
+          </div>
+        </div>
+
+        <div className="text-xs text-muted-foreground">
+          Os saldos abaixo consideram amortização apenas sobre o valor de crédito + taxas (sem seguro). O saldo
+          devedor final mostrado considera as correções configuradas.
+        </div>
+
+        <div className="mt-2 overflow-auto rounded-lg border">
+          <table className="min-w-full text-xs">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="text-left p-2">Parcela</th>
+                <th className="text-left p-2">Descrição</th>
+                <th className="text-right p-2">Valor da parcela</th>
+                <th className="text-right p-2">Amortização</th>
+                <th className="text-right p-2">Saldo após</th>
+              </tr>
+            </thead>
+            <tbody>
+              {flows.map((f, idx) => (
+                <tr key={idx} className="border-t">
+                  <td className="p-2">
+                    {f.tipo === "parcela" ? f.numero : f.tipo === "lance" ? "—" : ""}
+                  </td>
+                  <td className="p-2">{f.descricao}</td>
+                  <td className="p-2 text-right">{brMoney(f.valor)}</td>
+                  <td className="p-2 text-right">{brMoney(f.amortizacao)}</td>
+                  <td className="p-2 text-right">{brMoney(f.saldoApos)}</td>
+                </tr>
+              ))}
+              {flows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-4 text-center text-muted-foreground">
+                    Nenhum fluxo calculado. Preencha a simulação para ver o detalhamento.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 mt-3">
+          <Button variant="secondary" onClick={onClose} className="h-9 rounded-2xl px-3">
+            Fechar
+          </Button>
+          <Button onClick={handleDownloadPDF} disabled={flows.length === 0} className="h-9 rounded-2xl px-3">
+            Baixar PDF
+          </Button>
+        </div>
+      </div>
+    </ModalBase>
+  );
+}
+
 /* ====================== Embracon (UI genérica) ====================== */
 type EmbraconProps = {
   adminName: string;
@@ -2014,7 +2232,7 @@ function EmbraconSimulator(p: EmbraconProps) {
                   </div>
                   <div>
                     Limitador Parcela (tabela):{" "}
-                    <strong>{pctHuman(p.tabelaSelecionada.limitador_parcela_pct)}</strong>
+                      <strong>{pctHuman(p.tabelaSelecionada.limitador_parcela_pct)}</strong>
                   </div>
                 </div>
               )}

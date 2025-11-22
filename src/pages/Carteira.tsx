@@ -91,24 +91,83 @@ const formatNumberBR = (n: number) =>
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
 const onlyDigits = (s: string) => (s || "").replace(/\D/g, "");
+
+// Formata automaticamente como CPF (11 dígitos) ou CNPJ (14 dígitos)
 const formatCPF = (s: string) => {
-  const d = onlyDigits(s).slice(0, 11);
-  const parts = [d.slice(0, 3), d.slice(3, 6), d.slice(6, 9), d.slice(9, 11)].filter(Boolean);
-  return parts.length <= 3 ? parts.join(".") : `${parts[0]}.${parts[1]}.${parts[2]}-${parts[3]}`;
+  const d = onlyDigits(s);
+
+  // CPF – até 11 dígitos
+  if (d.length <= 11) {
+    const cpf = d.slice(0, 11);
+    const p1 = cpf.slice(0, 3);
+    const p2 = cpf.slice(3, 6);
+    const p3 = cpf.slice(6, 9);
+    const p4 = cpf.slice(9, 11);
+
+    if (cpf.length <= 3) return p1;
+    if (cpf.length <= 6) return `${p1}.${p2}`;
+    if (cpf.length <= 9) return `${p1}.${p2}.${p3}`;
+    return `${p1}.${p2}.${p3}-${p4}`;
+  }
+
+  // CNPJ – até 14 dígitos
+  const cnpj = d.slice(0, 14);
+  const p1 = cnpj.slice(0, 2);
+  const p2 = cnpj.slice(2, 5);
+  const p3 = cnpj.slice(5, 8);
+  const p4 = cnpj.slice(8, 12);
+  const p5 = cnpj.slice(12, 14);
+
+  if (cnpj.length <= 2) return p1;
+  if (cnpj.length <= 5) return `${p1}.${p2}`;
+  if (cnpj.length <= 8) return `${p1}.${p2}.${p3}`;
+  if (cnpj.length <= 12) return `${p1}.${p2}.${p3}/${p4}`;
+  return `${p1}.${p2}.${p3}/${p4}-${p5}`;
 };
-const validateCPF = (cpf: string) => {
-  const d = onlyDigits(cpf);
-  if (d.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(d)) return false;
-  const calc = (base: string, factor: number) => {
-    let sum = 0;
-    for (let i = 0; i < base.length; i++) sum += parseInt(base[i], 10) * (factor - i);
-    const rest = (sum * 10) % 11;
-    return rest === 10 ? 0 : rest;
-  };
-  const d1 = calc(d.slice(0, 9), 10);
-  const d2 = calc(d.slice(0, 10), 11);
-  return d1 === parseInt(d[9]) && d2 === parseInt(d[10]);
+
+// Valida CPF (11 dígitos) OU CNPJ (14 dígitos)
+const validateCPF = (doc: string) => {
+  const d = onlyDigits(doc);
+
+  // ===== CPF =====
+  if (d.length === 11) {
+    if (/^(\d)\1{10}$/.test(d)) return false;
+    const calc = (base: string, factor: number) => {
+      let sum = 0;
+      for (let i = 0; i < base.length; i++) {
+        sum += parseInt(base[i], 10) * (factor - i);
+      }
+      const rest = (sum * 10) % 11;
+      return rest === 10 ? 0 : rest;
+    };
+    const d1 = calc(d.slice(0, 9), 10);
+    const d2 = calc(d.slice(0, 10), 11);
+    return d1 === parseInt(d[9], 10) && d2 === parseInt(d[10], 10);
+  }
+
+  // ===== CNPJ =====
+  if (d.length === 14) {
+    if (/^(\d)\1{13}$/.test(d)) return false;
+
+    const calc = (weights: number[], digits: string) => {
+      let sum = 0;
+      for (let i = 0; i < weights.length; i++) {
+        sum += weights[i] * parseInt(digits[i], 10);
+      }
+      const rest = sum % 11;
+      return rest < 2 ? 0 : 11 - rest;
+    };
+
+    const w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const w2 = [6, ...w1];
+
+    const d1 = calc(w1, d.slice(0, 12));
+    const d2 = calc(w2, d.slice(0, 13));
+
+    return d1 === parseInt(d[12], 10) && d2 === parseInt(d[13], 10);
+  }
+
+  return false;
 };
 
 function normalizeProdutoToSegmento(produto: Produto | string | null | undefined): string | null {
@@ -808,8 +867,8 @@ const Carteira: React.FC = () => {
   const registrarVenda = async () => {
     try {
       if (!form.lead_id) throw new Error("Selecione o Lead.");
-      if (!form.cpf?.trim()) throw new Error("CPF é obrigatório.");
-      if (!validateCPF(form.cpf)) throw new Error("CPF inválido.");
+      if (!form.cpf?.trim()) throw new Error("CPF/CNPJ é obrigatório.");
+      if (!validateCPF(form.cpf)) throw new Error("CPF ou CNPJ inválido.");
       if (!form.numero_proposta?.trim())
         throw new Error("Número da proposta é obrigatório.");
       const valor = Number(
@@ -965,7 +1024,7 @@ const Carteira: React.FC = () => {
 
   const salvarEdicaoPendente = async (venda: Venda, novo: Partial<Venda>) => {
     try {
-      if (novo.cpf && !validateCPF(novo.cpf)) throw new Error("CPF inválido.");
+      if (novo.cpf && !validateCPF(novo.cpf)) throw new Error("CPF ou CNPJ inválido.");
       if (novo.numero_proposta && !novo.numero_proposta.trim())
         throw new Error("Informe o número da proposta.");
       const patch: any = { ...novo };
@@ -1576,12 +1635,12 @@ const Carteira: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="text-sm text-gray-600">CPF *</label>
+                <label className="text-sm text-gray-600">CPF / CNPJ *</label>
                 <input
                   className="w-full border rounded-xl px-3 py-2"
                   value={formatCPF(form.cpf ?? "")}
                   onChange={(e) => onFormChange("cpf", e.target.value)}
-                  placeholder="000.000.000-00"
+                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
                 />
               </div>
 
@@ -1841,7 +1900,7 @@ const Carteira: React.FC = () => {
                       </select>
                     </div>
                     <div>
-                      <label className="text-sm text-gray-600">CPF</label>
+                      <label className="text-sm text-gray-600">CPF / CNPJ</label>
                       <input
                         className="w-full border rounded-xl px-3 py-2"
                         value={formatCPF(tmp.cpf ?? "")}
@@ -2037,7 +2096,7 @@ const Carteira: React.FC = () => {
                     <div>{lead?.telefone ?? "—"}</div>
                   </div>
                   <div>
-                    <div className="text-gray-500">CPF</div>
+                    <div className="text-gray-500">CPF / CNPJ</div>
                     <div>{formatCPF(v.cpf ?? "") || "—"}</div>
                   </div>
                   <div>

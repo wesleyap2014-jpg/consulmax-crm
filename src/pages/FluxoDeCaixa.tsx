@@ -45,6 +45,7 @@ interface CashFlowForm {
   status: CashFlowStatus;
   origem: string;
   is_fixa: boolean;
+  recurrenceMonths: string; // meses de recorrência (inclui mês atual)
 }
 
 const MONTH_LABELS = [
@@ -68,8 +69,66 @@ const currency = (value: number) =>
     currency: "BRL",
   }).format(value || 0);
 
+/** Formata data YYYY-MM-DD para DD/MM/YYYY sem mexer em fuso */
+const formatDateBR = (isoDate: string) => {
+  if (!isoDate) return "";
+  const [y, m, d] = isoDate.split("-");
+  if (!y || !m || !d) return isoDate;
+  return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`;
+};
+
 const todayISO = new Date().toISOString().slice(0, 10);
 const currentYear = new Date().getFullYear();
+
+/** Retorna se a data é fim de semana */
+const isWeekend = (date: Date) => {
+  const day = date.getDay();
+  return day === 0 || day === 6;
+};
+
+/** Feriados nacionais fixos no Brasil (mês/dia) */
+const isNationalFixedHolidayBR = (date: Date) => {
+  const d = date.getDate();
+  const m = date.getMonth() + 1;
+  const fixed: Array<[number, number]> = [
+    [1, 1],   // 01/01 - Confraternização Universal
+    [21, 4],  // 21/04 - Tiradentes
+    [1, 5],   // 01/05 - Dia do Trabalho
+    [7, 9],   // 07/09 - Independência
+    [12, 10], // 12/10 - Nossa Senhora Aparecida
+    [2, 11],  // 02/11 - Finados
+    [15, 11], // 15/11 - Proclamação da República
+    [25, 12], // 25/12 - Natal
+  ];
+  return fixed.some(([day, month]) => day === d && month === m);
+};
+
+const toISODate = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+/**
+ * Ajusta uma data YYYY-MM-DD para o próximo dia útil,
+ * se cair em fim de semana ou feriado nacional fixo.
+ */
+const adjustToNextBusinessDay = (isoDate: string): string => {
+  const [yStr, mStr, dStr] = isoDate.split("-");
+  const y = Number(yStr);
+  const m = Number(mStr);
+  const d = Number(dStr);
+  if (!y || !m || !d) return isoDate;
+
+  let date = new Date(y, m - 1, d);
+
+  while (isWeekend(date) || isNationalFixedHolidayBR(date)) {
+    date.setDate(date.getDate() + 1);
+  }
+
+  return toISODate(date);
+};
 
 const FluxoDeCaixa: React.FC = () => {
   const [checkingAccess, setCheckingAccess] = useState(true);
@@ -99,6 +158,7 @@ const FluxoDeCaixa: React.FC = () => {
     status: "realizado",
     origem: "",
     is_fixa: false,
+    recurrenceMonths: "12",
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -246,6 +306,7 @@ const FluxoDeCaixa: React.FC = () => {
       status: "realizado",
       origem: "",
       is_fixa: false,
+      recurrenceMonths: "12",
     });
     setFormError(null);
     setEditingItem(null);
@@ -268,6 +329,7 @@ const FluxoDeCaixa: React.FC = () => {
       status: item.status,
       origem: item.origem || "",
       is_fixa: item.is_fixa,
+      recurrenceMonths: "12", // edição afeta só o mês atual
     });
     setFormError(null);
     setModalOpen(true);
@@ -305,17 +367,38 @@ const FluxoDeCaixa: React.FC = () => {
       return;
     }
 
-    const dateObj = new Date(form.data);
-    if (Number.isNaN(dateObj.getTime())) {
+    // Parse da data sem usar new Date("YYYY-MM-DD") (evita bug de fuso)
+    const [anoStr, mesStr, diaStr] = form.data.split("-");
+    let competencia_ano = Number(anoStr);
+    let competencia_mes = Number(mesStr);
+    const diaBase = Number(diaStr);
+
+    if (
+      !anoStr ||
+      !mesStr ||
+      !diaStr ||
+      Number.isNaN(competencia_ano) ||
+      Number.isNaN(competencia_mes) ||
+      Number.isNaN(diaBase) ||
+      competencia_mes < 1 ||
+      competencia_mes > 12
+    ) {
       setFormError("Data inválida.");
       return;
     }
 
-    const competencia_mes = dateObj.getMonth() + 1;
-    const competencia_ano = dateObj.getFullYear();
+    // Quantidade de meses recorrentes (inclui o mês atual)
+    let recurrenceCount = 1;
+    if (form.is_fixa) {
+      const parsed = Number(form.recurrenceMonths || "1");
+      recurrenceCount = !parsed || parsed < 1 ? 1 : Math.min(parsed, 120);
+    }
 
-    const payload = {
-      data: form.data,
+    const baseDay = diaBase;
+    const baseMonth = competencia_mes;
+    const baseYear = competencia_ano;
+
+    const commonFields = {
       tipo: form.tipo,
       categoria: form.categoria.trim(),
       subcategoria: form.subcategoria.trim() || null,
@@ -323,14 +406,41 @@ const FluxoDeCaixa: React.FC = () => {
       valor: valorNumber,
       status: form.status,
       origem: form.origem.trim() || null,
-      competencia_mes,
-      competencia_ano,
       is_fixa: form.is_fixa,
     };
 
     setSaving(true);
     try {
       if (editingItem) {
+        // Edição simples: só atualiza esse lançamento, sem mexer em recorrência
+        const finalDate =
+          form.status === "previsto"
+            ? adjustToNextBusinessDay(form.data)
+            : form.data;
+
+        const [yStrF, mStrF] = finalDate.split("-");
+        const compAno = Number(yStrF);
+        const compMes = Number(mStrF);
+
+        if (
+          !compAno ||
+          !compMes ||
+          Number.isNaN(compAno) ||
+          Number.isNaN(compMes) ||
+          compMes < 1 ||
+          compMes > 12
+        ) {
+          setFormError("Data inválida após ajuste.");
+          return;
+        }
+
+        const payload = {
+          ...commonFields,
+          data: finalDate,
+          competencia_ano: compAno,
+          competencia_mes: compMes,
+        };
+
         const { error } = await supabase
           .from("cash_flows")
           .update(payload)
@@ -357,17 +467,50 @@ const FluxoDeCaixa: React.FC = () => {
           setModalOpen(false);
         }
       } else {
+        // Criação: gera 1 ou vários lançamentos (recorrência)
+        const rows: any[] = [];
+
+        for (let i = 0; i < recurrenceCount; i++) {
+          // calcula ano/mês alvo somando i meses ao mês base
+          const totalMonths = (baseYear * 12 + (baseMonth - 1)) + i;
+          const anoAlvo = Math.floor(totalMonths / 12);
+          const mesIndex = totalMonths % 12; // 0..11
+          const mesAlvo = mesIndex + 1;
+
+          // quantos dias tem esse mês
+          const daysInMonth = new Date(anoAlvo, mesAlvo, 0).getDate();
+          const diaAlvo = Math.min(baseDay, daysInMonth);
+
+          // monta a data base
+          let projDate = toISODate(new Date(anoAlvo, mesAlvo - 1, diaAlvo));
+
+          // se for previsto, ajusta para próximo dia útil (fim de semana/feriado)
+          if (commonFields.status === "previsto") {
+            projDate = adjustToNextBusinessDay(projDate);
+          }
+
+          const [yaStr, maStr] = projDate.split("-");
+          const compAno = Number(yaStr);
+          const compMes = Number(maStr);
+
+          rows.push({
+            ...commonFields,
+            data: projDate,
+            competencia_ano: compAno,
+            competencia_mes: compMes,
+          });
+        }
+
         const { data, error } = await supabase
           .from("cash_flows")
-          .insert(payload)
-          .select("*")
-          .single();
+          .insert(rows)
+          .select("*");
 
         if (error) {
-          console.error("Erro ao criar lançamento", error);
+          console.error("Erro ao criar lançamento(s)", error);
           setFormError("Erro ao salvar lançamento.");
         } else if (data) {
-          setItems((prev) => [...prev, data as CashFlow]);
+          setItems((prev) => [...prev, ...(data as CashFlow[])]);
           setModalOpen(false);
         }
       }
@@ -611,9 +754,10 @@ const FluxoDeCaixa: React.FC = () => {
                 }
               />
               <Legend />
-              <Bar dataKey="entradas" name="Entradas" />
-              <Bar dataKey="saidas" name="Saídas" />
-              <Bar dataKey="resultado" name="Resultado" />
+              {/* Cores pedidas: Entrada Azul, Saída Vermelho, Saldo Verde */}
+              <Bar dataKey="entradas" name="Entradas" fill="#2563eb" />
+              <Bar dataKey="saidas" name="Saídas" fill="#dc2626" />
+              <Bar dataKey="resultado" name="Saldo" fill="#16a34a" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -683,7 +827,7 @@ const FluxoDeCaixa: React.FC = () => {
               {filteredItems.map((item) => (
                 <tr key={item.id} className="hover:bg-gray-50/60">
                   <td className="px-3 py-2 whitespace-nowrap text-gray-700">
-                    {new Date(item.data).toLocaleDateString("pt-BR")}
+                    {formatDateBR(item.data)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <span
@@ -923,6 +1067,29 @@ const FluxoDeCaixa: React.FC = () => {
                   Marcar como despesa fixa recorrente
                 </label>
               </div>
+
+              {form.is_fixa && (
+                <div className="flex flex-col gap-1 md:col-span-2">
+                  <span className="text-xs font-medium text-gray-500">
+                    Meses recorrente (inclui o mês do lançamento)
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    className="rounded-xl border-gray-200 text-sm focus:border-[#A11C27] focus:ring-[#A11C27] w-32"
+                    value={form.recurrenceMonths}
+                    onChange={(e) =>
+                      handleFormChange("recurrenceMonths", e.target.value)
+                    }
+                  />
+                  <p className="text-[11px] text-gray-400">
+                    Ex.: 12 → este mês + próximos 11 meses. Para lançamentos
+                    previstos, se a data cair em fim de semana ou feriado
+                    nacional fixo, será ajustada para o próximo dia útil.
+                  </p>
+                </div>
+              )}
             </div>
 
             {formError && (

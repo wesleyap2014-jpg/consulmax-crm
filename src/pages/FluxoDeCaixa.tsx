@@ -183,7 +183,7 @@ const FluxoDeCaixa: React.FC = () => {
       };
     }
 
-    // acumulado até o fim do mês selecionado (somente realizadas)
+    // acumulado até o fim do mês selecionado (considerando filtro de status)
     const ateMes = items.filter((item) => {
       if (item.competencia_ano !== year) return false;
       if (item.competencia_mes > month) return false;
@@ -233,7 +233,8 @@ const FluxoDeCaixa: React.FC = () => {
     return base;
   }, [items]);
 
-  // 7) Funções auxiliares do formulário
+  // ====== helpers de formulário ======
+
   const resetForm = () => {
     setForm({
       data: todayISO,
@@ -339,14 +340,12 @@ const FluxoDeCaixa: React.FC = () => {
           console.error("Erro ao atualizar lançamento", error);
           setFormError("Erro ao salvar lançamento.");
         } else {
-          // Atualiza em memória
           setItems((prev) =>
             prev.map((it) =>
               it.id === editingItem.id
                 ? {
                     ...it,
                     ...payload,
-                    // mantém campos imutáveis
                     id: it.id,
                     created_at: it.created_at,
                     created_by: it.created_by,
@@ -750,7 +749,7 @@ const FluxoDeCaixa: React.FC = () => {
               ))}
             </tbody>
 
-            {/* Rodapé com totais */}
+            {/* Rodapé com total do período */}
             {filteredItems.length > 0 && (
               <tfoot className="bg-gray-50/60">
                 <tr>
@@ -758,7 +757,7 @@ const FluxoDeCaixa: React.FC = () => {
                     colSpan={6}
                     className="px-3 py-2 text-right text-[11px] font-medium text-gray-600"
                   >
-                    Totais no filtro:
+                    Resultado no filtro:
                   </td>
                   <td className="px-3 py-2 text-right text-[11px] font-semibold text-gray-900">
                     {currency(resumo.resultado)}

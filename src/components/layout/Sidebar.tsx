@@ -2,18 +2,29 @@
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import type { LucideIcon } from 'lucide-react'
 import {
   UserCheck, Briefcase, Calendar, Calculator, FileText, Wallet, Layers, UserCog,
   SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight, Trophy,
-  CalendarClock,
+  CalendarClock, LineChart,
 } from 'lucide-react'
 
 type SidebarProps = { onNavigate?: () => void }
 
-const items = [
+const WESLEY_ID = '524f9d55-48c0-4c56-9ab8-7e6115e7c0b0'
+
+type NavItem = {
+  to: string
+  label: string
+  icon: LucideIcon
+  onlyForWesley?: boolean
+}
+
+const items: NavItem[] = [
   { to: '/oportunidades',   label: 'Oportunidades',    icon: Briefcase },
-  { to: '/propostas',        label: 'Propostas',        icon: FileText },
-  { to: '/carteira',         label: 'Carteira',         icon: Wallet },
+  { to: '/propostas',       label: 'Propostas',        icon: FileText },
+  { to: '/carteira',        label: 'Carteira',         icon: Wallet },
+  { to: '/fluxo-de-caixa',  label: 'Fluxo de Caixa',   icon: LineChart, onlyForWesley: true },
   { to: '/giro-de-carteira', label: 'Giro de Carteira', icon: CalendarClock },
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos', icon: Layers },
   { to: '/clientes',         label: 'Clientes',         icon: UserCheck },
@@ -23,7 +34,7 @@ const items = [
   { to: '/usuarios',         label: 'Usuários',         icon: UserCog },
   { to: '/parametros',       label: 'Parâmetros',       icon: SlidersHorizontal },
   { to: '/links',            label: 'Links Úteis',      icon: LinkIcon },
-] as const
+]
 
 const LOGO_URL = '/logo-consulmax.png?v=3'
 const FALLBACK_URL = '/favicon.ico?v=3'
@@ -151,6 +162,27 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     })()
     return () => { alive = false }
   }, [location.pathname])
+
+  // Usuário autenticado (para esconder Fluxo de Caixa pros demais)
+  const [authUserId, setAuthUserId] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser()
+        if (!alive) return
+        if (error || !data?.user) {
+          setAuthUserId(null)
+        } else {
+          setAuthUserId(data.user.id)
+        }
+      } catch {
+        if (!alive) return
+        setAuthUserId(null)
+      }
+    })()
+    return () => { alive = false }
+  }, [])
 
   // classes utilitárias colapsado
   const widthClass = collapsed ? 'md:w-20 w-full' : 'md:w-64 w-full'
@@ -329,6 +361,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         {/* Demais itens */}
         {items
           .filter(i => i.to !== '/oportunidades' && i.to !== '/propostas')
+          .filter(i => !i.onlyForWesley || authUserId === WESLEY_ID)
           .map((i) => (
             <NavLink
               key={i.to}

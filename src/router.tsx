@@ -24,6 +24,7 @@ const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdmini
 const LinksUteis              = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
+const FluxoDeCaixa            = React.lazy(() => import("./pages/FluxoDeCaixa")); // << NOVO
 
 // ==== Giro de Carteira SEM lazy (import direto) ====
 import GiroDeCarteira from "./pages/GiroDeCarteira";
@@ -69,9 +70,9 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="/oportunidades" replace /> },
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },
 
-          { path: "oportunidades", element: withSuspense(<Oportunidades />) },
-          { path: "clientes",      element: withSuspense(<Clientes />) },
-          { path: "agenda",        element: withSuspense(<Agenda />) },
+          { path: "oportunidades",  element: withSuspense(<Oportunidades />) },
+          { path: "clientes",       element: withSuspense(<Clientes />) },
+          { path: "agenda",         element: withSuspense(<Agenda />) },
 
           {
             path: "simuladores",
@@ -87,6 +88,9 @@ export const router = createBrowserRouter([
           { path: "comissoes",  element: withSuspense(<Comissoes />) },
           { path: "carteira",   element: withSuspense(<Carteira />) },
 
+          // NOVO: Fluxo de Caixa (página já limita pelo auth.getUser internamente)
+          { path: "fluxo-de-caixa", element: withSuspense(<FluxoDeCaixa />) },
+
           // Giro de Carteira: import direto + ErrorBoundary com reset por rota
           {
             path: "giro-de-carteira",
@@ -99,10 +103,10 @@ export const router = createBrowserRouter([
           { path: "giro",              element: <Navigate to="/giro-de-carteira" replace /> },
           { path: "giro-de-carteira/", element: <Navigate to="/giro-de-carteira" replace /> },
 
-          { path: "ranking", element: withSuspense(<RankingVendedores />) },
-          { path: "ranking-vendedores", element: <Navigate to="/ranking" replace /> },
-          { path: "vendedores/ranking", element: <Navigate to="/ranking" replace /> },
-          { path: "ranking-vendas",     element: <Navigate to="/ranking" replace /> },
+          { path: "ranking",             element: withSuspense(<RankingVendedores />) },
+          { path: "ranking-vendedores",  element: <Navigate to="/ranking" replace /> },
+          { path: "vendedores/ranking",  element: <Navigate to="/ranking" replace /> },
+          { path: "ranking-vendas",      element: <Navigate to="/ranking" replace /> },
 
           { path: "usuarios",         element: withSuspense(<Usuarios />) },
           { path: "gestao-de-grupos", element: withSuspense(<GestaoDeGrupos />) },

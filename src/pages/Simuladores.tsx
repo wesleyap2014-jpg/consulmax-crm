@@ -577,6 +577,9 @@ export default function Simuladores() {
 
       parcela_contemplacao: parcContemplacao,
 
+      // >>> NOVO: salvar antecipação de taxa de adm em parcelas <<<
+      antecip_parcelas: tabelaSelecionada.antecip_parcelas,
+
       valor_categoria: calc.valorCategoria,
       parcela_termo: calc.parcelaTermo,
       parcela_ate_1_ou_2: calc.parcelaAte,
@@ -1432,7 +1435,7 @@ function EmbraconSimulator(p: EmbraconProps) {
       {p.leadId ? (
         <>
           <Card>
-            <CardHeader><CardTitle>Configurações do Plano</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Configurações do Plano</CardHeader></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
               <div>
                 <Label>Segmento</Label>

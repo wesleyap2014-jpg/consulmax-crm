@@ -106,6 +106,14 @@ function PercentInput({
   );
 }
 
+/* ===== Helper para rótulo das parcelas de antecipação ===== */
+function labelAntecipacao(antecipParcelas?: number | null) {
+  if (!antecipParcelas || antecipParcelas <= 0) return "Parcela inicial";
+  if (antecipParcelas === 1) return "Parcela 1";
+  if (antecipParcelas === 2) return "Parcelas 1 e 2";
+  return `Parcelas 1 a ${antecipParcelas}`;
+}
+
 /* ======================= Cálculo ========================= */
 export type CalcInput = {
   credito: number;
@@ -619,12 +627,7 @@ export default function Simuladores() {
       return "veículo";
     })();
 
-    const primeiraParcelaLabel =
-      tabelaSelecionada.antecip_parcelas === 2
-        ? "Parcelas 1 e 2"
-        : tabelaSelecionada.antecip_parcelas === 1
-        ? "Parcela 1"
-        : "Parcela inicial";
+    const primeiraParcelaLabel = labelAntecipacao(tabelaSelecionada.antecip_parcelas);
 
     const parcelaRestanteValor = brMoney(calc.parcelaEscolhida);
     const segundaParcExtra =
@@ -1529,7 +1532,7 @@ function EmbraconSimulator(p: EmbraconProps) {
             <CardHeader><CardTitle>Plano de Pagamento até a Contemplação</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div>
-                <Label>{p.tabelaSelecionada?.antecip_parcelas === 2 ? "Parcelas 1 e 2" : p.tabelaSelecionada?.antecip_parcelas === 1 ? "Parcela 1" : "Parcela Inicial"}</Label>
+                <Label>{labelAntecipacao(p.tabelaSelecionada?.antecip_parcelas)}</Label>
                 <Input value={p.calc ? brMoney(p.calc.parcelaAte) : ""} readOnly />
               </div>
               <div>

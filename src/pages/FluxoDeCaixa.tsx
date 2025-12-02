@@ -10,6 +10,7 @@ import {
   Tooltip,
   Legend,
   CartesianGrid,
+  Cell,
 } from "recharts";
 
 const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
@@ -688,17 +689,17 @@ const FluxoDeCaixa: React.FC = () => {
           </p>
         </div>
 
-        {/* Entradas */}
+        {/* Entradas (AZUL) */}
         <div className="bg-white/80 backdrop-blur border border-gray-100 rounded-2xl p-4 shadow-sm">
           <p className="text-xs font-medium text-gray-500">
             Entradas ({statusFilter === "all" ? "todas" : statusFilter})
           </p>
-          <p className="mt-1 text-xl font-semibold text-[#16A34A]">
+          <p className="mt-1 text-xl font-semibold text-[#1E293F]">
             {currency(resumo.entradas)}
           </p>
         </div>
 
-        {/* Saídas */}
+        {/* Saídas (VERMELHO) */}
         <div className="bg-white/80 backdrop-blur border border-gray-100 rounded-2xl p-4 shadow-sm">
           <p className="text-xs font-medium text-gray-500">
             Saídas ({statusFilter === "all" ? "todas" : statusFilter})
@@ -708,12 +709,12 @@ const FluxoDeCaixa: React.FC = () => {
           </p>
         </div>
 
-        {/* Saldo final */}
+        {/* Saldo final (VERDE POSITIVO, VERMELHO NEGATIVO) */}
         <div className="bg-white/80 backdrop-blur border border-gray-100 rounded-2xl p-4 shadow-sm">
           <p className="text-xs font-medium text-gray-500">Saldo do período</p>
           <p
             className={`mt-1 text-xl font-semibold ${
-              resumo.resultado >= 0 ? "text-[#16A34A]" : "text-[#A11C27]"
+              resumo.resultado >= 0 ? "text-[#008000]" : "text-[#A11C27]"
             }`}
           >
             {currency(resumo.resultado)}
@@ -754,10 +755,17 @@ const FluxoDeCaixa: React.FC = () => {
                 }
               />
               <Legend />
-              {/* Cores Consulmax: Entradas (verde), Saídas (rubi), Saldo (azul marinho) */}
-              <Bar dataKey="entradas" name="Entradas" fill="#16A34A" />
+              {/* Entrada: Azul, Saída: Vermelho, Saldo: Verde/ Vermelho */}
+              <Bar dataKey="entradas" name="Entradas" fill="#1E293F" />
               <Bar dataKey="saidas" name="Saídas" fill="#A11C27" />
-              <Bar dataKey="resultado" name="Saldo" fill="#1E293F" />
+              <Bar dataKey="resultado" name="Saldo" fill="#008000">
+                {chartData.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={entry.resultado >= 0 ? "#008000" : "#A11C27"}
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -833,7 +841,7 @@ const FluxoDeCaixa: React.FC = () => {
                     <span
                       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
                         item.tipo === "entrada"
-                          ? "bg-[#16A34A]/10 text-[#16A34A]"
+                          ? "bg-[#1E293F]/10 text-[#1E293F]"
                           : "bg-[#A11C27]/10 text-[#A11C27]"
                       }`}
                     >
@@ -866,7 +874,7 @@ const FluxoDeCaixa: React.FC = () => {
                     <span
                       className={
                         item.tipo === "entrada"
-                          ? "text-[#16A34A] font-medium"
+                          ? "text-[#1E293F] font-medium"
                           : "text-[#A11C27] font-medium"
                       }
                     >
@@ -903,7 +911,13 @@ const FluxoDeCaixa: React.FC = () => {
                   >
                     Resultado no filtro:
                   </td>
-                  <td className="px-3 py-2 text-right text-[11px] font-semibold text-gray-900">
+                  <td
+                    className={`px-3 py-2 text-right text-[11px] font-semibold ${
+                      resumo.resultado >= 0
+                        ? "text-[#008000]"
+                        : "text-[#A11C27]"
+                    }`}
+                  >
                     {currency(resumo.resultado)}
                   </td>
                   <td />

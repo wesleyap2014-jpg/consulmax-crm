@@ -91,12 +91,12 @@ const isNationalFixedHolidayBR = (date: Date) => {
   const d = date.getDate();
   const m = date.getMonth() + 1;
   const fixed: Array<[number, number]> = [
-    [1, 1],   // 01/01 - Confraternização Universal
-    [21, 4],  // 21/04 - Tiradentes
-    [1, 5],   // 01/05 - Dia do Trabalho
-    [7, 9],   // 07/09 - Independência
+    [1, 1], // 01/01 - Confraternização Universal
+    [21, 4], // 21/04 - Tiradentes
+    [1, 5], // 01/05 - Dia do Trabalho
+    [7, 9], // 07/09 - Independência
     [12, 10], // 12/10 - Nossa Senhora Aparecida
-    [2, 11],  // 02/11 - Finados
+    [2, 11], // 02/11 - Finados
     [15, 11], // 15/11 - Proclamação da República
     [25, 12], // 25/12 - Natal
   ];
@@ -472,7 +472,7 @@ const FluxoDeCaixa: React.FC = () => {
 
         for (let i = 0; i < recurrenceCount; i++) {
           // calcula ano/mês alvo somando i meses ao mês base
-          const totalMonths = (baseYear * 12 + (baseMonth - 1)) + i;
+          const totalMonths = baseYear * 12 + (baseMonth - 1) + i;
           const anoAlvo = Math.floor(totalMonths / 12);
           const mesIndex = totalMonths % 12; // 0..11
           const mesAlvo = mesIndex + 1;
@@ -693,7 +693,7 @@ const FluxoDeCaixa: React.FC = () => {
           <p className="text-xs font-medium text-gray-500">
             Entradas ({statusFilter === "all" ? "todas" : statusFilter})
           </p>
-          <p className="mt-1 text-xl font-semibold text-emerald-700">
+          <p className="mt-1 text-xl font-semibold text-[#16A34A]">
             {currency(resumo.entradas)}
           </p>
         </div>
@@ -703,7 +703,7 @@ const FluxoDeCaixa: React.FC = () => {
           <p className="text-xs font-medium text-gray-500">
             Saídas ({statusFilter === "all" ? "todas" : statusFilter})
           </p>
-          <p className="mt-1 text-xl font-semibold text-red-700">
+          <p className="mt-1 text-xl font-semibold text-[#A11C27]">
             {currency(resumo.saidas)}
           </p>
         </div>
@@ -713,7 +713,7 @@ const FluxoDeCaixa: React.FC = () => {
           <p className="text-xs font-medium text-gray-500">Saldo do período</p>
           <p
             className={`mt-1 text-xl font-semibold ${
-              resumo.resultado >= 0 ? "text-emerald-700" : "text-red-700"
+              resumo.resultado >= 0 ? "text-[#16A34A]" : "text-[#A11C27]"
             }`}
           >
             {currency(resumo.resultado)}
@@ -754,10 +754,10 @@ const FluxoDeCaixa: React.FC = () => {
                 }
               />
               <Legend />
-              {/* Cores pedidas: Entrada Azul, Saída Vermelho, Saldo Verde */}
-              <Bar dataKey="entradas" name="Entradas" fill="#2563eb" />
-              <Bar dataKey="saidas" name="Saídas" fill="#dc2626" />
-              <Bar dataKey="resultado" name="Saldo" fill="#16a34a" />
+              {/* Cores Consulmax: Entradas (verde), Saídas (rubi), Saldo (azul marinho) */}
+              <Bar dataKey="entradas" name="Entradas" fill="#16A34A" />
+              <Bar dataKey="saidas" name="Saídas" fill="#A11C27" />
+              <Bar dataKey="resultado" name="Saldo" fill="#1E293F" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -777,7 +777,7 @@ const FluxoDeCaixa: React.FC = () => {
         </div>
 
         {loadError && (
-          <div className="mb-3 rounded-xl bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
+          <div className="mb-3 rounded-xl bg-[#A11C27]/5 border border-[#A11C27]/20 px-3 py-2 text-xs text-[#A11C27]">
             {loadError}
           </div>
         )}
@@ -833,8 +833,8 @@ const FluxoDeCaixa: React.FC = () => {
                     <span
                       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
                         item.tipo === "entrada"
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-red-50 text-red-700"
+                          ? "bg-[#16A34A]/10 text-[#16A34A]"
+                          : "bg-[#A11C27]/10 text-[#A11C27]"
                       }`}
                     >
                       {item.tipo === "entrada" ? "Entrada" : "Saída"}
@@ -853,7 +853,7 @@ const FluxoDeCaixa: React.FC = () => {
                     <span
                       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
                         item.status === "realizado"
-                          ? "bg-blue-50 text-blue-700"
+                          ? "bg-[#1E293F]/10 text-[#1E293F]"
                           : "bg-amber-50 text-amber-700"
                       }`}
                     >
@@ -866,8 +866,8 @@ const FluxoDeCaixa: React.FC = () => {
                     <span
                       className={
                         item.tipo === "entrada"
-                          ? "text-emerald-700 font-medium"
-                          : "text-red-700 font-medium"
+                          ? "text-[#16A34A] font-medium"
+                          : "text-[#A11C27] font-medium"
                       }
                     >
                       {currency(Number(item.valor || 0))}
@@ -883,7 +883,7 @@ const FluxoDeCaixa: React.FC = () => {
                       </button>
                       <button
                         onClick={() => handleDelete(item)}
-                        className="text-[11px] text-red-600 hover:underline"
+                        className="text-[11px] text-[#A11C27] hover:underline"
                       >
                         Excluir
                       </button>
@@ -1093,7 +1093,7 @@ const FluxoDeCaixa: React.FC = () => {
             </div>
 
             {formError && (
-              <div className="mb-3 rounded-xl bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
+              <div className="mb-3 rounded-xl bg-[#A11C27]/5 border border-[#A11C27]/20 px-3 py-2 text-xs text-[#A11C27]">
                 {formError}
               </div>
             )}

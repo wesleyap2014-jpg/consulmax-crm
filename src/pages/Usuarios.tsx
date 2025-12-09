@@ -449,7 +449,13 @@ export default function Usuarios() {
   ============================================================ */
   if (isAdmin === null) {
     return (
-      <div style={{ maxWidth: 1280, margin: "40px auto", fontFamily: "Inter, system-ui, Arial" }}>
+      <div
+        style={{
+          maxWidth: 1280,
+          margin: "40px auto",
+          fontFamily: "Inter, system-ui, Arial",
+        }}
+      >
         <div style={card}>Verificando permissões…</div>
       </div>
     );
@@ -457,7 +463,13 @@ export default function Usuarios() {
 
   if (!isAdmin) {
     return (
-      <div style={{ maxWidth: 1280, margin: "40px auto", fontFamily: "Inter, system-ui, Arial" }}>
+      <div
+        style={{
+          maxWidth: 1280,
+          margin: "40px auto",
+          fontFamily: "Inter, system-ui, Arial",
+        }}
+      >
         <div style={card}>
           <h2 style={{ marginTop: 0 }}>Acesso negado</h2>
           <p>Esta guia é exclusiva para administradores.</p>
@@ -467,9 +479,23 @@ export default function Usuarios() {
   }
 
   return (
-    <div style={{ maxWidth: 1280, margin: "40px auto", fontFamily: "Inter, system-ui, Arial" }}>
+    <div
+      style={{
+        maxWidth: 1280,
+        margin: "40px auto",
+        fontFamily: "Inter, system-ui, Arial",
+      }}
+    >
       {/* Header / barra ações */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 12,
+        }}
+      >
         <input
           placeholder="Buscar por nome, e-mail ou telefone"
           value={search}
@@ -488,7 +514,13 @@ export default function Usuarios() {
       <div style={card}>
         <h2 style={{ margin: "0 0 12px" }}>Usuários Cadastrados</h2>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "separate",
+              borderSpacing: 0,
+            }}
+          >
             <thead>
               <tr>
                 <th style={th}>Foto</th>
@@ -503,7 +535,9 @@ export default function Usuarios() {
             <tbody>
               {loadingList && (
                 <tr>
-                  <td style={td} colSpan={7}>Carregando…</td>
+                  <td style={td} colSpan={7}>
+                    Carregando…
+                  </td>
                 </tr>
               )}
               {!loadingList &&
@@ -560,9 +594,13 @@ export default function Usuarios() {
                     </td>
                     <td style={td}>{u.email}</td>
                     <td style={td}>
-                      <span style={roleBadge(u.role)}>{String(u.role || "").toUpperCase()}</span>
+                      <span style={roleBadge(u.role)}>
+                        {String(u.role || "").toUpperCase()}
+                      </span>
                     </td>
-                    <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
+                    <td style={td}>
+                      {u.phone ? maskPhone(String(u.phone)) : "-"}
+                    </td>
                     <td style={td}>
                       {u.pix_type
                         ? u.pix_type === "cpf"
@@ -591,7 +629,14 @@ export default function Usuarios() {
         </div>
 
         {/* paginação */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
           <button
             style={btnGhost}
             disabled={page <= 1}
@@ -616,29 +661,53 @@ export default function Usuarios() {
       {openCreate && (
         <div style={modalBackdrop}>
           <div style={modalCardWide}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
               <h3 style={{ margin: 0 }}>Novo usuário</h3>
-              <button onClick={() => setOpenCreate(false)} style={btnGhost}>Fechar</button>
+              <button
+                onClick={() => setOpenCreate(false)}
+                style={btnGhost}
+              >
+                Fechar
+              </button>
             </div>
 
             <div style={grid3}>
               <input
                 placeholder="Nome completo"
                 value={form.nome}
-                onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({ ...s, nome: e.target.value }))
+                }
                 style={input}
               />
               <input
                 placeholder="CPF"
                 value={form.cpf}
-                onChange={(e) => setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    cpf: maskCPF(e.target.value),
+                  }))
+                }
                 style={input}
                 inputMode="numeric"
               />
               <input
                 placeholder="Celular"
                 value={form.celular}
-                onChange={(e) => setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    celular: maskPhone(e.target.value),
+                  }))
+                }
                 style={input}
                 inputMode="tel"
               />
@@ -646,25 +715,52 @@ export default function Usuarios() {
               <input
                 placeholder="CEP"
                 value={form.cep}
-                onChange={(e) => setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    cep: maskCEP(e.target.value),
+                  }))
+                }
                 style={input}
                 inputMode="numeric"
               />
               <input
                 placeholder="Logradouro"
                 value={form.logradouro}
-                onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    logradouro: e.target.value,
+                  }))
+                }
                 style={input}
               />
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                }}
+              >
                 <input
                   placeholder="Número"
                   value={form.sn ? "s/n" : form.numero}
                   disabled={form.sn}
-                  onChange={(e) => setForm((s) => ({ ...s, numero: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((s) => ({
+                      ...s,
+                      numero: e.target.value,
+                    }))
+                  }
                   style={input}
                 />
-                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <label
+                  style={{
+                    display: "flex",
+                    gap: 6,
+                    alignItems: "center",
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={form.sn}
@@ -683,13 +779,23 @@ export default function Usuarios() {
               <input
                 placeholder="Bairro"
                 value={form.bairro}
-                onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    bairro: e.target.value,
+                  }))
+                }
                 style={input}
               />
               <input
                 placeholder="Cidade"
                 value={form.cidade}
-                onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    cidade: e.target.value,
+                  }))
+                }
                 style={input}
               />
               <input
@@ -708,12 +814,22 @@ export default function Usuarios() {
                 placeholder="E-mail"
                 value={form.email}
                 type="email"
-                onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    email: e.target.value,
+                  }))
+                }
                 style={input}
               />
               <select
                 value={form.role}
-                onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
+                onChange={(e) =>
+                  setForm((s) => ({
+                    ...s,
+                    role: e.target.value as RoleUI,
+                  }))
+                }
                 style={input}
               >
                 <option value="admin">Admin</option>
@@ -721,10 +837,21 @@ export default function Usuarios() {
                 <option value="operacoes">Operações</option>
               </select>
 
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                }}
+              >
                 <select
                   value={form.pix_type}
-                  onChange={(e) => setForm((s) => ({ ...s, pix_type: e.target.value as any }))}
+                  onChange={(e) =>
+                    setForm((s) => ({
+                      ...s,
+                      pix_type: e.target.value as any,
+                    }))
+                  }
                   style={input}
                 >
                   <option value="">Tipo da chave PIX</option>
@@ -735,12 +862,19 @@ export default function Usuarios() {
                 <input
                   placeholder="Chave PIX"
                   value={form.pix_key}
-                  onChange={(e) => setForm((s) => ({ ...s, pix_key: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((s) => ({
+                      ...s,
+                      pix_key: e.target.value,
+                    }))
+                  }
                   style={input}
                 />
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: 12 }}
+              >
                 <input
                   type="file"
                   accept="image/*"
@@ -777,11 +911,19 @@ export default function Usuarios() {
                   marginTop: 4,
                 }}
               >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
+                <div
+                  style={{ fontWeight: 700, marginBottom: 4 }}
+                >
+                  Guias com acesso:
+                </div>
                 {scopeCheckboxes}
               </div>
 
-              <button onClick={submitCreate} disabled={creating} style={btnPrimaryFull}>
+              <button
+                onClick={submitCreate}
+                disabled={creating}
+                style={btnPrimaryFull}
+              >
                 {creating ? "Cadastrando..." : "Cadastrar"}
               </button>
             </div>
@@ -800,18 +942,33 @@ export default function Usuarios() {
               <input
                 placeholder="Nome"
                 value={editing.nome || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, nome: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    nome: e.target.value,
+                  }))
+                }
                 style={input}
               />
               <input
                 placeholder="E-mail"
                 value={editing.email || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, email: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    email: e.target.value,
+                  }))
+                }
                 style={input}
               />
               <select
                 value={editing.role || "viewer"}
-                onChange={(e) => setEditing((s: any) => ({ ...s, role: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    role: e.target.value,
+                  }))
+                }
                 style={input}
               >
                 <option value="viewer">Operações</option>
@@ -823,7 +980,10 @@ export default function Usuarios() {
                 placeholder="Celular"
                 value={editing.celular || ""}
                 onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, celular: maskPhone(e.target.value) }))
+                  setEditing((s: any) => ({
+                    ...s,
+                    celular: maskPhone(e.target.value),
+                  }))
                 }
                 style={input}
               />
@@ -831,7 +991,10 @@ export default function Usuarios() {
                 placeholder="CEP"
                 value={editing.cep || ""}
                 onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))
+                  setEditing((s: any) => ({
+                    ...s,
+                    cep: maskCEP(e.target.value),
+                  }))
                 }
                 style={input}
               />
@@ -839,7 +1002,10 @@ export default function Usuarios() {
                 placeholder="Logradouro"
                 value={editing.logradouro || ""}
                 onChange={(e) =>
-                  setEditing((s: any) => ({ ...s, logradouro: e.target.value }))
+                  setEditing((s: any) => ({
+                    ...s,
+                    logradouro: e.target.value,
+                  }))
                 }
                 style={input}
               />
@@ -847,19 +1013,34 @@ export default function Usuarios() {
               <input
                 placeholder="Número"
                 value={editing.numero || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, numero: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    numero: e.target.value,
+                  }))
+                }
                 style={input}
               />
               <input
                 placeholder="Bairro"
                 value={editing.bairro || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, bairro: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    bairro: e.target.value,
+                  }))
+                }
                 style={input}
               />
               <input
                 placeholder="Cidade"
                 value={editing.cidade || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cidade: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    cidade: e.target.value,
+                  }))
+                }
                 style={input}
               />
               <input
@@ -868,7 +1049,9 @@ export default function Usuarios() {
                 onChange={(e) =>
                   setEditing((s: any) => ({
                     ...s,
-                    uf: String(e.target.value).toUpperCase().slice(0, 2),
+                    uf: String(e.target.value)
+                      .toUpperCase()
+                      .slice(0, 2),
                   }))
                 }
                 style={input}
@@ -876,7 +1059,12 @@ export default function Usuarios() {
 
               <select
                 value={editing.pix_type || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, pix_type: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    pix_type: e.target.value,
+                  }))
+                }
                 style={input}
               >
                 <option value="">Tipo da chave PIX</option>
@@ -887,12 +1075,19 @@ export default function Usuarios() {
               <input
                 placeholder="Chave PIX"
                 value={editing.pix_key || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, pix_key: e.target.value }))}
+                onChange={(e) =>
+                  setEditing((s: any) => ({
+                    ...s,
+                    pix_key: e.target.value,
+                  }))
+                }
                 style={input}
               />
 
               {/* upload foto (opcional na edição) */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: 12 }}
+              >
                 <input
                   type="file"
                   accept="image/*"
@@ -951,14 +1146,24 @@ export default function Usuarios() {
                   gap: 8,
                 }}
               >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Guias com acesso:</div>
+                <div
+                  style={{ fontWeight: 700, marginBottom: 4 }}
+                >
+                  Guias com acesso:
+                </div>
                 {ALL_SCOPES.map((k) => {
-                  const list: ScopeKey[] = Array.isArray(editing.scopes) ? editing.scopes : [];
+                  const list: ScopeKey[] = Array.isArray(editing.scopes)
+                    ? editing.scopes
+                    : [];
                   const checked = list.includes(k);
                   return (
                     <label
                       key={k}
-                      style={{ display: "flex", gap: 8, alignItems: "center" }}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                      }}
                     >
                       <input
                         type="checkbox"
@@ -983,7 +1188,11 @@ export default function Usuarios() {
             </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={saveEdit} disabled={savingEdit} style={btnPrimary}>
+              <button
+                onClick={saveEdit}
+                disabled={savingEdit}
+                style={btnPrimary}
+              >
                 {savingEdit ? "Salvando..." : "Salvar alterações"}
               </button>
               <button onClick={closeEdit} style={btnGhost}>
@@ -1016,12 +1225,20 @@ const grid3: React.CSSProperties = {
 const input: React.CSSProperties = {
   padding: 10,
   borderRadius: 12,
-  border: "1px solid "#e5e7eb",
+  border: "1px solid #e5e7eb",
   outline: "none",
 };
 
-const th: React.CSSProperties = { textAlign: "left", fontSize: 12, color: "#475569", padding: 8 };
-const td: React.CSSProperties = { padding: 8, borderTop: "1px solid #eee" };
+const th: React.CSSProperties = {
+  textAlign: "left",
+  fontSize: 12,
+  color: "#475569",
+  padding: 8,
+};
+const td: React.CSSProperties = {
+  padding: 8,
+  borderTop: "1px solid #eee",
+};
 
 const btnPrimaryFull: React.CSSProperties = {
   gridColumn: "1 / span 3",

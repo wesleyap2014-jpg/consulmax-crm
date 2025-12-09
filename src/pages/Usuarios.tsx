@@ -134,7 +134,6 @@ export default function Usuarios() {
       const from = (page - 1) * pageSize;
       const to = from + pageSize - 1;
 
-      // count: "exact" para paginação
       let q = supabase
         .from("users")
         .select(
@@ -234,7 +233,6 @@ export default function Usuarios() {
   }
 
   async function submitCreate() {
-    // validações
     if (!form.nome.trim()) return alert("Informe o nome.");
     if (!form.email.trim()) return alert("Informe o e-mail.");
     if (onlyDigits(form.cpf).length !== 11) return alert("CPF inválido.");
@@ -247,7 +245,6 @@ export default function Usuarios() {
       const numeroFinal = form.sn ? "s/n" : form.numero.trim();
       const roleForAPI = mapRoleToAPI(form.role);
 
-      // compat: enviar telefone
       const payload = {
         nome: form.nome.trim(),
         email: form.email.trim().toLowerCase(),
@@ -265,6 +262,7 @@ export default function Usuarios() {
         avatar_url,
         pix_type: form.pix_type || null,
         pix_key: form.pix_type ? form.pix_key.trim() : null,
+        is_active: true, // novo usuário já nasce ativo
       };
 
       const res = await fetch("/api/users/create", {
@@ -335,7 +333,7 @@ export default function Usuarios() {
   function openEdit(u: any) {
     setEditing({
       ...u,
-      cpf: "", // não mostramos cpf salvo (se houver encriptação ou compliance)
+      cpf: "",
       celular: u.phone ? maskPhone(String(u.phone)) : "",
       cep: u.cep ? maskCEP(String(u.cep)) : "",
       fotoFile: null as File | null,
@@ -373,7 +371,6 @@ export default function Usuarios() {
     try {
       setSavingEdit(true);
 
-      // upload foto se selecionada
       let avatar_url: string | undefined = undefined;
       if (editing.fotoFile) {
         const u = await uploadFotoSeNecessario(editing.fotoFile);
@@ -388,7 +385,7 @@ export default function Usuarios() {
       const update: any = {
         nome: editing.nome?.trim() || null,
         email: editing.email?.trim().toLowerCase() || null,
-        role: editing.role || null, // admin | vendedor | viewer (do banco)
+        role: editing.role || null, // admin | vendedor | viewer
         phone: editing.celular ? onlyDigits(editing.celular) : null,
         telefone: editing.celular ? onlyDigits(editing.celular) : null,
         cep: editing.cep ? onlyDigits(editing.cep) : null,
@@ -400,8 +397,7 @@ export default function Usuarios() {
         pix_type: editing.pix_type || null,
         pix_key: editing.pix_key || null,
         scopes: scopesList,
-        // aqui entra o controle de ativo/inativo
-        is_active: editing.is_active !== false, // default true se vier undefined
+        is_active: editing.is_active !== false, // se não for false, considera ativo
       };
       if (avatar_url) update.avatar_url = avatar_url;
 
@@ -1020,7 +1016,7 @@ const grid3: React.CSSProperties = {
 const input: React.CSSProperties = {
   padding: 10,
   borderRadius: 12,
-  border: "1px solid #e5e7eb",
+  border: "1px solid "#e5e7eb",
   outline: "none",
 };
 

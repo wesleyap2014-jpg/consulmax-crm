@@ -1,4 +1,3 @@
-// src/components/layout/Sidebar.tsx
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from 'react'
 import { supabase } from '@/lib/supabaseClient'
@@ -39,6 +38,13 @@ const items: NavItem[] = [
 const LOGO_URL = '/logo-consulmax.png?v=3'
 const FALLBACK_URL = '/favicon.ico?v=3'
 type AdminRow = { id: string; name: string; slug: string | null }
+
+type NavAlerts = {
+  oportunidades: boolean
+  fluxoCaixa: boolean
+  gestaoGrupos: boolean
+  agenda: boolean
+}
 
 /** ====== Liquid Glass ====== */
 const glassSidebarBase: CSSProperties = {
@@ -106,6 +112,116 @@ const sbLiquidKeyframes = `
 @keyframes sbFloat1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(18px,14px) scale(1.06)} 100%{transform:translate(0,0) scale(1)} }
 @keyframes sbFloat2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-16px,-10px) scale(1.05)} 100%{transform:translate(0,0) scale(1)} }
 `
+
+/** ====== Helpers de data / alertas ====== */
+function todayDateStr() {
+  const d = new Date()
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function dayRangeISO(dateStr: string) {
+  const start = new Date(`${dateStr}T00:00:00`)
+  const end = new Date(`${dateStr}T23:59:59.999`)
+  return { startIso: start.toISOString(), endIso: end.toISOString() }
+}
+
+// ⚠️ Ajuste aqui se o schema de Oportunidades for diferente
+async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('opportunities')
+      .select('id, due_date, status')
+      // oportunidade atrasada: data de vencimento anterior a hoje
+      .lt('due_date', todayStr)
+      // ignora oportunidades já concluídas (ajuste os status conforme o seu schema)
+      .not('status', 'in', '("won","lost","cancelled")')
+      .limit(1)
+
+    if (error) {
+      console.error('Erro ao verificar oportunidades atrasadas:', error.message)
+      return false
+    }
+    return !!(data && data.length > 0)
+  } catch (e) {
+    console.error('Erro inesperado em checkOpportunitiesAlert:', e)
+    return false
+  }
+}
+
+// ⚠️ Ajuste aqui se o schema do Fluxo de Caixa for diferente
+async function checkCashFlowAlert(startIso: string, endIso: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('cash_flows') // ex.: tabela de lançamentos de fluxo de caixa
+      .select('id, date, tipo')
+      .gte('date', startIso)
+      .lte('date', endIso)
+      .in('tipo', ['entrada', 'saida'])
+      .limit(1)
+
+    if (error) {
+      console.error('Erro ao verificar fluxo de caixa do dia:', error.message)
+      return false
+    }
+    return !!(data && data.length > 0)
+  } catch (e) {
+    console.error('Erro inesperado em checkCashFlowAlert:', e)
+    return false
+  }
+}
+
+// Gestão de Grupos: sorteio / vencimento / assembleia hoje
+async function checkGroupsAlert(todayStr: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('groups')
+      .select('id')
+      .or(
+        `prox_vencimento.eq.${todayStr},prox_sorteio.eq.${todayStr},prox_assembleia.eq.${todayStr}`
+      )
+      .limit(1)
+
+    if (error) {
+      console.error('Erro ao verificar eventos de grupos hoje:', error.message)
+      return false
+    }
+    return !!(data && data.length > 0)
+  } catch (e) {
+    console.error('Erro inesperado em checkGroupsAlert:', e)
+    return false
+  }
+}
+
+// Agenda: qualquer evento hoje
+async function checkAgendaAlert(startIso: string, endIso: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('agenda_eventos')
+      .select('id')
+      .gte('inicio_at', startIso)
+      .lte('inicio_at', endIso)
+      .limit(1)
+
+    if (error) {
+      console.error('Erro ao verificar eventos de agenda hoje:', error.message)
+      return false
+    }
+    return !!(data && data.length > 0)
+  } catch (e) {
+    console.error('Erro inesperado em checkAgendaAlert:', e)
+    return false
+  }
+}
+
+const AlertDot: FC = () => (
+  <span
+    className="ml-2 h-2.5 w-2.5 rounded-full bg-[#A11C27] animate-pulse shadow-[0_0_0_4px_rgba(161,28,39,0.25)]"
+    aria-label="Há pendências para hoje"
+  />
+)
 
 /** ====== Componente ====== */
 export default function Sidebar({ onNavigate }: SidebarProps) {
@@ -184,6 +300,54 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     return () => { alive = false }
   }, [])
 
+  // Alerts de hoje (oportunidades, fluxo, grupos, agenda)
+  const [navAlerts, setNavAlerts] = useState<NavAlerts>({
+    oportunidades: false,
+    fluxoCaixa: false,
+    gestaoGrupos: false,
+    agenda: false,
+  })
+
+  useEffect(() => {
+    let alive = true
+    const todayStr = todayDateStr()
+    const { startIso, endIso } = dayRangeISO(todayStr)
+
+    const loadAlerts = async () => {
+      try {
+        const [
+          hasOpp,
+          hasCash,
+          hasGroups,
+          hasAgenda,
+        ] = await Promise.all([
+          checkOpportunitiesAlert(todayStr),
+          checkCashFlowAlert(startIso, endIso),
+          checkGroupsAlert(todayStr),
+          checkAgendaAlert(startIso, endIso),
+        ])
+
+        if (!alive) return
+        setNavAlerts({
+          oportunidades: hasOpp,
+          fluxoCaixa: hasCash,
+          gestaoGrupos: hasGroups,
+          agenda: hasAgenda,
+        })
+      } catch (e) {
+        if (!alive) return
+        console.error('Erro ao carregar alertas de navegação:', e)
+      }
+    }
+
+    loadAlerts()
+    const interval = window.setInterval(loadAlerts, 5 * 60 * 1000) // atualiza a cada 5min
+    return () => {
+      alive = false
+      window.clearInterval(interval)
+    }
+  }, [])
+
   // classes utilitárias colapsado
   const widthClass = collapsed ? 'md:w-20 w-full' : 'md:w-64 w-full'
   const textHidden = collapsed ? 'opacity-0 pointer-events-none select-none w-0' : 'opacity-100'
@@ -258,7 +422,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           end
         >
           <Briefcase className="h-4 w-4" />
-          {!collapsed && 'Oportunidades'}
+          {!collapsed && (
+            <span className="flex items-center justify-between w-full">
+              <span>Oportunidades</span>
+              {navAlerts.oportunidades && <AlertDot />}
+            </span>
+          )}
         </NavLink>
 
         {/* 2) Simuladores (grupo) */}
@@ -378,7 +547,14 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
               end
             >
               <i.icon className="h-4 w-4" />
-              {!collapsed && i.label}
+              {!collapsed && (
+                <span className="flex items-center justify-between w-full">
+                  <span>{i.label}</span>
+                  {i.to === '/fluxo-de-caixa' && navAlerts.fluxoCaixa && <AlertDot />}
+                  {i.to === '/gestao-de-grupos' && navAlerts.gestaoGrupos && <AlertDot />}
+                  {i.to === '/agenda' && navAlerts.agenda && <AlertDot />}
+                </span>
+              )}
             </NavLink>
           ))}
       </nav>

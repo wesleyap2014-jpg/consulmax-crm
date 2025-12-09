@@ -138,10 +138,10 @@ export default function Usuarios() {
       let q = supabase
         .from("users")
         .select(
-          "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes",
+          "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes, is_active",
           { count: "exact" }
         )
-        .order("id", { ascending: false }) // ok manter
+        .order("id", { ascending: false })
         .range(from, to);
 
       if (orSearch) q = q.or(orSearch);
@@ -400,6 +400,8 @@ export default function Usuarios() {
         pix_type: editing.pix_type || null,
         pix_key: editing.pix_key || null,
         scopes: scopesList,
+        // aqui entra o controle de ativo/inativo
+        is_active: editing.is_active !== false, // default true se vier undefined
       };
       if (avatar_url) update.avatar_url = avatar_url;
 
@@ -510,7 +512,14 @@ export default function Usuarios() {
               )}
               {!loadingList &&
                 users.map((u) => (
-                  <tr key={u.id}>
+                  <tr
+                    key={u.id}
+                    style={
+                      u.is_active === false
+                        ? { opacity: 0.45, backgroundColor: "#F9FAFB" }
+                        : undefined
+                    }
+                  >
                     <td style={td}>
                       {u.avatar_url ? (
                         <img
@@ -535,7 +544,24 @@ export default function Usuarios() {
                         />
                       )}
                     </td>
-                    <td style={td}>{u.nome}</td>
+                    <td style={td}>
+                      {u.nome}
+                      {u.is_active === false && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 11,
+                            padding: "2px 6px",
+                            borderRadius: 999,
+                            border: "1px solid #e5e7eb",
+                            textTransform: "uppercase",
+                            letterSpacing: 0.02,
+                          }}
+                        >
+                          Inativo
+                        </span>
+                      )}
+                    </td>
                     <td style={td}>{u.email}</td>
                     <td style={td}>
                       <span style={roleBadge(u.role)}>{String(u.role || "").toUpperCase()}</span>
@@ -771,7 +797,9 @@ export default function Usuarios() {
       {editing && (
         <div style={modalBackdrop}>
           <div style={modalCardWide}>
-            <h3 style={{ marginTop: 0 }}>Editar usuário</h3>
+            <h3 style={{ marginTop: 0 }}>
+              Editar usuário {editing.is_active === false ? "(INATIVO)" : ""}
+            </h3>
             <div style={grid3}>
               <input
                 placeholder="Nome"
@@ -895,6 +923,28 @@ export default function Usuarios() {
                   />
                 )}
               </div>
+
+              {/* Ativo / inativo */}
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 4,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={editing.is_active !== false}
+                  onChange={(e) =>
+                    setEditing((s: any) => ({
+                      ...s,
+                      is_active: e.target.checked,
+                    }))
+                  }
+                />
+                <span>Usuário ativo</span>
+              </label>
 
               {/* scopes na edição */}
               <div

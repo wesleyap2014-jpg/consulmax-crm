@@ -90,24 +90,34 @@ const sbLiquidCanvas: CSSProperties = {
 
 const sbBlob: CSSProperties = {
   position: 'absolute',
-  width: 280, height: 280,
-  borderRadius: '50%', filter: 'blur(40px)', opacity: 0.55,
+  width: 280,
+  height: 280,
+  borderRadius: '50%',
+  filter: 'blur(40px)',
+  opacity: 0.55,
 }
 const sbBlob1: CSSProperties = {
-  left: -80, top: -60,
+  left: -80,
+  top: -60,
   background: 'radial-gradient(closest-side, #A11C27, rgba(161,28,39,0))',
   animation: 'sbFloat1 26s ease-in-out infinite',
 }
 const sbBlob2: CSSProperties = {
-  right: -90, bottom: -60,
+  right: -90,
+  bottom: -60,
   background: 'radial-gradient(closest-side, #1E293F, rgba(30,41,63,0))',
   animation: 'sbFloat2 30s ease-in-out infinite',
 }
 const sbGoldGlow: CSSProperties = {
-  position: 'absolute', right: -60, top: '45%',
-  width: 180, height: 180, borderRadius: '50%',
+  position: 'absolute',
+  right: -60,
+  top: '45%',
+  width: 180,
+  height: 180,
+  borderRadius: '50%',
   background: 'radial-gradient(closest-side, rgba(181,165,115,.35), rgba(181,165,115,0))',
-  filter: 'blur(30px)', opacity: 0.6,
+  filter: 'blur(30px)',
+  opacity: 0.6,
 }
 const sbLiquidKeyframes = `
 @keyframes sbFloat1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(18px,14px) scale(1.06)} 100%{transform:translate(0,0) scale(1)} }
@@ -116,10 +126,7 @@ const sbLiquidKeyframes = `
 
 /** ====== Helpers de data / alertas ====== */
 
-/**
- * Retorna a data de hoje no formato YYYY-MM-DD, usando a data local
- * (evita usar toISOString pra não "voltar" um dia no fuso -04:00).
- */
+/** Data local de hoje em YYYY-MM-DD (sem usar toISOString pra não “voltar” um dia) */
 function todayDateStr() {
   const d = new Date()
   const yyyy = d.getFullYear()
@@ -128,23 +135,15 @@ function todayDateStr() {
   return `${yyyy}-${mm}-${dd}`
 }
 
-/**
- * Gera o intervalo [início, fim] de um dia em ISO (UTC), a partir da data local.
- * Útil para colunas *timestamp/timestamptz* (como agenda.inicio_at).
- */
+/** Intervalo de um dia em ISO (UTC) a partir de uma data local YYYY-MM-DD */
 function dayRangeISO(dateStr: string) {
   const [y, m, d] = dateStr.split('-').map(Number)
-  const start = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)       // meia-noite local
-  const end   = new Date(y, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999)  // fim do dia local
+  const start = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
+  const end = new Date(y, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999)
   return { startIso: start.toISOString(), endIso: end.toISOString() }
 }
 
-/**
- * Oportunidades atrasadas:
- * - Usa expected_close_at (date)
- * - Considera atrasadas as com expected_close_at < hoje
- * - Ignora estágios fechados (Ganho/Perdido)
- */
+/** Oportunidades atrasadas */
 async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -165,12 +164,7 @@ async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
   }
 }
 
-/**
- * Fluxo de Caixa:
- * - Usa a coluna data (date) do schema cash_flows.tsx
- * - Verifica se existe qualquer lançamento (entrada/saída) para a data de hoje
- * - Compara por string de data (YYYY-MM-DD), sem toISOString, pra evitar bug de fuso.
- */
+/** Fluxo de Caixa – usa coluna data (date) e compara string YYYY-MM-DD */
 async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -178,7 +172,7 @@ async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
       .select('id')
       .eq('data', todayStr)
       .in('tipo', ['entrada', 'saida'])
-      .eq('created_by', WESLEY_ID) // opcional: só o fluxo do Wesley
+      .eq('created_by', WESLEY_ID)
       .limit(1)
 
     if (error) {
@@ -192,11 +186,7 @@ async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
   }
 }
 
-/**
- * Gestão de Grupos:
- * - Campos de data pura (date): prox_vencimento, prox_sorteio, prox_assembleia
- * - Compara direto com todayStr (YYYY-MM-DD), sem time
- */
+/** Gestão de Grupos – campos date */
 async function checkGroupsAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -218,11 +208,7 @@ async function checkGroupsAlert(todayStr: string): Promise<boolean> {
   }
 }
 
-/**
- * Agenda:
- * - inicio_at é timestamp/timestamptz
- * - Usa dayRangeISO para pegar o intervalo do dia "local" em UTC
- */
+/** Agenda – inicio_at é timestamp/timestamptz */
 async function checkAgendaAlert(startIso: string, endIso: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -260,18 +246,28 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
   // Colapsar com persistência
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem('@consulmax:sidebar-collapsed') === '1' } catch { return false }
+    try {
+      return localStorage.getItem('@consulmax:sidebar-collapsed') === '1'
+    } catch {
+      return false
+    }
   })
   useEffect(() => {
-    try { localStorage.setItem('@consulmax:sidebar-collapsed', collapsed ? '1' : '0') } catch {}
+    try {
+      localStorage.setItem('@consulmax:sidebar-collapsed', collapsed ? '1' : '0')
+    } catch {}
   }, [collapsed])
 
   const simListId = useId()
   const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive)
-  useEffect(() => { setSimGroupOpen(simuladoresActive) }, [simuladoresActive])
+  useEffect(() => {
+    setSimGroupOpen(simuladoresActive)
+  }, [simuladoresActive])
 
   // fecha drawer no mobile ao navegar
-  useEffect(() => { onNavigate?.() }, [location.pathname, onNavigate])
+  useEffect(() => {
+    onNavigate?.()
+  }, [location.pathname, onNavigate])
 
   // Carregar administradoras
   const [admins, setAdmins] = useState<AdminRow[]>([])
@@ -284,26 +280,34 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       setAdminsLoading(true)
       try {
         const { data, error } = await supabase
-          .from('sim_admins').select('id, name, slug').order('name', { ascending: true })
+          .from('sim_admins')
+          .select('id, name, slug')
+          .order('name', { ascending: true })
         if (!alive) return
         if (error) {
           console.error('Erro ao carregar administradoras:', error.message)
-          setAdmins([]); setEmbraconId(null)
+          setAdmins([])
+          setEmbraconId(null)
         } else {
-          const list = (data ?? [])
+          const list = data ?? []
           setAdmins(list as AdminRow[])
-          const embr = list.find(a => (a as AdminRow).name?.toLowerCase?.() === 'embracon') as AdminRow | undefined
+          const embr = list.find(
+            (a) => (a as AdminRow).name?.toLowerCase?.() === 'embracon'
+          ) as AdminRow | undefined
           setEmbraconId(embr?.id ?? null)
         }
       } catch (e: any) {
         if (!alive) return
         console.error('Erro inesperado ao carregar administradoras:', e?.message || e)
-        setAdmins([]); setEmbraconId(null)
+        setAdmins([])
+        setEmbraconId(null)
       } finally {
         if (alive) setAdminsLoading(false)
       }
     })()
-    return () => { alive = false }
+    return () => {
+      alive = false
+    }
   }, [location.pathname])
 
   // Usuário autenticado (para esconder Fluxo de Caixa pros demais)
@@ -324,10 +328,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         setAuthUserId(null)
       }
     })()
-    return () => { alive = false }
+    return () => {
+      alive = false
+    }
   }, [])
 
-  // Alerts de hoje (oportunidades, fluxo, grupos, agenda)
+  // Alerts de hoje
   const [navAlerts, setNavAlerts] = useState<NavAlerts>({
     oportunidades: false,
     fluxoCaixa: false,
@@ -342,12 +348,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
     const loadAlerts = async () => {
       try {
-        const [
-          hasOpp,
-          hasCash,
-          hasGroups,
-          hasAgenda,
-        ] = await Promise.all([
+        const [hasOpp, hasCash, hasGroups, hasAgenda] = await Promise.all([
           checkOpportunitiesAlert(todayStr),
           checkCashFlowAlert(todayStr),
           checkGroupsAlert(todayStr),
@@ -368,7 +369,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     }
 
     loadAlerts()
-    const interval = window.setInterval(loadAlerts, 5 * 60 * 1000) // atualiza a cada 5min
+    const interval = window.setInterval(loadAlerts, 5 * 60 * 1000)
     return () => {
       alive = false
       window.clearInterval(interval)
@@ -377,7 +378,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
   // classes utilitárias colapsado
   const widthClass = collapsed ? 'md:w-20 w-full' : 'md:w-64 w-full'
-  const textHidden = collapsed ? 'opacity-0 pointer-events-none select-none w-0' : 'opacity-100'
+  const textHidden = collapsed
+    ? 'opacity-0 pointer-events-none select-none w-0'
+    : 'opacity-100'
   const pillPadding = collapsed ? 'px-2.5' : 'px-3'
 
   return (
@@ -389,10 +392,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       role="navigation"
       aria-label="Navegação principal"
     >
-      {/* Efeito desde o topo */}
       {!collapsed && <SidebarLiquidBG />}
 
-      {/* LOGO / NOME / SLOGAN */}
+      {/* LOGO */}
       <Link
         to="/oportunidades"
         className="relative z-[1] flex items-center gap-3 mb-2"
@@ -407,9 +409,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           height={40}
           loading="eager"
           className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).src = FALLBACK_URL }}
+          onError={(e) => {
+            ;(e.currentTarget as HTMLImageElement).src = FALLBACK_URL
+          }}
         />
-        <div className={`flex flex-col leading-tight transition-opacity duration-200 ${textHidden}`}>
+        <div
+          className={`flex flex-col leading-tight transition-opacity duration-200 ${textHidden}`}
+        >
           <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
           <span className="text-xs text-consulmax-secondary -mt-0.5">
             Maximize as suas conquistas
@@ -421,27 +427,34 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       <div className="relative z-[1] mb-4">
         <button
           type="button"
-          onClick={() => { if (!collapsed) setSimGroupOpen(false); setCollapsed(v => !v) }}
+          onClick={() => {
+            if (!collapsed) setSimGroupOpen(false)
+            setCollapsed((v) => !v)
+          }}
           className="inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40"
           title={collapsed ? 'Expandir barra lateral' : 'Ocultar barra lateral'}
           aria-label={collapsed ? 'Expandir barra lateral' : 'Ocultar barra lateral'}
           style={glassHoverPill}
         >
-          {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
+          {collapsed ? (
+            <ChevronsRight className="h-4 w-4" />
+          ) : (
+            <ChevronsLeft className="h-4 w-4" />
+          )}
           {!collapsed && <span className="ml-1.5">Ocultar</span>}
         </button>
       </div>
 
       {/* Navegação */}
       <nav className="relative z-[1] grid gap-2">
-        {/* 1) Oportunidades */}
+        {/* Oportunidades */}
         <NavLink
           to="/oportunidades"
           className={({ isActive }) =>
             `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
              ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-             ${collapsed ? 'justify-center' : ''}`}
+             ${collapsed ? 'justify-center' : ''}`
           }
           style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
           onClick={() => onNavigate?.()}
@@ -457,11 +470,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           )}
         </NavLink>
 
-        {/* 2) Simuladores (grupo) */}
+        {/* Simuladores (grupo) */}
         <div>
           <button
             type="button"
-            onClick={() => !collapsed && setSimGroupOpen(v => !v)}
+            onClick={() => !collapsed && setSimGroupOpen((v) => !v)}
             className={`
               w-full text-left ${pillPadding} py-2.5 rounded-2xl transition-colors
               flex items-center justify-between
@@ -487,23 +500,33 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
           {!collapsed && simGroupOpen && (
             <div id={simListId} className="ml-6 grid gap-1 mt-1">
-              {adminsLoading && <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>}
+              {adminsLoading && (
+                <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>
+              )}
 
-              {!adminsLoading && admins.length > 0 && admins.map((ad) => (
-                <NavLink
-                  key={ad.id}
-                  to={`/simuladores/${ad.id}`}
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`}
-                  }
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={() => onNavigate?.()}
-                >
-                  {ad.name}
-                </NavLink>
-              ))}
+              {!adminsLoading &&
+                admins.length > 0 &&
+                admins.map((ad) => (
+                  <NavLink
+                    key={ad.id}
+                    to={`/simuladores/${ad.id}`}
+                    className={({ isActive }) =>
+                      `${pillPadding} py-2.5 rounded-2xl transition-colors
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                       ${
+                         isActive
+                           ? 'bg-consulmax-primary text-white'
+                           : 'hover:bg-consulmax-neutral'
+                       }`
+                    }
+                    style={({ isActive }) =>
+                      isActive ? activePillStyle : glassHoverPill
+                    }
+                    onClick={() => onNavigate?.()}
+                  >
+                    {ad.name}
+                  </NavLink>
+                ))}
 
               {!adminsLoading && admins.length === 0 && embraconId && (
                 <NavLink
@@ -511,9 +534,15 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) =>
                     `${pillPadding} py-2.5 rounded-2xl transition-colors
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`}
+                     ${
+                       isActive
+                         ? 'bg-consulmax-primary text-white'
+                         : 'hover:bg-consulmax-neutral'
+                     }`
                   }
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  style={({ isActive }) =>
+                    isActive ? activePillStyle : glassHoverPill
+                  }
                   onClick={() => onNavigate?.()}
                 >
                   Embracon
@@ -525,9 +554,15 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 className={({ isActive }) =>
                   `${pillPadding} py-2.5 rounded-2xl transition-colors
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`}
+                   ${
+                     isActive
+                       ? 'bg-consulmax-primary text-white'
+                       : 'hover:bg-consulmax-neutral'
+                   }`
                 }
-                style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                style={({ isActive }) =>
+                  isActive ? activePillStyle : glassHoverPill
+                }
                 onClick={() => onNavigate?.()}
               >
                 + Add Administradora
@@ -536,14 +571,14 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           )}
         </div>
 
-        {/* 3) Propostas */}
+        {/* Propostas */}
         <NavLink
           to="/propostas"
           className={({ isActive }) =>
             `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
              ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-             ${collapsed ? 'justify-center' : ''}`}
+             ${collapsed ? 'justify-center' : ''}`
           }
           style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
           onClick={() => onNavigate?.()}
@@ -556,8 +591,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
         {/* Demais itens */}
         {items
-          .filter(i => i.to !== '/oportunidades' && i.to !== '/propostas')
-          .filter(i => !i.onlyForWesley || authUserId === WESLEY_ID)
+          .filter((i) => i.to !== '/oportunidades' && i.to !== '/propostas')
+          .filter((i) => !i.onlyForWesley || authUserId === WESLEY_ID)
           .map((i) => (
             <NavLink
               key={i.to}
@@ -566,7 +601,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                  ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-                 ${collapsed ? 'justify-center' : ''}`}
+                 ${collapsed ? 'justify-center' : ''}`
               }
               style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
               onClick={() => onNavigate?.()}

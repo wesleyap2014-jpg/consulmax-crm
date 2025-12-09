@@ -37,6 +37,7 @@ const items: NavItem[] = [
 
 const LOGO_URL = '/logo-consulmax.png?v=3'
 const FALLBACK_URL = '/favicon.ico?v=3'
+
 type AdminRow = { id: string; name: string; slug: string | null }
 
 type NavAlerts = {
@@ -114,6 +115,11 @@ const sbLiquidKeyframes = `
 `
 
 /** ====== Helpers de data / alertas ====== */
+
+/**
+ * Retorna a data de hoje no formato YYYY-MM-DD, usando a data local
+ * (evita usar toISOString pra não "voltar" um dia no fuso -04:00).
+ */
 function todayDateStr() {
   const d = new Date()
   const yyyy = d.getFullYear()
@@ -122,22 +128,30 @@ function todayDateStr() {
   return `${yyyy}-${mm}-${dd}`
 }
 
+/**
+ * Gera o intervalo [início, fim] de um dia em ISO (UTC), a partir da data local.
+ * Útil para colunas *timestamp/timestamptz* (como agenda.inicio_at).
+ */
 function dayRangeISO(dateStr: string) {
-  const start = new Date(`${dateStr}T00:00:00`)
-  const end = new Date(`${dateStr}T23:59:59.999`)
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const start = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)       // meia-noite local
+  const end   = new Date(y, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999)  // fim do dia local
   return { startIso: start.toISOString(), endIso: end.toISOString() }
 }
 
-// ⚠️ Ajuste aqui se o schema de Oportunidades for diferente
+/**
+ * Oportunidades atrasadas:
+ * - Usa expected_close_at (date)
+ * - Considera atrasadas as com expected_close_at < hoje
+ * - Ignora estágios fechados (Ganho/Perdido)
+ */
 async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
       .from('opportunities')
-      .select('id, due_date, status')
-      // oportunidade atrasada: data de vencimento anterior a hoje
-      .lt('due_date', todayStr)
-      // ignora oportunidades já concluídas (ajuste os status conforme o seu schema)
-      .not('status', 'in', '("won","lost","cancelled")')
+      .select('id, expected_close_at, estagio')
+      .lt('expected_close_at', todayStr)
+      .not('estagio', 'in', '("Fechado (Ganho)","Fechado (Perdido)")')
       .limit(1)
 
     if (error) {
@@ -151,15 +165,20 @@ async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
   }
 }
 
-// ⚠️ Ajuste aqui se o schema do Fluxo de Caixa for diferente
-async function checkCashFlowAlert(startIso: string, endIso: string): Promise<boolean> {
+/**
+ * Fluxo de Caixa:
+ * - Usa a coluna data (date) do schema cash_flows.tsx
+ * - Verifica se existe qualquer lançamento (entrada/saída) para a data de hoje
+ * - Compara por string de data (YYYY-MM-DD), sem toISOString, pra evitar bug de fuso.
+ */
+async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
-      .from('cash_flows') // ex.: tabela de lançamentos de fluxo de caixa
-      .select('id, date, tipo')
-      .gte('date', startIso)
-      .lte('date', endIso)
+      .from('cash_flows')
+      .select('id')
+      .eq('data', todayStr)
       .in('tipo', ['entrada', 'saida'])
+      .eq('created_by', WESLEY_ID) // opcional: só o fluxo do Wesley
       .limit(1)
 
     if (error) {
@@ -173,7 +192,11 @@ async function checkCashFlowAlert(startIso: string, endIso: string): Promise<boo
   }
 }
 
-// Gestão de Grupos: sorteio / vencimento / assembleia hoje
+/**
+ * Gestão de Grupos:
+ * - Campos de data pura (date): prox_vencimento, prox_sorteio, prox_assembleia
+ * - Compara direto com todayStr (YYYY-MM-DD), sem time
+ */
 async function checkGroupsAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -195,7 +218,11 @@ async function checkGroupsAlert(todayStr: string): Promise<boolean> {
   }
 }
 
-// Agenda: qualquer evento hoje
+/**
+ * Agenda:
+ * - inicio_at é timestamp/timestamptz
+ * - Usa dayRangeISO para pegar o intervalo do dia "local" em UTC
+ */
 async function checkAgendaAlert(startIso: string, endIso: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -322,7 +349,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           hasAgenda,
         ] = await Promise.all([
           checkOpportunitiesAlert(todayStr),
-          checkCashFlowAlert(startIso, endIso),
+          checkCashFlowAlert(todayStr),
           checkGroupsAlert(todayStr),
           checkAgendaAlert(startIso, endIso),
         ])
@@ -414,7 +441,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
              ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-             ${collapsed ? 'justify-center' : ''}`
+             ${collapsed ? 'justify-center' : ''}`}
           }
           style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
           onClick={() => onNavigate?.()}
@@ -469,7 +496,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) =>
                     `${pillPadding} py-2.5 rounded-2xl transition-colors
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`}
                   }
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
@@ -484,7 +511,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) =>
                     `${pillPadding} py-2.5 rounded-2xl transition-colors
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`}
                   }
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
@@ -498,7 +525,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 className={({ isActive }) =>
                   `${pillPadding} py-2.5 rounded-2xl transition-colors
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`}
                 }
                 style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                 onClick={() => onNavigate?.()}
@@ -516,7 +543,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
              ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-             ${collapsed ? 'justify-center' : ''}`
+             ${collapsed ? 'justify-center' : ''}`}
           }
           style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
           onClick={() => onNavigate?.()}
@@ -539,7 +566,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                  ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-                 ${collapsed ? 'justify-center' : ''}`
+                 ${collapsed ? 'justify-center' : ''}`}
               }
               style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
               onClick={() => onNavigate?.()}

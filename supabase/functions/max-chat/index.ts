@@ -1,5 +1,4 @@
 // supabase/functions/max-chat/index.ts
-
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const corsHeaders = {
@@ -42,10 +41,7 @@ Deno.serve(async (req) => {
       }),
       {
         status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
   }
@@ -59,10 +55,7 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: "Campo 'prompt' é obrigatório." }),
         {
           status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
     }
@@ -97,7 +90,7 @@ Regras gerais:
   - Playbook (sales_playbooks)
   - Objeções já mapeadas (sales_objections)
 - Nunca exponha dados sensíveis do cliente final. Fale de forma genérica e segura.
-`.trim();
+    `.trim();
 
     let modeInstruction = "";
     switch (mode) {
@@ -112,7 +105,7 @@ Tarefa atual: ajudar o usuário a montar uma **estratégia de vendas completa** 
   4) Sugestão de apresentação e oferta
   5) Frases de fechamento
   6) Sugestão de follow-up, se o cliente não decidir na hora.
-`.trim();
+        `.trim();
         break;
       case "objeções":
         modeInstruction = `
@@ -122,9 +115,8 @@ Tarefa atual: sugerir e trabalhar **objeções de vendas**.
   - Como o cliente fala (frase real)
   - Sugestão de resposta
   - Próxima ação recomendada (ex.: aprofundar, reagendar, envolver cônjuge, etc.).
-`.trim();
+        `.trim();
         break;
-      case "livre":
       default:
         modeInstruction = `
 Tarefa atual: responder livremente a pergunta do usuário, mas sempre tentando conectar com:
@@ -132,7 +124,7 @@ Tarefa atual: responder livremente a pergunta do usuário, mas sempre tentando c
 - estratégias de abordagem,
 - contorno de objeções,
 - aumento de conversão nas vendas.
-`.trim();
+        `.trim();
         break;
     }
 
@@ -142,23 +134,27 @@ Tarefa atual: responder livremente a pergunta do usuário, mas sempre tentando c
 
 [Contexto do CRM (resumido em JSON)]:
 ${contextSnippet || "(sem contexto enviado)"}
-`.trim();
+    `.trim();
 
-    const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: [
-          { role: "developer", content: systemPrompt },
-          { role: "developer", content: modeInstruction },
-          { role: "user", content: userPrompt },
-        ],
-      }),
-    });
+    const openAiResponse = await fetch(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4.1-mini",
+          temperature: 0.7,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "system", content: modeInstruction },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      }
+    );
 
     if (!openAiResponse.ok) {
       const errorText = await openAiResponse.text();
@@ -170,48 +166,19 @@ ${contextSnippet || "(sem contexto enviado)"}
         }),
         {
           status: 500,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
     }
 
     const completion = await openAiResponse.json();
-
-    let answer: string | undefined;
-
-    if (typeof completion.output_text === "string") {
-      answer = completion.output_text;
-    } else if (Array.isArray(completion.output)) {
-      for (const item of completion.output) {
-        const content = item?.content;
-        if (Array.isArray(content)) {
-          const textPart = content.find(
-            (c: any) =>
-              (c.type === "output_text" || c.type === "output_text_delta") &&
-              typeof c.text === "string"
-          );
-          if (textPart) {
-            answer = textPart.text;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!answer) {
-      answer =
-        "Não consegui gerar uma resposta estruturada agora. Tenta reformular a pergunta pro Max 🐶.";
-    }
+    const answer =
+      completion.choices?.[0]?.message?.content ??
+      "Não consegui gerar uma resposta estruturada agora. Tenta reformular a pergunta pro Max 🐶.";
 
     return new Response(JSON.stringify({ answer }), {
       status: 200,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/json",
-      },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
     console.error("[max-chat] Erro geral:", err);
@@ -221,10 +188,7 @@ ${contextSnippet || "(sem contexto enviado)"}
       }),
       {
         status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
   }

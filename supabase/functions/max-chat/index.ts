@@ -27,11 +27,15 @@ if (!OPENAI_API_KEY) {
 }
 
 Deno.serve(async (req) => {
-  // CORS pré-flight
+  // ==== CORS pré-flight ====
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", {
+      status: 200,
+      headers: corsHeaders,
+    });
   }
 
+  // ==== Só aceitamos POST ====
   if (req.method !== "POST") {
     return new Response("Method not allowed", {
       status: 405,
@@ -39,11 +43,12 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Se a chave não estiver configurada, já retorna erro amigável
+  // ==== Garante que temos a chave da OpenAI ====
   if (!OPENAI_API_KEY) {
     return new Response(
       JSON.stringify({
-        error: "OPENAI_API_KEY não configurada nas Edge Function Secrets.",
+        error:
+          "OPENAI_API_KEY não configurada nas Edge Function Secrets do Supabase.",
       }),
       {
         status: 500,
@@ -55,37 +60,51 @@ Deno.serve(async (req) => {
     );
   }
 
+  let body: MaxRequestBody;
   try {
-    const body = (await req.json()) as MaxRequestBody;
-    const { prompt, mode = "livre", context } = body || {};
-
-    if (!prompt || typeof prompt !== "string") {
-      return new Response(
-        JSON.stringify({ error: "Campo 'prompt' é obrigatório." }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    }
-
-    // Fazemos um resumo do contexto pra não mandar um JSON gigante
-    let contextSnippet = "";
-    if (context) {
-      try {
-        const raw = JSON.stringify(context);
-        // Limita o tamanho do contexto enviado
-        contextSnippet = raw.slice(0, 8000);
-      } catch (_err) {
-        contextSnippet = "";
+    body = (await req.json()) as MaxRequestBody;
+  } catch (err) {
+    console.error("[max-chat] Erro ao parsear body:", err);
+    return new Response(
+      JSON.stringify({ error: "JSON inválido no body da requisição." }),
+      {
+        status: 400,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+        },
       }
-    }
+    );
+  }
 
-    // Mensagem de sistema: define a personalidade do Max
-    const systemPrompt = `
+  const { prompt, mode = "livre", context } = body || {};
+
+  if (!prompt || typeof prompt !== "string") {
+    return new Response(
+      JSON.stringify({ error: "Campo 'prompt' é obrigatório." }),
+      {
+        status: 400,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+  }
+
+  // ==== Monta contexto resumido ====
+  let contextSnippet = "";
+  if (context) {
+    try {
+      const raw = JSON.stringify(context);
+      contextSnippet = raw.slice(0, 8000);
+    } catch (_err) {
+      contextSnippet = "";
+    }
+  }
+
+  // ==== System prompt do Max ====
+  const systemPrompt = `
 Você é o **Max**, cachorrinho mascote da Consulmax Consórcios 🐶.
 
 Características:
@@ -105,13 +124,12 @@ Regras gerais:
   - Playbook (sales_playbooks)
   - Objeções já mapeadas (sales_objections)
 - Nunca exponha dados sensíveis do cliente final. Fale de forma genérica e segura.
-`;
+`.trim();
 
-    // Orientação extra com base no "mode"
-    let modeInstruction = "";
-    switch (mode) {
-      case "estrategia":
-        modeInstruction = `
+  let modeInstruction = "";
+  switch (mode) {
+    case "estrategia":
+      modeInstruction = `
 Tarefa atual: ajudar o usuário a montar uma **estratégia de vendas completa** da abertura ao fechamento.
 - Use o contexto do plano da semana e do playbook (segmento, persona, dor principal).
 - Entregue:
@@ -121,69 +139,65 @@ Tarefa atual: ajudar o usuário a montar uma **estratégia de vendas completa** 
   4) Sugestão de apresentação e oferta
   5) Frases de fechamento
   6) Sugestão de follow-up, se o cliente não decidir na hora.
-`;
-        break;
-      case "objeções":
-        modeInstruction = `
+`.trim();
+      break;
+    case "objeções":
+      modeInstruction = `
 Tarefa atual: sugerir e trabalhar **objeções de vendas**.
 - Liste as principais objeções que esse tipo de cliente pode ter.
 - Para cada objeção, entregue:
   - Como o cliente fala (frase real)
   - Sugestão de resposta
   - Próxima ação recomendada (ex.: aprofundar, reagendar, envolver cônjuge, etc.).
-`;
-        break;
-      case "livre":
-      default:
-        modeInstruction = `
-Tarefa atual: responder livremente a pergunta do usuário, mas sempre tentando conectar com:
+`.trim();
+      break;
+    case "livre":
+    default:
+      modeInstruction = `
+Tarefa atual: responder livremente a pergunta do usuário, sempre conectando com:
 - melhorias de script,
 - estratégias de abordagem,
 - contorno de objeções,
 - aumento de conversão nas vendas.
-`;
-        break;
-    }
+`.trim();
+      break;
+  }
 
-    const userPrompt = `
+  const finalInput = `
+${systemPrompt}
+
 [Modo]: ${mode}
-[Prompt do usuário]: ${prompt}
+[Instruções do modo]:
+${modeInstruction}
+
+[Pedido do usuário]:
+${prompt}
 
 [Contexto do CRM (resumido em JSON)]:
 ${contextSnippet || "(sem contexto enviado)"}
-`;
+`.trim();
 
-    // Chamada à OpenAI – modelo de chat
-    const openAiResponse = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          temperature: 0.7,
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "system",
-              content: modeInstruction,
-            },
-            { role: "user", content: userPrompt },
-          ],
-        }),
-      }
-    );
+  try {
+    // ==== Chamada à OpenAI usando a Responses API ====
+    const resp = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.1-mini",
+        input: finalInput,
+      }),
+    });
 
-    if (!openAiResponse.ok) {
-      const errorText = await openAiResponse.text();
-      console.error("[max-chat] Erro OpenAI:", errorText);
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("[max-chat] Erro da OpenAI:", resp.status, errText);
       return new Response(
         JSON.stringify({
           error: "Erro ao chamar a API da OpenAI.",
-          detail: errorText,
+          detail: errText,
         }),
         {
           status: 500,
@@ -195,9 +209,11 @@ ${contextSnippet || "(sem contexto enviado)"}
       );
     }
 
-    const completion = await openAiResponse.json();
+    const data = await resp.json();
+
+    // Responses API: output[0].content[0].text
     const answer =
-      completion.choices?.[0]?.message?.content ??
+      data?.output?.[0]?.content?.[0]?.text ??
       "Não consegui gerar uma resposta agora, tenta reformular a pergunta para o Max 🐶.";
 
     return new Response(JSON.stringify({ answer }), {
@@ -208,7 +224,7 @@ ${contextSnippet || "(sem contexto enviado)"}
       },
     });
   } catch (err) {
-    console.error("[max-chat] Erro geral:", err);
+    console.error("[max-chat] Erro inesperado:", err);
     return new Response(
       JSON.stringify({
         error: "Erro interno ao processar a solicitação para o Max.",

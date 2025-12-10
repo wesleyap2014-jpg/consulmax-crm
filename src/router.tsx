@@ -24,7 +24,8 @@ const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdmini
 const LinksUteis              = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
-const FluxoDeCaixa            = React.lazy(() => import("./pages/FluxoDeCaixa")); // << NOVO
+const FluxoDeCaixa            = React.lazy(() => import("./pages/FluxoDeCaixa")); // << já existia
+const Planejamento            = React.lazy(() => import("./pages/Planejamento")); // << NOVO
 
 // ==== Giro de Carteira SEM lazy (import direto) ====
 import GiroDeCarteira from "./pages/GiroDeCarteira";
@@ -73,6 +74,7 @@ export const router = createBrowserRouter([
           { path: "oportunidades",  element: withSuspense(<Oportunidades />) },
           { path: "clientes",       element: withSuspense(<Clientes />) },
           { path: "agenda",         element: withSuspense(<Agenda />) },
+          { path: "planejamento",   element: withSuspense(<Planejamento />) }, // << NOVO
 
           {
             path: "simuladores",

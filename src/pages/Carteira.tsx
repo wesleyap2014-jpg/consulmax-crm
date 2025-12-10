@@ -290,9 +290,10 @@ type LinhaCotaProps = {
   venda: Venda;
   onSave: (patch: Partial<Venda>) => Promise<void>;
   onViewVenda: (v: Venda) => void;
+  onTransfer: (v: Venda) => void;
   isAdmin: boolean;
 };
-const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, isAdmin }) => {
+const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, onTransfer, isAdmin }) => {
   const ativa = isAtiva(venda.codigo);
   const [edit, setEdit] = useState(false);
   const [grupo, setGrupo] = useState(venda.grupo ?? "");
@@ -427,9 +428,17 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onSave, onViewVenda, isAdm
               </button>
             </div>
           ) : (
-            <button className="px-3 py-1 rounded border" onClick={() => setEdit(true)}>
-              ✏️ Editar
-            </button>
+            <div className="flex flex-col gap-2">
+              <button className="px-3 py-1 rounded border" onClick={() => setEdit(true)}>
+                ✏️ Editar
+              </button>
+              <button
+                className="px-3 py-1 rounded border text-xs hover:bg-gray-50"
+                onClick={() => onTransfer(venda)}
+              >
+                ⇄ Transferir
+              </button>
+            </div>
           )
         ) : (
           <span className="text-xs text-gray-400">Somente admin edita</span>
@@ -483,12 +492,14 @@ type ClienteBlocoProps = {
   group: ClienteGroup;
   onSaveVenda: (v: Venda, patch: Partial<Venda>) => Promise<void>;
   onViewVenda: (v: Venda) => void;
+  onTransferVenda: (v: Venda) => void;
   isAdmin: boolean;
 };
 const ClienteBloco: React.FC<ClienteBlocoProps> = ({
   group,
   onSaveVenda,
   onViewVenda,
+  onTransferVenda,
   isAdmin,
 }) => {
   const [open, setOpen] = useState(false);
@@ -540,6 +551,7 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({
                   venda={v}
                   onSave={(patch) => onSaveVenda(v, patch)}
                   onViewVenda={onViewVenda}
+                  onTransfer={onTransferVenda}
                   isAdmin={isAdmin}
                 />
               ))}
@@ -635,6 +647,15 @@ const Carteira: React.FC = () => {
 
   const [leadSearch, setLeadSearch] = useState<string>(""); // busca de lead no modal
 
+  // Modal de transferência de cota
+  const [transferModal, setTransferModal] = useState<{ open: boolean; venda?: Venda }>({
+    open: false,
+  });
+  const [transferLeadId, setTransferLeadId] = useState<string>("");
+  const [transferSearch, setTransferSearch] = useState<string>("");
+  const [transferCpf, setTransferCpf] = useState<string>("");
+  const [transferNascimento, setTransferNascimento] = useState<string>("");
+
   useEffect(() => {
     setForm((f) => ({ ...f, tabela: "" }));
   }, [form.produto]);
@@ -699,6 +720,7 @@ const Carteira: React.FC = () => {
             supabase
               .from("users")
               .select("id,nome,email,role,auth_user_id")
+              .eq("is_active", true)
               .order("nome", { ascending: true }),
           ]);
 
@@ -1095,9 +1117,57 @@ const Carteira: React.FC = () => {
     return leads.filter((l) => l.nome.toLowerCase().includes(s));
   }, [leadSearch, leads]);
 
+  const filteredTransferLeads = useMemo(() => {
+    if (!transferSearch.trim()) return leads;
+    const s = transferSearch.toLowerCase();
+    return leads.filter((l) => l.nome.toLowerCase().includes(s));
+  }, [transferSearch, leads]);
+
   const onSelectLead = async (leadId: string) => {
     onFormChange("lead_id", leadId);
     await prefillFromLead(leadId);
+  };
+
+  const openTransfer = (v: Venda) => {
+    setTransferModal({ open: true, venda: v });
+    setTransferLeadId("");
+    setTransferSearch("");
+    setTransferCpf("");
+    setTransferNascimento("");
+  };
+
+  const handleTransferSave = async () => {
+    try {
+      if (!transferModal.venda) return;
+      if (!transferLeadId) throw new Error("Selecione o novo lead.");
+      if (!transferCpf.trim()) throw new Error("CPF/CNPJ é obrigatório.");
+      if (!validateCPF(transferCpf)) throw new Error("CPF ou CNPJ inválido.");
+
+      const patch: Partial<Venda> = {
+        lead_id: transferLeadId,
+        cpf: onlyDigits(transferCpf),
+        data_nascimento: transferNascimento || null,
+      };
+
+      await updateVenda(transferModal.venda.id, patch);
+
+      const encQuery = supabase
+        .from("vendas")
+        .select("*")
+        .eq("status", "encarteirada")
+        .order("created_at", { ascending: false });
+      if (!isAdmin) encQuery.eq("vendedor_id", userId);
+      const { data: enc } = await encQuery;
+      setEncarteiradas(enc ?? []);
+
+      setTransferModal({ open: false, venda: undefined });
+      setTransferLeadId("");
+      setTransferSearch("");
+      setTransferCpf("");
+      setTransferNascimento("");
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao transferir cota.");
+    }
   };
 
   const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
@@ -1369,6 +1439,8 @@ const Carteira: React.FC = () => {
     ? adminOptions
     : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
 
+  const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -1582,6 +1654,7 @@ const Carteira: React.FC = () => {
               onSaveVenda={salvarEdicao}
               isAdmin={isAdmin}
               onViewVenda={(v) => openViewVenda(v, leadMap[v.lead_id])}
+              onTransferVenda={openTransfer}
             />
           ))}
         </section>
@@ -2172,7 +2245,115 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-     {metaOverlay.open && (
+      {transferModal.open && transferModal.venda && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-semibold">
+                Transferir Cota • {transferModal.venda.numero_proposta}
+              </h3>
+              <button
+                onClick={() =>
+                  setTransferModal({ open: false, venda: undefined })
+                }
+                className="text-gray-500 hover:text-gray-800"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="md:col-span-2">
+                <label className="text-sm text-gray-600">Novo Cliente (Lead)</label>
+                <div className="flex flex-col gap-2">
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    placeholder="Buscar pelo nome do lead…"
+                    value={transferSearch}
+                    onChange={(e) => setTransferSearch(e.target.value)}
+                  />
+                  <select
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={transferLeadId}
+                    onChange={(e) => setTransferLeadId(e.target.value)}
+                  >
+                    <option value="">Selecione um lead…</option>
+                    {filteredTransferLeads.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.nome} {l.telefone ? `• ${l.telefone}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">CPF / CNPJ *</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={formatCPF(transferCpf)}
+                  onChange={(e) => setTransferCpf(e.target.value)}
+                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Data de Nascimento</label>
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={transferNascimento}
+                  onChange={(e) => setTransferNascimento(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Nome do Lead</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={selectedTransferLead?.nome ?? ""}
+                  readOnly
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Telefone</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={selectedTransferLead?.telefone ?? ""}
+                  readOnly
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-sm text-gray-600">E-mail</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={selectedTransferLead?.email ?? ""}
+                  readOnly
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                className="px-4 py-2 rounded-xl border"
+                onClick={() =>
+                  setTransferModal({ open: false, venda: undefined })
+                }
+              >
+                Cancelar
+              </button>
+              <button
+                className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
+                onClick={handleTransferSave}
+              >
+                Confirmar Transferência
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {metaOverlay.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">

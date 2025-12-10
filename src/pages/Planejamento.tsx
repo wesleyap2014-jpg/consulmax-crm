@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, Plus, Send, MessageCircle, Dog } from "lucide-react";
+import { Loader2, Plus, Send, MessageCircle, Dog, X } from "lucide-react";
 
 /* ========================= Tipos ========================= */
 
@@ -111,6 +111,7 @@ const Planejamento: React.FC = () => {
   const [maxMessages, setMaxMessages] = useState<MaxMessage[]>([]);
   const [maxInput, setMaxInput] = useState("");
   const [maxLoading, setMaxLoading] = useState(false);
+  const [maxOpen, setMaxOpen] = useState(false); // controle do widget flutuante
 
   const isAdmin = useMemo(
     () => currentUser?.user_role === "admin",
@@ -143,7 +144,6 @@ const Planejamento: React.FC = () => {
         setCurrentUser(me);
         setSelectedUserId(me.id);
 
-        // Admin enxerga só colaboradores ATIVOS
         if (me.user_role === "admin") {
           const { data: allUsers, error: allUsersError } = await supabase
             .from("users")
@@ -154,7 +154,6 @@ const Planejamento: React.FC = () => {
           if (allUsersError) throw allUsersError;
           setUsers((allUsers || []) as UserProfile[]);
         } else {
-          // Demais só vêm a si mesmos
           setUsers([me]);
         }
       } catch (err) {
@@ -509,7 +508,7 @@ const Planejamento: React.FC = () => {
   /* ========================= Render ========================= */
 
   return (
-    <div className="flex gap-4 h-full">
+    <div className="relative flex gap-4 h-full">
       {/* Coluna principal */}
       <div className="flex-1 flex flex-col gap-4 overflow-y-auto pb-4">
         {/* Filtros topo */}
@@ -798,8 +797,8 @@ const Planejamento: React.FC = () => {
                 ))}
                 {items.length === 0 && (
                   <div className="text-sm text-muted-foreground">
-                    Nenhuma ação ainda. Clique em “Adicionar ação” para começar o
-                    planejamento da semana.
+                    Nenhuma ação ainda. Clique em “Adicionar ação” para começar
+                    o planejamento da semana.
                   </div>
                 )}
               </div>
@@ -1038,10 +1037,10 @@ const Planejamento: React.FC = () => {
                   Pedir estratégia pro Max
                 </Button>
 
-              <Button onClick={handleSavePlaybook} disabled={saving}>
-                {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Salvar playbook
-              </Button>
+                <Button onClick={handleSavePlaybook} disabled={saving}>
+                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Salvar playbook
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -1178,17 +1177,34 @@ const Planejamento: React.FC = () => {
         )}
       </div>
 
-      {/* Coluna lateral - Chat com Max */}
-      <div className="w-full md:w-80 flex flex-col h-full">
-        <Card className="flex flex-col h-full">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Dog className="w-5 h-5 text-red-600" />
-              <CardTitle>Max – IA da Consulmax 🐶</CardTitle>
+      {/* ========================= Widget flutuante do Max ========================= */}
+      <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-3">
+        {maxOpen && (
+          <div className="w-80 sm:w-96 bg-background border shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[70vh]">
+            <div className="flex items-center justify-between px-3 py-2 border-b bg-gradient-to-r from-[#1E293F] to-[#A11C27] text-white">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center border border-white/40">
+                  <Dog className="w-5 h-5 text-white" />
+                </div>
+                <div className="flex flex-col leading-tight">
+                  <span className="text-sm font-semibold">
+                    Max – IA da Consulmax
+                  </span>
+                  <span className="text-[11px] text-white/80">
+                    Seu mascote ajudante de scripts 🐶
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMaxOpen(false)}
+                className="p-1 rounded-full hover:bg-white/10 transition"
+              >
+                <X className="w-4 h-4 text-white" />
+              </button>
             </div>
-          </CardHeader>
-          <CardContent className="flex flex-col h-full">
-            <div className="flex-1 border rounded-lg p-2 mb-2 overflow-y-auto space-y-2 text-sm">
+
+            <div className="flex-1 px-3 py-2 overflow-y-auto space-y-2 text-sm bg-background">
               {maxMessages.length === 0 && (
                 <div className="text-muted-foreground text-xs">
                   Fale com o Max! Você pode pedir:
@@ -1202,7 +1218,7 @@ const Planejamento: React.FC = () => {
               {maxMessages.map((m) => (
                 <div
                   key={m.id}
-                  className={`p-2 rounded-lg max-w-full ${
+                  className={`p-2 rounded-lg max-w-full whitespace-pre-wrap ${
                     m.role === "user"
                       ? "bg-primary text-primary-foreground ml-auto"
                       : "bg-muted mr-auto"
@@ -1212,7 +1228,8 @@ const Planejamento: React.FC = () => {
                 </div>
               ))}
             </div>
-            <div className="flex items-center gap-2 mt-2">
+
+            <div className="px-3 py-2 border-t bg-background flex items-center gap-2">
               <Input
                 placeholder="Pergunte algo pro Max..."
                 value={maxInput}
@@ -1236,8 +1253,18 @@ const Planejamento: React.FC = () => {
                 )}
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        )}
+
+        {/* Botão flutuante redondinho com carinha do Max */}
+        <Button
+          type="button"
+          size="icon"
+          onClick={() => setMaxOpen((prev) => !prev)}
+          className="h-14 w-14 rounded-full shadow-2xl bg-[#1E293F] text-white border-4 border-white flex items-center justify-center hover:scale-105 transition-transform"
+        >
+          <Dog className="w-7 h-7" />
+        </Button>
       </div>
     </div>
   );

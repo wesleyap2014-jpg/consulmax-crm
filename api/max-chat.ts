@@ -22,7 +22,6 @@ function applyCors(res: VercelResponse) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS preflight
   if (req.method === "OPTIONS") {
     applyCors(res);
     return res.status(200).end();
@@ -42,10 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const rawBody = req.body;
-    const body: MaxRequestBody =
-      typeof rawBody === "string" ? JSON.parse(rawBody) : (rawBody || {});
-
+    const body = (req.body || {}) as MaxRequestBody;
     const { prompt, mode = "livre", context } = body;
 
     if (!prompt || typeof prompt !== "string") {
@@ -54,7 +50,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .json({ error: "Campo 'prompt' é obrigatório e deve ser string." });
     }
 
-    // Resumo do contexto para não estourar o tamanho
     let contextSnippet = "";
     if (context) {
       try {
@@ -132,7 +127,6 @@ Tarefa atual: responder livremente a pergunta do usuário, sempre tentando conec
 ${contextSnippet || "(sem contexto enviado)"}
     `;
 
-    // === CHAMADA À OPENAI ===
     const openAiResponse = await fetch(
       "https://api.openai.com/v1/chat/completions",
       {
@@ -142,7 +136,7 @@ ${contextSnippet || "(sem contexto enviado)"}
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gpt-4.1-mini",
+          model: "gpt-4.1-mini", // <<< modelo CORRETO
           temperature: 0.7,
           messages: [
             { role: "system", content: systemPrompt },
@@ -163,7 +157,7 @@ ${contextSnippet || "(sem contexto enviado)"}
     }
 
     const completion = await openAiResponse.json();
-    const answer: string =
+    const answer =
       completion.choices?.[0]?.message?.content ??
       "Não consegui gerar uma resposta agora, tenta reformular a pergunta para o Max 🐶.";
 

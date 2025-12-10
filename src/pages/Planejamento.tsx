@@ -127,7 +127,8 @@ const Planejamento: React.FC = () => {
           data: { user },
           error: userError,
         } = await supabase.auth.getUser();
-        if (userError || !user) throw userError || new Error("Usuário não autenticado");
+        if (userError || !user)
+          throw userError || new Error("Usuário não autenticado");
 
         const { data: profiles, error: profilesError } = await supabase
           .from("users")
@@ -462,19 +463,25 @@ const Planejamento: React.FC = () => {
         mode,
       };
 
-      const { data, error } = await supabase.functions.invoke("max-chat", {
-        body: { prompt, mode, context },
+      const res = await fetch("/api/max-chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prompt, mode, context }),
       });
 
-      if (error) {
-        console.error("Erro ao chamar max-chat:", error);
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("Erro ao chamar /api/max-chat:", text);
         pushMaxMessage(
           "assistant",
-          "Max não conseguiu responder agora. Verifique a função `max-chat` no Supabase ou tente novamente em alguns instantes."
+          "Max não conseguiu responder agora. Verifique a chave de API na Vercel ou tente novamente em alguns instantes."
         );
         return;
       }
 
+      const data = await res.json();
       const answer =
         (data as any)?.answer ||
         "Max pensou, mas não conseguiu responder agora. Tenta de novo?";
@@ -552,7 +559,9 @@ const Planejamento: React.FC = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="sdr">SDR</SelectItem>
-                  <SelectItem value="vendedor">Vendedor / Especialista</SelectItem>
+                  <SelectItem value="vendedor">
+                    Vendedor / Especialista
+                  </SelectItem>
                   <SelectItem value="gestor">Gestor</SelectItem>
                   <SelectItem value="pos_venda">Pós-venda</SelectItem>
                 </SelectContent>
@@ -609,7 +618,9 @@ const Planejamento: React.FC = () => {
                 <Label>Meta principal</Label>
                 <Input
                   value={plan.main_goal || ""}
-                  onChange={(e) => setPlan({ ...plan, main_goal: e.target.value })}
+                  onChange={(e) =>
+                    setPlan({ ...plan, main_goal: e.target.value })
+                  }
                   placeholder="Ex.: Agendar 15 reuniões, fechar 300k em vendas..."
                 />
               </div>
@@ -648,7 +659,11 @@ const Planejamento: React.FC = () => {
                         type="date"
                         value={item.date_start || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "date_start", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "date_start",
+                            e.target.value
+                          )
                         }
                       />
                     </div>
@@ -658,7 +673,11 @@ const Planejamento: React.FC = () => {
                         type="date"
                         value={item.date_end || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "date_end", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "date_end",
+                            e.target.value
+                          )
                         }
                       />
                     </div>
@@ -667,7 +686,11 @@ const Planejamento: React.FC = () => {
                       <Input
                         value={item.what || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "what", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "what",
+                            e.target.value
+                          )
                         }
                       />
                     </div>
@@ -676,7 +699,11 @@ const Planejamento: React.FC = () => {
                       <Input
                         value={item.why || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "why", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "why",
+                            e.target.value
+                          )
                         }
                       />
                     </div>
@@ -685,7 +712,11 @@ const Planejamento: React.FC = () => {
                       <Input
                         value={item.where_ || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "where_", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "where_",
+                            e.target.value
+                          )
                         }
                       />
                     </div>
@@ -694,7 +725,11 @@ const Planejamento: React.FC = () => {
                       <Input
                         value={item.when_ || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "when_", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "when_",
+                            e.target.value
+                          )
                         }
                       />
                     </div>
@@ -703,7 +738,11 @@ const Planejamento: React.FC = () => {
                       <Input
                         value={item.who || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "who", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "who",
+                            e.target.value
+                          )
                         }
                       />
                     </div>
@@ -712,7 +751,11 @@ const Planejamento: React.FC = () => {
                       <Input
                         value={item.how || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "how", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "how",
+                            e.target.value
+                          )
                         }
                       />
                     </div>
@@ -721,7 +764,11 @@ const Planejamento: React.FC = () => {
                       <Input
                         value={item.how_much || ""}
                         onChange={(e) =>
-                          handleUpdateItemField(item.id, "how_much", e.target.value)
+                          handleUpdateItemField(
+                            item.id,
+                            "how_much",
+                            e.target.value
+                          )
                         }
                         placeholder="Ex.: 30 ligações, 10 reuniões..."
                       />
@@ -739,7 +786,9 @@ const Planejamento: React.FC = () => {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="planejado">Planejado</SelectItem>
-                          <SelectItem value="em_andamento">Em andamento</SelectItem>
+                          <SelectItem value="em_andamento">
+                            Em andamento
+                          </SelectItem>
                           <SelectItem value="concluido">Concluído</SelectItem>
                           <SelectItem value="adiado">Adiado</SelectItem>
                         </SelectContent>
@@ -989,10 +1038,10 @@ const Planejamento: React.FC = () => {
                   Pedir estratégia pro Max
                 </Button>
 
-                <Button onClick={handleSavePlaybook} disabled={saving}>
-                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Salvar playbook
-                </Button>
+              <Button onClick={handleSavePlaybook} disabled={saving}>
+                {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Salvar playbook
+              </Button>
               </div>
             </CardContent>
           </Card>
@@ -1097,8 +1146,9 @@ const Planejamento: React.FC = () => {
 
                 {objections.length === 0 && (
                   <div className="text-sm text-muted-foreground">
-                    Nenhuma objeção mapeada ainda. Você pode pedir sugestões para o Max
-                    ou ir registrando conforme os clientes forem falando.
+                    Nenhuma objeção mapeada ainda. Você pode pedir sugestões
+                    para o Max ou ir registrando conforme os clientes forem
+                    falando.
                   </div>
                 )}
               </div>

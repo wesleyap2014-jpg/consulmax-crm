@@ -1,6 +1,5 @@
 // supabase/functions/max-chat/index.ts
 
-// Tipos do runtime de Edge Functions
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const corsHeaders = {
@@ -18,11 +17,9 @@ type MaxRequestBody = {
   context?: any;
 };
 
-// Lê a variável de ambiente
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 
 Deno.serve(async (req) => {
-  // CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -34,7 +31,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Se a chave não estiver disponível, já avisa claro
   if (!OPENAI_API_KEY) {
     console.error(
       "[max-chat] OPENAI_API_KEY não encontrada nas variáveis do projeto Supabase."
@@ -71,20 +67,16 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Resumo do contexto para não mandar JSON gigante
     let contextSnippet = "";
     if (context) {
       try {
         const raw = JSON.stringify(context);
         contextSnippet = raw.slice(0, 8000);
-      } catch (_err) {
+      } catch {
         contextSnippet = "";
       }
     }
 
-    // =========================================================
-    // Prompt de sistema – personalidade do Max
-    // =========================================================
     const systemPrompt = `
 Você é o **Max**, cachorrinho mascote da Consulmax Consórcios 🐶.
 
@@ -107,7 +99,6 @@ Regras gerais:
 - Nunca exponha dados sensíveis do cliente final. Fale de forma genérica e segura.
 `.trim();
 
-    // Instrução extra por modo
     let modeInstruction = "";
     switch (mode) {
       case "estrategia":
@@ -153,9 +144,6 @@ Tarefa atual: responder livremente a pergunta do usuário, mas sempre tentando c
 ${contextSnippet || "(sem contexto enviado)"}
 `.trim();
 
-    // =========================================================
-    // Chamada para OpenAI – API nova /v1/responses
-    // =========================================================
     const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -163,20 +151,11 @@ ${contextSnippet || "(sem contexto enviado)"}
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-5.1-mini",
+        model: "gpt-4.1-mini",
         input: [
-          {
-            role: "developer",
-            content: systemPrompt,
-          },
-          {
-            role: "developer",
-            content: modeInstruction,
-          },
-          {
-            role: "user",
-            content: userPrompt,
-          },
+          { role: "developer", content: systemPrompt },
+          { role: "developer", content: modeInstruction },
+          { role: "user", content: userPrompt },
         ],
       }),
     });
@@ -201,7 +180,6 @@ ${contextSnippet || "(sem contexto enviado)"}
 
     const completion = await openAiResponse.json();
 
-    // Tenta pegar texto da forma mais amigável possível
     let answer: string | undefined;
 
     if (typeof completion.output_text === "string") {

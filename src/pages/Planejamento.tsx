@@ -25,6 +25,7 @@ type UserProfile = {
   nome: string;
   email: string;
   user_role: "admin" | "vendedor" | "gestor" | string;
+  is_active?: boolean;
 };
 
 type WeeklyPlan = {
@@ -130,7 +131,7 @@ const Planejamento: React.FC = () => {
 
         const { data: profiles, error: profilesError } = await supabase
           .from("users")
-          .select("id, auth_user_id, nome, email, user_role")
+          .select("id, auth_user_id, nome, email, user_role, is_active")
           .eq("auth_user_id", user.id)
           .limit(1);
 
@@ -141,16 +142,18 @@ const Planejamento: React.FC = () => {
         setCurrentUser(me);
         setSelectedUserId(me.id);
 
-        // carregar colaboradores ativos para admin
+        // Admin enxerga só colaboradores ATIVOS
         if (me.user_role === "admin") {
           const { data: allUsers, error: allUsersError } = await supabase
             .from("users")
-            .select("id, auth_user_id, nome, email, user_role")
+            .select("id, auth_user_id, nome, email, user_role, is_active")
+            .eq("is_active", true)
             .order("nome", { ascending: true });
 
           if (allUsersError) throw allUsersError;
-          setUsers(allUsers as UserProfile[]);
+          setUsers((allUsers || []) as UserProfile[]);
         } else {
+          // Demais só vêm a si mesmos
           setUsers([me]);
         }
       } catch (err) {
@@ -169,7 +172,6 @@ const Planejamento: React.FC = () => {
     if (!selectedUserId || !dateStart || !dateEnd) return;
     setLoading(true);
     try {
-      // 1) Tenta carregar um plano existente
       const { data: existingPlans, error: planError } = await supabase
         .from("weekly_plans")
         .select("*")
@@ -186,7 +188,6 @@ const Planejamento: React.FC = () => {
       if (existingPlans && existingPlans.length > 0) {
         currentPlan = existingPlans[0] as WeeklyPlan;
       } else {
-        // 2) Cria um novo plano
         const { data: newPlanData, error: insertError } = await supabase
           .from("weekly_plans")
           .insert({
@@ -206,7 +207,6 @@ const Planejamento: React.FC = () => {
 
       setPlan(currentPlan);
 
-      // 3) Carregar itens 5W2H
       const { data: planItems, error: itemsError } = await supabase
         .from("weekly_plan_items")
         .select("*")
@@ -216,7 +216,6 @@ const Planejamento: React.FC = () => {
       if (itemsError) throw itemsError;
       setItems((planItems || []) as WeeklyPlanItem[]);
 
-      // 4) Carregar playbook
       const { data: playbooks, error: pbError } = await supabase
         .from("sales_playbooks")
         .select("*")
@@ -447,7 +446,10 @@ const Planejamento: React.FC = () => {
     ]);
   };
 
-  const callMax = async (prompt: string, mode: "livre" | "estrategia" | "objeções" = "livre") => {
+  const callMax = async (
+    prompt: string,
+    mode: "livre" | "estrategia" | "objeções" = "livre"
+  ) => {
     if (!prompt.trim()) return;
     setMaxLoading(true);
 
@@ -460,34 +462,29 @@ const Planejamento: React.FC = () => {
         mode,
       };
 
-      // Supabase Edge Function (exemplo): /functions/v1/max-chat
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/max-chat`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({
-            prompt,
-            context,
-          }),
-        }
-      );
+      const { data, error } = await supabase.functions.invoke("max-chat", {
+        body: { prompt, mode, context },
+      });
 
-      const data = await res.json();
-      const answer = data.answer || "Max pensou, mas não conseguiu responder agora. Tenta de novo?";
+      if (error) {
+        console.error("Erro ao chamar max-chat:", error);
+        pushMaxMessage(
+          "assistant",
+          "Max não conseguiu responder agora. Verifique a função `max-chat` no Supabase ou tente novamente em alguns instantes."
+        );
+        return;
+      }
+
+      const answer =
+        (data as any)?.answer ||
+        "Max pensou, mas não conseguiu responder agora. Tenta de novo?";
 
       pushMaxMessage("assistant", answer);
-
-      // Se vier conteúdo estruturado (por exemplo, playbook sugerido), você pode
-      // aplicar atualizações automáticas aqui depois.
     } catch (err) {
-      console.error(err);
+      console.error("Erro inesperado ao falar com Max:", err);
       pushMaxMessage(
         "assistant",
-        "Ops, algo deu errado na conversa com o Max. Confere se a função `max-chat` está publicada no Supabase."
+        "Ops, algo deu errado na conversa com o Max. Tenta novamente em alguns segundos."
       );
     } finally {
       setMaxLoading(false);
@@ -513,7 +510,9 @@ const Planejamento: React.FC = () => {
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <Dog className="w-6 h-6 text-red-600" />
-              <CardTitle>Planejamento & Playbook – Max, o mascote da Consulmax 🐶</CardTitle>
+              <CardTitle>
+                Planejamento &amp; Playbook – Max, o mascote da Consulmax 🐶
+              </CardTitle>
             </div>
           </CardHeader>
           <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -593,7 +592,9 @@ const Planejamento: React.FC = () => {
         {plan && (
           <Card>
             <CardHeader>
-              <CardTitle>Resumo do plano ({plan.date_start} a {plan.date_end})</CardTitle>
+              <CardTitle>
+                Resumo do plano ({plan.date_start} a {plan.date_end})
+              </CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -867,7 +868,7 @@ const Planejamento: React.FC = () => {
                         cta_principal: e.target.value,
                       }))
                     }
-                    placeholder="Ex.: Você consegue 15 min hoje às 14h ou 15h pra alinharmos isso?"
+                    placeholder="Ex.: Você consegue 15 min hoje às 14h ou às 15h pra alinharmos isso?"
                   />
                 </div>
               </div>
@@ -1001,7 +1002,7 @@ const Planejamento: React.FC = () => {
         {plan && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Objeções & Contornos</CardTitle>
+              <CardTitle>Objeções &amp; Contornos</CardTitle>
               <Button variant="outline" size="sm" onClick={handleAddObjection}>
                 <Plus className="w-4 h-4 mr-1" /> Adicionar objeção
               </Button>

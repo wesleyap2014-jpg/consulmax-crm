@@ -6,7 +6,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-api-version",
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -18,24 +18,15 @@ type MaxRequestBody = {
   context?: any;
 };
 
+// Lê a variável de ambiente
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 
-if (!OPENAI_API_KEY) {
-  console.warn(
-    "[max-chat] Variável de ambiente OPENAI_API_KEY não definida. Configure nas Edge Function Secrets do projeto Supabase."
-  );
-}
-
 Deno.serve(async (req) => {
-  // ==== CORS pré-flight ====
+  // CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      status: 200,
-      headers: corsHeaders,
-    });
+    return new Response("ok", { headers: corsHeaders });
   }
 
-  // ==== Só aceitamos POST ====
   if (req.method !== "POST") {
     return new Response("Method not allowed", {
       status: 405,
@@ -43,12 +34,15 @@ Deno.serve(async (req) => {
     });
   }
 
-  // ==== Garante que temos a chave da OpenAI ====
+  // Se a chave não estiver disponível, já avisa claro
   if (!OPENAI_API_KEY) {
+    console.error(
+      "[max-chat] OPENAI_API_KEY não encontrada nas variáveis do projeto Supabase."
+    );
     return new Response(
       JSON.stringify({
         error:
-          "OPENAI_API_KEY não configurada nas Edge Function Secrets do Supabase.",
+          "Variável OPENAI_API_KEY não está configurada no Supabase. Configure-a em Settings → Environment Variables.",
       }),
       {
         status: 500,
@@ -60,51 +54,38 @@ Deno.serve(async (req) => {
     );
   }
 
-  let body: MaxRequestBody;
   try {
-    body = (await req.json()) as MaxRequestBody;
-  } catch (err) {
-    console.error("[max-chat] Erro ao parsear body:", err);
-    return new Response(
-      JSON.stringify({ error: "JSON inválido no body da requisição." }),
-      {
-        status: 400,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  }
+    const body = (await req.json()) as MaxRequestBody;
+    const { prompt, mode = "livre", context } = body || {};
 
-  const { prompt, mode = "livre", context } = body || {};
-
-  if (!prompt || typeof prompt !== "string") {
-    return new Response(
-      JSON.stringify({ error: "Campo 'prompt' é obrigatório." }),
-      {
-        status: 400,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  }
-
-  // ==== Monta contexto resumido ====
-  let contextSnippet = "";
-  if (context) {
-    try {
-      const raw = JSON.stringify(context);
-      contextSnippet = raw.slice(0, 8000);
-    } catch (_err) {
-      contextSnippet = "";
+    if (!prompt || typeof prompt !== "string") {
+      return new Response(
+        JSON.stringify({ error: "Campo 'prompt' é obrigatório." }),
+        {
+          status: 400,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
+          },
+        }
+      );
     }
-  }
 
-  // ==== System prompt do Max ====
-  const systemPrompt = `
+    // Resumo do contexto para não mandar JSON gigante
+    let contextSnippet = "";
+    if (context) {
+      try {
+        const raw = JSON.stringify(context);
+        contextSnippet = raw.slice(0, 8000);
+      } catch (_err) {
+        contextSnippet = "";
+      }
+    }
+
+    // =========================================================
+    // Prompt de sistema – personalidade do Max
+    // =========================================================
+    const systemPrompt = `
 Você é o **Max**, cachorrinho mascote da Consulmax Consórcios 🐶.
 
 Características:
@@ -126,10 +107,11 @@ Regras gerais:
 - Nunca exponha dados sensíveis do cliente final. Fale de forma genérica e segura.
 `.trim();
 
-  let modeInstruction = "";
-  switch (mode) {
-    case "estrategia":
-      modeInstruction = `
+    // Instrução extra por modo
+    let modeInstruction = "";
+    switch (mode) {
+      case "estrategia":
+        modeInstruction = `
 Tarefa atual: ajudar o usuário a montar uma **estratégia de vendas completa** da abertura ao fechamento.
 - Use o contexto do plano da semana e do playbook (segmento, persona, dor principal).
 - Entregue:
@@ -140,9 +122,9 @@ Tarefa atual: ajudar o usuário a montar uma **estratégia de vendas completa** 
   5) Frases de fechamento
   6) Sugestão de follow-up, se o cliente não decidir na hora.
 `.trim();
-      break;
-    case "objeções":
-      modeInstruction = `
+        break;
+      case "objeções":
+        modeInstruction = `
 Tarefa atual: sugerir e trabalhar **objeções de vendas**.
 - Liste as principais objeções que esse tipo de cliente pode ter.
 - Para cada objeção, entregue:
@@ -150,36 +132,31 @@ Tarefa atual: sugerir e trabalhar **objeções de vendas**.
   - Sugestão de resposta
   - Próxima ação recomendada (ex.: aprofundar, reagendar, envolver cônjuge, etc.).
 `.trim();
-      break;
-    case "livre":
-    default:
-      modeInstruction = `
-Tarefa atual: responder livremente a pergunta do usuário, sempre conectando com:
+        break;
+      case "livre":
+      default:
+        modeInstruction = `
+Tarefa atual: responder livremente a pergunta do usuário, mas sempre tentando conectar com:
 - melhorias de script,
 - estratégias de abordagem,
 - contorno de objeções,
 - aumento de conversão nas vendas.
 `.trim();
-      break;
-  }
+        break;
+    }
 
-  const finalInput = `
-${systemPrompt}
-
+    const userPrompt = `
 [Modo]: ${mode}
-[Instruções do modo]:
-${modeInstruction}
-
-[Pedido do usuário]:
-${prompt}
+[Prompt do usuário]: ${prompt}
 
 [Contexto do CRM (resumido em JSON)]:
 ${contextSnippet || "(sem contexto enviado)"}
 `.trim();
 
-  try {
-    // ==== Chamada à OpenAI usando a Responses API ====
-    const resp = await fetch("https://api.openai.com/v1/responses", {
+    // =========================================================
+    // Chamada para OpenAI – API nova /v1/responses
+    // =========================================================
+    const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -187,17 +164,30 @@ ${contextSnippet || "(sem contexto enviado)"}
       },
       body: JSON.stringify({
         model: "gpt-5.1-mini",
-        input: finalInput,
+        input: [
+          {
+            role: "developer",
+            content: systemPrompt,
+          },
+          {
+            role: "developer",
+            content: modeInstruction,
+          },
+          {
+            role: "user",
+            content: userPrompt,
+          },
+        ],
       }),
     });
 
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error("[max-chat] Erro da OpenAI:", resp.status, errText);
+    if (!openAiResponse.ok) {
+      const errorText = await openAiResponse.text();
+      console.error("[max-chat] Erro OpenAI:", errorText);
       return new Response(
         JSON.stringify({
           error: "Erro ao chamar a API da OpenAI.",
-          detail: errText,
+          detail: errorText,
         }),
         {
           status: 500,
@@ -209,12 +199,34 @@ ${contextSnippet || "(sem contexto enviado)"}
       );
     }
 
-    const data = await resp.json();
+    const completion = await openAiResponse.json();
 
-    // Responses API: output[0].content[0].text
-    const answer =
-      data?.output?.[0]?.content?.[0]?.text ??
-      "Não consegui gerar uma resposta agora, tenta reformular a pergunta para o Max 🐶.";
+    // Tenta pegar texto da forma mais amigável possível
+    let answer: string | undefined;
+
+    if (typeof completion.output_text === "string") {
+      answer = completion.output_text;
+    } else if (Array.isArray(completion.output)) {
+      for (const item of completion.output) {
+        const content = item?.content;
+        if (Array.isArray(content)) {
+          const textPart = content.find(
+            (c: any) =>
+              (c.type === "output_text" || c.type === "output_text_delta") &&
+              typeof c.text === "string"
+          );
+          if (textPart) {
+            answer = textPart.text;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!answer) {
+      answer =
+        "Não consegui gerar uma resposta estruturada agora. Tenta reformular a pergunta pro Max 🐶.";
+    }
 
     return new Response(JSON.stringify({ answer }), {
       status: 200,
@@ -224,7 +236,7 @@ ${contextSnippet || "(sem contexto enviado)"}
       },
     });
   } catch (err) {
-    console.error("[max-chat] Erro inesperado:", err);
+    console.error("[max-chat] Erro geral:", err);
     return new Response(
       JSON.stringify({
         error: "Erro interno ao processar a solicitação para o Max.",

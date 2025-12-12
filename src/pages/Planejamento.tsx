@@ -1,5 +1,5 @@
 // src/pages/Planejamento.tsx
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,28 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, Plus, Send, MessageCircle, Dog, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Loader2,
+  Plus,
+  Send,
+  MessageCircle,
+  Dog,
+  X,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Sparkles,
+} from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 /* ========================= Tipos ========================= */
 
@@ -38,6 +59,8 @@ type WeeklyPlan = {
   main_goal: string | null;
 };
 
+type WeeklyPlanItemStatus = "planejado" | "em_andamento" | "concluido" | "adiado";
+
 type WeeklyPlanItem = {
   id: UUID;
   plan_id: UUID;
@@ -50,7 +73,7 @@ type WeeklyPlanItem = {
   who: string | null;
   how: string | null;
   how_much: string | null;
-  status: string;
+  status: WeeklyPlanItemStatus | string;
 };
 
 type SalesPlaybook = {
@@ -89,6 +112,36 @@ type MaxMessage = {
   content: string;
 };
 
+/* ========================= Helpers ========================= */
+
+const BRAND_RUBI = "#A11C27";
+const BRAND_NAVY = "#1E293F";
+
+function safeJsonExtract(text: string): any | null {
+  try {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeStatus(s: string): WeeklyPlanItemStatus {
+  if (s === "em_andamento") return "em_andamento";
+  if (s === "concluido") return "concluido";
+  if (s === "adiado") return "adiado";
+  return "planejado";
+}
+
+function formatDateBR(iso: string) {
+  if (!iso) return "";
+  // iso yyyy-mm-dd
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`;
+}
+
 /* ========================= Componente ========================= */
 
 const Planejamento: React.FC = () => {
@@ -108,10 +161,28 @@ const Planejamento: React.FC = () => {
   const [playbook, setPlaybook] = useState<SalesPlaybook | null>(null);
   const [objections, setObjections] = useState<SalesObjection[]>([]);
 
+  // IA extra (editável) – diálogo / possibilidades
+  const [aiDialogues, setAiDialogues] = useState<string>("");
+
+  // Controle do widget flutuante (chat)
   const [maxMessages, setMaxMessages] = useState<MaxMessage[]>([]);
   const [maxInput, setMaxInput] = useState("");
   const [maxLoading, setMaxLoading] = useState(false);
-  const [maxOpen, setMaxOpen] = useState(false); // controle do widget flutuante
+  const [maxOpen, setMaxOpen] = useState(false);
+
+  // Overlay Playbook
+  const [playbookOpen, setPlaybookOpen] = useState(false);
+  const [playbookTab, setPlaybookTab] = useState<"playbook" | "objections" | "dialogo">(
+    "playbook"
+  );
+
+  // Expansões por status (por padrão oculto)
+  const [openDoing, setOpenDoing] = useState(false);
+  const [openPlanned, setOpenPlanned] = useState(false);
+  const [openDone, setOpenDone] = useState(false);
+
+  // Gate: só habilita Playbook depois de salvar 5W2H
+  const [hasSaved5W2H, setHasSaved5W2H] = useState(false);
 
   const isAdmin = useMemo(
     () => currentUser?.user_role === "admin",
@@ -172,6 +243,9 @@ const Planejamento: React.FC = () => {
     if (!selectedUserId || !dateStart || !dateEnd) return;
     setLoading(true);
     try {
+      // reset gate – precisa salvar novamente depois que abrir/editar
+      setHasSaved5W2H(false);
+
       const { data: existingPlans, error: planError } = await supabase
         .from("weekly_plans")
         .select("*")
@@ -223,6 +297,7 @@ const Planejamento: React.FC = () => {
         .limit(1);
 
       if (pbError) throw pbError;
+
       if (playbooks && playbooks.length > 0) {
         setPlaybook(playbooks[0] as SalesPlaybook);
 
@@ -238,6 +313,11 @@ const Planejamento: React.FC = () => {
         setPlaybook(null);
         setObjections([]);
       }
+
+      // não auto-abre as listas; mantém oculto por padrão
+      setOpenDoing(false);
+      setOpenPlanned(false);
+      setOpenDone(false);
     } catch (err) {
       console.error(err);
     } finally {
@@ -245,27 +325,16 @@ const Planejamento: React.FC = () => {
     }
   };
 
-  /* ========================= Save plano / itens / playbook ========================= */
+  /* ========================= 5W2H (itens + theme/meta dentro) ========================= */
 
-  const handleSavePlanHeader = async () => {
-    if (!plan) return;
-    setSaving(true);
-    try {
-      const { id, ...payload } = plan;
-      const { error } = await supabase
-        .from("weekly_plans")
-        .update(payload)
-        .eq("id", id);
-      if (error) throw error;
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const markDirty = useCallback(() => {
+    setHasSaved5W2H(false);
+  }, []);
 
   const handleAddItem = () => {
     if (!plan) return;
+    markDirty();
+
     const today = dateStart || new Date().toISOString().slice(0, 10);
     const newItem: WeeklyPlanItem = {
       id: `temp-${Math.random()}`,
@@ -289,15 +358,28 @@ const Planejamento: React.FC = () => {
     field: keyof WeeklyPlanItem,
     value: any
   ) => {
+    markDirty();
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
     );
   };
 
-  const handleSaveItems = async () => {
+  const handleSavePlanAndItems = async () => {
     if (!plan) return;
     setSaving(true);
     try {
+      // 1) salva theme + meta principal dentro do weekly_plans
+      {
+        const { id, ...payload } = plan;
+        const { error } = await supabase
+          .from("weekly_plans")
+          .update(payload)
+          .eq("id", id);
+
+        if (error) throw error;
+      }
+
+      // 2) salva itens
       const toInsert = items.filter((i) => i.id.startsWith("temp-"));
       const toUpdate = items.filter((i) => !i.id.startsWith("temp-"));
 
@@ -316,7 +398,7 @@ const Planejamento: React.FC = () => {
               who: i.who,
               how: i.how,
               how_much: i.how_much,
-              status: i.status,
+              status: normalizeStatus(String(i.status || "planejado")),
             }))
           );
         if (insertError) throw insertError;
@@ -326,12 +408,20 @@ const Planejamento: React.FC = () => {
         const { id, ...payload } = item;
         const { error: updateError } = await supabase
           .from("weekly_plan_items")
-          .update(payload)
+          .update({
+            ...payload,
+            status: normalizeStatus(String((payload as any)?.status || "planejado")),
+          })
           .eq("id", id);
+
         if (updateError) throw updateError;
       }
 
+      // 3) recarrega
       await handleLoadOrCreatePlan();
+
+      // gate OK
+      setHasSaved5W2H(true);
     } catch (err) {
       console.error(err);
     } finally {
@@ -339,9 +429,11 @@ const Planejamento: React.FC = () => {
     }
   };
 
+  /* ========================= Playbook + Objeções ========================= */
+
   const handleEnsurePlaybook = async (): Promise<SalesPlaybook | null> => {
     if (!plan) return null;
-    if (playbook) return playbook;
+    if (playbook && playbook.id) return playbook;
 
     try {
       const { data, error } = await supabase
@@ -353,7 +445,10 @@ const Planejamento: React.FC = () => {
         .single();
 
       if (error) throw error;
+
       setPlaybook(data as SalesPlaybook);
+      setObjections([]); // começa vazio
+      setAiDialogues("");
       return data as SalesPlaybook;
     } catch (err) {
       console.error(err);
@@ -361,48 +456,60 @@ const Planejamento: React.FC = () => {
     }
   };
 
-  const handleSavePlaybook = async () => {
-    if (!plan) return;
-    setSaving(true);
-    try {
-      const pb = await handleEnsurePlaybook();
-      if (!pb && !playbook) return;
-
-      const finalPb = playbook || pb!;
-      const { id, ...payload } = finalPb;
-
-      const { error } = await supabase
-        .from("sales_playbooks")
-        .update(payload)
-        .eq("id", id);
-      if (error) throw error;
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
+  const handleAddObjection = () => {
+    if (!playbook) return;
+    setObjections((prev) => [
+      ...prev,
+      {
+        id: `temp-${Math.random()}`,
+        playbook_id: playbook.id,
+        tag: "",
+        objection_text: "",
+        answer_text: "",
+        next_step: "",
+        priority: prev.length + 1,
+      },
+    ]);
   };
 
-  const handleSaveObjections = async () => {
-    if (!playbook) return;
+  const handleSavePlaybookAndObjections = async () => {
+    if (!plan) return;
     setSaving(true);
+
     try {
-      const toInsert = objections.filter((o) => o.id.startsWith("temp-"));
-      const toUpdate = objections.filter((o) => !o.id.startsWith("temp-"));
+      const pb = await handleEnsurePlaybook();
+      const finalPb = playbook || pb;
+      if (!finalPb) return;
+
+      // garante playbook no state com id real
+      if (!playbook || !playbook.id) setPlaybook(finalPb);
+
+      // 1) update playbook
+      {
+        const { id, ...payload } = finalPb as SalesPlaybook;
+        const { error } = await supabase
+          .from("sales_playbooks")
+          .update(payload)
+          .eq("id", id);
+
+        if (error) throw error;
+      }
+
+      // 2) salva objeções
+      const toInsert = objections.filter((o) => String(o.id).startsWith("temp-"));
+      const toUpdate = objections.filter((o) => !String(o.id).startsWith("temp-"));
 
       if (toInsert.length > 0) {
-        const { error: insertError } = await supabase
-          .from("sales_objections")
-          .insert(
-            toInsert.map((o) => ({
-              playbook_id: playbook.id,
-              tag: o.tag,
-              objection_text: o.objection_text,
-              answer_text: o.answer_text,
-              next_step: o.next_step,
-              priority: o.priority,
-            }))
-          );
+        const { error: insertError } = await supabase.from("sales_objections").insert(
+          toInsert.map((o) => ({
+            playbook_id: (finalPb as SalesPlaybook).id,
+            tag: o.tag,
+            objection_text: o.objection_text,
+            answer_text: o.answer_text,
+            next_step: o.next_step,
+            priority: o.priority,
+          }))
+        );
         if (insertError) throw insertError;
       }
 
@@ -415,26 +522,13 @@ const Planejamento: React.FC = () => {
         if (updateError) throw updateError;
       }
 
+      // 3) recarrega tudo
       await handleLoadOrCreatePlan();
     } catch (err) {
       console.error(err);
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleAddObjection = () => {
-    if (!playbook) return;
-    const newObj: SalesObjection = {
-      id: `temp-${Math.random()}`,
-      playbook_id: playbook.id,
-      tag: "",
-      objection_text: "",
-      answer_text: "",
-      next_step: "",
-      priority: objections.length + 1,
-    };
-    setObjections((prev) => [...prev, newObj]);
   };
 
   /* ========================= Max - IA Consulmax ========================= */
@@ -446,11 +540,11 @@ const Planejamento: React.FC = () => {
     ]);
   };
 
-  const callMax = async (
+  const callMaxRaw = async (
     prompt: string,
     mode: "livre" | "estrategia" | "objeções" = "livre"
-  ) => {
-    if (!prompt.trim()) return;
+  ): Promise<string | null> => {
+    if (!prompt.trim()) return null;
     setMaxLoading(true);
 
     try {
@@ -459,25 +553,20 @@ const Planejamento: React.FC = () => {
         items,
         playbook,
         objections,
+        aiDialogues,
         mode,
       };
 
       const res = await fetch("/api/max-chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, mode, context }),
       });
 
       if (!res.ok) {
         const text = await res.text();
         console.error("Erro ao chamar /api/max-chat:", text);
-        pushMaxMessage(
-          "assistant",
-          "Max não conseguiu responder agora. Verifique a chave de API na Vercel ou tente novamente em alguns instantes."
-        );
-        return;
+        return null;
       }
 
       const data = await res.json();
@@ -485,13 +574,32 @@ const Planejamento: React.FC = () => {
         (data as any)?.answer ||
         "Max pensou, mas não conseguiu responder agora. Tenta de novo?";
 
-      pushMaxMessage("assistant", answer);
+      return String(answer);
     } catch (err) {
       console.error("Erro inesperado ao falar com Max:", err);
-      pushMaxMessage(
-        "assistant",
-        "Ops, algo deu errado na conversa com o Max. Tenta novamente em alguns segundos."
-      );
+      return null;
+    } finally {
+      setMaxLoading(false);
+    }
+  };
+
+  // Chat do widget flutuante
+  const callMaxChat = async (
+    prompt: string,
+    mode: "livre" | "estrategia" | "objeções" = "livre"
+  ) => {
+    if (!prompt.trim()) return;
+    setMaxLoading(true);
+    try {
+      const answer = await callMaxRaw(prompt, mode);
+      if (!answer) {
+        pushMaxMessage(
+          "assistant",
+          "Max não conseguiu responder agora. Verifique a chave de API na Vercel ou tente novamente em alguns instantes."
+        );
+        return;
+      }
+      pushMaxMessage("assistant", answer);
     } finally {
       setMaxLoading(false);
     }
@@ -502,7 +610,429 @@ const Planejamento: React.FC = () => {
     const message = maxInput.trim();
     pushMaxMessage("user", message);
     setMaxInput("");
-    await callMax(message, "livre");
+    await callMaxChat(message, "livre");
+  };
+
+  // Preenche Playbook + Objeções automaticamente
+  const handleFillPlaybookFromMax = async () => {
+    if (!plan) return;
+
+    // garante playbook para receber objeções com playbook_id
+    const pb = await handleEnsurePlaybook();
+    if (!pb) return;
+
+    const prompt = `
+Você é o Max (Consulmax). Gere um PLAYBOOK COMPLETO e OBJEÇÕES para esta semana com base no contexto (tema, meta, ações 5W2H, cargo e período).
+Responda APENAS em JSON válido (sem markdown, sem explicações) neste formato:
+
+{
+  "playbook": {
+    "segmento": "...",
+    "produto": "...",
+    "persona": "...",
+    "dor_principal": "...",
+    "big_idea": "...",
+    "garantia": "...",
+    "cta_principal": "...",
+    "script_abertura": "...",
+    "script_quebra_gelo": "...",
+    "script_diagnostico": "...",
+    "script_apresentacao": "...",
+    "script_oferta": "...",
+    "script_fechamento": "...",
+    "script_followup": "..."
+  },
+  "objections": [
+    { "tag": "....", "objection_text": "...", "answer_text": "...", "next_step": "...", "priority": 1 }
+  ],
+  "dialogo": "Texto com possibilidades do que o cliente pode falar e o que o vendedor responde (formato fácil de ler, com variações)."
+}
+
+Regras:
+- Faça scripts curtos, naturais e “Consulmax”.
+- Objeções: 10 itens, prioridade 1..10.
+- Use o tema/meta/ações para direcionar (não genérico).
+`;
+
+    const answer = await callMaxRaw(prompt, "estrategia");
+    if (!answer) {
+      pushMaxMessage(
+        "assistant",
+        "Não consegui preencher automaticamente agora. Tenta de novo em alguns instantes."
+      );
+      return;
+    }
+
+    const parsed = safeJsonExtract(answer);
+    if (!parsed?.playbook) {
+      pushMaxMessage(
+        "assistant",
+        "O Max respondeu, mas não veio no JSON certinho pra auto-preencher. Tenta de novo."
+      );
+      return;
+    }
+
+    // aplica playbook
+    setPlaybook((prev) => {
+      const base = prev && prev.id ? prev : (pb as SalesPlaybook);
+      return {
+        ...(base as SalesPlaybook),
+        segmento: parsed.playbook.segmento ?? base.segmento ?? "",
+        produto: parsed.playbook.produto ?? base.produto ?? "",
+        persona: parsed.playbook.persona ?? base.persona ?? "",
+        dor_principal: parsed.playbook.dor_principal ?? base.dor_principal ?? "",
+        big_idea: parsed.playbook.big_idea ?? base.big_idea ?? "",
+        garantia: parsed.playbook.garantia ?? base.garantia ?? "",
+        cta_principal: parsed.playbook.cta_principal ?? base.cta_principal ?? "",
+        script_abertura: parsed.playbook.script_abertura ?? base.script_abertura ?? "",
+        script_quebra_gelo:
+          parsed.playbook.script_quebra_gelo ?? base.script_quebra_gelo ?? "",
+        script_diagnostico:
+          parsed.playbook.script_diagnostico ?? base.script_diagnostico ?? "",
+        script_apresentacao:
+          parsed.playbook.script_apresentacao ?? base.script_apresentacao ?? "",
+        script_oferta: parsed.playbook.script_oferta ?? base.script_oferta ?? "",
+        script_fechamento:
+          parsed.playbook.script_fechamento ?? base.script_fechamento ?? "",
+        script_followup:
+          parsed.playbook.script_followup ?? base.script_followup ?? "",
+      };
+    });
+
+    // aplica objeções
+    const objs = Array.isArray(parsed.objections) ? parsed.objections : [];
+    setObjections(
+      objs.map((o: any, idx: number) => ({
+        id: `temp-${Math.random()}`,
+        playbook_id: (pb as SalesPlaybook).id,
+        tag: String(o?.tag ?? ""),
+        objection_text: String(o?.objection_text ?? ""),
+        answer_text: String(o?.answer_text ?? ""),
+        next_step: String(o?.next_step ?? ""),
+        priority: Number(o?.priority ?? idx + 1),
+      }))
+    );
+
+    // diálogo
+    setAiDialogues(String(parsed.dialogo ?? ""));
+
+    // leva pra aba playbook
+    setPlaybookTab("playbook");
+  };
+
+  const handleGenerateDialoguesFromMax = async () => {
+    if (!plan) return;
+
+    const prompt = `
+Você é o Max (Consulmax). Crie um "roteiro de conversa" com variações:
+- o que o cliente pode falar (várias possibilidades)
+- como o vendedor responde (respostas curtas e fortes)
+Use o contexto (tema/meta/ações 5W2H, scripts e objeções já cadastradas).
+Retorne um texto organizado em tópicos, bem legível para colar e treinar.
+`;
+    const answer = await callMaxRaw(prompt, "livre");
+    if (!answer) return;
+    setAiDialogues(answer);
+  };
+
+  /* ========================= PDF Profissional ========================= */
+
+  const handleExportPDF = async () => {
+    if (!plan) return;
+
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Header
+    doc.setFillColor(BRAND_NAVY);
+    doc.rect(0, 0, pageWidth, 22, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("Consulmax — Planejamento & Playbook", 14, 14);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(
+      `Período: ${formatDateBR(plan.date_start)} a ${formatDateBR(plan.date_end)}  •  Cargo: ${role}`,
+      14,
+      19
+    );
+
+    // Subheader box
+    doc.setTextColor(20, 20, 20);
+    doc.setFontSize(11);
+    let y = 30;
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Tema da Semana:", 14, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(String(plan.theme || "-"), 48, y);
+    y += 7;
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Meta principal:", 14, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(String(plan.main_goal || "-"), 48, y);
+    y += 10;
+
+    // 5W2H table (todos os itens)
+    const rows = items
+      .slice()
+      .sort((a, b) => String(a.date_start).localeCompare(String(b.date_start)))
+      .map((it) => [
+        `${formatDateBR(it.date_start)} → ${formatDateBR(it.date_end)}`,
+        String(it.what || ""),
+        String(it.why || ""),
+        String(it.how_much || ""),
+        String(it.status || ""),
+      ]);
+
+    autoTable(doc, {
+      startY: y,
+      head: [["Período", "O que?", "Por quê?", "Quanto?", "Status"]],
+      body: rows.length ? rows : [["-", "-", "-", "-", "-"]],
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [30, 41, 63] },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+      margin: { left: 14, right: 14 },
+    });
+
+    y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : y + 8;
+
+    // Playbook section
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("Playbook (editável pelo vendedor)", 14, y);
+    y += 6;
+
+    const pb = playbook;
+
+    const playbookLines: Array<[string, string]> = [
+      ["Segmento", String(pb?.segmento || "-")],
+      ["Produto", String(pb?.produto || "-")],
+      ["Persona", String(pb?.persona || "-")],
+      ["Dor principal", String(pb?.dor_principal || "-")],
+      ["Big Idea", String(pb?.big_idea || "-")],
+      ["Garantia", String(pb?.garantia || "-")],
+      ["CTA principal", String(pb?.cta_principal || "-")],
+      ["Abertura", String(pb?.script_abertura || "-")],
+      ["Quebra-gelo", String(pb?.script_quebra_gelo || "-")],
+      ["Diagnóstico", String(pb?.script_diagnostico || "-")],
+      ["Apresentação", String(pb?.script_apresentacao || "-")],
+      ["Oferta", String(pb?.script_oferta || "-")],
+      ["Fechamento", String(pb?.script_fechamento || "-")],
+      ["Follow-up", String(pb?.script_followup || "-")],
+    ];
+
+    autoTable(doc, {
+      startY: y,
+      head: [["Campo", "Conteúdo"]],
+      body: playbookLines.map(([k, v]) => [k, v]),
+      styles: { fontSize: 8, cellPadding: 2, valign: "top" },
+      headStyles: { fillColor: [161, 28, 39] },
+      columnStyles: { 0: { cellWidth: 36 }, 1: { cellWidth: pageWidth - 14 - 14 - 36 } },
+      margin: { left: 14, right: 14 },
+    });
+
+    y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : y + 8;
+
+    // Objections
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("Objeções & Contornos (o que o cliente fala vs resposta)", 14, y);
+    y += 6;
+
+    const objRows = objections
+      .slice()
+      .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+      .map((o) => [
+        String(o.priority ?? ""),
+        String(o.tag || ""),
+        String(o.objection_text || ""),
+        String(o.answer_text || ""),
+        String(o.next_step || ""),
+      ]);
+
+    autoTable(doc, {
+      startY: y,
+      head: [["#", "Tag", "Cliente diz", "Vendedor responde", "Próximo passo"]],
+      body: objRows.length ? objRows : [["-", "-", "-", "-", "-"]],
+      styles: { fontSize: 7, cellPadding: 2, valign: "top" },
+      headStyles: { fillColor: [30, 41, 63] },
+      margin: { left: 14, right: 14 },
+    });
+
+    y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : y + 8;
+
+    // Dialogues (IA)
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("Possibilidades de Conversa (IA) — editável", 14, y);
+    y += 6;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+
+    const dialog = String(aiDialogues || "-");
+    const split = doc.splitTextToSize(dialog, pageWidth - 28);
+
+    // se estourar página, jsPDF vai quebrar no addPage manualmente
+    const maxHeight = doc.internal.pageSize.getHeight() - 14;
+    for (let i = 0; i < split.length; i++) {
+      if (y > maxHeight) {
+        doc.addPage();
+        y = 16;
+      }
+      doc.text(split[i], 14, y);
+      y += 4.2;
+    }
+
+    // Footer
+    doc.setTextColor(120);
+    doc.setFontSize(8);
+    doc.text(
+      "Consulmax — Maximize as suas conquistas • Documento interno de treinamento",
+      14,
+      doc.internal.pageSize.getHeight() - 10
+    );
+
+    doc.save(
+      `consulmax-playbook-${plan.date_start}_a_${plan.date_end}-${role}.pdf`
+    );
+  };
+
+  /* ========================= Derived groups ========================= */
+
+  const doingItems = useMemo(
+    () =>
+      items.filter((i) => normalizeStatus(String(i.status || "planejado")) === "em_andamento"),
+    [items]
+  );
+
+  const plannedItems = useMemo(
+    () =>
+      items.filter((i) => {
+        const st = normalizeStatus(String(i.status || "planejado"));
+        return st === "planejado" || st === "adiado";
+      }),
+    [items]
+  );
+
+  const doneItems = useMemo(
+    () =>
+      items.filter((i) => normalizeStatus(String(i.status || "planejado")) === "concluido"),
+    [items]
+  );
+
+  const renderItem = (item: WeeklyPlanItem) => {
+    return (
+      <div
+        key={item.id}
+        className="border rounded-xl p-3 grid md:grid-cols-4 gap-3 bg-background/40"
+      >
+        <div>
+          <Label>De</Label>
+          <Input
+            type="date"
+            value={item.date_start || ""}
+            onChange={(e) =>
+              handleUpdateItemField(item.id, "date_start", e.target.value)
+            }
+          />
+        </div>
+        <div>
+          <Label>Até</Label>
+          <Input
+            type="date"
+            value={item.date_end || ""}
+            onChange={(e) =>
+              handleUpdateItemField(item.id, "date_end", e.target.value)
+            }
+          />
+        </div>
+
+        <div>
+          <Label>O que? (What)</Label>
+          <Input
+            value={item.what || ""}
+            onChange={(e) => handleUpdateItemField(item.id, "what", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Por quê? (Why)</Label>
+          <Input
+            value={item.why || ""}
+            onChange={(e) => handleUpdateItemField(item.id, "why", e.target.value)}
+          />
+        </div>
+
+        <div>
+          <Label>Onde? (Where)</Label>
+          <Input
+            value={item.where_ || ""}
+            onChange={(e) =>
+              handleUpdateItemField(item.id, "where_", e.target.value)
+            }
+          />
+        </div>
+        <div>
+          <Label>Quando? (When)</Label>
+          <Input
+            value={item.when_ || ""}
+            onChange={(e) =>
+              handleUpdateItemField(item.id, "when_", e.target.value)
+            }
+          />
+        </div>
+        <div>
+          <Label>Quem? (Who)</Label>
+          <Input
+            value={item.who || ""}
+            onChange={(e) => handleUpdateItemField(item.id, "who", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Como? (How)</Label>
+          <Input
+            value={item.how || ""}
+            onChange={(e) => handleUpdateItemField(item.id, "how", e.target.value)}
+          />
+        </div>
+
+        <div>
+          <Label>Quanto? (How much)</Label>
+          <Input
+            value={item.how_much || ""}
+            onChange={(e) =>
+              handleUpdateItemField(item.id, "how_much", e.target.value)
+            }
+            placeholder="Ex.: 30 ligações, 10 reuniões..."
+          />
+        </div>
+
+        <div>
+          <Label>Status</Label>
+          <Select
+            value={normalizeStatus(String(item.status || "planejado"))}
+            onValueChange={(val) =>
+              handleUpdateItemField(item.id, "status", val as WeeklyPlanItemStatus)
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="planejado">Planejado</SelectItem>
+              <SelectItem value="em_andamento">Em andamento</SelectItem>
+              <SelectItem value="concluido">Concluído</SelectItem>
+              <SelectItem value="adiado">Adiado</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    );
   };
 
   /* ========================= Render ========================= */
@@ -515,12 +1045,13 @@ const Planejamento: React.FC = () => {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <Dog className="w-6 h-6 text-red-600" />
+              <Dog className="w-6 h-6" style={{ color: BRAND_RUBI }} />
               <CardTitle>
                 Planejamento &amp; Playbook – Max, o mascote da Consulmax 🐶
               </CardTitle>
             </div>
           </CardHeader>
+
           <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {isAdmin && (
               <div>
@@ -558,9 +1089,7 @@ const Planejamento: React.FC = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="sdr">SDR</SelectItem>
-                  <SelectItem value="vendedor">
-                    Vendedor / Especialista
-                  </SelectItem>
+                  <SelectItem value="vendedor">Vendedor / Especialista</SelectItem>
                   <SelectItem value="gestor">Gestor</SelectItem>
                   <SelectItem value="pos_venda">Pós-venda</SelectItem>
                 </SelectContent>
@@ -575,6 +1104,7 @@ const Planejamento: React.FC = () => {
                 onChange={(e) => setDateStart(e.target.value)}
               />
             </div>
+
             <div>
               <Label>Até</Label>
               <Input
@@ -596,229 +1126,292 @@ const Planejamento: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Cabeçalho do plano */}
-        {plan && (
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                Resumo do plano ({plan.date_start} a {plan.date_end})
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Tema da semana</Label>
-                <Input
-                  value={plan.theme || ""}
-                  onChange={(e) => setPlan({ ...plan, theme: e.target.value })}
-                  placeholder="Ex.: Semana da Frota Agro, Semana dos Médicos, etc."
-                />
-              </div>
-              <div>
-                <Label>Meta principal</Label>
-                <Input
-                  value={plan.main_goal || ""}
-                  onChange={(e) =>
-                    setPlan({ ...plan, main_goal: e.target.value })
-                  }
-                  placeholder="Ex.: Agendar 15 reuniões, fechar 300k em vendas..."
-                />
-              </div>
-              <div className="md:col-span-2 flex justify-end">
-                <Button onClick={handleSavePlanHeader} disabled={saving}>
-                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Salvar resumo
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* 5W2H */}
+        {/* 5W2H + Theme/Meta dentro */}
         {plan && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Planejamento 5W2H</CardTitle>
+              <div className="flex flex-col">
+                <CardTitle>Planejamento 5W2H</CardTitle>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Período do plano: <b>{formatDateBR(plan.date_start)}</b> a{" "}
+                  <b>{formatDateBR(plan.date_end)}</b>
+                </div>
+              </div>
+
               <Button variant="outline" size="sm" onClick={handleAddItem}>
                 <Plus className="w-4 h-4 mr-1" /> Adicionar ação
               </Button>
             </CardHeader>
+
             <CardContent className="space-y-4">
-              <div className="text-xs text-muted-foreground">
-                Cada linha é uma ação com intervalo: <b>De / Até</b> + 5W2H.
+              {/* Tema / Meta (movidos para cá) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label>Tema da semana</Label>
+                  <Input
+                    value={plan.theme || ""}
+                    onChange={(e) => {
+                      markDirty();
+                      setPlan({ ...plan, theme: e.target.value });
+                    }}
+                    placeholder="Ex.: Semana da Frota Agro, Semana dos Médicos, etc."
+                  />
+                </div>
+
+                <div>
+                  <Label>Meta principal</Label>
+                  <Input
+                    value={plan.main_goal || ""}
+                    onChange={(e) => {
+                      markDirty();
+                      setPlan({ ...plan, main_goal: e.target.value });
+                    }}
+                    placeholder="Ex.: Agendar 15 reuniões, fechar 300k em vendas..."
+                  />
+                </div>
               </div>
-              <div className="space-y-4 max-h-[320px] overflow-y-auto pr-1">
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    className="border rounded-xl p-3 grid md:grid-cols-4 gap-3 bg-background/40"
-                  >
-                    <div>
-                      <Label>De</Label>
-                      <Input
-                        type="date"
-                        value={item.date_start || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "date_start",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>Até</Label>
-                      <Input
-                        type="date"
-                        value={item.date_end || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "date_end",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>O que? (What)</Label>
-                      <Input
-                        value={item.what || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "what",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>Por quê? (Why)</Label>
-                      <Input
-                        value={item.why || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "why",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>Onde? (Where)</Label>
-                      <Input
-                        value={item.where_ || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "where_",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>Quando? (When)</Label>
-                      <Input
-                        value={item.when_ || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "when_",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>Quem? (Who)</Label>
-                      <Input
-                        value={item.who || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "who",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>Como? (How)</Label>
-                      <Input
-                        value={item.how || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "how",
-                            e.target.value
-                          )
-                        }
-                      />
-                    </div>
-                    <div>
-                      <Label>Quanto? (How much)</Label>
-                      <Input
-                        value={item.how_much || ""}
-                        onChange={(e) =>
-                          handleUpdateItemField(
-                            item.id,
-                            "how_much",
-                            e.target.value
-                          )
-                        }
-                        placeholder="Ex.: 30 ligações, 10 reuniões..."
-                      />
-                    </div>
-                    <div>
-                      <Label>Status</Label>
-                      <Select
-                        value={item.status || "planejado"}
-                        onValueChange={(val) =>
-                          handleUpdateItemField(item.id, "status", val)
-                        }
+
+              {/* Separação por status */}
+              <div className="space-y-3">
+                {/* Em andamento */}
+                <div className="border rounded-2xl p-3 bg-background/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 text-sm font-semibold"
+                      onClick={() => setOpenDoing((v) => !v)}
+                    >
+                      <span
+                        className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs"
+                        style={{ backgroundColor: BRAND_NAVY }}
                       >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="planejado">Planejado</SelectItem>
-                          <SelectItem value="em_andamento">
-                            Em andamento
-                          </SelectItem>
-                          <SelectItem value="concluido">Concluído</SelectItem>
-                          <SelectItem value="adiado">Adiado</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        Em andamento • {doingItems.length}
+                      </span>
+                      {openDoing ? (
+                        <>
+                          <ChevronUp className="w-4 h-4" />
+                          <span className="text-xs text-muted-foreground">
+                            Ocultar
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-4 h-4" />
+                          <span className="text-xs text-muted-foreground">
+                            Expandir
+                          </span>
+                        </>
+                      )}
+                    </button>
+
+                    <span className="text-xs text-muted-foreground">
+                      Itens com status “Em andamento”
+                    </span>
+                  </div>
+
+                  {openDoing && (
+                    <div className="mt-3 space-y-3">
+                      {doingItems.length ? (
+                        doingItems.map(renderItem)
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          Nenhum item em andamento ainda.
+                        </div>
+                      )}
                     </div>
+                  )}
+                </div>
+
+                {/* Planejado (inclui Adiado) */}
+                <div className="border rounded-2xl p-3 bg-background/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 text-sm font-semibold"
+                      onClick={() => setOpenPlanned((v) => !v)}
+                    >
+                      <span
+                        className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs"
+                        style={{ backgroundColor: BRAND_RUBI }}
+                      >
+                        Planejado • {plannedItems.length}
+                      </span>
+                      {openPlanned ? (
+                        <>
+                          <ChevronUp className="w-4 h-4" />
+                          <span className="text-xs text-muted-foreground">
+                            Ocultar
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-4 h-4" />
+                          <span className="text-xs text-muted-foreground">
+                            Expandir
+                          </span>
+                        </>
+                      )}
+                    </button>
+
+                    <span className="text-xs text-muted-foreground">
+                      Inclui “Planejado” e “Adiado”
+                    </span>
                   </div>
-                ))}
-                {items.length === 0 && (
-                  <div className="text-sm text-muted-foreground">
-                    Nenhuma ação ainda. Clique em “Adicionar ação” para começar
-                    o planejamento da semana.
+
+                  {openPlanned && (
+                    <div className="mt-3 space-y-3">
+                      {plannedItems.length ? (
+                        plannedItems.map(renderItem)
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          Nenhum item planejado/adiado ainda.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Concluídos */}
+                <div className="border rounded-2xl p-3 bg-background/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 text-sm font-semibold"
+                      onClick={() => setOpenDone((v) => !v)}
+                    >
+                      <span className="inline-flex items-center px-2 py-1 rounded-full bg-emerald-600 text-white text-xs">
+                        Concluídos • {doneItems.length}
+                      </span>
+                      {openDone ? (
+                        <>
+                          <ChevronUp className="w-4 h-4" />
+                          <span className="text-xs text-muted-foreground">
+                            Ocultar
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-4 h-4" />
+                          <span className="text-xs text-muted-foreground">
+                            Expandir
+                          </span>
+                        </>
+                      )}
+                    </button>
+
+                    <span className="text-xs text-muted-foreground">
+                      Itens com status “Concluído”
+                    </span>
                   </div>
-                )}
+
+                  {openDone && (
+                    <div className="mt-3 space-y-3">
+                      {doneItems.length ? (
+                        doneItems.map(renderItem)
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          Nenhum item concluído ainda.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex justify-end">
-                <Button onClick={handleSaveItems} disabled={saving}>
+
+              {/* Rodapé: salvar + playbook (gate) */}
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setPlaybookOpen(true);
+                    setPlaybookTab("playbook");
+                  }}
+                  disabled={!hasSaved5W2H || saving || loading}
+                  title={
+                    !hasSaved5W2H
+                      ? "Salve o 5W2H primeiro para habilitar o Playbook."
+                      : "Abrir Playbook"
+                  }
+                >
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  Playbook
+                </Button>
+
+                <Button onClick={handleSavePlanAndItems} disabled={saving}>
                   {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                   Salvar 5W2H
                 </Button>
               </div>
+
+              {!hasSaved5W2H && (
+                <div className="text-xs text-muted-foreground">
+                  ⚠️ O botão <b>Playbook</b> só habilita depois que você salvar o 5W2H.
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
+      </div>
 
-        {/* Playbook da semana */}
-        {plan && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Playbook de Vendas da Semana</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+      {/* ========================= Overlay Playbook (Playbook + Objeções + Diálogo + PDF) ========================= */}
+      <Dialog open={playbookOpen} onOpenChange={setPlaybookOpen}>
+        <DialogContent className="max-w-5xl w-[95vw]">
+          <DialogHeader>
+            <DialogTitle>
+              Playbook da Semana (com Objeções) — {plan ? `${formatDateBR(plan.date_start)} a ${formatDateBR(plan.date_end)}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm text-muted-foreground">
+              Preencha manualmente ou clique em <b>Pedir para o Max</b> para auto-preencher tudo.
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={handleFillPlaybookFromMax}
+                disabled={maxLoading || saving || !plan}
+              >
+                {maxLoading ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4 mr-2" />
+                )}
+                Pedir para o Max
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={handleExportPDF}
+                disabled={!plan}
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Gerar PDF
+              </Button>
+
+              <Button
+                onClick={handleSavePlaybookAndObjections}
+                disabled={saving || !plan}
+              >
+                {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Salvar Playbook
+              </Button>
+            </div>
+          </div>
+
+          <Tabs
+            value={playbookTab}
+            onValueChange={(v) => setPlaybookTab(v as any)}
+            className="mt-2"
+          >
+            <TabsList>
+              <TabsTrigger value="playbook">Playbook</TabsTrigger>
+              <TabsTrigger value="objections">Objeções</TabsTrigger>
+              <TabsTrigger value="dialogo">Possibilidades (IA)</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="playbook" className="mt-4">
               <div className="grid md:grid-cols-3 gap-4">
                 <div>
                   <Label>Segmento</Label>
@@ -826,10 +1419,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.segmento || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || {
-                          id: "" as UUID,
-                          plan_id: plan.id,
-                        }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         segmento: e.target.value,
                       }))
                     }
@@ -841,7 +1431,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.produto || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         produto: e.target.value,
                       }))
                     }
@@ -853,7 +1443,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.persona || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         persona: e.target.value,
                       }))
                     }
@@ -861,7 +1451,7 @@ const Planejamento: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
                 <div>
                   <Label>Dor principal</Label>
                   <Textarea
@@ -869,7 +1459,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.dor_principal || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         dor_principal: e.target.value,
                       }))
                     }
@@ -882,7 +1472,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.big_idea || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         big_idea: e.target.value,
                       }))
                     }
@@ -891,7 +1481,7 @@ const Planejamento: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
                 <div>
                   <Label>Garantia</Label>
                   <Textarea
@@ -899,7 +1489,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.garantia || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         garantia: e.target.value,
                       }))
                     }
@@ -912,7 +1502,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.cta_principal || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         cta_principal: e.target.value,
                       }))
                     }
@@ -921,7 +1511,7 @@ const Planejamento: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
                 <div>
                   <Label>Abertura</Label>
                   <Textarea
@@ -929,7 +1519,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.script_abertura || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         script_abertura: e.target.value,
                       }))
                     }
@@ -942,7 +1532,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.script_quebra_gelo || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         script_quebra_gelo: e.target.value,
                       }))
                     }
@@ -950,7 +1540,7 @@ const Planejamento: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
                 <div>
                   <Label>Diagnóstico (perguntas)</Label>
                   <Textarea
@@ -958,7 +1548,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.script_diagnostico || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         script_diagnostico: e.target.value,
                       }))
                     }
@@ -971,7 +1561,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.script_apresentacao || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         script_apresentacao: e.target.value,
                       }))
                     }
@@ -979,7 +1569,7 @@ const Planejamento: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
                 <div>
                   <Label>Oferta</Label>
                   <Textarea
@@ -987,7 +1577,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.script_oferta || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         script_oferta: e.target.value,
                       }))
                     }
@@ -1000,7 +1590,7 @@ const Planejamento: React.FC = () => {
                     value={playbook?.script_fechamento || ""}
                     onChange={(e) =>
                       setPlaybook((prev) => ({
-                        ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                        ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                         script_fechamento: e.target.value,
                       }))
                     }
@@ -1008,55 +1598,32 @@ const Planejamento: React.FC = () => {
                 </div>
               </div>
 
-              <div>
+              <div className="mt-4">
                 <Label>Follow-up</Label>
                 <Textarea
                   rows={3}
                   value={playbook?.script_followup || ""}
                   onChange={(e) =>
                     setPlaybook((prev) => ({
-                      ...(prev || { id: "" as UUID, plan_id: plan.id }),
+                      ...(prev || ({ id: "" as UUID, plan_id: plan?.id as UUID } as any)),
                       script_followup: e.target.value,
                     }))
                   }
                 />
               </div>
+            </TabsContent>
 
-              <div className="flex justify-between gap-2">
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={() =>
-                    callMax(
-                      "Max, sugira uma estratégia completa de abordagem da abertura ao fechamento para esta semana.",
-                      "estrategia"
-                    )
-                  }
-                >
-                  <MessageCircle className="w-4 h-4 mr-2" />
-                  Pedir estratégia pro Max
-                </Button>
-
-                <Button onClick={handleSavePlaybook} disabled={saving}>
-                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Salvar playbook
+            <TabsContent value="objections" className="mt-4">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-muted-foreground">
+                  Registre as objeções reais — isso vira “munição” pro time.
+                </div>
+                <Button variant="outline" size="sm" onClick={handleAddObjection} disabled={!playbook}>
+                  <Plus className="w-4 h-4 mr-1" /> Adicionar objeção
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        )}
 
-        {/* Objeções */}
-        {plan && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Objeções &amp; Contornos</CardTitle>
-              <Button variant="outline" size="sm" onClick={handleAddObjection}>
-                <Plus className="w-4 h-4 mr-1" /> Adicionar objeção
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="max-h-[280px] overflow-y-auto pr-1 space-y-3">
+              <div className="mt-3 max-h-[55vh] overflow-y-auto pr-1 space-y-3">
                 {objections.map((obj) => (
                   <div
                     key={obj.id}
@@ -1076,6 +1643,7 @@ const Planejamento: React.FC = () => {
                         placeholder="Ex.: sem_dinheiro, falar_com_esposa..."
                       />
                     </div>
+
                     <div>
                       <Label>Prioridade</Label>
                       <Input
@@ -1092,6 +1660,7 @@ const Planejamento: React.FC = () => {
                         }
                       />
                     </div>
+
                     <div>
                       <Label>Como o cliente fala</Label>
                       <Textarea
@@ -1108,6 +1677,7 @@ const Planejamento: React.FC = () => {
                         }
                       />
                     </div>
+
                     <div>
                       <Label>Resposta recomendada</Label>
                       <Textarea
@@ -1124,6 +1694,7 @@ const Planejamento: React.FC = () => {
                         }
                       />
                     </div>
+
                     <div className="md:col-span-2">
                       <Label>Próximo passo</Label>
                       <Input
@@ -1145,51 +1716,67 @@ const Planejamento: React.FC = () => {
 
                 {objections.length === 0 && (
                   <div className="text-sm text-muted-foreground">
-                    Nenhuma objeção mapeada ainda. Você pode pedir sugestões
-                    para o Max ou ir registrando conforme os clientes forem
-                    falando.
+                    Nenhuma objeção ainda. Clique em “Adicionar objeção” ou “Pedir para o Max”.
                   </div>
                 )}
               </div>
+            </TabsContent>
 
-              <div className="flex justify-between gap-2">
+            <TabsContent value="dialogo" className="mt-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm text-muted-foreground">
+                  “O que o cliente pode falar” vs “como responder” — editável antes do PDF.
+                </div>
                 <Button
                   variant="outline"
-                  type="button"
-                  onClick={() =>
-                    callMax(
-                      "Max, sugira as principais 10 objeções que esse tipo de cliente pode ter e como contornar.",
-                      "objeções"
-                    )
-                  }
+                  onClick={handleGenerateDialoguesFromMax}
+                  disabled={maxLoading || !plan}
                 >
-                  <MessageCircle className="w-4 h-4 mr-2" />
-                  Pedir objeções pro Max
-                </Button>
-
-                <Button onClick={handleSaveObjections} disabled={saving}>
-                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Salvar objeções
+                  {maxLoading ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 mr-2" />
+                  )}
+                  Gerar com Max
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
 
-      {/* ========================= Widget flutuante do Max ========================= */}
+              <div className="mt-3">
+                <Label>Possibilidades (IA)</Label>
+                <Textarea
+                  rows={14}
+                  value={aiDialogues}
+                  onChange={(e) => setAiDialogues(e.target.value)}
+                  placeholder="Clique em “Gerar com Max” para criar as possibilidades — depois você pode editar."
+                />
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setPlaybookOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================= Widget flutuante do Max (chat) ========================= */}
       <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-3">
         {maxOpen && (
           <div className="w-80 sm:w-96 bg-background border shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[70vh]">
-            <div className="flex items-center justify-between px-3 py-2 border-b bg-gradient-to-r from-[#1E293F] to-[#A11C27] text-white">
+            <div
+              className="flex items-center justify-between px-3 py-2 border-b text-white"
+              style={{
+                background: `linear-gradient(90deg, ${BRAND_NAVY}, ${BRAND_RUBI})`,
+              }}
+            >
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center border border-white/40">
                   <Dog className="w-5 h-5 text-white" />
                 </div>
                 <div className="flex flex-col leading-tight">
-                  <span className="text-sm font-semibold">
-                    Max – IA da Consulmax
-                  </span>
+                  <span className="text-sm font-semibold">Max – IA da Consulmax</span>
                   <span className="text-[11px] text-white/80">
                     Seu mascote ajudante de scripts 🐶
                   </span>
@@ -1256,12 +1843,13 @@ const Planejamento: React.FC = () => {
           </div>
         )}
 
-        {/* Botão flutuante redondinho com carinha do Max */}
+        {/* Botão flutuante redondinho */}
         <Button
           type="button"
           size="icon"
           onClick={() => setMaxOpen((prev) => !prev)}
-          className="h-14 w-14 rounded-full shadow-2xl bg-[#1E293F] text-white border-4 border-white flex items-center justify-center hover:scale-105 transition-transform"
+          className="h-14 w-14 rounded-full shadow-2xl text-white border-4 border-white flex items-center justify-center hover:scale-105 transition-transform"
+          style={{ backgroundColor: BRAND_NAVY }}
         >
           <Dog className="w-7 h-7" />
         </Button>

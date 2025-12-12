@@ -1,5 +1,5 @@
 // src/pages/Planejamento.tsx
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,8 @@ import {
   ChevronUp,
   FileText,
   Sparkles,
+  RefreshCcw,
+  FolderOpen,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -112,6 +114,17 @@ type MaxMessage = {
   content: string;
 };
 
+type PlanQueue = "planejado" | "em_andamento" | "concluido";
+
+type PlanRow = {
+  plan: WeeklyPlan;
+  itemsCount: number;
+  doingCount: number;
+  doneCount: number;
+  hasPlaybook: boolean;
+  queue: PlanQueue;
+};
+
 /* ========================= Helpers ========================= */
 
 const BRAND_RUBI = "#A11C27";
@@ -136,10 +149,58 @@ function normalizeStatus(s: string): WeeklyPlanItemStatus {
 
 function formatDateBR(iso: string) {
   if (!iso) return "";
-  // iso yyyy-mm-dd
   const [y, m, d] = iso.split("-");
   if (!y || !m || !d) return iso;
   return `${d}/${m}/${y}`;
+}
+
+function planDisplayName(p: WeeklyPlan) {
+  const base = p.theme?.trim()
+    ? p.theme.trim()
+    : `Planejamento ${formatDateBR(p.date_start)} → ${formatDateBR(p.date_end)}`;
+  return base;
+}
+
+function isPlaybookFilled(pb: SalesPlaybook | null) {
+  if (!pb) return false;
+  const fields = [
+    pb.segmento,
+    pb.produto,
+    pb.persona,
+    pb.dor_principal,
+    pb.big_idea,
+    pb.garantia,
+    pb.cta_principal,
+    pb.script_abertura,
+    pb.script_quebra_gelo,
+    pb.script_diagnostico,
+    pb.script_apresentacao,
+    pb.script_oferta,
+    pb.script_fechamento,
+    pb.script_followup,
+  ];
+  return fields.some((v) => String(v || "").trim().length > 0);
+}
+
+function computePlanQueue(args: {
+  items: WeeklyPlanItem[];
+  playbook: SalesPlaybook | null;
+}) : PlanQueue {
+  const items = args.items || [];
+  const hasAny = items.length > 0;
+  const allDone =
+    hasAny && items.every((i) => normalizeStatus(String(i.status || "planejado")) === "concluido");
+  if (allDone) return "concluido";
+
+  const anyDoing = items.some(
+    (i) => normalizeStatus(String(i.status || "planejado")) === "em_andamento"
+  );
+
+  if (anyDoing) return "em_andamento";
+
+  if (isPlaybookFilled(args.playbook)) return "em_andamento";
+
+  return "planejado";
 }
 
 /* ========================= Componente ========================= */
@@ -151,24 +212,30 @@ const Planejamento: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
+  // Filtro “cargo” para criar/carregar e também para a lista (pode ver por cargo)
   const [role, setRole] = useState<string>("vendedor");
 
+  // Datas (apenas para criar/carregar)
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
 
+  // Plano ativo (editor)
   const [plan, setPlan] = useState<WeeklyPlan | null>(null);
   const [items, setItems] = useState<WeeklyPlanItem[]>([]);
   const [playbook, setPlaybook] = useState<SalesPlaybook | null>(null);
   const [objections, setObjections] = useState<SalesObjection[]>([]);
-
-  // IA extra (editável) – diálogo / possibilidades
   const [aiDialogues, setAiDialogues] = useState<string>("");
 
-  // Controle do widget flutuante (chat)
-  const [maxMessages, setMaxMessages] = useState<MaxMessage[]>([]);
-  const [maxInput, setMaxInput] = useState("");
-  const [maxLoading, setMaxLoading] = useState(false);
-  const [maxOpen, setMaxOpen] = useState(false);
+  // Etapas (gate)
+  const [hasSaved5W2H, setHasSaved5W2H] = useState(false);
+
+  // Lista de planos (sempre disponível)
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [plans, setPlans] = useState<PlanRow[]>([]);
+  const [openQueueDoing, setOpenQueueDoing] = useState(true); // por padrão abre “Em andamento”
+  const [openQueuePlanned, setOpenQueuePlanned] = useState(false);
+  const [openQueueDone, setOpenQueueDone] = useState(false);
 
   // Overlay Playbook
   const [playbookOpen, setPlaybookOpen] = useState(false);
@@ -176,18 +243,13 @@ const Planejamento: React.FC = () => {
     "playbook"
   );
 
-  // Expansões por status (por padrão oculto)
-  const [openDoing, setOpenDoing] = useState(false);
-  const [openPlanned, setOpenPlanned] = useState(false);
-  const [openDone, setOpenDone] = useState(false);
+  // Widget flutuante (chat livre)
+  const [maxMessages, setMaxMessages] = useState<MaxMessage[]>([]);
+  const [maxInput, setMaxInput] = useState("");
+  const [maxLoading, setMaxLoading] = useState(false);
+  const [maxOpen, setMaxOpen] = useState(false);
 
-  // Gate: só habilita Playbook depois de salvar 5W2H
-  const [hasSaved5W2H, setHasSaved5W2H] = useState(false);
-
-  const isAdmin = useMemo(
-    () => currentUser?.user_role === "admin",
-    [currentUser]
-  );
+  const isAdmin = useMemo(() => currentUser?.user_role === "admin", [currentUser]);
 
   /* ========================= Load user & collaborators ========================= */
 
@@ -199,8 +261,7 @@ const Planejamento: React.FC = () => {
           data: { user },
           error: userError,
         } = await supabase.auth.getUser();
-        if (userError || !user)
-          throw userError || new Error("Usuário não autenticado");
+        if (userError || !user) throw userError || new Error("Usuário não autenticado");
 
         const { data: profiles, error: profilesError } = await supabase
           .from("users")
@@ -237,13 +298,169 @@ const Planejamento: React.FC = () => {
     loadUserAndUsers();
   }, []);
 
-  /* ========================= Carregar ou criar plano ========================= */
+  /* ========================= Lista de planos (sempre visível) ========================= */
+
+  const loadPlansList = useCallback(async () => {
+    if (!selectedUserId) return;
+    setPlansLoading(true);
+    try {
+      // 1) planos
+      const { data: plansData, error: pErr } = await supabase
+        .from("weekly_plans")
+        .select("*")
+        .eq("user_id", selectedUserId)
+        .eq("role", role)
+        .order("date_start", { ascending: false })
+        .limit(60);
+
+      if (pErr) throw pErr;
+
+      const list = (plansData || []) as WeeklyPlan[];
+      if (list.length === 0) {
+        setPlans([]);
+        return;
+      }
+
+      const planIds = list.map((p) => p.id);
+
+      // 2) itens de TODOS os planos de uma vez
+      const { data: itemsData, error: iErr } = await supabase
+        .from("weekly_plan_items")
+        .select("*")
+        .in("plan_id", planIds);
+
+      if (iErr) throw iErr;
+
+      const allItems = (itemsData || []) as WeeklyPlanItem[];
+      const itemsByPlan = new Map<string, WeeklyPlanItem[]>();
+      for (const it of allItems) {
+        const arr = itemsByPlan.get(it.plan_id) || [];
+        arr.push(it);
+        itemsByPlan.set(it.plan_id, arr);
+      }
+
+      // 3) playbooks (1 por plano)
+      const { data: pbData, error: pbErr } = await supabase
+        .from("sales_playbooks")
+        .select("*")
+        .in("plan_id", planIds);
+
+      if (pbErr) throw pbErr;
+
+      const pbs = (pbData || []) as SalesPlaybook[];
+      const pbByPlan = new Map<string, SalesPlaybook>();
+      for (const pb of pbs) pbByPlan.set(pb.plan_id, pb);
+
+      // 4) monta rows
+      const rows: PlanRow[] = list.map((p) => {
+        const its = itemsByPlan.get(p.id) || [];
+        const doingCount = its.filter(
+          (x) => normalizeStatus(String(x.status || "planejado")) === "em_andamento"
+        ).length;
+        const doneCount = its.filter(
+          (x) => normalizeStatus(String(x.status || "planejado")) === "concluido"
+        ).length;
+
+        const pb = pbByPlan.get(p.id) || null;
+        const queue = computePlanQueue({ items: its, playbook: pb });
+
+        return {
+          plan: p,
+          itemsCount: its.length,
+          doingCount,
+          doneCount,
+          hasPlaybook: !!pb && isPlaybookFilled(pb),
+          queue,
+        };
+      });
+
+      setPlans(rows);
+    } catch (err) {
+      console.error(err);
+      setPlans([]);
+    } finally {
+      setPlansLoading(false);
+    }
+  }, [selectedUserId, role]);
+
+  // carrega lista automaticamente (sem precisar digitar nada)
+  useEffect(() => {
+    if (!selectedUserId) return;
+    loadPlansList();
+  }, [selectedUserId, role, loadPlansList]);
+
+  /* ========================= Carregar detalhes de um plano ========================= */
+
+  const loadPlanDetails = useCallback(async (planId: string) => {
+    setLoading(true);
+    try {
+      const { data: pData, error: pErr } = await supabase
+        .from("weekly_plans")
+        .select("*")
+        .eq("id", planId)
+        .single();
+
+      if (pErr) throw pErr;
+      const currentPlan = pData as WeeklyPlan;
+      setPlan(currentPlan);
+
+      // sincroniza filtros superiores (pra ficar coerente)
+      setDateStart(currentPlan.date_start);
+      setDateEnd(currentPlan.date_end);
+      setRole(currentPlan.role);
+
+      // itens
+      const { data: itemsData, error: itemsError } = await supabase
+        .from("weekly_plan_items")
+        .select("*")
+        .eq("plan_id", currentPlan.id)
+        .order("date_start", { ascending: true });
+
+      if (itemsError) throw itemsError;
+      const loadedItems = (itemsData || []) as WeeklyPlanItem[];
+      setItems(loadedItems);
+
+      // etapa 1 (5w2h): se já tem itens persistidos, habilita etapa 2
+      setHasSaved5W2H(loadedItems.length > 0);
+
+      // playbook
+      const { data: pbData, error: pbError } = await supabase
+        .from("sales_playbooks")
+        .select("*")
+        .eq("plan_id", currentPlan.id)
+        .limit(1);
+
+      if (pbError) throw pbError;
+
+      if (pbData && pbData.length > 0) {
+        const pb = pbData[0] as SalesPlaybook;
+        setPlaybook(pb);
+
+        const { data: objData, error: objError } = await supabase
+          .from("sales_objections")
+          .select("*")
+          .eq("playbook_id", pb.id)
+          .order("priority", { ascending: true });
+
+        if (objError) throw objError;
+        setObjections((objData || []) as SalesObjection[]);
+      } else {
+        setPlaybook(null);
+        setObjections([]);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /* ========================= Criar/Carregar plano pelo topo ========================= */
 
   const handleLoadOrCreatePlan = async () => {
     if (!selectedUserId || !dateStart || !dateEnd) return;
     setLoading(true);
     try {
-      // reset gate – precisa salvar novamente depois que abrir/editar
       setHasSaved5W2H(false);
 
       const { data: existingPlans, error: planError } = await supabase
@@ -279,45 +496,12 @@ const Planejamento: React.FC = () => {
         currentPlan = newPlanData as WeeklyPlan;
       }
 
-      setPlan(currentPlan);
+      // abre o editor carregando detalhes completos
+      await loadPlanDetails(currentPlan.id);
 
-      const { data: planItems, error: itemsError } = await supabase
-        .from("weekly_plan_items")
-        .select("*")
-        .eq("plan_id", currentPlan.id)
-        .order("date_start", { ascending: true });
-
-      if (itemsError) throw itemsError;
-      setItems((planItems || []) as WeeklyPlanItem[]);
-
-      const { data: playbooks, error: pbError } = await supabase
-        .from("sales_playbooks")
-        .select("*")
-        .eq("plan_id", currentPlan.id)
-        .limit(1);
-
-      if (pbError) throw pbError;
-
-      if (playbooks && playbooks.length > 0) {
-        setPlaybook(playbooks[0] as SalesPlaybook);
-
-        const { data: objData, error: objError } = await supabase
-          .from("sales_objections")
-          .select("*")
-          .eq("playbook_id", playbooks[0].id)
-          .order("priority", { ascending: true });
-
-        if (objError) throw objError;
-        setObjections((objData || []) as SalesObjection[]);
-      } else {
-        setPlaybook(null);
-        setObjections([]);
-      }
-
-      // não auto-abre as listas; mantém oculto por padrão
-      setOpenDoing(false);
-      setOpenPlanned(false);
-      setOpenDone(false);
+      // garante que ele apareça na lista imediatamente
+      await loadPlansList();
+      setOpenQueuePlanned(true);
     } catch (err) {
       console.error(err);
     } finally {
@@ -325,7 +509,7 @@ const Planejamento: React.FC = () => {
     }
   };
 
-  /* ========================= 5W2H (itens + theme/meta dentro) ========================= */
+  /* ========================= Editor 5W2H ========================= */
 
   const markDirty = useCallback(() => {
     setHasSaved5W2H(false);
@@ -334,13 +518,12 @@ const Planejamento: React.FC = () => {
   const handleAddItem = () => {
     if (!plan) return;
     markDirty();
-
-    const today = dateStart || new Date().toISOString().slice(0, 10);
+    const today = plan.date_start || new Date().toISOString().slice(0, 10);
     const newItem: WeeklyPlanItem = {
       id: `temp-${Math.random()}`,
       plan_id: plan.id,
       date_start: today,
-      date_end: dateEnd || today,
+      date_end: plan.date_end || today,
       what: "",
       why: "",
       where_: "",
@@ -353,54 +536,42 @@ const Planejamento: React.FC = () => {
     setItems((prev) => [...prev, newItem]);
   };
 
-  const handleUpdateItemField = (
-    id: string,
-    field: keyof WeeklyPlanItem,
-    value: any
-  ) => {
+  const handleUpdateItemField = (id: string, field: keyof WeeklyPlanItem, value: any) => {
     markDirty();
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
-    );
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
   };
 
   const handleSavePlanAndItems = async () => {
     if (!plan) return;
     setSaving(true);
     try {
-      // 1) salva theme + meta principal dentro do weekly_plans
+      // 1) salva weekly_plans (tema/meta)
       {
         const { id, ...payload } = plan;
-        const { error } = await supabase
-          .from("weekly_plans")
-          .update(payload)
-          .eq("id", id);
-
+        const { error } = await supabase.from("weekly_plans").update(payload).eq("id", id);
         if (error) throw error;
       }
 
-      // 2) salva itens
-      const toInsert = items.filter((i) => i.id.startsWith("temp-"));
-      const toUpdate = items.filter((i) => !i.id.startsWith("temp-"));
+      // 2) salva itens (insert/update)
+      const toInsert = items.filter((i) => String(i.id).startsWith("temp-"));
+      const toUpdate = items.filter((i) => !String(i.id).startsWith("temp-"));
 
       if (toInsert.length > 0) {
-        const { error: insertError } = await supabase
-          .from("weekly_plan_items")
-          .insert(
-            toInsert.map((i) => ({
-              plan_id: plan.id,
-              date_start: i.date_start,
-              date_end: i.date_end,
-              what: i.what,
-              why: i.why,
-              where_: i.where_,
-              when_: i.when_,
-              who: i.who,
-              how: i.how,
-              how_much: i.how_much,
-              status: normalizeStatus(String(i.status || "planejado")),
-            }))
-          );
+        const { error: insertError } = await supabase.from("weekly_plan_items").insert(
+          toInsert.map((i) => ({
+            plan_id: plan.id,
+            date_start: i.date_start,
+            date_end: i.date_end,
+            what: i.what,
+            why: i.why,
+            where_: i.where_,
+            when_: i.when_,
+            who: i.who,
+            how: i.how,
+            how_much: i.how_much,
+            status: normalizeStatus(String(i.status || "planejado")),
+          }))
+        );
         if (insertError) throw insertError;
       }
 
@@ -417,11 +588,15 @@ const Planejamento: React.FC = () => {
         if (updateError) throw updateError;
       }
 
-      // 3) recarrega
-      await handleLoadOrCreatePlan();
+      // 3) recarrega plano ativo
+      await loadPlanDetails(plan.id);
 
-      // gate OK
+      // 4) etapa 1 concluída → habilita playbook
       setHasSaved5W2H(true);
+
+      // 5) atualiza lista e abre fila planejado (normalmente cai aqui)
+      await loadPlansList();
+      setOpenQueuePlanned(true);
     } catch (err) {
       console.error(err);
     } finally {
@@ -438,18 +613,16 @@ const Planejamento: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from("sales_playbooks")
-        .insert({
-          plan_id: plan.id,
-        })
+        .insert({ plan_id: plan.id })
         .select("*")
         .single();
 
       if (error) throw error;
-
-      setPlaybook(data as SalesPlaybook);
-      setObjections([]); // começa vazio
+      const pb = data as SalesPlaybook;
+      setPlaybook(pb);
+      setObjections([]);
       setAiDialogues("");
-      return data as SalesPlaybook;
+      return pb;
     } catch (err) {
       console.error(err);
       return null;
@@ -475,34 +648,26 @@ const Planejamento: React.FC = () => {
   const handleSavePlaybookAndObjections = async () => {
     if (!plan) return;
     setSaving(true);
-
     try {
       const pb = await handleEnsurePlaybook();
       const finalPb = playbook || pb;
       if (!finalPb) return;
 
-      // garante playbook no state com id real
-      if (!playbook || !playbook.id) setPlaybook(finalPb);
-
-      // 1) update playbook
+      // playbook update
       {
-        const { id, ...payload } = finalPb as SalesPlaybook;
-        const { error } = await supabase
-          .from("sales_playbooks")
-          .update(payload)
-          .eq("id", id);
-
+        const { id, ...payload } = finalPb;
+        const { error } = await supabase.from("sales_playbooks").update(payload).eq("id", id);
         if (error) throw error;
       }
 
-      // 2) salva objeções
+      // objeções insert/update
       const toInsert = objections.filter((o) => String(o.id).startsWith("temp-"));
       const toUpdate = objections.filter((o) => !String(o.id).startsWith("temp-"));
 
       if (toInsert.length > 0) {
         const { error: insertError } = await supabase.from("sales_objections").insert(
           toInsert.map((o) => ({
-            playbook_id: (finalPb as SalesPlaybook).id,
+            playbook_id: finalPb.id,
             tag: o.tag,
             objection_text: o.objection_text,
             answer_text: o.answer_text,
@@ -522,8 +687,10 @@ const Planejamento: React.FC = () => {
         if (updateError) throw updateError;
       }
 
-      // 3) recarrega tudo
-      await handleLoadOrCreatePlan();
+      // recarrega e atualiza lista (normalmente vira “em andamento”)
+      await loadPlanDetails(plan.id);
+      await loadPlansList();
+      setOpenQueueDoing(true);
     } catch (err) {
       console.error(err);
     } finally {
@@ -531,13 +698,10 @@ const Planejamento: React.FC = () => {
     }
   };
 
-  /* ========================= Max - IA Consulmax ========================= */
+  /* ========================= Max (chat + autopreencher) ========================= */
 
   const pushMaxMessage = (role: "user" | "assistant", content: string) => {
-    setMaxMessages((prev) => [
-      ...prev,
-      { id: `${Date.now()}-${Math.random()}`, role, content },
-    ]);
+    setMaxMessages((prev) => [...prev, { id: `${Date.now()}-${Math.random()}`, role, content }]);
   };
 
   const callMaxRaw = async (
@@ -546,17 +710,8 @@ const Planejamento: React.FC = () => {
   ): Promise<string | null> => {
     if (!prompt.trim()) return null;
     setMaxLoading(true);
-
     try {
-      const context = {
-        plan,
-        items,
-        playbook,
-        objections,
-        aiDialogues,
-        mode,
-      };
-
+      const context = { plan, items, playbook, objections, aiDialogues, mode };
       const res = await fetch("/api/max-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -570,10 +725,7 @@ const Planejamento: React.FC = () => {
       }
 
       const data = await res.json();
-      const answer =
-        (data as any)?.answer ||
-        "Max pensou, mas não conseguiu responder agora. Tenta de novo?";
-
+      const answer = (data as any)?.answer || "Max não conseguiu responder agora.";
       return String(answer);
     } catch (err) {
       console.error("Erro inesperado ao falar com Max:", err);
@@ -583,47 +735,37 @@ const Planejamento: React.FC = () => {
     }
   };
 
-  // Chat do widget flutuante
-  const callMaxChat = async (
-    prompt: string,
-    mode: "livre" | "estrategia" | "objeções" = "livre"
-  ) => {
+  const callMaxChat = async (prompt: string) => {
     if (!prompt.trim()) return;
-    setMaxLoading(true);
-    try {
-      const answer = await callMaxRaw(prompt, mode);
-      if (!answer) {
-        pushMaxMessage(
-          "assistant",
-          "Max não conseguiu responder agora. Verifique a chave de API na Vercel ou tente novamente em alguns instantes."
-        );
-        return;
-      }
-      pushMaxMessage("assistant", answer);
-    } finally {
-      setMaxLoading(false);
+    pushMaxMessage("user", prompt);
+    const answer = await callMaxRaw(prompt, "livre");
+    if (!answer) {
+      pushMaxMessage(
+        "assistant",
+        "Max não conseguiu responder agora. Verifique a chave de API na Vercel e tente novamente."
+      );
+      return;
     }
+    pushMaxMessage("assistant", answer);
   };
 
   const handleSendToMax = async () => {
     if (!maxInput.trim()) return;
     const message = maxInput.trim();
-    pushMaxMessage("user", message);
     setMaxInput("");
-    await callMaxChat(message, "livre");
+    await callMaxChat(message);
   };
 
-  // Preenche Playbook + Objeções automaticamente
   const handleFillPlaybookFromMax = async () => {
     if (!plan) return;
-
-    // garante playbook para receber objeções com playbook_id
     const pb = await handleEnsurePlaybook();
     if (!pb) return;
 
     const prompt = `
-Você é o Max (Consulmax). Gere um PLAYBOOK COMPLETO e OBJEÇÕES para esta semana com base no contexto (tema, meta, ações 5W2H, cargo e período).
-Responda APENAS em JSON válido (sem markdown, sem explicações) neste formato:
+Você é o Max (Consulmax). Gere um PLAYBOOK COMPLETO + OBJEÇÕES + POSSIBILIDADES DE CONVERSA
+com base no contexto (Tema, Meta, Ações 5W2H, Cargo, Período).
+
+Responda APENAS em JSON válido (sem markdown), formato:
 
 {
   "playbook": {
@@ -645,36 +787,23 @@ Responda APENAS em JSON válido (sem markdown, sem explicações) neste formato:
   "objections": [
     { "tag": "....", "objection_text": "...", "answer_text": "...", "next_step": "...", "priority": 1 }
   ],
-  "dialogo": "Texto com possibilidades do que o cliente pode falar e o que o vendedor responde (formato fácil de ler, com variações)."
+  "dialogo": "Texto organizado com possibilidades do que o cliente fala vs o que o vendedor responde."
 }
 
 Regras:
-- Faça scripts curtos, naturais e “Consulmax”.
-- Objeções: 10 itens, prioridade 1..10.
-- Use o tema/meta/ações para direcionar (não genérico).
+- Scripts curtos, naturais, “Consulmax”.
+- Objeções: 10 itens (priority 1..10).
+- Use o tema/meta/ações para não ficar genérico.
 `;
 
     const answer = await callMaxRaw(prompt, "estrategia");
-    if (!answer) {
-      pushMaxMessage(
-        "assistant",
-        "Não consegui preencher automaticamente agora. Tenta de novo em alguns instantes."
-      );
-      return;
-    }
+    if (!answer) return;
 
     const parsed = safeJsonExtract(answer);
-    if (!parsed?.playbook) {
-      pushMaxMessage(
-        "assistant",
-        "O Max respondeu, mas não veio no JSON certinho pra auto-preencher. Tenta de novo."
-      );
-      return;
-    }
+    if (!parsed?.playbook) return;
 
-    // aplica playbook
     setPlaybook((prev) => {
-      const base = prev && prev.id ? prev : (pb as SalesPlaybook);
+      const base = prev && prev.id ? prev : pb;
       return {
         ...(base as SalesPlaybook),
         segmento: parsed.playbook.segmento ?? base.segmento ?? "",
@@ -685,26 +814,20 @@ Regras:
         garantia: parsed.playbook.garantia ?? base.garantia ?? "",
         cta_principal: parsed.playbook.cta_principal ?? base.cta_principal ?? "",
         script_abertura: parsed.playbook.script_abertura ?? base.script_abertura ?? "",
-        script_quebra_gelo:
-          parsed.playbook.script_quebra_gelo ?? base.script_quebra_gelo ?? "",
-        script_diagnostico:
-          parsed.playbook.script_diagnostico ?? base.script_diagnostico ?? "",
-        script_apresentacao:
-          parsed.playbook.script_apresentacao ?? base.script_apresentacao ?? "",
+        script_quebra_gelo: parsed.playbook.script_quebra_gelo ?? base.script_quebra_gelo ?? "",
+        script_diagnostico: parsed.playbook.script_diagnostico ?? base.script_diagnostico ?? "",
+        script_apresentacao: parsed.playbook.script_apresentacao ?? base.script_apresentacao ?? "",
         script_oferta: parsed.playbook.script_oferta ?? base.script_oferta ?? "",
-        script_fechamento:
-          parsed.playbook.script_fechamento ?? base.script_fechamento ?? "",
-        script_followup:
-          parsed.playbook.script_followup ?? base.script_followup ?? "",
+        script_fechamento: parsed.playbook.script_fechamento ?? base.script_fechamento ?? "",
+        script_followup: parsed.playbook.script_followup ?? base.script_followup ?? "",
       };
     });
 
-    // aplica objeções
     const objs = Array.isArray(parsed.objections) ? parsed.objections : [];
     setObjections(
       objs.map((o: any, idx: number) => ({
         id: `temp-${Math.random()}`,
-        playbook_id: (pb as SalesPlaybook).id,
+        playbook_id: pb.id,
         tag: String(o?.tag ?? ""),
         objection_text: String(o?.objection_text ?? ""),
         answer_text: String(o?.answer_text ?? ""),
@@ -713,26 +836,8 @@ Regras:
       }))
     );
 
-    // diálogo
     setAiDialogues(String(parsed.dialogo ?? ""));
-
-    // leva pra aba playbook
     setPlaybookTab("playbook");
-  };
-
-  const handleGenerateDialoguesFromMax = async () => {
-    if (!plan) return;
-
-    const prompt = `
-Você é o Max (Consulmax). Crie um "roteiro de conversa" com variações:
-- o que o cliente pode falar (várias possibilidades)
-- como o vendedor responde (respostas curtas e fortes)
-Use o contexto (tema/meta/ações 5W2H, scripts e objeções já cadastradas).
-Retorne um texto organizado em tópicos, bem legível para colar e treinar.
-`;
-    const answer = await callMaxRaw(prompt, "livre");
-    if (!answer) return;
-    setAiDialogues(answer);
   };
 
   /* ========================= PDF Profissional ========================= */
@@ -741,11 +846,11 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
     if (!plan) return;
 
     const doc = new jsPDF("p", "mm", "a4");
-    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageW = doc.internal.pageSize.getWidth();
 
     // Header
     doc.setFillColor(BRAND_NAVY);
-    doc.rect(0, 0, pageWidth, 22, "F");
+    doc.rect(0, 0, pageW, 22, "F");
 
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
@@ -755,15 +860,16 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.text(
-      `Período: ${formatDateBR(plan.date_start)} a ${formatDateBR(plan.date_end)}  •  Cargo: ${role}`,
+      `Plano: ${planDisplayName(plan)}  •  Período: ${formatDateBR(plan.date_start)} a ${formatDateBR(
+        plan.date_end
+      )}  •  Cargo: ${plan.role}`,
       14,
       19
     );
 
-    // Subheader box
+    let y = 30;
     doc.setTextColor(20, 20, 20);
     doc.setFontSize(11);
-    let y = 30;
 
     doc.setFont("helvetica", "bold");
     doc.text("Tema da Semana:", 14, y);
@@ -777,7 +883,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
     doc.text(String(plan.main_goal || "-"), 48, y);
     y += 10;
 
-    // 5W2H table (todos os itens)
+    // 5W2H table
     const rows = items
       .slice()
       .sort((a, b) => String(a.date_start).localeCompare(String(b.date_start)))
@@ -801,7 +907,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
 
     y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : y + 8;
 
-    // Playbook section
+    // Playbook
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
     doc.text("Playbook (editável pelo vendedor)", 14, y);
@@ -832,7 +938,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
       body: playbookLines.map(([k, v]) => [k, v]),
       styles: { fontSize: 8, cellPadding: 2, valign: "top" },
       headStyles: { fillColor: [161, 28, 39] },
-      columnStyles: { 0: { cellWidth: 36 }, 1: { cellWidth: pageWidth - 14 - 14 - 36 } },
+      columnStyles: { 0: { cellWidth: 36 }, 1: { cellWidth: pageW - 14 - 14 - 36 } },
       margin: { left: 14, right: 14 },
     });
 
@@ -841,7 +947,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
     // Objections
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
-    doc.text("Objeções & Contornos (o que o cliente fala vs resposta)", 14, y);
+    doc.text("Objeções & Contornos (Cliente diz vs Vendedor responde)", 14, y);
     y += 6;
 
     const objRows = objections
@@ -866,7 +972,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
 
     y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : y + 8;
 
-    // Dialogues (IA)
+    // Dialogues
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
     doc.text("Possibilidades de Conversa (IA) — editável", 14, y);
@@ -876,12 +982,11 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
     doc.setFontSize(9);
 
     const dialog = String(aiDialogues || "-");
-    const split = doc.splitTextToSize(dialog, pageWidth - 28);
+    const split = doc.splitTextToSize(dialog, pageW - 28);
+    const maxY = doc.internal.pageSize.getHeight() - 14;
 
-    // se estourar página, jsPDF vai quebrar no addPage manualmente
-    const maxHeight = doc.internal.pageSize.getHeight() - 14;
     for (let i = 0; i < split.length; i++) {
-      if (y > maxHeight) {
+      if (y > maxY) {
         doc.addPage();
         y = 16;
       }
@@ -889,7 +994,6 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
       y += 4.2;
     }
 
-    // Footer
     doc.setTextColor(120);
     doc.setFontSize(8);
     doc.text(
@@ -898,19 +1002,15 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
       doc.internal.pageSize.getHeight() - 10
     );
 
-    doc.save(
-      `consulmax-playbook-${plan.date_start}_a_${plan.date_end}-${role}.pdf`
-    );
+    doc.save(`consulmax-playbook-${plan.date_start}_a_${plan.date_end}-${plan.role}.pdf`);
   };
 
-  /* ========================= Derived groups ========================= */
+  /* ========================= Grupos do Editor (itens por status) ========================= */
 
   const doingItems = useMemo(
-    () =>
-      items.filter((i) => normalizeStatus(String(i.status || "planejado")) === "em_andamento"),
+    () => items.filter((i) => normalizeStatus(String(i.status || "planejado")) === "em_andamento"),
     [items]
   );
-
   const plannedItems = useMemo(
     () =>
       items.filter((i) => {
@@ -919,117 +1019,160 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
       }),
     [items]
   );
-
   const doneItems = useMemo(
-    () =>
-      items.filter((i) => normalizeStatus(String(i.status || "planejado")) === "concluido"),
+    () => items.filter((i) => normalizeStatus(String(i.status || "planejado")) === "concluido"),
     [items]
   );
 
-  const renderItem = (item: WeeklyPlanItem) => {
+  const renderItem = (item: WeeklyPlanItem) => (
+    <div
+      key={item.id}
+      className="border rounded-xl p-3 grid md:grid-cols-4 gap-3 bg-background/40"
+    >
+      <div>
+        <Label>De</Label>
+        <Input
+          type="date"
+          value={item.date_start || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "date_start", e.target.value)}
+        />
+      </div>
+      <div>
+        <Label>Até</Label>
+        <Input
+          type="date"
+          value={item.date_end || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "date_end", e.target.value)}
+        />
+      </div>
+      <div>
+        <Label>O que? (What)</Label>
+        <Input
+          value={item.what || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "what", e.target.value)}
+        />
+      </div>
+      <div>
+        <Label>Por quê? (Why)</Label>
+        <Input
+          value={item.why || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "why", e.target.value)}
+        />
+      </div>
+      <div>
+        <Label>Onde? (Where)</Label>
+        <Input
+          value={item.where_ || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "where_", e.target.value)}
+        />
+      </div>
+      <div>
+        <Label>Quando? (When)</Label>
+        <Input
+          value={item.when_ || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "when_", e.target.value)}
+        />
+      </div>
+      <div>
+        <Label>Quem? (Who)</Label>
+        <Input
+          value={item.who || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "who", e.target.value)}
+        />
+      </div>
+      <div>
+        <Label>Como? (How)</Label>
+        <Input
+          value={item.how || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "how", e.target.value)}
+        />
+      </div>
+      <div>
+        <Label>Quanto? (How much)</Label>
+        <Input
+          value={item.how_much || ""}
+          onChange={(e) => handleUpdateItemField(item.id, "how_much", e.target.value)}
+          placeholder="Ex.: 30 ligações, 10 reuniões..."
+        />
+      </div>
+      <div>
+        <Label>Status</Label>
+        <Select
+          value={normalizeStatus(String(item.status || "planejado"))}
+          onValueChange={(val) => handleUpdateItemField(item.id, "status", val)}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="planejado">Planejado</SelectItem>
+            <SelectItem value="em_andamento">Em andamento</SelectItem>
+            <SelectItem value="concluido">Concluído</SelectItem>
+            <SelectItem value="adiado">Adiado</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  );
+
+  /* ========================= Lista (filas) ========================= */
+
+  const plansDoing = useMemo(() => plans.filter((p) => p.queue === "em_andamento"), [plans]);
+  const plansPlanned = useMemo(() => plans.filter((p) => p.queue === "planejado"), [plans]);
+  const plansDone = useMemo(() => plans.filter((p) => p.queue === "concluido"), [plans]);
+
+  const PlanRowCard = ({ row }: { row: PlanRow }) => {
+    const p = row.plan;
     return (
-      <div
-        key={item.id}
-        className="border rounded-xl p-3 grid md:grid-cols-4 gap-3 bg-background/40"
-      >
-        <div>
-          <Label>De</Label>
-          <Input
-            type="date"
-            value={item.date_start || ""}
-            onChange={(e) =>
-              handleUpdateItemField(item.id, "date_start", e.target.value)
-            }
-          />
-        </div>
-        <div>
-          <Label>Até</Label>
-          <Input
-            type="date"
-            value={item.date_end || ""}
-            onChange={(e) =>
-              handleUpdateItemField(item.id, "date_end", e.target.value)
-            }
-          />
-        </div>
+      <div className="border rounded-2xl p-3 bg-background/40 flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-semibold truncate">{planDisplayName(p)}</div>
+            <div className="text-xs text-muted-foreground">
+              {formatDateBR(p.date_start)} → {formatDateBR(p.date_end)} • Cargo: {p.role} • Ações:{" "}
+              {row.itemsCount} • Concluídas: {row.doneCount} • Em andamento: {row.doingCount}
+            </div>
+          </div>
 
-        <div>
-          <Label>O que? (What)</Label>
-          <Input
-            value={item.what || ""}
-            onChange={(e) => handleUpdateItemField(item.id, "what", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Por quê? (Why)</Label>
-          <Input
-            value={item.why || ""}
-            onChange={(e) => handleUpdateItemField(item.id, "why", e.target.value)}
-          />
-        </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => loadPlanDetails(p.id)}
+              disabled={loading}
+            >
+              <FolderOpen className="w-4 h-4 mr-1" />
+              Abrir
+            </Button>
 
-        <div>
-          <Label>Onde? (Where)</Label>
-          <Input
-            value={item.where_ || ""}
-            onChange={(e) =>
-              handleUpdateItemField(item.id, "where_", e.target.value)
-            }
-          />
-        </div>
-        <div>
-          <Label>Quando? (When)</Label>
-          <Input
-            value={item.when_ || ""}
-            onChange={(e) =>
-              handleUpdateItemField(item.id, "when_", e.target.value)
-            }
-          />
-        </div>
-        <div>
-          <Label>Quem? (Who)</Label>
-          <Input
-            value={item.who || ""}
-            onChange={(e) => handleUpdateItemField(item.id, "who", e.target.value)}
-          />
-        </div>
-        <div>
-          <Label>Como? (How)</Label>
-          <Input
-            value={item.how || ""}
-            onChange={(e) => handleUpdateItemField(item.id, "how", e.target.value)}
-          />
-        </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await loadPlanDetails(p.id);
+                setPlaybookOpen(true);
+                setPlaybookTab("playbook");
+              }}
+              disabled={loading}
+              title={!row.itemsCount ? "Salve o 5W2H primeiro." : "Abrir Playbook"}
+            >
+              <MessageCircle className="w-4 h-4 mr-1" />
+              Playbook
+            </Button>
 
-        <div>
-          <Label>Quanto? (How much)</Label>
-          <Input
-            value={item.how_much || ""}
-            onChange={(e) =>
-              handleUpdateItemField(item.id, "how_much", e.target.value)
-            }
-            placeholder="Ex.: 30 ligações, 10 reuniões..."
-          />
-        </div>
-
-        <div>
-          <Label>Status</Label>
-          <Select
-            value={normalizeStatus(String(item.status || "planejado"))}
-            onValueChange={(val) =>
-              handleUpdateItemField(item.id, "status", val as WeeklyPlanItemStatus)
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="planejado">Planejado</SelectItem>
-              <SelectItem value="em_andamento">Em andamento</SelectItem>
-              <SelectItem value="concluido">Concluído</SelectItem>
-              <SelectItem value="adiado">Adiado</SelectItem>
-            </SelectContent>
-          </Select>
+            <Button
+              size="sm"
+              onClick={async () => {
+                await loadPlanDetails(p.id);
+                await handleExportPDF();
+              }}
+              disabled={loading || !row.hasPlaybook}
+              title={!row.hasPlaybook ? "Gere e salve o Playbook antes do PDF." : "Baixar PDF"}
+            >
+              <FileText className="w-4 h-4 mr-1" />
+              PDF
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -1039,27 +1182,30 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
 
   return (
     <div className="relative flex gap-4 h-full">
-      {/* Coluna principal */}
       <div className="flex-1 flex flex-col gap-4 overflow-y-auto pb-4">
-        {/* Filtros topo */}
+        {/* Topo: filtros e criar/carregar */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <Dog className="w-6 h-6" style={{ color: BRAND_RUBI }} />
-              <CardTitle>
-                Planejamento &amp; Playbook – Max, o mascote da Consulmax 🐶
-              </CardTitle>
+              <CardTitle>Planejamento &amp; Playbook – Max 🐶</CardTitle>
             </div>
+
+            <Button variant="outline" onClick={loadPlansList} disabled={plansLoading || !selectedUserId}>
+              {plansLoading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCcw className="w-4 h-4 mr-2" />
+              )}
+              Atualizar lista
+            </Button>
           </CardHeader>
 
           <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {isAdmin && (
               <div>
                 <Label>Colaborador</Label>
-                <Select
-                  value={selectedUserId || ""}
-                  onValueChange={(val) => setSelectedUserId(val)}
-                >
+                <Select value={selectedUserId || ""} onValueChange={(val) => setSelectedUserId(val)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o colaborador" />
                   </SelectTrigger>
@@ -1098,20 +1244,12 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
 
             <div>
               <Label>De</Label>
-              <Input
-                type="date"
-                value={dateStart}
-                onChange={(e) => setDateStart(e.target.value)}
-              />
+              <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} />
             </div>
 
             <div>
               <Label>Até</Label>
-              <Input
-                type="date"
-                value={dateEnd}
-                onChange={(e) => setDateEnd(e.target.value)}
-              />
+              <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
             </div>
 
             <div className="flex items-end">
@@ -1120,21 +1258,156 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                 disabled={loading || !selectedUserId || !dateStart || !dateEnd}
               >
                 {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Carregar / Criar planejamento
+                Criar / Carregar planejamento
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        {/* 5W2H + Theme/Meta dentro */}
+        {/* FILAS DE PLANOS (sempre disponível) */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Meus Planejamentos</CardTitle>
+          </CardHeader>
+
+          <CardContent className="space-y-3">
+            {/* Em andamento */}
+            <div className="border rounded-2xl p-3 bg-background/40">
+              <button
+                type="button"
+                className="flex items-center gap-2 text-sm font-semibold"
+                onClick={() => setOpenQueueDoing((v) => !v)}
+              >
+                <span
+                  className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs"
+                  style={{ backgroundColor: BRAND_NAVY }}
+                >
+                  Em andamento • {plansDoing.length}
+                </span>
+                {openQueueDoing ? (
+                  <>
+                    <ChevronUp className="w-4 h-4" />
+                    <span className="text-xs text-muted-foreground">Ocultar</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-4 h-4" />
+                    <span className="text-xs text-muted-foreground">Expandir</span>
+                  </>
+                )}
+              </button>
+
+              {openQueueDoing && (
+                <div className="mt-3 space-y-3">
+                  {plansLoading ? (
+                    <div className="text-sm text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                    </div>
+                  ) : plansDoing.length ? (
+                    plansDoing.map((r) => <PlanRowCard key={r.plan.id} row={r} />)
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      Nenhum planejamento em andamento ainda.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Planejado */}
+            <div className="border rounded-2xl p-3 bg-background/40">
+              <button
+                type="button"
+                className="flex items-center gap-2 text-sm font-semibold"
+                onClick={() => setOpenQueuePlanned((v) => !v)}
+              >
+                <span
+                  className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs"
+                  style={{ backgroundColor: BRAND_RUBI }}
+                >
+                  Planejado • {plansPlanned.length}
+                </span>
+                {openQueuePlanned ? (
+                  <>
+                    <ChevronUp className="w-4 h-4" />
+                    <span className="text-xs text-muted-foreground">Ocultar</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-4 h-4" />
+                    <span className="text-xs text-muted-foreground">Expandir</span>
+                  </>
+                )}
+              </button>
+
+              {openQueuePlanned && (
+                <div className="mt-3 space-y-3">
+                  {plansLoading ? (
+                    <div className="text-sm text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                    </div>
+                  ) : plansPlanned.length ? (
+                    plansPlanned.map((r) => <PlanRowCard key={r.plan.id} row={r} />)
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      Nenhum planejamento planejado ainda.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Concluídos */}
+            <div className="border rounded-2xl p-3 bg-background/40">
+              <button
+                type="button"
+                className="flex items-center gap-2 text-sm font-semibold"
+                onClick={() => setOpenQueueDone((v) => !v)}
+              >
+                <span className="inline-flex items-center px-2 py-1 rounded-full bg-emerald-600 text-white text-xs">
+                  Concluídos • {plansDone.length}
+                </span>
+                {openQueueDone ? (
+                  <>
+                    <ChevronUp className="w-4 h-4" />
+                    <span className="text-xs text-muted-foreground">Ocultar</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-4 h-4" />
+                    <span className="text-xs text-muted-foreground">Expandir</span>
+                  </>
+                )}
+              </button>
+
+              {openQueueDone && (
+                <div className="mt-3 space-y-3">
+                  {plansLoading ? (
+                    <div className="text-sm text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+                    </div>
+                  ) : plansDone.length ? (
+                    plansDone.map((r) => <PlanRowCard key={r.plan.id} row={r} />)
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      Nenhum planejamento concluído ainda.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* EDITOR do plano ativo */}
         {plan && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div className="flex flex-col">
-                <CardTitle>Planejamento 5W2H</CardTitle>
+                <CardTitle>Editor — {planDisplayName(plan)}</CardTitle>
                 <div className="text-xs text-muted-foreground mt-1">
-                  Período do plano: <b>{formatDateBR(plan.date_start)}</b> a{" "}
-                  <b>{formatDateBR(plan.date_end)}</b>
+                  Período: <b>{formatDateBR(plan.date_start)}</b> a <b>{formatDateBR(plan.date_end)}</b> • Cargo:{" "}
+                  <b>{plan.role}</b>
                 </div>
               </div>
 
@@ -1144,20 +1417,19 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
             </CardHeader>
 
             <CardContent className="space-y-4">
-              {/* Tema / Meta (movidos para cá) */}
+              {/* Tema / Meta */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label>Tema da semana</Label>
+                  <Label>Tema da semana (nome do planejamento)</Label>
                   <Input
                     value={plan.theme || ""}
                     onChange={(e) => {
                       markDirty();
                       setPlan({ ...plan, theme: e.target.value });
                     }}
-                    placeholder="Ex.: Semana da Frota Agro, Semana dos Médicos, etc."
+                    placeholder="Ex.: Semana da Frota Agro, Semana dos Médicos..."
                   />
                 </div>
-
                 <div>
                   <Label>Meta principal</Label>
                   <Input
@@ -1171,154 +1443,49 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                 </div>
               </div>
 
-              {/* Separação por status */}
+              {/* Itens por status (visualizar o que foi planejado) */}
               <div className="space-y-3">
-                {/* Em andamento */}
                 <div className="border rounded-2xl p-3 bg-background/40">
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      className="flex items-center gap-2 text-sm font-semibold"
-                      onClick={() => setOpenDoing((v) => !v)}
-                    >
-                      <span
-                        className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs"
-                        style={{ backgroundColor: BRAND_NAVY }}
-                      >
-                        Em andamento • {doingItems.length}
-                      </span>
-                      {openDoing ? (
-                        <>
-                          <ChevronUp className="w-4 h-4" />
-                          <span className="text-xs text-muted-foreground">
-                            Ocultar
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="w-4 h-4" />
-                          <span className="text-xs text-muted-foreground">
-                            Expandir
-                          </span>
-                        </>
-                      )}
-                    </button>
-
-                    <span className="text-xs text-muted-foreground">
-                      Itens com status “Em andamento”
+                  <div className="text-sm font-semibold flex items-center gap-2">
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs" style={{ backgroundColor: BRAND_NAVY }}>
+                      Em andamento • {doingItems.length}
                     </span>
                   </div>
-
-                  {openDoing && (
-                    <div className="mt-3 space-y-3">
-                      {doingItems.length ? (
-                        doingItems.map(renderItem)
-                      ) : (
-                        <div className="text-sm text-muted-foreground">
-                          Nenhum item em andamento ainda.
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <div className="mt-3 space-y-3">
+                    {doingItems.length ? doingItems.map(renderItem) : (
+                      <div className="text-sm text-muted-foreground">Nenhuma ação em andamento.</div>
+                    )}
+                  </div>
                 </div>
 
-                {/* Planejado (inclui Adiado) */}
                 <div className="border rounded-2xl p-3 bg-background/40">
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      className="flex items-center gap-2 text-sm font-semibold"
-                      onClick={() => setOpenPlanned((v) => !v)}
-                    >
-                      <span
-                        className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs"
-                        style={{ backgroundColor: BRAND_RUBI }}
-                      >
-                        Planejado • {plannedItems.length}
-                      </span>
-                      {openPlanned ? (
-                        <>
-                          <ChevronUp className="w-4 h-4" />
-                          <span className="text-xs text-muted-foreground">
-                            Ocultar
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="w-4 h-4" />
-                          <span className="text-xs text-muted-foreground">
-                            Expandir
-                          </span>
-                        </>
-                      )}
-                    </button>
-
-                    <span className="text-xs text-muted-foreground">
-                      Inclui “Planejado” e “Adiado”
+                  <div className="text-sm font-semibold flex items-center gap-2">
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs" style={{ backgroundColor: BRAND_RUBI }}>
+                      Planejado (inclui Adiado) • {plannedItems.length}
                     </span>
                   </div>
-
-                  {openPlanned && (
-                    <div className="mt-3 space-y-3">
-                      {plannedItems.length ? (
-                        plannedItems.map(renderItem)
-                      ) : (
-                        <div className="text-sm text-muted-foreground">
-                          Nenhum item planejado/adiado ainda.
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <div className="mt-3 space-y-3">
+                    {plannedItems.length ? plannedItems.map(renderItem) : (
+                      <div className="text-sm text-muted-foreground">Nenhuma ação planejada/adiada.</div>
+                    )}
+                  </div>
                 </div>
 
-                {/* Concluídos */}
                 <div className="border rounded-2xl p-3 bg-background/40">
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      className="flex items-center gap-2 text-sm font-semibold"
-                      onClick={() => setOpenDone((v) => !v)}
-                    >
-                      <span className="inline-flex items-center px-2 py-1 rounded-full bg-emerald-600 text-white text-xs">
-                        Concluídos • {doneItems.length}
-                      </span>
-                      {openDone ? (
-                        <>
-                          <ChevronUp className="w-4 h-4" />
-                          <span className="text-xs text-muted-foreground">
-                            Ocultar
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="w-4 h-4" />
-                          <span className="text-xs text-muted-foreground">
-                            Expandir
-                          </span>
-                        </>
-                      )}
-                    </button>
-
-                    <span className="text-xs text-muted-foreground">
-                      Itens com status “Concluído”
+                  <div className="text-sm font-semibold flex items-center gap-2">
+                    <span className="inline-flex items-center px-2 py-1 rounded-full bg-emerald-600 text-white text-xs">
+                      Concluídos • {doneItems.length}
                     </span>
                   </div>
-
-                  {openDone && (
-                    <div className="mt-3 space-y-3">
-                      {doneItems.length ? (
-                        doneItems.map(renderItem)
-                      ) : (
-                        <div className="text-sm text-muted-foreground">
-                          Nenhum item concluído ainda.
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <div className="mt-3 space-y-3">
+                    {doneItems.length ? doneItems.map(renderItem) : (
+                      <div className="text-sm text-muted-foreground">Nenhuma ação concluída.</div>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Rodapé: salvar + playbook (gate) */}
+              {/* Etapas */}
               <div className="flex justify-end gap-2">
                 <Button
                   variant="outline"
@@ -1327,11 +1494,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                     setPlaybookTab("playbook");
                   }}
                   disabled={!hasSaved5W2H || saving || loading}
-                  title={
-                    !hasSaved5W2H
-                      ? "Salve o 5W2H primeiro para habilitar o Playbook."
-                      : "Abrir Playbook"
-                  }
+                  title={!hasSaved5W2H ? "Salve o 5W2H primeiro para habilitar o Playbook." : "Abrir Playbook"}
                 >
                   <MessageCircle className="w-4 h-4 mr-2" />
                   Playbook
@@ -1345,7 +1508,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
 
               {!hasSaved5W2H && (
                 <div className="text-xs text-muted-foreground">
-                  ⚠️ O botão <b>Playbook</b> só habilita depois que você salvar o 5W2H.
+                  ⚠️ Etapa 1: salve o <b>5W2H</b> para liberar a etapa 2 (Playbook).
                 </div>
               )}
             </CardContent>
@@ -1353,18 +1516,18 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
         )}
       </div>
 
-      {/* ========================= Overlay Playbook (Playbook + Objeções + Diálogo + PDF) ========================= */}
+      {/* ========================= Overlay Playbook (etapa 2) ========================= */}
       <Dialog open={playbookOpen} onOpenChange={setPlaybookOpen}>
         <DialogContent className="max-w-5xl w-[95vw]">
           <DialogHeader>
             <DialogTitle>
-              Playbook da Semana (com Objeções) — {plan ? `${formatDateBR(plan.date_start)} a ${formatDateBR(plan.date_end)}` : ""}
+              Playbook da Semana (com Objeções) — {plan ? planDisplayName(plan) : ""}
             </DialogTitle>
           </DialogHeader>
 
           <div className="flex items-center justify-between gap-2">
             <div className="text-sm text-muted-foreground">
-              Preencha manualmente ou clique em <b>Pedir para o Max</b> para auto-preencher tudo.
+              Clique em <b>Pedir para o Max</b> para auto-preencher tudo. Depois revise e salve.
             </div>
 
             <div className="flex items-center gap-2">
@@ -1381,30 +1544,19 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                 Pedir para o Max
               </Button>
 
-              <Button
-                variant="outline"
-                onClick={handleExportPDF}
-                disabled={!plan}
-              >
+              <Button variant="outline" onClick={handleExportPDF} disabled={!plan || !isPlaybookFilled(playbook)}>
                 <FileText className="w-4 h-4 mr-2" />
                 Gerar PDF
               </Button>
 
-              <Button
-                onClick={handleSavePlaybookAndObjections}
-                disabled={saving || !plan}
-              >
+              <Button onClick={handleSavePlaybookAndObjections} disabled={saving || !plan}>
                 {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Salvar Playbook
               </Button>
             </div>
           </div>
 
-          <Tabs
-            value={playbookTab}
-            onValueChange={(v) => setPlaybookTab(v as any)}
-            className="mt-2"
-          >
+          <Tabs value={playbookTab} onValueChange={(v) => setPlaybookTab(v as any)} className="mt-2">
             <TabsList>
               <TabsTrigger value="playbook">Playbook</TabsTrigger>
               <TabsTrigger value="objections">Objeções</TabsTrigger>
@@ -1542,7 +1694,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
 
               <div className="grid md:grid-cols-2 gap-4 mt-4">
                 <div>
-                  <Label>Diagnóstico (perguntas)</Label>
+                  <Label>Diagnóstico</Label>
                   <Textarea
                     rows={3}
                     value={playbook?.script_diagnostico || ""}
@@ -1616,7 +1768,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
             <TabsContent value="objections" className="mt-4">
               <div className="flex items-center justify-between">
                 <div className="text-sm text-muted-foreground">
-                  Registre as objeções reais — isso vira “munição” pro time.
+                  Objeções reais viram padrão de resposta do time.
                 </div>
                 <Button variant="outline" size="sm" onClick={handleAddObjection} disabled={!playbook}>
                   <Plus className="w-4 h-4 mr-1" /> Adicionar objeção
@@ -1635,9 +1787,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                         value={obj.tag || ""}
                         onChange={(e) =>
                           setObjections((prev) =>
-                            prev.map((o) =>
-                              o.id === obj.id ? { ...o, tag: e.target.value } : o
-                            )
+                            prev.map((o) => (o.id === obj.id ? { ...o, tag: e.target.value } : o))
                           )
                         }
                         placeholder="Ex.: sem_dinheiro, falar_com_esposa..."
@@ -1652,9 +1802,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                         onChange={(e) =>
                           setObjections((prev) =>
                             prev.map((o) =>
-                              o.id === obj.id
-                                ? { ...o, priority: Number(e.target.value) }
-                                : o
+                              o.id === obj.id ? { ...o, priority: Number(e.target.value) } : o
                             )
                           )
                         }
@@ -1669,9 +1817,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                         onChange={(e) =>
                           setObjections((prev) =>
                             prev.map((o) =>
-                              o.id === obj.id
-                                ? { ...o, objection_text: e.target.value }
-                                : o
+                              o.id === obj.id ? { ...o, objection_text: e.target.value } : o
                             )
                           )
                         }
@@ -1686,9 +1832,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                         onChange={(e) =>
                           setObjections((prev) =>
                             prev.map((o) =>
-                              o.id === obj.id
-                                ? { ...o, answer_text: e.target.value }
-                                : o
+                              o.id === obj.id ? { ...o, answer_text: e.target.value } : o
                             )
                           )
                         }
@@ -1702,9 +1846,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                         onChange={(e) =>
                           setObjections((prev) =>
                             prev.map((o) =>
-                              o.id === obj.id
-                                ? { ...o, next_step: e.target.value }
-                                : o
+                              o.id === obj.id ? { ...o, next_step: e.target.value } : o
                             )
                           )
                         }
@@ -1716,38 +1858,23 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
 
                 {objections.length === 0 && (
                   <div className="text-sm text-muted-foreground">
-                    Nenhuma objeção ainda. Clique em “Adicionar objeção” ou “Pedir para o Max”.
+                    Nenhuma objeção ainda. Clique em “Adicionar” ou “Pedir para o Max”.
                   </div>
                 )}
               </div>
             </TabsContent>
 
             <TabsContent value="dialogo" className="mt-4">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-sm text-muted-foreground">
-                  “O que o cliente pode falar” vs “como responder” — editável antes do PDF.
-                </div>
-                <Button
-                  variant="outline"
-                  onClick={handleGenerateDialoguesFromMax}
-                  disabled={maxLoading || !plan}
-                >
-                  {maxLoading ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4 mr-2" />
-                  )}
-                  Gerar com Max
-                </Button>
+              <div className="text-sm text-muted-foreground">
+                Aqui fica o “o que o cliente pode falar” vs “como responder” (editável).
               </div>
-
               <div className="mt-3">
                 <Label>Possibilidades (IA)</Label>
                 <Textarea
                   rows={14}
                   value={aiDialogues}
                   onChange={(e) => setAiDialogues(e.target.value)}
-                  placeholder="Clique em “Gerar com Max” para criar as possibilidades — depois você pode editar."
+                  placeholder="Use o botão “Pedir para o Max” pra gerar automaticamente e depois edite."
                 />
               </div>
             </TabsContent>
@@ -1761,15 +1888,13 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
         </DialogContent>
       </Dialog>
 
-      {/* ========================= Widget flutuante do Max (chat) ========================= */}
+      {/* ========================= Widget flutuante do Max (chat livre) ========================= */}
       <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-3">
         {maxOpen && (
           <div className="w-80 sm:w-96 bg-background border shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[70vh]">
             <div
               className="flex items-center justify-between px-3 py-2 border-b text-white"
-              style={{
-                background: `linear-gradient(90deg, ${BRAND_NAVY}, ${BRAND_RUBI})`,
-              }}
+              style={{ background: `linear-gradient(90deg, ${BRAND_NAVY}, ${BRAND_RUBI})` }}
             >
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center border border-white/40">
@@ -1777,9 +1902,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                 </div>
                 <div className="flex flex-col leading-tight">
                   <span className="text-sm font-semibold">Max – IA da Consulmax</span>
-                  <span className="text-[11px] text-white/80">
-                    Seu mascote ajudante de scripts 🐶
-                  </span>
+                  <span className="text-[11px] text-white/80">Seu mascote ajudante de scripts 🐶</span>
                 </div>
               </div>
               <button
@@ -1794,7 +1917,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
             <div className="flex-1 px-3 py-2 overflow-y-auto space-y-2 text-sm bg-background">
               {maxMessages.length === 0 && (
                 <div className="text-muted-foreground text-xs">
-                  Fale com o Max! Você pode pedir:
+                  Fale com o Max! Exemplos:
                   <ul className="list-disc list-inside mt-1">
                     <li>“Max, melhora minha abertura pra médicos.”</li>
                     <li>“Simula um cliente difícil com essa objeção.”</li>
@@ -1806,9 +1929,7 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                 <div
                   key={m.id}
                   className={`p-2 rounded-lg max-w-full whitespace-pre-wrap ${
-                    m.role === "user"
-                      ? "bg-primary text-primary-foreground ml-auto"
-                      : "bg-muted mr-auto"
+                    m.role === "user" ? "bg-primary text-primary-foreground ml-auto" : "bg-muted mr-auto"
                   }`}
                 >
                   {m.content}
@@ -1828,22 +1949,13 @@ Retorne um texto organizado em tópicos, bem legível para colar e treinar.
                   }
                 }}
               />
-              <Button
-                size="icon"
-                onClick={handleSendToMax}
-                disabled={maxLoading || !maxInput.trim()}
-              >
-                {maxLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
+              <Button size="icon" onClick={handleSendToMax} disabled={maxLoading || !maxInput.trim()}>
+                {maxLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </div>
           </div>
         )}
 
-        {/* Botão flutuante redondinho */}
         <Button
           type="button"
           size="icon"

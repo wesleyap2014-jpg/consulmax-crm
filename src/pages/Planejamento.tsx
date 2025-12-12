@@ -24,7 +24,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Loader2,
   Plus,
-  Send,
   MessageCircle,
   Dog,
   X,
@@ -34,6 +33,7 @@ import {
   Sparkles,
   RefreshCcw,
   FolderOpen,
+  ClipboardList,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -108,12 +108,6 @@ type SalesObjection = {
   priority: number;
 };
 
-type MaxMessage = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-};
-
 type PlanQueue = "planejado" | "em_andamento" | "concluido";
 
 type PlanRow = {
@@ -182,23 +176,19 @@ function isPlaybookFilled(pb: SalesPlaybook | null) {
   return fields.some((v) => String(v || "").trim().length > 0);
 }
 
-function computePlanQueue(args: {
-  items: WeeklyPlanItem[];
-  playbook: SalesPlaybook | null;
-}) : PlanQueue {
-  const items = args.items || [];
-  const hasAny = items.length > 0;
+function computePlanQueue(items: WeeklyPlanItem[], pb: SalesPlaybook | null): PlanQueue {
+  const arr = items || [];
+  const hasAny = arr.length > 0;
+
   const allDone =
-    hasAny && items.every((i) => normalizeStatus(String(i.status || "planejado")) === "concluido");
+    hasAny && arr.every((i) => normalizeStatus(String(i.status || "planejado")) === "concluido");
   if (allDone) return "concluido";
 
-  const anyDoing = items.some(
-    (i) => normalizeStatus(String(i.status || "planejado")) === "em_andamento"
-  );
-
+  const anyDoing = arr.some((i) => normalizeStatus(String(i.status || "planejado")) === "em_andamento");
   if (anyDoing) return "em_andamento";
 
-  if (isPlaybookFilled(args.playbook)) return "em_andamento";
+  // Se quiser que "gerou playbook" já jogue para Em andamento, mantenha isso:
+  if (isPlaybookFilled(pb)) return "em_andamento";
 
   return "planejado";
 }
@@ -212,42 +202,36 @@ const Planejamento: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-
-  // Filtro “cargo” para criar/carregar e também para a lista (pode ver por cargo)
   const [role, setRole] = useState<string>("vendedor");
 
-  // Datas (apenas para criar/carregar)
+  // topo (criação)
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
 
-  // Plano ativo (editor)
+  // plano ativo (carregado/selecionado)
   const [plan, setPlan] = useState<WeeklyPlan | null>(null);
   const [items, setItems] = useState<WeeklyPlanItem[]>([]);
   const [playbook, setPlaybook] = useState<SalesPlaybook | null>(null);
   const [objections, setObjections] = useState<SalesObjection[]>([]);
   const [aiDialogues, setAiDialogues] = useState<string>("");
 
-  // Etapas (gate)
+  // gate (etapas)
   const [hasSaved5W2H, setHasSaved5W2H] = useState(false);
 
-  // Lista de planos (sempre disponível)
+  // lista de planos (sempre visível)
   const [plansLoading, setPlansLoading] = useState(false);
   const [plans, setPlans] = useState<PlanRow[]>([]);
-  const [openQueueDoing, setOpenQueueDoing] = useState(true); // por padrão abre “Em andamento”
+  const [openQueueDoing, setOpenQueueDoing] = useState(true);
   const [openQueuePlanned, setOpenQueuePlanned] = useState(false);
   const [openQueueDone, setOpenQueueDone] = useState(false);
 
-  // Overlay Playbook
-  const [playbookOpen, setPlaybookOpen] = useState(false);
-  const [playbookTab, setPlaybookTab] = useState<"playbook" | "objections" | "dialogo">(
-    "playbook"
-  );
+  // overlay 5W2H (etapa 1)
+  const [w2hOpen, setW2hOpen] = useState(false);
 
-  // Widget flutuante (chat livre)
-  const [maxMessages, setMaxMessages] = useState<MaxMessage[]>([]);
-  const [maxInput, setMaxInput] = useState("");
+  // overlay playbook (etapa 2)
+  const [playbookOpen, setPlaybookOpen] = useState(false);
+  const [playbookTab, setPlaybookTab] = useState<"playbook" | "objections" | "dialogo">("playbook");
   const [maxLoading, setMaxLoading] = useState(false);
-  const [maxOpen, setMaxOpen] = useState(false);
 
   const isAdmin = useMemo(() => currentUser?.user_role === "admin", [currentUser]);
 
@@ -298,13 +282,12 @@ const Planejamento: React.FC = () => {
     loadUserAndUsers();
   }, []);
 
-  /* ========================= Lista de planos (sempre visível) ========================= */
+  /* ========================= Lista de planos (sempre disponível) ========================= */
 
   const loadPlansList = useCallback(async () => {
     if (!selectedUserId) return;
     setPlansLoading(true);
     try {
-      // 1) planos
       const { data: plansData, error: pErr } = await supabase
         .from("weekly_plans")
         .select("*")
@@ -316,14 +299,13 @@ const Planejamento: React.FC = () => {
       if (pErr) throw pErr;
 
       const list = (plansData || []) as WeeklyPlan[];
-      if (list.length === 0) {
+      if (!list.length) {
         setPlans([]);
         return;
       }
 
       const planIds = list.map((p) => p.id);
 
-      // 2) itens de TODOS os planos de uma vez
       const { data: itemsData, error: iErr } = await supabase
         .from("weekly_plan_items")
         .select("*")
@@ -339,7 +321,6 @@ const Planejamento: React.FC = () => {
         itemsByPlan.set(it.plan_id, arr);
       }
 
-      // 3) playbooks (1 por plano)
       const { data: pbData, error: pbErr } = await supabase
         .from("sales_playbooks")
         .select("*")
@@ -351,18 +332,13 @@ const Planejamento: React.FC = () => {
       const pbByPlan = new Map<string, SalesPlaybook>();
       for (const pb of pbs) pbByPlan.set(pb.plan_id, pb);
 
-      // 4) monta rows
       const rows: PlanRow[] = list.map((p) => {
-        const its = itemsByPlan.get(p.id) || [];
-        const doingCount = its.filter(
-          (x) => normalizeStatus(String(x.status || "planejado")) === "em_andamento"
-        ).length;
-        const doneCount = its.filter(
-          (x) => normalizeStatus(String(x.status || "planejado")) === "concluido"
-        ).length;
+        const its = (itemsByPlan.get(p.id) || []).slice();
+        const doingCount = its.filter((x) => normalizeStatus(String(x.status || "planejado")) === "em_andamento").length;
+        const doneCount = its.filter((x) => normalizeStatus(String(x.status || "planejado")) === "concluido").length;
 
         const pb = pbByPlan.get(p.id) || null;
-        const queue = computePlanQueue({ items: its, playbook: pb });
+        const queue = computePlanQueue(its, pb);
 
         return {
           plan: p,
@@ -383,11 +359,14 @@ const Planejamento: React.FC = () => {
     }
   }, [selectedUserId, role]);
 
-  // carrega lista automaticamente (sem precisar digitar nada)
   useEffect(() => {
     if (!selectedUserId) return;
     loadPlansList();
   }, [selectedUserId, role, loadPlansList]);
+
+  const plansDoing = useMemo(() => plans.filter((p) => p.queue === "em_andamento"), [plans]);
+  const plansPlanned = useMemo(() => plans.filter((p) => p.queue === "planejado"), [plans]);
+  const plansDone = useMemo(() => plans.filter((p) => p.queue === "concluido"), [plans]);
 
   /* ========================= Carregar detalhes de um plano ========================= */
 
@@ -404,12 +383,10 @@ const Planejamento: React.FC = () => {
       const currentPlan = pData as WeeklyPlan;
       setPlan(currentPlan);
 
-      // sincroniza filtros superiores (pra ficar coerente)
       setDateStart(currentPlan.date_start);
       setDateEnd(currentPlan.date_end);
       setRole(currentPlan.role);
 
-      // itens
       const { data: itemsData, error: itemsError } = await supabase
         .from("weekly_plan_items")
         .select("*")
@@ -420,10 +397,9 @@ const Planejamento: React.FC = () => {
       const loadedItems = (itemsData || []) as WeeklyPlanItem[];
       setItems(loadedItems);
 
-      // etapa 1 (5w2h): se já tem itens persistidos, habilita etapa 2
+      // etapa 1: só libera se já existe item salvo
       setHasSaved5W2H(loadedItems.length > 0);
 
-      // playbook
       const { data: pbData, error: pbError } = await supabase
         .from("sales_playbooks")
         .select("*")
@@ -455,9 +431,9 @@ const Planejamento: React.FC = () => {
     }
   }, []);
 
-  /* ========================= Criar/Carregar plano pelo topo ========================= */
+  /* ========================= Fluxo: Criar/Gerar Planejamento -> abre overlay 5W2H ========================= */
 
-  const handleLoadOrCreatePlan = async () => {
+  const handleCreateOrLoadPlanAndOpenW2H = async () => {
     if (!selectedUserId || !dateStart || !dateEnd) return;
     setLoading(true);
     try {
@@ -496,10 +472,31 @@ const Planejamento: React.FC = () => {
         currentPlan = newPlanData as WeeklyPlan;
       }
 
-      // abre o editor carregando detalhes completos
+      // carrega tudo e abre overlay
       await loadPlanDetails(currentPlan.id);
 
-      // garante que ele apareça na lista imediatamente
+      // Se não tiver itens ainda, já cria 1 linha inicial no overlay (melhora UX)
+      setItems((prev) => {
+        if (prev.length > 0) return prev;
+        const today = currentPlan.date_start || new Date().toISOString().slice(0, 10);
+        const first: WeeklyPlanItem = {
+          id: `temp-${Math.random()}`,
+          plan_id: currentPlan.id,
+          date_start: today,
+          date_end: currentPlan.date_end || today,
+          what: "",
+          why: "",
+          where_: "",
+          when_: "",
+          who: "",
+          how: "",
+          how_much: "",
+          status: "planejado",
+        };
+        return [first];
+      });
+
+      setW2hOpen(true);
       await loadPlansList();
       setOpenQueuePlanned(true);
     } catch (err) {
@@ -509,15 +506,10 @@ const Planejamento: React.FC = () => {
     }
   };
 
-  /* ========================= Editor 5W2H ========================= */
-
-  const markDirty = useCallback(() => {
-    setHasSaved5W2H(false);
-  }, []);
+  /* ========================= Overlay 5W2H: editar e salvar ========================= */
 
   const handleAddItem = () => {
     if (!plan) return;
-    markDirty();
     const today = plan.date_start || new Date().toISOString().slice(0, 10);
     const newItem: WeeklyPlanItem = {
       id: `temp-${Math.random()}`,
@@ -534,18 +526,19 @@ const Planejamento: React.FC = () => {
       status: "planejado",
     };
     setItems((prev) => [...prev, newItem]);
+    setHasSaved5W2H(false);
   };
 
   const handleUpdateItemField = (id: string, field: keyof WeeklyPlanItem, value: any) => {
-    markDirty();
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
+    setHasSaved5W2H(false);
   };
 
-  const handleSavePlanAndItems = async () => {
+  const handleSaveW2H = async () => {
     if (!plan) return;
     setSaving(true);
     try {
-      // 1) salva weekly_plans (tema/meta)
+      // 1) salva cabeçalho
       {
         const { id, ...payload } = plan;
         const { error } = await supabase.from("weekly_plans").update(payload).eq("id", id);
@@ -584,19 +577,16 @@ const Planejamento: React.FC = () => {
             status: normalizeStatus(String((payload as any)?.status || "planejado")),
           })
           .eq("id", id);
-
         if (updateError) throw updateError;
       }
 
-      // 3) recarrega plano ativo
+      // recarrega com ids reais
       await loadPlanDetails(plan.id);
 
-      // 4) etapa 1 concluída → habilita playbook
       setHasSaved5W2H(true);
 
-      // 5) atualiza lista e abre fila planejado (normalmente cai aqui)
+      // Atualiza filas conforme status
       await loadPlansList();
-      setOpenQueuePlanned(true);
     } catch (err) {
       console.error(err);
     } finally {
@@ -604,7 +594,7 @@ const Planejamento: React.FC = () => {
     }
   };
 
-  /* ========================= Playbook + Objeções ========================= */
+  /* ========================= Playbook: ensure, gerar por Max, salvar ========================= */
 
   const handleEnsurePlaybook = async (): Promise<SalesPlaybook | null> => {
     if (!plan) return null;
@@ -645,77 +635,15 @@ const Planejamento: React.FC = () => {
     ]);
   };
 
-  const handleSavePlaybookAndObjections = async () => {
-    if (!plan) return;
-    setSaving(true);
-    try {
-      const pb = await handleEnsurePlaybook();
-      const finalPb = playbook || pb;
-      if (!finalPb) return;
-
-      // playbook update
-      {
-        const { id, ...payload } = finalPb;
-        const { error } = await supabase.from("sales_playbooks").update(payload).eq("id", id);
-        if (error) throw error;
-      }
-
-      // objeções insert/update
-      const toInsert = objections.filter((o) => String(o.id).startsWith("temp-"));
-      const toUpdate = objections.filter((o) => !String(o.id).startsWith("temp-"));
-
-      if (toInsert.length > 0) {
-        const { error: insertError } = await supabase.from("sales_objections").insert(
-          toInsert.map((o) => ({
-            playbook_id: finalPb.id,
-            tag: o.tag,
-            objection_text: o.objection_text,
-            answer_text: o.answer_text,
-            next_step: o.next_step,
-            priority: o.priority,
-          }))
-        );
-        if (insertError) throw insertError;
-      }
-
-      for (const obj of toUpdate) {
-        const { id, ...payload } = obj;
-        const { error: updateError } = await supabase
-          .from("sales_objections")
-          .update(payload)
-          .eq("id", id);
-        if (updateError) throw updateError;
-      }
-
-      // recarrega e atualiza lista (normalmente vira “em andamento”)
-      await loadPlanDetails(plan.id);
-      await loadPlansList();
-      setOpenQueueDoing(true);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /* ========================= Max (chat + autopreencher) ========================= */
-
-  const pushMaxMessage = (role: "user" | "assistant", content: string) => {
-    setMaxMessages((prev) => [...prev, { id: `${Date.now()}-${Math.random()}`, role, content }]);
-  };
-
-  const callMaxRaw = async (
-    prompt: string,
-    mode: "livre" | "estrategia" | "objeções" = "livre"
-  ): Promise<string | null> => {
+  const callMaxRaw = async (prompt: string): Promise<string | null> => {
     if (!prompt.trim()) return null;
     setMaxLoading(true);
     try {
-      const context = { plan, items, playbook, objections, aiDialogues, mode };
+      const context = { plan, items, playbook, objections, aiDialogues };
       const res = await fetch("/api/max-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, mode, context }),
+        body: JSON.stringify({ prompt, mode: "estrategia", context }),
       });
 
       if (!res.ok) {
@@ -733,27 +661,6 @@ const Planejamento: React.FC = () => {
     } finally {
       setMaxLoading(false);
     }
-  };
-
-  const callMaxChat = async (prompt: string) => {
-    if (!prompt.trim()) return;
-    pushMaxMessage("user", prompt);
-    const answer = await callMaxRaw(prompt, "livre");
-    if (!answer) {
-      pushMaxMessage(
-        "assistant",
-        "Max não conseguiu responder agora. Verifique a chave de API na Vercel e tente novamente."
-      );
-      return;
-    }
-    pushMaxMessage("assistant", answer);
-  };
-
-  const handleSendToMax = async () => {
-    if (!maxInput.trim()) return;
-    const message = maxInput.trim();
-    setMaxInput("");
-    await callMaxChat(message);
   };
 
   const handleFillPlaybookFromMax = async () => {
@@ -787,7 +694,7 @@ Responda APENAS em JSON válido (sem markdown), formato:
   "objections": [
     { "tag": "....", "objection_text": "...", "answer_text": "...", "next_step": "...", "priority": 1 }
   ],
-  "dialogo": "Texto organizado com possibilidades do que o cliente fala vs o que o vendedor responde."
+  "dialogo": "Texto organizado: CLIENTE DIZ -> VENDEDOR RESPONDE (várias possibilidades)."
 }
 
 Regras:
@@ -796,7 +703,7 @@ Regras:
 - Use o tema/meta/ações para não ficar genérico.
 `;
 
-    const answer = await callMaxRaw(prompt, "estrategia");
+    const answer = await callMaxRaw(prompt);
     if (!answer) return;
 
     const parsed = safeJsonExtract(answer);
@@ -840,6 +747,55 @@ Regras:
     setPlaybookTab("playbook");
   };
 
+  const handleSavePlaybookAndObjections = async () => {
+    if (!plan) return;
+    setSaving(true);
+    try {
+      const pb = await handleEnsurePlaybook();
+      const finalPb = playbook || pb;
+      if (!finalPb) return;
+
+      {
+        const { id, ...payload } = finalPb;
+        const { error } = await supabase.from("sales_playbooks").update(payload).eq("id", id);
+        if (error) throw error;
+      }
+
+      const toInsert = objections.filter((o) => String(o.id).startsWith("temp-"));
+      const toUpdate = objections.filter((o) => !String(o.id).startsWith("temp-"));
+
+      if (toInsert.length > 0) {
+        const { error: insertError } = await supabase.from("sales_objections").insert(
+          toInsert.map((o) => ({
+            playbook_id: finalPb.id,
+            tag: o.tag,
+            objection_text: o.objection_text,
+            answer_text: o.answer_text,
+            next_step: o.next_step,
+            priority: o.priority,
+          }))
+        );
+        if (insertError) throw insertError;
+      }
+
+      for (const obj of toUpdate) {
+        const { id, ...payload } = obj;
+        const { error: updateError } = await supabase.from("sales_objections").update(payload).eq("id", id);
+        if (updateError) throw updateError;
+      }
+
+      await loadPlanDetails(plan.id);
+
+      // “registrar no bloco conforme status”
+      await loadPlansList();
+      setOpenQueueDoing(true);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   /* ========================= PDF Profissional ========================= */
 
   const handleExportPDF = async () => {
@@ -848,69 +804,65 @@ Regras:
     const doc = new jsPDF("p", "mm", "a4");
     const pageW = doc.internal.pageSize.getWidth();
 
-    // Header
     doc.setFillColor(BRAND_NAVY);
     doc.rect(0, 0, pageW, 22, "F");
 
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
-    doc.text("Consulmax — Planejamento & Playbook", 14, 14);
+    doc.text("Consulmax — Plano de Ação (5W2H) + Playbook", 14, 14);
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.text(
-      `Plano: ${planDisplayName(plan)}  •  Período: ${formatDateBR(plan.date_start)} a ${formatDateBR(
-        plan.date_end
-      )}  •  Cargo: ${plan.role}`,
+      `Plano: ${planDisplayName(plan)}  •  Período: ${formatDateBR(plan.date_start)} a ${formatDateBR(plan.date_end)}  •  Cargo: ${plan.role}`,
       14,
       19
     );
 
     let y = 30;
+
     doc.setTextColor(20, 20, 20);
     doc.setFontSize(11);
 
     doc.setFont("helvetica", "bold");
-    doc.text("Tema da Semana:", 14, y);
+    doc.text("Tema:", 14, y);
     doc.setFont("helvetica", "normal");
-    doc.text(String(plan.theme || "-"), 48, y);
+    doc.text(String(plan.theme || "-"), 30, y);
     y += 7;
 
     doc.setFont("helvetica", "bold");
-    doc.text("Meta principal:", 14, y);
+    doc.text("Meta:", 14, y);
     doc.setFont("helvetica", "normal");
-    doc.text(String(plan.main_goal || "-"), 48, y);
+    doc.text(String(plan.main_goal || "-"), 30, y);
     y += 10;
 
-    // 5W2H table
-    const rows = items
-      .slice()
-      .sort((a, b) => String(a.date_start).localeCompare(String(b.date_start)))
-      .map((it) => [
-        `${formatDateBR(it.date_start)} → ${formatDateBR(it.date_end)}`,
-        String(it.what || ""),
-        String(it.why || ""),
-        String(it.how_much || ""),
-        String(it.status || ""),
-      ]);
+    const rows = items.map((it) => [
+      `${formatDateBR(it.date_start)} → ${formatDateBR(it.date_end)}`,
+      String(it.what || ""),
+      String(it.why || ""),
+      String(it.where_ || ""),
+      String(it.when_ || ""),
+      String(it.who || ""),
+      String(it.how || ""),
+      String(it.how_much || ""),
+      String(it.status || ""),
+    ]);
 
     autoTable(doc, {
       startY: y,
-      head: [["Período", "O que?", "Por quê?", "Quanto?", "Status"]],
-      body: rows.length ? rows : [["-", "-", "-", "-", "-"]],
-      styles: { fontSize: 8, cellPadding: 2 },
+      head: [["Período", "What", "Why", "Where", "When", "Who", "How", "How much", "Status"]],
+      body: rows.length ? rows : [["-", "-", "-", "-", "-", "-", "-", "-", "-"]],
+      styles: { fontSize: 7, cellPadding: 2, valign: "top" },
       headStyles: { fillColor: [30, 41, 63] },
-      alternateRowStyles: { fillColor: [245, 245, 245] },
       margin: { left: 14, right: 14 },
     });
 
     y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : y + 8;
 
-    // Playbook
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
-    doc.text("Playbook (editável pelo vendedor)", 14, y);
+    doc.text("Playbook", 14, y);
     y += 6;
 
     const pb = playbook;
@@ -922,7 +874,7 @@ Regras:
       ["Dor principal", String(pb?.dor_principal || "-")],
       ["Big Idea", String(pb?.big_idea || "-")],
       ["Garantia", String(pb?.garantia || "-")],
-      ["CTA principal", String(pb?.cta_principal || "-")],
+      ["CTA", String(pb?.cta_principal || "-")],
       ["Abertura", String(pb?.script_abertura || "-")],
       ["Quebra-gelo", String(pb?.script_quebra_gelo || "-")],
       ["Diagnóstico", String(pb?.script_diagnostico || "-")],
@@ -938,16 +890,15 @@ Regras:
       body: playbookLines.map(([k, v]) => [k, v]),
       styles: { fontSize: 8, cellPadding: 2, valign: "top" },
       headStyles: { fillColor: [161, 28, 39] },
-      columnStyles: { 0: { cellWidth: 36 }, 1: { cellWidth: pageW - 14 - 14 - 36 } },
+      columnStyles: { 0: { cellWidth: 34 }, 1: { cellWidth: pageW - 14 - 14 - 34 } },
       margin: { left: 14, right: 14 },
     });
 
     y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : y + 8;
 
-    // Objections
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
-    doc.text("Objeções & Contornos (Cliente diz vs Vendedor responde)", 14, y);
+    doc.text("Objeções & Contornos", 14, y);
     y += 6;
 
     const objRows = objections
@@ -972,10 +923,9 @@ Regras:
 
     y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : y + 8;
 
-    // Dialogues
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
-    doc.text("Possibilidades de Conversa (IA) — editável", 14, y);
+    doc.text("Possibilidades (IA) — Cliente diz → Vendedor responde", 14, y);
     y += 6;
 
     doc.setFont("helvetica", "normal");
@@ -994,135 +944,14 @@ Regras:
       y += 4.2;
     }
 
-    doc.setTextColor(120);
-    doc.setFontSize(8);
-    doc.text(
-      "Consulmax — Maximize as suas conquistas • Documento interno de treinamento",
-      14,
-      doc.internal.pageSize.getHeight() - 10
-    );
-
     doc.save(`consulmax-playbook-${plan.date_start}_a_${plan.date_end}-${plan.role}.pdf`);
   };
 
-  /* ========================= Grupos do Editor (itens por status) ========================= */
-
-  const doingItems = useMemo(
-    () => items.filter((i) => normalizeStatus(String(i.status || "planejado")) === "em_andamento"),
-    [items]
-  );
-  const plannedItems = useMemo(
-    () =>
-      items.filter((i) => {
-        const st = normalizeStatus(String(i.status || "planejado"));
-        return st === "planejado" || st === "adiado";
-      }),
-    [items]
-  );
-  const doneItems = useMemo(
-    () => items.filter((i) => normalizeStatus(String(i.status || "planejado")) === "concluido"),
-    [items]
-  );
-
-  const renderItem = (item: WeeklyPlanItem) => (
-    <div
-      key={item.id}
-      className="border rounded-xl p-3 grid md:grid-cols-4 gap-3 bg-background/40"
-    >
-      <div>
-        <Label>De</Label>
-        <Input
-          type="date"
-          value={item.date_start || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "date_start", e.target.value)}
-        />
-      </div>
-      <div>
-        <Label>Até</Label>
-        <Input
-          type="date"
-          value={item.date_end || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "date_end", e.target.value)}
-        />
-      </div>
-      <div>
-        <Label>O que? (What)</Label>
-        <Input
-          value={item.what || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "what", e.target.value)}
-        />
-      </div>
-      <div>
-        <Label>Por quê? (Why)</Label>
-        <Input
-          value={item.why || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "why", e.target.value)}
-        />
-      </div>
-      <div>
-        <Label>Onde? (Where)</Label>
-        <Input
-          value={item.where_ || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "where_", e.target.value)}
-        />
-      </div>
-      <div>
-        <Label>Quando? (When)</Label>
-        <Input
-          value={item.when_ || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "when_", e.target.value)}
-        />
-      </div>
-      <div>
-        <Label>Quem? (Who)</Label>
-        <Input
-          value={item.who || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "who", e.target.value)}
-        />
-      </div>
-      <div>
-        <Label>Como? (How)</Label>
-        <Input
-          value={item.how || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "how", e.target.value)}
-        />
-      </div>
-      <div>
-        <Label>Quanto? (How much)</Label>
-        <Input
-          value={item.how_much || ""}
-          onChange={(e) => handleUpdateItemField(item.id, "how_much", e.target.value)}
-          placeholder="Ex.: 30 ligações, 10 reuniões..."
-        />
-      </div>
-      <div>
-        <Label>Status</Label>
-        <Select
-          value={normalizeStatus(String(item.status || "planejado"))}
-          onValueChange={(val) => handleUpdateItemField(item.id, "status", val)}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="planejado">Planejado</SelectItem>
-            <SelectItem value="em_andamento">Em andamento</SelectItem>
-            <SelectItem value="concluido">Concluído</SelectItem>
-            <SelectItem value="adiado">Adiado</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-    </div>
-  );
-
-  /* ========================= Lista (filas) ========================= */
-
-  const plansDoing = useMemo(() => plans.filter((p) => p.queue === "em_andamento"), [plans]);
-  const plansPlanned = useMemo(() => plans.filter((p) => p.queue === "planejado"), [plans]);
-  const plansDone = useMemo(() => plans.filter((p) => p.queue === "concluido"), [plans]);
+  /* ========================= UI: Card de plano na lista ========================= */
 
   const PlanRowCard = ({ row }: { row: PlanRow }) => {
     const p = row.plan;
+
     return (
       <div className="border rounded-2xl p-3 bg-background/40 flex flex-col gap-2">
         <div className="flex items-start justify-between gap-3">
@@ -1138,11 +967,14 @@ Regras:
             <Button
               variant="outline"
               size="sm"
-              onClick={() => loadPlanDetails(p.id)}
+              onClick={async () => {
+                await loadPlanDetails(p.id);
+                setW2hOpen(true);
+              }}
               disabled={loading}
             >
-              <FolderOpen className="w-4 h-4 mr-1" />
-              Abrir
+              <ClipboardList className="w-4 h-4 mr-1" />
+              Plano (5W2H)
             </Button>
 
             <Button
@@ -1153,8 +985,8 @@ Regras:
                 setPlaybookOpen(true);
                 setPlaybookTab("playbook");
               }}
-              disabled={loading}
-              title={!row.itemsCount ? "Salve o 5W2H primeiro." : "Abrir Playbook"}
+              disabled={loading || !(row.itemsCount > 0)}
+              title={row.itemsCount > 0 ? "Abrir Playbook" : "Salve o 5W2H primeiro."}
             >
               <MessageCircle className="w-4 h-4 mr-1" />
               Playbook
@@ -1167,10 +999,20 @@ Regras:
                 await handleExportPDF();
               }}
               disabled={loading || !row.hasPlaybook}
-              title={!row.hasPlaybook ? "Gere e salve o Playbook antes do PDF." : "Baixar PDF"}
+              title={row.hasPlaybook ? "Baixar PDF" : "Gere e salve o Playbook antes do PDF."}
             >
               <FileText className="w-4 h-4 mr-1" />
               PDF
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => loadPlanDetails(p.id)}
+              disabled={loading}
+            >
+              <FolderOpen className="w-4 h-4 mr-1" />
+              Abrir
             </Button>
           </div>
         </div>
@@ -1183,12 +1025,12 @@ Regras:
   return (
     <div className="relative flex gap-4 h-full">
       <div className="flex-1 flex flex-col gap-4 overflow-y-auto pb-4">
-        {/* Topo: filtros e criar/carregar */}
+        {/* Topo: filtros e criar/gerar planejamento */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <Dog className="w-6 h-6" style={{ color: BRAND_RUBI }} />
-              <CardTitle>Planejamento &amp; Playbook – Max 🐶</CardTitle>
+              <CardTitle>Planejamento &amp; Playbook</CardTitle>
             </div>
 
             <Button variant="outline" onClick={loadPlansList} disabled={plansLoading || !selectedUserId}>
@@ -1254,17 +1096,17 @@ Regras:
 
             <div className="flex items-end">
               <Button
-                onClick={handleLoadOrCreatePlan}
+                onClick={handleCreateOrLoadPlanAndOpenW2H}
                 disabled={loading || !selectedUserId || !dateStart || !dateEnd}
               >
                 {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Criar / Carregar planejamento
+                Criar / Gerar Planejamento
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        {/* FILAS DE PLANOS (sempre disponível) */}
+        {/* FILAS */}
         <Card>
           <CardHeader>
             <CardTitle>Meus Planejamentos</CardTitle>
@@ -1278,10 +1120,7 @@ Regras:
                 className="flex items-center gap-2 text-sm font-semibold"
                 onClick={() => setOpenQueueDoing((v) => !v)}
               >
-                <span
-                  className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs"
-                  style={{ backgroundColor: BRAND_NAVY }}
-                >
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs" style={{ backgroundColor: BRAND_NAVY }}>
                   Em andamento • {plansDoing.length}
                 </span>
                 {openQueueDoing ? (
@@ -1306,9 +1145,7 @@ Regras:
                   ) : plansDoing.length ? (
                     plansDoing.map((r) => <PlanRowCard key={r.plan.id} row={r} />)
                   ) : (
-                    <div className="text-sm text-muted-foreground">
-                      Nenhum planejamento em andamento ainda.
-                    </div>
+                    <div className="text-sm text-muted-foreground">Nenhum planejamento em andamento.</div>
                   )}
                 </div>
               )}
@@ -1321,10 +1158,7 @@ Regras:
                 className="flex items-center gap-2 text-sm font-semibold"
                 onClick={() => setOpenQueuePlanned((v) => !v)}
               >
-                <span
-                  className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs"
-                  style={{ backgroundColor: BRAND_RUBI }}
-                >
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs" style={{ backgroundColor: BRAND_RUBI }}>
                   Planejado • {plansPlanned.length}
                 </span>
                 {openQueuePlanned ? (
@@ -1349,9 +1183,7 @@ Regras:
                   ) : plansPlanned.length ? (
                     plansPlanned.map((r) => <PlanRowCard key={r.plan.id} row={r} />)
                   ) : (
-                    <div className="text-sm text-muted-foreground">
-                      Nenhum planejamento planejado ainda.
-                    </div>
+                    <div className="text-sm text-muted-foreground">Nenhum planejamento planejado.</div>
                   )}
                 </div>
               )}
@@ -1389,139 +1221,203 @@ Regras:
                   ) : plansDone.length ? (
                     plansDone.map((r) => <PlanRowCard key={r.plan.id} row={r} />)
                   ) : (
-                    <div className="text-sm text-muted-foreground">
-                      Nenhum planejamento concluído ainda.
-                    </div>
+                    <div className="text-sm text-muted-foreground">Nenhum planejamento concluído.</div>
                   )}
                 </div>
               )}
             </div>
           </CardContent>
         </Card>
+      </div>
 
-        {/* EDITOR do plano ativo */}
-        {plan && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div className="flex flex-col">
-                <CardTitle>Editor — {planDisplayName(plan)}</CardTitle>
-                <div className="text-xs text-muted-foreground mt-1">
-                  Período: <b>{formatDateBR(plan.date_start)}</b> a <b>{formatDateBR(plan.date_end)}</b> • Cargo:{" "}
-                  <b>{plan.role}</b>
-                </div>
-              </div>
+      {/* ========================= Overlay 5W2H (Etapa 1) ========================= */}
+      <Dialog open={w2hOpen} onOpenChange={setW2hOpen}>
+        <DialogContent className="max-w-6xl w-[95vw]">
+          <DialogHeader>
+            <DialogTitle>
+              Plano de Ação — 5W2H {plan ? `• ${planDisplayName(plan)}` : ""}
+            </DialogTitle>
+          </DialogHeader>
 
-              <Button variant="outline" size="sm" onClick={handleAddItem}>
-                <Plus className="w-4 h-4 mr-1" /> Adicionar ação
-              </Button>
-            </CardHeader>
-
-            <CardContent className="space-y-4">
-              {/* Tema / Meta */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {!plan ? (
+            <div className="text-sm text-muted-foreground">Carregando plano…</div>
+          ) : (
+            <>
+              <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                  <Label>Tema da semana (nome do planejamento)</Label>
+                  <Label>Tema da Semana</Label>
                   <Input
                     value={plan.theme || ""}
                     onChange={(e) => {
-                      markDirty();
                       setPlan({ ...plan, theme: e.target.value });
+                      setHasSaved5W2H(false);
                     }}
                     placeholder="Ex.: Semana da Frota Agro, Semana dos Médicos..."
                   />
                 </div>
                 <div>
-                  <Label>Meta principal</Label>
+                  <Label>Meta Principal</Label>
                   <Input
                     value={plan.main_goal || ""}
                     onChange={(e) => {
-                      markDirty();
                       setPlan({ ...plan, main_goal: e.target.value });
+                      setHasSaved5W2H(false);
                     }}
-                    placeholder="Ex.: Agendar 15 reuniões, fechar 300k em vendas..."
+                    placeholder="Ex.: Agendar 15 reuniões, fechar 300k..."
                   />
                 </div>
               </div>
 
-              {/* Itens por status (visualizar o que foi planejado) */}
-              <div className="space-y-3">
-                <div className="border rounded-2xl p-3 bg-background/40">
-                  <div className="text-sm font-semibold flex items-center gap-2">
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs" style={{ backgroundColor: BRAND_NAVY }}>
-                      Em andamento • {doingItems.length}
-                    </span>
-                  </div>
-                  <div className="mt-3 space-y-3">
-                    {doingItems.length ? doingItems.map(renderItem) : (
-                      <div className="text-sm text-muted-foreground">Nenhuma ação em andamento.</div>
-                    )}
-                  </div>
+              <div className="flex items-center justify-between mt-4">
+                <div className="text-sm text-muted-foreground">
+                  Preencha as ações (5W2H). Depois clique <b>Salvar</b> para habilitar o Playbook.
                 </div>
-
-                <div className="border rounded-2xl p-3 bg-background/40">
-                  <div className="text-sm font-semibold flex items-center gap-2">
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-white text-xs" style={{ backgroundColor: BRAND_RUBI }}>
-                      Planejado (inclui Adiado) • {plannedItems.length}
-                    </span>
-                  </div>
-                  <div className="mt-3 space-y-3">
-                    {plannedItems.length ? plannedItems.map(renderItem) : (
-                      <div className="text-sm text-muted-foreground">Nenhuma ação planejada/adiada.</div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="border rounded-2xl p-3 bg-background/40">
-                  <div className="text-sm font-semibold flex items-center gap-2">
-                    <span className="inline-flex items-center px-2 py-1 rounded-full bg-emerald-600 text-white text-xs">
-                      Concluídos • {doneItems.length}
-                    </span>
-                  </div>
-                  <div className="mt-3 space-y-3">
-                    {doneItems.length ? doneItems.map(renderItem) : (
-                      <div className="text-sm text-muted-foreground">Nenhuma ação concluída.</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Etapas */}
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setPlaybookOpen(true);
-                    setPlaybookTab("playbook");
-                  }}
-                  disabled={!hasSaved5W2H || saving || loading}
-                  title={!hasSaved5W2H ? "Salve o 5W2H primeiro para habilitar o Playbook." : "Abrir Playbook"}
-                >
-                  <MessageCircle className="w-4 h-4 mr-2" />
-                  Playbook
-                </Button>
-
-                <Button onClick={handleSavePlanAndItems} disabled={saving}>
-                  {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Salvar 5W2H
+                <Button variant="outline" size="sm" onClick={handleAddItem}>
+                  <Plus className="w-4 h-4 mr-1" /> Adicionar ação
                 </Button>
               </div>
 
-              {!hasSaved5W2H && (
+              <div className="mt-3 max-h-[55vh] overflow-y-auto pr-1 space-y-3">
+                {items.map((item) => (
+                  <div
+                    key={item.id}
+                    className="border rounded-xl p-3 grid md:grid-cols-4 gap-3 bg-background/40"
+                  >
+                    <div>
+                      <Label>De</Label>
+                      <Input
+                        type="date"
+                        value={item.date_start || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "date_start", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Até</Label>
+                      <Input
+                        type="date"
+                        value={item.date_end || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "date_end", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>O que? (What)</Label>
+                      <Input
+                        value={item.what || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "what", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Por quê? (Why)</Label>
+                      <Input
+                        value={item.why || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "why", e.target.value)}
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Onde? (Where)</Label>
+                      <Input
+                        value={item.where_ || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "where_", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Quando? (When)</Label>
+                      <Input
+                        value={item.when_ || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "when_", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Quem? (Who)</Label>
+                      <Input
+                        value={item.who || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "who", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Como? (How)</Label>
+                      <Input
+                        value={item.how || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "how", e.target.value)}
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Quanto? (How much)</Label>
+                      <Input
+                        value={item.how_much || ""}
+                        onChange={(e) => handleUpdateItemField(item.id, "how_much", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Status</Label>
+                      <Select
+                        value={normalizeStatus(String(item.status || "planejado"))}
+                        onValueChange={(val) => handleUpdateItemField(item.id, "status", val)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="planejado">Planejado</SelectItem>
+                          <SelectItem value="em_andamento">Em andamento</SelectItem>
+                          <SelectItem value="concluido">Concluído</SelectItem>
+                          <SelectItem value="adiado">Adiado</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ))}
+
+                {items.length === 0 && (
+                  <div className="text-sm text-muted-foreground">
+                    Nenhuma ação adicionada ainda. Clique em “Adicionar ação”.
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="mt-4 flex items-center justify-between">
                 <div className="text-xs text-muted-foreground">
-                  ⚠️ Etapa 1: salve o <b>5W2H</b> para liberar a etapa 2 (Playbook).
+                  {hasSaved5W2H ? "✅ Etapa 1 salva — Playbook liberado." : "⚠️ Salve o 5W2H para liberar o Playbook."}
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-      </div>
 
-      {/* ========================= Overlay Playbook (etapa 2) ========================= */}
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setW2hOpen(false)}>
+                    Fechar
+                  </Button>
+
+                  <Button onClick={handleSaveW2H} disabled={saving}>
+                    {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Salvar
+                  </Button>
+
+                  <Button
+                    onClick={async () => {
+                      // Ao clicar aqui, você “registra” no bloco correto (recarregando filas)
+                      await loadPlansList();
+                      setPlaybookOpen(true);
+                      setPlaybookTab("playbook");
+                    }}
+                    disabled={!hasSaved5W2H}
+                    title={!hasSaved5W2H ? "Salve o 5W2H primeiro" : "Gerar/Editar Playbook"}
+                  >
+                    <MessageCircle className="w-4 h-4 mr-2" />
+                    Gerar Playbook
+                  </Button>
+                </div>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================= Overlay Playbook (Etapa 2) ========================= */}
       <Dialog open={playbookOpen} onOpenChange={setPlaybookOpen}>
         <DialogContent className="max-w-5xl w-[95vw]">
           <DialogHeader>
             <DialogTitle>
-              Playbook da Semana (com Objeções) — {plan ? planDisplayName(plan) : ""}
+              Playbook (com Objeções) — {plan ? planDisplayName(plan) : ""}
             </DialogTitle>
           </DialogHeader>
 
@@ -1531,11 +1427,7 @@ Regras:
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                onClick={handleFillPlaybookFromMax}
-                disabled={maxLoading || saving || !plan}
-              >
+              <Button variant="outline" onClick={handleFillPlaybookFromMax} disabled={maxLoading || saving || !plan}>
                 {maxLoading ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : (
@@ -1628,7 +1520,6 @@ Regras:
                         big_idea: e.target.value,
                       }))
                     }
-                    placeholder="Ex.: Renovar a frota pagando juros médios de 1% ao ano..."
                   />
                 </div>
               </div>
@@ -1658,7 +1549,6 @@ Regras:
                         cta_principal: e.target.value,
                       }))
                     }
-                    placeholder="Ex.: Você consegue 15 min hoje às 14h ou às 15h pra alinharmos isso?"
                   />
                 </div>
               </div>
@@ -1767,9 +1657,7 @@ Regras:
 
             <TabsContent value="objections" className="mt-4">
               <div className="flex items-center justify-between">
-                <div className="text-sm text-muted-foreground">
-                  Objeções reais viram padrão de resposta do time.
-                </div>
+                <div className="text-sm text-muted-foreground">Objeções reais viram padrão do time.</div>
                 <Button variant="outline" size="sm" onClick={handleAddObjection} disabled={!playbook}>
                   <Plus className="w-4 h-4 mr-1" /> Adicionar objeção
                 </Button>
@@ -1777,10 +1665,7 @@ Regras:
 
               <div className="mt-3 max-h-[55vh] overflow-y-auto pr-1 space-y-3">
                 {objections.map((obj) => (
-                  <div
-                    key={obj.id}
-                    className="border rounded-xl p-3 grid md:grid-cols-2 gap-3 bg-background/40"
-                  >
+                  <div key={obj.id} className="border rounded-xl p-3 grid md:grid-cols-2 gap-3 bg-background/40">
                     <div>
                       <Label>Tag</Label>
                       <Input
@@ -1790,7 +1675,6 @@ Regras:
                             prev.map((o) => (o.id === obj.id ? { ...o, tag: e.target.value } : o))
                           )
                         }
-                        placeholder="Ex.: sem_dinheiro, falar_com_esposa..."
                       />
                     </div>
 
@@ -1801,9 +1685,7 @@ Regras:
                         value={obj.priority}
                         onChange={(e) =>
                           setObjections((prev) =>
-                            prev.map((o) =>
-                              o.id === obj.id ? { ...o, priority: Number(e.target.value) } : o
-                            )
+                            prev.map((o) => (o.id === obj.id ? { ...o, priority: Number(e.target.value) } : o))
                           )
                         }
                       />
@@ -1816,9 +1698,7 @@ Regras:
                         value={obj.objection_text || ""}
                         onChange={(e) =>
                           setObjections((prev) =>
-                            prev.map((o) =>
-                              o.id === obj.id ? { ...o, objection_text: e.target.value } : o
-                            )
+                            prev.map((o) => (o.id === obj.id ? { ...o, objection_text: e.target.value } : o))
                           )
                         }
                       />
@@ -1831,9 +1711,7 @@ Regras:
                         value={obj.answer_text || ""}
                         onChange={(e) =>
                           setObjections((prev) =>
-                            prev.map((o) =>
-                              o.id === obj.id ? { ...o, answer_text: e.target.value } : o
-                            )
+                            prev.map((o) => (o.id === obj.id ? { ...o, answer_text: e.target.value } : o))
                           )
                         }
                       />
@@ -1845,37 +1723,25 @@ Regras:
                         value={obj.next_step || ""}
                         onChange={(e) =>
                           setObjections((prev) =>
-                            prev.map((o) =>
-                              o.id === obj.id ? { ...o, next_step: e.target.value } : o
-                            )
+                            prev.map((o) => (o.id === obj.id ? { ...o, next_step: e.target.value } : o))
                           )
                         }
-                        placeholder="Ex.: reagendar, enviar proposta, marcar call com sócio..."
                       />
                     </div>
                   </div>
                 ))}
 
                 {objections.length === 0 && (
-                  <div className="text-sm text-muted-foreground">
-                    Nenhuma objeção ainda. Clique em “Adicionar” ou “Pedir para o Max”.
-                  </div>
+                  <div className="text-sm text-muted-foreground">Nenhuma objeção ainda. Use “Pedir para o Max”.</div>
                 )}
               </div>
             </TabsContent>
 
             <TabsContent value="dialogo" className="mt-4">
-              <div className="text-sm text-muted-foreground">
-                Aqui fica o “o que o cliente pode falar” vs “como responder” (editável).
-              </div>
+              <div className="text-sm text-muted-foreground">Editável: cliente diz → vendedor responde.</div>
               <div className="mt-3">
                 <Label>Possibilidades (IA)</Label>
-                <Textarea
-                  rows={14}
-                  value={aiDialogues}
-                  onChange={(e) => setAiDialogues(e.target.value)}
-                  placeholder="Use o botão “Pedir para o Max” pra gerar automaticamente e depois edite."
-                />
+                <Textarea rows={14} value={aiDialogues} onChange={(e) => setAiDialogues(e.target.value)} />
               </div>
             </TabsContent>
           </Tabs>
@@ -1887,85 +1753,6 @@ Regras:
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* ========================= Widget flutuante do Max (chat livre) ========================= */}
-      <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-3">
-        {maxOpen && (
-          <div className="w-80 sm:w-96 bg-background border shadow-2xl rounded-2xl overflow-hidden flex flex-col max-h-[70vh]">
-            <div
-              className="flex items-center justify-between px-3 py-2 border-b text-white"
-              style={{ background: `linear-gradient(90deg, ${BRAND_NAVY}, ${BRAND_RUBI})` }}
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center border border-white/40">
-                  <Dog className="w-5 h-5 text-white" />
-                </div>
-                <div className="flex flex-col leading-tight">
-                  <span className="text-sm font-semibold">Max – IA da Consulmax</span>
-                  <span className="text-[11px] text-white/80">Seu mascote ajudante de scripts 🐶</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setMaxOpen(false)}
-                className="p-1 rounded-full hover:bg-white/10 transition"
-              >
-                <X className="w-4 h-4 text-white" />
-              </button>
-            </div>
-
-            <div className="flex-1 px-3 py-2 overflow-y-auto space-y-2 text-sm bg-background">
-              {maxMessages.length === 0 && (
-                <div className="text-muted-foreground text-xs">
-                  Fale com o Max! Exemplos:
-                  <ul className="list-disc list-inside mt-1">
-                    <li>“Max, melhora minha abertura pra médicos.”</li>
-                    <li>“Simula um cliente difícil com essa objeção.”</li>
-                    <li>“Transforma meu playbook em bullets pra eu treinar.”</li>
-                  </ul>
-                </div>
-              )}
-              {maxMessages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`p-2 rounded-lg max-w-full whitespace-pre-wrap ${
-                    m.role === "user" ? "bg-primary text-primary-foreground ml-auto" : "bg-muted mr-auto"
-                  }`}
-                >
-                  {m.content}
-                </div>
-              ))}
-            </div>
-
-            <div className="px-3 py-2 border-t bg-background flex items-center gap-2">
-              <Input
-                placeholder="Pergunte algo pro Max..."
-                value={maxInput}
-                onChange={(e) => setMaxInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendToMax();
-                  }
-                }}
-              />
-              <Button size="icon" onClick={handleSendToMax} disabled={maxLoading || !maxInput.trim()}>
-                {maxLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        <Button
-          type="button"
-          size="icon"
-          onClick={() => setMaxOpen((prev) => !prev)}
-          className="h-14 w-14 rounded-full shadow-2xl text-white border-4 border-white flex items-center justify-center hover:scale-105 transition-transform"
-          style={{ backgroundColor: BRAND_NAVY }}
-        >
-          <Dog className="w-7 h-7" />
-        </Button>
-      </div>
     </div>
   );
 };

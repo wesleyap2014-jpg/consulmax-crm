@@ -5,7 +5,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   UserCheck, Briefcase, Calendar, Calculator, FileText, Wallet, Layers, UserCog,
   SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight, Trophy,
-  CalendarClock, LineChart,
+  CalendarClock, LineChart, ClipboardList,
 } from 'lucide-react'
 
 type SidebarProps = { onNavigate?: () => void }
@@ -20,19 +20,23 @@ type NavItem = {
 }
 
 const items: NavItem[] = [
-  { to: '/oportunidades',   label: 'Oportunidades',    icon: Briefcase },
-  { to: '/propostas',       label: 'Propostas',        icon: FileText },
-  { to: '/carteira',        label: 'Carteira',         icon: Wallet },
-  { to: '/fluxo-de-caixa',  label: 'Fluxo de Caixa',   icon: LineChart, onlyForWesley: true },
-  { to: '/giro-de-carteira', label: 'Giro de Carteira', icon: CalendarClock },
-  { to: '/gestao-de-grupos', label: 'Gestão de Grupos', icon: Layers },
-  { to: '/clientes',         label: 'Clientes',         icon: UserCheck },
-  { to: '/agenda',           label: 'Agenda',           icon: Calendar },
-  { to: '/comissoes',        label: 'Comissões',        icon: BarChart3 },
-  { to: '/ranking',          label: 'Ranking',          icon: Trophy },
-  { to: '/usuarios',         label: 'Usuários',         icon: UserCog },
-  { to: '/parametros',       label: 'Parâmetros',       icon: SlidersHorizontal },
-  { to: '/links',            label: 'Links Úteis',      icon: LinkIcon },
+  { to: '/oportunidades',   label: 'Oportunidades',           icon: Briefcase },
+  { to: '/propostas',       label: 'Propostas',               icon: FileText },
+  { to: '/carteira',        label: 'Carteira',                icon: Wallet },
+  { to: '/fluxo-de-caixa',  label: 'Fluxo de Caixa',          icon: LineChart, onlyForWesley: true },
+  { to: '/giro-de-carteira', label: 'Giro de Carteira',       icon: CalendarClock },
+  { to: '/gestao-de-grupos', label: 'Gestão de Grupos',       icon: Layers },
+  { to: '/clientes',         label: 'Clientes',               icon: UserCheck },
+  { to: '/agenda',           label: 'Agenda',                 icon: Calendar },
+
+  // ✅ NOVO: Planejamento & Playbook
+  { to: '/planejamento',     label: 'Planejamento & Playbook', icon: ClipboardList },
+
+  { to: '/comissoes',        label: 'Comissões',              icon: BarChart3 },
+  { to: '/ranking',          label: 'Ranking',                icon: Trophy },
+  { to: '/usuarios',         label: 'Usuários',               icon: UserCog },
+  { to: '/parametros',       label: 'Parâmetros',             icon: SlidersHorizontal },
+  { to: '/links',            label: 'Links Úteis',            icon: LinkIcon },
 ]
 
 const LOGO_URL = '/logo-consulmax.png?v=3'

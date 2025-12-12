@@ -105,6 +105,12 @@ function formatPhoneBR(s?: string | null) {
   if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return s || "";
 }
+function waMeLink(phone?: string | null) {
+  const digits = (phone || "").replace(/\D/g, "");
+  if (!digits) return "https://wa.me/";
+  const withCountry = digits.startsWith("55") ? digits : `55${digits}`;
+  return `https://wa.me/${withCountry}`;
+}
 async function fetchAsDataURL(url: string): Promise<string | null> {
   try {
     const res = await fetch(url);
@@ -621,9 +627,35 @@ export default function Propostas() {
       .catch(() => alert("Não foi possível copiar."));
   }
   function copyResumoText(r: SimRow) {
-    const segNorm = normalizeSegment(r.segmento);
-    const { labelParcelaInicial } = proposalEngine(r, params);
-    const text = `Resumo da Proposta — ${segNorm}\n\nCrédito contratado: ${brMoney(r.credito)}\n${labelParcelaInicial} (até contemplação): ${brMoney(r.parcela_ate_1_ou_2)}\nDemais até a contemplação: ${brMoney(r.parcela_demais)}\n— Após a contemplação —\nCrédito líquido: ${brMoney(r.novo_credito)}\nParcela escolhida: ${brMoney(r.parcela_escolhida)}\nPrazo restante: ${r.novo_prazo ?? 0} meses\nLance próprio: ${brMoney(r.lance_proprio_valor)}\nGrupo: ${r.grupo || "—"}`;
+    const out = proposalEngine(r, params);
+    const nCont = out.nContemplacao || 0;
+    const wa = waMeLink(seller.phone);
+
+    const text =
+`🎯 Com a estratégia certa, você conquista seu imóvel sem pagar juros, sem entrada e ainda economiza!
+
+📌 Confira essa simulação real:
+
+💰 Crédito contratado: ${brMoney(r.credito)}
+💳 ${out.labelParcelaInicial}: ${brMoney(r.parcela_ate_1_ou_2)}
+
+💵 Demais parcelas até a contemplação: ${brMoney(r.parcela_demais)}
+
+📈 Após a contemplação (prevista em ${nCont} meses): ${brMoney(r.parcela_escolhida)}
+🏦 Lance próprio: ${brMoney(r.lance_proprio_valor)}
+
+✅ Crédito líquido liberado: ${brMoney(r.novo_credito)}
+
+📆 Parcelas restantes (valor): ${brMoney(r.parcela_escolhida)}
+
+⏳ Prazo restante: ${r.novo_prazo ?? 0} meses
+
+💡 Um planejamento inteligente que cabe no seu bolso e acelera a realização do seu sonho!
+
+👉 Quer simular com o valor do seu imóvel dos sonhos?
+Me chama aqui e eu te mostro o melhor caminho 👇
+${wa}`;
+
     navigator.clipboard.writeText(text).then(() => alert("Resumo copiado!"))
       .catch(() => alert("Não foi possível copiar."));
   }
@@ -641,8 +673,14 @@ export default function Propostas() {
     doc.setTextColor("#FFFFFF"); doc.text(title, 40, 60);
     if (logoDataUrl) {
       const props = (doc as any).getImageProperties(logoDataUrl);
-      const ratio = Math.min(120 / props.width, 34 / props.height);
+
+      // +30% no tamanho máximo (mantendo proporção)
+      const maxW = 120 * 1.3;
+      const maxH = 34 * 1.3;
+
+      const ratio = Math.min(maxW / props.width, maxH / props.height);
       const lw = props.width * ratio, lh = props.height * ratio;
+
       doc.addImage(logoDataUrl, "PNG", w - lw - 40, 30, lw, lh);
     }
   };
@@ -758,7 +796,19 @@ export default function Propostas() {
     const marginX = 34;
 
     // Cabeçalho + Discleimer
-    headerBand(doc, "Consórcio — Crédito Veículo");
+    const segTitle = normalizeSegment(sim.segmento);
+    headerBand(doc, `Consórcio — Crédito ${segTitle}`);
+
+    // linha menor abaixo do título
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(11);
+    doc.setTextColor("#FFFFFF");
+    doc.text(
+      `Projeto especialmente elaborado para ${((sim.lead_nome || "—").toString().trim() || "—")}`,
+      marginX,
+      78
+    );
+
     doc.setFont("helvetica","normal"); doc.setTextColor(40); doc.setFontSize(10);
     const disclaimer =
       "Essa proposta foi desenhada para quem busca um crédito alto com inteligência financeira, seja para compra de um veículo, ampliação patrimonial ou alavancagem de investimentos, com máxima eficiência.";

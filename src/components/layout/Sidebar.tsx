@@ -20,23 +20,26 @@ type NavItem = {
 }
 
 const items: NavItem[] = [
-  { to: '/oportunidades',   label: 'Oportunidades',           icon: Briefcase },
-  { to: '/propostas',       label: 'Propostas',               icon: FileText },
-  { to: '/carteira',        label: 'Carteira',                icon: Wallet },
-  { to: '/fluxo-de-caixa',  label: 'Fluxo de Caixa',          icon: LineChart, onlyForWesley: true },
-  { to: '/giro-de-carteira', label: 'Giro de Carteira',       icon: CalendarClock },
-  { to: '/gestao-de-grupos', label: 'Gestão de Grupos',       icon: Layers },
-  { to: '/clientes',         label: 'Clientes',               icon: UserCheck },
-  { to: '/agenda',           label: 'Agenda',                 icon: Calendar },
+  { to: '/oportunidades',    label: 'Oportunidades',            icon: Briefcase },
+  { to: '/propostas',        label: 'Propostas',                icon: FileText },
+  { to: '/carteira',         label: 'Carteira',                 icon: Wallet },
+  { to: '/fluxo-de-caixa',   label: 'Fluxo de Caixa',           icon: LineChart, onlyForWesley: true },
+  { to: '/giro-de-carteira', label: 'Giro de Carteira',         icon: CalendarClock },
+  { to: '/gestao-de-grupos', label: 'Gestão de Grupos',         icon: Layers },
+  { to: '/clientes',         label: 'Clientes',                 icon: UserCheck },
+  { to: '/agenda',           label: 'Agenda',                   icon: Calendar },
 
-  // ✅ NOVO: Planejamento & Playbook
-  { to: '/planejamento',     label: 'Planejamento & Playbook', icon: ClipboardList },
+  // ✅ Planejamento & Playbook
+  { to: '/planejamento',     label: 'Planejamento & Playbook',  icon: ClipboardList },
 
-  { to: '/comissoes',        label: 'Comissões',              icon: BarChart3 },
-  { to: '/ranking',          label: 'Ranking',                icon: Trophy },
-  { to: '/usuarios',         label: 'Usuários',               icon: UserCog },
-  { to: '/parametros',       label: 'Parâmetros',             icon: SlidersHorizontal },
-  { to: '/links',            label: 'Links Úteis',            icon: LinkIcon },
+  // ✅ NOVO: Relatórios
+  { to: '/relatorios',       label: 'Relatórios',               icon: BarChart3 },
+
+  { to: '/comissoes',        label: 'Comissões',                icon: BarChart3 },
+  { to: '/ranking',          label: 'Ranking',                  icon: Trophy },
+  { to: '/usuarios',         label: 'Usuários',                 icon: UserCog },
+  { to: '/parametros',       label: 'Parâmetros',               icon: SlidersHorizontal },
+  { to: '/links',            label: 'Links Úteis',              icon: LinkIcon },
 ]
 
 const LOGO_URL = '/logo-consulmax.png?v=3'
@@ -338,7 +341,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   }, [])
 
   // Alerts de hoje
-  const [navAlerts, setNavAlerts] = useState<NavAlerts>({
+  const [navAlerts, setNavAlerts] = useState({
     oportunidades: false,
     fluxoCaixa: false,
     gestaoGrupos: false,
@@ -517,15 +520,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     className={({ isActive }) =>
                       `${pillPadding} py-2.5 rounded-2xl transition-colors
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                       ${
-                         isActive
-                           ? 'bg-consulmax-primary text-white'
-                           : 'hover:bg-consulmax-neutral'
-                       }`
+                       ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                     }
-                    style={({ isActive }) =>
-                      isActive ? activePillStyle : glassHoverPill
-                    }
+                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                     onClick={() => onNavigate?.()}
                   >
                     {ad.name}
@@ -538,15 +535,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) =>
                     `${pillPadding} py-2.5 rounded-2xl transition-colors
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${
-                       isActive
-                         ? 'bg-consulmax-primary text-white'
-                         : 'hover:bg-consulmax-neutral'
-                     }`
+                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                   }
-                  style={({ isActive }) =>
-                    isActive ? activePillStyle : glassHoverPill
-                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                 >
                   Embracon
@@ -558,15 +549,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 className={({ isActive }) =>
                   `${pillPadding} py-2.5 rounded-2xl transition-colors
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                   ${
-                     isActive
-                       ? 'bg-consulmax-primary text-white'
-                       : 'hover:bg-consulmax-neutral'
-                   }`
+                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
                 }
-                style={({ isActive }) =>
-                  isActive ? activePillStyle : glassHoverPill
-                }
+                style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                 onClick={() => onNavigate?.()}
               >
                 + Add Administradora

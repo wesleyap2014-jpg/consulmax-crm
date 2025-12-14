@@ -26,6 +26,7 @@ const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedor
 const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
 const FluxoDeCaixa            = React.lazy(() => import("./pages/FluxoDeCaixa")); // << já existia
 const Planejamento            = React.lazy(() => import("./pages/Planejamento")); // << NOVO
+const Relatorios              = React.lazy(() => import("./pages/Relatorios"));   // << NOVO
 
 // ==== Giro de Carteira SEM lazy (import direto) ====
 import GiroDeCarteira from "./pages/GiroDeCarteira";
@@ -75,6 +76,9 @@ export const router = createBrowserRouter([
           { path: "clientes",       element: withSuspense(<Clientes />) },
           { path: "agenda",         element: withSuspense(<Agenda />) },
           { path: "planejamento",   element: withSuspense(<Planejamento />) }, // << NOVO
+
+          // ✅ NOVO: Relatórios
+          { path: "relatorios",     element: withSuspense(<Relatorios />) },
 
           {
             path: "simuladores",

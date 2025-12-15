@@ -5,13 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -52,13 +46,13 @@ const C = {
 const CONCENTRACAO_ALERTA = 0.10; // 10%
 
 /* =========================
-   Tipos
+   Tipos (DB)
 ========================= */
 type UUID = string;
 
 type VendaRow = {
   id: UUID;
-  vendedor_id: UUID | null; // normalmente users.id
+  vendedor_id: UUID | null; // IMPORTANT: referencia users.id
 
   administradora: string | null;
   segmento: string | null;
@@ -74,7 +68,7 @@ type VendaRow = {
   data_venda: string | null; // date
   data_contemplacao: string | null; // date
 
-  contemplacao_tipo: string | null; // Lance Livre | Primeiro Lance Fixo | Segundo Lance Fixo
+  contemplacao_tipo: string | null; // "Lance Livre" | "Primeiro Lance Fixo" | "Segundo Lance Fixo"
   contemplacao_pct: number | null;
 
   valor_venda: number | null;
@@ -85,8 +79,8 @@ type VendaRow = {
   grupo?: string | null;
   cota?: string | null;
 
-  inad?: boolean | null;
-  inad_em: string | null; // date/timestamptz
+  inad?: boolean | null; // bool
+  inad_em: string | null; // date/timestamptz -> data da parcela mais antiga inadimplida
 };
 
 type LeadRow = {
@@ -98,11 +92,11 @@ type LeadRow = {
 };
 
 type UserRow = {
-  id: UUID;
+  id: UUID; // IMPORTANT
   auth_user_id: UUID;
   nome: string | null;
-  user_role?: string | null; // texto
-  role?: string | null;      // enum/text legado
+  user_role?: string | null;
+  role?: string | null;
   is_active?: boolean | null;
 };
 
@@ -122,14 +116,16 @@ function fmtBRL(v: number) {
   }
 }
 
+/** p em fração (0..1) */
 function fmtPctHuman(p: number, digits = 1) {
   const v = Number.isFinite(p) ? p : 0;
   return `${(v * 100).toFixed(digits).replace(".", ",")}%`;
 }
 
-function fmtPct100Human(p100: number, digits = 2) {
-  const v = Number.isFinite(p100) ? p100 : 0;
-  return `${v.toFixed(digits).replace(".", ",")}%`;
+/** v em percent (0..100) */
+function fmtPct100Human(v: number, digits = 2) {
+  const n = Number.isFinite(v) ? v : 0;
+  return `${n.toFixed(digits).replace(".", ",")}%`;
 }
 
 function fmtDateBR(isoOrDate: string | null) {
@@ -146,6 +142,7 @@ function fmtDateBR(isoOrDate: string | null) {
   return `${dd}/${mm}/${yy}`;
 }
 
+/** "Hoje" local sem deslizar */
 function todayLocalYMD() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -154,14 +151,15 @@ function todayLocalYMD() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/** Parse date string (YYYY-MM-DD) como data local (meia-noite) */
 function parseLocalDate(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
 }
 
+/** Diferença em dias usando datas locais (evita “voltar um dia”) */
 function diffDaysLocal(from: string, toYMD: string) {
-  const fromDt =
-    /^\d{4}-\d{2}-\d{2}$/.test(from) ? parseLocalDate(from) : new Date(from);
+  const fromDt = /^\d{4}-\d{2}-\d{2}$/.test(from) ? parseLocalDate(from) : new Date(from);
   const toDt = parseLocalDate(toYMD);
   const a = fromDt.getTime();
   const b = toDt.getTime();
@@ -261,13 +259,7 @@ function downloadXls(filename: string, headers: string[], rows: any[][]) {
 /* =========================
    UI helpers
 ========================= */
-function GlassCard({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+function GlassCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <Card
       className={`border ${className}`}
@@ -276,8 +268,7 @@ function GlassCard({
         borderColor: C.border,
         backdropFilter: "saturate(160%) blur(10px)",
         WebkitBackdropFilter: "saturate(160%) blur(10px)",
-        boxShadow:
-          "inset 0 0 0 1px rgba(255,255,255,.20), 0 10px 30px rgba(30,41,63,.08)",
+        boxShadow: "inset 0 0 0 1px rgba(255,255,255,.20), 0 10px 30px rgba(30,41,63,.08)",
         borderRadius: 18,
       }}
     >
@@ -317,10 +308,7 @@ function Badge({
   };
 
   return (
-    <span
-      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
-      style={styles[tone]}
-    >
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold" style={styles[tone]}>
       {children}
     </span>
   );
@@ -343,14 +331,13 @@ export default function Relatorios() {
 
   // dados
   const [loading, setLoading] = useState(false);
-
-  const [authUserId, setAuthUserId] = useState<string | null>(null); // auth.users.id
-  const [userId, setUserId] = useState<string | null>(null);         // public.users.id
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [myUserId, setMyUserId] = useState<string | null>(null); // users.id
   const [isAdmin, setIsAdmin] = useState(false);
 
   const [vendas, setVendas] = useState<VendaRow[]>([]);
-  const [usersById, setUsersById] = useState<Record<string, UserRow>>({});
-  const [usersByAuth, setUsersByAuth] = useState<Record<string, UserRow>>({});
+  const [usersMap, setUsersMap] = useState<Record<string, UserRow>>({}); // key: users.id
+  const [usersByAuth, setUsersByAuth] = useState<Record<string, UserRow>>({}); // key: users.auth_user_id
   const [leadsMap, setLeadsMap] = useState<Record<string, LeadRow>>({});
 
   // dialog concentração
@@ -364,19 +351,20 @@ export default function Relatorios() {
   // dialog export
   const [exportOpen, setExportOpen] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
-  const [exportType, setExportType] = useState<
-    "vendas" | "canceladas" | "contempladas" | "inadimplentes"
-  >("vendas");
+  const [exportType, setExportType] = useState<"vendas" | "canceladas" | "contempladas" | "inadimplentes">("vendas");
   const [exportStatusStart, setExportStatusStart] = useState<string>("");
   const [exportStatusEnd, setExportStatusEnd] = useState<string>("");
 
   const todayYMD = useMemo(() => todayLocalYMD(), []);
 
   /* =========================
-     Carrega auth + role + userId
+     Carrega auth + role (corrigido)
+     - authUserId: supabase auth user id
+     - myUserId: users.id (referência usada em vendas.vendedor_id)
   ========================= */
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         const { data, error } = await supabase.auth.getUser();
@@ -384,7 +372,7 @@ export default function Relatorios() {
 
         if (error || !data?.user) {
           setAuthUserId(null);
-          setUserId(null);
+          setMyUserId(null);
           setIsAdmin(false);
           return;
         }
@@ -392,7 +380,6 @@ export default function Relatorios() {
         const authId = data.user.id;
         setAuthUserId(authId);
 
-        // pega o profile (public.users) do usuário logado
         const { data: urow, error: uerr } = await supabase
           .from("users")
           .select("id, auth_user_id, nome, user_role, role, is_active")
@@ -400,25 +387,23 @@ export default function Relatorios() {
           .maybeSingle();
 
         if (!alive) return;
-        if (uerr || !urow) {
-          console.error("Erro ao carregar profile do usuário:", uerr?.message);
-          setUserId(null);
+
+        if (uerr || !urow?.id) {
+          console.error("Erro ao carregar usuário (users):", uerr?.message);
+          setMyUserId(null);
           setIsAdmin(false);
           return;
         }
 
-        setUserId(urow.id);
+        setMyUserId(urow.id);
 
-        const roleRaw = (urow.user_role || urow.role || "")
-          .toString()
-          .trim()
-          .toLowerCase();
+        const roleRaw = (urow.user_role || urow.role || "").toString().trim().toLowerCase();
         setIsAdmin(roleRaw === "admin");
       } catch (e) {
         console.error("Erro ao identificar usuário:", e);
         if (!alive) return;
         setAuthUserId(null);
-        setUserId(null);
+        setMyUserId(null);
         setIsAdmin(false);
       }
     })();
@@ -428,43 +413,44 @@ export default function Relatorios() {
     };
   }, []);
 
-  // quando descobre que é admin, libera o filtro de vendedor
+  // default do filtro vendedor:
+  // - admin: all
+  // - vendedor: meu users.id
   useEffect(() => {
-    if (!authUserId) return;
+    if (!myUserId) return;
     if (isAdmin) setFVendedor("all");
-    else if (userId) setFVendedor(userId);
-  }, [isAdmin, authUserId, userId]);
+    else setFVendedor(myUserId);
+  }, [isAdmin, myUserId]);
 
   /* =========================
-     Fetch principal (para UI)
-     - Admin: TUDO (sem limite 24 meses)
-     - Outros: somente dele (por performance, últimos 24 meses)
+     Fetch principal (UI)
+     - Admin: tudo (sem filtro vendedor)
+     - Vendedor: somente dele (vendas.vendedor_id = myUserId)
   ========================= */
   async function fetchAllUI() {
-    if (!authUserId) return;
+    if (!myUserId) return;
 
     setLoading(true);
     try {
-      // users (nome do vendedor)
+      // users (nome do vendedor) - mapeando por users.id
       const { data: usersData, error: usersErr } = await supabase
         .from("users")
         .select("id, auth_user_id, nome, user_role, role, is_active")
         .order("nome", { ascending: true });
 
-      if (usersErr) {
-        console.error("Erro users:", usersErr.message);
-      } else {
-        const byId: Record<string, UserRow> = {};
-        const byAuth: Record<string, UserRow> = {};
+      if (usersErr) console.error("Erro users:", usersErr.message);
+      else {
+        const mapById: Record<string, UserRow> = {};
+        const mapByAuth: Record<string, UserRow> = {};
         (usersData || []).forEach((u: any) => {
-          if (u?.id) byId[u.id] = u as UserRow;
-          if (u?.auth_user_id) byAuth[u.auth_user_id] = u as UserRow;
+          if (u?.id) mapById[u.id] = u as UserRow;
+          if (u?.auth_user_id) mapByAuth[u.auth_user_id] = u as UserRow;
         });
-        setUsersById(byId);
-        setUsersByAuth(byAuth);
+        setUsersMap(mapById);
+        setUsersByAuth(mapByAuth);
       }
 
-      // vendas
+      // vendas (UI: performance, últimos 24 meses)
       const now = new Date();
       const defaultMin = addMonths(now, -24).toISOString();
 
@@ -495,17 +481,12 @@ export default function Relatorios() {
             "inad_em",
           ].join(",")
         )
-        .order("encarteirada_em", { ascending: false });
+        .order("encarteirada_em", { ascending: false })
+        .gte("encarteirada_em", defaultMin);
 
-      // ✅ Admin vê tudo (sem corte)
-      // ✅ Não-admin: corte 24 meses por performance
-      if (!isAdmin) q = q.gte("encarteirada_em", defaultMin);
-
-      // ✅ Não-admin: só as próprias vendas (vendedor_id = public.users.id)
-      if (!isAdmin && userId) q = q.eq("vendedor_id", userId);
+      if (!isAdmin) q = q.eq("vendedor_id", myUserId);
 
       const { data: vendasData, error: vendasErr } = await q;
-
       if (vendasErr) {
         console.error("Erro vendas:", vendasErr.message);
         setVendas([]);
@@ -517,10 +498,7 @@ export default function Relatorios() {
       setVendas(list);
 
       // leads usados
-      const leadIds = Array.from(
-        new Set(list.map((v) => v.lead_id).filter(Boolean) as string[])
-      );
-
+      const leadIds = Array.from(new Set(list.map((v) => v.lead_id).filter(Boolean) as string[]));
       if (leadIds.length) {
         const chunkSize = 200;
         const map: Record<string, LeadRow> = {};
@@ -549,17 +527,16 @@ export default function Relatorios() {
   }
 
   useEffect(() => {
-    if (!authUserId) return;
+    if (!myUserId) return;
     fetchAllUI();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUserId, isAdmin, userId]);
+  }, [myUserId, isAdmin]);
 
   /* =========================
      Status (UI e export)
 ========================= */
   const isActive = (v: VendaRow) => v.codigo === "00" && !v.cancelada_em;
-  const isCanceled = (v: VendaRow) =>
-    Boolean(v.cancelada_em) || (v.codigo !== null && v.codigo !== "00");
+  const isCanceled = (v: VendaRow) => Boolean(v.cancelada_em) || (v.codigo !== null && v.codigo !== "00");
 
   function getStatus(v: VendaRow) {
     if (isCanceled(v)) return "Cancelada";
@@ -585,7 +562,7 @@ export default function Relatorios() {
   }
 
   /* =========================
-     Filtros (memória)
+     Filtros
 ========================= */
   const filtered = useMemo(() => {
     let rows = vendas.slice();
@@ -610,7 +587,9 @@ export default function Relatorios() {
       });
     }
 
+    // vendedor é users.id
     if (fVendedor !== "all") rows = rows.filter((v) => (v.vendedor_id || "") === fVendedor);
+
     if (fAdmin !== "all") rows = rows.filter((v) => (v.administradora || "") === fAdmin);
     if (fSeg !== "all") rows = rows.filter((v) => (v.segmento || "") === fSeg);
     if (fTabela !== "all") rows = rows.filter((v) => (v.tabela || "") === fTabela);
@@ -621,22 +600,9 @@ export default function Relatorios() {
     }
 
     return rows;
-  }, [
-    vendas,
-    dateStart,
-    dateEnd,
-    fVendedor,
-    fAdmin,
-    fSeg,
-    fTabela,
-    fTipoVenda,
-    fContemplada,
-  ]);
+  }, [vendas, dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
 
-  useEffect(
-    () => setConcPage(1),
-    [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]
-  );
+  useEffect(() => setConcPage(1), [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
 
   /* =========================
      Distintos selects
@@ -672,9 +638,7 @@ export default function Relatorios() {
     const vendido = filtered.reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const cancelado = filtered.filter(isCanceled).reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const ativoValue = filtered.filter(isActive).reduce((s, v) => s + safeNum(v.valor_venda), 0);
-    const inadValue = filtered
-      .filter((v) => isActive(v) && Boolean(v.inad))
-      .reduce((s, v) => s + safeNum(v.valor_venda), 0);
+    const inadValue = filtered.filter((v) => isActive(v) && Boolean(v.inad)).reduce((s, v) => s + safeNum(v.valor_venda), 0);
 
     return {
       vendido,
@@ -704,12 +668,8 @@ export default function Relatorios() {
     const soldPrev = filtered.filter((v) => inRange(v.encarteirada_em, semPrev.start, semPrev.end));
     const canceledInNowFromPrev = soldPrev.filter((v) => inRange(v.cancelada_em, semNow.start, semNow.end));
 
-    const soldPrevPrev = filtered.filter((v) =>
-      inRange(v.encarteirada_em, semPrevPrev.start, semPrevPrev.end)
-    );
-    const canceledInPrevFromPrevPrev = soldPrevPrev.filter((v) =>
-      inRange(v.cancelada_em, semPrev.start, semPrev.end)
-    );
+    const soldPrevPrev = filtered.filter((v) => inRange(v.encarteirada_em, semPrevPrev.start, semPrevPrev.end));
+    const canceledInPrevFromPrevPrev = soldPrevPrev.filter((v) => inRange(v.cancelada_em, semPrev.start, semPrev.end));
 
     const mk = (sold: VendaRow[], canceled: VendaRow[]) => {
       const soldValue = sold.reduce((s, v) => s + safeNum(v.valor_venda), 0);
@@ -761,12 +721,12 @@ export default function Relatorios() {
   }, [filtered, todayYMD]);
 
   /* =========================
-     Prazo de contemplação + amostras + tipo de lance
+     Prazo + contemplação por tipo (melhorado)
 ========================= */
   const prazo = useMemo(() => {
-    const rows = filtered.filter((v) => v.encarteirada_em && v.data_contemplacao);
+    const rowsPrazo = filtered.filter((v) => v.encarteirada_em && v.data_contemplacao);
 
-    const daysAll = rows
+    const daysAll = rowsPrazo
       .map((v) => {
         const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
         if (!dc || !v.encarteirada_em) return 0;
@@ -779,10 +739,11 @@ export default function Relatorios() {
     const p50 = percentile(daysAll, 0.5);
     const p75 = percentile(daysAll, 0.75);
 
+    // por segmento/admin com amostras (proposta + prazo)
     const bySeg: Record<string, { list: { proposta: string; dias: number }[]; sum: number; n: number }> = {};
     const byAdm: Record<string, { list: { proposta: string; dias: number }[]; sum: number; n: number }> = {};
 
-    rows.forEach((v) => {
+    rowsPrazo.forEach((v) => {
       const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
       if (!dc || !v.encarteirada_em) return;
       const d = diffDays(v.encarteirada_em, dc);
@@ -821,12 +782,14 @@ export default function Relatorios() {
       .sort((a, b) => b.media - a.media)
       .slice(0, 10);
 
-    // ✅ tipos corretos do schema
+    // tipos de lance (conforme schema)
     const allowedTypes = ["Lance Livre", "Primeiro Lance Fixo", "Segundo Lance Fixo"];
+
+    // prazo médio por tipo (somente contempladas com datas)
     const byTipo: Record<string, { sum: number; n: number }> = {};
     const byTipoAdm: Record<string, Record<string, { sum: number; n: number }>> = {};
 
-    rows.forEach((v) => {
+    rowsPrazo.forEach((v) => {
       const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
       if (!dc || !v.encarteirada_em) return;
       const d = diffDays(v.encarteirada_em, dc);
@@ -863,7 +826,72 @@ export default function Relatorios() {
       .sort((a, b) => (b["Lance Livre"] || 0) - (a["Lance Livre"] || 0))
       .slice(0, 12);
 
-    return { mean, p50, p75, segChart, admChart, tipoChart, tipoPorAdmChart };
+    // =========================
+    // Taxa de contemplação por tipo (do total no filtro)
+    // =========================
+    const baseAll = filtered.filter((v) => !!v.encarteirada_em);
+    const totalBase = baseAll.length;
+
+    const contemplatedAll = baseAll.filter((v) => Boolean(v.contemplada)).length;
+
+    const contemplatedByTipo: Record<string, number> = {};
+    const totalByAdm: Record<string, number> = {};
+    const contemplatedByAdmTipo: Record<string, Record<string, number>> = {};
+
+    baseAll.forEach((v) => {
+      const adm = v.administradora || "—";
+      totalByAdm[adm] = (totalByAdm[adm] || 0) + 1;
+
+      if (!Boolean(v.contemplada)) return;
+
+      const tipoRaw = (v.contemplacao_tipo || "").toString().trim();
+      const tipo = allowedTypes.includes(tipoRaw) ? tipoRaw : "Lance Livre";
+
+      contemplatedByTipo[tipo] = (contemplatedByTipo[tipo] || 0) + 1;
+
+      contemplatedByAdmTipo[adm] = contemplatedByAdmTipo[adm] || {};
+      contemplatedByAdmTipo[adm][tipo] = (contemplatedByAdmTipo[adm][tipo] || 0) + 1;
+    });
+
+    const tipoRateChart = allowedTypes.map((tipo) => {
+      const qtd = contemplatedByTipo[tipo] || 0;
+      const taxa100 = totalBase > 0 ? (qtd / totalBase) * 100 : 0;
+      const shareContempladas100 = contemplatedAll > 0 ? (qtd / contemplatedAll) * 100 : 0;
+      return { tipo, qtd, taxa100, shareContempladas100 };
+    });
+
+    const tipoRatePorAdmChart = Object.keys(totalByAdm)
+      .map((adm) => {
+        const tot = totalByAdm[adm] || 0;
+        const row: any = { adm, total: tot };
+        let sumTipos = 0;
+
+        for (const t of allowedTypes) {
+          const qtd = contemplatedByAdmTipo[adm]?.[t] || 0;
+          const pct100 = tot > 0 ? (qtd / tot) * 100 : 0;
+          row[t] = pct100;
+          sumTipos += qtd;
+        }
+
+        row.taxa_total_cont100 = tot > 0 ? (sumTipos / tot) * 100 : 0;
+        return row;
+      })
+      .sort((a, b) => (b.taxa_total_cont100 || 0) - (a.taxa_total_cont100 || 0))
+      .slice(0, 12);
+
+    return {
+      mean,
+      p50,
+      p75,
+      segChart,
+      admChart,
+      tipoChart,
+      tipoPorAdmChart,
+      tipoRateChart,
+      tipoRatePorAdmChart,
+      totalBase,
+      contemplatedAll,
+    };
   }, [filtered]);
 
   /* =========================
@@ -943,10 +971,7 @@ export default function Relatorios() {
      Concentração (Pareto + Lorenz + Heat)
 ========================= */
   const concRows = useMemo(() => {
-    const byLead: Record<
-      string,
-      { lead_id: string; value: number; count: number; sellers: Set<string> }
-    > = {};
+    const byLead: Record<string, { lead_id: string; value: number; count: number; sellers: Set<string> }> = {};
     const ativos = filtered.filter(isActive);
 
     for (const v of ativos) {
@@ -984,9 +1009,8 @@ export default function Relatorios() {
     const rows = top10.map((r) => {
       cum += r.pct;
       const lead = leadsMap[r.lead_id];
-      const label =
-        (lead?.nome || "Cliente").toString().slice(0, 18) +
-        ((lead?.nome || "").length > 18 ? "…" : "");
+      const nm = (lead?.nome || "Cliente").toString();
+      const label = nm.slice(0, 18) + (nm.length > 18 ? "…" : "");
       return { name: label, pct100: r.pct * 100, cum100: cum * 100 };
     });
 
@@ -1006,8 +1030,8 @@ export default function Relatorios() {
 
     sorted.forEach((r, i) => {
       cumValue += r.value;
-      const x = (i + 1) / n;
-      const y = cumValue / total;
+      const x = (i + 1) / n; // % clientes
+      const y = cumValue / total; // % valor
       points.push({ x, y });
     });
 
@@ -1055,13 +1079,9 @@ export default function Relatorios() {
   /* =========================
      UI helpers
 ========================= */
-  const vendorName = (sellerIdOrAuthId: string | null) => {
-    if (!sellerIdOrAuthId) return "—";
-    return (
-      usersById[sellerIdOrAuthId]?.nome ||
-      usersByAuth[sellerIdOrAuthId]?.nome ||
-      "—"
-    );
+  const vendorName = (userId: string | null) => {
+    if (!userId) return "—";
+    return usersMap[userId]?.nome || "—";
   };
 
   const leadName = (lid: string | null) => {
@@ -1076,13 +1096,13 @@ export default function Relatorios() {
 
   /* =========================
      Export (histórico completo)
-     ✅ “Vendas” inclui Cliente + Nº Proposta
 ========================= */
   async function exportReport() {
-    if (!authUserId) return;
+    if (!myUserId) return;
 
     setExportLoading(true);
     try {
+      // base query: SEM limite 24 meses
       let q = supabase
         .from("vendas")
         .select(
@@ -1110,8 +1130,8 @@ export default function Relatorios() {
         )
         .order("encarteirada_em", { ascending: false });
 
-      // perfil
-      if (!isAdmin && userId) q = q.eq("vendedor_id", userId);
+      // trava por perfil
+      if (!isAdmin) q = q.eq("vendedor_id", myUserId);
 
       // filtros globais
       if (fVendedor !== "all") q = q.eq("vendedor_id", fVendedor);
@@ -1129,7 +1149,7 @@ export default function Relatorios() {
 
       const list = (data || []) as VendaRow[];
 
-      // garante users
+      // carregar users faltantes
       const vendorIds = Array.from(new Set(list.map((v) => v.vendedor_id).filter(Boolean) as string[]));
       if (vendorIds.length) {
         const { data: uData } = await supabase
@@ -1138,18 +1158,18 @@ export default function Relatorios() {
           .in("id", vendorIds);
 
         if (uData?.length) {
-          const byId = { ...usersById };
-          const byAuth = { ...usersByAuth };
+          const mId = { ...usersMap };
+          const mAuth = { ...usersByAuth };
           uData.forEach((u: any) => {
-            if (u?.id) byId[u.id] = u;
-            if (u?.auth_user_id) byAuth[u.auth_user_id] = u;
+            if (u?.id) mId[u.id] = u;
+            if (u?.auth_user_id) mAuth[u.auth_user_id] = u;
           });
-          setUsersById(byId);
-          setUsersByAuth(byAuth);
+          setUsersMap(mId);
+          setUsersByAuth(mAuth);
         }
       }
 
-      // garante leads
+      // carregar leads faltantes
       const leadIds = Array.from(new Set(list.map((v) => v.lead_id).filter(Boolean) as string[]));
       if (leadIds.length) {
         const chunkSize = 200;
@@ -1166,7 +1186,7 @@ export default function Relatorios() {
         setLeadsMap(m);
       }
 
-      // tipo do relatório
+      // aplica tipo do relatório
       let rows = list.slice();
       if (exportType === "canceladas") rows = rows.filter((v) => getStatus(v) === "Cancelada");
       if (exportType === "inadimplentes") rows = rows.filter((v) => getStatus(v) === "Inadimplente");
@@ -1188,9 +1208,11 @@ export default function Relatorios() {
         });
       }
 
-      // ✅ headers: “Vendas” inclui Cliente + Nº Proposta
-      const baseHeaders = [
+      // HEADERS (VENDAS agora inclui Cliente + Proposta)
+      const headers = [
         "Vendedor",
+        "Cliente",
+        "Número da Proposta",
         "Administradora",
         "Segmento",
         "Tabela",
@@ -1202,17 +1224,16 @@ export default function Relatorios() {
         "Dias de Inadimplência",
       ];
 
-      const headers =
-        exportType === "vendas"
-          ? ["Nome do Cliente", "Número da Proposta", ...baseHeaders]
-          : baseHeaders;
-
       const body = rows.map((v) => {
         const status = getStatus(v);
         const statusDate = getStatusDate(v);
+        const cliente = v.lead_id ? (leadsMap[v.lead_id]?.nome || v.lead_id) : "";
+        const proposta = v.numero_proposta || "";
 
-        const baseRow = [
+        return [
           vendorName(v.vendedor_id),
+          cliente,
+          proposta,
           v.administradora || "",
           v.segmento || "",
           v.tabela || "",
@@ -1223,15 +1244,6 @@ export default function Relatorios() {
           fmtDateBR(statusDate),
           getDiasInad(v),
         ];
-
-        if (exportType === "vendas") {
-          return [
-            leadName(v.lead_id),
-            v.numero_proposta || "",
-            ...baseRow,
-          ];
-        }
-        return baseRow;
       });
 
       const nameMap: Record<string, string> = {
@@ -1270,7 +1282,7 @@ export default function Relatorios() {
         <Button
           variant="outline"
           onClick={() => setExportOpen(true)}
-          disabled={!authUserId}
+          disabled={!myUserId}
           className="rounded-xl"
         >
           <Download className="h-4 w-4 mr-2" />
@@ -1311,11 +1323,17 @@ export default function Relatorios() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
-                  {distincts.vends.map((id) => (
-                    <SelectItem key={id} value={id}>
-                      {vendorName(id)}
-                    </SelectItem>
-                  ))}
+                  {distincts.vends
+                    .filter((id) => {
+                      const u = usersMap[id];
+                      // opcional: esconder inativos da lista (não afeta admin ver dados)
+                      return u ? u.is_active !== false : true;
+                    })
+                    .map((id) => (
+                      <SelectItem key={id} value={id}>
+                        {vendorName(id)}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1425,7 +1443,7 @@ export default function Relatorios() {
                   setFTipoVenda("all");
                   setFContemplada("all");
                   if (isAdmin) setFVendedor("all");
-                  else if (userId) setFVendedor(userId);
+                  else if (myUserId) setFVendedor(myUserId);
                 }}
               >
                 Limpar filtros
@@ -1493,7 +1511,7 @@ export default function Relatorios() {
           <TabsTrigger value="concentracao">Concentração</TabsTrigger>
         </TabsList>
 
-        {/* 12-6 */}
+        {/* 12-6 (VALOR + % no centro) */}
         <TabsContent value="inad126" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
@@ -1537,27 +1555,46 @@ export default function Relatorios() {
                     </CardTitle>
                   </CardHeader>
 
-                  <CardContent className="h-[260px] relative">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={2}>
-                          <Cell fill={C.navy} />
-                          <Cell fill={C.rubi} />
-                        </Pie>
-                        <RTooltip formatter={(v: any, n: any) => [fmtBRL(safeNum(v)), String(n)]} />
-                        <Legend />
-                        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}>
-                          {fmtPctHuman(x.pct, 1)}
-                        </text>
-                        <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}>
-                          cancelado
-                        </text>
-                      </PieChart>
-                    </ResponsiveContainer>
+                  {/* ✅ FIX: não estoura mais pra fora */}
+                  <CardContent className="space-y-2">
+                    <div className="h-[240px] relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={2}>
+                            <Cell fill={C.navy} />
+                            <Cell fill={C.rubi} />
+                          </Pie>
+                          <RTooltip formatter={(v: any, n: any) => [fmtBRL(safeNum(v)), String(n)]} />
+                          <Legend />
+                          <text
+                            x="50%"
+                            y="50%"
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}
+                          >
+                            {fmtPctHuman(x.pct, 1)}
+                          </text>
+                          <text
+                            x="50%"
+                            y="58%"
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}
+                          >
+                            cancelado
+                          </text>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
 
-                    <div className="mt-2 flex items-center justify-between text-sm" style={{ color: C.navy }}>
-                      <span>Vendido: <b>{fmtBRL(x.soldValue)}</b></span>
-                      <span>Cancelado: <b>{fmtBRL(x.cancelValue)}</b></span>
+                    <div className="flex items-center justify-between text-sm" style={{ color: C.navy }}>
+                      <span>
+                        Vendido: <b>{fmtBRL(x.soldValue)}</b>
+                      </span>
+                      <span>
+                        Cancelado: <b>{fmtBRL(x.cancelValue)}</b>
+                      </span>
                     </div>
                   </CardContent>
                 </GlassCard>
@@ -1593,7 +1630,9 @@ export default function Relatorios() {
                   </div>
                   <div className="space-y-1">
                     {inad82.recem.length === 0 ? (
-                      <div className="text-xs" style={{ color: C.muted }}>—</div>
+                      <div className="text-xs" style={{ color: C.muted }}>
+                        —
+                      </div>
                     ) : (
                       inad82.recem.map(({ v, dias }) => (
                         <div key={v.id} className="text-xs flex items-center justify-between" style={{ color: C.navy }}>
@@ -1611,7 +1650,9 @@ export default function Relatorios() {
                   </div>
                   <div className="space-y-1">
                     {inad82.topRisco.length === 0 ? (
-                      <div className="text-xs" style={{ color: C.muted }}>—</div>
+                      <div className="text-xs" style={{ color: C.muted }}>
+                        —
+                      </div>
                     ) : (
                       inad82.topRisco.map(({ v, dias }) => (
                         <div key={v.id} className="text-xs flex items-center justify-between" style={{ color: C.navy }}>
@@ -1654,7 +1695,9 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Média (dias)</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Média (dias)
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.mean || 0)}
@@ -1663,7 +1706,9 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Mediana P50 (dias)</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Mediana P50 (dias)
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.p50 || 0)}
@@ -1672,7 +1717,9 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>P75 (dias)</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  P75 (dias)
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.p75 || 0)}
@@ -1701,13 +1748,17 @@ export default function Relatorios() {
                         return (
                           <div className="rounded-xl border px-3 py-2 text-xs bg-white/90" style={{ borderColor: C.border, color: C.navy }}>
                             <div className="font-bold">{p.name}</div>
-                            <div>Média: <b>{p.media}</b> dias</div>
+                            <div>
+                              Média: <b>{p.media}</b> dias
+                            </div>
                             <div className="mt-2 font-semibold" style={{ color: C.muted }}>
                               Amostras (proposta • prazo)
                             </div>
                             <div className="mt-1 space-y-0.5">
                               {(p.sample || []).slice(0, 5).map((s: any, i: number) => (
-                                <div key={i}>{s.proposta} • <b>{s.dias} dias</b></div>
+                                <div key={i}>
+                                  {s.proposta} • <b>{s.dias} dias</b>
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -1742,13 +1793,17 @@ export default function Relatorios() {
                         return (
                           <div className="rounded-xl border px-3 py-2 text-xs bg-white/90" style={{ borderColor: C.border, color: C.navy }}>
                             <div className="font-bold">{p.name}</div>
-                            <div>Média: <b>{p.media}</b> dias</div>
+                            <div>
+                              Média: <b>{p.media}</b> dias
+                            </div>
                             <div className="mt-2 font-semibold" style={{ color: C.muted }}>
                               Amostras (proposta • prazo)
                             </div>
                             <div className="mt-1 space-y-0.5">
                               {(p.sample || []).slice(0, 5).map((s: any, i: number) => (
-                                <div key={i}>{s.proposta} • <b>{s.dias} dias</b></div>
+                                <div key={i}>
+                                  {s.proposta} • <b>{s.dias} dias</b>
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -1814,36 +1869,146 @@ export default function Relatorios() {
               </CardContent>
             </GlassCard>
           </div>
+
+          {/* ✅ NOVO: Taxa de contemplação por tipo + por administradora */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Taxa de contemplação por tipo de lance
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent>
+                <div className="text-xs mb-2" style={{ color: C.muted }}>
+                  Base: {prazo.totalBase || 0} vendas no filtro • Contempladas: {prazo.contemplatedAll || 0}
+                </div>
+
+                <div className="h-[260px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={prazo.tipoRateChart || []}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="tipo" />
+                      <YAxis domain={[0, 100]} tickFormatter={(v) => fmtPct100Human(Number(v), 2)} />
+                      <RTooltip
+                        formatter={(v: any, n: any) => {
+                          if (String(n) === "taxa100") return [fmtPct100Human(Number(v), 2), "Taxa (do total)"];
+                          if (String(n) === "shareContempladas100") return [fmtPct100Human(Number(v), 2), "Share (nas contempladas)"];
+                          return [v, String(n)];
+                        }}
+                        labelFormatter={(l) => `Tipo: ${l}`}
+                        contentStyle={{ borderRadius: 12 }}
+                      />
+                      <Legend />
+                      <Bar dataKey="taxa100" name="Taxa (do total)" fill={C.navy} radius={[8, 8, 0, 0]}>
+                        <LabelList dataKey="taxa100" position="top" formatter={(v: any) => fmtPct100Human(Number(v), 2)} />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="mt-2 grid grid-cols-1 gap-1 text-xs" style={{ color: C.muted }}>
+                  {(prazo.tipoRateChart || []).map((r: any) => (
+                    <div key={r.tipo} className="flex items-center justify-between">
+                      <span>{r.tipo}</span>
+                      <span style={{ color: C.navy, fontWeight: 800 }}>
+                        {r.qtd} • {fmtPct100Human(Number(r.taxa100), 2)} (share: {fmtPct100Human(Number(r.shareContempladas100), 2)})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Taxa de contemplação por administradora (Top 12)
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={prazo.tipoRatePorAdmChart || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="adm" hide />
+                    <YAxis domain={[0, 100]} tickFormatter={(v) => fmtPct100Human(Number(v), 2)} />
+                    <RTooltip
+                      formatter={(v: any, n: any) => [fmtPct100Human(Number(v), 2), String(n)]}
+                      labelFormatter={(l) => `Administradora: ${l}`}
+                      contentStyle={{ borderRadius: 12 }}
+                    />
+                    <Legend />
+                    <Bar dataKey="Lance Livre" stackId="a" fill={C.navy} />
+                    <Bar dataKey="Primeiro Lance Fixo" stackId="a" fill={C.gold} />
+                    <Bar dataKey="Segundo Lance Fixo" stackId="a" fill={C.rubi} radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+          </div>
         </TabsContent>
 
         {/* Clientes */}
         <TabsContent value="clientes" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Total de clientes</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.total}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Total de clientes
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.total}
+              </CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Ativos</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.ativos}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Ativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.ativos}
+              </CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Inadimplentes</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.inadimplentes}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Inadimplentes
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.inadimplentes}
+              </CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Inativos</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.inativos}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Inativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.inativos}
+              </CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>% Ativos</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(clientes.pctAtivos, 1)}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  % Ativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPctHuman(clientes.pctAtivos, 1)}
+              </CardContent>
             </GlassCard>
           </div>
 
           <GlassCard>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base" style={{ color: C.navy }}>Resumo</CardTitle>
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Resumo
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -1921,10 +2086,7 @@ export default function Relatorios() {
                   <PieChart>
                     <Pie data={distSegmento.rows} dataKey="value" nameKey="name" innerRadius={65} outerRadius={95} paddingAngle={2}>
                       {distSegmento.rows.map((_, idx) => (
-                        <Cell
-                          key={idx}
-                          fill={[C.navy, C.rubi, C.gold, "#2B3A55", "#8E7A3B", "#4D0E16"][idx % 6]}
-                        />
+                        <Cell key={idx} fill={[C.navy, C.rubi, C.gold, "#2B3A55", "#8E7A3B", "#4D0E16"][idx % 6]} />
                       ))}
                     </Pie>
                     <RTooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
@@ -1944,10 +2106,14 @@ export default function Relatorios() {
                 <div className="space-y-2">
                   {distSegmento.rows.slice(0, 10).map((r) => (
                     <div key={r.name} className="flex items-center justify-between gap-3">
-                      <div className="font-semibold truncate" style={{ color: C.navy }}>{r.name}</div>
+                      <div className="font-semibold truncate" style={{ color: C.navy }}>
+                        {r.name}
+                      </div>
                       <div className="flex items-center gap-2">
                         <Badge tone="info">{fmtPctHuman(r.pct, 1)}</Badge>
-                        <div className="font-bold" style={{ color: C.navy }}>{fmtBRL(r.value)}</div>
+                        <div className="font-bold" style={{ color: C.navy }}>
+                          {fmtBRL(r.value)}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1961,34 +2127,60 @@ export default function Relatorios() {
         <TabsContent value="concentracao" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Corte (alerta)</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(CONCENTRACAO_ALERTA, 0)}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Corte (alerta)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPctHuman(CONCENTRACAO_ALERTA, 0)}
+              </CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Clientes concentrados</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{concKpis.acimaCount}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Clientes concentrados
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {concKpis.acimaCount}
+              </CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>% em concentrados</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(concKpis.acimaPct, 2)}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  % em concentrados
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPctHuman(concKpis.acimaPct, 1)}
+              </CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Maior concentração</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(concKpis.top1, 2)}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Maior concentração
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPctHuman(concKpis.top1, 1)}
+              </CardContent>
             </GlassCard>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>Curva de Lorenz</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Curva de Lorenz
+                </CardTitle>
               </CardHeader>
               <CardContent className="h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={lorenz.points}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="x" tickFormatter={(v) => `${Math.round(v * 100)}%`} />
-                    <YAxis tickFormatter={(v) => `${Math.round(v * 100)}%`} domain={[0, 1]} />
+                    <XAxis dataKey="x" tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} />
+                    <YAxis tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} domain={[0, 1]} />
                     <RTooltip formatter={(v: any) => fmtPctHuman(safeNum(v), 2)} />
                     <Area type="monotone" dataKey="y" stroke={C.navy} fill={C.gold} fillOpacity={0.25} />
                     <Line type="linear" data={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} dataKey="y" stroke={C.rubi} dot={false} />
@@ -2014,9 +2206,15 @@ export default function Relatorios() {
                         background: `rgba(161,28,39,${0.10 + 0.35 * b.intensity})`,
                       }}
                     >
-                      <div className="text-xs font-semibold" style={{ color: C.navy }}>{b.label}</div>
-                      <div className="text-2xl font-extrabold" style={{ color: C.navy }}>{b.qtd}</div>
-                      <div className="text-[11px]" style={{ color: C.muted }}>clientes</div>
+                      <div className="text-xs font-semibold" style={{ color: C.navy }}>
+                        {b.label}
+                      </div>
+                      <div className="text-2xl font-extrabold" style={{ color: C.navy }}>
+                        {b.qtd}
+                      </div>
+                      <div className="text-[11px]" style={{ color: C.muted }}>
+                        clientes
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -2027,6 +2225,7 @@ export default function Relatorios() {
           <GlassCard>
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
+                {/* ✅ título ajustado */}
                 <span>Concentração - Top 10</span>
                 <div className="flex items-center gap-2">
                   <Badge tone="info">Top 10: {fmtPctHuman(paretoData.sumTop10, 2)}</Badge>
@@ -2034,17 +2233,13 @@ export default function Relatorios() {
                 </div>
               </CardTitle>
             </CardHeader>
-
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={paretoData.rows}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" interval={0} tick={{ fontSize: 11 }} />
-                  <YAxis
-                    yAxisId="left"
-                    tickFormatter={(v) => fmtPct100Human(Number(v), 2)}
-                    domain={[0, 100]}
-                  />
+                  {/* ✅ % humano 2 casas */}
+                  <YAxis yAxisId="left" tickFormatter={(v) => fmtPct100Human(Number(v), 2)} domain={[0, 100]} />
                   <YAxis
                     yAxisId="right"
                     orientation="right"
@@ -2052,13 +2247,8 @@ export default function Relatorios() {
                     domain={[0, 100]}
                   />
                   <RTooltip
-                    formatter={(v: any, n: any) => {
-                      const name = String(n);
-                      if (name === "Participação" || name === "Acumulado") {
-                        return [fmtPct100Human(Number(v), 2), name];
-                      }
-                      return [v, name];
-                    }}
+                    formatter={(v: any, n: any) => [fmtPct100Human(Number(v), 2), String(n)]}
+                    contentStyle={{ borderRadius: 12 }}
                   />
                   <Legend />
                   <Bar yAxisId="left" dataKey="pct100" name="Participação" fill={C.navy} radius={[8, 8, 0, 0]} />
@@ -2126,13 +2316,13 @@ export default function Relatorios() {
                                 </div>
                               </td>
 
-                              <td className="py-2"><div className="text-sm">{sellers || "—"}</div></td>
+                              <td className="py-2">
+                                <div className="text-sm">{sellers || "—"}</div>
+                              </td>
                               <td className="py-2 text-right font-extrabold">{fmtBRL(row.value)}</td>
 
                               <td className="py-2 text-right">
-                                <Badge tone={row.alerta ? "danger" : "info"}>
-                                  {fmtPctHuman(row.pct, 2)}
-                                </Badge>
+                                <Badge tone={row.alerta ? "danger" : "info"}>{fmtPctHuman(row.pct, 1)}</Badge>
                               </td>
 
                               <td className="py-2">
@@ -2212,15 +2402,16 @@ export default function Relatorios() {
                           {leadName(leadDialogId)}
                         </div>
                         <div className="text-xs mt-1" style={{ color: C.muted }}>
-                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} • {leadsMap[leadDialogId]?.origem || "—"}
+                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} •{" "}
+                          {leadsMap[leadDialogId]?.origem || "—"}
                         </div>
 
                         <div className="text-xs mt-2 flex items-center gap-2 flex-wrap" style={{ color: C.muted }}>
                           <span>Carteira ativa do cliente:</span>
-                          <span className="font-bold" style={{ color: C.navy }}>{fmtBRL(leadDialogAtivoTotal)}</span>
-                          <Badge tone={leadDialogPct >= CONCENTRACAO_ALERTA ? "danger" : "info"}>
-                            {fmtPctHuman(leadDialogPct, 2)} da carteira
-                          </Badge>
+                          <span className="font-bold" style={{ color: C.navy }}>
+                            {fmtBRL(leadDialogAtivoTotal)}
+                          </span>
+                          <Badge tone={leadDialogPct >= CONCENTRACAO_ALERTA ? "danger" : "info"}>{fmtPctHuman(leadDialogPct, 1)} da carteira</Badge>
                           {leadDialogPct >= CONCENTRACAO_ALERTA ? (
                             <Badge tone="danger">Cliente concentrado (≥ 10%)</Badge>
                           ) : (
@@ -2305,7 +2496,9 @@ export default function Relatorios() {
           <div className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="space-y-1">
-                <div className="text-xs font-semibold" style={{ color: C.muted }}>Tipo de relatório</div>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  Tipo de relatório
+                </div>
                 <Select value={exportType} onValueChange={(v: any) => setExportType(v)}>
                   <SelectTrigger className="rounded-xl">
                     <SelectValue />
@@ -2320,12 +2513,16 @@ export default function Relatorios() {
               </div>
 
               <div className="space-y-1">
-                <div className="text-xs font-semibold" style={{ color: C.muted }}>Data do status (início)</div>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  Data do status (início)
+                </div>
                 <Input type="date" value={exportStatusStart} onChange={(e) => setExportStatusStart(e.target.value)} />
               </div>
 
               <div className="space-y-1">
-                <div className="text-xs font-semibold" style={{ color: C.muted }}>Data do status (fim)</div>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  Data do status (fim)
+                </div>
                 <Input type="date" value={exportStatusEnd} onChange={(e) => setExportStatusEnd(e.target.value)} />
               </div>
             </div>

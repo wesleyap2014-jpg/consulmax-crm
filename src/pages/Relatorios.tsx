@@ -1,5 +1,5 @@
 // src/pages/Relatorios.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -67,7 +67,7 @@ type UserRow = {
   email?: string | null;
   phone?: string | null;
   telefone?: string | null;
-  user_role?: string | null;
+  user_role?: string | null; // admin|vendedor
   is_active?: boolean | null;
 };
 
@@ -100,12 +100,10 @@ function safeNum(v: any) {
 
 function parseISODateOnly(isoOrDate: string | null | undefined): Date | null {
   if (!isoOrDate) return null;
-  // date: YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrDate)) {
     const [y, m, d] = isoOrDate.split("-").map(Number);
     return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0, 0);
   }
-  // timestamptz ISO
   const dt = new Date(isoOrDate);
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
@@ -151,7 +149,6 @@ function mean(arr: number[]) {
   return arr.reduce((s, v) => s + v, 0) / arr.length;
 }
 
-/** Semestre atual pelo "hoje" (H1=Jan-Jun / H2=Jul-Dez) */
 function semesterKey(d: Date) {
   const y = d.getFullYear();
   const h = d.getMonth() < 6 ? "H1" : "H2";
@@ -170,12 +167,6 @@ function prevSemesterKey(key: string) {
   const y = Number(yy);
   if (hh === "H1") return `${y - 1}-H2`;
   return `${y}-H1`;
-}
-function nextSemesterKey(key: string) {
-  const [yy, hh] = key.split("-");
-  const y = Number(yy);
-  if (hh === "H1") return `${y}-H2`;
-  return `${y + 1}-H1`;
 }
 
 function isActive(v: VendaRow) {
@@ -233,7 +224,9 @@ function CustomTooltip({ active, payload, label }: any) {
       {payload.map((p: any, idx: number) => (
         <div key={idx} className="flex items-center justify-between gap-3">
           <span className="text-xs" style={{ color: C.muted }}>{p.name ?? p.dataKey}</span>
-          <span className="font-medium">{typeof p.value === "number" ? p.value.toLocaleString("pt-BR") : String(p.value)}</span>
+          <span className="font-medium">
+            {typeof p.value === "number" ? p.value.toLocaleString("pt-BR") : String(p.value)}
+          </span>
         </div>
       ))}
     </div>
@@ -241,9 +234,13 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 export default function Relatorios() {
+  // ====== auth / perfil ======
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [profileLoading, setProfileLoading] = useState<boolean>(true);
+
   // ====== filtros ======
   const [dateStart, setDateStart] = useState<string>(() => {
-    // default: últimos 12 meses
     const d = new Date();
     d.setMonth(d.getMonth() - 12);
     const y = d.getFullYear();
@@ -253,7 +250,7 @@ export default function Relatorios() {
   });
   const [dateEnd, setDateEnd] = useState<string>(() => todayStrLocal());
 
-  const [vendorId, setVendorId] = useState<string>("all");
+  const [vendorId, setVendorId] = useState<string>("all"); // admin controla; vendedor fica travado no authUserId
   const [administradora, setAdministradora] = useState<string>("all");
   const [segmento, setSegmento] = useState<string>("all");
   const [tabela, setTabela] = useState<string>("all");
@@ -266,19 +263,73 @@ export default function Relatorios() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
 
-  // dialog (contração)
+  // lead names (para Concentração)
+  const [leadNameById, setLeadNameById] = useState<Map<string, LeadRow>>(new Map());
+  const [leadsLoading, setLeadsLoading] = useState(false);
+
+  // dialog (concentração)
   const [leadDialogOpen, setLeadDialogOpen] = useState(false);
   const [leadDialogLead, setLeadDialogLead] = useState<LeadRow | null>(null);
   const [leadDialogVendas, setLeadDialogVendas] = useState<VendaRow[]>([]);
   const [leadDialogLoading, setLeadDialogLoading] = useState(false);
 
-  // paginação simples (10/pg) para listas
+  // paginação simples (10/pg)
   const [pageNewInad, setPageNewInad] = useState(1);
   const [pageRisk, setPageRisk] = useState(1);
   const [pageTopClients, setPageTopClients] = useState(1);
   const PAGE = 10;
 
-  // ====== load users ======
+  // ====== carregar auth + perfil (admin/vendedor) ======
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setProfileLoading(true);
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (!alive) return;
+
+        const uid = error ? null : data?.user?.id ?? null;
+        setAuthUserId(uid);
+
+        // por segurança: default não-admin até provar que é admin
+        let admin = false;
+
+        if (uid) {
+          const { data: prof, error: profErr } = await supabase
+            .from("users")
+            .select("auth_user_id,user_role,is_active,name,nome")
+            .eq("auth_user_id", uid)
+            .maybeSingle();
+
+          if (!profErr && prof) {
+            admin = String(prof.user_role ?? "").toLowerCase() === "admin";
+          }
+        }
+
+        if (!alive) return;
+        setIsAdmin(admin);
+
+        // trava o filtro de vendedor para quem não é admin
+        if (uid && !admin) {
+          setVendorId(uid);
+        } else {
+          setVendorId("all");
+        }
+      } catch (e) {
+        if (!alive) return;
+        console.error("Erro ao carregar perfil:", e);
+        setIsAdmin(false);
+      } finally {
+        if (alive) setProfileLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // ====== load users (para nomes) ======
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -294,8 +345,9 @@ export default function Relatorios() {
           setUsers([]);
           return;
         }
+
         const list = (data ?? []) as UserRow[];
-        // Regra: não listar inativos (is_active = false)
+        // regra já combinada: não listar inativos
         const activeOnly = list.filter((u) => u.is_active !== false);
         setUsers(activeOnly);
       } catch (e) {
@@ -306,7 +358,6 @@ export default function Relatorios() {
         if (alive) setUsersLoading(false);
       }
     })();
-
     return () => {
       alive = false;
     };
@@ -321,8 +372,11 @@ export default function Relatorios() {
     return m;
   }, [users]);
 
-  // ====== load vendas ======
+  // ====== load vendas (com trava por perfil) ======
   async function loadVendas() {
+    // se ainda estamos carregando perfil, evita queries duplicadas
+    if (profileLoading) return;
+
     setLoading(true);
     try {
       let q = supabase
@@ -333,11 +387,19 @@ export default function Relatorios() {
         .order("encarteirada_em", { ascending: false })
         .limit(5000);
 
-      // Período (por encarteirada_em)
+      // período por encarteirada_em
       if (dateStart) q = q.gte("encarteirada_em", dateToLocalStartISO(dateStart));
       if (dateEnd) q = q.lte("encarteirada_em", dateToLocalEndISO(dateEnd));
 
-      if (vendorId !== "all") q = q.eq("vendedor_id", vendorId);
+      // TRAVA por perfil:
+      // - vendedor: sempre filtra por vendedor_id == authUserId
+      // - admin: aplica filtro normal do select (se não for "all")
+      if (!isAdmin) {
+        if (authUserId) q = q.eq("vendedor_id", authUserId);
+      } else {
+        if (vendorId !== "all") q = q.eq("vendedor_id", vendorId);
+      }
+
       if (administradora !== "all") q = q.eq("administradora", administradora);
       if (segmento !== "all") q = q.eq("segmento", segmento);
       if (tabela !== "all") q = q.eq("tabela", tabela);
@@ -352,7 +414,8 @@ export default function Relatorios() {
         return;
       }
       setVendas((data ?? []) as VendaRow[]);
-      // reset paginação quando recarrega
+
+      // reset paginação
       setPageNewInad(1);
       setPageRisk(1);
       setPageTopClients(1);
@@ -364,10 +427,40 @@ export default function Relatorios() {
     }
   }
 
+  // ====== auto-aplicar filtros (debounce leve) ======
+  const debounceRef = useRef<number | null>(null);
   useEffect(() => {
-    loadVendas();
+    if (profileLoading) return;
+
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+
+    debounceRef.current = window.setTimeout(() => {
+      loadVendas();
+    }, 250);
+
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [
+    profileLoading,
+    isAdmin,
+    authUserId,
+    dateStart,
+    dateEnd,
+    vendorId,
+    administradora,
+    segmento,
+    tabela,
+    tipoVenda,
+    contemplada,
+  ]);
+
+  // carregamento inicial (quando perfil terminar)
+  useEffect(() => {
+    if (!profileLoading) loadVendas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileLoading]);
 
   // ====== opções de filtros (derivadas das vendas carregadas) ======
   const filterOptions = useMemo(() => {
@@ -421,12 +514,12 @@ export default function Relatorios() {
   // ====== A) Inadimplência 12-6 ======
   const inad126 = useMemo(() => {
     const now = new Date();
-    const curSem = semesterKey(now);              // semestre observação atual
-    const cohortAtual = prevSemesterKey(curSem);  // coorte que está sendo observada agora
+    const curSem = semesterKey(now);
+    const cohortAtual = prevSemesterKey(curSem);
     const obsAtual = curSem;
 
-    const cohortAnterior = prevSemesterKey(cohortAtual); // coorte anterior
-    const obsAnterior = cohortAtual;                     // observação anterior
+    const cohortAnterior = prevSemesterKey(cohortAtual);
+    const obsAnterior = cohortAtual;
 
     const build = (cohortKey: string, obsKey: string) => {
       const { start: cStart, end: cEnd } = semesterRange(cohortKey);
@@ -463,7 +556,7 @@ export default function Relatorios() {
     };
   }, [vendas]);
 
-  // ====== C) Prazo médio de contemplação ======
+  // ====== C) Prazo médio ======
   const prazoStats = useMemo(() => {
     const samples: number[] = [];
     const bySeg: Record<string, number[]> = {};
@@ -501,7 +594,7 @@ export default function Relatorios() {
     return { meanDays, p50, p75, segChart, admChart, n: samples.length };
   }, [vendas]);
 
-  // ====== D) Clientes (via leads vinculados em vendas.lead_id) ======
+  // ====== D) Clientes (via lead_id) ======
   const clientesStats = useMemo(() => {
     const leadIdsAll = new Set<string>();
     const leadIdsActive = new Set<string>();
@@ -520,7 +613,7 @@ export default function Relatorios() {
     return { total, ativos, inativos, pctAtivo };
   }, [vendas]);
 
-  // ====== E) Série mensal (últimos 12 meses) ======
+  // ====== E) Série mensal (12 meses) ======
   const serieMensal = useMemo(() => {
     const now = new Date();
     const months: string[] = [];
@@ -579,21 +672,18 @@ export default function Relatorios() {
     return { total, data: arr };
   }, [vendasAtivas]);
 
-  // ====== B) Inadimplência 8-2 (KPI real + aging placeholder) ======
+  // ====== B) Inadimplência 8-2 ======
   const inad82 = useMemo(() => {
     const inad = vendasAtivas.filter((v) => !!v.inad);
 
-    // “recém-inadimplentes”: ordenar por updated_at/created_at (não temos updated_at na query)
     const recent = [...inad].sort((a, b) => {
       const da = parseISODateOnly(a.created_at) ?? new Date(0);
       const db = parseISODateOnly(b.created_at) ?? new Date(0);
       return db.getTime() - da.getTime();
     });
 
-    // “em risco”: sem dias_atraso, usamos valor como proxy
     const risk = [...inad].sort((a, b) => safeNum(b.valor_venda) - safeNum(a.valor_venda));
 
-    // Aging: precisa de uma fonte de dias em atraso (TODO)
     const aging = [
       { faixa: "0–7", qtd: 0 },
       { faixa: "8–15", qtd: 0 },
@@ -609,21 +699,66 @@ export default function Relatorios() {
   const slicePage = (arr: any[], page: number) => arr.slice((page - 1) * PAGE, page * PAGE);
   const pagesCount = (arr: any[]) => Math.max(1, Math.ceil(arr.length / PAGE));
 
-  // ====== G) Contração: top 10 leads por valor de crédito (carteira ativa) ======
+  // ====== G) Concentração ======
   const topLeads = useMemo(() => {
-    const byLead: Record<string, { lead_id: string; value: number; count: number }> = {};
+    const byLead: Record<string, { lead_id: string; value: number; count: number; sellers: Set<string> }> = {};
     for (const v of vendasAtivas) {
       if (!v.lead_id) continue;
       const k = v.lead_id;
-      byLead[k] = byLead[k] ?? { lead_id: k, value: 0, count: 0 };
+      byLead[k] = byLead[k] ?? { lead_id: k, value: 0, count: 0, sellers: new Set() };
       byLead[k].value += safeNum(v.valor_venda);
       byLead[k].count += 1;
+      if (v.vendedor_id) byLead[k].sellers.add(v.vendedor_id);
     }
 
     return Object.values(byLead)
       .sort((a, b) => b.value - a.value)
-      .slice(0, 50); // a tabela mostra paginado; top 10 fica na primeira página
+      .slice(0, 50);
   }, [vendasAtivas]);
+
+  // carregar nomes dos leads do ranking (para não mostrar UUID)
+  useEffect(() => {
+    let alive = true;
+
+    const ids = topLeads.map((x) => x.lead_id).filter(Boolean);
+    if (!ids.length) {
+      setLeadNameById(new Map());
+      return;
+    }
+
+    (async () => {
+      setLeadsLoading(true);
+      try {
+        // supabase "in" costuma aceitar até uma quantidade razoável; aqui 50 está ok
+        const { data, error } = await supabase
+          .from("leads")
+          .select("id,nome,telefone,email,origem")
+          .in("id", ids);
+
+        if (!alive) return;
+
+        if (error) {
+          console.error("Erro ao carregar leads (ranking):", error.message);
+          return;
+        }
+
+        const map = new Map<string, LeadRow>();
+        for (const row of (data ?? []) as any[]) {
+          map.set(row.id, row as LeadRow);
+        }
+        setLeadNameById(map);
+      } catch (e) {
+        if (!alive) return;
+        console.error("Erro inesperado ao carregar leads (ranking):", e);
+      } finally {
+        if (alive) setLeadsLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [topLeads]);
 
   async function openLeadDialog(leadId: string) {
     setLeadDialogOpen(true);
@@ -638,12 +773,9 @@ export default function Relatorios() {
         .eq("id", leadId)
         .maybeSingle();
 
-      if (leadErr) {
-        console.error("Erro ao carregar lead:", leadErr.message);
-      }
+      if (leadErr) console.error("Erro ao carregar lead:", leadErr.message);
       setLeadDialogLead((leadData ?? null) as LeadRow | null);
 
-      // vendas do lead (usamos o dataset já carregado como base para não fazer query pesada)
       const vendasLead = vendas
         .filter((v) => v.lead_id === leadId)
         .sort((a, b) => safeNum(b.valor_venda) - safeNum(a.valor_venda));
@@ -655,6 +787,11 @@ export default function Relatorios() {
       setLeadDialogLoading(false);
     }
   }
+
+  const lockedVendorName = useMemo(() => {
+    if (!authUserId) return "Meu usuário";
+    return userNameByAuthId.get(authUserId) ?? "Meu usuário";
+  }, [authUserId, userNameByAuthId]);
 
   // ====== UI ======
   return (
@@ -670,7 +807,7 @@ export default function Relatorios() {
         <Button
           variant="outline"
           onClick={loadVendas}
-          disabled={loading}
+          disabled={loading || profileLoading}
           className="border-white/40 bg-white/60 hover:bg-white/70"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
@@ -678,16 +815,21 @@ export default function Relatorios() {
         </Button>
       </div>
 
-      {/* Filtros globais */}
+      {/* Filtros globais (AUTO aplica) */}
       <GlassCard>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Filtros globais</CardTitle>
+          <div className="text-xs" style={{ color: C.muted }}>
+            Ajustou qualquer filtro? Já aplica automaticamente.
+          </div>
         </CardHeader>
+
         <CardContent className="grid grid-cols-1 md:grid-cols-7 gap-3">
           <div className="space-y-1">
             <Label>Início</Label>
             <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} />
           </div>
+
           <div className="space-y-1">
             <Label>Fim</Label>
             <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
@@ -695,26 +837,41 @@ export default function Relatorios() {
 
           <div className="space-y-1">
             <Label>Vendedor</Label>
-            <Select value={vendorId} onValueChange={setVendorId}>
+            <Select
+              value={isAdmin ? vendorId : (authUserId ?? "all")}
+              onValueChange={(v) => isAdmin && setVendorId(v)}
+              disabled={!isAdmin}
+            >
               <SelectTrigger className="bg-white/70 border-white/40">
                 <SelectValue placeholder="Todos" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                {usersLoading ? (
-                  <div className="px-3 py-2 text-xs" style={{ color: C.muted }}>Carregando…</div>
+                {isAdmin ? (
+                  <>
+                    <SelectItem value="all">Todos</SelectItem>
+                    {usersLoading ? (
+                      <div className="px-3 py-2 text-xs" style={{ color: C.muted }}>Carregando…</div>
+                    ) : (
+                      users
+                        .slice()
+                        .sort((a, b) => (a.name ?? a.nome ?? "").localeCompare((b.name ?? b.nome ?? ""), "pt-BR"))
+                        .map((u) => (
+                          <SelectItem key={u.auth_user_id} value={u.auth_user_id}>
+                            {(u.name ?? u.nome ?? u.email ?? u.auth_user_id) as string}
+                          </SelectItem>
+                        ))
+                    )}
+                  </>
                 ) : (
-                  users
-                    .slice()
-                    .sort((a, b) => (a.name ?? a.nome ?? "").localeCompare((b.name ?? b.nome ?? ""), "pt-BR"))
-                    .map((u) => (
-                      <SelectItem key={u.auth_user_id} value={u.auth_user_id}>
-                        {(u.name ?? u.nome ?? u.email ?? u.auth_user_id) as string}
-                      </SelectItem>
-                    ))
+                  <SelectItem value={authUserId ?? "all"}>{lockedVendorName}</SelectItem>
                 )}
               </SelectContent>
             </Select>
+            {!isAdmin && (
+              <div className="text-[11px]" style={{ color: C.muted }}>
+                Perfil vendedor: filtrado automaticamente nas suas vendas.
+              </div>
+            )}
           </div>
 
           <div className="space-y-1">
@@ -793,39 +950,34 @@ export default function Relatorios() {
 
           <div className="md:col-span-7 flex gap-2 flex-wrap pt-1">
             <Button
-              onClick={loadVendas}
-              disabled={loading}
-              className="bg-[#1E293F] hover:bg-[#1E293F]/90 text-white"
-            >
-              {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              Aplicar filtros
-            </Button>
-
-            <Button
               variant="outline"
               className="border-white/40 bg-white/60 hover:bg-white/70"
               onClick={() => {
-                setVendorId("all");
                 setAdministradora("all");
                 setSegmento("all");
                 setTabela("all");
                 setTipoVenda("all");
                 setContemplada("all");
+                if (isAdmin) setVendorId("all");
+                // vendedor permanece travado no authUserId
               }}
             >
               Limpar filtros
             </Button>
 
             <div className="ml-auto text-xs flex items-center gap-2" style={{ color: C.muted }}>
-              <span>Registros carregados:</span>
+              <span>Registros:</span>
               <span className="font-semibold" style={{ color: C.navy }}>{vendas.length}</span>
-              {loading && <span className="inline-flex items-center"><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> carregando…</span>}
+              {(loading || profileLoading) && (
+                <span className="inline-flex items-center">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> carregando…
+                </span>
+              )}
             </div>
           </div>
         </CardContent>
       </GlassCard>
 
-      {/* Tabs */}
       <Tabs defaultValue="geral" className="space-y-3">
         <TabsList className="bg-white/60 border border-white/40">
           <TabsTrigger value="geral">Geral</TabsTrigger>
@@ -835,7 +987,7 @@ export default function Relatorios() {
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
           <TabsTrigger value="carteira">Carteira</TabsTrigger>
           <TabsTrigger value="segmentos">Segmentos</TabsTrigger>
-          <TabsTrigger value="contracao">Contração</TabsTrigger>
+          <TabsTrigger value="concentracao">Concentração</TabsTrigger>
         </TabsList>
 
         {/* Geral */}
@@ -916,10 +1068,7 @@ export default function Relatorios() {
               ];
 
               const title = k === "atual" ? "Semestre atual" : "Semestre anterior";
-              const subtitle =
-                k === "atual"
-                  ? `Coorte ${item.cohortKey} → cancelamentos em ${item.obsKey}`
-                  : `Coorte ${item.cohortKey} → cancelamentos em ${item.obsKey}`;
+              const subtitle = `Coorte ${item.cohortKey} → cancelamentos em ${item.obsKey}`;
 
               return (
                 <GlassCard key={k}>
@@ -946,14 +1095,7 @@ export default function Relatorios() {
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <RechartsTooltip content={<CustomTooltip />} />
-                          <Pie
-                            data={donutData}
-                            dataKey="value"
-                            nameKey="name"
-                            innerRadius={60}
-                            outerRadius={85}
-                            paddingAngle={2}
-                          >
+                          <Pie data={donutData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={85} paddingAngle={2}>
                             <Cell fill={C.navy} />
                             <Cell fill={C.rubi} />
                           </Pie>
@@ -1030,7 +1172,6 @@ export default function Relatorios() {
 
                 <div className="mt-2 text-xs" style={{ color: C.muted }}>
                   <span className="font-medium">TODO:</span> precisamos de um campo/tabela com “dias em atraso” (ex.: inad_desde / dias_atraso).
-                  Enquanto isso, o KPI e listas já funcionam via <span className="font-medium">vendas.inad</span>.
                 </div>
               </CardContent>
             </GlassCard>
@@ -1044,8 +1185,11 @@ export default function Relatorios() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {slicePage(inad82.recent, pageNewInad).map((v) => (
-                  <div key={v.id} className="flex items-center justify-between rounded-xl border px-3 py-2"
-                       style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}>
+                  <div
+                    key={v.id}
+                    className="flex items-center justify-between rounded-xl border px-3 py-2"
+                    style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}
+                  >
                     <div className="min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>
                         {v.administradora ?? "—"} • {v.segmento ?? "—"}
@@ -1054,8 +1198,9 @@ export default function Relatorios() {
                         Grupo {v.grupo ?? "—"} • Cota {v.cota ?? "—"} • Proposta {v.numero_proposta ?? "—"}
                       </div>
                       <div className="text-xs" style={{ color: C.muted }}>
-                        Vendedor: <span className="font-medium" style={{ color: C.navy }}>
-                          {v.vendedor_id ? (userNameByAuthId.get(v.vendedor_id) ?? v.vendedor_id) : "—"}
+                        Vendedor:{" "}
+                        <span className="font-medium" style={{ color: C.navy }}>
+                          {v.vendedor_id ? (userNameByAuthId.get(v.vendedor_id) ?? "—") : "—"}
                         </span>
                       </div>
                     </div>
@@ -1094,8 +1239,11 @@ export default function Relatorios() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {slicePage(inad82.risk, pageRisk).map((v) => (
-                  <div key={v.id} className="flex items-center justify-between rounded-xl border px-3 py-2"
-                       style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}>
+                  <div
+                    key={v.id}
+                    className="flex items-center justify-between rounded-xl border px-3 py-2"
+                    style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}
+                  >
                     <div className="min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>
                         {v.administradora ?? "—"} • {v.segmento ?? "—"}
@@ -1196,8 +1344,9 @@ export default function Relatorios() {
           </div>
 
           <div className="text-xs" style={{ color: C.muted }}>
-            Base: diferença em dias entre <span className="font-medium">encarteirada_em</span> e <span className="font-medium">data_contemplacao</span>.
-            Amostra usada: <span className="font-semibold" style={{ color: C.navy }}>{prazoStats.n}</span> registros.
+            Base: diferença em dias entre <span className="font-medium">encarteirada_em</span> e{" "}
+            <span className="font-medium">data_contemplacao</span>. Amostra:{" "}
+            <span className="font-semibold" style={{ color: C.navy }}>{prazoStats.n}</span>.
           </div>
         </TabsContent>
 
@@ -1229,20 +1378,6 @@ export default function Relatorios() {
               <CardContent className="text-3xl font-bold">{(clientesStats.pctAtivo * 100).toFixed(1)}%</CardContent>
             </GlassCard>
           </div>
-
-          <GlassCard>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Resumo</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm" style={{ color: C.muted }}>
-              Definição usada:
-              <ul className="list-disc ml-5 mt-2 space-y-1">
-                <li><span className="font-medium" style={{ color: C.navy }}>Cliente</span> = lead que possui ao menos 1 venda vinculada (vendas.lead_id).</li>
-                <li><span className="font-medium" style={{ color: C.navy }}>Ativo</span> = possui ao menos 1 cota ativa (codigo='00' e não cancelada).</li>
-                <li><span className="font-medium" style={{ color: C.navy }}>Inativo</span> = já teve venda, mas não possui cotas ativas no recorte.</li>
-              </ul>
-            </CardContent>
-          </GlassCard>
         </TabsContent>
 
         {/* Carteira */}
@@ -1273,29 +1408,9 @@ export default function Relatorios() {
               <CardContent className="text-xl font-bold">{totalsCarteira.countInad}</CardContent>
             </GlassCard>
           </div>
-
-          <GlassCard>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Série mensal (12 meses)</CardTitle>
-            </CardHeader>
-            <CardContent style={{ height: 300 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={serieMensal}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="mes" />
-                  <YAxis />
-                  <RechartsTooltip content={<CustomTooltip />} />
-                  <Legend />
-                  <Line type="monotone" dataKey="vendido" name="Vendido" stroke={C.navy} strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="cancelado" name="Cancelado" stroke={C.rubi} strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="liquido" name="Líquido" stroke={C.gold} strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </GlassCard>
         </TabsContent>
 
-        {/* Distribuição por segmentos */}
+        {/* Segmentos */}
         <TabsContent value="segmentos" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
@@ -1309,14 +1424,7 @@ export default function Relatorios() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <RechartsTooltip content={<CustomTooltip />} />
-                    <Pie
-                      data={distSegmento.data}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={70}
-                      outerRadius={110}
-                      paddingAngle={2}
-                    >
+                    <Pie data={distSegmento.data} dataKey="value" nameKey="name" innerRadius={70} outerRadius={110} paddingAngle={2}>
                       {distSegmento.data.map((_, i) => (
                         <Cell
                           key={i}
@@ -1349,44 +1457,77 @@ export default function Relatorios() {
           </div>
         </TabsContent>
 
-        {/* Contração */}
-        <TabsContent value="contracao" className="space-y-3">
+        {/* Concentração */}
+        <TabsContent value="concentracao" className="space-y-3">
           <GlassCard>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Top clientes (leads) por crédito</CardTitle>
+              <CardTitle className="text-base">Concentração de carteira por cliente</CardTitle>
               <div className="text-xs" style={{ color: C.muted }}>
                 Base: soma de <span className="font-medium">valor_venda</span> das cotas ativas por lead_id
               </div>
             </CardHeader>
 
             <CardContent className="space-y-2">
-              {slicePage(topLeads, pageTopClients).map((row) => (
-                <div
-                  key={row.lead_id}
-                  className="flex items-center justify-between rounded-xl border px-3 py-2"
-                  style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>
-                      Lead: <span className="font-mono text-xs">{row.lead_id}</span>
-                    </div>
-                    <div className="text-xs" style={{ color: C.muted }}>
-                      Cotas ativas: <span className="font-semibold" style={{ color: C.navy }}>{row.count}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm font-semibold whitespace-nowrap">{fmtBRL(row.value)}</div>
-                    <Button
-                      variant="outline"
-                      className="border-white/40 bg-white/60 hover:bg-white/70"
-                      onClick={() => openLeadDialog(row.lead_id)}
-                    >
-                      Ver detalhes
-                    </Button>
-                  </div>
+              {leadsLoading && (
+                <div className="text-xs flex items-center gap-2" style={{ color: C.muted }}>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> carregando nomes dos clientes…
                 </div>
-              ))}
+              )}
+
+              {slicePage(topLeads, pageTopClients).map((row) => {
+                const lead = leadNameById.get(row.lead_id);
+                const leadLabel =
+                  (lead?.nome ?? "").trim() ||
+                  `Lead ${row.lead_id.slice(0, 8)}…`;
+
+                // como vendedor já está travado, mas no admin pode ter mais de um vendedor por lead
+                const sellerNames = Array.from(row.sellers)
+                  .map((id) => userNameByAuthId.get(id) ?? id)
+                  .filter(Boolean)
+                  .slice(0, 3);
+
+                return (
+                  <div
+                    key={row.lead_id}
+                    className="flex items-center justify-between rounded-xl border px-3 py-2"
+                    style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>
+                        {leadLabel}
+                      </div>
+
+                      <div className="text-xs truncate" style={{ color: C.muted }}>
+                        {lead?.telefone ? `📞 ${lead.telefone}` : ""}{" "}
+                        {lead?.email ? `• ✉️ ${lead.email}` : ""}
+                      </div>
+
+                      <div className="text-xs" style={{ color: C.muted }}>
+                        Vendedor:{" "}
+                        <span className="font-medium" style={{ color: C.navy }}>
+                          {!sellerNames.length ? "—" : sellerNames.join(", ")}
+                        </span>
+                        {row.sellers.size > 3 ? (
+                          <span className="ml-1" style={{ color: C.muted }}>+{row.sellers.size - 3}</span>
+                        ) : null}
+                        {"  "}• Cotas ativas:{" "}
+                        <span className="font-semibold" style={{ color: C.navy }}>{row.count}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-semibold whitespace-nowrap">{fmtBRL(row.value)}</div>
+                      <Button
+                        variant="outline"
+                        className="border-white/40 bg-white/60 hover:bg-white/70"
+                        onClick={() => openLeadDialog(row.lead_id)}
+                      >
+                        Ver detalhes
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
 
               <div className="flex items-center justify-between pt-1">
                 <Button
@@ -1463,7 +1604,7 @@ export default function Relatorios() {
                           <div className="text-xs" style={{ color: C.muted }}>
                             Vendedor:{" "}
                             <span className="font-medium" style={{ color: C.navy }}>
-                              {v.vendedor_id ? (userNameByAuthId.get(v.vendedor_id) ?? v.vendedor_id) : "—"}
+                              {v.vendedor_id ? (userNameByAuthId.get(v.vendedor_id) ?? "—") : "—"}
                             </span>
                             {v.inad ? <span className="ml-2 font-semibold" style={{ color: C.rubi }}>• Inadimplente</span> : null}
                           </div>

@@ -1,74 +1,88 @@
 // src/pages/Relatorios.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+import { Loader2, RefreshCw, AlertTriangle, CheckCircle2, Eye } from "lucide-react";
 
 import {
   ResponsiveContainer,
   PieChart,
   Pie,
   Cell,
-  Tooltip as RechartsTooltip,
+  Tooltip,
+  Legend,
   BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
-  Legend,
-  LineChart,
+  ComposedChart,
   Line,
 } from "recharts";
 
-import { Loader2, RefreshCcw, AlertTriangle } from "lucide-react";
+/* =========================
+   Paleta Consulmax
+========================= */
+const C = {
+  rubi: "#A11C27",
+  navy: "#1E293F",
+  gold: "#B5A573",
+  off: "#F5F5F5",
+  muted: "rgba(30,41,63,.70)",
+  border: "rgba(255,255,255,.35)",
+  glass: "rgba(255,255,255,.55)",
+};
 
+const CONCENTRACAO_ALERTA = 0.10; // 10%
+
+/* =========================
+   Tipos (baseados nos prints)
+========================= */
 type UUID = string;
 
 type VendaRow = {
   id: UUID;
-  data_venda: string | null; // date
   vendedor_id: UUID | null;
 
+  administradora: string | null;
   segmento: string | null;
   tabela: string | null;
-  administradora: string | null;
-  forma_venda: string | null;
-  numero_proposta: string | null;
 
-  lead_id: UUID | null;
-
-  valor_venda: number | null;
-
-  grupo: string | null;
-  cota: string | null;
-  codigo: string | null;
+  tipo_venda: "Normal" | "Contemplada" | "Bolsão" | string | null; // tipo_venda
+  contemplada: boolean | null;
 
   encarteirada_em: string | null; // timestamptz
-  tipo_venda: string | null; // Normal/Contemplada/Bolsão
-  contemplada: boolean | null;
-  data_contemplacao: string | null; // date
   cancelada_em: string | null; // timestamptz
+  codigo: string | null; // '00' ativa
 
-  inad: boolean | null;
+  data_contemplacao: string | null; // date
+  valor_venda: number | null;
 
-  created_at: string | null; // timestamptz
-};
+  lead_id: UUID | null; // uuid (link para public.leads.id)
+  cliente_lead_id?: UUID | null; // existe no schema, mas parece não estar usando
 
-type UserRow = {
-  auth_user_id: UUID;
-  name?: string | null;
-  nome?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  telefone?: string | null;
-  user_role?: string | null; // admin|vendedor
-  is_active?: boolean | null;
+  grupo?: string | null;
+  cota?: string | null;
+
+  inad?: boolean | null; // bool
 };
 
 type LeadRow = {
@@ -79,283 +93,224 @@ type LeadRow = {
   origem: string | null;
 };
 
-const C = {
-  rubi: "#A11C27",
-  navy: "#1E293F",
-  gold: "#B5A573",
-  off: "#F5F5F5",
-  muted: "rgba(30,41,63,.70)",
-  border: "rgba(255,255,255,.35)",
-  glass: "rgba(255,255,255,.60)",
+type UserRow = {
+  auth_user_id: UUID;
+  name: string | null;
+  user_role?: string | null; // admin/vendedor
+  role?: string | null; // alias
+  is_active?: boolean | null;
 };
 
+/* =========================
+   Helpers
+========================= */
+function safeNum(n: any): number {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : 0;
+}
+
 function fmtBRL(v: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
-}
-
-function safeNum(v: any) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function parseISODateOnly(isoOrDate: string | null | undefined): Date | null {
-  if (!isoOrDate) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrDate)) {
-    const [y, m, d] = isoOrDate.split("-").map(Number);
-    return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0, 0);
+  try {
+    return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  } catch {
+    return `R$ ${v}`;
   }
-  const dt = new Date(isoOrDate);
-  return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
-function toYYYYMM(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
+function fmtPct(p: number, digits = 1) {
+  const v = Number.isFinite(p) ? p : 0;
+  return `${(v * 100).toFixed(digits)}%`;
 }
 
-function todayStrLocal() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-}
-
-function dateToLocalStartISO(yyyyMMdd: string) {
-  const [y, m, d] = yyyyMMdd.split("-").map(Number);
+function isoLocalStart(dateStr: string) {
+  // dateStr = YYYY-MM-DD
+  const [y, m, d] = dateStr.split("-").map(Number);
   const dt = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
   return dt.toISOString();
 }
-function dateToLocalEndISO(yyyyMMdd: string) {
-  const [y, m, d] = yyyyMMdd.split("-").map(Number);
+function isoLocalEnd(dateStr: string) {
+  const [y, m, d] = dateStr.split("-").map(Number);
   const dt = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
   return dt.toISOString();
 }
 
-function percentile(arr: number[], p: number) {
-  if (!arr.length) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
+function monthKeyFromISO(iso: string | null) {
+  if (!iso) return null;
+  // pega YYYY-MM
+  const m = iso.slice(0, 7);
+  return /^\d{4}-\d{2}$/.test(m) ? m : null;
+}
+
+function percentile(sorted: number[], p: number) {
+  if (!sorted.length) return 0;
   const idx = (sorted.length - 1) * p;
   const lo = Math.floor(idx);
   const hi = Math.ceil(idx);
-  if (lo === hi) return sorted[lo] ?? 0;
+  if (lo === hi) return sorted[lo];
   const w = idx - lo;
-  return (sorted[lo] ?? 0) * (1 - w) + (sorted[hi] ?? 0) * w;
+  return sorted[lo] * (1 - w) + sorted[hi] * w;
 }
 
-function mean(arr: number[]) {
-  if (!arr.length) return 0;
-  return arr.reduce((s, v) => s + v, 0) / arr.length;
+function diffDays(aIso: string, bIso: string) {
+  const a = new Date(aIso).getTime();
+  const b = new Date(bIso).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.round((b - a) / (1000 * 60 * 60 * 24));
 }
 
-function semesterKey(d: Date) {
-  const y = d.getFullYear();
-  const h = d.getMonth() < 6 ? "H1" : "H2";
-  return `${y}-${h}`;
-}
-function semesterRange(key: string) {
-  const [yy, hh] = key.split("-");
-  const y = Number(yy);
-  const isH1 = hh === "H1";
+function getSemesterRange(date: Date) {
+  const y = date.getFullYear();
+  const m = date.getMonth(); // 0-11
+  const isH1 = m <= 5;
   const start = new Date(y, isH1 ? 0 : 6, 1, 0, 0, 0, 0);
   const end = new Date(y, isH1 ? 5 : 11, isH1 ? 30 : 31, 23, 59, 59, 999);
-  return { start, end };
-}
-function prevSemesterKey(key: string) {
-  const [yy, hh] = key.split("-");
-  const y = Number(yy);
-  if (hh === "H1") return `${y - 1}-H2`;
-  return `${y}-H1`;
+  return { start, end, label: isH1 ? `Jan–Jun ${y}` : `Jul–Dez ${y}` };
 }
 
-function isActive(v: VendaRow) {
-  const codeOk = (v.codigo ?? "").trim() === "00";
-  const cancelled = !!v.cancelada_em || ((v.codigo ?? "").trim() !== "" && (v.codigo ?? "").trim() !== "00");
-  return codeOk && !cancelled;
-}
-function isCancelled(v: VendaRow) {
-  const code = (v.codigo ?? "").trim();
-  return !!v.cancelada_em || (code !== "" && code !== "00");
-}
-function encarteiraDate(v: VendaRow): Date | null {
-  return parseISODateOnly(v.encarteirada_em) ?? parseISODateOnly(v.data_venda) ?? null;
-}
-function cancelDate(v: VendaRow): Date | null {
-  return parseISODateOnly(v.cancelada_em) ?? null;
+function addMonths(d: Date, months: number) {
+  const dt = new Date(d);
+  dt.setMonth(dt.getMonth() + months);
+  return dt;
 }
 
-const GlassCard: React.FC<React.ComponentProps<typeof Card>> = ({ className, ...props }) => (
-  <Card
-    className={[
-      "border",
-      "shadow-sm",
-      "backdrop-blur-md",
-      "bg-white/60",
-      "border-white/40",
-      "text-[#1E293F]",
-      className ?? "",
-    ].join(" ")}
-    {...props}
-  />
-);
-
-const Badge: React.FC<{ variant?: "danger" | "ok" | "warn" | "info"; children: React.ReactNode }> = ({
-  variant = "info",
+/* =========================
+   UI helpers
+========================= */
+function GlassCard({
   children,
-}) => {
-  const map: Record<string, string> = {
-    danger: "bg-[#A11C27] text-white",
-    ok: "bg-[#1E293F] text-white",
-    warn: "bg-[#B5A573] text-[#1E293F]",
-    info: "bg-white/70 text-[#1E293F] border border-white/40",
-  };
-  return <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs ${map[variant]}`}>{children}</span>;
-};
-
-function CustomTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <div
-      className="rounded-xl border px-3 py-2 text-sm shadow-sm"
-      style={{ background: C.glass, borderColor: C.border, color: C.navy }}
+    <Card
+      className={`border ${className}`}
+      style={{
+        background: C.glass,
+        borderColor: C.border,
+        backdropFilter: "saturate(160%) blur(10px)",
+        WebkitBackdropFilter: "saturate(160%) blur(10px)",
+        boxShadow: "inset 0 0 0 1px rgba(255,255,255,.20), 0 10px 30px rgba(30,41,63,.08)",
+        borderRadius: 18,
+      }}
     >
-      {label != null && <div className="text-xs mb-1" style={{ color: C.muted }}>{String(label)}</div>}
-      {payload.map((p: any, idx: number) => (
-        <div key={idx} className="flex items-center justify-between gap-3">
-          <span className="text-xs" style={{ color: C.muted }}>{p.name ?? p.dataKey}</span>
-          <span className="font-medium">
-            {typeof p.value === "number" ? p.value.toLocaleString("pt-BR") : String(p.value)}
-          </span>
-        </div>
-      ))}
-    </div>
+      {children}
+    </Card>
   );
 }
 
+function Badge({
+  children,
+  tone = "info",
+}: {
+  children: React.ReactNode;
+  tone?: "info" | "danger" | "ok" | "muted";
+}) {
+  const styles: Record<string, React.CSSProperties> = {
+    info: {
+      background: "rgba(30,41,63,.10)",
+      color: C.navy,
+      border: "1px solid rgba(30,41,63,.18)",
+    },
+    danger: {
+      background: "rgba(161,28,39,.12)",
+      color: C.rubi,
+      border: "1px solid rgba(161,28,39,.22)",
+    },
+    ok: {
+      background: "rgba(181,165,115,.18)",
+      color: C.navy,
+      border: "1px solid rgba(181,165,115,.35)",
+    },
+    muted: {
+      background: "rgba(255,255,255,.55)",
+      color: C.muted,
+      border: "1px solid rgba(255,255,255,.45)",
+    },
+  };
+
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+      style={styles[tone]}
+    >
+      {children}
+    </span>
+  );
+}
+
+/* =========================
+   Página
+========================= */
 export default function Relatorios() {
-  // ====== auth / perfil ======
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [profileLoading, setProfileLoading] = useState<boolean>(true);
+  // filtros globais (auto-aplicáveis)
+  const [dateStart, setDateStart] = useState<string>(""); // YYYY-MM-DD
+  const [dateEnd, setDateEnd] = useState<string>("");
 
-  // ====== filtros ======
-  const [dateStart, setDateStart] = useState<string>(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 12);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${dd}`;
-  });
-  const [dateEnd, setDateEnd] = useState<string>(() => todayStrLocal());
+  const [fVendedor, setFVendedor] = useState<string>("all");
+  const [fAdmin, setFAdmin] = useState<string>("all");
+  const [fSeg, setFSeg] = useState<string>("all");
+  const [fTabela, setFTabela] = useState<string>("all");
+  const [fTipoVenda, setFTipoVenda] = useState<string>("all");
+  const [fContemplada, setFContemplada] = useState<string>("all"); // all|sim|nao
 
-  const [vendorId, setVendorId] = useState<string>("all"); // admin controla; vendedor fica travado no authUserId
-  const [administradora, setAdministradora] = useState<string>("all");
-  const [segmento, setSegmento] = useState<string>("all");
-  const [tabela, setTabela] = useState<string>("all");
-  const [tipoVenda, setTipoVenda] = useState<string>("all");
-  const [contemplada, setContemplada] = useState<string>("all"); // all/sim/nao
-
-  // ====== dados ======
+  // dados
   const [loading, setLoading] = useState(false);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [vendas, setVendas] = useState<VendaRow[]>([]);
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersMap, setUsersMap] = useState<Record<string, UserRow>>({});
+  const [leadsMap, setLeadsMap] = useState<Record<string, LeadRow>>({});
 
-  // lead names (para Concentração)
-  const [leadNameById, setLeadNameById] = useState<Map<string, LeadRow>>(new Map());
-  const [leadsLoading, setLeadsLoading] = useState(false);
-
-  // dialog (concentração)
+  // dialog concentração
   const [leadDialogOpen, setLeadDialogOpen] = useState(false);
-  const [leadDialogLead, setLeadDialogLead] = useState<LeadRow | null>(null);
-  const [leadDialogVendas, setLeadDialogVendas] = useState<VendaRow[]>([]);
-  const [leadDialogLoading, setLeadDialogLoading] = useState(false);
+  const [leadDialogId, setLeadDialogId] = useState<string | null>(null);
 
-  // paginação simples (10/pg)
-  const [pageNewInad, setPageNewInad] = useState(1);
-  const [pageRisk, setPageRisk] = useState(1);
-  const [pageTopClients, setPageTopClients] = useState(1);
-  const PAGE = 10;
+  // paginação concentração
+  const [concPage, setConcPage] = useState(1);
+  const concPageSize = 10;
 
-  // ====== carregar auth + perfil (admin/vendedor) ======
+  /* =========================
+     Carrega auth + role
+  ========================= */
   useEffect(() => {
     let alive = true;
     (async () => {
-      setProfileLoading(true);
       try {
         const { data, error } = await supabase.auth.getUser();
         if (!alive) return;
-
-        const uid = error ? null : data?.user?.id ?? null;
+        if (error || !data?.user) {
+          setAuthUserId(null);
+          setIsAdmin(false);
+          return;
+        }
+        const uid = data.user.id;
         setAuthUserId(uid);
 
-        // por segurança: default não-admin até provar que é admin
-        let admin = false;
-
-        if (uid) {
-          const { data: prof, error: profErr } = await supabase
-            .from("users")
-            .select("auth_user_id,user_role,is_active,name,nome")
-            .eq("auth_user_id", uid)
-            .maybeSingle();
-
-          if (!profErr && prof) {
-            admin = String(prof.user_role ?? "").toLowerCase() === "admin";
-          }
-        }
-
-        if (!alive) return;
-        setIsAdmin(admin);
-
-        // trava o filtro de vendedor para quem não é admin
-        if (uid && !admin) {
-          setVendorId(uid);
-        } else {
-          setVendorId("all");
-        }
-      } catch (e) {
-        if (!alive) return;
-        console.error("Erro ao carregar perfil:", e);
-        setIsAdmin(false);
-      } finally {
-        if (alive) setProfileLoading(false);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // ====== load users (para nomes) ======
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setUsersLoading(true);
-      try {
-        const { data, error } = await supabase
+        // identifica se é admin via public.users
+        const { data: urow, error: uerr } = await supabase
           .from("users")
-          .select("auth_user_id,name,nome,email,phone,telefone,user_role,is_active");
+          .select("auth_user_id, name, user_role, role, is_active")
+          .eq("auth_user_id", uid)
+          .maybeSingle();
 
         if (!alive) return;
-        if (error) {
-          console.error("Erro ao carregar users:", error.message);
-          setUsers([]);
+
+        if (uerr) {
+          console.error("Erro ao carregar role do usuário:", uerr.message);
+          setIsAdmin(false);
           return;
         }
 
-        const list = (data ?? []) as UserRow[];
-        // regra já combinada: não listar inativos
-        const activeOnly = list.filter((u) => u.is_active !== false);
-        setUsers(activeOnly);
+        const role = (urow?.user_role || urow?.role || "").toString().toLowerCase();
+        setIsAdmin(role === "admin");
       } catch (e) {
+        console.error("Erro ao identificar usuário:", e);
         if (!alive) return;
-        console.error("Erro inesperado ao carregar users:", e);
-        setUsers([]);
-      } finally {
-        if (alive) setUsersLoading(false);
+        setAuthUserId(null);
+        setIsAdmin(false);
       }
     })();
     return () => {
@@ -363,624 +318,754 @@ export default function Relatorios() {
     };
   }, []);
 
-  const userNameByAuthId = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const u of users) {
-      const nm = (u.name ?? u.nome ?? "").trim();
-      if (u.auth_user_id) m.set(u.auth_user_id, nm || u.email || u.auth_user_id);
-    }
-    return m;
-  }, [users]);
-
-  // ====== load vendas (com trava por perfil) ======
-  async function loadVendas() {
-    // se ainda estamos carregando perfil, evita queries duplicadas
-    if (profileLoading) return;
-
+  /* =========================
+     Fetch principal (vendas)
+     - Admin vê tudo
+     - Não-admin vê apenas suas vendas (vendedor_id = auth.user.id)
+  ========================= */
+  async function fetchAll() {
     setLoading(true);
     try {
+      // 1) carrega users para map (nome do vendedor)
+      const { data: usersData, error: usersErr } = await supabase
+        .from("users")
+        .select("auth_user_id, name, user_role, role, is_active")
+        .order("name", { ascending: true });
+
+      if (usersErr) {
+        console.error("Erro users:", usersErr.message);
+      } else {
+        const map: Record<string, UserRow> = {};
+        (usersData || []).forEach((u: any) => {
+          if (u?.auth_user_id) map[u.auth_user_id] = u as UserRow;
+        });
+        setUsersMap(map);
+      }
+
+      // 2) carrega vendas (base)
+      // performance: se não tiver período, carrega últimos 24 meses
+      const now = new Date();
+      const defaultMin = addMonths(now, -24).toISOString();
+
       let q = supabase
         .from("vendas")
         .select(
-          "id,data_venda,vendedor_id,segmento,tabela,administradora,forma_venda,numero_proposta,lead_id,valor_venda,grupo,cota,codigo,encarteirada_em,tipo_venda,contemplada,data_contemplacao,cancelada_em,inad,created_at"
+          [
+            "id",
+            "vendedor_id",
+            "administradora",
+            "segmento",
+            "tabela",
+            "tipo_venda",
+            "contemplada",
+            "encarteirada_em",
+            "cancelada_em",
+            "codigo",
+            "data_contemplacao",
+            "valor_venda",
+            "lead_id",
+            "cliente_lead_id",
+            "grupo",
+            "cota",
+            "inad",
+          ].join(",")
         )
-        .order("encarteirada_em", { ascending: false })
-        .limit(5000);
+        .order("encarteirada_em", { ascending: false });
 
-      // período por encarteirada_em
-      if (dateStart) q = q.gte("encarteirada_em", dateToLocalStartISO(dateStart));
-      if (dateEnd) q = q.lte("encarteirada_em", dateToLocalEndISO(dateEnd));
-
-      // TRAVA por perfil:
-      // - vendedor: sempre filtra por vendedor_id == authUserId
-      // - admin: aplica filtro normal do select (se não for "all")
-      if (!isAdmin) {
-        if (authUserId) q = q.eq("vendedor_id", authUserId);
-      } else {
-        if (vendorId !== "all") q = q.eq("vendedor_id", vendorId);
+      // trava por perfil (admin vê tudo; outros apenas as suas)
+      if (!isAdmin && authUserId) {
+        q = q.eq("vendedor_id", authUserId);
       }
 
-      if (administradora !== "all") q = q.eq("administradora", administradora);
-      if (segmento !== "all") q = q.eq("segmento", segmento);
-      if (tabela !== "all") q = q.eq("tabela", tabela);
-      if (tipoVenda !== "all") q = q.eq("tipo_venda", tipoVenda);
-      if (contemplada === "sim") q = q.eq("contemplada", true);
-      if (contemplada === "nao") q = q.eq("contemplada", false);
+      // aplica um mínimo de data por performance (se não informarem período)
+      q = q.gte("encarteirada_em", defaultMin);
 
-      const { data, error } = await q;
-      if (error) {
-        console.error("Erro ao carregar vendas:", error.message);
+      const { data: vendasData, error: vendasErr } = await q;
+      if (vendasErr) {
+        console.error("Erro vendas:", vendasErr.message);
         setVendas([]);
+        setLeadsMap({});
         return;
       }
-      setVendas((data ?? []) as VendaRow[]);
 
-      // reset paginação
-      setPageNewInad(1);
-      setPageRisk(1);
-      setPageTopClients(1);
-    } catch (e) {
-      console.error("Erro inesperado ao carregar vendas:", e);
-      setVendas([]);
+      const list = (vendasData || []) as VendaRow[];
+      setVendas(list);
+
+      // 3) carrega leads usados nas vendas
+      const leadIds = Array.from(
+        new Set(list.map((v) => v.lead_id).filter(Boolean) as string[])
+      );
+
+      if (leadIds.length) {
+        const chunkSize = 200;
+        const map: Record<string, LeadRow> = {};
+        for (let i = 0; i < leadIds.length; i += chunkSize) {
+          const chunk = leadIds.slice(i, i + chunkSize);
+          const { data: leadsData, error: leadsErr } = await supabase
+            .from("leads")
+            .select("id, nome, telefone, email, origem")
+            .in("id", chunk);
+
+          if (leadsErr) {
+            console.error("Erro leads:", leadsErr.message);
+            continue;
+          }
+          (leadsData || []).forEach((l: any) => {
+            if (l?.id) map[l.id] = l as LeadRow;
+          });
+        }
+        setLeadsMap(map);
+      } else {
+        setLeadsMap({});
+      }
     } finally {
       setLoading(false);
     }
   }
 
-  // ====== auto-aplicar filtros (debounce leve) ======
-  const debounceRef = useRef<number | null>(null);
   useEffect(() => {
-    if (profileLoading) return;
-
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-
-    debounceRef.current = window.setTimeout(() => {
-      loadVendas();
-    }, 250);
-
-    return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    };
+    // só busca quando já sabemos o auth/role
+    if (authUserId === null && !isAdmin) return;
+    // authUserId pode ser null (caso de erro) -> ainda assim tenta? melhor não.
+    if (!authUserId) return;
+    fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUserId, isAdmin]);
+
+  /* =========================
+     Filtros (em memória)
+  ========================= */
+  const filtered = useMemo(() => {
+    let rows = vendas.slice();
+
+    // período (encarteirada_em)
+    if (dateStart) {
+      const s = isoLocalStart(dateStart);
+      rows = rows.filter((v) => (v.encarteirada_em ? v.encarteirada_em >= s : false));
+    }
+    if (dateEnd) {
+      const e = isoLocalEnd(dateEnd);
+      rows = rows.filter((v) => (v.encarteirada_em ? v.encarteirada_em <= e : false));
+    }
+
+    if (fVendedor !== "all") rows = rows.filter((v) => (v.vendedor_id || "") === fVendedor);
+    if (fAdmin !== "all") rows = rows.filter((v) => (v.administradora || "") === fAdmin);
+    if (fSeg !== "all") rows = rows.filter((v) => (v.segmento || "") === fSeg);
+    if (fTabela !== "all") rows = rows.filter((v) => (v.tabela || "") === fTabela);
+    if (fTipoVenda !== "all") rows = rows.filter((v) => (v.tipo_venda || "") === fTipoVenda);
+    if (fContemplada !== "all") {
+      const want = fContemplada === "sim";
+      rows = rows.filter((v) => Boolean(v.contemplada) === want);
+    }
+
+    return rows;
   }, [
-    profileLoading,
-    isAdmin,
-    authUserId,
+    vendas,
     dateStart,
     dateEnd,
-    vendorId,
-    administradora,
-    segmento,
-    tabela,
-    tipoVenda,
-    contemplada,
+    fVendedor,
+    fAdmin,
+    fSeg,
+    fTabela,
+    fTipoVenda,
+    fContemplada,
   ]);
 
-  // carregamento inicial (quando perfil terminar)
+  // reset paginação concentração quando filtros mudam
   useEffect(() => {
-    if (!profileLoading) loadVendas();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileLoading]);
+    setConcPage(1);
+  }, [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
 
-  // ====== opções de filtros (derivadas das vendas carregadas) ======
-  const filterOptions = useMemo(() => {
+  /* =========================
+     Distintos para selects
+  ========================= */
+  const distincts = useMemo(() => {
     const admins = new Set<string>();
     const segs = new Set<string>();
     const tabs = new Set<string>();
     const tipos = new Set<string>();
+    const vends = new Set<string>();
 
     for (const v of vendas) {
       if (v.administradora) admins.add(v.administradora);
       if (v.segmento) segs.add(v.segmento);
       if (v.tabela) tabs.add(v.tabela);
       if (v.tipo_venda) tipos.add(v.tipo_venda);
+      if (v.vendedor_id) vends.add(v.vendedor_id);
     }
 
-    const sort = (a: string, b: string) => a.localeCompare(b, "pt-BR");
     return {
-      administradoras: Array.from(admins).sort(sort),
-      segmentos: Array.from(segs).sort(sort),
-      tabelas: Array.from(tabs).sort(sort),
-      tipos: Array.from(tipos).sort(sort),
+      admins: Array.from(admins).sort(),
+      segs: Array.from(segs).sort(),
+      tabs: Array.from(tabs).sort(),
+      tipos: Array.from(tipos).sort(),
+      vends: Array.from(vends).sort(),
     };
   }, [vendas]);
 
-  // ====== agregações principais ======
-  const vendasAtivas = useMemo(() => vendas.filter(isActive), [vendas]);
-  const vendasCanceladas = useMemo(() => vendas.filter(isCancelled), [vendas]);
+  /* =========================
+     Status: ativo/cancelado
+  ========================= */
+  const isActive = (v: VendaRow) => v.codigo === "00" && !v.cancelada_em;
+  const isCanceled = (v: VendaRow) => Boolean(v.cancelada_em) || (v.codigo !== null && v.codigo !== "00");
 
+  /* =========================
+     Carteira - totais base
+  ========================= */
   const totalsCarteira = useMemo(() => {
-    const totalVendido = vendas.reduce((s, v) => s + safeNum(v.valor_venda), 0);
-    const totalCancelado = vendasCanceladas.reduce((s, v) => s + safeNum(v.valor_venda), 0);
-    const totalLiquido = totalVendido - totalCancelado;
-
-    const ativoValue = vendasAtivas.reduce((s, v) => s + safeNum(v.valor_venda), 0);
-    const inadValue = vendasAtivas.filter((v) => !!v.inad).reduce((s, v) => s + safeNum(v.valor_venda), 0);
-
-    const inadPct = ativoValue > 0 ? inadValue / ativoValue : 0;
+    const vendido = filtered.reduce((s, v) => s + safeNum(v.valor_venda), 0);
+    const cancelado = filtered
+      .filter(isCanceled)
+      .reduce((s, v) => s + safeNum(v.valor_venda), 0);
+    const ativoValue = filtered.filter(isActive).reduce((s, v) => s + safeNum(v.valor_venda), 0);
+    const inadValue = filtered
+      .filter((v) => isActive(v) && Boolean(v.inad))
+      .reduce((s, v) => s + safeNum(v.valor_venda), 0);
 
     return {
-      totalVendido,
-      totalCancelado,
-      totalLiquido,
+      vendido,
+      cancelado,
+      liquido: vendido - cancelado,
       ativoValue,
       inadValue,
-      inadPct,
-      countAtivas: vendasAtivas.length,
-      countInad: vendasAtivas.filter((v) => !!v.inad).length,
+      inadPct: ativoValue > 0 ? inadValue / ativoValue : 0,
     };
-  }, [vendas, vendasAtivas, vendasCanceladas]);
+  }, [filtered]);
 
-  // ====== A) Inadimplência 12-6 ======
+  /* =========================
+     Inadimplência 12-6 (jan-jun / jul-dez)
+     Implementação: janela de cancelamento
+     - "Semestre atual"  = cancelamentos neste semestre / vendas do semestre anterior
+     - "Semestre anterior" = cancelamentos no semestre anterior / vendas do semestre anterior ao anterior
+  ========================= */
   const inad126 = useMemo(() => {
     const now = new Date();
-    const curSem = semesterKey(now);
-    const cohortAtual = prevSemesterKey(curSem);
-    const obsAtual = curSem;
+    const semNow = getSemesterRange(now);
+    const semPrev = getSemesterRange(addMonths(semNow.start, -6));
+    const semPrevPrev = getSemesterRange(addMonths(semNow.start, -12));
 
-    const cohortAnterior = prevSemesterKey(cohortAtual);
-    const obsAnterior = cohortAtual;
+    const inRange = (iso: string | null, start: Date, end: Date) => {
+      if (!iso) return false;
+      const t = new Date(iso).getTime();
+      return t >= start.getTime() && t <= end.getTime();
+    };
 
-    const build = (cohortKey: string, obsKey: string) => {
-      const { start: cStart, end: cEnd } = semesterRange(cohortKey);
-      const { start: oStart, end: oEnd } = semesterRange(obsKey);
+    // cohort (vendidos) = encarteiradas no semestre anterior
+    const soldPrev = filtered.filter((v) => inRange(v.encarteirada_em, semPrev.start, semPrev.end));
+    const canceledInNowFromPrev = soldPrev.filter((v) =>
+      inRange(v.cancelada_em, semNow.start, semNow.end)
+    );
 
-      const cohort = vendas.filter((v) => {
-        const d = encarteiraDate(v);
-        return d && d >= cStart && d <= cEnd;
-      });
+    // cohort (vendidos) = encarteiradas no semestre anterior ao anterior
+    const soldPrevPrev = filtered.filter((v) =>
+      inRange(v.encarteirada_em, semPrevPrev.start, semPrevPrev.end)
+    );
+    const canceledInPrevFromPrevPrev = soldPrevPrev.filter((v) =>
+      inRange(v.cancelada_em, semPrev.start, semPrev.end)
+    );
 
-      const sold = cohort.length;
-
-      const cancelledInObs = cohort.filter((v) => {
-        const cd = cancelDate(v);
-        if (!cd) return false;
-        return cd >= oStart && cd <= oEnd;
-      }).length;
-
-      const pct = sold > 0 ? cancelledInObs / sold : 0;
-
-      return {
-        cohortKey,
-        obsKey,
-        sold,
-        cancelled: cancelledInObs,
-        pct,
-        alarm: pct > 0.3,
-      };
+    const mk = (sold: VendaRow[], canceled: VendaRow[]) => {
+      const soldCount = sold.length;
+      const cancelCount = canceled.length;
+      const pct = soldCount > 0 ? cancelCount / soldCount : 0;
+      return { soldCount, cancelCount, pct };
     };
 
     return {
-      atual: build(cohortAtual, obsAtual),
-      anterior: build(cohortAnterior, obsAnterior),
-    };
-  }, [vendas]);
+      nowLabel: semNow.label,
+      prevLabel: semPrev.label,
+      prevPrevLabel: semPrevPrev.label,
 
-  // ====== C) Prazo médio ======
-  const prazoStats = useMemo(() => {
-    const samples: number[] = [];
+      // "Semestre atual" (janela atual, coorte anterior)
+      currentWindow: mk(soldPrev, canceledInNowFromPrev),
+
+      // "Semestre anterior" (janela anterior, coorte anterior ao anterior)
+      previousWindow: mk(soldPrevPrev, canceledInPrevFromPrevPrev),
+    };
+  }, [filtered]);
+
+  /* =========================
+     Prazo de contemplação
+  ========================= */
+  const prazo = useMemo(() => {
+    const rows = filtered.filter((v) => v.encarteirada_em && v.data_contemplacao);
+    const days = rows
+      .map((v) => {
+        // data_contemplacao é date => converte pra ISO local (meia-noite)
+        const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
+        if (!dc || !v.encarteirada_em) return 0;
+        return diffDays(v.encarteirada_em, dc);
+      })
+      .filter((d) => d > 0)
+      .sort((a, b) => a - b);
+
+    const mean = days.length ? days.reduce((s, x) => s + x, 0) / days.length : 0;
+    const p50 = percentile(days, 0.5);
+    const p75 = percentile(days, 0.75);
+
     const bySeg: Record<string, number[]> = {};
     const byAdm: Record<string, number[]> = {};
+    rows.forEach((v) => {
+      const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
+      if (!dc || !v.encarteirada_em) return;
+      const d = diffDays(v.encarteirada_em, dc);
+      if (d <= 0) return;
 
-    for (const v of vendas) {
-      if (!v.encarteirada_em || !v.data_contemplacao) continue;
-      const e = parseISODateOnly(v.encarteirada_em);
-      const c = parseISODateOnly(v.data_contemplacao);
-      if (!e || !c) continue;
+      const s = v.segmento || "—";
+      const a = v.administradora || "—";
 
-      const days = Math.max(0, Math.round((c.getTime() - e.getTime()) / (1000 * 60 * 60 * 24)));
-      samples.push(days);
+      bySeg[s] = bySeg[s] || [];
+      bySeg[s].push(d);
 
-      const seg = (v.segmento ?? "—").trim() || "—";
-      const adm = (v.administradora ?? "—").trim() || "—";
-      bySeg[seg] = bySeg[seg] ?? [];
-      byAdm[adm] = byAdm[adm] ?? [];
-      bySeg[seg].push(days);
-      byAdm[adm].push(days);
-    }
+      byAdm[a] = byAdm[a] || [];
+      byAdm[a].push(d);
+    });
 
-    const meanDays = mean(samples);
-    const p50 = percentile(samples, 0.5);
-    const p75 = percentile(samples, 0.75);
+    const avgOf = (arr: number[]) => (arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : 0);
 
     const segChart = Object.entries(bySeg)
-      .map(([k, arr]) => ({ name: k, dias: Math.round(mean(arr)) }))
-      .sort((a, b) => b.dias - a.dias);
+      .map(([k, arr]) => ({ name: k, media: avgOf(arr) }))
+      .sort((a, b) => b.media - a.media)
+      .slice(0, 10);
 
     const admChart = Object.entries(byAdm)
-      .map(([k, arr]) => ({ name: k, dias: Math.round(mean(arr)) }))
-      .sort((a, b) => b.dias - a.dias);
+      .map(([k, arr]) => ({ name: k, media: avgOf(arr) }))
+      .sort((a, b) => b.media - a.media)
+      .slice(0, 10);
 
-    return { meanDays, p50, p75, segChart, admChart, n: samples.length };
-  }, [vendas]);
+    return { mean, p50, p75, segChart, admChart };
+  }, [filtered]);
 
-  // ====== D) Clientes (via lead_id) ======
-  const clientesStats = useMemo(() => {
-    const leadIdsAll = new Set<string>();
-    const leadIdsActive = new Set<string>();
+  /* =========================
+     Clientes (via lead_id em vendas)
+  ========================= */
+  const clientes = useMemo(() => {
+    const byLead: Record<string, { hasActive: boolean; hasCanceled: boolean }> = {};
 
-    for (const v of vendas) {
+    for (const v of filtered) {
       if (!v.lead_id) continue;
-      leadIdsAll.add(v.lead_id);
-      if (isActive(v)) leadIdsActive.add(v.lead_id);
+      const k = v.lead_id;
+      byLead[k] = byLead[k] || { hasActive: false, hasCanceled: false };
+      if (isActive(v)) byLead[k].hasActive = true;
+      if (isCanceled(v)) byLead[k].hasCanceled = true;
     }
 
-    const total = leadIdsAll.size;
-    const ativos = leadIdsActive.size;
-    const inativos = Math.max(0, total - ativos);
-    const pctAtivo = total > 0 ? ativos / total : 0;
+    const total = Object.keys(byLead).length;
+    const ativos = Object.values(byLead).filter((x) => x.hasActive).length;
+    const inativos = total - ativos;
+    const pctAtivos = total > 0 ? ativos / total : 0;
 
-    return { total, ativos, inativos, pctAtivo };
-  }, [vendas]);
+    return { total, ativos, inativos, pctAtivos };
+  }, [filtered]);
 
-  // ====== E) Série mensal (12 meses) ======
-  const serieMensal = useMemo(() => {
+  /* =========================
+     Carteira série mensal (12 meses)
+     vendido: encarteirada_em
+     cancelado: cancelada_em
+  ========================= */
+  const carteiraSerie = useMemo(() => {
+    // últimos 12 meses a partir de agora (chaves YYYY-MM)
     const now = new Date();
-    const months: string[] = [];
-    const cursor = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0, 0);
-    cursor.setMonth(cursor.getMonth() - 11);
-    for (let i = 0; i < 12; i++) {
-      months.push(toYYYYMM(cursor));
-      cursor.setMonth(cursor.getMonth() + 1);
+    const keys: string[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = addMonths(now, -i);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      keys.push(`${y}-${m}`);
     }
 
-    const soldBy: Record<string, number> = {};
-    const canceledBy: Record<string, number> = {};
+    const map: Record<string, { vendido: number; cancelado: number }> = {};
+    keys.forEach((k) => (map[k] = { vendido: 0, cancelado: 0 }));
 
-    for (const v of vendas) {
-      const e = encarteiraDate(v);
-      if (e) {
-        const k = toYYYYMM(new Date(e.getFullYear(), e.getMonth(), 1, 12, 0, 0, 0));
-        soldBy[k] = (soldBy[k] ?? 0) + safeNum(v.valor_venda);
-      }
-      const c = cancelDate(v);
-      if (c) {
-        const k = toYYYYMM(new Date(c.getFullYear(), c.getMonth(), 1, 12, 0, 0, 0));
-        canceledBy[k] = (canceledBy[k] ?? 0) + safeNum(v.valor_venda);
-      }
-    }
+    filtered.forEach((v) => {
+      const mk = monthKeyFromISO(v.encarteirada_em);
+      if (mk && map[mk]) map[mk].vendido += safeNum(v.valor_venda);
 
-    return months.map((m) => {
-      const vendido = soldBy[m] ?? 0;
-      const cancelado = canceledBy[m] ?? 0;
+      const ck = monthKeyFromISO(v.cancelada_em);
+      if (ck && map[ck]) map[ck].cancelado += safeNum(v.valor_venda);
+    });
+
+    return keys.map((k) => {
+      const vendido = map[k]?.vendido || 0;
+      const cancelado = map[k]?.cancelado || 0;
       return {
-        mes: m,
-        vendido: Math.round(vendido),
-        cancelado: Math.round(cancelado),
-        liquido: Math.round(vendido - cancelado),
+        mes: k,
+        vendido,
+        cancelado,
+        liquido: vendido - cancelado,
       };
     });
-  }, [vendas]);
+  }, [filtered]);
 
-  // ====== F) Distribuição por segmento (carteira ativa) ======
+  /* =========================
+     Distribuição por segmento (carteira ativa)
+  ========================= */
   const distSegmento = useMemo(() => {
-    const map: Record<string, number> = {};
-    const total = vendasAtivas.reduce((s, v) => s + safeNum(v.valor_venda), 0);
-    for (const v of vendasAtivas) {
-      const k = (v.segmento ?? "—").trim() || "—";
-      map[k] = (map[k] ?? 0) + safeNum(v.valor_venda);
-    }
+    const by: Record<string, number> = {};
+    filtered.filter(isActive).forEach((v) => {
+      const s = v.segmento || "—";
+      by[s] = (by[s] || 0) + safeNum(v.valor_venda);
+    });
 
-    const arr = Object.entries(map)
+    const total = Object.values(by).reduce((s, x) => s + x, 0);
+    const rows = Object.entries(by)
       .map(([name, value]) => ({
         name,
-        value: Math.round(value),
+        value,
         pct: total > 0 ? value / total : 0,
       }))
       .sort((a, b) => b.value - a.value);
 
-    return { total, data: arr };
-  }, [vendasAtivas]);
+    return { rows, total };
+  }, [filtered]);
 
-  // ====== B) Inadimplência 8-2 ======
-  const inad82 = useMemo(() => {
-    const inad = vendasAtivas.filter((v) => !!v.inad);
+  /* =========================
+     CONCENTRAÇÃO (o que você pediu)
+     - base: carteira ativa
+     - share por cliente: soma(valor_venda ativa do lead) / total carteira ativa
+     - alerta >= 10%
+     - Pareto Top10 vs Resto
+  ========================= */
+  const concRows = useMemo(() => {
+    const byLead: Record<
+      string,
+      { lead_id: string; value: number; count: number; sellers: Set<string> }
+    > = {};
 
-    const recent = [...inad].sort((a, b) => {
-      const da = parseISODateOnly(a.created_at) ?? new Date(0);
-      const db = parseISODateOnly(b.created_at) ?? new Date(0);
-      return db.getTime() - da.getTime();
-    });
-
-    const risk = [...inad].sort((a, b) => safeNum(b.valor_venda) - safeNum(a.valor_venda));
-
-    const aging = [
-      { faixa: "0–7", qtd: 0 },
-      { faixa: "8–15", qtd: 0 },
-      { faixa: "16–30", qtd: 0 },
-      { faixa: "31–60", qtd: 0 },
-      { faixa: "61–90", qtd: 0 },
-      { faixa: "90+", qtd: 0 },
-    ];
-
-    return { recent, risk, aging };
-  }, [vendasAtivas]);
-
-  const slicePage = (arr: any[], page: number) => arr.slice((page - 1) * PAGE, page * PAGE);
-  const pagesCount = (arr: any[]) => Math.max(1, Math.ceil(arr.length / PAGE));
-
-  // ====== G) Concentração ======
-  const topLeads = useMemo(() => {
-    const byLead: Record<string, { lead_id: string; value: number; count: number; sellers: Set<string> }> = {};
-    for (const v of vendasAtivas) {
+    const ativos = filtered.filter(isActive);
+    for (const v of ativos) {
       if (!v.lead_id) continue;
       const k = v.lead_id;
-      byLead[k] = byLead[k] ?? { lead_id: k, value: 0, count: 0, sellers: new Set() };
+      byLead[k] = byLead[k] || { lead_id: k, value: 0, count: 0, sellers: new Set() };
       byLead[k].value += safeNum(v.valor_venda);
       byLead[k].count += 1;
       if (v.vendedor_id) byLead[k].sellers.add(v.vendedor_id);
     }
 
+    const ativoTotal = totalsCarteira.ativoValue || 0;
+
     return Object.values(byLead)
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 50);
-  }, [vendasAtivas]);
+      .map((x) => {
+        const pct = ativoTotal > 0 ? x.value / ativoTotal : 0;
+        return {
+          ...x,
+          pct,
+          alerta: pct >= CONCENTRACAO_ALERTA,
+        };
+      })
+      .sort((a, b) => b.value - a.value);
+  }, [filtered, totalsCarteira.ativoValue]);
 
-  // carregar nomes dos leads do ranking (para não mostrar UUID)
-  useEffect(() => {
-    let alive = true;
-
-    const ids = topLeads.map((x) => x.lead_id).filter(Boolean);
-    if (!ids.length) {
-      setLeadNameById(new Map());
-      return;
-    }
-
-    (async () => {
-      setLeadsLoading(true);
-      try {
-        // supabase "in" costuma aceitar até uma quantidade razoável; aqui 50 está ok
-        const { data, error } = await supabase
-          .from("leads")
-          .select("id,nome,telefone,email,origem")
-          .in("id", ids);
-
-        if (!alive) return;
-
-        if (error) {
-          console.error("Erro ao carregar leads (ranking):", error.message);
-          return;
-        }
-
-        const map = new Map<string, LeadRow>();
-        for (const row of (data ?? []) as any[]) {
-          map.set(row.id, row as LeadRow);
-        }
-        setLeadNameById(map);
-      } catch (e) {
-        if (!alive) return;
-        console.error("Erro inesperado ao carregar leads (ranking):", e);
-      } finally {
-        if (alive) setLeadsLoading(false);
-      }
-    })();
-
-    return () => {
-      alive = false;
+  const concKpis = useMemo(() => {
+    const acima = concRows.filter((x) => x.alerta);
+    const acimaPct = acima.reduce((s, x) => s + x.pct, 0);
+    const top1 = concRows[0]?.pct || 0;
+    return {
+      acimaCount: acima.length,
+      acimaPct,
+      top1,
     };
-  }, [topLeads]);
+  }, [concRows]);
 
-  async function openLeadDialog(leadId: string) {
-    setLeadDialogOpen(true);
-    setLeadDialogLoading(true);
-    setLeadDialogLead(null);
-    setLeadDialogVendas([]);
+  const paretoData = useMemo(() => {
+    const top10 = concRows.slice(0, 10);
+    const sumTop10 = top10.reduce((s, x) => s + x.pct, 0);
+    const restoPct = Math.max(0, 1 - sumTop10);
 
-    try {
-      const { data: leadData, error: leadErr } = await supabase
-        .from("leads")
-        .select("id,nome,telefone,email,origem")
-        .eq("id", leadId)
-        .maybeSingle();
+    let cum = 0;
+    const rows = top10.map((r) => {
+      cum += r.pct;
+      const lead = leadsMap[r.lead_id];
+      const label =
+        (lead?.nome || "Cliente").toString().slice(0, 18) + ((lead?.nome || "").length > 18 ? "…" : "");
+      return {
+        name: label,
+        pct: r.pct,
+        pct100: r.pct * 100,
+        cum: cum,
+        cum100: cum * 100,
+      };
+    });
 
-      if (leadErr) console.error("Erro ao carregar lead:", leadErr.message);
-      setLeadDialogLead((leadData ?? null) as LeadRow | null);
+    // adiciona "Resto"
+    const cumFinal = Math.min(1, cum + restoPct);
+    rows.push({
+      name: "Resto",
+      pct: restoPct,
+      pct100: restoPct * 100,
+      cum: cumFinal,
+      cum100: cumFinal * 100,
+    });
 
-      const vendasLead = vendas
-        .filter((v) => v.lead_id === leadId)
-        .sort((a, b) => safeNum(b.valor_venda) - safeNum(a.valor_venda));
+    return { rows, sumTop10, restoPct };
+  }, [concRows, leadsMap]);
 
-      setLeadDialogVendas(vendasLead);
-    } catch (e) {
-      console.error("Erro inesperado ao abrir dialog do lead:", e);
-    } finally {
-      setLeadDialogLoading(false);
+  /* =========================
+     Dialog concentração (detalhes do cliente)
+  ========================= */
+  const leadDialogVendas = useMemo(() => {
+    if (!leadDialogId) return [];
+    return filtered.filter((v) => v.lead_id === leadDialogId);
+  }, [filtered, leadDialogId]);
+
+  const leadDialogAtivoTotal = useMemo(() => {
+    return leadDialogVendas.filter(isActive).reduce((s, v) => s + safeNum(v.valor_venda), 0);
+  }, [leadDialogVendas]);
+
+  const leadDialogPct = useMemo(() => {
+    const total = totalsCarteira.ativoValue || 0;
+    return total > 0 ? leadDialogAtivoTotal / total : 0;
+  }, [leadDialogAtivoTotal, totalsCarteira.ativoValue]);
+
+  /* =========================
+     UI
+  ========================= */
+  const vendorName = (authId: string | null) => {
+    if (!authId) return "—";
+    return usersMap[authId]?.name || "—";
+  };
+
+  const leadName = (lid: string | null) => {
+    if (!lid) return "—";
+    return leadsMap[lid]?.nome || lid;
+  };
+
+  const vendedorSelectDisabled = !isAdmin; // vendedor não pode ver outros
+  useEffect(() => {
+    if (!isAdmin && authUserId) {
+      setFVendedor(authUserId);
     }
-  }
+  }, [isAdmin, authUserId]);
 
-  const lockedVendorName = useMemo(() => {
-    if (!authUserId) return "Meu usuário";
-    return userNameByAuthId.get(authUserId) ?? "Meu usuário";
-  }, [authUserId, userNameByAuthId]);
+  const concTotalPages = Math.max(1, Math.ceil(concRows.length / concPageSize));
+  const concSlice = concRows.slice((concPage - 1) * concPageSize, concPage * concPageSize);
 
-  // ====== UI ======
   return (
-    <div className="p-4 md:p-6 space-y-4" style={{ color: C.navy }}>
+    <div className="p-4 space-y-4">
+      {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: C.navy }}>Relatórios</h1>
+          <h1 className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            Relatórios
+          </h1>
           <p className="text-sm" style={{ color: C.muted }}>
-            Indicadores e análises da operação (base: <span className="font-medium">public.vendas</span> + users + leads).
+            Indicadores e análises da Consulmax (filtros auto-aplicáveis).
           </p>
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            {isAdmin ? <Badge tone="ok">Perfil: Admin (vê tudo)</Badge> : <Badge tone="info">Perfil: Vendedor (somente suas vendas)</Badge>}
+            <Badge tone="muted">Concentração: alerta ≥ {fmtPct(CONCENTRACAO_ALERTA, 0)}</Badge>
+          </div>
         </div>
 
         <Button
           variant="outline"
-          onClick={loadVendas}
-          disabled={loading || profileLoading}
-          className="border-white/40 bg-white/60 hover:bg-white/70"
+          onClick={fetchAll}
+          disabled={loading || !authUserId}
+          className="rounded-xl"
         >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
+          {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
           Atualizar
         </Button>
       </div>
 
-      {/* Filtros globais (AUTO aplica) */}
+      {/* Filtros globais */}
       <GlassCard>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Filtros globais</CardTitle>
+          <CardTitle className="text-base" style={{ color: C.navy }}>
+            Filtros globais
+          </CardTitle>
           <div className="text-xs" style={{ color: C.muted }}>
-            Ajustou qualquer filtro? Já aplica automaticamente.
+            Ao alterar qualquer filtro, os relatórios atualizam automaticamente.
           </div>
         </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>Início</div>
+              <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} />
+            </div>
 
-        <CardContent className="grid grid-cols-1 md:grid-cols-7 gap-3">
-          <div className="space-y-1">
-            <Label>Início</Label>
-            <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} />
-          </div>
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>Fim</div>
+              <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
+            </div>
 
-          <div className="space-y-1">
-            <Label>Fim</Label>
-            <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
-          </div>
-
-          <div className="space-y-1">
-            <Label>Vendedor</Label>
-            <Select
-              value={isAdmin ? vendorId : (authUserId ?? "all")}
-              onValueChange={(v) => isAdmin && setVendorId(v)}
-              disabled={!isAdmin}
-            >
-              <SelectTrigger className="bg-white/70 border-white/40">
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                {isAdmin ? (
-                  <>
-                    <SelectItem value="all">Todos</SelectItem>
-                    {usersLoading ? (
-                      <div className="px-3 py-2 text-xs" style={{ color: C.muted }}>Carregando…</div>
-                    ) : (
-                      users
-                        .slice()
-                        .sort((a, b) => (a.name ?? a.nome ?? "").localeCompare((b.name ?? b.nome ?? ""), "pt-BR"))
-                        .map((u) => (
-                          <SelectItem key={u.auth_user_id} value={u.auth_user_id}>
-                            {(u.name ?? u.nome ?? u.email ?? u.auth_user_id) as string}
-                          </SelectItem>
-                        ))
-                    )}
-                  </>
-                ) : (
-                  <SelectItem value={authUserId ?? "all"}>{lockedVendorName}</SelectItem>
-                )}
-              </SelectContent>
-            </Select>
-            {!isAdmin && (
-              <div className="text-[11px]" style={{ color: C.muted }}>
-                Perfil vendedor: filtrado automaticamente nas suas vendas.
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-1">
-            <Label>Administradora</Label>
-            <Select value={administradora} onValueChange={setAdministradora}>
-              <SelectTrigger className="bg-white/70 border-white/40">
-                <SelectValue placeholder="Todas" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas</SelectItem>
-                {filterOptions.administradoras.map((a) => (
-                  <SelectItem key={a} value={a}>{a}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Segmento</Label>
-            <Select value={segmento} onValueChange={setSegmento}>
-              <SelectTrigger className="bg-white/70 border-white/40">
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                {filterOptions.segmentos.map((s) => (
-                  <SelectItem key={s} value={s}>{s}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Tabela</Label>
-            <Select value={tabela} onValueChange={setTabela}>
-              <SelectTrigger className="bg-white/70 border-white/40">
-                <SelectValue placeholder="Todas" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas</SelectItem>
-                {filterOptions.tabelas.map((t) => (
-                  <SelectItem key={t} value={t}>{t}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Tipo de venda</Label>
-            <Select value={tipoVenda} onValueChange={setTipoVenda}>
-              <SelectTrigger className="bg-white/70 border-white/40">
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                {filterOptions.tipos.map((t) => (
-                  <SelectItem key={t} value={t}>{t}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1 md:col-span-2">
-            <Label>Contemplada</Label>
-            <Select value={contemplada} onValueChange={setContemplada}>
-              <SelectTrigger className="bg-white/70 border-white/40">
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                <SelectItem value="sim">Sim</SelectItem>
-                <SelectItem value="nao">Não</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="md:col-span-7 flex gap-2 flex-wrap pt-1">
-            <Button
-              variant="outline"
-              className="border-white/40 bg-white/60 hover:bg-white/70"
-              onClick={() => {
-                setAdministradora("all");
-                setSegmento("all");
-                setTabela("all");
-                setTipoVenda("all");
-                setContemplada("all");
-                if (isAdmin) setVendorId("all");
-                // vendedor permanece travado no authUserId
-              }}
-            >
-              Limpar filtros
-            </Button>
-
-            <div className="ml-auto text-xs flex items-center gap-2" style={{ color: C.muted }}>
-              <span>Registros:</span>
-              <span className="font-semibold" style={{ color: C.navy }}>{vendas.length}</span>
-              {(loading || profileLoading) && (
-                <span className="inline-flex items-center">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> carregando…
-                </span>
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>Vendedor</div>
+              <Select
+                value={fVendedor}
+                onValueChange={setFVendedor}
+                disabled={vendedorSelectDisabled}
+              >
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.vends.map((id) => (
+                    <SelectItem key={id} value={id}>
+                      {vendorName(id)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!isAdmin && (
+                <div className="text-[11px]" style={{ color: C.muted }}>
+                  (Vendedor vê apenas as próprias vendas)
+                </div>
               )}
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>Administradora</div>
+              <Select value={fAdmin} onValueChange={setFAdmin}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {distincts.admins.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>Segmento</div>
+              <Select value={fSeg} onValueChange={setFSeg}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.segs.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>Tabela</div>
+              <Select value={fTabela} onValueChange={setFTabela}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {distincts.tabs.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>Tipo de venda</div>
+              <Select value={fTipoVenda} onValueChange={setFTipoVenda}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.tipos.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>Contemplada</div>
+              <Select value={fContemplada} onValueChange={setFContemplada}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="sim">Sim</SelectItem>
+                  <SelectItem value="nao">Não</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="md:col-span-2 flex items-end">
+              <Button
+                variant="outline"
+                className="rounded-xl w-full"
+                onClick={() => {
+                  setDateStart("");
+                  setDateEnd("");
+                  setFAdmin("all");
+                  setFSeg("all");
+                  setFTabela("all");
+                  setFTipoVenda("all");
+                  setFContemplada("all");
+                  if (isAdmin) setFVendedor("all");
+                  else if (authUserId) setFVendedor(authUserId);
+                }}
+              >
+                Limpar filtros
+              </Button>
             </div>
           </div>
         </CardContent>
       </GlassCard>
 
-      <Tabs defaultValue="geral" className="space-y-3">
-        <TabsList className="bg-white/60 border border-white/40">
-          <TabsTrigger value="geral">Geral</TabsTrigger>
+      {/* KPIs gerais */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>Carteira ativa</CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.ativoValue)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>Total vendido (filtro)</CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.vendido)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>Total cancelado (filtro)</CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.cancelado)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>Carteira inadimplente</CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtPct(totalsCarteira.inadPct, 1)}
+          </CardContent>
+          <div className="px-6 pb-4 text-xs" style={{ color: C.muted }}>
+            Base: vendas ativas com <b>inad = true</b>
+          </div>
+        </GlassCard>
+      </div>
+
+      {/* Tabs */}
+      <Tabs defaultValue="concentracao" className="space-y-3">
+        <TabsList className="rounded-2xl">
           <TabsTrigger value="inad126">Inadimplência 12-6</TabsTrigger>
           <TabsTrigger value="inad82">Inadimplência 8-2</TabsTrigger>
           <TabsTrigger value="prazo">Prazo</TabsTrigger>
@@ -990,133 +1075,72 @@ export default function Relatorios() {
           <TabsTrigger value="concentracao">Concentração</TabsTrigger>
         </TabsList>
 
-        {/* Geral */}
-        <TabsContent value="geral" className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Total vendido</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xl font-bold">{fmtBRL(totalsCarteira.totalVendido)}</CardContent>
-            </GlassCard>
-
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Total cancelado</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xl font-bold">{fmtBRL(totalsCarteira.totalCancelado)}</CardContent>
-            </GlassCard>
-
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Total líquido</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xl font-bold">{fmtBRL(totalsCarteira.totalLiquido)}</CardContent>
-            </GlassCard>
-
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Carteira inadimplente</CardTitle>
-              </CardHeader>
-              <CardContent className="flex items-center justify-between">
-                <div className="text-xl font-bold">
-                  {(totalsCarteira.inadPct * 100).toFixed(1)}%
-                </div>
-                <Badge variant={totalsCarteira.inadPct > 0.08 ? "warn" : "info"}>
-                  {fmtBRL(totalsCarteira.inadValue)}
-                </Badge>
-              </CardContent>
-            </GlassCard>
-          </div>
-
-          <GlassCard>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Série mensal (últimos 12 meses)</CardTitle>
-              <div className="text-xs" style={{ color: C.muted }}>
-                Vendido / Cancelado / Líquido
-              </div>
-            </CardHeader>
-            <CardContent style={{ height: 280 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={serieMensal}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="mes" />
-                  <YAxis />
-                  <RechartsTooltip content={<CustomTooltip />} />
-                  <Legend />
-                  <Line type="monotone" dataKey="vendido" name="Vendido" stroke={C.navy} strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="cancelado" name="Cancelado" stroke={C.rubi} strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="liquido" name="Líquido" stroke={C.gold} strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </GlassCard>
-        </TabsContent>
-
-        {/* Inadimplência 12-6 */}
+        {/* 12-6 */}
         <TabsContent value="inad126" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {(["anterior", "atual"] as const).map((k) => {
-              const item = inad126[k];
-              const sold = item.sold;
-              const cancelled = item.cancelled;
-              const pct = item.pct;
-
-              const donutData = [
-                { name: "Vendido", value: sold - cancelled },
-                { name: "Cancelado", value: cancelled },
+            {[
+              {
+                title: `Semestre anterior (${inad126.prevLabel})`,
+                sold: inad126.previousWindow.soldCount,
+                canceled: inad126.previousWindow.cancelCount,
+                pct: inad126.previousWindow.pct,
+              },
+              {
+                title: `Semestre atual (${inad126.nowLabel})`,
+                sold: inad126.currentWindow.soldCount,
+                canceled: inad126.currentWindow.cancelCount,
+                pct: inad126.currentWindow.pct,
+              },
+            ].map((x) => {
+              const alarm = x.pct > 0.30;
+              const pieData = [
+                { name: "Vendido", value: Math.max(0, x.sold - x.canceled) },
+                { name: "Cancelado", value: x.canceled },
               ];
 
-              const title = k === "atual" ? "Semestre atual" : "Semestre anterior";
-              const subtitle = `Coorte ${item.cohortKey} → cancelamentos em ${item.obsKey}`;
-
               return (
-                <GlassCard key={k}>
+                <GlassCard key={x.title}>
                   <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <CardTitle className="text-base">{title}</CardTitle>
-                        <div className="text-xs" style={{ color: C.muted }}>{subtitle}</div>
-                      </div>
-                      {item.alarm ? (
-                        <Badge variant="danger" title="Acima de 30%">
-                          <span className="inline-flex items-center gap-1">
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                            ALARMANTE
-                          </span>
+                    <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
+                      <span>{x.title}</span>
+                      {alarm ? (
+                        <Badge tone="danger">
+                          <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                          Alarmante (&gt; 30%)
                         </Badge>
                       ) : (
-                        <Badge variant="ok">{(pct * 100).toFixed(1)}%</Badge>
+                        <Badge tone="ok">
+                          <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                          OK
+                        </Badge>
                       )}
+                    </CardTitle>
+                    <div className="text-xs" style={{ color: C.muted }}>
+                      Cancelamento por coorte: vendas do semestre anterior observadas no semestre seguinte.
                     </div>
                   </CardHeader>
-                  <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
-                    <div style={{ height: 220 }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <RechartsTooltip content={<CustomTooltip />} />
-                          <Pie data={donutData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={85} paddingAngle={2}>
-                            <Cell fill={C.navy} />
-                            <Cell fill={C.rubi} />
-                          </Pie>
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="text-sm" style={{ color: C.muted }}>% Cancelado</div>
-                      <div className="text-2xl font-bold" style={{ color: C.navy }}>
-                        {(pct * 100).toFixed(1)}%
-                      </div>
-                      <div className="text-sm" style={{ color: C.muted }}>
-                        Vendido: <span className="font-semibold" style={{ color: C.navy }}>{sold}</span>
-                      </div>
-                      <div className="text-sm" style={{ color: C.muted }}>
-                        Cancelado: <span className="font-semibold" style={{ color: C.navy }}>{cancelled}</span>
-                      </div>
-                      <div className="text-xs" style={{ color: C.muted }}>
-                        Regra: coorte por semestre de encarteiramento e cancelamento no semestre seguinte.
-                      </div>
+                  <CardContent className="h-[240px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={pieData}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={60}
+                          outerRadius={85}
+                          paddingAngle={2}
+                        >
+                          <Cell fill={C.navy} />
+                          <Cell fill={C.rubi} />
+                        </Pie>
+                        <Tooltip formatter={(v: any) => v?.toLocaleString?.("pt-BR") ?? v} />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="mt-3 flex items-center justify-between text-sm" style={{ color: C.navy }}>
+                      <span>Vendido: <b>{x.sold}</b></span>
+                      <span>Cancelado: <b>{x.canceled}</b></span>
+                      <span>%: <b>{fmtPct(x.pct, 1)}</b></span>
                     </div>
                   </CardContent>
                 </GlassCard>
@@ -1125,161 +1149,56 @@ export default function Relatorios() {
           </div>
         </TabsContent>
 
-        {/* Inadimplência 8-2 */}
+        {/* 8-2 */}
         <TabsContent value="inad82" className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <GlassCard className="md:col-span-1">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">KPI</CardTitle>
-                <div className="text-xs" style={{ color: C.muted }}>
-                  % da carteira ativa (por valor) que está inadimplente
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Inadimplência 8-2 (carteira atual)
+              </CardTitle>
+              <div className="text-xs" style={{ color: C.muted }}>
+                Percentual da carteira ativa com <b>inad = true</b>. Aging por dias depende de uma fonte de “dias em atraso”.
+              </div>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>KPI % carteira inadimplente</div>
+                <div className="text-3xl font-extrabold mt-1" style={{ color: C.navy }}>
+                  {fmtPct(totalsCarteira.inadPct, 1)}
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="text-3xl font-bold" style={{ color: C.navy }}>
-                  {(totalsCarteira.inadPct * 100).toFixed(1)}%
+                <div className="text-xs mt-1" style={{ color: C.muted }}>
+                  Inadimplente: {fmtBRL(totalsCarteira.inadValue)} / Ativo: {fmtBRL(totalsCarteira.ativoValue)}
                 </div>
-                <div className="text-sm" style={{ color: C.muted }}>
-                  Inadimplente: <span className="font-semibold" style={{ color: C.navy }}>{fmtBRL(totalsCarteira.inadValue)}</span>
-                </div>
-                <div className="text-sm" style={{ color: C.muted }}>
-                  Carteira ativa: <span className="font-semibold" style={{ color: C.navy }}>{fmtBRL(totalsCarteira.ativoValue)}</span>
-                </div>
-                <div className="text-xs" style={{ color: C.muted }}>
-                  Fonte: vendas.inad (bool). Aging por dias em atraso: pronto para plugar.
-                </div>
-              </CardContent>
-            </GlassCard>
+              </div>
 
-            <GlassCard className="md:col-span-2">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Aging da inadimplência</CardTitle>
-                <div className="text-xs" style={{ color: C.muted }}>
-                  0–7 / 8–15 / 16–30 / 31–60 / 61–90 / 90+ dias
+              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>Aging (placeholder)</div>
+                <div className="text-xs mt-2" style={{ color: C.muted }}>
+                  TODO: criar/ligar uma fonte com “dias em atraso” (ex.: primeira parcela em atraso / data_ultimo_pagamento / tabela específica).
                 </div>
-              </CardHeader>
-              <CardContent style={{ height: 260 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={inad82.aging}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="faixa" />
-                    <YAxis />
-                    <RechartsTooltip content={<CustomTooltip />} />
-                    <Legend />
-                    <Bar dataKey="qtd" name="Cotas" fill={C.gold} radius={[10, 10, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-
-                <div className="mt-2 text-xs" style={{ color: C.muted }}>
-                  <span className="font-medium">TODO:</span> precisamos de um campo/tabela com “dias em atraso” (ex.: inad_desde / dias_atraso).
+                <div className="h-[180px] mt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={[
+                        { faixa: "0–7", qtd: 0 },
+                        { faixa: "8–15", qtd: 0 },
+                        { faixa: "16–30", qtd: 0 },
+                        { faixa: "31–60", qtd: 0 },
+                        { faixa: "61–90", qtd: 0 },
+                        { faixa: "90+", qtd: 0 },
+                      ]}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="faixa" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="qtd" fill={C.rubi} radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              </CardContent>
-            </GlassCard>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Cotas recém-inadimplentes</CardTitle>
-                <div className="text-xs" style={{ color: C.muted }}>Ordenado por created_at (proxy)</div>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {slicePage(inad82.recent, pageNewInad).map((v) => (
-                  <div
-                    key={v.id}
-                    className="flex items-center justify-between rounded-xl border px-3 py-2"
-                    style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>
-                        {v.administradora ?? "—"} • {v.segmento ?? "—"}
-                      </div>
-                      <div className="text-xs truncate" style={{ color: C.muted }}>
-                        Grupo {v.grupo ?? "—"} • Cota {v.cota ?? "—"} • Proposta {v.numero_proposta ?? "—"}
-                      </div>
-                      <div className="text-xs" style={{ color: C.muted }}>
-                        Vendedor:{" "}
-                        <span className="font-medium" style={{ color: C.navy }}>
-                          {v.vendedor_id ? (userNameByAuthId.get(v.vendedor_id) ?? "—") : "—"}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-sm font-semibold whitespace-nowrap">{fmtBRL(safeNum(v.valor_venda))}</div>
-                  </div>
-                ))}
-
-                <div className="flex items-center justify-between pt-1">
-                  <Button
-                    variant="outline"
-                    className="border-white/40 bg-white/60 hover:bg-white/70"
-                    onClick={() => setPageNewInad((p) => Math.max(1, p - 1))}
-                    disabled={pageNewInad <= 1}
-                  >
-                    Anterior
-                  </Button>
-                  <div className="text-xs" style={{ color: C.muted }}>
-                    Página {pageNewInad} de {pagesCount(inad82.recent)}
-                  </div>
-                  <Button
-                    variant="outline"
-                    className="border-white/40 bg-white/60 hover:bg-white/70"
-                    onClick={() => setPageNewInad((p) => Math.min(pagesCount(inad82.recent), p + 1))}
-                    disabled={pageNewInad >= pagesCount(inad82.recent)}
-                  >
-                    Próxima
-                  </Button>
-                </div>
-              </CardContent>
-            </GlassCard>
-
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Top cotas em risco</CardTitle>
-                <div className="text-xs" style={{ color: C.muted }}>Proxy: maior valor (sem dias em atraso)</div>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {slicePage(inad82.risk, pageRisk).map((v) => (
-                  <div
-                    key={v.id}
-                    className="flex items-center justify-between rounded-xl border px-3 py-2"
-                    style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>
-                        {v.administradora ?? "—"} • {v.segmento ?? "—"}
-                      </div>
-                      <div className="text-xs truncate" style={{ color: C.muted }}>
-                        Grupo {v.grupo ?? "—"} • Cota {v.cota ?? "—"} • Proposta {v.numero_proposta ?? "—"}
-                      </div>
-                    </div>
-                    <div className="text-sm font-semibold whitespace-nowrap">{fmtBRL(safeNum(v.valor_venda))}</div>
-                  </div>
-                ))}
-
-                <div className="flex items-center justify-between pt-1">
-                  <Button
-                    variant="outline"
-                    className="border-white/40 bg-white/60 hover:bg-white/70"
-                    onClick={() => setPageRisk((p) => Math.max(1, p - 1))}
-                    disabled={pageRisk <= 1}
-                  >
-                    Anterior
-                  </Button>
-                  <div className="text-xs" style={{ color: C.muted }}>
-                    Página {pageRisk} de {pagesCount(inad82.risk)}
-                  </div>
-                  <Button
-                    variant="outline"
-                    className="border-white/40 bg-white/60 hover:bg-white/70"
-                    onClick={() => setPageRisk((p) => Math.min(pagesCount(inad82.risk), p + 1))}
-                    disabled={pageRisk >= pagesCount(inad82.risk)}
-                  >
-                    Próxima
-                  </Button>
-                </div>
-              </CardContent>
-            </GlassCard>
-          </div>
+              </div>
+            </CardContent>
+          </GlassCard>
         </TabsContent>
 
         {/* Prazo */}
@@ -1289,36 +1208,43 @@ export default function Relatorios() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm" style={{ color: C.muted }}>Média (dias)</CardTitle>
               </CardHeader>
-              <CardContent className="text-3xl font-bold">{Math.round(prazoStats.meanDays)}</CardContent>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {Math.round(prazo.mean || 0)}
+              </CardContent>
             </GlassCard>
+
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Mediana P50</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>Mediana P50 (dias)</CardTitle>
               </CardHeader>
-              <CardContent className="text-3xl font-bold">{Math.round(prazoStats.p50)}</CardContent>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {Math.round(prazo.p50 || 0)}
+              </CardContent>
             </GlassCard>
+
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>P75</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>P75 (dias)</CardTitle>
               </CardHeader>
-              <CardContent className="text-3xl font-bold">{Math.round(prazoStats.p75)}</CardContent>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {Math.round(prazo.p75 || 0)}
+              </CardContent>
             </GlassCard>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Prazo médio por segmento</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>Prazo por segmento (média)</CardTitle>
               </CardHeader>
-              <CardContent style={{ height: 300 }}>
+              <CardContent className="h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={prazoStats.segChart}>
+                  <BarChart data={prazo.segChart}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
+                    <XAxis dataKey="name" hide />
                     <YAxis />
-                    <RechartsTooltip content={<CustomTooltip />} />
-                    <Legend />
-                    <Bar dataKey="dias" name="Dias" fill={C.navy} radius={[10, 10, 0, 0]} />
+                    <Tooltip />
+                    <Bar dataKey="media" fill={C.navy} radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1326,27 +1252,20 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Prazo médio por administradora</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>Prazo por administradora (média)</CardTitle>
               </CardHeader>
-              <CardContent style={{ height: 300 }}>
+              <CardContent className="h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={prazoStats.admChart}>
+                  <BarChart data={prazo.admChart}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
+                    <XAxis dataKey="name" hide />
                     <YAxis />
-                    <RechartsTooltip content={<CustomTooltip />} />
-                    <Legend />
-                    <Bar dataKey="dias" name="Dias" fill={C.gold} radius={[10, 10, 0, 0]} />
+                    <Tooltip />
+                    <Bar dataKey="media" fill={C.gold} radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
             </GlassCard>
-          </div>
-
-          <div className="text-xs" style={{ color: C.muted }}>
-            Base: diferença em dias entre <span className="font-medium">encarteirada_em</span> e{" "}
-            <span className="font-medium">data_contemplacao</span>. Amostra:{" "}
-            <span className="font-semibold" style={{ color: C.navy }}>{prazoStats.n}</span>.
           </div>
         </TabsContent>
 
@@ -1354,60 +1273,81 @@ export default function Relatorios() {
         <TabsContent value="clientes" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Total de clientes (leads)</CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-bold">{clientesStats.total}</CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Total de clientes</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.total}</CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Clientes ativos</CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-bold">{clientesStats.ativos}</CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Clientes ativos</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.ativos}</CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Clientes inativos</CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-bold">{clientesStats.inativos}</CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Clientes inativos</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.inativos}</CardContent>
             </GlassCard>
             <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>% que permanecem ativos</CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-bold">{(clientesStats.pctAtivo * 100).toFixed(1)}%</CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>% que permanecem ativos</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPct(clientes.pctAtivos, 1)}</CardContent>
             </GlassCard>
           </div>
+
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>Resumo</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ color: C.muted }}>
+                      <th className="text-left py-2">Indicador</th>
+                      <th className="text-right py-2">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody style={{ color: C.navy }}>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">Total de clientes (distinct lead_id)</td>
+                      <td className="py-2 text-right font-bold">{clientes.total}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">Ativos (possuem cota ativa)</td>
+                      <td className="py-2 text-right font-bold">{clientes.ativos}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">Inativos</td>
+                      <td className="py-2 text-right font-bold">{clientes.inativos}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">% ativos</td>
+                      <td className="py-2 text-right font-bold">{fmtPct(clientes.pctAtivos, 1)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </GlassCard>
         </TabsContent>
 
         {/* Carteira */}
         <TabsContent value="carteira" className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Carteira ativa (valor)</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xl font-bold">{fmtBRL(totalsCarteira.ativoValue)}</CardContent>
-            </GlassCard>
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Inadimplente (valor)</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xl font-bold">{fmtBRL(totalsCarteira.inadValue)}</CardContent>
-            </GlassCard>
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Cotas ativas</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xl font-bold">{totalsCarteira.countAtivas}</CardContent>
-            </GlassCard>
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Cotas inadimplentes</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xl font-bold">{totalsCarteira.countInad}</CardContent>
-            </GlassCard>
-          </div>
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>Série mensal (últimos 12 meses)</CardTitle>
+            </CardHeader>
+            <CardContent className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={carteiraSerie}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="mes" />
+                  <YAxis />
+                  <Tooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
+                  <Legend />
+                  <Bar dataKey="vendido" name="Vendido" fill={C.navy} radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="cancelado" name="Cancelado" fill={C.rubi} radius={[8, 8, 0, 0]} />
+                  <Line dataKey="liquido" name="Líquido" stroke={C.gold} strokeWidth={2.5} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </GlassCard>
         </TabsContent>
 
         {/* Segmentos */}
@@ -1415,23 +1355,29 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Participação por segmento (carteira ativa)</CardTitle>
-                <div className="text-xs" style={{ color: C.muted }}>
-                  Total: <span className="font-semibold" style={{ color: C.navy }}>{fmtBRL(distSegmento.total)}</span>
-                </div>
+                <CardTitle className="text-base" style={{ color: C.navy }}>Distribuição da carteira ativa por segmento</CardTitle>
+                <div className="text-xs" style={{ color: C.muted }}>Base: vendas ativas (codigo='00' e não cancelada)</div>
               </CardHeader>
-              <CardContent style={{ height: 320 }}>
+              <CardContent className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <RechartsTooltip content={<CustomTooltip />} />
-                    <Pie data={distSegmento.data} dataKey="value" nameKey="name" innerRadius={70} outerRadius={110} paddingAngle={2}>
-                      {distSegmento.data.map((_, i) => (
+                    <Pie
+                      data={distSegmento.rows}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={65}
+                      outerRadius={95}
+                      paddingAngle={2}
+                    >
+                      {distSegmento.rows.map((_, idx) => (
                         <Cell
-                          key={i}
-                          fill={[C.navy, C.rubi, C.gold, "#6b7280", "#9ca3af", "#374151"][i % 6]}
+                          key={idx}
+                          fill={[C.navy, C.rubi, C.gold, "#2B3A55", "#8E7A3B", "#4D0E16"][idx % 6]}
                         />
                       ))}
                     </Pie>
+                    <Tooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
+                    <Legend />
                   </PieChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1439,194 +1385,333 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Ranking por segmento</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>Ranking por segmento</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                {distSegmento.data.slice(0, 12).map((s) => (
-                  <div key={s.name} className="flex items-center justify-between rounded-xl border px-3 py-2"
-                       style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>{s.name}</div>
-                      <div className="text-xs" style={{ color: C.muted }}>{(s.pct * 100).toFixed(1)}%</div>
+              <CardContent>
+                <div className="space-y-2">
+                  {distSegmento.rows.slice(0, 10).map((r) => (
+                    <div key={r.name} className="flex items-center justify-between gap-3">
+                      <div className="font-semibold truncate" style={{ color: C.navy }}>{r.name}</div>
+                      <div className="flex items-center gap-2">
+                        <Badge tone="info">{fmtPct(r.pct, 1)}</Badge>
+                        <div className="font-bold" style={{ color: C.navy }}>{fmtBRL(r.value)}</div>
+                      </div>
                     </div>
-                    <div className="text-sm font-semibold whitespace-nowrap">{fmtBRL(s.value)}</div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </CardContent>
             </GlassCard>
           </div>
         </TabsContent>
 
-        {/* Concentração */}
+        {/* CONCENTRAÇÃO */}
         <TabsContent value="concentracao" className="space-y-3">
+          {/* KPIs concentração */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>Corte (alerta)</CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPct(CONCENTRACAO_ALERTA, 0)}
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>Clientes concentrados</CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {concKpis.acimaCount}
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>% da carteira em concentrados</CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPct(concKpis.acimaPct, 1)}
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>Maior concentração (Top 1)</CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPct(concKpis.top1, 1)}
+              </CardContent>
+            </GlassCard>
+          </div>
+
+          {/* Pareto Top10 vs Resto */}
           <GlassCard>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Concentração de carteira por cliente</CardTitle>
+              <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
+                <span>Pareto de Concentração (Top 10 vs Resto)</span>
+                <div className="flex items-center gap-2">
+                  <Badge tone="info">Top 10: {fmtPct(paretoData.sumTop10, 1)}</Badge>
+                  <Badge tone="muted">Resto: {fmtPct(paretoData.restoPct, 1)}</Badge>
+                </div>
+              </CardTitle>
               <div className="text-xs" style={{ color: C.muted }}>
-                Base: soma de <span className="font-medium">valor_venda</span> das cotas ativas por lead_id
+                Barras = participação (%) • Linha = acumulado (%)
+              </div>
+            </CardHeader>
+            <CardContent className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={paretoData.rows}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" interval={0} tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="left" tickFormatter={(v) => `${v}%`} />
+                  <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
+                  <Tooltip
+                    formatter={(v: any, k: any) => {
+                      if (k === "pct100") return [`${Number(v).toFixed(1)}%`, "Participação"];
+                      if (k === "cum100") return [`${Number(v).toFixed(1)}%`, "Acumulado"];
+                      return [v, k];
+                    }}
+                  />
+                  <Legend />
+                  <Bar yAxisId="left" dataKey="pct100" name="Participação" fill={C.navy} radius={[8, 8, 0, 0]} />
+                  <Line yAxisId="right" dataKey="cum100" name="Acumulado" stroke={C.gold} strokeWidth={3} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </GlassCard>
+
+          {/* Lista Top clientes */}
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Concentração por cliente (carteira ativa)
+              </CardTitle>
+              <div className="text-xs" style={{ color: C.muted }}>
+                Cada linha mostra quanto do total da carteira ativa está concentrado naquele cliente.
               </div>
             </CardHeader>
 
-            <CardContent className="space-y-2">
-              {leadsLoading && (
-                <div className="text-xs flex items-center gap-2" style={{ color: C.muted }}>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> carregando nomes dos clientes…
+            <CardContent>
+              {loading ? (
+                <div className="flex items-center gap-2 text-sm" style={{ color: C.muted }}>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
                 </div>
-              )}
+              ) : concRows.length === 0 ? (
+                <div className="text-sm" style={{ color: C.muted }}>
+                  Sem dados de carteira ativa para exibir.
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ color: C.muted }}>
+                          <th className="text-left py-2">Cliente</th>
+                          <th className="text-left py-2">Vendedor(es)</th>
+                          <th className="text-right py-2">Valor (ativo)</th>
+                          <th className="text-right py-2">% Concentração</th>
+                          <th className="text-left py-2">Status</th>
+                          <th className="text-right py-2">Ação</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {concSlice.map((row, idx) => {
+                          const lead = leadsMap[row.lead_id];
+                          const nome = lead?.nome || row.lead_id;
+                          const sellers = Array.from(row.sellers)
+                            .map((sid) => vendorName(sid))
+                            .filter(Boolean)
+                            .join(", ");
 
-              {slicePage(topLeads, pageTopClients).map((row) => {
-                const lead = leadNameById.get(row.lead_id);
-                const leadLabel =
-                  (lead?.nome ?? "").trim() ||
-                  `Lead ${row.lead_id.slice(0, 8)}…`;
+                          return (
+                            <tr
+                              key={row.lead_id}
+                              className="border-t"
+                              style={{ borderColor: C.border, color: C.navy }}
+                            >
+                              <td className="py-2">
+                                <div className="font-bold truncate max-w-[260px]">{nome}</div>
+                                <div className="text-xs truncate max-w-[260px]" style={{ color: C.muted }}>
+                                  {lead?.telefone || "—"} • {lead?.email || "—"} • {lead?.origem || "—"}
+                                </div>
 
-                // como vendedor já está travado, mas no admin pode ter mais de um vendedor por lead
-                const sellerNames = Array.from(row.sellers)
-                  .map((id) => userNameByAuthId.get(id) ?? id)
-                  .filter(Boolean)
-                  .slice(0, 3);
+                                {/* barra visual de concentração */}
+                                <div className="mt-2 h-2 w-full rounded-full bg-white/60 border border-white/40 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${Math.min(100, row.pct * 100)}%`,
+                                      background: row.alerta ? C.rubi : C.navy,
+                                    }}
+                                  />
+                                </div>
+                              </td>
 
-                return (
-                  <div
-                    key={row.lead_id}
-                    className="flex items-center justify-between rounded-xl border px-3 py-2"
-                    style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>
-                        {leadLabel}
-                      </div>
+                              <td className="py-2">
+                                <div className="text-sm">{sellers || "—"}</div>
+                              </td>
 
-                      <div className="text-xs truncate" style={{ color: C.muted }}>
-                        {lead?.telefone ? `📞 ${lead.telefone}` : ""}{" "}
-                        {lead?.email ? `• ✉️ ${lead.email}` : ""}
-                      </div>
+                              <td className="py-2 text-right font-extrabold">{fmtBRL(row.value)}</td>
 
-                      <div className="text-xs" style={{ color: C.muted }}>
-                        Vendedor:{" "}
-                        <span className="font-medium" style={{ color: C.navy }}>
-                          {!sellerNames.length ? "—" : sellerNames.join(", ")}
-                        </span>
-                        {row.sellers.size > 3 ? (
-                          <span className="ml-1" style={{ color: C.muted }}>+{row.sellers.size - 3}</span>
-                        ) : null}
-                        {"  "}• Cotas ativas:{" "}
-                        <span className="font-semibold" style={{ color: C.navy }}>{row.count}</span>
-                      </div>
+                              <td className="py-2 text-right">
+                                <Badge tone={row.alerta ? "danger" : "info"}>
+                                  {fmtPct(row.pct, 1)}
+                                </Badge>
+                              </td>
+
+                              <td className="py-2">
+                                {row.alerta ? (
+                                  <Badge tone="danger">
+                                    <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                                    Cliente concentrado
+                                  </Badge>
+                                ) : (
+                                  <Badge tone="ok">
+                                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                                    OK
+                                  </Badge>
+                                )}
+                              </td>
+
+                              <td className="py-2 text-right">
+                                <Button
+                                  variant="outline"
+                                  className="rounded-xl"
+                                  onClick={() => {
+                                    setLeadDialogId(row.lead_id);
+                                    setLeadDialogOpen(true);
+                                  }}
+                                >
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  Ver
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Paginação */}
+                  <div className="mt-3 flex items-center justify-between">
+                    <div className="text-xs" style={{ color: C.muted }}>
+                      Página {concPage} / {concTotalPages} • {concRows.length} clientes
                     </div>
-
                     <div className="flex items-center gap-2">
-                      <div className="text-sm font-semibold whitespace-nowrap">{fmtBRL(row.value)}</div>
                       <Button
                         variant="outline"
-                        className="border-white/40 bg-white/60 hover:bg-white/70"
-                        onClick={() => openLeadDialog(row.lead_id)}
+                        className="rounded-xl"
+                        onClick={() => setConcPage((p) => Math.max(1, p - 1))}
+                        disabled={concPage <= 1}
                       >
-                        Ver detalhes
+                        Anterior
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={() => setConcPage((p) => Math.min(concTotalPages, p + 1))}
+                        disabled={concPage >= concTotalPages}
+                      >
+                        Próxima
                       </Button>
                     </div>
                   </div>
-                );
-              })}
-
-              <div className="flex items-center justify-between pt-1">
-                <Button
-                  variant="outline"
-                  className="border-white/40 bg-white/60 hover:bg-white/70"
-                  onClick={() => setPageTopClients((p) => Math.max(1, p - 1))}
-                  disabled={pageTopClients <= 1}
-                >
-                  Anterior
-                </Button>
-                <div className="text-xs" style={{ color: C.muted }}>
-                  Página {pageTopClients} de {pagesCount(topLeads)}
-                </div>
-                <Button
-                  variant="outline"
-                  className="border-white/40 bg-white/60 hover:bg-white/70"
-                  onClick={() => setPageTopClients((p) => Math.min(pagesCount(topLeads), p + 1))}
-                  disabled={pageTopClients >= pagesCount(topLeads)}
-                >
-                  Próxima
-                </Button>
-              </div>
+                </>
+              )}
             </CardContent>
           </GlassCard>
-        </TabsContent>
-      </Tabs>
 
-      {/* Dialog detalhes do lead */}
-      <Dialog open={leadDialogOpen} onOpenChange={setLeadDialogOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle style={{ color: C.navy }}>Detalhes do cliente (lead)</DialogTitle>
-            <DialogDescription style={{ color: C.muted }}>
-              Cotas, status e composição da carteira.
-            </DialogDescription>
-          </DialogHeader>
+          {/* Dialog detalhes */}
+          <Dialog open={leadDialogOpen} onOpenChange={setLeadDialogOpen}>
+            <DialogContent className="sm:max-w-[900px] rounded-2xl">
+              <DialogHeader>
+                <DialogTitle style={{ color: C.navy }}>
+                  Detalhes do cliente (Concentração)
+                </DialogTitle>
+              </DialogHeader>
 
-          {leadDialogLoading ? (
-            <div className="py-10 flex items-center justify-center gap-2" style={{ color: C.muted }}>
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Carregando…
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="rounded-xl border p-3" style={{ background: "rgba(255,255,255,.60)", borderColor: C.border }}>
-                <div className="text-sm font-semibold" style={{ color: C.navy }}>
-                  {leadDialogLead?.nome ?? "Lead não encontrado"}
-                </div>
-                <div className="text-xs mt-1" style={{ color: C.muted }}>
-                  Telefone: <span className="font-medium" style={{ color: C.navy }}>{leadDialogLead?.telefone ?? "—"}</span>{" "}
-                  • Email: <span className="font-medium" style={{ color: C.navy }}>{leadDialogLead?.email ?? "—"}</span>{" "}
-                  • Origem: <span className="font-medium" style={{ color: C.navy }}>{leadDialogLead?.origem ?? "—"}</span>
-                </div>
-              </div>
-
-              <div className="text-sm font-semibold" style={{ color: C.navy }}>Cotas</div>
-
-              <div className="max-h-[360px] overflow-auto space-y-2 pr-1">
-                {leadDialogVendas.map((v) => {
-                  const status = isActive(v) ? "Ativa" : isCancelled(v) ? "Cancelada" : "—";
-                  const statusBadge = isActive(v) ? "ok" : isCancelled(v) ? "danger" : "info";
-
-                  return (
-                    <div key={v.id} className="rounded-xl border px-3 py-2"
-                         style={{ background: "rgba(255,255,255,.55)", borderColor: C.border }}>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold truncate" style={{ color: C.navy }}>
-                            {v.administradora ?? "—"} • {v.segmento ?? "—"} • {v.tabela ?? "—"}
-                          </div>
-                          <div className="text-xs truncate" style={{ color: C.muted }}>
-                            Grupo {v.grupo ?? "—"} • Cota {v.cota ?? "—"} • Proposta {v.numero_proposta ?? "—"} • Tipo {v.tipo_venda ?? "—"}
-                          </div>
-                          <div className="text-xs" style={{ color: C.muted }}>
-                            Vendedor:{" "}
-                            <span className="font-medium" style={{ color: C.navy }}>
-                              {v.vendedor_id ? (userNameByAuthId.get(v.vendedor_id) ?? "—") : "—"}
-                            </span>
-                            {v.inad ? <span className="ml-2 font-semibold" style={{ color: C.rubi }}>• Inadimplente</span> : null}
-                          </div>
+              {leadDialogId && (
+                <div className="space-y-3">
+                  <div className="rounded-xl border p-3" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="text-lg font-extrabold" style={{ color: C.navy }}>
+                          {leadName(leadDialogId)}
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: C.muted }}>
+                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} • {leadsMap[leadDialogId]?.origem || "—"}
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <Badge variant={statusBadge as any}>{status}</Badge>
-                          <div className="text-sm font-semibold whitespace-nowrap">{fmtBRL(safeNum(v.valor_venda))}</div>
+                        <div className="text-xs mt-2 flex items-center gap-2 flex-wrap" style={{ color: C.muted }}>
+                          <span>Carteira ativa do cliente:</span>
+                          <span className="font-bold" style={{ color: C.navy }}>{fmtBRL(leadDialogAtivoTotal)}</span>
+                          <Badge tone={leadDialogPct >= CONCENTRACAO_ALERTA ? "danger" : "info"}>
+                            {fmtPct(leadDialogPct, 1)} da carteira
+                          </Badge>
+                          {leadDialogPct >= CONCENTRACAO_ALERTA ? (
+                            <Badge tone="danger">Cliente concentrado (≥ 10%)</Badge>
+                          ) : (
+                            <Badge tone="ok">OK</Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                          Total cotas (filtro)
+                        </div>
+                        <div className="text-2xl font-extrabold" style={{ color: C.navy }}>
+                          {leadDialogVendas.length}
                         </div>
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
 
-                {!leadDialogVendas.length && (
-                  <div className="text-sm" style={{ color: C.muted }}>Nenhuma venda vinculada a este lead no recorte.</div>
-                )}
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ color: C.muted }}>
+                          <th className="text-left py-2">Grupo/Cota</th>
+                          <th className="text-left py-2">Administradora</th>
+                          <th className="text-left py-2">Segmento</th>
+                          <th className="text-left py-2">Tabela</th>
+                          <th className="text-left py-2">Vendedor</th>
+                          <th className="text-left py-2">Status</th>
+                          <th className="text-right py-2">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody style={{ color: C.navy }}>
+                        {leadDialogVendas.slice(0, 50).map((v) => (
+                          <tr key={v.id} className="border-t" style={{ borderColor: C.border }}>
+                            <td className="py-2">{`${v.grupo || "—"} / ${v.cota || "—"}`}</td>
+                            <td className="py-2">{v.administradora || "—"}</td>
+                            <td className="py-2">{v.segmento || "—"}</td>
+                            <td className="py-2">{v.tabela || "—"}</td>
+                            <td className="py-2">{vendorName(v.vendedor_id)}</td>
+                            <td className="py-2">
+                              {isActive(v) ? <Badge tone="ok">Ativa</Badge> : isCanceled(v) ? <Badge tone="danger">Cancelada</Badge> : <Badge tone="muted">—</Badge>}
+                              {Boolean(v.inad) && isActive(v) && <span className="ml-2"><Badge tone="danger">Inad</Badge></span>}
+                            </td>
+                            <td className="py-2 text-right font-bold">{fmtBRL(safeNum(v.valor_venda))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {leadDialogVendas.length > 50 && (
+                    <div className="text-xs" style={{ color: C.muted }}>
+                      Mostrando 50 de {leadDialogVendas.length} registros.
+                    </div>
+                  )}
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -13,16 +13,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
-import { Loader2, RefreshCw, AlertTriangle, CheckCircle2, Eye } from "lucide-react";
+import { Loader2, AlertTriangle, CheckCircle2, Eye, Download } from "lucide-react";
 
 import {
   ResponsiveContainer,
   PieChart,
   Pie,
   Cell,
-  Tooltip,
+  Tooltip as RTooltip,
   Legend,
   BarChart,
   Bar,
@@ -31,6 +36,9 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  LabelList,
+  AreaChart,
+  Area,
 } from "recharts";
 
 /* =========================
@@ -49,7 +57,7 @@ const C = {
 const CONCENTRACAO_ALERTA = 0.10; // 10%
 
 /* =========================
-   Tipos
+   Tipos (baseados nos prints + novos campos)
 ========================= */
 type UUID = string;
 
@@ -68,16 +76,22 @@ type VendaRow = {
   cancelada_em: string | null; // timestamptz
   codigo: string | null; // '00' ativa
 
+  data_venda: string | null; // date
   data_contemplacao: string | null; // date
-  valor_venda: number | string | null;
+
+  contemplacao_tipo: string | null; // Livre | Primeiro Fixo | Segundo Fixo
+  contemplacao_pct: number | null;
+
+  valor_venda: number | null;
 
   lead_id: UUID | null;
-  cliente_lead_id?: UUID | null;
+  numero_proposta: string | null;
 
   grupo?: string | null;
   cota?: string | null;
 
-  inad?: boolean | null;
+  inad?: boolean | null; // bool
+  inad_em: string | null; // date/timestamptz -> data da parcela mais antiga inadimplida
 };
 
 type LeadRow = {
@@ -90,9 +104,9 @@ type LeadRow = {
 
 type UserRow = {
   auth_user_id: UUID;
-  nome: string | null;
-  user_role?: string | null; // text
-  role?: string | null; // enum/text (compat)
+  name: string | null;
+  user_role?: string | null;
+  role?: string | null;
   is_active?: boolean | null;
 };
 
@@ -100,7 +114,7 @@ type UserRow = {
    Helpers
 ========================= */
 function safeNum(n: any): number {
-  const v = typeof n === "string" ? Number(String(n).replace(",", ".")) : Number(n);
+  const v = Number(n);
   return Number.isFinite(v) ? v : 0;
 }
 
@@ -112,42 +126,50 @@ function fmtBRL(v: number) {
   }
 }
 
-// pct em 0..1
-function fmtPct01(p: number, digits = 1) {
+function fmtPctHuman(p: number, digits = 1) {
   const v = Number.isFinite(p) ? p : 0;
-  const n = v * 100;
-  try {
-    return `${n.toLocaleString("pt-BR", {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
-    })}%`;
-  } catch {
-    return `${n.toFixed(digits)}%`;
-  }
+  return `${(v * 100).toFixed(digits).replace(".", ",")}%`;
 }
 
-// pct em 0..100
-function fmtPct100(p100: number, digits = 2) {
-  const v = Number.isFinite(p100) ? p100 : 0;
-  try {
-    return `${v.toLocaleString("pt-BR", {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
-    })}%`;
-  } catch {
-    return `${v.toFixed(digits)}%`;
+function fmtDateBR(isoOrDate: string | null) {
+  if (!isoOrDate) return "";
+  // se vier date "YYYY-MM-DD"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrDate)) {
+    const [y, m, d] = isoOrDate.split("-").map(Number);
+    return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
   }
+  const dt = new Date(isoOrDate);
+  if (!Number.isFinite(dt.getTime())) return isoOrDate;
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const yy = dt.getFullYear();
+  return `${dd}/${mm}/${yy}`;
 }
 
-function isoLocalStart(dateStr: string) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const dt = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
-  return dt.toISOString();
+/** "Hoje" local sem deslizar */
+function todayLocalYMD() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
-function isoLocalEnd(dateStr: string) {
+
+/** Parse date string (YYYY-MM-DD) como data local (meia-noite) */
+function parseLocalDate(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
-  const dt = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
-  return dt.toISOString();
+  return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+}
+
+/** Diferença em dias usando datas locais (evita “voltar um dia”) */
+function diffDaysLocal(from: string, toYMD: string) {
+  const fromDt =
+    /^\d{4}-\d{2}-\d{2}$/.test(from) ? parseLocalDate(from) : new Date(from);
+  const toDt = parseLocalDate(toYMD);
+  const a = fromDt.getTime();
+  const b = toDt.getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.max(0, Math.floor((b - a) / (1000 * 60 * 60 * 24)));
 }
 
 function monthKeyFromISO(iso: string | null) {
@@ -188,9 +210,57 @@ function addMonths(d: Date, months: number) {
   return dt;
 }
 
-function shortId(id: string) {
-  if (!id) return "—";
-  return `${id.slice(0, 6)}…${id.slice(-4)}`;
+/* =========================
+   Excel (XLS via HTML table)
+========================= */
+function escapeHtml(v: any) {
+  const s = String(v ?? "");
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function downloadXls(filename: string, headers: string[], rows: any[][]) {
+  const thead = `<tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr>`;
+  const tbody = rows
+    .map(
+      (r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`
+    )
+    .join("");
+
+  const html = `
+  <html xmlns:o="urn:schemas-microsoft-com:office:office"
+        xmlns:x="urn:schemas-microsoft-com:office:excel"
+        xmlns="http://www.w3.org/TR/REC-html40">
+    <head>
+      <meta charset="utf-8" />
+      <!--[if gte mso 9]><xml>
+        <x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+          <x:Name>Relatorio</x:Name>
+          <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+        </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook>
+      </xml><![endif]-->
+    </head>
+    <body>
+      <table border="1">
+        <thead>${thead}</thead>
+        <tbody>${tbody}</tbody>
+      </table>
+    </body>
+  </html>`;
+
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.endsWith(".xls") ? filename : `${filename}.xls`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /* =========================
@@ -264,7 +334,7 @@ function Badge({
    Página
 ========================= */
 export default function Relatorios() {
-  // filtros globais
+  // filtros globais (auto-aplicáveis)
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
 
@@ -279,7 +349,6 @@ export default function Relatorios() {
   const [loading, setLoading] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [roleReady, setRoleReady] = useState(false);
 
   const [vendas, setVendas] = useState<VendaRow[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, UserRow>>({});
@@ -293,15 +362,21 @@ export default function Relatorios() {
   const [concPage, setConcPage] = useState(1);
   const concPageSize = 10;
 
+  // dialog export
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportType, setExportType] = useState<"vendas" | "canceladas" | "contempladas" | "inadimplentes">("vendas");
+  const [exportStatusStart, setExportStatusStart] = useState<string>("");
+  const [exportStatusEnd, setExportStatusEnd] = useState<string>("");
+
+  const todayYMD = useMemo(() => todayLocalYMD(), []);
+
   /* =========================
-     Auth + Role (FIX: usa coluna "nome")
-     - Admin vê tudo e pode selecionar vendedor
-     - Vendedor vê só suas vendas
+     Carrega auth + role
   ========================= */
   useEffect(() => {
     let alive = true;
     (async () => {
-      setRoleReady(false);
       try {
         const { data, error } = await supabase.auth.getUser();
         if (!alive) return;
@@ -309,42 +384,32 @@ export default function Relatorios() {
         if (error || !data?.user) {
           setAuthUserId(null);
           setIsAdmin(false);
-          setRoleReady(true);
           return;
         }
 
         const uid = data.user.id;
         setAuthUserId(uid);
 
-        // identifica se é admin via public.users
         const { data: urow, error: uerr } = await supabase
           .from("users")
-          .select("auth_user_id, nome, user_role, role, is_active")
+          .select("auth_user_id, name, user_role, role, is_active")
           .eq("auth_user_id", uid)
           .maybeSingle();
 
         if (!alive) return;
-
         if (uerr) {
           console.error("Erro ao carregar role do usuário:", uerr.message);
           setIsAdmin(false);
-          setRoleReady(true);
           return;
         }
 
-        const role = (urow?.user_role || urow?.role || "")
-          .toString()
-          .toLowerCase()
-          .trim();
-
-        setIsAdmin(role === "admin");
-        setRoleReady(true);
+        const roleRaw = (urow?.user_role || urow?.role || "").toString().trim().toLowerCase();
+        setIsAdmin(roleRaw === "admin");
       } catch (e) {
         console.error("Erro ao identificar usuário:", e);
         if (!alive) return;
         setAuthUserId(null);
         setIsAdmin(false);
-        setRoleReady(true);
       }
     })();
 
@@ -353,34 +418,31 @@ export default function Relatorios() {
     };
   }, []);
 
-  // Ajusta filtro vendedor padrão conforme perfil (sem “travar” admin)
+  // quando descobre que é admin, libera o filtro de vendedor
   useEffect(() => {
-    if (!roleReady) return;
     if (!authUserId) return;
-
     if (isAdmin) setFVendedor("all");
     else setFVendedor(authUserId);
-  }, [roleReady, isAdmin, authUserId]);
+  }, [isAdmin, authUserId]);
 
   /* =========================
-     Fetch principal (vendas)
-     - Admin vê tudo
-     - Não-admin vê apenas suas vendas (vendedor_id = auth.user.id)
-     FIX: users select usa "nome" (não "name") -> vendedor deixa de aparecer "-"
+     Fetch principal (para UI)
+     - Admin: tudo
+     - outros: somente dele
   ========================= */
-  async function fetchAll() {
+  async function fetchAllUI() {
+    if (!authUserId) return;
+
     setLoading(true);
     try {
-      // 1) carrega users para map (nome do vendedor)
+      // users (nome do vendedor)
       const { data: usersData, error: usersErr } = await supabase
         .from("users")
-        .select("auth_user_id, nome, user_role, role, is_active")
-        .order("nome", { ascending: true });
+        .select("auth_user_id, name, user_role, role, is_active")
+        .order("name", { ascending: true });
 
-      if (usersErr) {
-        console.error("Erro users:", usersErr.message);
-        setUsersMap({});
-      } else {
+      if (usersErr) console.error("Erro users:", usersErr.message);
+      else {
         const map: Record<string, UserRow> = {};
         (usersData || []).forEach((u: any) => {
           if (u?.auth_user_id) map[u.auth_user_id] = u as UserRow;
@@ -388,7 +450,7 @@ export default function Relatorios() {
         setUsersMap(map);
       }
 
-      // 2) carrega vendas (base)
+      // vendas (UI: por performance, últimos 24 meses)
       const now = new Date();
       const defaultMin = addMonths(now, -24).toISOString();
 
@@ -406,27 +468,25 @@ export default function Relatorios() {
             "encarteirada_em",
             "cancelada_em",
             "codigo",
+            "data_venda",
             "data_contemplacao",
+            "contemplacao_tipo",
+            "contemplacao_pct",
             "valor_venda",
             "lead_id",
-            "cliente_lead_id",
+            "numero_proposta",
             "grupo",
             "cota",
             "inad",
+            "inad_em",
           ].join(",")
         )
-        .order("encarteirada_em", { ascending: false });
+        .order("encarteirada_em", { ascending: false })
+        .gte("encarteirada_em", defaultMin);
 
-      // trava por perfil (admin vê tudo; outros apenas as suas)
-      if (!isAdmin && authUserId) {
-        q = q.eq("vendedor_id", authUserId);
-      }
-
-      // mínimo por performance
-      q = q.gte("encarteirada_em", defaultMin);
+      if (!isAdmin) q = q.eq("vendedor_id", authUserId);
 
       const { data: vendasData, error: vendasErr } = await q;
-
       if (vendasErr) {
         console.error("Erro vendas:", vendasErr.message);
         setVendas([]);
@@ -437,9 +497,8 @@ export default function Relatorios() {
       const list = (vendasData || []) as VendaRow[];
       setVendas(list);
 
-      // 3) carrega leads usados nas vendas
+      // leads usados
       const leadIds = Array.from(new Set(list.map((v) => v.lead_id).filter(Boolean) as string[]));
-
       if (leadIds.length) {
         const chunkSize = 200;
         const map: Record<string, LeadRow> = {};
@@ -468,27 +527,65 @@ export default function Relatorios() {
   }
 
   useEffect(() => {
-    // só busca quando já sabemos auth + role (evita buscar como vendedor e “travando” admin)
-    if (!roleReady) return;
     if (!authUserId) return;
-
-    fetchAll();
+    fetchAllUI();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleReady, authUserId, isAdmin]);
+  }, [authUserId, isAdmin]);
 
   /* =========================
-     Filtros (em memória)
-  ========================= */
+     Status (UI e export)
+========================= */
+  const isActive = (v: VendaRow) => v.codigo === "00" && !v.cancelada_em;
+  const isCanceled = (v: VendaRow) =>
+    Boolean(v.cancelada_em) || (v.codigo !== null && v.codigo !== "00");
+
+  function getStatus(v: VendaRow) {
+    if (isCanceled(v)) return "Cancelada";
+    if (isActive(v) && Boolean(v.inad)) return "Inadimplente";
+    if (Boolean(v.contemplada)) return "Contemplada";
+    if (isActive(v)) return "Ativa";
+    return "—";
+  }
+
+  function getStatusDate(v: VendaRow) {
+    const status = getStatus(v);
+    if (status === "Cancelada") return v.cancelada_em;
+    if (status === "Inadimplente") return v.inad_em || v.encarteirada_em;
+    if (status === "Contemplada") return v.data_contemplacao || v.encarteirada_em;
+    if (status === "Ativa") return v.encarteirada_em;
+    return v.encarteirada_em || v.data_venda;
+  }
+
+  function getDiasInad(v: VendaRow) {
+    if (!(isActive(v) && Boolean(v.inad))) return "";
+    if (!v.inad_em) return "";
+    return String(diffDaysLocal(v.inad_em, todayYMD));
+  }
+
+  /* =========================
+     Filtros (memória)
+========================= */
   const filtered = useMemo(() => {
     let rows = vendas.slice();
 
+    // período (encarteirada_em)
     if (dateStart) {
-      const s = isoLocalStart(dateStart);
-      rows = rows.filter((v) => (v.encarteirada_em ? v.encarteirada_em >= s : false));
+      const s = new Date(dateStart + "T00:00:00");
+      const sMs = s.getTime();
+      rows = rows.filter((v) => {
+        if (!v.encarteirada_em) return false;
+        const t = new Date(v.encarteirada_em).getTime();
+        return Number.isFinite(t) && t >= sMs;
+      });
     }
     if (dateEnd) {
-      const e = isoLocalEnd(dateEnd);
-      rows = rows.filter((v) => (v.encarteirada_em ? v.encarteirada_em <= e : false));
+      const e = new Date(dateEnd + "T23:59:59");
+      const eMs = e.getTime();
+      rows = rows.filter((v) => {
+        if (!v.encarteirada_em) return false;
+        const t = new Date(v.encarteirada_em).getTime();
+        return Number.isFinite(t) && t <= eMs;
+      });
     }
 
     if (fVendedor !== "all") rows = rows.filter((v) => (v.vendedor_id || "") === fVendedor);
@@ -496,23 +593,29 @@ export default function Relatorios() {
     if (fSeg !== "all") rows = rows.filter((v) => (v.segmento || "") === fSeg);
     if (fTabela !== "all") rows = rows.filter((v) => (v.tabela || "") === fTabela);
     if (fTipoVenda !== "all") rows = rows.filter((v) => (v.tipo_venda || "") === fTipoVenda);
-
     if (fContemplada !== "all") {
       const want = fContemplada === "sim";
       rows = rows.filter((v) => Boolean(v.contemplada) === want);
     }
 
     return rows;
-  }, [vendas, dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
+  }, [
+    vendas,
+    dateStart,
+    dateEnd,
+    fVendedor,
+    fAdmin,
+    fSeg,
+    fTabela,
+    fTipoVenda,
+    fContemplada,
+  ]);
 
-  // reset paginação concentração quando filtros mudam
-  useEffect(() => {
-    setConcPage(1);
-  }, [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
+  useEffect(() => setConcPage(1), [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
 
   /* =========================
-     Distintos para selects
-  ========================= */
+     Distintos selects
+========================= */
   const distincts = useMemo(() => {
     const admins = new Set<string>();
     const segs = new Set<string>();
@@ -538,21 +641,13 @@ export default function Relatorios() {
   }, [vendas]);
 
   /* =========================
-     Status: ativo/cancelado
-  ========================= */
-  const isActive = (v: VendaRow) => v.codigo === "00" && !v.cancelada_em;
-  const isCanceled = (v: VendaRow) => Boolean(v.cancelada_em) || (v.codigo !== null && v.codigo !== "00");
-
-  /* =========================
-     Carteira - totais base
-  ========================= */
+     Carteira totais
+========================= */
   const totalsCarteira = useMemo(() => {
     const vendido = filtered.reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const cancelado = filtered.filter(isCanceled).reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const ativoValue = filtered.filter(isActive).reduce((s, v) => s + safeNum(v.valor_venda), 0);
-    const inadValue = filtered
-      .filter((v) => isActive(v) && Boolean(v.inad))
-      .reduce((s, v) => s + safeNum(v.valor_venda), 0);
+    const inadValue = filtered.filter((v) => isActive(v) && Boolean(v.inad)).reduce((s, v) => s + safeNum(v.valor_venda), 0);
 
     return {
       vendido,
@@ -565,8 +660,8 @@ export default function Relatorios() {
   }, [filtered]);
 
   /* =========================
-     Inadimplência 12-6
-  ========================= */
+     Inadimplência 12-6 (VALOR)
+========================= */
   const inad126 = useMemo(() => {
     const now = new Date();
     const semNow = getSemesterRange(now);
@@ -576,7 +671,7 @@ export default function Relatorios() {
     const inRange = (iso: string | null, start: Date, end: Date) => {
       if (!iso) return false;
       const t = new Date(iso).getTime();
-      return t >= start.getTime() && t <= end.getTime();
+      return Number.isFinite(t) && t >= start.getTime() && t <= end.getTime();
     };
 
     const soldPrev = filtered.filter((v) => inRange(v.encarteirada_em, semPrev.start, semPrev.end));
@@ -586,10 +681,10 @@ export default function Relatorios() {
     const canceledInPrevFromPrevPrev = soldPrevPrev.filter((v) => inRange(v.cancelada_em, semPrev.start, semPrev.end));
 
     const mk = (sold: VendaRow[], canceled: VendaRow[]) => {
-      const soldCount = sold.length;
-      const cancelCount = canceled.length;
-      const pct = soldCount > 0 ? cancelCount / soldCount : 0;
-      return { soldCount, cancelCount, pct };
+      const soldValue = sold.reduce((s, v) => s + safeNum(v.valor_venda), 0);
+      const cancelValue = canceled.reduce((s, v) => s + safeNum(v.valor_venda), 0);
+      const pct = soldValue > 0 ? cancelValue / soldValue : 0;
+      return { soldValue, cancelValue, pct };
     };
 
     return {
@@ -602,11 +697,49 @@ export default function Relatorios() {
   }, [filtered]);
 
   /* =========================
-     Prazo de contemplação
-  ========================= */
+     Inadimplência 8-2 (aging por inad_em)
+========================= */
+  const inad82 = useMemo(() => {
+    const buckets = [
+      { key: "0-7", label: "0–7", from: 0, to: 7 },
+      { key: "8-15", label: "8–15", from: 8, to: 15 },
+      { key: "16-30", label: "16–30", from: 16, to: 30 },
+      { key: "31-60", label: "31–60", from: 31, to: 60 },
+      { key: "61-90", label: "61–90", from: 61, to: 90 },
+      { key: "90+", label: "90+", from: 91, to: 99999 },
+    ];
+
+    const inadAtivas = filtered.filter((v) => isActive(v) && Boolean(v.inad));
+    const rows = buckets.map((b) => ({ faixa: b.label, qtd: 0 }));
+
+    for (const v of inadAtivas) {
+      if (!v.inad_em) continue;
+      const dias = diffDaysLocal(v.inad_em, todayYMD);
+      const idx = buckets.findIndex((b) => dias >= b.from && dias <= b.to);
+      if (idx >= 0) rows[idx].qtd += 1;
+    }
+
+    // listas acionáveis (top risco e recém inadimplentes) — sem pedir agora, mas úteis
+    const withDias = inadAtivas
+      .map((v) => ({
+        v,
+        dias: v.inad_em ? diffDaysLocal(v.inad_em, todayYMD) : 0,
+      }))
+      .sort((a, b) => b.dias - a.dias);
+
+    const topRisco = withDias.slice(0, 10);
+    const recem = withDias.filter((x) => x.dias <= 7).slice(0, 10);
+
+    return { rows, topRisco, recem };
+  }, [filtered, todayYMD]);
+
+  /* =========================
+     Prazo de contemplação + amostras (proposta)
+========================= */
   const prazo = useMemo(() => {
     const rows = filtered.filter((v) => v.encarteirada_em && v.data_contemplacao);
-    const days = rows
+
+    const daysAll = rows
       .map((v) => {
         const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
         if (!dc || !v.encarteirada_em) return 0;
@@ -615,68 +748,125 @@ export default function Relatorios() {
       .filter((d) => d > 0)
       .sort((a, b) => a - b);
 
-    const mean = days.length ? days.reduce((s, x) => s + x, 0) / days.length : 0;
-    const p50 = percentile(days, 0.5);
-    const p75 = percentile(days, 0.75);
+    const mean = daysAll.length ? daysAll.reduce((s, x) => s + x, 0) / daysAll.length : 0;
+    const p50 = percentile(daysAll, 0.5);
+    const p75 = percentile(daysAll, 0.75);
 
-    const bySeg: Record<string, number[]> = {};
-    const byAdm: Record<string, number[]> = {};
+    // por segmento/admin com amostras (proposta + prazo)
+    const bySeg: Record<string, { list: { proposta: string; dias: number }[]; sum: number; n: number }> = {};
+    const byAdm: Record<string, { list: { proposta: string; dias: number }[]; sum: number; n: number }> = {};
+
     rows.forEach((v) => {
       const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
       if (!dc || !v.encarteirada_em) return;
       const d = diffDays(v.encarteirada_em, dc);
       if (d <= 0) return;
 
-      const s = v.segmento || "—";
-      const a = v.administradora || "—";
+      const seg = v.segmento || "—";
+      const adm = v.administradora || "—";
+      const proposta = v.numero_proposta || v.id;
 
-      bySeg[s] = bySeg[s] || [];
-      bySeg[s].push(d);
+      bySeg[seg] = bySeg[seg] || { list: [], sum: 0, n: 0 };
+      bySeg[seg].list.push({ proposta, dias: d });
+      bySeg[seg].sum += d;
+      bySeg[seg].n += 1;
 
-      byAdm[a] = byAdm[a] || [];
-      byAdm[a].push(d);
+      byAdm[adm] = byAdm[adm] || { list: [], sum: 0, n: 0 };
+      byAdm[adm].list.push({ proposta, dias: d });
+      byAdm[adm].sum += d;
+      byAdm[adm].n += 1;
     });
 
-    const avgOf = (arr: number[]) => (arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : 0);
-
     const segChart = Object.entries(bySeg)
-      .map(([k, arr]) => ({ name: k, media: avgOf(arr) }))
+      .map(([name, obj]) => {
+        const media = obj.n ? obj.sum / obj.n : 0;
+        const sample = obj.list.sort((a, b) => b.dias - a.dias).slice(0, 5);
+        return { name, media: Math.round(media), sample };
+      })
       .sort((a, b) => b.media - a.media)
       .slice(0, 10);
 
     const admChart = Object.entries(byAdm)
-      .map(([k, arr]) => ({ name: k, media: avgOf(arr) }))
+      .map(([name, obj]) => {
+        const media = obj.n ? obj.sum / obj.n : 0;
+        const sample = obj.list.sort((a, b) => b.dias - a.dias).slice(0, 5);
+        return { name, media: Math.round(media), sample };
+      })
       .sort((a, b) => b.media - a.media)
       .slice(0, 10);
 
-    return { mean, p50, p75, segChart, admChart };
+    // por tipo de lance (geral)
+    const allowedTypes = ["Livre", "Primeiro Fixo", "Segundo Fixo"];
+    const byTipo: Record<string, { sum: number; n: number }> = {};
+    const byTipoAdm: Record<string, Record<string, { sum: number; n: number }>> = {};
+
+    rows.forEach((v) => {
+      const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
+      if (!dc || !v.encarteirada_em) return;
+      const d = diffDays(v.encarteirada_em, dc);
+      if (d <= 0) return;
+
+      const tipoRaw = (v.contemplacao_tipo || "").toString().trim();
+      const tipo = allowedTypes.includes(tipoRaw) ? tipoRaw : "Livre";
+
+      byTipo[tipo] = byTipo[tipo] || { sum: 0, n: 0 };
+      byTipo[tipo].sum += d;
+      byTipo[tipo].n += 1;
+
+      const adm = v.administradora || "—";
+      byTipoAdm[adm] = byTipoAdm[adm] || {};
+      byTipoAdm[adm][tipo] = byTipoAdm[adm][tipo] || { sum: 0, n: 0 };
+      byTipoAdm[adm][tipo].sum += d;
+      byTipoAdm[adm][tipo].n += 1;
+    });
+
+    const tipoChart = allowedTypes.map((t) => ({
+      tipo: t,
+      media: Math.round(byTipo[t]?.n ? byTipo[t].sum / byTipo[t].n : 0),
+    }));
+
+    const tipoPorAdmChart = Object.entries(byTipoAdm)
+      .map(([adm, obj]) => {
+        const row: any = { adm };
+        for (const t of allowedTypes) {
+          const it = obj[t];
+          row[t] = Math.round(it?.n ? it.sum / it.n : 0);
+        }
+        return row;
+      })
+      .sort((a, b) => (b["Livre"] || 0) - (a["Livre"] || 0))
+      .slice(0, 12);
+
+    return { mean, p50, p75, segChart, admChart, tipoChart, tipoPorAdmChart };
   }, [filtered]);
 
   /* =========================
-     Clientes (via lead_id em vendas)
-  ========================= */
+     Clientes (via lead_id)
+========================= */
   const clientes = useMemo(() => {
-    const byLead: Record<string, { hasActive: boolean; hasCanceled: boolean }> = {};
+    const byLead: Record<string, { hasActive: boolean; hasCanceled: boolean; hasInad: boolean }> = {};
 
     for (const v of filtered) {
       if (!v.lead_id) continue;
       const k = v.lead_id;
-      byLead[k] = byLead[k] || { hasActive: false, hasCanceled: false };
+      byLead[k] = byLead[k] || { hasActive: false, hasCanceled: false, hasInad: false };
       if (isActive(v)) byLead[k].hasActive = true;
       if (isCanceled(v)) byLead[k].hasCanceled = true;
+      if (isActive(v) && Boolean(v.inad)) byLead[k].hasInad = true;
     }
 
     const total = Object.keys(byLead).length;
     const ativos = Object.values(byLead).filter((x) => x.hasActive).length;
+    const inadimplentes = Object.values(byLead).filter((x) => x.hasInad).length;
     const inativos = total - ativos;
     const pctAtivos = total > 0 ? ativos / total : 0;
 
-    return { total, ativos, inativos, pctAtivos };
+    return { total, ativos, inadimplentes, inativos, pctAtivos };
   }, [filtered]);
 
   /* =========================
      Carteira série mensal (12 meses)
-  ========================= */
+========================= */
   const carteiraSerie = useMemo(() => {
     const now = new Date();
     const keys: string[] = [];
@@ -707,7 +897,7 @@ export default function Relatorios() {
 
   /* =========================
      Distribuição por segmento (carteira ativa)
-  ========================= */
+========================= */
   const distSegmento = useMemo(() => {
     const by: Record<string, number> = {};
     filtered.filter(isActive).forEach((v) => {
@@ -724,12 +914,12 @@ export default function Relatorios() {
   }, [filtered]);
 
   /* =========================
-     CONCENTRAÇÃO
-  ========================= */
+     Concentração (Pareto + Lorenz + Heat)
+========================= */
   const concRows = useMemo(() => {
     const byLead: Record<string, { lead_id: string; value: number; count: number; sellers: Set<string> }> = {};
-
     const ativos = filtered.filter(isActive);
+
     for (const v of ativos) {
       if (!v.lead_id) continue;
       const k = v.lead_id;
@@ -765,32 +955,62 @@ export default function Relatorios() {
     const rows = top10.map((r) => {
       cum += r.pct;
       const lead = leadsMap[r.lead_id];
-      const nm = (lead?.nome || "Cliente").toString();
-      const label = nm.slice(0, 18) + (nm.length > 18 ? "…" : "");
-      return {
-        name: label,
-        pct: r.pct,
-        pct100: r.pct * 100,
-        cum: cum,
-        cum100: cum * 100,
-      };
+      const label = ((lead?.nome || "Cliente").toString().slice(0, 18) + ((lead?.nome || "").length > 18 ? "…" : ""));
+      return { name: label, pct100: r.pct * 100, cum100: cum * 100 };
     });
 
-    const cumFinal = Math.min(1, cum + restoPct);
-    rows.push({
-      name: "Resto",
-      pct: restoPct,
-      pct100: restoPct * 100,
-      cum: cumFinal,
-      cum100: cumFinal * 100,
-    });
+    rows.push({ name: "Resto", pct100: restoPct * 100, cum100: 100 });
 
     return { rows, sumTop10, restoPct };
   }, [concRows, leadsMap]);
 
+  const lorenz = useMemo(() => {
+    const total = totalsCarteira.ativoValue || 0;
+    const n = concRows.length || 0;
+    if (!total || !n) return { points: [] as any[] };
+
+    const sorted = concRows.slice().sort((a, b) => a.value - b.value);
+    let cumValue = 0;
+    const points = [{ x: 0, y: 0 }];
+
+    sorted.forEach((r, i) => {
+      cumValue += r.value;
+      const x = (i + 1) / n;         // % clientes
+      const y = cumValue / total;    // % valor
+      points.push({ x, y });
+    });
+
+    return { points };
+  }, [concRows, totalsCarteira.ativoValue]);
+
+  const heat = useMemo(() => {
+    // buckets de % concentração
+    const buckets = [
+      { key: "0-1", label: "0–1%", from: 0, to: 0.01 },
+      { key: "1-2", label: "1–2%", from: 0.01, to: 0.02 },
+      { key: "2-5", label: "2–5%", from: 0.02, to: 0.05 },
+      { key: "5-10", label: "5–10%", from: 0.05, to: 0.10 },
+      { key: "10-20", label: "10–20%", from: 0.10, to: 0.20 },
+      { key: "20+", label: "20%+", from: 0.20, to: 1.0 },
+    ];
+
+    const counts = buckets.map((b) => ({ ...b, qtd: 0 }));
+    for (const r of concRows) {
+      const idx = counts.findIndex((b) => r.pct >= b.from && r.pct < b.to);
+      if (idx >= 0) counts[idx].qtd += 1;
+      else if (r.pct >= 0.20) counts[counts.length - 1].qtd += 1;
+    }
+
+    const max = Math.max(1, ...counts.map((c) => c.qtd));
+    return counts.map((c) => ({
+      ...c,
+      intensity: c.qtd / max,
+    }));
+  }, [concRows]);
+
   /* =========================
-     Dialog concentração (detalhes do cliente)
-  ========================= */
+     Dialog concentração (detalhes)
+========================= */
   const leadDialogVendas = useMemo(() => {
     if (!leadDialogId) return [];
     return filtered.filter((v) => v.lead_id === leadDialogId);
@@ -806,13 +1026,11 @@ export default function Relatorios() {
   }, [leadDialogAtivoTotal, totalsCarteira.ativoValue]);
 
   /* =========================
-     UI
-  ========================= */
+     UI helpers
+========================= */
   const vendorName = (authId: string | null) => {
     if (!authId) return "—";
-    const u = usersMap[authId];
-    const nm = (u?.nome || "").toString().trim();
-    return nm ? nm : shortId(authId);
+    return usersMap[authId]?.name || "—";
   };
 
   const leadName = (lid: string | null) => {
@@ -825,6 +1043,167 @@ export default function Relatorios() {
   const concTotalPages = Math.max(1, Math.ceil(concRows.length / concPageSize));
   const concSlice = concRows.slice((concPage - 1) * concPageSize, concPage * concPageSize);
 
+  /* =========================
+     Export (puxa histórico completo se datas status vazias)
+========================= */
+  async function exportReport() {
+    if (!authUserId) return;
+
+    setExportLoading(true);
+    try {
+      // base query: SEM limite 24 meses (histórico)
+      let q = supabase
+        .from("vendas")
+        .select(
+          [
+            "id",
+            "vendedor_id",
+            "administradora",
+            "segmento",
+            "tabela",
+            "tipo_venda",
+            "contemplada",
+            "encarteirada_em",
+            "cancelada_em",
+            "codigo",
+            "data_venda",
+            "data_contemplacao",
+            "contemplacao_tipo",
+            "contemplacao_pct",
+            "valor_venda",
+            "lead_id",
+            "numero_proposta",
+            "inad",
+            "inad_em",
+          ].join(",")
+        )
+        .order("encarteirada_em", { ascending: false });
+
+      // trava por perfil
+      if (!isAdmin) q = q.eq("vendedor_id", authUserId);
+
+      // aplica filtros globais também
+      if (fVendedor !== "all") q = q.eq("vendedor_id", fVendedor);
+      if (fAdmin !== "all") q = q.eq("administradora", fAdmin);
+      if (fSeg !== "all") q = q.eq("segmento", fSeg);
+      if (fTabela !== "all") q = q.eq("tabela", fTabela);
+      if (fTipoVenda !== "all") q = q.eq("tipo_venda", fTipoVenda);
+      if (fContemplada !== "all") q = q.eq("contemplada", fContemplada === "sim");
+
+      // período global (encarteirada_em)
+      if (dateStart) q = q.gte("encarteirada_em", new Date(dateStart + "T00:00:00").toISOString());
+      if (dateEnd) q = q.lte("encarteirada_em", new Date(dateEnd + "T23:59:59").toISOString());
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      const list = (data || []) as VendaRow[];
+
+      // carregue users/leads faltantes (para export, garantir nomes)
+      const vendorIds = Array.from(new Set(list.map((v) => v.vendedor_id).filter(Boolean) as string[]));
+      if (vendorIds.length) {
+        const { data: uData } = await supabase
+          .from("users")
+          .select("auth_user_id, name, user_role, role, is_active")
+          .in("auth_user_id", vendorIds);
+
+        if (uData?.length) {
+          const m = { ...usersMap };
+          uData.forEach((u: any) => (m[u.auth_user_id] = u));
+          setUsersMap(m);
+        }
+      }
+
+      const leadIds = Array.from(new Set(list.map((v) => v.lead_id).filter(Boolean) as string[]));
+      if (leadIds.length) {
+        const chunkSize = 200;
+        const m = { ...leadsMap };
+        for (let i = 0; i < leadIds.length; i += chunkSize) {
+          const chunk = leadIds.slice(i, i + chunkSize);
+          const { data: lData } = await supabase
+            .from("leads")
+            .select("id, nome, telefone, email, origem")
+            .in("id", chunk);
+
+          lData?.forEach((l: any) => (m[l.id] = l));
+        }
+        setLeadsMap(m);
+      }
+
+      // aplica tipo do relatório
+      let rows = list.slice();
+
+      if (exportType === "canceladas") rows = rows.filter((v) => getStatus(v) === "Cancelada");
+      if (exportType === "inadimplentes") rows = rows.filter((v) => getStatus(v) === "Inadimplente");
+      if (exportType === "contempladas") rows = rows.filter((v) => getStatus(v) === "Contemplada");
+
+      // filtro por "data do status"
+      const sStart = exportStatusStart ? parseLocalDate(exportStatusStart).getTime() : null;
+      const sEnd = exportStatusEnd ? new Date(exportStatusEnd + "T23:59:59").getTime() : null;
+
+      if (sStart || sEnd) {
+        rows = rows.filter((v) => {
+          const sd = getStatusDate(v);
+          if (!sd) return false;
+          const t = new Date(sd).getTime();
+          if (!Number.isFinite(t)) return false;
+          if (sStart && t < sStart) return false;
+          if (sEnd && t > sEnd) return false;
+          return true;
+        });
+      }
+
+      const headers = [
+        "Vendedor",
+        "Administradora",
+        "Segmento",
+        "Tabela",
+        "Valor",
+        "Data da Venda",
+        "Data do Encarteiramento",
+        "Status",
+        "Data do Status",
+        "Dias de Inadimplência",
+      ];
+
+      const body = rows.map((v) => {
+        const status = getStatus(v);
+        const statusDate = getStatusDate(v);
+
+        return [
+          vendorName(v.vendedor_id),
+          v.administradora || "",
+          v.segmento || "",
+          v.tabela || "",
+          fmtBRL(safeNum(v.valor_venda)),
+          fmtDateBR(v.data_venda),
+          fmtDateBR(v.encarteirada_em),
+          status,
+          fmtDateBR(statusDate),
+          getDiasInad(v),
+        ];
+      });
+
+      const nameMap: Record<string, string> = {
+        vendas: "Relatorio_Vendas",
+        canceladas: "Relatorio_Canceladas",
+        contempladas: "Relatorio_Contempladas",
+        inadimplentes: "Relatorio_Inadimplentes",
+      };
+
+      downloadXls(`${nameMap[exportType]}_${todayYMD}.xls`, headers, body);
+      setExportOpen(false);
+    } catch (e: any) {
+      console.error("Erro ao exportar relatório:", e?.message || e);
+      alert("Não foi possível gerar o relatório. Verifique o console para detalhes.");
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
+  /* =========================
+     UI
+========================= */
   return (
     <div className="p-4 space-y-4">
       {/* Header */}
@@ -834,30 +1213,18 @@ export default function Relatorios() {
             Relatórios
           </h1>
           <p className="text-sm" style={{ color: C.muted }}>
-            Indicadores e análises da Consulmax (filtros auto-aplicáveis).
+            Indicadores e análises da Consulmax
           </p>
-          <div className="mt-2 flex items-center gap-2 flex-wrap">
-            {isAdmin ? (
-              <Badge tone="ok">Perfil: Admin (vê tudo)</Badge>
-            ) : (
-              <Badge tone="info">Perfil: Vendedor (somente suas vendas)</Badge>
-            )}
-            <Badge tone="muted">Concentração: alerta ≥ {fmtPct01(CONCENTRACAO_ALERTA, 0)}</Badge>
-          </div>
         </div>
 
         <Button
           variant="outline"
-          onClick={fetchAll}
-          disabled={loading || !authUserId || !roleReady}
+          onClick={() => setExportOpen(true)}
+          disabled={!authUserId}
           className="rounded-xl"
         >
-          {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
-          Atualizar
+          <Download className="h-4 w-4 mr-2" />
+          Extrair Relatório
         </Button>
       </div>
 
@@ -867,9 +1234,6 @@ export default function Relatorios() {
           <CardTitle className="text-base" style={{ color: C.navy }}>
             Filtros globais
           </CardTitle>
-          <div className="text-xs" style={{ color: C.muted }}>
-            Ao alterar qualquer filtro, os relatórios atualizam automaticamente.
-          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
@@ -904,11 +1268,6 @@ export default function Relatorios() {
                   ))}
                 </SelectContent>
               </Select>
-              {!isAdmin && (
-                <div className="text-[11px]" style={{ color: C.muted }}>
-                  (Vendedor vê apenas as próprias vendas)
-                </div>
-              )}
             </div>
 
             <div className="space-y-1">
@@ -1068,15 +1427,11 @@ export default function Relatorios() {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
-            {fmtPct01(totalsCarteira.inadPct, 1)}
+            {fmtPctHuman(totalsCarteira.inadPct, 1)}
           </CardContent>
-          <div className="px-6 pb-4 text-xs" style={{ color: C.muted }}>
-            Base: vendas ativas com <b>inad = true</b>
-          </div>
         </GlassCard>
       </div>
 
-      {/* Tabs */}
       <Tabs defaultValue="concentracao" className="space-y-3">
         <TabsList className="rounded-2xl">
           <TabsTrigger value="inad126">Inadimplência 12-6</TabsTrigger>
@@ -1088,38 +1443,43 @@ export default function Relatorios() {
           <TabsTrigger value="concentracao">Concentração</TabsTrigger>
         </TabsList>
 
-        {/* 12-6 */}
+        {/* 12-6 (VALOR + % no centro) */}
         <TabsContent value="inad126" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
               {
                 title: `Semestre anterior (${inad126.prevLabel})`,
-                sold: inad126.previousWindow.soldCount,
-                canceled: inad126.previousWindow.cancelCount,
+                soldValue: inad126.previousWindow.soldValue,
+                cancelValue: inad126.previousWindow.cancelValue,
                 pct: inad126.previousWindow.pct,
               },
               {
                 title: `Semestre atual (${inad126.nowLabel})`,
-                sold: inad126.currentWindow.soldCount,
-                canceled: inad126.currentWindow.cancelCount,
+                soldValue: inad126.currentWindow.soldValue,
+                cancelValue: inad126.currentWindow.cancelValue,
                 pct: inad126.currentWindow.pct,
               },
             ].map((x) => {
               const alarm = x.pct > 0.30;
+              const restante = Math.max(0, x.soldValue - x.cancelValue);
+
               const pieData = [
-                { name: "Vendido", value: Math.max(0, x.sold - x.canceled) },
-                { name: "Cancelado", value: x.canceled },
+                { name: "Vendido", value: restante },
+                { name: "Cancelado", value: x.cancelValue },
               ];
 
               return (
                 <GlassCard key={x.title}>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
+                    <CardTitle
+                      className="text-base flex items-center justify-between"
+                      style={{ color: C.navy }}
+                    >
                       <span>{x.title}</span>
                       {alarm ? (
                         <Badge tone="danger">
                           <AlertTriangle className="h-3.5 w-3.5 mr-1" />
-                          Alarmante (&gt; 30%)
+                          Alarmante
                         </Badge>
                       ) : (
                         <Badge tone="ok">
@@ -1128,31 +1488,51 @@ export default function Relatorios() {
                         </Badge>
                       )}
                     </CardTitle>
-                    <div className="text-xs" style={{ color: C.muted }}>
-                      Cancelamento por coorte: vendas do semestre anterior observadas no semestre seguinte.
-                    </div>
                   </CardHeader>
-                  <CardContent className="h-[240px]">
+
+                  <CardContent className="h-[260px] relative">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={85} paddingAngle={2}>
+                        <Pie
+                          data={pieData}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={62}
+                          outerRadius={92}
+                          paddingAngle={2}
+                        >
                           <Cell fill={C.navy} />
                           <Cell fill={C.rubi} />
                         </Pie>
-                        <Tooltip formatter={(v: any) => v?.toLocaleString?.("pt-BR") ?? v} />
+                        <RTooltip
+                          formatter={(v: any, n: any) => [fmtBRL(safeNum(v)), String(n)]}
+                        />
                         <Legend />
+                        {/* % no centro */}
+                        <text
+                          x="50%"
+                          y="50%"
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}
+                        >
+                          {fmtPctHuman(x.pct, 1)}
+                        </text>
+                        <text
+                          x="50%"
+                          y="58%"
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}
+                        >
+                          cancelado
+                        </text>
                       </PieChart>
                     </ResponsiveContainer>
-                    <div className="mt-3 flex items-center justify-between text-sm" style={{ color: C.navy }}>
-                      <span>
-                        Vendido: <b>{x.sold}</b>
-                      </span>
-                      <span>
-                        Cancelado: <b>{x.canceled}</b>
-                      </span>
-                      <span>
-                        %: <b>{fmtPct01(x.pct, 1)}</b>
-                      </span>
+
+                    <div className="mt-2 flex items-center justify-between text-sm" style={{ color: C.navy }}>
+                      <span>Vendido: <b>{fmtBRL(x.soldValue)}</b></span>
+                      <span>Cancelado: <b>{fmtBRL(x.cancelValue)}</b></span>
                     </div>
                   </CardContent>
                 </GlassCard>
@@ -1166,49 +1546,82 @@ export default function Relatorios() {
           <GlassCard>
             <CardHeader className="pb-2">
               <CardTitle className="text-base" style={{ color: C.navy }}>
-                Inadimplência 8-2 (carteira atual)
+                Inadimplência 8-2
               </CardTitle>
-              <div className="text-xs" style={{ color: C.muted }}>
-                Percentual da carteira ativa com <b>inad = true</b>. Aging por dias depende de uma fonte de “dias em atraso”.
-              </div>
             </CardHeader>
+
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+              <div
+                className="p-3 rounded-xl border"
+                style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}
+              >
                 <div className="text-xs font-semibold" style={{ color: C.muted }}>
-                  KPI % carteira inadimplente
+                  % carteira inadimplente
                 </div>
                 <div className="text-3xl font-extrabold mt-1" style={{ color: C.navy }}>
-                  {fmtPct01(totalsCarteira.inadPct, 1)}
+                  {fmtPctHuman(totalsCarteira.inadPct, 1)}
                 </div>
                 <div className="text-xs mt-1" style={{ color: C.muted }}>
-                  Inadimplente: {fmtBRL(totalsCarteira.inadValue)} / Ativo: {fmtBRL(totalsCarteira.ativoValue)}
+                  {fmtBRL(totalsCarteira.inadValue)} / {fmtBRL(totalsCarteira.ativoValue)}
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-2">
+                  <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                    Cotas recém-inadimplentes
+                  </div>
+                  <div className="space-y-1">
+                    {inad82.recem.length === 0 ? (
+                      <div className="text-xs" style={{ color: C.muted }}>—</div>
+                    ) : (
+                      inad82.recem.map(({ v, dias }) => (
+                        <div key={v.id} className="text-xs flex items-center justify-between" style={{ color: C.navy }}>
+                          <span className="truncate max-w-[70%]">
+                            {leadName(v.lead_id)} • {v.grupo || "—"}/{v.cota || "—"}
+                          </span>
+                          <Badge tone="info">{dias}d</Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="text-xs font-semibold mt-2" style={{ color: C.muted }}>
+                    Top cotas em risco
+                  </div>
+                  <div className="space-y-1">
+                    {inad82.topRisco.length === 0 ? (
+                      <div className="text-xs" style={{ color: C.muted }}>—</div>
+                    ) : (
+                      inad82.topRisco.map(({ v, dias }) => (
+                        <div key={v.id} className="text-xs flex items-center justify-between" style={{ color: C.navy }}>
+                          <span className="truncate max-w-[70%]">
+                            {leadName(v.lead_id)} • {v.grupo || "—"}/{v.cota || "—"}
+                          </span>
+                          <Badge tone="danger">{dias}d</Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+              <div
+                className="p-3 rounded-xl border"
+                style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}
+              >
                 <div className="text-xs font-semibold" style={{ color: C.muted }}>
-                  Aging (placeholder)
+                  Faixas de atraso
                 </div>
-                <div className="text-xs mt-2" style={{ color: C.muted }}>
-                  TODO: criar/ligar uma fonte com “dias em atraso” (ex.: primeira parcela em atraso / data_ultimo_pagamento / tabela específica).
-                </div>
-                <div className="h-[180px] mt-2">
+
+                <div className="h-[240px] mt-2">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={[
-                        { faixa: "0–7", qtd: 0 },
-                        { faixa: "8–15", qtd: 0 },
-                        { faixa: "16–30", qtd: 0 },
-                        { faixa: "31–60", qtd: 0 },
-                        { faixa: "61–90", qtd: 0 },
-                        { faixa: "90+", qtd: 0 },
-                      ]}
-                    >
+                    <BarChart data={inad82.rows}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="faixa" />
                       <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="qtd" fill={C.rubi} radius={[8, 8, 0, 0]} />
+                      <RTooltip />
+                      <Bar dataKey="qtd" fill={C.rubi} radius={[8, 8, 0, 0]}>
+                        <LabelList dataKey="qtd" position="top" />
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1222,9 +1635,7 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  Média (dias)
-                </CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>Média (dias)</CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.mean || 0)}
@@ -1233,9 +1644,7 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  Mediana P50 (dias)
-                </CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>Mediana P50 (dias)</CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.p50 || 0)}
@@ -1244,9 +1653,7 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  P75 (dias)
-                </CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>P75 (dias)</CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.p75 || 0)}
@@ -1261,14 +1668,35 @@ export default function Relatorios() {
                   Prazo por segmento (média)
                 </CardTitle>
               </CardHeader>
-              <CardContent className="h-[260px]">
+
+              <CardContent className="h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={prazo.segChart}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" hide />
                     <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="media" fill={C.navy} radius={[8, 8, 0, 0]} />
+                    <RTooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const p: any = payload[0].payload;
+                        return (
+                          <div className="rounded-xl border px-3 py-2 text-xs bg-white/90"
+                               style={{ borderColor: C.border, color: C.navy }}>
+                            <div className="font-bold">{p.name}</div>
+                            <div>Média: <b>{p.media}</b> dias</div>
+                            <div className="mt-2 font-semibold" style={{ color: C.muted }}>Amostras (proposta • prazo)</div>
+                            <div className="mt-1 space-y-0.5">
+                              {(p.sample || []).slice(0, 5).map((s: any, i: number) => (
+                                <div key={i}>{s.proposta} • <b>{s.dias} dias</b></div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar dataKey="media" fill={C.navy} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="media" position="top" />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1280,14 +1708,86 @@ export default function Relatorios() {
                   Prazo por administradora (média)
                 </CardTitle>
               </CardHeader>
-              <CardContent className="h-[260px]">
+
+              <CardContent className="h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={prazo.admChart}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" hide />
                     <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="media" fill={C.gold} radius={[8, 8, 0, 0]} />
+                    <RTooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const p: any = payload[0].payload;
+                        return (
+                          <div className="rounded-xl border px-3 py-2 text-xs bg-white/90"
+                               style={{ borderColor: C.border, color: C.navy }}>
+                            <div className="font-bold">{p.name}</div>
+                            <div>Média: <b>{p.media}</b> dias</div>
+                            <div className="mt-2 font-semibold" style={{ color: C.muted }}>Amostras (proposta • prazo)</div>
+                            <div className="mt-1 space-y-0.5">
+                              {(p.sample || []).slice(0, 5).map((s: any, i: number) => (
+                                <div key={i}>{s.proposta} • <b>{s.dias} dias</b></div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar dataKey="media" fill={C.gold} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="media" position="top" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Prazo médio por tipo de lance
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={prazo.tipoChart}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="tipo" />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="media" fill={C.navy} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="media" position="top" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Prazo médio por tipo de lance por administradora
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={prazo.tipoPorAdmChart}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="adm" hide />
+                    <YAxis />
+                    <RTooltip />
+                    <Legend />
+                    <Bar dataKey="Livre" fill={C.navy} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Livre" position="top" />
+                    </Bar>
+                    <Bar dataKey="Primeiro Fixo" fill={C.gold} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Primeiro Fixo" position="top" />
+                    </Bar>
+                    <Bar dataKey="Segundo Fixo" fill={C.rubi} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Segundo Fixo" position="top" />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1297,57 +1797,32 @@ export default function Relatorios() {
 
         {/* Clientes */}
         <TabsContent value="clientes" className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  Total de clientes
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {clientes.total}
-              </CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Total de clientes</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.total}</CardContent>
             </GlassCard>
-
             <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  Clientes ativos
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {clientes.ativos}
-              </CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Ativos</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.ativos}</CardContent>
             </GlassCard>
-
             <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  Clientes inativos
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {clientes.inativos}
-              </CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Inadimplentes</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.inadimplentes}</CardContent>
             </GlassCard>
-
             <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  % que permanecem ativos
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {fmtPct01(clientes.pctAtivos, 1)}
-              </CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Inativos</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.inativos}</CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>% Ativos</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(clientes.pctAtivos, 1)}</CardContent>
             </GlassCard>
           </div>
 
           <GlassCard>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base" style={{ color: C.navy }}>
-                Resumo
-              </CardTitle>
+              <CardTitle className="text-base" style={{ color: C.navy }}>Resumo</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -1360,20 +1835,24 @@ export default function Relatorios() {
                   </thead>
                   <tbody style={{ color: C.navy }}>
                     <tr className="border-t" style={{ borderColor: C.border }}>
-                      <td className="py-2">Total de clientes (distinct lead_id)</td>
+                      <td className="py-2">Total de clientes</td>
                       <td className="py-2 text-right font-bold">{clientes.total}</td>
                     </tr>
                     <tr className="border-t" style={{ borderColor: C.border }}>
-                      <td className="py-2">Ativos (possuem cota ativa)</td>
+                      <td className="py-2">Ativos</td>
                       <td className="py-2 text-right font-bold">{clientes.ativos}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">Inadimplentes</td>
+                      <td className="py-2 text-right font-bold">{clientes.inadimplentes}</td>
                     </tr>
                     <tr className="border-t" style={{ borderColor: C.border }}>
                       <td className="py-2">Inativos</td>
                       <td className="py-2 text-right font-bold">{clientes.inativos}</td>
                     </tr>
                     <tr className="border-t" style={{ borderColor: C.border }}>
-                      <td className="py-2">% ativos</td>
-                      <td className="py-2 text-right font-bold">{fmtPct01(clientes.pctAtivos, 1)}</td>
+                      <td className="py-2">% Ativos</td>
+                      <td className="py-2 text-right font-bold">{fmtPctHuman(clientes.pctAtivos, 1)}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1386,9 +1865,7 @@ export default function Relatorios() {
         <TabsContent value="carteira" className="space-y-3">
           <GlassCard>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base" style={{ color: C.navy }}>
-                Série mensal (últimos 12 meses)
-              </CardTitle>
+              <CardTitle className="text-base" style={{ color: C.navy }}>Série mensal (últimos 12 meses)</CardTitle>
             </CardHeader>
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -1396,7 +1873,7 @@ export default function Relatorios() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="mes" />
                   <YAxis />
-                  <Tooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
+                  <RTooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
                   <Legend />
                   <Bar dataKey="vendido" name="Vendido" fill={C.navy} radius={[8, 8, 0, 0]} />
                   <Bar dataKey="cancelado" name="Cancelado" fill={C.rubi} radius={[8, 8, 0, 0]} />
@@ -1412,22 +1889,20 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>
-                  Distribuição da carteira ativa por segmento
-                </CardTitle>
-                <div className="text-xs" style={{ color: C.muted }}>
-                  Base: vendas ativas (codigo='00' e não cancelada)
-                </div>
+                <CardTitle className="text-base" style={{ color: C.navy }}>Distribuição da carteira ativa por segmento</CardTitle>
               </CardHeader>
               <CardContent className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={distSegmento.rows} dataKey="value" nameKey="name" innerRadius={65} outerRadius={95} paddingAngle={2}>
                       {distSegmento.rows.map((_, idx) => (
-                        <Cell key={idx} fill={[C.navy, C.rubi, C.gold, "#2B3A55", "#8E7A3B", "#4D0E16"][idx % 6]} />
+                        <Cell
+                          key={idx}
+                          fill={[C.navy, C.rubi, C.gold, "#2B3A55", "#8E7A3B", "#4D0E16"][idx % 6]}
+                        />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
+                    <RTooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -1436,22 +1911,16 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>
-                  Ranking por segmento
-                </CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>Ranking por segmento</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
                   {distSegmento.rows.slice(0, 10).map((r) => (
                     <div key={r.name} className="flex items-center justify-between gap-3">
-                      <div className="font-semibold truncate" style={{ color: C.navy }}>
-                        {r.name}
-                      </div>
+                      <div className="font-semibold truncate" style={{ color: C.navy }}>{r.name}</div>
                       <div className="flex items-center gap-2">
-                        <Badge tone="info">{fmtPct01(r.pct, 1)}</Badge>
-                        <div className="font-bold" style={{ color: C.navy }}>
-                          {fmtBRL(r.value)}
-                        </div>
+                        <Badge tone="info">{fmtPctHuman(r.pct, 1)}</Badge>
+                        <div className="font-bold" style={{ color: C.navy }}>{fmtBRL(r.value)}</div>
                       </div>
                     </div>
                   ))}
@@ -1461,98 +1930,91 @@ export default function Relatorios() {
           </div>
         </TabsContent>
 
-        {/* CONCENTRAÇÃO */}
+        {/* Concentração + Lorenz + Heat */}
         <TabsContent value="concentracao" className="space-y-3">
-          {/* KPIs concentração */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <GlassCard>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Corte (alerta)</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(CONCENTRACAO_ALERTA, 0)}</CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Clientes concentrados</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{concKpis.acimaCount}</CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>% em concentrados</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(concKpis.acimaPct, 1)}</CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Maior concentração</CardTitle></CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(concKpis.top1, 1)}</CardContent>
+            </GlassCard>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  Corte (alerta)
-                </CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>Curva de Lorenz</CardTitle>
               </CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {fmtPct01(CONCENTRACAO_ALERTA, 0)}
+              <CardContent className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={lorenz.points}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="x" tickFormatter={(v) => `${Math.round(v * 100)}%`} />
+                    <YAxis tickFormatter={(v) => `${Math.round(v * 100)}%`} domain={[0, 1]} />
+                    <RTooltip formatter={(v: any) => fmtPctHuman(safeNum(v), 1)} />
+                    <Area type="monotone" dataKey="y" stroke={C.navy} fill={C.gold} fillOpacity={0.25} />
+                    {/* linha de igualdade 45° */}
+                    <Line type="linear" data={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} dataKey="y" stroke={C.rubi} dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
               </CardContent>
             </GlassCard>
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  Clientes concentrados
-                </CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>Heatmap de distribuição (faixas de concentração)</CardTitle>
               </CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {concKpis.acimaCount}
-              </CardContent>
-            </GlassCard>
-
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  % da carteira em concentrados
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {fmtPct01(concKpis.acimaPct, 1)}
-              </CardContent>
-            </GlassCard>
-
-            <GlassCard>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>
-                  Maior concentração (Top 1)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {fmtPct01(concKpis.top1, 1)}
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {heat.map((b) => (
+                    <div
+                      key={b.key}
+                      className="rounded-xl border p-3"
+                      style={{
+                        borderColor: C.border,
+                        background: `rgba(161,28,39,${0.10 + 0.35 * b.intensity})`,
+                      }}
+                    >
+                      <div className="text-xs font-semibold" style={{ color: C.navy }}>{b.label}</div>
+                      <div className="text-2xl font-extrabold" style={{ color: C.navy }}>{b.qtd}</div>
+                      <div className="text-[11px]" style={{ color: C.muted }}>clientes</div>
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </GlassCard>
           </div>
 
-          {/* Pareto Top10 vs Resto */}
           <GlassCard>
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
                 <span>Pareto de Concentração (Top 10 vs Resto)</span>
                 <div className="flex items-center gap-2">
-                  <Badge tone="info">Top 10: {fmtPct01(paretoData.sumTop10, 1)}</Badge>
-                  <Badge tone="muted">Resto: {fmtPct01(paretoData.restoPct, 1)}</Badge>
+                  <Badge tone="info">Top 10: {fmtPctHuman(paretoData.sumTop10, 1)}</Badge>
+                  <Badge tone="muted">Resto: {fmtPctHuman(paretoData.restoPct, 1)}</Badge>
                 </div>
               </CardTitle>
-              <div className="text-xs" style={{ color: C.muted }}>
-                Barras = participação (%) • Linha = acumulado (%) — <b>formato humano (2 casas)</b>
-              </div>
             </CardHeader>
-
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={paretoData.rows}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" interval={0} tick={{ fontSize: 11 }} />
-                  <YAxis
-                    yAxisId="left"
-                    tickFormatter={(v: any) => fmtPct100(Number(v) || 0, 2)}
-                    domain={[0, (dataMax: number) => Math.max(10, Math.ceil(dataMax / 5) * 5)]}
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    domain={[0, 100]}
-                    tickFormatter={(v: any) => fmtPct100(Number(v) || 0, 2)}
-                  />
-                  <Tooltip
-                    formatter={(value: any, name: any) => {
-                      const v = Number(value) || 0;
-                      // FIX: usa o "name" (series name), não o dataKey
-                      if (name === "Participação" || name === "Acumulado") {
-                        return [fmtPct100(v, 2), name];
-                      }
-                      return [value, name];
-                    }}
-                  />
+                  <YAxis yAxisId="left" tickFormatter={(v) => `${v.toFixed(0)}%`} domain={[0, 100]} />
+                  <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${v.toFixed(0)}%`} domain={[0, 100]} />
+                  <RTooltip />
                   <Legend />
-                  {/* FIX: dados em % já estão em pct100/cum100 */}
                   <Bar yAxisId="left" dataKey="pct100" name="Participação" fill={C.navy} radius={[8, 8, 0, 0]} />
                   <Line yAxisId="right" dataKey="cum100" name="Acumulado" stroke={C.gold} strokeWidth={3} dot={false} />
                 </ComposedChart>
@@ -1560,15 +2022,11 @@ export default function Relatorios() {
             </CardContent>
           </GlassCard>
 
-          {/* Lista Top clientes */}
           <GlassCard>
             <CardHeader className="pb-2">
               <CardTitle className="text-base" style={{ color: C.navy }}>
                 Concentração por cliente (carteira ativa)
               </CardTitle>
-              <div className="text-xs" style={{ color: C.muted }}>
-                Cada linha mostra quanto do total da carteira ativa está concentrado naquele cliente.
-              </div>
             </CardHeader>
 
             <CardContent>
@@ -1622,14 +2080,13 @@ export default function Relatorios() {
                                 </div>
                               </td>
 
-                              <td className="py-2">
-                                <div className="text-sm">{sellers || "—"}</div>
-                              </td>
-
+                              <td className="py-2"><div className="text-sm">{sellers || "—"}</div></td>
                               <td className="py-2 text-right font-extrabold">{fmtBRL(row.value)}</td>
 
                               <td className="py-2 text-right">
-                                <Badge tone={row.alerta ? "danger" : "info"}>{fmtPct01(row.pct, 1)}</Badge>
+                                <Badge tone={row.alerta ? "danger" : "info"}>
+                                  {fmtPctHuman(row.pct, 1)}
+                                </Badge>
                               </td>
 
                               <td className="py-2">
@@ -1666,7 +2123,6 @@ export default function Relatorios() {
                     </table>
                   </div>
 
-                  {/* Paginação */}
                   <div className="mt-3 flex items-center justify-between">
                     <div className="text-xs" style={{ color: C.muted }}>
                       Página {concPage} / {concTotalPages} • {concRows.length} clientes
@@ -1695,7 +2151,6 @@ export default function Relatorios() {
             </CardContent>
           </GlassCard>
 
-          {/* Dialog detalhes */}
           <Dialog open={leadDialogOpen} onOpenChange={setLeadDialogOpen}>
             <DialogContent className="sm:max-w-[900px] rounded-2xl">
               <DialogHeader>
@@ -1711,17 +2166,14 @@ export default function Relatorios() {
                           {leadName(leadDialogId)}
                         </div>
                         <div className="text-xs mt-1" style={{ color: C.muted }}>
-                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} •{" "}
-                          {leadsMap[leadDialogId]?.origem || "—"}
+                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} • {leadsMap[leadDialogId]?.origem || "—"}
                         </div>
 
                         <div className="text-xs mt-2 flex items-center gap-2 flex-wrap" style={{ color: C.muted }}>
                           <span>Carteira ativa do cliente:</span>
-                          <span className="font-bold" style={{ color: C.navy }}>
-                            {fmtBRL(leadDialogAtivoTotal)}
-                          </span>
+                          <span className="font-bold" style={{ color: C.navy }}>{fmtBRL(leadDialogAtivoTotal)}</span>
                           <Badge tone={leadDialogPct >= CONCENTRACAO_ALERTA ? "danger" : "info"}>
-                            {fmtPct01(leadDialogPct, 1)} da carteira
+                            {fmtPctHuman(leadDialogPct, 1)} da carteira
                           </Badge>
                           {leadDialogPct >= CONCENTRACAO_ALERTA ? (
                             <Badge tone="danger">Cliente concentrado (≥ 10%)</Badge>
@@ -1764,18 +2216,9 @@ export default function Relatorios() {
                             <td className="py-2">{v.tabela || "—"}</td>
                             <td className="py-2">{vendorName(v.vendedor_id)}</td>
                             <td className="py-2">
-                              {isActive(v) ? (
-                                <Badge tone="ok">Ativa</Badge>
-                              ) : isCanceled(v) ? (
-                                <Badge tone="danger">Cancelada</Badge>
-                              ) : (
-                                <Badge tone="muted">—</Badge>
-                              )}
-                              {Boolean(v.inad) && isActive(v) && (
-                                <span className="ml-2">
-                                  <Badge tone="danger">Inad</Badge>
-                                </span>
-                              )}
+                              <Badge tone={getStatus(v) === "Cancelada" ? "danger" : getStatus(v) === "Inadimplente" ? "danger" : getStatus(v) === "Contemplada" ? "info" : "ok"}>
+                                {getStatus(v)}
+                              </Badge>
                             </td>
                             <td className="py-2 text-right font-bold">{fmtBRL(safeNum(v.valor_venda))}</td>
                           </tr>
@@ -1795,6 +2238,58 @@ export default function Relatorios() {
           </Dialog>
         </TabsContent>
       </Tabs>
+
+      {/* Export overlay */}
+      <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+        <DialogContent className="sm:max-w-[720px] rounded-2xl">
+          <DialogHeader>
+            <DialogTitle style={{ color: C.navy }}>Extrair Relatório (XLS)</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>Tipo de relatório</div>
+                <Select value={exportType} onValueChange={(v: any) => setExportType(v)}>
+                  <SelectTrigger className="rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="vendas">Vendas</SelectItem>
+                    <SelectItem value="canceladas">Canceladas</SelectItem>
+                    <SelectItem value="contempladas">Contempladas</SelectItem>
+                    <SelectItem value="inadimplentes">Inadimplentes</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>Data do status (início)</div>
+                <Input type="date" value={exportStatusStart} onChange={(e) => setExportStatusStart(e.target.value)} />
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>Data do status (fim)</div>
+                <Input type="date" value={exportStatusEnd} onChange={(e) => setExportStatusEnd(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="text-xs" style={{ color: C.muted }}>
+              Se você não preencher a data do status, o relatório é gerado com todo o histórico (respeitando os filtros globais).
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="outline" className="rounded-xl" onClick={() => setExportOpen(false)} disabled={exportLoading}>
+                Cancelar
+              </Button>
+              <Button className="rounded-xl" onClick={exportReport} disabled={exportLoading}>
+                {exportLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                Baixar XLS
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

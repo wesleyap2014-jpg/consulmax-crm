@@ -13,12 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { Loader2, AlertTriangle, CheckCircle2, Eye, Download } from "lucide-react";
 
@@ -57,13 +52,13 @@ const C = {
 const CONCENTRACAO_ALERTA = 0.10; // 10%
 
 /* =========================
-   Tipos (baseados nos prints + novos campos)
+   Tipos
 ========================= */
 type UUID = string;
 
 type VendaRow = {
   id: UUID;
-  vendedor_id: UUID | null;
+  vendedor_id: UUID | null; // normalmente users.id
 
   administradora: string | null;
   segmento: string | null;
@@ -79,7 +74,7 @@ type VendaRow = {
   data_venda: string | null; // date
   data_contemplacao: string | null; // date
 
-  contemplacao_tipo: string | null; // Livre | Primeiro Fixo | Segundo Fixo
+  contemplacao_tipo: string | null; // Lance Livre | Primeiro Lance Fixo | Segundo Lance Fixo
   contemplacao_pct: number | null;
 
   valor_venda: number | null;
@@ -90,8 +85,8 @@ type VendaRow = {
   grupo?: string | null;
   cota?: string | null;
 
-  inad?: boolean | null; // bool
-  inad_em: string | null; // date/timestamptz -> data da parcela mais antiga inadimplida
+  inad?: boolean | null;
+  inad_em: string | null; // date/timestamptz
 };
 
 type LeadRow = {
@@ -103,10 +98,11 @@ type LeadRow = {
 };
 
 type UserRow = {
+  id: UUID;
   auth_user_id: UUID;
-  name: string | null;
-  user_role?: string | null;
-  role?: string | null;
+  nome: string | null;
+  user_role?: string | null; // texto
+  role?: string | null;      // enum/text legado
   is_active?: boolean | null;
 };
 
@@ -131,9 +127,13 @@ function fmtPctHuman(p: number, digits = 1) {
   return `${(v * 100).toFixed(digits).replace(".", ",")}%`;
 }
 
+function fmtPct100Human(p100: number, digits = 2) {
+  const v = Number.isFinite(p100) ? p100 : 0;
+  return `${v.toFixed(digits).replace(".", ",")}%`;
+}
+
 function fmtDateBR(isoOrDate: string | null) {
   if (!isoOrDate) return "";
-  // se vier date "YYYY-MM-DD"
   if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrDate)) {
     const [y, m, d] = isoOrDate.split("-").map(Number);
     return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
@@ -146,7 +146,6 @@ function fmtDateBR(isoOrDate: string | null) {
   return `${dd}/${mm}/${yy}`;
 }
 
-/** "Hoje" local sem deslizar */
 function todayLocalYMD() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -155,13 +154,11 @@ function todayLocalYMD() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-/** Parse date string (YYYY-MM-DD) como data local (meia-noite) */
 function parseLocalDate(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
 }
 
-/** Diferença em dias usando datas locais (evita “voltar um dia”) */
 function diffDaysLocal(from: string, toYMD: string) {
   const fromDt =
     /^\d{4}-\d{2}-\d{2}$/.test(from) ? parseLocalDate(from) : new Date(from);
@@ -226,9 +223,7 @@ function escapeHtml(v: any) {
 function downloadXls(filename: string, headers: string[], rows: any[][]) {
   const thead = `<tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr>`;
   const tbody = rows
-    .map(
-      (r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`
-    )
+    .map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`)
     .join("");
 
   const html = `
@@ -281,7 +276,8 @@ function GlassCard({
         borderColor: C.border,
         backdropFilter: "saturate(160%) blur(10px)",
         WebkitBackdropFilter: "saturate(160%) blur(10px)",
-        boxShadow: "inset 0 0 0 1px rgba(255,255,255,.20), 0 10px 30px rgba(30,41,63,.08)",
+        boxShadow:
+          "inset 0 0 0 1px rgba(255,255,255,.20), 0 10px 30px rgba(30,41,63,.08)",
         borderRadius: 18,
       }}
     >
@@ -338,7 +334,7 @@ export default function Relatorios() {
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
 
-  const [fVendedor, setFVendedor] = useState<string>("all");
+  const [fVendedor, setFVendedor] = useState<string>("all"); // users.id
   const [fAdmin, setFAdmin] = useState<string>("all");
   const [fSeg, setFSeg] = useState<string>("all");
   const [fTabela, setFTabela] = useState<string>("all");
@@ -347,11 +343,14 @@ export default function Relatorios() {
 
   // dados
   const [loading, setLoading] = useState(false);
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
+
+  const [authUserId, setAuthUserId] = useState<string | null>(null); // auth.users.id
+  const [userId, setUserId] = useState<string | null>(null);         // public.users.id
   const [isAdmin, setIsAdmin] = useState(false);
 
   const [vendas, setVendas] = useState<VendaRow[]>([]);
-  const [usersMap, setUsersMap] = useState<Record<string, UserRow>>({});
+  const [usersById, setUsersById] = useState<Record<string, UserRow>>({});
+  const [usersByAuth, setUsersByAuth] = useState<Record<string, UserRow>>({});
   const [leadsMap, setLeadsMap] = useState<Record<string, LeadRow>>({});
 
   // dialog concentração
@@ -365,14 +364,16 @@ export default function Relatorios() {
   // dialog export
   const [exportOpen, setExportOpen] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
-  const [exportType, setExportType] = useState<"vendas" | "canceladas" | "contempladas" | "inadimplentes">("vendas");
+  const [exportType, setExportType] = useState<
+    "vendas" | "canceladas" | "contempladas" | "inadimplentes"
+  >("vendas");
   const [exportStatusStart, setExportStatusStart] = useState<string>("");
   const [exportStatusEnd, setExportStatusEnd] = useState<string>("");
 
   const todayYMD = useMemo(() => todayLocalYMD(), []);
 
   /* =========================
-     Carrega auth + role
+     Carrega auth + role + userId
   ========================= */
   useEffect(() => {
     let alive = true;
@@ -383,32 +384,41 @@ export default function Relatorios() {
 
         if (error || !data?.user) {
           setAuthUserId(null);
+          setUserId(null);
           setIsAdmin(false);
           return;
         }
 
-        const uid = data.user.id;
-        setAuthUserId(uid);
+        const authId = data.user.id;
+        setAuthUserId(authId);
 
+        // pega o profile (public.users) do usuário logado
         const { data: urow, error: uerr } = await supabase
           .from("users")
-          .select("auth_user_id, name, user_role, role, is_active")
-          .eq("auth_user_id", uid)
+          .select("id, auth_user_id, nome, user_role, role, is_active")
+          .eq("auth_user_id", authId)
           .maybeSingle();
 
         if (!alive) return;
-        if (uerr) {
-          console.error("Erro ao carregar role do usuário:", uerr.message);
+        if (uerr || !urow) {
+          console.error("Erro ao carregar profile do usuário:", uerr?.message);
+          setUserId(null);
           setIsAdmin(false);
           return;
         }
 
-        const roleRaw = (urow?.user_role || urow?.role || "").toString().trim().toLowerCase();
+        setUserId(urow.id);
+
+        const roleRaw = (urow.user_role || urow.role || "")
+          .toString()
+          .trim()
+          .toLowerCase();
         setIsAdmin(roleRaw === "admin");
       } catch (e) {
         console.error("Erro ao identificar usuário:", e);
         if (!alive) return;
         setAuthUserId(null);
+        setUserId(null);
         setIsAdmin(false);
       }
     })();
@@ -422,13 +432,13 @@ export default function Relatorios() {
   useEffect(() => {
     if (!authUserId) return;
     if (isAdmin) setFVendedor("all");
-    else setFVendedor(authUserId);
-  }, [isAdmin, authUserId]);
+    else if (userId) setFVendedor(userId);
+  }, [isAdmin, authUserId, userId]);
 
   /* =========================
      Fetch principal (para UI)
-     - Admin: tudo
-     - outros: somente dele
+     - Admin: TUDO (sem limite 24 meses)
+     - Outros: somente dele (por performance, últimos 24 meses)
   ========================= */
   async function fetchAllUI() {
     if (!authUserId) return;
@@ -438,19 +448,23 @@ export default function Relatorios() {
       // users (nome do vendedor)
       const { data: usersData, error: usersErr } = await supabase
         .from("users")
-        .select("auth_user_id, name, user_role, role, is_active")
-        .order("name", { ascending: true });
+        .select("id, auth_user_id, nome, user_role, role, is_active")
+        .order("nome", { ascending: true });
 
-      if (usersErr) console.error("Erro users:", usersErr.message);
-      else {
-        const map: Record<string, UserRow> = {};
+      if (usersErr) {
+        console.error("Erro users:", usersErr.message);
+      } else {
+        const byId: Record<string, UserRow> = {};
+        const byAuth: Record<string, UserRow> = {};
         (usersData || []).forEach((u: any) => {
-          if (u?.auth_user_id) map[u.auth_user_id] = u as UserRow;
+          if (u?.id) byId[u.id] = u as UserRow;
+          if (u?.auth_user_id) byAuth[u.auth_user_id] = u as UserRow;
         });
-        setUsersMap(map);
+        setUsersById(byId);
+        setUsersByAuth(byAuth);
       }
 
-      // vendas (UI: por performance, últimos 24 meses)
+      // vendas
       const now = new Date();
       const defaultMin = addMonths(now, -24).toISOString();
 
@@ -481,12 +495,17 @@ export default function Relatorios() {
             "inad_em",
           ].join(",")
         )
-        .order("encarteirada_em", { ascending: false })
-        .gte("encarteirada_em", defaultMin);
+        .order("encarteirada_em", { ascending: false });
 
-      if (!isAdmin) q = q.eq("vendedor_id", authUserId);
+      // ✅ Admin vê tudo (sem corte)
+      // ✅ Não-admin: corte 24 meses por performance
+      if (!isAdmin) q = q.gte("encarteirada_em", defaultMin);
+
+      // ✅ Não-admin: só as próprias vendas (vendedor_id = public.users.id)
+      if (!isAdmin && userId) q = q.eq("vendedor_id", userId);
 
       const { data: vendasData, error: vendasErr } = await q;
+
       if (vendasErr) {
         console.error("Erro vendas:", vendasErr.message);
         setVendas([]);
@@ -498,7 +517,10 @@ export default function Relatorios() {
       setVendas(list);
 
       // leads usados
-      const leadIds = Array.from(new Set(list.map((v) => v.lead_id).filter(Boolean) as string[]));
+      const leadIds = Array.from(
+        new Set(list.map((v) => v.lead_id).filter(Boolean) as string[])
+      );
+
       if (leadIds.length) {
         const chunkSize = 200;
         const map: Record<string, LeadRow> = {};
@@ -530,7 +552,7 @@ export default function Relatorios() {
     if (!authUserId) return;
     fetchAllUI();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUserId, isAdmin]);
+  }, [authUserId, isAdmin, userId]);
 
   /* =========================
      Status (UI e export)
@@ -611,7 +633,10 @@ export default function Relatorios() {
     fContemplada,
   ]);
 
-  useEffect(() => setConcPage(1), [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
+  useEffect(
+    () => setConcPage(1),
+    [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]
+  );
 
   /* =========================
      Distintos selects
@@ -647,7 +672,9 @@ export default function Relatorios() {
     const vendido = filtered.reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const cancelado = filtered.filter(isCanceled).reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const ativoValue = filtered.filter(isActive).reduce((s, v) => s + safeNum(v.valor_venda), 0);
-    const inadValue = filtered.filter((v) => isActive(v) && Boolean(v.inad)).reduce((s, v) => s + safeNum(v.valor_venda), 0);
+    const inadValue = filtered
+      .filter((v) => isActive(v) && Boolean(v.inad))
+      .reduce((s, v) => s + safeNum(v.valor_venda), 0);
 
     return {
       vendido,
@@ -677,8 +704,12 @@ export default function Relatorios() {
     const soldPrev = filtered.filter((v) => inRange(v.encarteirada_em, semPrev.start, semPrev.end));
     const canceledInNowFromPrev = soldPrev.filter((v) => inRange(v.cancelada_em, semNow.start, semNow.end));
 
-    const soldPrevPrev = filtered.filter((v) => inRange(v.encarteirada_em, semPrevPrev.start, semPrevPrev.end));
-    const canceledInPrevFromPrevPrev = soldPrevPrev.filter((v) => inRange(v.cancelada_em, semPrev.start, semPrev.end));
+    const soldPrevPrev = filtered.filter((v) =>
+      inRange(v.encarteirada_em, semPrevPrev.start, semPrevPrev.end)
+    );
+    const canceledInPrevFromPrevPrev = soldPrevPrev.filter((v) =>
+      inRange(v.cancelada_em, semPrev.start, semPrev.end)
+    );
 
     const mk = (sold: VendaRow[], canceled: VendaRow[]) => {
       const soldValue = sold.reduce((s, v) => s + safeNum(v.valor_venda), 0);
@@ -719,12 +750,8 @@ export default function Relatorios() {
       if (idx >= 0) rows[idx].qtd += 1;
     }
 
-    // listas acionáveis (top risco e recém inadimplentes) — sem pedir agora, mas úteis
     const withDias = inadAtivas
-      .map((v) => ({
-        v,
-        dias: v.inad_em ? diffDaysLocal(v.inad_em, todayYMD) : 0,
-      }))
+      .map((v) => ({ v, dias: v.inad_em ? diffDaysLocal(v.inad_em, todayYMD) : 0 }))
       .sort((a, b) => b.dias - a.dias);
 
     const topRisco = withDias.slice(0, 10);
@@ -734,7 +761,7 @@ export default function Relatorios() {
   }, [filtered, todayYMD]);
 
   /* =========================
-     Prazo de contemplação + amostras (proposta)
+     Prazo de contemplação + amostras + tipo de lance
 ========================= */
   const prazo = useMemo(() => {
     const rows = filtered.filter((v) => v.encarteirada_em && v.data_contemplacao);
@@ -752,7 +779,6 @@ export default function Relatorios() {
     const p50 = percentile(daysAll, 0.5);
     const p75 = percentile(daysAll, 0.75);
 
-    // por segmento/admin com amostras (proposta + prazo)
     const bySeg: Record<string, { list: { proposta: string; dias: number }[]; sum: number; n: number }> = {};
     const byAdm: Record<string, { list: { proposta: string; dias: number }[]; sum: number; n: number }> = {};
 
@@ -795,8 +821,8 @@ export default function Relatorios() {
       .sort((a, b) => b.media - a.media)
       .slice(0, 10);
 
-    // por tipo de lance (geral)
-    const allowedTypes = ["Livre", "Primeiro Fixo", "Segundo Fixo"];
+    // ✅ tipos corretos do schema
+    const allowedTypes = ["Lance Livre", "Primeiro Lance Fixo", "Segundo Lance Fixo"];
     const byTipo: Record<string, { sum: number; n: number }> = {};
     const byTipoAdm: Record<string, Record<string, { sum: number; n: number }>> = {};
 
@@ -807,7 +833,7 @@ export default function Relatorios() {
       if (d <= 0) return;
 
       const tipoRaw = (v.contemplacao_tipo || "").toString().trim();
-      const tipo = allowedTypes.includes(tipoRaw) ? tipoRaw : "Livre";
+      const tipo = allowedTypes.includes(tipoRaw) ? tipoRaw : "Lance Livre";
 
       byTipo[tipo] = byTipo[tipo] || { sum: 0, n: 0 };
       byTipo[tipo].sum += d;
@@ -834,7 +860,7 @@ export default function Relatorios() {
         }
         return row;
       })
-      .sort((a, b) => (b["Livre"] || 0) - (a["Livre"] || 0))
+      .sort((a, b) => (b["Lance Livre"] || 0) - (a["Lance Livre"] || 0))
       .slice(0, 12);
 
     return { mean, p50, p75, segChart, admChart, tipoChart, tipoPorAdmChart };
@@ -917,7 +943,10 @@ export default function Relatorios() {
      Concentração (Pareto + Lorenz + Heat)
 ========================= */
   const concRows = useMemo(() => {
-    const byLead: Record<string, { lead_id: string; value: number; count: number; sellers: Set<string> }> = {};
+    const byLead: Record<
+      string,
+      { lead_id: string; value: number; count: number; sellers: Set<string> }
+    > = {};
     const ativos = filtered.filter(isActive);
 
     for (const v of ativos) {
@@ -955,7 +984,9 @@ export default function Relatorios() {
     const rows = top10.map((r) => {
       cum += r.pct;
       const lead = leadsMap[r.lead_id];
-      const label = ((lead?.nome || "Cliente").toString().slice(0, 18) + ((lead?.nome || "").length > 18 ? "…" : ""));
+      const label =
+        (lead?.nome || "Cliente").toString().slice(0, 18) +
+        ((lead?.nome || "").length > 18 ? "…" : "");
       return { name: label, pct100: r.pct * 100, cum100: cum * 100 };
     });
 
@@ -975,8 +1006,8 @@ export default function Relatorios() {
 
     sorted.forEach((r, i) => {
       cumValue += r.value;
-      const x = (i + 1) / n;         // % clientes
-      const y = cumValue / total;    // % valor
+      const x = (i + 1) / n;
+      const y = cumValue / total;
       points.push({ x, y });
     });
 
@@ -984,7 +1015,6 @@ export default function Relatorios() {
   }, [concRows, totalsCarteira.ativoValue]);
 
   const heat = useMemo(() => {
-    // buckets de % concentração
     const buckets = [
       { key: "0-1", label: "0–1%", from: 0, to: 0.01 },
       { key: "1-2", label: "1–2%", from: 0.01, to: 0.02 },
@@ -1002,10 +1032,7 @@ export default function Relatorios() {
     }
 
     const max = Math.max(1, ...counts.map((c) => c.qtd));
-    return counts.map((c) => ({
-      ...c,
-      intensity: c.qtd / max,
-    }));
+    return counts.map((c) => ({ ...c, intensity: c.qtd / max }));
   }, [concRows]);
 
   /* =========================
@@ -1028,9 +1055,13 @@ export default function Relatorios() {
   /* =========================
      UI helpers
 ========================= */
-  const vendorName = (authId: string | null) => {
-    if (!authId) return "—";
-    return usersMap[authId]?.name || "—";
+  const vendorName = (sellerIdOrAuthId: string | null) => {
+    if (!sellerIdOrAuthId) return "—";
+    return (
+      usersById[sellerIdOrAuthId]?.nome ||
+      usersByAuth[sellerIdOrAuthId]?.nome ||
+      "—"
+    );
   };
 
   const leadName = (lid: string | null) => {
@@ -1044,14 +1075,14 @@ export default function Relatorios() {
   const concSlice = concRows.slice((concPage - 1) * concPageSize, concPage * concPageSize);
 
   /* =========================
-     Export (puxa histórico completo se datas status vazias)
+     Export (histórico completo)
+     ✅ “Vendas” inclui Cliente + Nº Proposta
 ========================= */
   async function exportReport() {
     if (!authUserId) return;
 
     setExportLoading(true);
     try {
-      // base query: SEM limite 24 meses (histórico)
       let q = supabase
         .from("vendas")
         .select(
@@ -1079,10 +1110,10 @@ export default function Relatorios() {
         )
         .order("encarteirada_em", { ascending: false });
 
-      // trava por perfil
-      if (!isAdmin) q = q.eq("vendedor_id", authUserId);
+      // perfil
+      if (!isAdmin && userId) q = q.eq("vendedor_id", userId);
 
-      // aplica filtros globais também
+      // filtros globais
       if (fVendedor !== "all") q = q.eq("vendedor_id", fVendedor);
       if (fAdmin !== "all") q = q.eq("administradora", fAdmin);
       if (fSeg !== "all") q = q.eq("segmento", fSeg);
@@ -1090,7 +1121,6 @@ export default function Relatorios() {
       if (fTipoVenda !== "all") q = q.eq("tipo_venda", fTipoVenda);
       if (fContemplada !== "all") q = q.eq("contemplada", fContemplada === "sim");
 
-      // período global (encarteirada_em)
       if (dateStart) q = q.gte("encarteirada_em", new Date(dateStart + "T00:00:00").toISOString());
       if (dateEnd) q = q.lte("encarteirada_em", new Date(dateEnd + "T23:59:59").toISOString());
 
@@ -1099,21 +1129,27 @@ export default function Relatorios() {
 
       const list = (data || []) as VendaRow[];
 
-      // carregue users/leads faltantes (para export, garantir nomes)
+      // garante users
       const vendorIds = Array.from(new Set(list.map((v) => v.vendedor_id).filter(Boolean) as string[]));
       if (vendorIds.length) {
         const { data: uData } = await supabase
           .from("users")
-          .select("auth_user_id, name, user_role, role, is_active")
-          .in("auth_user_id", vendorIds);
+          .select("id, auth_user_id, nome, user_role, role, is_active")
+          .in("id", vendorIds);
 
         if (uData?.length) {
-          const m = { ...usersMap };
-          uData.forEach((u: any) => (m[u.auth_user_id] = u));
-          setUsersMap(m);
+          const byId = { ...usersById };
+          const byAuth = { ...usersByAuth };
+          uData.forEach((u: any) => {
+            if (u?.id) byId[u.id] = u;
+            if (u?.auth_user_id) byAuth[u.auth_user_id] = u;
+          });
+          setUsersById(byId);
+          setUsersByAuth(byAuth);
         }
       }
 
+      // garante leads
       const leadIds = Array.from(new Set(list.map((v) => v.lead_id).filter(Boolean) as string[]));
       if (leadIds.length) {
         const chunkSize = 200;
@@ -1130,9 +1166,8 @@ export default function Relatorios() {
         setLeadsMap(m);
       }
 
-      // aplica tipo do relatório
+      // tipo do relatório
       let rows = list.slice();
-
       if (exportType === "canceladas") rows = rows.filter((v) => getStatus(v) === "Cancelada");
       if (exportType === "inadimplentes") rows = rows.filter((v) => getStatus(v) === "Inadimplente");
       if (exportType === "contempladas") rows = rows.filter((v) => getStatus(v) === "Contemplada");
@@ -1153,7 +1188,8 @@ export default function Relatorios() {
         });
       }
 
-      const headers = [
+      // ✅ headers: “Vendas” inclui Cliente + Nº Proposta
+      const baseHeaders = [
         "Vendedor",
         "Administradora",
         "Segmento",
@@ -1166,11 +1202,16 @@ export default function Relatorios() {
         "Dias de Inadimplência",
       ];
 
+      const headers =
+        exportType === "vendas"
+          ? ["Nome do Cliente", "Número da Proposta", ...baseHeaders]
+          : baseHeaders;
+
       const body = rows.map((v) => {
         const status = getStatus(v);
         const statusDate = getStatusDate(v);
 
-        return [
+        const baseRow = [
           vendorName(v.vendedor_id),
           v.administradora || "",
           v.segmento || "",
@@ -1182,6 +1223,15 @@ export default function Relatorios() {
           fmtDateBR(statusDate),
           getDiasInad(v),
         ];
+
+        if (exportType === "vendas") {
+          return [
+            leadName(v.lead_id),
+            v.numero_proposta || "",
+            ...baseRow,
+          ];
+        }
+        return baseRow;
       });
 
       const nameMap: Record<string, string> = {
@@ -1375,7 +1425,7 @@ export default function Relatorios() {
                   setFTipoVenda("all");
                   setFContemplada("all");
                   if (isAdmin) setFVendedor("all");
-                  else if (authUserId) setFVendedor(authUserId);
+                  else if (userId) setFVendedor(userId);
                 }}
               >
                 Limpar filtros
@@ -1443,7 +1493,7 @@ export default function Relatorios() {
           <TabsTrigger value="concentracao">Concentração</TabsTrigger>
         </TabsList>
 
-        {/* 12-6 (VALOR + % no centro) */}
+        {/* 12-6 */}
         <TabsContent value="inad126" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
@@ -1471,10 +1521,7 @@ export default function Relatorios() {
               return (
                 <GlassCard key={x.title}>
                   <CardHeader className="pb-2">
-                    <CardTitle
-                      className="text-base flex items-center justify-between"
-                      style={{ color: C.navy }}
-                    >
+                    <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
                       <span>{x.title}</span>
                       {alarm ? (
                         <Badge tone="danger">
@@ -1493,38 +1540,16 @@ export default function Relatorios() {
                   <CardContent className="h-[260px] relative">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie
-                          data={pieData}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius={62}
-                          outerRadius={92}
-                          paddingAngle={2}
-                        >
+                        <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={2}>
                           <Cell fill={C.navy} />
                           <Cell fill={C.rubi} />
                         </Pie>
-                        <RTooltip
-                          formatter={(v: any, n: any) => [fmtBRL(safeNum(v)), String(n)]}
-                        />
+                        <RTooltip formatter={(v: any, n: any) => [fmtBRL(safeNum(v)), String(n)]} />
                         <Legend />
-                        {/* % no centro */}
-                        <text
-                          x="50%"
-                          y="50%"
-                          textAnchor="middle"
-                          dominantBaseline="middle"
-                          style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}
-                        >
+                        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}>
                           {fmtPctHuman(x.pct, 1)}
                         </text>
-                        <text
-                          x="50%"
-                          y="58%"
-                          textAnchor="middle"
-                          dominantBaseline="middle"
-                          style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}
-                        >
+                        <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}>
                           cancelado
                         </text>
                       </PieChart>
@@ -1551,10 +1576,7 @@ export default function Relatorios() {
             </CardHeader>
 
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div
-                className="p-3 rounded-xl border"
-                style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}
-              >
+              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
                 <div className="text-xs font-semibold" style={{ color: C.muted }}>
                   % carteira inadimplente
                 </div>
@@ -1604,10 +1626,7 @@ export default function Relatorios() {
                 </div>
               </div>
 
-              <div
-                className="p-3 rounded-xl border"
-                style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}
-              >
+              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
                 <div className="text-xs font-semibold" style={{ color: C.muted }}>
                   Faixas de atraso
                 </div>
@@ -1680,11 +1699,12 @@ export default function Relatorios() {
                         if (!active || !payload?.length) return null;
                         const p: any = payload[0].payload;
                         return (
-                          <div className="rounded-xl border px-3 py-2 text-xs bg-white/90"
-                               style={{ borderColor: C.border, color: C.navy }}>
+                          <div className="rounded-xl border px-3 py-2 text-xs bg-white/90" style={{ borderColor: C.border, color: C.navy }}>
                             <div className="font-bold">{p.name}</div>
                             <div>Média: <b>{p.media}</b> dias</div>
-                            <div className="mt-2 font-semibold" style={{ color: C.muted }}>Amostras (proposta • prazo)</div>
+                            <div className="mt-2 font-semibold" style={{ color: C.muted }}>
+                              Amostras (proposta • prazo)
+                            </div>
                             <div className="mt-1 space-y-0.5">
                               {(p.sample || []).slice(0, 5).map((s: any, i: number) => (
                                 <div key={i}>{s.proposta} • <b>{s.dias} dias</b></div>
@@ -1720,11 +1740,12 @@ export default function Relatorios() {
                         if (!active || !payload?.length) return null;
                         const p: any = payload[0].payload;
                         return (
-                          <div className="rounded-xl border px-3 py-2 text-xs bg-white/90"
-                               style={{ borderColor: C.border, color: C.navy }}>
+                          <div className="rounded-xl border px-3 py-2 text-xs bg-white/90" style={{ borderColor: C.border, color: C.navy }}>
                             <div className="font-bold">{p.name}</div>
                             <div>Média: <b>{p.media}</b> dias</div>
-                            <div className="mt-2 font-semibold" style={{ color: C.muted }}>Amostras (proposta • prazo)</div>
+                            <div className="mt-2 font-semibold" style={{ color: C.muted }}>
+                              Amostras (proposta • prazo)
+                            </div>
                             <div className="mt-1 space-y-0.5">
                               {(p.sample || []).slice(0, 5).map((s: any, i: number) => (
                                 <div key={i}>{s.proposta} • <b>{s.dias} dias</b></div>
@@ -1779,14 +1800,14 @@ export default function Relatorios() {
                     <YAxis />
                     <RTooltip />
                     <Legend />
-                    <Bar dataKey="Livre" fill={C.navy} radius={[8, 8, 0, 0]}>
-                      <LabelList dataKey="Livre" position="top" />
+                    <Bar dataKey="Lance Livre" fill={C.navy} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Lance Livre" position="top" />
                     </Bar>
-                    <Bar dataKey="Primeiro Fixo" fill={C.gold} radius={[8, 8, 0, 0]}>
-                      <LabelList dataKey="Primeiro Fixo" position="top" />
+                    <Bar dataKey="Primeiro Lance Fixo" fill={C.gold} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Primeiro Lance Fixo" position="top" />
                     </Bar>
-                    <Bar dataKey="Segundo Fixo" fill={C.rubi} radius={[8, 8, 0, 0]}>
-                      <LabelList dataKey="Segundo Fixo" position="top" />
+                    <Bar dataKey="Segundo Lance Fixo" fill={C.rubi} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Segundo Lance Fixo" position="top" />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -1865,7 +1886,9 @@ export default function Relatorios() {
         <TabsContent value="carteira" className="space-y-3">
           <GlassCard>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base" style={{ color: C.navy }}>Série mensal (últimos 12 meses)</CardTitle>
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Série mensal (últimos 12 meses)
+              </CardTitle>
             </CardHeader>
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -1889,7 +1912,9 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>Distribuição da carteira ativa por segmento</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Distribuição da carteira ativa por segmento
+                </CardTitle>
               </CardHeader>
               <CardContent className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1911,7 +1936,9 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>Ranking por segmento</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Ranking por segmento
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
@@ -1930,7 +1957,7 @@ export default function Relatorios() {
           </div>
         </TabsContent>
 
-        {/* Concentração + Lorenz + Heat */}
+        {/* Concentração */}
         <TabsContent value="concentracao" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <GlassCard>
@@ -1943,11 +1970,11 @@ export default function Relatorios() {
             </GlassCard>
             <GlassCard>
               <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>% em concentrados</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(concKpis.acimaPct, 1)}</CardContent>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(concKpis.acimaPct, 2)}</CardContent>
             </GlassCard>
             <GlassCard>
               <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Maior concentração</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(concKpis.top1, 1)}</CardContent>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPctHuman(concKpis.top1, 2)}</CardContent>
             </GlassCard>
           </div>
 
@@ -1962,9 +1989,8 @@ export default function Relatorios() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="x" tickFormatter={(v) => `${Math.round(v * 100)}%`} />
                     <YAxis tickFormatter={(v) => `${Math.round(v * 100)}%`} domain={[0, 1]} />
-                    <RTooltip formatter={(v: any) => fmtPctHuman(safeNum(v), 1)} />
+                    <RTooltip formatter={(v: any) => fmtPctHuman(safeNum(v), 2)} />
                     <Area type="monotone" dataKey="y" stroke={C.navy} fill={C.gold} fillOpacity={0.25} />
-                    {/* linha de igualdade 45° */}
                     <Line type="linear" data={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} dataKey="y" stroke={C.rubi} dot={false} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -1973,7 +1999,9 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>Heatmap de distribuição (faixas de concentração)</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Heatmap de distribuição (faixas de concentração)
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
@@ -1999,21 +2027,39 @@ export default function Relatorios() {
           <GlassCard>
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
-                <span>Pareto de Concentração (Top 10 vs Resto)</span>
+                <span>Concentração - Top 10</span>
                 <div className="flex items-center gap-2">
-                  <Badge tone="info">Top 10: {fmtPctHuman(paretoData.sumTop10, 1)}</Badge>
-                  <Badge tone="muted">Resto: {fmtPctHuman(paretoData.restoPct, 1)}</Badge>
+                  <Badge tone="info">Top 10: {fmtPctHuman(paretoData.sumTop10, 2)}</Badge>
+                  <Badge tone="muted">Resto: {fmtPctHuman(paretoData.restoPct, 2)}</Badge>
                 </div>
               </CardTitle>
             </CardHeader>
+
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={paretoData.rows}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" interval={0} tick={{ fontSize: 11 }} />
-                  <YAxis yAxisId="left" tickFormatter={(v) => `${v.toFixed(0)}%`} domain={[0, 100]} />
-                  <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${v.toFixed(0)}%`} domain={[0, 100]} />
-                  <RTooltip />
+                  <YAxis
+                    yAxisId="left"
+                    tickFormatter={(v) => fmtPct100Human(Number(v), 2)}
+                    domain={[0, 100]}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tickFormatter={(v) => fmtPct100Human(Number(v), 2)}
+                    domain={[0, 100]}
+                  />
+                  <RTooltip
+                    formatter={(v: any, n: any) => {
+                      const name = String(n);
+                      if (name === "Participação" || name === "Acumulado") {
+                        return [fmtPct100Human(Number(v), 2), name];
+                      }
+                      return [v, name];
+                    }}
+                  />
                   <Legend />
                   <Bar yAxisId="left" dataKey="pct100" name="Participação" fill={C.navy} radius={[8, 8, 0, 0]} />
                   <Line yAxisId="right" dataKey="cum100" name="Acumulado" stroke={C.gold} strokeWidth={3} dot={false} />
@@ -2085,7 +2131,7 @@ export default function Relatorios() {
 
                               <td className="py-2 text-right">
                                 <Badge tone={row.alerta ? "danger" : "info"}>
-                                  {fmtPctHuman(row.pct, 1)}
+                                  {fmtPctHuman(row.pct, 2)}
                                 </Badge>
                               </td>
 
@@ -2173,7 +2219,7 @@ export default function Relatorios() {
                           <span>Carteira ativa do cliente:</span>
                           <span className="font-bold" style={{ color: C.navy }}>{fmtBRL(leadDialogAtivoTotal)}</span>
                           <Badge tone={leadDialogPct >= CONCENTRACAO_ALERTA ? "danger" : "info"}>
-                            {fmtPctHuman(leadDialogPct, 1)} da carteira
+                            {fmtPctHuman(leadDialogPct, 2)} da carteira
                           </Badge>
                           {leadDialogPct >= CONCENTRACAO_ALERTA ? (
                             <Badge tone="danger">Cliente concentrado (≥ 10%)</Badge>
@@ -2216,7 +2262,17 @@ export default function Relatorios() {
                             <td className="py-2">{v.tabela || "—"}</td>
                             <td className="py-2">{vendorName(v.vendedor_id)}</td>
                             <td className="py-2">
-                              <Badge tone={getStatus(v) === "Cancelada" ? "danger" : getStatus(v) === "Inadimplente" ? "danger" : getStatus(v) === "Contemplada" ? "info" : "ok"}>
+                              <Badge
+                                tone={
+                                  getStatus(v) === "Cancelada"
+                                    ? "danger"
+                                    : getStatus(v) === "Inadimplente"
+                                    ? "danger"
+                                    : getStatus(v) === "Contemplada"
+                                    ? "info"
+                                    : "ok"
+                                }
+                              >
                                 {getStatus(v)}
                               </Badge>
                             </td>

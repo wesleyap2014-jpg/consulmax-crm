@@ -13,12 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { Loader2, RefreshCw, AlertTriangle, CheckCircle2, Eye } from "lucide-react";
 
@@ -54,7 +49,7 @@ const C = {
 const CONCENTRACAO_ALERTA = 0.10; // 10%
 
 /* =========================
-   Tipos (baseados nos prints)
+   Tipos
 ========================= */
 type UUID = string;
 
@@ -66,7 +61,7 @@ type VendaRow = {
   segmento: string | null;
   tabela: string | null;
 
-  tipo_venda: "Normal" | "Contemplada" | "Bolsão" | string | null; // tipo_venda
+  tipo_venda: "Normal" | "Contemplada" | "Bolsão" | string | null;
   contemplada: boolean | null;
 
   encarteirada_em: string | null; // timestamptz
@@ -74,15 +69,15 @@ type VendaRow = {
   codigo: string | null; // '00' ativa
 
   data_contemplacao: string | null; // date
-  valor_venda: number | null;
+  valor_venda: number | string | null;
 
-  lead_id: UUID | null; // uuid (link para public.leads.id)
-  cliente_lead_id?: UUID | null; // existe no schema, mas parece não estar usando
+  lead_id: UUID | null;
+  cliente_lead_id?: UUID | null;
 
   grupo?: string | null;
   cota?: string | null;
 
-  inad?: boolean | null; // bool
+  inad?: boolean | null;
 };
 
 type LeadRow = {
@@ -95,9 +90,9 @@ type LeadRow = {
 
 type UserRow = {
   auth_user_id: UUID;
-  name: string | null;
-  user_role?: string | null; // admin/vendedor
-  role?: string | null; // alias
+  nome: string | null;
+  user_role?: string | null; // text
+  role?: string | null; // enum/text (compat)
   is_active?: boolean | null;
 };
 
@@ -105,7 +100,7 @@ type UserRow = {
    Helpers
 ========================= */
 function safeNum(n: any): number {
-  const v = Number(n);
+  const v = typeof n === "string" ? Number(String(n).replace(",", ".")) : Number(n);
   return Number.isFinite(v) ? v : 0;
 }
 
@@ -117,13 +112,34 @@ function fmtBRL(v: number) {
   }
 }
 
-function fmtPct(p: number, digits = 1) {
+// pct em 0..1
+function fmtPct01(p: number, digits = 1) {
   const v = Number.isFinite(p) ? p : 0;
-  return `${(v * 100).toFixed(digits)}%`;
+  const n = v * 100;
+  try {
+    return `${n.toLocaleString("pt-BR", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })}%`;
+  } catch {
+    return `${n.toFixed(digits)}%`;
+  }
+}
+
+// pct em 0..100
+function fmtPct100(p100: number, digits = 2) {
+  const v = Number.isFinite(p100) ? p100 : 0;
+  try {
+    return `${v.toLocaleString("pt-BR", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })}%`;
+  } catch {
+    return `${v.toFixed(digits)}%`;
+  }
 }
 
 function isoLocalStart(dateStr: string) {
-  // dateStr = YYYY-MM-DD
   const [y, m, d] = dateStr.split("-").map(Number);
   const dt = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
   return dt.toISOString();
@@ -136,7 +152,6 @@ function isoLocalEnd(dateStr: string) {
 
 function monthKeyFromISO(iso: string | null) {
   if (!iso) return null;
-  // pega YYYY-MM
   const m = iso.slice(0, 7);
   return /^\d{4}-\d{2}$/.test(m) ? m : null;
 }
@@ -160,7 +175,7 @@ function diffDays(aIso: string, bIso: string) {
 
 function getSemesterRange(date: Date) {
   const y = date.getFullYear();
-  const m = date.getMonth(); // 0-11
+  const m = date.getMonth();
   const isH1 = m <= 5;
   const start = new Date(y, isH1 ? 0 : 6, 1, 0, 0, 0, 0);
   const end = new Date(y, isH1 ? 5 : 11, isH1 ? 30 : 31, 23, 59, 59, 999);
@@ -171,6 +186,11 @@ function addMonths(d: Date, months: number) {
   const dt = new Date(d);
   dt.setMonth(dt.getMonth() + months);
   return dt;
+}
+
+function shortId(id: string) {
+  if (!id) return "—";
+  return `${id.slice(0, 6)}…${id.slice(-4)}`;
 }
 
 /* =========================
@@ -244,8 +264,8 @@ function Badge({
    Página
 ========================= */
 export default function Relatorios() {
-  // filtros globais (auto-aplicáveis)
-  const [dateStart, setDateStart] = useState<string>(""); // YYYY-MM-DD
+  // filtros globais
+  const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
 
   const [fVendedor, setFVendedor] = useState<string>("all");
@@ -259,6 +279,7 @@ export default function Relatorios() {
   const [loading, setLoading] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [roleReady, setRoleReady] = useState(false);
 
   const [vendas, setVendas] = useState<VendaRow[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, UserRow>>({});
@@ -273,26 +294,32 @@ export default function Relatorios() {
   const concPageSize = 10;
 
   /* =========================
-     Carrega auth + role
+     Auth + Role (FIX: usa coluna "nome")
+     - Admin vê tudo e pode selecionar vendedor
+     - Vendedor vê só suas vendas
   ========================= */
   useEffect(() => {
     let alive = true;
     (async () => {
+      setRoleReady(false);
       try {
         const { data, error } = await supabase.auth.getUser();
         if (!alive) return;
+
         if (error || !data?.user) {
           setAuthUserId(null);
           setIsAdmin(false);
+          setRoleReady(true);
           return;
         }
+
         const uid = data.user.id;
         setAuthUserId(uid);
 
         // identifica se é admin via public.users
         const { data: urow, error: uerr } = await supabase
           .from("users")
-          .select("auth_user_id, name, user_role, role, is_active")
+          .select("auth_user_id, nome, user_role, role, is_active")
           .eq("auth_user_id", uid)
           .maybeSingle();
 
@@ -301,27 +328,45 @@ export default function Relatorios() {
         if (uerr) {
           console.error("Erro ao carregar role do usuário:", uerr.message);
           setIsAdmin(false);
+          setRoleReady(true);
           return;
         }
 
-        const role = (urow?.user_role || urow?.role || "").toString().toLowerCase();
+        const role = (urow?.user_role || urow?.role || "")
+          .toString()
+          .toLowerCase()
+          .trim();
+
         setIsAdmin(role === "admin");
+        setRoleReady(true);
       } catch (e) {
         console.error("Erro ao identificar usuário:", e);
         if (!alive) return;
         setAuthUserId(null);
         setIsAdmin(false);
+        setRoleReady(true);
       }
     })();
+
     return () => {
       alive = false;
     };
   }, []);
 
+  // Ajusta filtro vendedor padrão conforme perfil (sem “travar” admin)
+  useEffect(() => {
+    if (!roleReady) return;
+    if (!authUserId) return;
+
+    if (isAdmin) setFVendedor("all");
+    else setFVendedor(authUserId);
+  }, [roleReady, isAdmin, authUserId]);
+
   /* =========================
      Fetch principal (vendas)
      - Admin vê tudo
      - Não-admin vê apenas suas vendas (vendedor_id = auth.user.id)
+     FIX: users select usa "nome" (não "name") -> vendedor deixa de aparecer "-"
   ========================= */
   async function fetchAll() {
     setLoading(true);
@@ -329,11 +374,12 @@ export default function Relatorios() {
       // 1) carrega users para map (nome do vendedor)
       const { data: usersData, error: usersErr } = await supabase
         .from("users")
-        .select("auth_user_id, name, user_role, role, is_active")
-        .order("name", { ascending: true });
+        .select("auth_user_id, nome, user_role, role, is_active")
+        .order("nome", { ascending: true });
 
       if (usersErr) {
         console.error("Erro users:", usersErr.message);
+        setUsersMap({});
       } else {
         const map: Record<string, UserRow> = {};
         (usersData || []).forEach((u: any) => {
@@ -343,7 +389,6 @@ export default function Relatorios() {
       }
 
       // 2) carrega vendas (base)
-      // performance: se não tiver período, carrega últimos 24 meses
       const now = new Date();
       const defaultMin = addMonths(now, -24).toISOString();
 
@@ -377,10 +422,11 @@ export default function Relatorios() {
         q = q.eq("vendedor_id", authUserId);
       }
 
-      // aplica um mínimo de data por performance (se não informarem período)
+      // mínimo por performance
       q = q.gte("encarteirada_em", defaultMin);
 
       const { data: vendasData, error: vendasErr } = await q;
+
       if (vendasErr) {
         console.error("Erro vendas:", vendasErr.message);
         setVendas([]);
@@ -392,9 +438,7 @@ export default function Relatorios() {
       setVendas(list);
 
       // 3) carrega leads usados nas vendas
-      const leadIds = Array.from(
-        new Set(list.map((v) => v.lead_id).filter(Boolean) as string[])
-      );
+      const leadIds = Array.from(new Set(list.map((v) => v.lead_id).filter(Boolean) as string[]));
 
       if (leadIds.length) {
         const chunkSize = 200;
@@ -424,13 +468,13 @@ export default function Relatorios() {
   }
 
   useEffect(() => {
-    // só busca quando já sabemos o auth/role
-    if (authUserId === null && !isAdmin) return;
-    // authUserId pode ser null (caso de erro) -> ainda assim tenta? melhor não.
+    // só busca quando já sabemos auth + role (evita buscar como vendedor e “travando” admin)
+    if (!roleReady) return;
     if (!authUserId) return;
+
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUserId, isAdmin]);
+  }, [roleReady, authUserId, isAdmin]);
 
   /* =========================
      Filtros (em memória)
@@ -438,7 +482,6 @@ export default function Relatorios() {
   const filtered = useMemo(() => {
     let rows = vendas.slice();
 
-    // período (encarteirada_em)
     if (dateStart) {
       const s = isoLocalStart(dateStart);
       rows = rows.filter((v) => (v.encarteirada_em ? v.encarteirada_em >= s : false));
@@ -453,23 +496,14 @@ export default function Relatorios() {
     if (fSeg !== "all") rows = rows.filter((v) => (v.segmento || "") === fSeg);
     if (fTabela !== "all") rows = rows.filter((v) => (v.tabela || "") === fTabela);
     if (fTipoVenda !== "all") rows = rows.filter((v) => (v.tipo_venda || "") === fTipoVenda);
+
     if (fContemplada !== "all") {
       const want = fContemplada === "sim";
       rows = rows.filter((v) => Boolean(v.contemplada) === want);
     }
 
     return rows;
-  }, [
-    vendas,
-    dateStart,
-    dateEnd,
-    fVendedor,
-    fAdmin,
-    fSeg,
-    fTabela,
-    fTipoVenda,
-    fContemplada,
-  ]);
+  }, [vendas, dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
 
   // reset paginação concentração quando filtros mudam
   useEffect(() => {
@@ -514,9 +548,7 @@ export default function Relatorios() {
   ========================= */
   const totalsCarteira = useMemo(() => {
     const vendido = filtered.reduce((s, v) => s + safeNum(v.valor_venda), 0);
-    const cancelado = filtered
-      .filter(isCanceled)
-      .reduce((s, v) => s + safeNum(v.valor_venda), 0);
+    const cancelado = filtered.filter(isCanceled).reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const ativoValue = filtered.filter(isActive).reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const inadValue = filtered
       .filter((v) => isActive(v) && Boolean(v.inad))
@@ -533,10 +565,7 @@ export default function Relatorios() {
   }, [filtered]);
 
   /* =========================
-     Inadimplência 12-6 (jan-jun / jul-dez)
-     Implementação: janela de cancelamento
-     - "Semestre atual"  = cancelamentos neste semestre / vendas do semestre anterior
-     - "Semestre anterior" = cancelamentos no semestre anterior / vendas do semestre anterior ao anterior
+     Inadimplência 12-6
   ========================= */
   const inad126 = useMemo(() => {
     const now = new Date();
@@ -550,19 +579,11 @@ export default function Relatorios() {
       return t >= start.getTime() && t <= end.getTime();
     };
 
-    // cohort (vendidos) = encarteiradas no semestre anterior
     const soldPrev = filtered.filter((v) => inRange(v.encarteirada_em, semPrev.start, semPrev.end));
-    const canceledInNowFromPrev = soldPrev.filter((v) =>
-      inRange(v.cancelada_em, semNow.start, semNow.end)
-    );
+    const canceledInNowFromPrev = soldPrev.filter((v) => inRange(v.cancelada_em, semNow.start, semNow.end));
 
-    // cohort (vendidos) = encarteiradas no semestre anterior ao anterior
-    const soldPrevPrev = filtered.filter((v) =>
-      inRange(v.encarteirada_em, semPrevPrev.start, semPrevPrev.end)
-    );
-    const canceledInPrevFromPrevPrev = soldPrevPrev.filter((v) =>
-      inRange(v.cancelada_em, semPrev.start, semPrev.end)
-    );
+    const soldPrevPrev = filtered.filter((v) => inRange(v.encarteirada_em, semPrevPrev.start, semPrevPrev.end));
+    const canceledInPrevFromPrevPrev = soldPrevPrev.filter((v) => inRange(v.cancelada_em, semPrev.start, semPrev.end));
 
     const mk = (sold: VendaRow[], canceled: VendaRow[]) => {
       const soldCount = sold.length;
@@ -575,11 +596,7 @@ export default function Relatorios() {
       nowLabel: semNow.label,
       prevLabel: semPrev.label,
       prevPrevLabel: semPrevPrev.label,
-
-      // "Semestre atual" (janela atual, coorte anterior)
       currentWindow: mk(soldPrev, canceledInNowFromPrev),
-
-      // "Semestre anterior" (janela anterior, coorte anterior ao anterior)
       previousWindow: mk(soldPrevPrev, canceledInPrevFromPrevPrev),
     };
   }, [filtered]);
@@ -591,7 +608,6 @@ export default function Relatorios() {
     const rows = filtered.filter((v) => v.encarteirada_em && v.data_contemplacao);
     const days = rows
       .map((v) => {
-        // data_contemplacao é date => converte pra ISO local (meia-noite)
         const dc = v.data_contemplacao ? `${v.data_contemplacao}T00:00:00.000Z` : null;
         if (!dc || !v.encarteirada_em) return 0;
         return diffDays(v.encarteirada_em, dc);
@@ -660,11 +676,8 @@ export default function Relatorios() {
 
   /* =========================
      Carteira série mensal (12 meses)
-     vendido: encarteirada_em
-     cancelado: cancelada_em
   ========================= */
   const carteiraSerie = useMemo(() => {
-    // últimos 12 meses a partir de agora (chaves YYYY-MM)
     const now = new Date();
     const keys: string[] = [];
     for (let i = 11; i >= 0; i--) {
@@ -688,12 +701,7 @@ export default function Relatorios() {
     return keys.map((k) => {
       const vendido = map[k]?.vendido || 0;
       const cancelado = map[k]?.cancelado || 0;
-      return {
-        mes: k,
-        vendido,
-        cancelado,
-        liquido: vendido - cancelado,
-      };
+      return { mes: k, vendido, cancelado, liquido: vendido - cancelado };
     });
   }, [filtered]);
 
@@ -709,28 +717,17 @@ export default function Relatorios() {
 
     const total = Object.values(by).reduce((s, x) => s + x, 0);
     const rows = Object.entries(by)
-      .map(([name, value]) => ({
-        name,
-        value,
-        pct: total > 0 ? value / total : 0,
-      }))
+      .map(([name, value]) => ({ name, value, pct: total > 0 ? value / total : 0 }))
       .sort((a, b) => b.value - a.value);
 
     return { rows, total };
   }, [filtered]);
 
   /* =========================
-     CONCENTRAÇÃO (o que você pediu)
-     - base: carteira ativa
-     - share por cliente: soma(valor_venda ativa do lead) / total carteira ativa
-     - alerta >= 10%
-     - Pareto Top10 vs Resto
+     CONCENTRAÇÃO
   ========================= */
   const concRows = useMemo(() => {
-    const byLead: Record<
-      string,
-      { lead_id: string; value: number; count: number; sellers: Set<string> }
-    > = {};
+    const byLead: Record<string, { lead_id: string; value: number; count: number; sellers: Set<string> }> = {};
 
     const ativos = filtered.filter(isActive);
     for (const v of ativos) {
@@ -747,11 +744,7 @@ export default function Relatorios() {
     return Object.values(byLead)
       .map((x) => {
         const pct = ativoTotal > 0 ? x.value / ativoTotal : 0;
-        return {
-          ...x,
-          pct,
-          alerta: pct >= CONCENTRACAO_ALERTA,
-        };
+        return { ...x, pct, alerta: pct >= CONCENTRACAO_ALERTA };
       })
       .sort((a, b) => b.value - a.value);
   }, [filtered, totalsCarteira.ativoValue]);
@@ -760,11 +753,7 @@ export default function Relatorios() {
     const acima = concRows.filter((x) => x.alerta);
     const acimaPct = acima.reduce((s, x) => s + x.pct, 0);
     const top1 = concRows[0]?.pct || 0;
-    return {
-      acimaCount: acima.length,
-      acimaPct,
-      top1,
-    };
+    return { acimaCount: acima.length, acimaPct, top1 };
   }, [concRows]);
 
   const paretoData = useMemo(() => {
@@ -776,8 +765,8 @@ export default function Relatorios() {
     const rows = top10.map((r) => {
       cum += r.pct;
       const lead = leadsMap[r.lead_id];
-      const label =
-        (lead?.nome || "Cliente").toString().slice(0, 18) + ((lead?.nome || "").length > 18 ? "…" : "");
+      const nm = (lead?.nome || "Cliente").toString();
+      const label = nm.slice(0, 18) + (nm.length > 18 ? "…" : "");
       return {
         name: label,
         pct: r.pct,
@@ -787,7 +776,6 @@ export default function Relatorios() {
       };
     });
 
-    // adiciona "Resto"
     const cumFinal = Math.min(1, cum + restoPct);
     rows.push({
       name: "Resto",
@@ -822,7 +810,9 @@ export default function Relatorios() {
   ========================= */
   const vendorName = (authId: string | null) => {
     if (!authId) return "—";
-    return usersMap[authId]?.name || "—";
+    const u = usersMap[authId];
+    const nm = (u?.nome || "").toString().trim();
+    return nm ? nm : shortId(authId);
   };
 
   const leadName = (lid: string | null) => {
@@ -830,12 +820,7 @@ export default function Relatorios() {
     return leadsMap[lid]?.nome || lid;
   };
 
-  const vendedorSelectDisabled = !isAdmin; // vendedor não pode ver outros
-  useEffect(() => {
-    if (!isAdmin && authUserId) {
-      setFVendedor(authUserId);
-    }
-  }, [isAdmin, authUserId]);
+  const vendedorSelectDisabled = !isAdmin;
 
   const concTotalPages = Math.max(1, Math.ceil(concRows.length / concPageSize));
   const concSlice = concRows.slice((concPage - 1) * concPageSize, concPage * concPageSize);
@@ -852,18 +837,26 @@ export default function Relatorios() {
             Indicadores e análises da Consulmax (filtros auto-aplicáveis).
           </p>
           <div className="mt-2 flex items-center gap-2 flex-wrap">
-            {isAdmin ? <Badge tone="ok">Perfil: Admin (vê tudo)</Badge> : <Badge tone="info">Perfil: Vendedor (somente suas vendas)</Badge>}
-            <Badge tone="muted">Concentração: alerta ≥ {fmtPct(CONCENTRACAO_ALERTA, 0)}</Badge>
+            {isAdmin ? (
+              <Badge tone="ok">Perfil: Admin (vê tudo)</Badge>
+            ) : (
+              <Badge tone="info">Perfil: Vendedor (somente suas vendas)</Badge>
+            )}
+            <Badge tone="muted">Concentração: alerta ≥ {fmtPct01(CONCENTRACAO_ALERTA, 0)}</Badge>
           </div>
         </div>
 
         <Button
           variant="outline"
           onClick={fetchAll}
-          disabled={loading || !authUserId}
+          disabled={loading || !authUserId || !roleReady}
           className="rounded-xl"
         >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+          ) : (
+            <RefreshCw className="h-4 w-4 mr-2" />
+          )}
           Atualizar
         </Button>
       </div>
@@ -881,22 +874,24 @@ export default function Relatorios() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
             <div className="space-y-1">
-              <div className="text-xs font-semibold" style={{ color: C.muted }}>Início</div>
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Início
+              </div>
               <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} />
             </div>
 
             <div className="space-y-1">
-              <div className="text-xs font-semibold" style={{ color: C.muted }}>Fim</div>
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Fim
+              </div>
               <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
             </div>
 
             <div className="space-y-1">
-              <div className="text-xs font-semibold" style={{ color: C.muted }}>Vendedor</div>
-              <Select
-                value={fVendedor}
-                onValueChange={setFVendedor}
-                disabled={vendedorSelectDisabled}
-              >
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Vendedor
+              </div>
+              <Select value={fVendedor} onValueChange={setFVendedor} disabled={vendedorSelectDisabled}>
                 <SelectTrigger className="rounded-xl">
                   <SelectValue placeholder="Todos" />
                 </SelectTrigger>
@@ -917,7 +912,9 @@ export default function Relatorios() {
             </div>
 
             <div className="space-y-1">
-              <div className="text-xs font-semibold" style={{ color: C.muted }}>Administradora</div>
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Administradora
+              </div>
               <Select value={fAdmin} onValueChange={setFAdmin}>
                 <SelectTrigger className="rounded-xl">
                   <SelectValue placeholder="Todas" />
@@ -934,7 +931,9 @@ export default function Relatorios() {
             </div>
 
             <div className="space-y-1">
-              <div className="text-xs font-semibold" style={{ color: C.muted }}>Segmento</div>
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Segmento
+              </div>
               <Select value={fSeg} onValueChange={setFSeg}>
                 <SelectTrigger className="rounded-xl">
                   <SelectValue placeholder="Todos" />
@@ -951,7 +950,9 @@ export default function Relatorios() {
             </div>
 
             <div className="space-y-1">
-              <div className="text-xs font-semibold" style={{ color: C.muted }}>Tabela</div>
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Tabela
+              </div>
               <Select value={fTabela} onValueChange={setFTabela}>
                 <SelectTrigger className="rounded-xl">
                   <SelectValue placeholder="Todas" />
@@ -968,7 +969,9 @@ export default function Relatorios() {
             </div>
 
             <div className="space-y-1 md:col-span-2">
-              <div className="text-xs font-semibold" style={{ color: C.muted }}>Tipo de venda</div>
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Tipo de venda
+              </div>
               <Select value={fTipoVenda} onValueChange={setFTipoVenda}>
                 <SelectTrigger className="rounded-xl">
                   <SelectValue placeholder="Todos" />
@@ -985,7 +988,9 @@ export default function Relatorios() {
             </div>
 
             <div className="space-y-1 md:col-span-2">
-              <div className="text-xs font-semibold" style={{ color: C.muted }}>Contemplada</div>
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Contemplada
+              </div>
               <Select value={fContemplada} onValueChange={setFContemplada}>
                 <SelectTrigger className="rounded-xl">
                   <SelectValue placeholder="Todas" />
@@ -1025,7 +1030,9 @@ export default function Relatorios() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <GlassCard>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm" style={{ color: C.muted }}>Carteira ativa</CardTitle>
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Carteira ativa
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
             {fmtBRL(totalsCarteira.ativoValue)}
@@ -1034,7 +1041,9 @@ export default function Relatorios() {
 
         <GlassCard>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm" style={{ color: C.muted }}>Total vendido (filtro)</CardTitle>
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Total vendido (filtro)
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
             {fmtBRL(totalsCarteira.vendido)}
@@ -1043,7 +1052,9 @@ export default function Relatorios() {
 
         <GlassCard>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm" style={{ color: C.muted }}>Total cancelado (filtro)</CardTitle>
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Total cancelado (filtro)
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
             {fmtBRL(totalsCarteira.cancelado)}
@@ -1052,10 +1063,12 @@ export default function Relatorios() {
 
         <GlassCard>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm" style={{ color: C.muted }}>Carteira inadimplente</CardTitle>
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Carteira inadimplente
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
-            {fmtPct(totalsCarteira.inadPct, 1)}
+            {fmtPct01(totalsCarteira.inadPct, 1)}
           </CardContent>
           <div className="px-6 pb-4 text-xs" style={{ color: C.muted }}>
             Base: vendas ativas com <b>inad = true</b>
@@ -1122,14 +1135,7 @@ export default function Relatorios() {
                   <CardContent className="h-[240px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie
-                          data={pieData}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius={60}
-                          outerRadius={85}
-                          paddingAngle={2}
-                        >
+                        <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={85} paddingAngle={2}>
                           <Cell fill={C.navy} />
                           <Cell fill={C.rubi} />
                         </Pie>
@@ -1138,9 +1144,15 @@ export default function Relatorios() {
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="mt-3 flex items-center justify-between text-sm" style={{ color: C.navy }}>
-                      <span>Vendido: <b>{x.sold}</b></span>
-                      <span>Cancelado: <b>{x.canceled}</b></span>
-                      <span>%: <b>{fmtPct(x.pct, 1)}</b></span>
+                      <span>
+                        Vendido: <b>{x.sold}</b>
+                      </span>
+                      <span>
+                        Cancelado: <b>{x.canceled}</b>
+                      </span>
+                      <span>
+                        %: <b>{fmtPct01(x.pct, 1)}</b>
+                      </span>
                     </div>
                   </CardContent>
                 </GlassCard>
@@ -1162,9 +1174,11 @@ export default function Relatorios() {
             </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
-                <div className="text-xs font-semibold" style={{ color: C.muted }}>KPI % carteira inadimplente</div>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  KPI % carteira inadimplente
+                </div>
                 <div className="text-3xl font-extrabold mt-1" style={{ color: C.navy }}>
-                  {fmtPct(totalsCarteira.inadPct, 1)}
+                  {fmtPct01(totalsCarteira.inadPct, 1)}
                 </div>
                 <div className="text-xs mt-1" style={{ color: C.muted }}>
                   Inadimplente: {fmtBRL(totalsCarteira.inadValue)} / Ativo: {fmtBRL(totalsCarteira.ativoValue)}
@@ -1172,7 +1186,9 @@ export default function Relatorios() {
               </div>
 
               <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
-                <div className="text-xs font-semibold" style={{ color: C.muted }}>Aging (placeholder)</div>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  Aging (placeholder)
+                </div>
                 <div className="text-xs mt-2" style={{ color: C.muted }}>
                   TODO: criar/ligar uma fonte com “dias em atraso” (ex.: primeira parcela em atraso / data_ultimo_pagamento / tabela específica).
                 </div>
@@ -1206,7 +1222,9 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Média (dias)</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Média (dias)
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.mean || 0)}
@@ -1215,7 +1233,9 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Mediana P50 (dias)</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Mediana P50 (dias)
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.p50 || 0)}
@@ -1224,7 +1244,9 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>P75 (dias)</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  P75 (dias)
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {Math.round(prazo.p75 || 0)}
@@ -1235,7 +1257,9 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>Prazo por segmento (média)</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Prazo por segmento (média)
+                </CardTitle>
               </CardHeader>
               <CardContent className="h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1252,7 +1276,9 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>Prazo por administradora (média)</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Prazo por administradora (média)
+                </CardTitle>
               </CardHeader>
               <CardContent className="h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1273,26 +1299,55 @@ export default function Relatorios() {
         <TabsContent value="clientes" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Total de clientes</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.total}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Total de clientes
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.total}
+              </CardContent>
             </GlassCard>
+
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Clientes ativos</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.ativos}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Clientes ativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.ativos}
+              </CardContent>
             </GlassCard>
+
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>Clientes inativos</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{clientes.inativos}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Clientes inativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.inativos}
+              </CardContent>
             </GlassCard>
+
             <GlassCard>
-              <CardHeader className="pb-2"><CardTitle className="text-sm" style={{ color: C.muted }}>% que permanecem ativos</CardTitle></CardHeader>
-              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>{fmtPct(clientes.pctAtivos, 1)}</CardContent>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  % que permanecem ativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPct01(clientes.pctAtivos, 1)}
+              </CardContent>
             </GlassCard>
           </div>
 
           <GlassCard>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base" style={{ color: C.navy }}>Resumo</CardTitle>
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Resumo
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -1318,7 +1373,7 @@ export default function Relatorios() {
                     </tr>
                     <tr className="border-t" style={{ borderColor: C.border }}>
                       <td className="py-2">% ativos</td>
-                      <td className="py-2 text-right font-bold">{fmtPct(clientes.pctAtivos, 1)}</td>
+                      <td className="py-2 text-right font-bold">{fmtPct01(clientes.pctAtivos, 1)}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1331,7 +1386,9 @@ export default function Relatorios() {
         <TabsContent value="carteira" className="space-y-3">
           <GlassCard>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base" style={{ color: C.navy }}>Série mensal (últimos 12 meses)</CardTitle>
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Série mensal (últimos 12 meses)
+              </CardTitle>
             </CardHeader>
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -1355,25 +1412,19 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>Distribuição da carteira ativa por segmento</CardTitle>
-                <div className="text-xs" style={{ color: C.muted }}>Base: vendas ativas (codigo='00' e não cancelada)</div>
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Distribuição da carteira ativa por segmento
+                </CardTitle>
+                <div className="text-xs" style={{ color: C.muted }}>
+                  Base: vendas ativas (codigo='00' e não cancelada)
+                </div>
               </CardHeader>
               <CardContent className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie
-                      data={distSegmento.rows}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={65}
-                      outerRadius={95}
-                      paddingAngle={2}
-                    >
+                    <Pie data={distSegmento.rows} dataKey="value" nameKey="name" innerRadius={65} outerRadius={95} paddingAngle={2}>
                       {distSegmento.rows.map((_, idx) => (
-                        <Cell
-                          key={idx}
-                          fill={[C.navy, C.rubi, C.gold, "#2B3A55", "#8E7A3B", "#4D0E16"][idx % 6]}
-                        />
+                        <Cell key={idx} fill={[C.navy, C.rubi, C.gold, "#2B3A55", "#8E7A3B", "#4D0E16"][idx % 6]} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
@@ -1385,16 +1436,22 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base" style={{ color: C.navy }}>Ranking por segmento</CardTitle>
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Ranking por segmento
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
                   {distSegmento.rows.slice(0, 10).map((r) => (
                     <div key={r.name} className="flex items-center justify-between gap-3">
-                      <div className="font-semibold truncate" style={{ color: C.navy }}>{r.name}</div>
+                      <div className="font-semibold truncate" style={{ color: C.navy }}>
+                        {r.name}
+                      </div>
                       <div className="flex items-center gap-2">
-                        <Badge tone="info">{fmtPct(r.pct, 1)}</Badge>
-                        <div className="font-bold" style={{ color: C.navy }}>{fmtBRL(r.value)}</div>
+                        <Badge tone="info">{fmtPct01(r.pct, 1)}</Badge>
+                        <div className="font-bold" style={{ color: C.navy }}>
+                          {fmtBRL(r.value)}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1410,16 +1467,20 @@ export default function Relatorios() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Corte (alerta)</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Corte (alerta)
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {fmtPct(CONCENTRACAO_ALERTA, 0)}
+                {fmtPct01(CONCENTRACAO_ALERTA, 0)}
               </CardContent>
             </GlassCard>
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Clientes concentrados</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Clientes concentrados
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
                 {concKpis.acimaCount}
@@ -1428,19 +1489,23 @@ export default function Relatorios() {
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>% da carteira em concentrados</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  % da carteira em concentrados
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {fmtPct(concKpis.acimaPct, 1)}
+                {fmtPct01(concKpis.acimaPct, 1)}
               </CardContent>
             </GlassCard>
 
             <GlassCard>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm" style={{ color: C.muted }}>Maior concentração (Top 1)</CardTitle>
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Maior concentração (Top 1)
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
-                {fmtPct(concKpis.top1, 1)}
+                {fmtPct01(concKpis.top1, 1)}
               </CardContent>
             </GlassCard>
           </div>
@@ -1451,29 +1516,43 @@ export default function Relatorios() {
               <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
                 <span>Pareto de Concentração (Top 10 vs Resto)</span>
                 <div className="flex items-center gap-2">
-                  <Badge tone="info">Top 10: {fmtPct(paretoData.sumTop10, 1)}</Badge>
-                  <Badge tone="muted">Resto: {fmtPct(paretoData.restoPct, 1)}</Badge>
+                  <Badge tone="info">Top 10: {fmtPct01(paretoData.sumTop10, 1)}</Badge>
+                  <Badge tone="muted">Resto: {fmtPct01(paretoData.restoPct, 1)}</Badge>
                 </div>
               </CardTitle>
               <div className="text-xs" style={{ color: C.muted }}>
-                Barras = participação (%) • Linha = acumulado (%)
+                Barras = participação (%) • Linha = acumulado (%) — <b>formato humano (2 casas)</b>
               </div>
             </CardHeader>
+
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={paretoData.rows}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" interval={0} tick={{ fontSize: 11 }} />
-                  <YAxis yAxisId="left" tickFormatter={(v) => `${v}%`} />
-                  <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
+                  <YAxis
+                    yAxisId="left"
+                    tickFormatter={(v: any) => fmtPct100(Number(v) || 0, 2)}
+                    domain={[0, (dataMax: number) => Math.max(10, Math.ceil(dataMax / 5) * 5)]}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    domain={[0, 100]}
+                    tickFormatter={(v: any) => fmtPct100(Number(v) || 0, 2)}
+                  />
                   <Tooltip
-                    formatter={(v: any, k: any) => {
-                      if (k === "pct100") return [`${Number(v).toFixed(1)}%`, "Participação"];
-                      if (k === "cum100") return [`${Number(v).toFixed(1)}%`, "Acumulado"];
-                      return [v, k];
+                    formatter={(value: any, name: any) => {
+                      const v = Number(value) || 0;
+                      // FIX: usa o "name" (series name), não o dataKey
+                      if (name === "Participação" || name === "Acumulado") {
+                        return [fmtPct100(v, 2), name];
+                      }
+                      return [value, name];
                     }}
                   />
                   <Legend />
+                  {/* FIX: dados em % já estão em pct100/cum100 */}
                   <Bar yAxisId="left" dataKey="pct100" name="Participação" fill={C.navy} radius={[8, 8, 0, 0]} />
                   <Line yAxisId="right" dataKey="cum100" name="Acumulado" stroke={C.gold} strokeWidth={3} dot={false} />
                 </ComposedChart>
@@ -1516,7 +1595,7 @@ export default function Relatorios() {
                         </tr>
                       </thead>
                       <tbody>
-                        {concSlice.map((row, idx) => {
+                        {concSlice.map((row) => {
                           const lead = leadsMap[row.lead_id];
                           const nome = lead?.nome || row.lead_id;
                           const sellers = Array.from(row.sellers)
@@ -1525,18 +1604,13 @@ export default function Relatorios() {
                             .join(", ");
 
                           return (
-                            <tr
-                              key={row.lead_id}
-                              className="border-t"
-                              style={{ borderColor: C.border, color: C.navy }}
-                            >
+                            <tr key={row.lead_id} className="border-t" style={{ borderColor: C.border, color: C.navy }}>
                               <td className="py-2">
                                 <div className="font-bold truncate max-w-[260px]">{nome}</div>
                                 <div className="text-xs truncate max-w-[260px]" style={{ color: C.muted }}>
                                   {lead?.telefone || "—"} • {lead?.email || "—"} • {lead?.origem || "—"}
                                 </div>
 
-                                {/* barra visual de concentração */}
                                 <div className="mt-2 h-2 w-full rounded-full bg-white/60 border border-white/40 overflow-hidden">
                                   <div
                                     className="h-full rounded-full"
@@ -1555,9 +1629,7 @@ export default function Relatorios() {
                               <td className="py-2 text-right font-extrabold">{fmtBRL(row.value)}</td>
 
                               <td className="py-2 text-right">
-                                <Badge tone={row.alerta ? "danger" : "info"}>
-                                  {fmtPct(row.pct, 1)}
-                                </Badge>
+                                <Badge tone={row.alerta ? "danger" : "info"}>{fmtPct01(row.pct, 1)}</Badge>
                               </td>
 
                               <td className="py-2">
@@ -1627,9 +1699,7 @@ export default function Relatorios() {
           <Dialog open={leadDialogOpen} onOpenChange={setLeadDialogOpen}>
             <DialogContent className="sm:max-w-[900px] rounded-2xl">
               <DialogHeader>
-                <DialogTitle style={{ color: C.navy }}>
-                  Detalhes do cliente (Concentração)
-                </DialogTitle>
+                <DialogTitle style={{ color: C.navy }}>Detalhes do cliente (Concentração)</DialogTitle>
               </DialogHeader>
 
               {leadDialogId && (
@@ -1641,14 +1711,17 @@ export default function Relatorios() {
                           {leadName(leadDialogId)}
                         </div>
                         <div className="text-xs mt-1" style={{ color: C.muted }}>
-                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} • {leadsMap[leadDialogId]?.origem || "—"}
+                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} •{" "}
+                          {leadsMap[leadDialogId]?.origem || "—"}
                         </div>
 
                         <div className="text-xs mt-2 flex items-center gap-2 flex-wrap" style={{ color: C.muted }}>
                           <span>Carteira ativa do cliente:</span>
-                          <span className="font-bold" style={{ color: C.navy }}>{fmtBRL(leadDialogAtivoTotal)}</span>
+                          <span className="font-bold" style={{ color: C.navy }}>
+                            {fmtBRL(leadDialogAtivoTotal)}
+                          </span>
                           <Badge tone={leadDialogPct >= CONCENTRACAO_ALERTA ? "danger" : "info"}>
-                            {fmtPct(leadDialogPct, 1)} da carteira
+                            {fmtPct01(leadDialogPct, 1)} da carteira
                           </Badge>
                           {leadDialogPct >= CONCENTRACAO_ALERTA ? (
                             <Badge tone="danger">Cliente concentrado (≥ 10%)</Badge>
@@ -1691,8 +1764,18 @@ export default function Relatorios() {
                             <td className="py-2">{v.tabela || "—"}</td>
                             <td className="py-2">{vendorName(v.vendedor_id)}</td>
                             <td className="py-2">
-                              {isActive(v) ? <Badge tone="ok">Ativa</Badge> : isCanceled(v) ? <Badge tone="danger">Cancelada</Badge> : <Badge tone="muted">—</Badge>}
-                              {Boolean(v.inad) && isActive(v) && <span className="ml-2"><Badge tone="danger">Inad</Badge></span>}
+                              {isActive(v) ? (
+                                <Badge tone="ok">Ativa</Badge>
+                              ) : isCanceled(v) ? (
+                                <Badge tone="danger">Cancelada</Badge>
+                              ) : (
+                                <Badge tone="muted">—</Badge>
+                              )}
+                              {Boolean(v.inad) && isActive(v) && (
+                                <span className="ml-2">
+                                  <Badge tone="danger">Inad</Badge>
+                                </span>
+                              )}
                             </td>
                             <td className="py-2 text-right font-bold">{fmtBRL(safeNum(v.valor_venda))}</td>
                           </tr>

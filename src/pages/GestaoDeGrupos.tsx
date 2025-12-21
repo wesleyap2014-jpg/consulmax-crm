@@ -404,12 +404,21 @@ function OverlayAssembleias({
 }) {
   const [date, setDate] = useState<string>("");
   const [adminSel, setAdminSel] = useState<string>("");
+
+  // >>>>>>> AQUI: tornam-se obrigatórios
   const [nextDue, setNextDue] = useState<string>("");
   const [nextDraw, setNextDraw] = useState<string>("");
   const [nextAsm, setNextAsm] = useState<string>("");
 
   const [linhas, setLinhas] = useState<LinhaAsm[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // snapshot do prazo atual por grupo (pra validar “reduziu 2 ou mais”)
+  const prazoAtualById = useMemo(() => {
+    const m = new Map<string, number | null>();
+    gruposBase.forEach((g) => m.set(g.id, g.prazo_encerramento_meses ?? null));
+    return m;
+  }, [gruposBase]);
 
   const administradoras = useMemo(
     () => Array.from(new Set(gruposBase.map((g) => g.administradora))).sort(),
@@ -444,13 +453,102 @@ function OverlayAssembleias({
     setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
   };
 
-  const podeSalvar = Boolean(date) && linhas.length > 0;
+  const podeSalvar =
+    Boolean(date) &&
+    linhas.length > 0 &&
+    Boolean(nextDue) &&
+    Boolean(nextDraw) &&
+    Boolean(nextAsm);
+
+  function buildPreSaveWarnings() {
+    const issuesLL: { codigo: string; maior: number; menor: number }[] = [];
+    const issuesPrazo: { codigo: string; atual: number; novo: number }[] = [];
+    const blanks: { codigo: string; campos: string[] }[] = [];
+
+    linhas.forEach((l) => {
+      // LL maior < LL menor
+      if (l.ll_maior != null && l.ll_menor != null && l.ll_maior < l.ll_menor) {
+        issuesLL.push({ codigo: l.codigo, maior: l.ll_maior, menor: l.ll_menor });
+      }
+
+      // prazo reduzido 2 ou mais do que o atual (ex.: 240 -> 238 já alerta)
+      const atual = prazoAtualById.get(l.group_id);
+      if (atual != null && l.prazo_enc_meses != null) {
+        const diff = atual - l.prazo_enc_meses;
+        if (diff >= 2) issuesPrazo.push({ codigo: l.codigo, atual, novo: l.prazo_enc_meses });
+      }
+
+      // campos em branco (null) que são “digitáveis” no overlay
+      const campos: string[] = [];
+      if (l.ll_maior == null) campos.push("LL Maior %");
+      if (l.ll_menor == null) campos.push("LL Menor %");
+      if (l.prazo_enc_meses == null) campos.push("Pz Enc (meses)");
+      if (campos.length > 0) blanks.push({ codigo: l.codigo, campos });
+    });
+
+    const parts: string[] = [];
+    if (issuesLL.length > 0) {
+      parts.push(
+        `• Suspeita (LL): há grupo(s) onde "LL Maior %" < "LL Menor %":\n` +
+          issuesLL
+            .slice(0, 12)
+            .map((x) => `  - Grupo ${x.codigo}: maior=${x.maior} | menor=${x.menor}`)
+            .join("\n") +
+          (issuesLL.length > 12 ? `\n  ... +${issuesLL.length - 12} grupo(s)` : "")
+      );
+    }
+    if (issuesPrazo.length > 0) {
+      parts.push(
+        `• Suspeita (Prazo): prazo foi reduzido em 2 ou mais meses:\n` +
+          issuesPrazo
+            .slice(0, 12)
+            .map((x) => `  - Grupo ${x.codigo}: atual=${x.atual} → novo=${x.novo}`)
+            .join("\n") +
+          (issuesPrazo.length > 12 ? `\n  ... +${issuesPrazo.length - 12} grupo(s)` : "")
+      );
+    }
+    if (blanks.length > 0) {
+      parts.push(
+        `• Campos em branco: alguns grupos têm campos sem valor (vai ficar "—" no relatório):\n` +
+          blanks
+            .slice(0, 12)
+            .map((x) => `  - Grupo ${x.codigo}: ${x.campos.join(", ")}`)
+            .join("\n") +
+          (blanks.length > 12 ? `\n  ... +${blanks.length - 12} grupo(s)` : "")
+      );
+    }
+
+    if (parts.length === 0) return null;
+
+    return (
+      `Antes de salvar, encontrei possíveis inconsistências:\n\n` +
+      parts.join("\n\n") +
+      `\n\nDeseja salvar mesmo assim?`
+    );
+  }
 
   const handleSave = async () => {
-    if (!podeSalvar) {
-      alert("Verifique data, administradora e os grupos listados.");
+    // obrigatórios
+    if (!date) {
+      alert("Informe a data da Assembleia (Ocorrida em).");
       return;
     }
+    if (!nextDue || !nextDraw || !nextAsm) {
+      alert("Para salvar, é obrigatório informar: Próximo Vencimento, Próximo Sorteio e Próxima Assembleia.");
+      return;
+    }
+    if (linhas.length === 0) {
+      alert("Nenhum grupo encontrado para essa data/filtro.");
+      return;
+    }
+
+    // alertas com confirmação (sem perder o que foi digitado)
+    const warn = buildPreSaveWarnings();
+    if (warn) {
+      const ok = window.confirm(warn);
+      if (!ok) return; // volta pra tela sem perder estado
+    }
+
     try {
       setLoading(true);
 
@@ -532,7 +630,7 @@ function OverlayAssembleias({
           </Button>
         </div>
 
-        {/* AQUI: área rolável */}
+        {/* área rolável */}
         <div className="p-5 space-y-5 flex-1 min-h-0 overflow-y-auto">
           <Card>
             <CardHeader className="pb-2">
@@ -552,7 +650,9 @@ function OverlayAssembleias({
                 >
                   <option value="">Todas</option>
                   {administradoras.map((a) => (
-                    <option key={a} value={a}>{a}</option>
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground mt-1">Selecione para reduzir a lista (opcional).</p>
@@ -562,12 +662,32 @@ function OverlayAssembleias({
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Informe os dados da próxima assembleia</CardTitle>
+              <CardTitle className="text-base">
+                Informe os dados da próxima assembleia <span className="text-red-600">*</span>
+              </CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div><Label>Próximo Vencimento</Label><Input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} /></div>
-              <div><Label>Próximo Sorteio</Label><Input type="date" value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} /></div>
-              <div><Label>Próxima Assembleia</Label><Input type="date" value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} /></div>
+              <div>
+                <Label>
+                  Próximo Vencimento <span className="text-red-600">*</span>
+                </Label>
+                <Input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} />
+              </div>
+              <div>
+                <Label>
+                  Próximo Sorteio <span className="text-red-600">*</span>
+                </Label>
+                <Input type="date" value={nextDraw} onChange={(e) => setNextDraw(e.target.value)} />
+              </div>
+              <div>
+                <Label>
+                  Próxima Assembleia <span className="text-red-600">*</span>
+                </Label>
+                <Input type="date" value={nextAsm} onChange={(e) => setNextAsm(e.target.value)} />
+              </div>
+              <div className="md:col-span-3 text-xs text-muted-foreground">
+                Obrigatório para salvar: Próximo vencimento, sorteio e assembleia.
+              </div>
             </CardContent>
           </Card>
 
@@ -601,15 +721,80 @@ function OverlayAssembleias({
                       {linhas.map((l) => (
                         <tr key={l.group_id} className="odd:bg-muted/30">
                           <td className="p-2 font-medium">{l.codigo}</td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} step="0.01" value={l.ll_maior ?? ""} onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} step="0.01" value={l.ll_menor ?? ""} onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))} /></td>
-                          <td className="p-1 text-center"><Input type="number" min={0} value={l.prazo_enc_meses ?? ""} onChange={(e) => upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))} /></td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.fix25_entregas}
+                              onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.fix25_ofertas}
+                              onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.fix50_entregas}
+                              onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.fix50_ofertas}
+                              onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.ll_entregas}
+                              onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.ll_ofertas}
+                              onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={l.ll_maior ?? ""}
+                              onChange={(e) => upd(l.group_id, "ll_maior", e.target.value === "" ? null : Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={l.ll_menor ?? ""}
+                              onChange={(e) => upd(l.group_id, "ll_menor", e.target.value === "" ? null : Number(e.target.value))}
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={l.prazo_enc_meses ?? ""}
+                              onChange={(e) => upd(l.group_id, "prazo_enc_meses", e.target.value === "" ? null : Number(e.target.value))}
+                            />
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -623,6 +808,11 @@ function OverlayAssembleias({
                   <Save className="h-4 w-4" /> Salvar Resultados
                 </Button>
               </div>
+              {!podeSalvar && (
+                <div className="pt-2 text-xs text-muted-foreground">
+                  Para salvar: informe a data da assembleia, e as datas obrigatórias (próx. vencimento, sorteio e assembleia) e tenha grupos listados.
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -690,17 +880,15 @@ function OverlayOfertaLance({
 
       type VendasRow = { [key: string]: any };
 
-      // ======= ATENÇÃO (pedido do Wesley) =======
       // Excluir cotas canceladas do relatório de oferta de lances.
-      // Regra do schema: public.vendas
+      // public.vendas:
       // - Canceladas: codigo != '00'
       // - Ativas:     codigo = '00'
-      // Portanto, buscamos SOMENTE codigo = '00'.
       const { data: vds, error } = await supabase
         .from("vendas")
         .select("*")
         .eq("status", "encarteirada")
-        .eq("codigo", "00") // <- só ativas
+        .eq("codigo", "00")
         .in("grupo", Array.from(gruposDigits));
 
       if (error) throw error;
@@ -734,10 +922,7 @@ function OverlayOfertaLance({
         );
 
         if (leadIds.length > 0) {
-          const { data: leadsData, error: errLeads } = await supabase
-            .from("leads")
-            .select("id, nome")
-            .in("id", leadIds);
+          const { data: leadsData, error: errLeads } = await supabase.from("leads").select("id, nome").in("id", leadIds);
 
           if (errLeads) throw errLeads;
 
@@ -757,10 +942,7 @@ function OverlayOfertaLance({
 
         const asm = lastAsmByGroup.get(g.id);
         const med = asm?.median ?? calcMediana(asm?.ll_high ?? null, asm?.ll_low ?? null);
-        const contem =
-          (asm?.fixed25_deliveries || 0) +
-          (asm?.fixed50_deliveries || 0) +
-          (asm?.ll_deliveries || 0);
+        const contem = (asm?.fixed25_deliveries || 0) + (asm?.fixed50_deliveries || 0) + (asm?.ll_deliveries || 0);
 
         const bilhetes = g.prox_sorteio ? drawsByDate[toYMD(g.prox_sorteio)!] ?? null : null;
         const ref = referenciaPorAdministradora({
@@ -773,12 +955,7 @@ function OverlayOfertaLance({
         const cliente = leadVal != null ? (nomesById.get(String(leadVal)) ?? null) : null;
 
         const descVal = descKey ? v?.[descKey] : null;
-        const descricao =
-          descVal ??
-          v?.vendas_descrecao ??
-          v?.vendas_descricao ??
-          v?.descricao ??
-          null;
+        const descricao = descVal ?? v?.vendas_descrecao ?? v?.vendas_descricao ?? v?.descricao ?? null;
 
         out.push({
           administradora: g.administradora,
@@ -790,8 +967,6 @@ function OverlayOfertaLance({
           contemplados: contem,
           cliente,
           descricao,
-          // ======= TAG CONTEMPLADA (pedido do Wesley) =======
-          // public.vendas.contemplada = TRUE -> mostrar badge
           contemplada: Boolean(v?.contemplada === true),
         });
       });
@@ -978,7 +1153,9 @@ function OverlayOfertaLance({
                 </span>
               </>
             ) : (
-              <>Informe a data e clique em <b>Listar</b>.</>
+              <>
+                Informe a data e clique em <b>Listar</b>.
+              </>
             )}
           </div>
 
@@ -1182,9 +1359,7 @@ export default function GestaoDeGrupos() {
 
     const { data: g, error: gErr } = await supabase
       .from("groups")
-      .select(
-        "id, administradora, segmento, codigo, participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia, prazo_encerramento_meses"
-      );
+      .select("id, administradora, segmento, codigo, participantes, faixa_min, faixa_max, prox_vencimento, prox_sorteio, prox_assembleia, prazo_encerramento_meses");
     if (gErr) console.error(gErr);
 
     const groupsAll: Grupo[] =
@@ -1251,9 +1426,7 @@ export default function GestaoDeGrupos() {
     if (reais.length > 0) {
       const { data: ar, error: arErr } = await supabase
         .from("v_group_last_assembly")
-        .select(
-          "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
-        )
+        .select("group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median")
         .in("group_id", reais);
       if (arErr) console.error(arErr);
       byGroup = new Map<string, UltimoResultado>();
@@ -1269,10 +1442,7 @@ export default function GestaoDeGrupos() {
     const want = Array.from(dateSet);
     let newDraws: Record<string, LoteriaFederal> = {};
     if (want.length > 0) {
-      const { data: ld, error: ldErr } = await supabase
-        .from("lottery_draws")
-        .select("*")
-        .in("draw_date", want);
+      const { data: ld, error: ldErr } = await supabase.from("lottery_draws").select("*").in("draw_date", want);
       if (ldErr) console.error(ldErr);
       (ld || []).forEach((d: any) => {
         newDraws[d.draw_date] = {
@@ -1355,16 +1525,8 @@ export default function GestaoDeGrupos() {
         return (va - vb) * dir;
       }
 
-      const da = toYMD(
-        sortKey === "prox_sorteio"
-          ? a.prox_sorteio
-          : a.prox_vencimento
-      );
-      const db = toYMD(
-        sortKey === "prox_sorteio"
-          ? b.prox_sorteio
-          : b.prox_vencimento
-      );
+      const da = toYMD(sortKey === "prox_sorteio" ? a.prox_sorteio : a.prox_vencimento);
+      const db = toYMD(sortKey === "prox_sorteio" ? b.prox_sorteio : b.prox_vencimento);
       const na = da ? Date.parse(da) : -1;
       const nb = db ? Date.parse(db) : -1;
       return (na - nb) * dir;
@@ -1382,7 +1544,9 @@ export default function GestaoDeGrupos() {
 
   function pushBrowser(title: string, body: string) {
     if ("Notification" in window && Notification.permission === "granted") {
-      try { new Notification(title, { body, icon: "/logo-consulmax.png" }); } catch {}
+      try {
+        new Notification(title, { body, icon: "/logo-consulmax.png" });
+      } catch {}
     }
   }
 
@@ -1406,7 +1570,7 @@ export default function GestaoDeGrupos() {
 
     const venc = sorted.filter((r) => isToday(r.prox_vencimento));
     const sort = sorted.filter((r) => isToday(r.prox_sorteio));
-    const asm  = sorted.filter((r) => isToday(r.prox_assembleia));
+    const asm = sorted.filter((r) => isToday(r.prox_assembleia));
 
     const keyV = `venc-${today}`;
     const keyS = `sorteio-${today}`;
@@ -1505,9 +1669,13 @@ export default function GestaoDeGrupos() {
             <div className="col-span-5 text-xs text-muted-foreground">
               {loteria?.data_sorteio ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}` : "Sem resultado selecionado"}
             </div>
-            {([loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[]).map((v, i) => (
-              <div key={i} className="px-2 py-1 rounded bg-muted text-center font-mono">{v}</div>
-            ))}
+            {([loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[]).map(
+              (v, i) => (
+                <div key={i} className="px-2 py-1 rounded bg-muted text-center font-mono">
+                  {v}
+                </div>
+              )
+            )}
           </CardContent>
         </Card>
 
@@ -1518,9 +1686,7 @@ export default function GestaoDeGrupos() {
               <Settings className="h-4 w-4" /> Informar resultados
             </Button>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Informe resultados por data. Atualizaremos próximas datas.
-          </CardContent>
+          <CardContent className="text-sm text-muted-foreground">Informe resultados por data. Atualizaremos próximas datas.</CardContent>
         </Card>
 
         <Card className="lg:col-span-3">
@@ -1547,10 +1713,22 @@ export default function GestaoDeGrupos() {
           </CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-3">
-          <div><Label>Administradora</Label><Input value={fAdmin} onChange={(e) => setFAdmin(e.target.value)} placeholder="Filtrar Administradora" /></div>
-          <div><Label>Segmento</Label><Input value={fSeg} onChange={(e) => setFSeg(e.target.value)} placeholder="Filtrar Segmento" /></div>
-          <div><Label>Grupo</Label><Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" /></div>
-          <div><Label>Faixa de Crédito</Label><Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" /></div>
+          <div>
+            <Label>Administradora</Label>
+            <Input value={fAdmin} onChange={(e) => setFAdmin(e.target.value)} placeholder="Filtrar Administradora" />
+          </div>
+          <div>
+            <Label>Segmento</Label>
+            <Input value={fSeg} onChange={(e) => setFSeg(e.target.value)} placeholder="Filtrar Segmento" />
+          </div>
+          <div>
+            <Label>Grupo</Label>
+            <Input value={fGrupo} onChange={(e) => setFGrupo(e.target.value)} placeholder="Filtrar Grupo" />
+          </div>
+          <div>
+            <Label>Faixa de Crédito</Label>
+            <Input value={fFaixa} onChange={(e) => setFFaixa(e.target.value)} placeholder="ex.: 80000-120000" />
+          </div>
           <div>
             <Label>% Lance Livre (mediana ±30%)</Label>
             <Input type="number" step="0.01" value={fMedianaAlvo} onChange={(e) => setFMedianaAlvo(e.target.value)} placeholder="ex.: 45" />
@@ -1587,7 +1765,6 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-right">Menor %</th>
               <th className="p-2 text-right">{headerSort("LL Mediana", "mediana")}</th>
 
-              {/* Ordem correta */}
               <th className="p-2 text-center">Apuração</th>
               <th className="p-2 text-center">{headerSort("Pz Enc", "prazo_encerramento_meses")}</th>
               <th className="p-2 text-center">{headerSort("Vencimento", "prox_vencimento")}</th>
@@ -1599,9 +1776,17 @@ export default function GestaoDeGrupos() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…</td></tr>
+              <tr>
+                <td colSpan={22} className="p-6 text-center text-muted-foreground">
+                  <Loader2 className="h-5 w-5 inline animate-spin mr-2" /> Carregando…
+                </td>
+              </tr>
             ) : sorted.length === 0 ? (
-              <tr><td colSpan={22} className="p-6 text-center text-muted-foreground">Sem registros para os filtros aplicados.</td></tr>
+              <tr>
+                <td colSpan={22} className="p-6 text-center text-muted-foreground">
+                  Sem registros para os filtros aplicados.
+                </td>
+              </tr>
             ) : (
               sorted.map((r) => {
                 const isEditing = editingId === r.id;
@@ -1637,9 +1822,7 @@ export default function GestaoDeGrupos() {
                             type="number"
                             step="0.01"
                             value={editDraft?.faixa_min ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({ ...(d as any), faixa_min: e.target.value === "" ? null : Number(e.target.value) }))
-                            }
+                            onChange={(e) => setEditDraft((d) => ({ ...(d as any), faixa_min: e.target.value === "" ? null : Number(e.target.value) }))}
                             placeholder="mín"
                           />
                           <span className="text-muted-foreground">—</span>
@@ -1648,9 +1831,7 @@ export default function GestaoDeGrupos() {
                             type="number"
                             step="0.01"
                             value={editDraft?.faixa_max ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({ ...(d as any), faixa_max: e.target.value === "" ? null : Number(e.target.value) }))
-                            }
+                            onChange={(e) => setEditDraft((d) => ({ ...(d as any), faixa_max: e.target.value === "" ? null : Number(e.target.value) }))}
                             placeholder="máx"
                           />
                         </div>
@@ -1674,14 +1855,12 @@ export default function GestaoDeGrupos() {
                     <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
                     <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
 
-                    {/* Apuração / Pz Enc / Venc / Sorteio / Assembleia */}
                     <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                     <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
                     <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
                     <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
                     <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
 
-                    {/* Ref */}
                     <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
 
                     {/* AÇÕES */}
@@ -1762,12 +1941,7 @@ export default function GestaoDeGrupos() {
         />
       )}
       {ofertaOpen && (
-        <OverlayOfertaLance
-          onClose={() => setOfertaOpen(false)}
-          gruposBase={grupos}
-          drawsByDate={drawsByDate}
-          lastAsmByGroup={lastAsmByGroup}
-        />
+        <OverlayOfertaLance onClose={() => setOfertaOpen(false)} gruposBase={grupos} drawsByDate={drawsByDate} lastAsmByGroup={lastAsmByGroup} />
       )}
 
       {editorOpen && (
@@ -1879,87 +2053,51 @@ function EditorGrupo(props: EditorGrupoProps) {
         </div>
         <div>
           <Label>Segmento</Label>
-          <Input
-            value={form.segmento ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))}
-            placeholder="Ex.: Imóvel"
-          />
+          <Input value={form.segmento ?? ""} onChange={(e) => setForm((f) => ({ ...f, segmento: e.target.value as SegmentoUI }))} placeholder="Ex.: Imóvel" />
         </div>
         <div>
           <Label>Código do Grupo</Label>
-          <Input
-            value={form.codigo ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))}
-            placeholder="Ex.: 1234/5"
-          />
+          <Input value={form.codigo ?? ""} onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))} placeholder="Ex.: 1234/5" />
         </div>
 
         <div>
           <Label>Participantes</Label>
-          <Input
-            type="number"
-            min={1}
-            value={form.participantes ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))}
-          />
+          <Input type="number" min={1} value={form.participantes ?? ""} onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))} />
         </div>
         <div>
           <Label>Faixa Mínima</Label>
-          <Input
-            type="number"
-            step="0.01"
-            value={form.faixa_min ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))}
-          />
+          <Input type="number" step="0.01" value={form.faixa_min ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_min: Number(e.target.value) || null }))} />
         </div>
         <div>
           <Label>Faixa Máxima</Label>
-          <Input
-            type="number"
-            step="0.01"
-            value={form.faixa_max ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))}
-          />
+          <Input type="number" step="0.01" value={form.faixa_max ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))} />
         </div>
 
         <div>
           <Label>Próx. Vencimento</Label>
-          <Input
-            type="date"
-            value={form.prox_vencimento ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))}
-          />
+          <Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} />
         </div>
         <div>
           <Label>Próx. Sorteio</Label>
-          <Input
-            type="date"
-            value={form.prox_sorteio ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))}
-          />
+          <Input type="date" value={form.prox_sorteio ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_sorteio: e.target.value || null }))} />
         </div>
         <div>
           <Label>Próx. Assembleia</Label>
-          <Input
-            type="date"
-            value={form.prox_assembleia ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))}
-          />
+          <Input type="date" value={form.prox_assembleia ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_assembleia: e.target.value || null }))} />
         </div>
         <div>
           <Label>Prazo Enc. (meses)</Label>
-          <Input
-            type="number"
-            min={0}
-            value={form.prazo_encerramento_meses ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))}
-          />
+          <Input type="number" min={0} value={form.prazo_encerramento_meses ?? ""} onChange={(e) => setForm((f) => ({ ...f, prazo_encerramento_meses: Number(e.target.value) || null }))} />
         </div>
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2"><X className="h-4 w-4" /> Cancelar</Button>
-        <Button onClick={handleSave} className="inline-flex items-center gap-2"><Save className="h-4 w-4" /> Salvar Grupo</Button>
+        <Button variant="secondary" onClick={onClose} className="inline-flex items-center gap-2">
+          <X className="h-4 w-4" /> Cancelar
+        </Button>
+        <Button onClick={handleSave} className="inline-flex items-center gap-2">
+          <Save className="h-4 w-4" /> Salvar Grupo
+        </Button>
       </div>
     </div>
   );

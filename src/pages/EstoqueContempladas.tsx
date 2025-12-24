@@ -33,7 +33,7 @@ type UserRow = {
   auth_user_id: string;
   nome: string;
   user_role?: string | null;
-  role?: string | null; // enum user_role no banco, mas pode vir como string
+  role?: string | null;
 };
 
 type Partner = { id: string; nome: string; logo_path?: string | null };
@@ -77,7 +77,7 @@ type ReservationRequest = {
   vendor_pct: number;
   status: "aberta" | "cancelada" | "convertida";
   created_at: string;
-  vendor?: { id: string; nome: string } | null;
+  vendor_nome?: string;
 };
 
 function formatBRL(v: number) {
@@ -96,13 +96,12 @@ function toTelDigits(t: string) {
 function parseBRNumber(input: string) {
   const s = (input || "").trim();
   if (!s) return 0;
-  // suporta "250.000,50" e "250000.50"
   const normalized = s.replace(/\./g, "").replace(",", ".");
   const n = Number(normalized);
   return Number.isFinite(n) ? n : 0;
 }
 
-const WHATSAPP_RESERVA_NUMBER = "5569993917465"; // número oficial Consulmax (ajuste se quiser)
+const WHATSAPP_RESERVA_NUMBER = "5569993917465"; // número oficial Consulmax
 const NONE = "__none__";
 
 export default function EstoqueContempladas() {
@@ -138,6 +137,12 @@ export default function EstoqueContempladas() {
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [vendedores, setVendedores] = useState<UserRow[]>([]);
 
+  const vendedoresById = useMemo(() => {
+    const m = new Map<string, UserRow>();
+    for (const v of vendedores) m.set(v.id, v);
+    return m;
+  }, [vendedores]);
+
   // dialogs
   const [openCreate, setOpenCreate] = useState(false);
   const [openReserve, setOpenReserve] = useState<{ open: boolean; cota: CotaRow | null }>({ open: false, cota: null });
@@ -172,11 +177,10 @@ export default function EstoqueContempladas() {
   const [buyerCpf, setBuyerCpf] = useState("");
   const [sinalFile, setSinalFile] = useState<File | null>(null);
 
-  // amarra vendedor+% (opcional)
   const [reserveVendorId, setReserveVendorId] = useState<string>(NONE);
   const [reserveVendorPct, setReserveVendorPct] = useState<number>(0.05);
 
-  // ✅ solicitações abertas (admin vê)
+  // solicitações abertas
   const [reserveRequests, setReserveRequests] = useState<ReservationRequest[]>([]);
   const [selectedRequestId, setSelectedRequestId] = useState<string>(NONE);
 
@@ -345,7 +349,7 @@ export default function EstoqueContempladas() {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
-  // ✅ vendedor cria solicitação no banco + abre WhatsApp
+  // vendedor cria solicitação no banco + abre WhatsApp
   async function vendorRequestReserve(c: CotaRow) {
     if (!me?.id) return;
 
@@ -354,6 +358,7 @@ export default function EstoqueContempladas() {
         cota_id: c.id,
         vendor_id: me.id,
         vendor_pct: clampPct(commissionPct),
+        status: "aberta",
       });
 
       // se der erro, ainda abre o WhatsApp (pra não travar o vendedor)
@@ -374,16 +379,22 @@ export default function EstoqueContempladas() {
     return path;
   }
 
-  async function createPartnerIfNeeded(): Promise<string | null> {
+  // ✅ UPSERT por nome (evita duplicate key)
+  async function createPartnerIfNeeded(): Promise<string> {
     if (createTabPartner === "select") {
       if (!partnerId) throw new Error("Selecione um parceiro (ou cadastre um novo).");
-      return partnerId || null;
+      return partnerId;
     }
 
     const nome = newPartnerName.trim();
     if (!nome) throw new Error("Informe o nome do parceiro.");
 
-    const { data, error } = await supabase.from("stock_partners").insert({ nome }).select("id").single();
+    const { data, error } = await supabase
+      .from("stock_partners")
+      .upsert({ nome }, { onConflict: "nome" })
+      .select("id")
+      .single();
+
     if (error) throw error;
 
     const id = data.id as string;
@@ -392,7 +403,8 @@ export default function EstoqueContempladas() {
       const ext = (newPartnerLogo.name.split(".").pop() || "png").toLowerCase();
       const path = `partners/${id}.${ext}`;
       await uploadToBucket("stock_assets", path, newPartnerLogo);
-      await supabase.from("stock_partners").update({ logo_path: path }).eq("id", id);
+      const { error: e2 } = await supabase.from("stock_partners").update({ logo_path: path }).eq("id", id);
+      if (e2) throw e2;
     }
 
     const p = await supabase.from("stock_partners").select("id,nome,logo_path").order("nome");
@@ -401,16 +413,22 @@ export default function EstoqueContempladas() {
     return id;
   }
 
-  async function createAdminIfNeeded(): Promise<string | null> {
+  // ✅ UPSERT por nome (evita duplicate key)
+  async function createAdminIfNeeded(): Promise<string> {
     if (createTabAdmin === "select") {
       if (!adminId) throw new Error("Selecione uma administradora (ou cadastre uma nova).");
-      return adminId || null;
+      return adminId;
     }
 
     const nome = newAdminName.trim();
     if (!nome) throw new Error("Informe o nome da administradora.");
 
-    const { data, error } = await supabase.from("stock_admins").insert({ nome }).select("id").single();
+    const { data, error } = await supabase
+      .from("stock_admins")
+      .upsert({ nome }, { onConflict: "nome" })
+      .select("id")
+      .single();
+
     if (error) throw error;
 
     const id = data.id as string;
@@ -419,7 +437,8 @@ export default function EstoqueContempladas() {
       const ext = (newAdminLogo.name.split(".").pop() || "png").toLowerCase();
       const path = `admins/${id}.${ext}`;
       await uploadToBucket("stock_assets", path, newAdminLogo);
-      await supabase.from("stock_admins").update({ logo_path: path }).eq("id", id);
+      const { error: e2 } = await supabase.from("stock_admins").update({ logo_path: path }).eq("id", id);
+      if (e2) throw e2;
     }
 
     const a = await supabase.from("stock_admins").select("id,nome,logo_path").order("nome");
@@ -462,6 +481,9 @@ export default function EstoqueContempladas() {
       setNewPartnerLogo(null);
       setNewAdminName("");
       setNewAdminLogo(null);
+      setCreateTabPartner("select");
+      setCreateTabAdmin("select");
+
       setNumeroProposta("");
       setCreditoContratado("");
       setCreditoDisponivel("");
@@ -482,18 +504,21 @@ export default function EstoqueContempladas() {
     setBuyerName("");
     setBuyerCpf("");
     setSinalFile(null);
+
     setReserveVendorId(NONE);
     setReserveVendorPct(0.05);
+
     setReserveRequests([]);
     setSelectedRequestId(NONE);
   }
 
-  // ✅ carrega solicitações abertas quando admin abre reserva
+  // carrega solicitações abertas quando admin abre reserva
   async function loadRequestsForCota(cotaId: string) {
     if (!isAdmin) return;
+
     const { data, error } = await supabase
       .from("stock_reservation_requests")
-      .select("id,cota_id,vendor_id,vendor_pct,status,created_at,vendor:users(id,nome)")
+      .select("id,cota_id,vendor_id,vendor_pct,status,created_at")
       .eq("cota_id", cotaId)
       .eq("status", "aberta")
       .order("created_at", { ascending: false });
@@ -503,7 +528,15 @@ export default function EstoqueContempladas() {
       setReserveRequests([]);
       return;
     }
-    setReserveRequests((data || []) as any);
+
+    const base = (data || []) as ReservationRequest[];
+    // adiciona nome do vendedor via cache (vendedores list)
+    const enriched = base.map((r) => ({
+      ...r,
+      vendor_nome: vendedoresById.get(r.vendor_id)?.nome || "Vendedor",
+    }));
+
+    setReserveRequests(enriched);
   }
 
   async function reserveCotaAdmin() {
@@ -543,12 +576,9 @@ export default function EstoqueContempladas() {
 
       if (error) throw error;
 
-      // ✅ se escolheu uma solicitação, amarra: convertida + cancela as outras
+      // se escolheu uma solicitação, amarra: convertida + cancela as outras
       if (selectedRequestId !== NONE) {
-        await supabase
-          .from("stock_reservation_requests")
-          .update({ status: "convertida" })
-          .eq("id", selectedRequestId);
+        await supabase.from("stock_reservation_requests").update({ status: "convertida" }).eq("id", selectedRequestId);
 
         await supabase
           .from("stock_reservation_requests")
@@ -556,13 +586,6 @@ export default function EstoqueContempladas() {
           .eq("cota_id", c.id)
           .eq("status", "aberta")
           .neq("id", selectedRequestId);
-      } else {
-        // se não escolheu, cancela todas as abertas (opcional — pode comentar se não quiser)
-        await supabase
-          .from("stock_reservation_requests")
-          .update({ status: "cancelada" })
-          .eq("cota_id", c.id)
-          .eq("status", "aberta");
       }
 
       setOpenReserve({ open: false, cota: null });
@@ -753,9 +776,7 @@ export default function EstoqueContempladas() {
                               Reservar
                             </Button>
                           ) : (
-                            <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}>
-                              Reservar
-                            </Button>
+                            <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}>Reservar</Button>
                           )
                         ) : (
                           <Button variant="outline" disabled>
@@ -954,7 +975,7 @@ export default function EstoqueContempladas() {
                   <b>Mensagem será enviada para:</b> {WHATSAPP_RESERVA_NUMBER}
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  A solicitação ficará registrada no banco para o admin ver.
+                  A solicitação fica registrada no banco para o admin ver.
                 </div>
               </div>
             </div>
@@ -979,10 +1000,7 @@ export default function EstoqueContempladas() {
       </Dialog>
 
       {/* ====== DIALOG: RESERVAR (ADMIN) ====== */}
-      <Dialog
-        open={openReserve.open}
-        onOpenChange={(v) => setOpenReserve({ open: v, cota: v ? openReserve.cota : null })}
-      >
+      <Dialog open={openReserve.open} onOpenChange={(v) => setOpenReserve({ open: v, cota: v ? openReserve.cota : null })}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Reservar cota (Admin)</DialogTitle>
@@ -998,7 +1016,7 @@ export default function EstoqueContempladas() {
                 </div>
               </div>
 
-              {/* ✅ Solicitações abertas */}
+              {/* Solicitações abertas */}
               <div className="space-y-2">
                 <Label>Solicitação aberta (opcional, recomendado)</Label>
                 <Select
@@ -1006,10 +1024,13 @@ export default function EstoqueContempladas() {
                   onValueChange={(v) => {
                     setSelectedRequestId(v);
                     const req = reserveRequests.find((r) => r.id === v);
+
                     if (req) {
                       setReserveVendorId(req.vendor_id);
                       setReserveVendorPct(clampPct(Number(req.vendor_pct)));
+                      return;
                     }
+
                     if (v === NONE) {
                       setReserveVendorId(NONE);
                       setReserveVendorPct(0.05);
@@ -1023,14 +1044,15 @@ export default function EstoqueContempladas() {
                     <SelectItem value={NONE}>Nenhuma</SelectItem>
                     {reserveRequests.map((r) => (
                       <SelectItem key={r.id} value={r.id}>
-                        {r.vendor?.nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} —{" "}
+                        {r.vendor_nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} —{" "}
                         {new Date(r.created_at).toLocaleString("pt-BR")}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+
                 <div className="text-xs text-muted-foreground">
-                  Se selecionar, o sistema “amarra” o vendedor e o % combinados e marca a solicitação como convertida.
+                  Se selecionar, o sistema amarra o vendedor e o % combinados e marca a solicitação como <b>convertida</b>.
                 </div>
               </div>
 
@@ -1060,7 +1082,6 @@ export default function EstoqueContempladas() {
                       <SelectValue placeholder="Selecione um vendedor (opcional)" />
                     </SelectTrigger>
                     <SelectContent>
-                      {/* ✅ NUNCA use value="" em SelectItem */}
                       <SelectItem value={NONE}>—</SelectItem>
                       {vendedores.map((v) => (
                         <SelectItem key={v.id} value={v.id}>

@@ -16,7 +16,13 @@ type Lead = {
 
 type Vendedor = { auth_user_id: string; nome: string };
 
-type StageUI = "novo" | "qualificando" | "proposta" | "negociacao" | "fechado_ganho" | "fechado_perdido";
+type StageUI =
+  | "novo"
+  | "qualificando"
+  | "proposta"
+  | "negociacao"
+  | "fechado_ganho"
+  | "fechado_perdido";
 type EstagioDB =
   | "Novo"
   | "Qualificando"
@@ -311,12 +317,21 @@ export default function Oportunidades() {
   /** ===================== Ações ===================== */
   // Novo Lead → cria oportunidade “Novo” automaticamente
   async function criarLead() {
+    // ✅ correção RLS: garantir owner_id no INSERT do lead
+    if (!meId) {
+      alert("Aguarde carregar seu usuário (login) antes de criar o lead.");
+      return;
+    }
+
     const payloadLead = {
       nome: nlNome.trim(),
       telefone: onlyDigits(nlTel) || null,
       email: nlEmail.trim().toLowerCase() || null,
       origem: nlOrigem || null,
       descricao: nlDesc.trim() || null,
+
+      // ESSENCIAL para passar em policies do tipo: owner_id = auth.uid()
+      owner_id: meId,
     };
     if (!payloadLead.nome) return alert("Informe o nome do lead.");
 
@@ -442,7 +457,8 @@ export default function Oportunidades() {
         const s = String(editing.estagio);
         if (s === "Negociacao") return "Negociação";
         if (s === "Qualificacao" || s === "Qualificação") return "Qualificando";
-        if (s === "Fechado (Ganho)" || s === "Fechado (Perdido)" || s === "Proposta" || s === "Novo") return s as EstagioDB;
+        if (s === "Fechado (Ganho)" || s === "Fechado (Perdido)" || s === "Proposta" || s === "Novo")
+          return s as EstagioDB;
         if (s.toLowerCase().startsWith("negocia")) return "Negociação";
         if (s.toLowerCase().startsWith("qualifica")) return "Qualificando";
         if (s.toLowerCase().startsWith("proposta")) return "Proposta";
@@ -553,12 +569,7 @@ export default function Oportunidades() {
     setLista(nextLista);
 
     // Persistir
-    const { error, data } = await supabase
-      .from("opportunities")
-      .update({ estagio: uiToDB[target] })
-      .eq("id", oppId)
-      .select()
-      .single();
+    const { error, data } = await supabase.from("opportunities").update({ estagio: uiToDB[target] }).eq("id", oppId).select().single();
 
     if (error) {
       setLista(prevLista); // rollback
@@ -766,11 +777,7 @@ export default function Oportunidades() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           {/* Ligar */}
-          <IconBtn
-            title="Ligar"
-            disabled={!lead?.telefone}
-            href={lead?.telefone ? `tel:${onlyDigits(lead.telefone)}` : undefined}
-          >
+          <IconBtn title="Ligar" disabled={!lead?.telefone} href={lead?.telefone ? `tel:${onlyDigits(lead.telefone)}` : undefined}>
             📞
           </IconBtn>
           {/* WhatsApp */}
@@ -1274,8 +1281,7 @@ const pageWrap: React.CSSProperties = {
 const glassBase: React.CSSProperties = {
   background: "rgba(255,255,255,.55)",
   border: "1px solid rgba(255,255,255,.35)",
-  boxShadow:
-    "0 2px 14px rgba(0,0,0,.06), inset 0 -8px 30px rgba(181,165,115,.12)", // brilho dourado (B5A573) sutil
+  boxShadow: "0 2px 14px rgba(0,0,0,.06), inset 0 -8px 30px rgba(181,165,115,.12)", // brilho dourado (B5A573) sutil
   backdropFilter: "saturate(160%) blur(10px)",
   WebkitBackdropFilter: "saturate(160%) blur(10px)",
 };

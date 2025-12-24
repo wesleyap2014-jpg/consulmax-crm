@@ -24,9 +24,12 @@ const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdmini
 const LinksUteis              = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
-const FluxoDeCaixa            = React.lazy(() => import("./pages/FluxoDeCaixa")); // << já existia
-const Planejamento            = React.lazy(() => import("./pages/Planejamento")); // << NOVO
-const Relatorios              = React.lazy(() => import("./pages/Relatorios"));   // << NOVO
+const FluxoDeCaixa            = React.lazy(() => import("./pages/FluxoDeCaixa"));
+const Planejamento            = React.lazy(() => import("./pages/Planejamento"));
+const Relatorios              = React.lazy(() => import("./pages/Relatorios"));
+
+// ✅ NOVO: Estoque de cotas contempladas (lazy)
+const EstoqueContempladas     = React.lazy(() => import("./pages/EstoqueContempladas"));
 
 // ==== Giro de Carteira SEM lazy (import direto) ====
 import GiroDeCarteira from "./pages/GiroDeCarteira";
@@ -75,10 +78,15 @@ export const router = createBrowserRouter([
           { path: "oportunidades",  element: withSuspense(<Oportunidades />) },
           { path: "clientes",       element: withSuspense(<Clientes />) },
           { path: "agenda",         element: withSuspense(<Agenda />) },
-          { path: "planejamento",   element: withSuspense(<Planejamento />) }, // << NOVO
+          { path: "planejamento",   element: withSuspense(<Planejamento />) },
 
-          // ✅ NOVO: Relatórios
+          // ✅ Relatórios
           { path: "relatorios",     element: withSuspense(<Relatorios />) },
+
+          // ✅ NOVO: Estoque de cotas contempladas
+          { path: "estoque-contempladas", element: withSuspense(<EstoqueContempladas />) },
+          { path: "estoque",              element: <Navigate to="/estoque-contempladas" replace /> },
+          { path: "cotas-contempladas",   element: <Navigate to="/estoque-contempladas" replace /> },
 
           {
             path: "simuladores",
@@ -94,7 +102,7 @@ export const router = createBrowserRouter([
           { path: "comissoes",  element: withSuspense(<Comissoes />) },
           { path: "carteira",   element: withSuspense(<Carteira />) },
 
-          // NOVO: Fluxo de Caixa (página já limita pelo auth.getUser internamente)
+          // Fluxo de Caixa
           { path: "fluxo-de-caixa", element: withSuspense(<FluxoDeCaixa />) },
 
           // Giro de Carteira: import direto + ErrorBoundary com reset por rota

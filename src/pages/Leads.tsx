@@ -10,7 +10,7 @@ type Lead = {
   email?: string | null;
   origem?: string | null;
   descricao?: string | null;
-  owner_id?: string | null;
+  owner_id?: string | null; // aqui (no seu app) está sendo usado como auth_user_id
   created_at: string;
 };
 
@@ -71,6 +71,7 @@ export default function LeadsPage() {
   const [newOwnerId, setNewOwnerId] = useState<string>("");
 
   const isAdmin = me?.role === "admin";
+
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)),
     [total]
@@ -89,7 +90,10 @@ export default function LeadsPage() {
     (async () => {
       const { data } = await supabase.auth.getUser();
       const user = data?.user;
+
+      // você está usando role no app_metadata
       const role = (user?.app_metadata as any)?.role || "viewer";
+
       if (user) setMe({ id: user.id, role });
     })();
   }, []);
@@ -109,10 +113,9 @@ export default function LeadsPage() {
     try {
       let query = supabase
         .from("leads")
-        .select(
-          "id,nome,telefone,email,origem,descricao,owner_id,created_at",
-          { count: "exact" }
-        )
+        .select("id,nome,telefone,email,origem,descricao,owner_id,created_at", {
+          count: "exact",
+        })
         .order("created_at", { ascending: false });
 
       // filtro de não-admin (RLS já cobre; aqui é só otimização)
@@ -149,11 +152,13 @@ export default function LeadsPage() {
 
   // Entradas
   useEffect(() => {
+    if (!me?.id) return;
     loadLeads(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.id]);
+  }, [me?.id, me?.role]);
 
   useEffect(() => {
+    if (!me?.id) return;
     loadLeads(1, debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch]);
@@ -164,13 +169,23 @@ export default function LeadsPage() {
 
   // Criar lead
   const [form, setForm] = useState<Partial<Lead>>({ origem: "Site" });
+
   async function createLead() {
+    if (!me?.id) {
+      alert("Aguarde carregar seu usuário (login) antes de criar o lead.");
+      return;
+    }
+
     const payload = {
       nome: (form.nome || "").trim(),
       telefone: normalizePhoneBR(form.telefone) || null,
       email: (form.email || "").trim().toLowerCase() || null,
       origem: form.origem || null,
       descricao: (form.descricao || "").trim() || null,
+
+      // ✅ IMPORTANTE: garante que o INSERT passa na policy do RLS (WITH CHECK)
+      // No seu app, owner_id está sendo usado como auth_user_id (auth.uid()).
+      owner_id: me.id,
     };
 
     if (!payload.nome) {
@@ -180,11 +195,13 @@ export default function LeadsPage() {
 
     try {
       setLoading(true);
-      const { error } = await supabase.from("leads").insert([payload]); // owner_id via trigger
+      const { error } = await supabase.from("leads").insert([payload]);
+
       if (error) {
         alert("Erro ao criar lead: " + error.message);
         return;
       }
+
       setForm({ origem: "Site" });
       await loadLeads(1);
       alert("Lead criado com sucesso!");
@@ -413,7 +430,6 @@ export default function LeadsPage() {
                           title="Abrir WhatsApp"
                           style={waIconBtn}
                         >
-                          {/* Ícone simples em SVG (sem libs) */}
                           <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M20 3.5A10.5 10.5 0 0 0 3.6 19.2L3 22l2.9-.6A10.5 10.5 0 1 0 20 3.5Zm-8.9 3c.2 0 .5.1.7.7s.9 2.1.9 2.1.1.4-.1.6l-.7.7s-.2.2 0 .5c.3.3 1.1 1.7 2.6 2.3 1.6.6 1.6.4 1.9.1l.7-.8c.2-.2.4-.2.6-.1.2.1 1.9.9 2.1 1 .2.1.3.2.3.4 0 .2.1 1.2-.7 2s-2 1-3.3.6c-1.4-.4-3.1-1.2-4.6-2.7-1.5-1.5-2.3-3.2-2.7-4.6s-.1-2.6.6-3.3c.6-.7 1.4-.7 1.5-.7Z" />
                           </svg>

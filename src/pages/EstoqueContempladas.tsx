@@ -33,7 +33,7 @@ type UserRow = {
   auth_user_id: string;
   nome: string;
   user_role?: string | null;
-  role?: string | null;
+  role?: string | null; // enum user_role no banco, mas pode vir como string
 };
 
 type Partner = { id: string; nome: string; logo_path?: string | null };
@@ -70,6 +70,16 @@ type CotaRow = {
   reservado_em?: string | null;
 };
 
+type ReservationRequest = {
+  id: string;
+  cota_id: string;
+  vendor_id: string;
+  vendor_pct: number;
+  status: "aberta" | "cancelada" | "convertida";
+  created_at: string;
+  vendor?: { id: string; nome: string } | null;
+};
+
 function formatBRL(v: number) {
   const n = Number(v || 0);
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -83,17 +93,34 @@ function pctToHuman(p: number) {
 function toTelDigits(t: string) {
   return (t || "").replace(/\D/g, "");
 }
+function parseBRNumber(input: string) {
+  const s = (input || "").trim();
+  if (!s) return 0;
+  // suporta "250.000,50" e "250000.50"
+  const normalized = s.replace(/\./g, "").replace(",", ".");
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
 
 const WHATSAPP_RESERVA_NUMBER = "5569993917465"; // número oficial Consulmax (ajuste se quiser)
+const NONE = "__none__";
 
 export default function EstoqueContempladas() {
   const [loading, setLoading] = useState(false);
+  const [savingCota, setSavingCota] = useState(false);
+  const [savingReserve, setSavingReserve] = useState(false);
 
   const [me, setMe] = useState<UserRow | null>(null);
   const isAdmin = useMemo(() => {
     const r = (me?.user_role || me?.role || "").toString();
     return r === "admin";
   }, [me]);
+
+  function notifyError(title: string, err: any) {
+    console.error(title, err);
+    const msg = (err?.message || err?.error_description || err?.toString?.() || "Erro desconhecido") as string;
+    window.alert(`${title}\n\n${msg}`);
+  }
 
   // filtros
   const [segFilter, setSegFilter] = useState<"all" | Segmento>("all");
@@ -144,8 +171,14 @@ export default function EstoqueContempladas() {
   const [buyerName, setBuyerName] = useState("");
   const [buyerCpf, setBuyerCpf] = useState("");
   const [sinalFile, setSinalFile] = useState<File | null>(null);
-  const [reserveVendorId, setReserveVendorId] = useState<string>("");
+
+  // amarra vendedor+% (opcional)
+  const [reserveVendorId, setReserveVendorId] = useState<string>(NONE);
   const [reserveVendorPct, setReserveVendorPct] = useState<number>(0.05);
+
+  // ✅ solicitações abertas (admin vê)
+  const [reserveRequests, setReserveRequests] = useState<ReservationRequest[]>([]);
+  const [selectedRequestId, setSelectedRequestId] = useState<string>(NONE);
 
   async function loadMe() {
     const { data: auth } = await supabase.auth.getUser();
@@ -190,7 +223,6 @@ export default function EstoqueContempladas() {
     if (!error && data?.commission_pct) {
       setCommissionPct(clampPct(Number(data.commission_pct)));
     } else {
-      // cria default 5% (só para vendedor/usuário logado)
       await supabase.from("stock_vendor_settings").upsert({ user_id: userId, commission_pct: 0.05 });
       setCommissionPct(0.05);
     }
@@ -200,7 +232,8 @@ export default function EstoqueContempladas() {
     if (!me?.id) return;
     const value = clampPct(pct);
     setCommissionPct(value);
-    await supabase.from("stock_vendor_settings").upsert({ user_id: me.id, commission_pct: value });
+    const { error } = await supabase.from("stock_vendor_settings").upsert({ user_id: me.id, commission_pct: value });
+    if (error) notifyError("Erro ao salvar comissão do vendedor", error);
   }
 
   async function loadCotas() {
@@ -225,15 +258,17 @@ export default function EstoqueContempladas() {
       if (statusFilter !== "all") q = q.eq("status", statusFilter);
       if (segFilter !== "all") q = q.eq("segmento", segFilter);
 
-      const min = Number((minValue || "").replace(/\./g, "").replace(",", "."));
-      const max = Number((maxValue || "").replace(/\./g, "").replace(",", "."));
-      if (!Number.isNaN(min) && minValue.trim() !== "") q = q.gte("credito_disponivel", min);
-      if (!Number.isNaN(max) && maxValue.trim() !== "") q = q.lte("credito_disponivel", max);
+      const min = parseBRNumber(minValue);
+      const max = parseBRNumber(maxValue);
+      if (minValue.trim() !== "") q = q.gte("credito_disponivel", min);
+      if (maxValue.trim() !== "") q = q.lte("credito_disponivel", max);
 
       const { data, error } = await q;
       if (error) throw error;
 
       setCotas((data || []) as any);
+    } catch (err) {
+      notifyError("Erro ao carregar cotas", err);
     } finally {
       setLoading(false);
     }
@@ -310,16 +345,23 @@ export default function EstoqueContempladas() {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  // ✅ vendedor cria solicitação no banco + abre WhatsApp
   async function vendorRequestReserve(c: CotaRow) {
     if (!me?.id) return;
-    // cria request (recomendado)
-    await supabase.from("stock_reservation_requests").insert({
-      cota_id: c.id,
-      vendor_id: me.id,
-      vendor_pct: clampPct(commissionPct),
-    });
 
-    // abre WhatsApp
+    try {
+      const { error } = await supabase.from("stock_reservation_requests").insert({
+        cota_id: c.id,
+        vendor_id: me.id,
+        vendor_pct: clampPct(commissionPct),
+      });
+
+      // se der erro, ainda abre o WhatsApp (pra não travar o vendedor)
+      if (error) console.warn("Falha ao registrar solicitação, mas seguindo para WhatsApp:", error);
+    } catch (err) {
+      console.warn("Erro ao registrar solicitação, mas seguindo para WhatsApp:", err);
+    }
+
     openWhatsApp(buildWhatsAppMessage(c));
   }
 
@@ -333,12 +375,14 @@ export default function EstoqueContempladas() {
   }
 
   async function createPartnerIfNeeded(): Promise<string | null> {
-    if (createTabPartner === "select") return partnerId || null;
+    if (createTabPartner === "select") {
+      if (!partnerId) throw new Error("Selecione um parceiro (ou cadastre um novo).");
+      return partnerId || null;
+    }
 
     const nome = newPartnerName.trim();
     if (!nome) throw new Error("Informe o nome do parceiro.");
 
-    // cria primeiro
     const { data, error } = await supabase.from("stock_partners").insert({ nome }).select("id").single();
     if (error) throw error;
 
@@ -351,7 +395,6 @@ export default function EstoqueContempladas() {
       await supabase.from("stock_partners").update({ logo_path: path }).eq("id", id);
     }
 
-    // refresh list
     const p = await supabase.from("stock_partners").select("id,nome,logo_path").order("nome");
     if (!p.error) setPartners((p.data || []) as any);
 
@@ -359,7 +402,10 @@ export default function EstoqueContempladas() {
   }
 
   async function createAdminIfNeeded(): Promise<string | null> {
-    if (createTabAdmin === "select") return adminId || null;
+    if (createTabAdmin === "select") {
+      if (!adminId) throw new Error("Selecione uma administradora (ou cadastre uma nova).");
+      return adminId || null;
+    }
 
     const nome = newAdminName.trim();
     if (!nome) throw new Error("Informe o nome da administradora.");
@@ -385,52 +431,79 @@ export default function EstoqueContempladas() {
   async function createCota() {
     if (!isAdmin) return;
 
-    const pid = await createPartnerIfNeeded();
-    const aid = await createAdminIfNeeded();
+    setSavingCota(true);
+    try {
+      const pid = await createPartnerIfNeeded();
+      const aid = await createAdminIfNeeded();
 
-    const payload = {
-      partner_id: pid,
-      admin_id: aid,
-      segmento,
-      numero_proposta: numeroProposta.trim() || null,
-      credito_contratado: Number(creditoContratado || 0),
-      credito_disponivel: Number(creditoDisponivel || 0),
-      prazo_restante: Number(prazoRestante || 0),
-      valor_parcela: Number(valorParcela || 0),
-      comissao_corretora: Number(comissaoCorretora || 0),
-      valor_pago_ao_cliente: Number(valorPagoCliente || 0),
-      status: "disponivel" as const,
-    };
+      const payload = {
+        partner_id: pid,
+        admin_id: aid,
+        segmento,
+        numero_proposta: numeroProposta.trim() || null,
+        credito_contratado: parseBRNumber(creditoContratado),
+        credito_disponivel: parseBRNumber(creditoDisponivel),
+        prazo_restante: Math.max(0, Math.floor(parseBRNumber(prazoRestante))),
+        valor_parcela: parseBRNumber(valorParcela),
+        comissao_corretora: parseBRNumber(comissaoCorretora),
+        valor_pago_ao_cliente: parseBRNumber(valorPagoCliente),
+        status: "disponivel" as const,
+      };
 
-    const { error } = await supabase.from("stock_cotas").insert(payload);
-    if (error) throw error;
+      const { error } = await supabase.from("stock_cotas").insert(payload);
+      if (error) throw error;
 
-    setOpenCreate(false);
+      setOpenCreate(false);
 
-    // reset campos principais
-    setPartnerId("");
-    setAdminId("");
-    setNewPartnerName("");
-    setNewPartnerLogo(null);
-    setNewAdminName("");
-    setNewAdminLogo(null);
-    setNumeroProposta("");
-    setCreditoContratado("");
-    setCreditoDisponivel("");
-    setPrazoRestante("");
-    setValorParcela("");
-    setComissaoCorretora("");
-    setValorPagoCliente("");
+      // reset
+      setPartnerId("");
+      setAdminId("");
+      setNewPartnerName("");
+      setNewPartnerLogo(null);
+      setNewAdminName("");
+      setNewAdminLogo(null);
+      setNumeroProposta("");
+      setCreditoContratado("");
+      setCreditoDisponivel("");
+      setPrazoRestante("");
+      setValorParcela("");
+      setComissaoCorretora("");
+      setValorPagoCliente("");
 
-    await loadCotas();
+      await loadCotas();
+    } catch (err) {
+      notifyError("Não foi possível salvar a cota", err);
+    } finally {
+      setSavingCota(false);
+    }
   }
 
   function resetReserveForm() {
     setBuyerName("");
     setBuyerCpf("");
     setSinalFile(null);
-    setReserveVendorId("");
+    setReserveVendorId(NONE);
     setReserveVendorPct(0.05);
+    setReserveRequests([]);
+    setSelectedRequestId(NONE);
+  }
+
+  // ✅ carrega solicitações abertas quando admin abre reserva
+  async function loadRequestsForCota(cotaId: string) {
+    if (!isAdmin) return;
+    const { data, error } = await supabase
+      .from("stock_reservation_requests")
+      .select("id,cota_id,vendor_id,vendor_pct,status,created_at,vendor:users(id,nome)")
+      .eq("cota_id", cotaId)
+      .eq("status", "aberta")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.warn("Erro ao carregar solicitações abertas:", error);
+      setReserveRequests([]);
+      return;
+    }
+    setReserveRequests((data || []) as any);
   }
 
   async function reserveCotaAdmin() {
@@ -438,36 +511,68 @@ export default function EstoqueContempladas() {
     const c = openReserve.cota;
     if (!c) return;
 
-    const nome = buyerName.trim();
-    const cpf = buyerCpf.trim();
+    setSavingReserve(true);
+    try {
+      const nome = buyerName.trim();
+      const cpf = buyerCpf.trim();
 
-    if (!nome) throw new Error("Informe o nome completo do comprador.");
-    if (!cpf) throw new Error("Informe o CPF do comprador.");
-    if (!sinalFile) throw new Error("Faça upload do comprovante do sinal.");
+      if (!nome) throw new Error("Informe o nome completo do comprador.");
+      if (!cpf) throw new Error("Informe o CPF do comprador.");
+      if (!sinalFile) throw new Error("Faça upload do comprovante do sinal.");
 
-    const ext = (sinalFile.name.split(".").pop() || "pdf").toLowerCase();
-    const path = `sinais/${c.id}/${Date.now()}.${ext}`;
-    await uploadToBucket("stock_sinais", path, sinalFile);
+      const ext = (sinalFile.name.split(".").pop() || "pdf").toLowerCase();
+      const path = `sinais/${c.id}/${Date.now()}.${ext}`;
+      await uploadToBucket("stock_sinais", path, sinalFile);
 
-    const { error } = await supabase
-      .from("stock_cotas")
-      .update({
-        status: "reservada",
-        reservado_em: new Date().toISOString(),
-        reservado_por: me?.id || null,
-        comprador_nome: nome,
-        comprador_cpf: cpf,
-        sinal_comprovante_path: path,
-        vendedor_id: reserveVendorId || null,
-        vendedor_pct: reserveVendorId ? clampPct(reserveVendorPct) : null,
-      })
-      .eq("id", c.id);
+      const vendedorIdNormalized = reserveVendorId === NONE ? null : reserveVendorId;
+      const vendedorPctNormalized = vendedorIdNormalized ? clampPct(reserveVendorPct) : null;
 
-    if (error) throw error;
+      const { error } = await supabase
+        .from("stock_cotas")
+        .update({
+          status: "reservada",
+          reservado_em: new Date().toISOString(),
+          reservado_por: me?.id || null,
+          comprador_nome: nome,
+          comprador_cpf: cpf,
+          sinal_comprovante_path: path,
+          vendedor_id: vendedorIdNormalized,
+          vendedor_pct: vendedorPctNormalized,
+        })
+        .eq("id", c.id);
 
-    setOpenReserve({ open: false, cota: null });
-    resetReserveForm();
-    await loadCotas();
+      if (error) throw error;
+
+      // ✅ se escolheu uma solicitação, amarra: convertida + cancela as outras
+      if (selectedRequestId !== NONE) {
+        await supabase
+          .from("stock_reservation_requests")
+          .update({ status: "convertida" })
+          .eq("id", selectedRequestId);
+
+        await supabase
+          .from("stock_reservation_requests")
+          .update({ status: "cancelada" })
+          .eq("cota_id", c.id)
+          .eq("status", "aberta")
+          .neq("id", selectedRequestId);
+      } else {
+        // se não escolheu, cancela todas as abertas (opcional — pode comentar se não quiser)
+        await supabase
+          .from("stock_reservation_requests")
+          .update({ status: "cancelada" })
+          .eq("cota_id", c.id)
+          .eq("status", "aberta");
+      }
+
+      setOpenReserve({ open: false, cota: null });
+      resetReserveForm();
+      await loadCotas();
+    } catch (err) {
+      notifyError("Não foi possível confirmar a reserva", err);
+    } finally {
+      setSavingReserve(false);
+    }
   }
 
   return (
@@ -487,7 +592,12 @@ export default function EstoqueContempladas() {
             </Button>
 
             {isAdmin && (
-              <Button onClick={() => setOpenCreate(true)}>
+              <Button
+                onClick={async () => {
+                  await loadBaseLists();
+                  setOpenCreate(true);
+                }}
+              >
                 <PlusCircle className="h-4 w-4 mr-2" />
                 Cadastrar cota
               </Button>
@@ -537,12 +647,12 @@ export default function EstoqueContempladas() {
 
             <div className="md:col-span-2">
               <Label>Crédito mín.</Label>
-              <Input value={minValue} onChange={(e) => setMinValue(e.target.value)} placeholder="Ex: 100000" />
+              <Input value={minValue} onChange={(e) => setMinValue(e.target.value)} placeholder="Ex: 100.000" />
             </div>
 
             <div className="md:col-span-2">
               <Label>Crédito máx.</Label>
-              <Input value={maxValue} onChange={(e) => setMaxValue(e.target.value)} placeholder="Ex: 300000" />
+              <Input value={maxValue} onChange={(e) => setMaxValue(e.target.value)} placeholder="Ex: 300.000" />
             </div>
 
             <div className="md:col-span-2">
@@ -562,7 +672,9 @@ export default function EstoqueContempladas() {
                   <SelectItem value="5">5%</SelectItem>
                 </SelectContent>
               </Select>
-              <div className="text-xs text-muted-foreground mt-1">Atual: <b>{commissionPctHuman}</b></div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Atual: <b>{commissionPctHuman}</b>
+              </div>
             </div>
           </div>
 
@@ -632,19 +744,16 @@ export default function EstoqueContempladas() {
                         {c.status === "disponivel" ? (
                           isAdmin ? (
                             <Button
-                              onClick={() => {
+                              onClick={async () => {
                                 resetReserveForm();
                                 setOpenReserve({ open: true, cota: c });
+                                await loadRequestsForCota(c.id);
                               }}
                             >
                               Reservar
                             </Button>
                           ) : (
-                            <Button
-                              onClick={() => {
-                                setOpenVendorReserve({ open: true, cota: c });
-                              }}
-                            >
+                            <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}>
                               Reservar
                             </Button>
                           )
@@ -676,8 +785,12 @@ export default function EstoqueContempladas() {
               <Label>Parceiro</Label>
               <Tabs value={createTabPartner} onValueChange={(v: any) => setCreateTabPartner(v)}>
                 <TabsList className="w-full">
-                  <TabsTrigger value="select" className="flex-1">Selecionar</TabsTrigger>
-                  <TabsTrigger value="new" className="flex-1">Cadastrar</TabsTrigger>
+                  <TabsTrigger value="select" className="flex-1">
+                    Selecionar
+                  </TabsTrigger>
+                  <TabsTrigger value="new" className="flex-1">
+                    Cadastrar
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="select" className="space-y-2">
@@ -696,9 +809,15 @@ export default function EstoqueContempladas() {
                 </TabsContent>
 
                 <TabsContent value="new" className="space-y-2">
-                  <Input value={newPartnerName} onChange={(e) => setNewPartnerName(e.target.value)} placeholder="Nome do parceiro" />
+                  <Input
+                    value={newPartnerName}
+                    onChange={(e) => setNewPartnerName(e.target.value)}
+                    placeholder="Nome do parceiro"
+                  />
                   <Input type="file" accept="image/*" onChange={(e) => setNewPartnerLogo(e.target.files?.[0] || null)} />
-                  <div className="text-xs text-muted-foreground">Logo vai para bucket <b>stock_assets</b>.</div>
+                  <div className="text-xs text-muted-foreground">
+                    Logo vai para bucket <b>stock_assets</b>.
+                  </div>
                 </TabsContent>
               </Tabs>
             </div>
@@ -708,8 +827,12 @@ export default function EstoqueContempladas() {
               <Label>Administradora</Label>
               <Tabs value={createTabAdmin} onValueChange={(v: any) => setCreateTabAdmin(v)}>
                 <TabsList className="w-full">
-                  <TabsTrigger value="select" className="flex-1">Selecionar</TabsTrigger>
-                  <TabsTrigger value="new" className="flex-1">Cadastrar</TabsTrigger>
+                  <TabsTrigger value="select" className="flex-1">
+                    Selecionar
+                  </TabsTrigger>
+                  <TabsTrigger value="new" className="flex-1">
+                    Cadastrar
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="select" className="space-y-2">
@@ -728,9 +851,15 @@ export default function EstoqueContempladas() {
                 </TabsContent>
 
                 <TabsContent value="new" className="space-y-2">
-                  <Input value={newAdminName} onChange={(e) => setNewAdminName(e.target.value)} placeholder="Nome da administradora" />
+                  <Input
+                    value={newAdminName}
+                    onChange={(e) => setNewAdminName(e.target.value)}
+                    placeholder="Nome da administradora"
+                  />
                   <Input type="file" accept="image/*" onChange={(e) => setNewAdminLogo(e.target.files?.[0] || null)} />
-                  <div className="text-xs text-muted-foreground">Logo vai para bucket <b>stock_assets</b>.</div>
+                  <div className="text-xs text-muted-foreground">
+                    Logo vai para bucket <b>stock_assets</b>.
+                  </div>
                 </TabsContent>
               </Tabs>
             </div>
@@ -738,7 +867,9 @@ export default function EstoqueContempladas() {
             <div className="space-y-2">
               <Label>Segmento</Label>
               <Select value={segmento} onValueChange={(v: any) => setSegmento(v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Automóvel">Automóvel</SelectItem>
                   <SelectItem value="Imóvel">Imóvel</SelectItem>
@@ -755,12 +886,12 @@ export default function EstoqueContempladas() {
 
             <div className="space-y-2">
               <Label>Crédito contratado</Label>
-              <Input value={creditoContratado} onChange={(e) => setCreditoContratado(e.target.value)} placeholder="Ex: 250000" />
+              <Input value={creditoContratado} onChange={(e) => setCreditoContratado(e.target.value)} placeholder="Ex: 250.000" />
             </div>
 
             <div className="space-y-2">
               <Label>Crédito disponível</Label>
-              <Input value={creditoDisponivel} onChange={(e) => setCreditoDisponivel(e.target.value)} placeholder="Ex: 250000" />
+              <Input value={creditoDisponivel} onChange={(e) => setCreditoDisponivel(e.target.value)} placeholder="Ex: 250.000" />
             </div>
 
             <div className="space-y-2">
@@ -770,23 +901,28 @@ export default function EstoqueContempladas() {
 
             <div className="space-y-2">
               <Label>Valor da parcela</Label>
-              <Input value={valorParcela} onChange={(e) => setValorParcela(e.target.value)} placeholder="Ex: 1850" />
+              <Input value={valorParcela} onChange={(e) => setValorParcela(e.target.value)} placeholder="Ex: 1.850" />
             </div>
 
             <div className="space-y-2">
               <Label>Comissão exigida pela corretora</Label>
-              <Input value={comissaoCorretora} onChange={(e) => setComissaoCorretora(e.target.value)} placeholder="Ex: 2500" />
+              <Input value={comissaoCorretora} onChange={(e) => setComissaoCorretora(e.target.value)} placeholder="Ex: 2.500" />
             </div>
 
             <div className="space-y-2">
               <Label>Valor pago ao cliente (cedente)</Label>
-              <Input value={valorPagoCliente} onChange={(e) => setValorPagoCliente(e.target.value)} placeholder="Ex: 15000" />
+              <Input value={valorPagoCliente} onChange={(e) => setValorPagoCliente(e.target.value)} placeholder="Ex: 15.000" />
             </div>
           </div>
 
           <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setOpenCreate(false)}>Cancelar</Button>
-            <Button onClick={() => createCota()}>Salvar cota</Button>
+            <Button variant="outline" onClick={() => setOpenCreate(false)} disabled={savingCota}>
+              Cancelar
+            </Button>
+            <Button onClick={() => createCota()} disabled={savingCota}>
+              {savingCota ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Salvar cota
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -811,14 +947,23 @@ export default function EstoqueContempladas() {
               </div>
 
               <div className="rounded-md bg-muted/40 p-3">
-                <div><b>Comissão selecionada:</b> {commissionPctHuman}</div>
-                <div><b>Mensagem será enviada para:</b> {WHATSAPP_RESERVA_NUMBER}</div>
+                <div>
+                  <b>Comissão selecionada:</b> {commissionPctHuman}
+                </div>
+                <div>
+                  <b>Mensagem será enviada para:</b> {WHATSAPP_RESERVA_NUMBER}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  A solicitação ficará registrada no banco para o admin ver.
+                </div>
               </div>
             </div>
           ) : null}
 
           <DialogFooter className="mt-3">
-            <Button variant="outline" onClick={() => setOpenVendorReserve({ open: false, cota: null })}>Fechar</Button>
+            <Button variant="outline" onClick={() => setOpenVendorReserve({ open: false, cota: null })}>
+              Fechar
+            </Button>
             <Button
               onClick={async () => {
                 if (!openVendorReserve.cota) return;
@@ -848,7 +993,44 @@ export default function EstoqueContempladas() {
               <div className="rounded-md border p-3 text-sm">
                 <div className="font-semibold">{openReserve.cota.codigo}</div>
                 <div className="text-muted-foreground">
-                  {openReserve.cota.admin?.nome || "—"} • {openReserve.cota.segmento} • Crédito {formatBRL(Number(openReserve.cota.credito_disponivel || 0))}
+                  {openReserve.cota.admin?.nome || "—"} • {openReserve.cota.segmento} • Crédito{" "}
+                  {formatBRL(Number(openReserve.cota.credito_disponivel || 0))}
+                </div>
+              </div>
+
+              {/* ✅ Solicitações abertas */}
+              <div className="space-y-2">
+                <Label>Solicitação aberta (opcional, recomendado)</Label>
+                <Select
+                  value={selectedRequestId}
+                  onValueChange={(v) => {
+                    setSelectedRequestId(v);
+                    const req = reserveRequests.find((r) => r.id === v);
+                    if (req) {
+                      setReserveVendorId(req.vendor_id);
+                      setReserveVendorPct(clampPct(Number(req.vendor_pct)));
+                    }
+                    if (v === NONE) {
+                      setReserveVendorId(NONE);
+                      setReserveVendorPct(0.05);
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma solicitação (se houver)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Nenhuma</SelectItem>
+                    {reserveRequests.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.vendor?.nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} —{" "}
+                        {new Date(r.created_at).toLocaleString("pt-BR")}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="text-xs text-muted-foreground">
+                  Se selecionar, o sistema “amarra” o vendedor e o % combinados e marca a solicitação como convertida.
                 </div>
               </div>
 
@@ -866,7 +1048,9 @@ export default function EstoqueContempladas() {
                 <div className="space-y-2 md:col-span-2">
                   <Label>Comprovante do sinal</Label>
                   <Input type="file" onChange={(e) => setSinalFile(e.target.files?.[0] || null)} />
-                  <div className="text-xs text-muted-foreground">Vai para bucket <b>stock_sinais</b> (recomendado private).</div>
+                  <div className="text-xs text-muted-foreground">
+                    Vai para bucket <b>stock_sinais</b> (recomendado private).
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -876,7 +1060,8 @@ export default function EstoqueContempladas() {
                       <SelectValue placeholder="Selecione um vendedor (opcional)" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">—</SelectItem>
+                      {/* ✅ NUNCA use value="" em SelectItem */}
+                      <SelectItem value={NONE}>—</SelectItem>
                       {vendedores.map((v) => (
                         <SelectItem key={v.id} value={v.id}>
                           {v.nome}
@@ -891,7 +1076,7 @@ export default function EstoqueContempladas() {
                   <Select
                     value={String(Math.round(reserveVendorPct * 100))}
                     onValueChange={(v) => setReserveVendorPct(Number(v) / 100)}
-                    disabled={!reserveVendorId}
+                    disabled={reserveVendorId === NONE}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="5%" />
@@ -910,8 +1095,20 @@ export default function EstoqueContempladas() {
           ) : null}
 
           <DialogFooter className="mt-3">
-            <Button variant="outline" onClick={() => setOpenReserve({ open: false, cota: null })}>Cancelar</Button>
-            <Button onClick={() => reserveCotaAdmin()}>Confirmar reserva</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setOpenReserve({ open: false, cota: null });
+                resetReserveForm();
+              }}
+              disabled={savingReserve}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={() => reserveCotaAdmin()} disabled={savingReserve}>
+              {savingReserve ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Confirmar reserva
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

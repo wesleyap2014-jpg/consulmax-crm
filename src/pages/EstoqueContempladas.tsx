@@ -117,6 +117,12 @@ export default function EstoqueContempladas() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  const [toast, setToast] = useState<string | null>(null);
+  function showToast(msg: string) {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 1800);
+  }
+
   const [me, setMe] = useState<UserRow | null>(null);
   const isAdmin = useMemo(() => {
     const r = (me?.user_role || me?.role || "").toString();
@@ -144,7 +150,7 @@ export default function EstoqueContempladas() {
         document.execCommand("copy");
         document.body.removeChild(ta);
       }
-      window.alert("Texto copiado ✅");
+      showToast("Resumo copiado para a área de transferência ✅");
     } catch (e) {
       console.warn("Falha ao copiar:", e);
       window.alert("Não consegui copiar automaticamente. Selecione e copie manualmente.");
@@ -181,15 +187,16 @@ export default function EstoqueContempladas() {
     cota: null,
   });
 
-  // share dialog (resumo / soma inteligente)
-  const [openShare, setOpenShare] = useState<{
-    open: boolean;
-    anchorId: string | null;
-    baseSegmento: Segmento | null;
-    basePartnerId: string | null;
-    baseAdminId: string | null;
-    selectedIds: string[];
-  }>({ open: false, anchorId: null, baseSegmento: null, basePartnerId: null, baseAdminId: null, selectedIds: [] });
+  // soma/resumo overlay (somar)
+  const [openSum, setOpenSum] = useState(false);
+
+  // seleção (soma inteligente) direto na lista
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [anchorRule, setAnchorRule] = useState<{
+    partnerId: string | null;
+    adminId: string | null;
+    segmento: Segmento | null;
+  } | null>(null);
 
   // manage dialog (admin ver/editar/excluir)
   const [openManage, setOpenManage] = useState<{ open: boolean; cota: CotaRow | null }>({ open: false, cota: null });
@@ -643,118 +650,141 @@ export default function EstoqueContempladas() {
     }
   }
 
-  // ========= Resumo (individual ou soma inteligente) =========
-  const selectableForShare = useMemo(() => {
-    const baseSeg = openShare.baseSegmento;
-    const basePartner = openShare.basePartnerId;
-    const baseAdmin = openShare.baseAdminId;
+  // ========= Regra de seleção (mesmo parceiro + admin + segmento) =========
+  function getRuleFromRow(r: any) {
+    return {
+      partnerId: r.partner?.id || null,
+      adminId: r.admin?.id || null,
+      segmento: (r.segmento || null) as Segmento | null,
+    };
+  }
+  function matchesRule(r: any, rule: { partnerId: string | null; adminId: string | null; segmento: Segmento | null } | null) {
+    if (!rule) return true;
+    return (r.partner?.id || null) === rule.partnerId && (r.admin?.id || null) === rule.adminId && (r.segmento as any) === rule.segmento;
+  }
 
-    return rows.map((r: any) => {
-      const rPartner = r.partner?.id || null;
-      const rAdmin = r.admin?.id || null;
+  function toggleSelected(r: any, checked: boolean) {
+    const id = r.id as string;
 
-      const disabled =
-        (baseSeg ? r.segmento !== baseSeg : false) ||
-        (basePartner ? rPartner !== basePartner : false) ||
-        (baseAdmin ? rAdmin !== baseAdmin : false);
+    setSelectedIds((prev) => {
+      const set = new Set(prev);
 
-      return { ...r, _shareDisabled: disabled };
+      // definir âncora ao selecionar o primeiro
+      if (checked) {
+        if (!anchorRule) {
+          setAnchorRule(getRuleFromRow(r));
+          set.add(id);
+          return Array.from(set);
+        }
+
+        // se já existe âncora, só permite se obedecer
+        if (!matchesRule(r, anchorRule)) {
+          showToast("Essa cota não obedece a regra da seleção atual.");
+          return prev;
+        }
+
+        set.add(id);
+        return Array.from(set);
+      }
+
+      // desmarcar
+      set.delete(id);
+      const next = Array.from(set);
+
+      // se virou vazio, reseta âncora
+      if (next.length === 0) setAnchorRule(null);
+
+      return next;
     });
-  }, [rows, openShare.baseSegmento, openShare.basePartnerId, openShare.baseAdminId]);
+  }
 
-  const selectedShareRows = useMemo(() => {
-    const set = new Set(openShare.selectedIds);
-    return rows.filter((r: any) => set.has(r.id));
-  }, [rows, openShare.selectedIds]);
+  // ========= Resumo / texto =========
+  function buildParcelRangesForSelected(selected: any[]) {
+    // Correção: somar VALORES mensais em sobreposição (não somar prazos)
+    // Meses 1..minN: soma de todas parcelas; após cada vencimento (n), remove parcela daquela cota
+    const items = selected
+      .map((c) => ({
+        n: Math.max(0, safeInt(c.prazo_restante)),
+        v: Number(c.valor_parcela || 0),
+      }))
+      .filter((x) => x.n > 0 && x.v > 0);
 
-  const shareText = useMemo(() => {
-    if (!selectedShareRows.length) return "";
+    if (items.length === 0) return ["1 a 0: 0,00"];
 
-    const seg = selectedShareRows[0].segmento as Segmento;
+    // agrupa por n (pra retirar em bloco)
+    const byN = new Map<number, number>(); // n -> soma parcelas com esse n
+    for (const it of items) byN.set(it.n, (byN.get(it.n) || 0) + it.v);
 
-    const creditTotal = selectedShareRows.reduce((acc, c: any) => acc + Number(c.credito_disponivel || 0), 0);
-    const entradaTotal = selectedShareRows.reduce((acc, c: any) => acc + Number(c._calc?.entrada || 0), 0);
-    const parcelasTotal = selectedShareRows.reduce(
-      (acc, c: any) => acc + Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0),
+    const uniqueNsAsc = Array.from(byN.keys()).sort((a, b) => a - b);
+
+    let currentTotal = items.reduce((acc, it) => acc + it.v, 0);
+    let start = 1;
+    const lines: string[] = [];
+
+    for (const n of uniqueNsAsc) {
+      const end = n;
+      if (end >= start) {
+        lines.push(`${start} a ${end}: ${formatBRLNoSymbol(currentTotal)}`);
+      }
+      // após o mês "n", a(s) cota(s) com n acaba(m)
+      currentTotal = currentTotal - (byN.get(n) || 0);
+      start = n + 1;
+    }
+
+    return lines;
+  }
+
+  function buildResumoText(selected: any[]) {
+    if (!selected.length) return "";
+
+    const seg = selected[0].segmento as Segmento;
+
+    const creditTotal = selected.reduce((acc, c) => acc + Number(c.credito_disponivel || 0), 0);
+    const entradaTotal = selected.reduce((acc, c) => acc + Number(c._calc?.entrada || 0), 0);
+
+    const parcelasTotal = selected.reduce(
+      (acc, c) => acc + Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0),
       0
     );
 
-    const nTotal = Math.max(
-      1,
-      selectedShareRows.reduce((acc, c: any) => acc + Number(c.prazo_restante || 0), 0)
-    );
+    // n para taxa: aqui seguimos sua regra “n = quantidade de parcelas”
+    // (para soma, usamos a soma dos prazos, como você pediu originalmente para o cálculo da taxa)
+    const nTaxa = Math.max(1, selected.reduce((acc, c) => acc + Number(c.prazo_restante || 0), 0));
 
-    // Parcelas em “faixas” (concatena cotas selecionadas): 1..n1, (n1+1)..(n1+n2) etc.
-    const parcelasSegments = selectedShareRows
-      .map((c: any) => ({
-        n: Math.max(0, safeInt(c.prazo_restante)),
-        valor: Number(c.valor_parcela || 0),
-      }))
-      .filter((x) => x.n > 0)
-      // ordem: maior parcela primeiro (fica mais natural pra leitura do exemplo)
-      .sort((a, b) => b.valor - a.valor || b.n - a.n);
+    const codigoLine = selected.length === 1 ? selected[0].codigo : selected.map((c) => c.codigo).filter(Boolean).join(", ");
 
-    let cursor = 1;
-    const parcelasLines: string[] = [];
-    for (const s of parcelasSegments) {
-      const start = cursor;
-      const end = cursor + s.n - 1;
-      parcelasLines.push(`${start} a ${end}: ${formatBRLNoSymbol(s.valor)}`);
-      cursor = end + 1;
-    }
-
-    const parcelasBlock =
-      parcelasLines.length > 0 ? `🧾 Parcelas:\n${parcelasLines.join("\n")}` : `🧾 Parcelas:\n1 a ${nTotal}: 0,00`;
-
-    const codigoLine =
-      selectedShareRows.length === 1
-        ? selectedShareRows[0].codigo
-        : selectedShareRows.map((c: any) => c.codigo).filter(Boolean).join(", ");
-
-    const txTransfer = selectedShareRows.reduce((acc, c: any) => acc + 0.01 * Number(c.credito_contratado || 0), 0);
+    const txTransfer = selected.reduce((acc, c) => acc + 0.01 * Number(c.credito_contratado || 0), 0);
 
     const fv = parcelasTotal + entradaTotal;
-    const rm = calcCompoundRateMonthly(creditTotal, fv, nTotal);
+    const rm = calcCompoundRateMonthly(creditTotal, fv, nTaxa);
     const ra = Math.pow(1 + rm, 12) - 1;
 
-    const taxaLine = `${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a.`;
+    const parcelaLines = buildParcelRangesForSelected(selected);
 
     return (
       `📄 Carta Contemplada • ${seg} 🎯\n` +
       `💰 Crédito: ${formatBRL(creditTotal)}\n` +
       `💳 Entrada: ${formatBRL(entradaTotal)}\n` +
-      `${parcelasBlock}\n` +
+      `🧾 Parcelas:\n${parcelaLines.join("\n")}\n` +
       `🆔 Código: ${codigoLine}\n` +
       `🔁 Tx. Transferência: ${formatBRL(txTransfer)} 💵\n` +
-      `📈 Taxa: ${taxaLine} 📊\n`
+      `📈 Taxa: ${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a. 📊\n`
     );
-  }, [selectedShareRows]);
-
-  function openShareDialogFromRow(c: any) {
-    setOpenShare({
-      open: true,
-      anchorId: c.id,
-      baseSegmento: c.segmento as Segmento,
-      basePartnerId: c.partner?.id || null,
-      baseAdminId: c.admin?.id || null,
-      selectedIds: [c.id],
-    });
   }
 
-  function toggleShareSelected(id: string, checked: boolean) {
-    setOpenShare((prev) => {
-      const next = new Set(prev.selectedIds);
-      if (checked) next.add(id);
-      else next.delete(id);
+  const selectedRows = useMemo(() => {
+    const set = new Set(selectedIds);
+    return rows.filter((r: any) => set.has(r.id));
+  }, [rows, selectedIds]);
 
-      const list = Array.from(next);
-      if (list.length === 0 && prev.anchorId) list.push(prev.anchorId);
+  const sumText = useMemo(() => buildResumoText(selectedRows as any[]), [selectedRows]);
 
-      return { ...prev, selectedIds: list };
-    });
+  async function copyRowResumo(r: any) {
+    const text = buildResumoText([r]);
+    await copyToClipboard(text);
   }
 
-  // ========= Admin Manage (ver/editar/excluir) =========
+  // ========= Admin Manage =========
   function openManageDialog(c: any) {
     if (!isAdmin) return;
 
@@ -834,7 +864,21 @@ export default function EstoqueContempladas() {
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-4 relative">
+      {/* toast */}
+      {toast ? (
+        <div className="fixed top-4 right-4 z-50 rounded-lg border bg-background/95 px-4 py-2 text-sm shadow-md">
+          {toast}
+        </div>
+      ) : null}
+
+      {/* botão Somar (canto inferior esquerdo) */}
+      <div className="fixed bottom-4 left-4 z-40">
+        <Button onClick={() => setOpenSum(true)} disabled={selectedIds.length < 1}>
+          Somar
+        </Button>
+      </div>
+
       <Card className="border-none shadow-sm">
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <div>
@@ -935,6 +979,7 @@ export default function EstoqueContempladas() {
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr className="text-left">
+                  <th className="p-3 w-10"></th>
                   <th className="p-3">Administradora</th>
                   <th className="p-3">Segmento</th>
                   <th className="p-3">Código</th>
@@ -949,85 +994,165 @@ export default function EstoqueContempladas() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td className="p-6 text-muted-foreground" colSpan={9}>
+                    <td className="p-6 text-muted-foreground" colSpan={10}>
                       Nenhuma cota encontrada.
                     </td>
                   </tr>
                 ) : (
-                  rows.map((c: any) => (
-                    <tr key={c.id} className="border-t">
-                      <td className="p-3">
-                        <div className="font-medium">{c.admin?.nome || "—"}</div>
-                        <div className="text-xs text-muted-foreground">Parceiro: {c.partner?.nome || "—"}</div>
-                      </td>
-                      <td className="p-3">{c.segmento}</td>
-                      <td className="p-3">
-                        <button
-                          type="button"
-                          className={`font-semibold ${isAdmin ? "underline underline-offset-2 hover:opacity-80" : ""}`}
-                          onClick={() => (isAdmin ? openManageDialog(c) : undefined)}
-                          disabled={!isAdmin}
-                          title={isAdmin ? "Ver/Editar/Excluir" : undefined}
-                        >
-                          {c.codigo}
-                        </button>
-                        {c.numero_proposta ? <div className="text-xs text-muted-foreground">Proposta: {c.numero_proposta}</div> : null}
-                      </td>
-                      <td className="p-3">{formatBRL(Number(c.credito_disponivel || 0))}</td>
-                      <td className="p-3">{formatBRL(c._calc.entrada)}</td>
-                      <td className="p-3">{formatBRL(c._calc.comissaoVendedor)}</td>
-                      <td className="p-3">
-                        {c.prazo_restante}x de {formatBRL(Number(c.valor_parcela || 0))}
-                      </td>
-                      <td className="p-3">
-                        {c.status === "disponivel" ? (
-                          <Badge className="gap-1">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Disponível
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="gap-1">
-                            <Lock className="h-3 w-3" />
-                            Reservada
-                          </Badge>
-                        )}
-                      </td>
-                      <td className="p-3 text-right">
-                        {c.status === "disponivel" ? (
-                          <div className="flex items-center justify-end gap-2">
-                            {/* resumo */}
-                            <Button variant="outline" size="icon" onClick={() => openShareDialogFromRow(c)} title="Resumo">
-                              <Copy className="h-4 w-4" />
-                            </Button>
+                  rows.map((c: any) => {
+                    const checked = selectedIds.includes(c.id);
+                    const allowed = matchesRule(c, anchorRule);
+                    const dim = anchorRule && !allowed && !checked;
 
-                            {isAdmin ? (
-                              <Button
-                                onClick={async () => {
-                                  resetReserveForm();
-                                  setOpenReserve({ open: true, cota: c });
-                                  await loadRequestsForCota(c.id);
-                                }}
-                              >
-                                Reservar
+                    return (
+                      <tr key={c.id} className={`border-t ${dim ? "opacity-40" : ""}`}>
+                        {/* seleção */}
+                        <td className="p-3">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={!allowed && !checked}
+                            onChange={(e) => toggleSelected(c, e.target.checked)}
+                            title={!allowed && !checked ? "Essa cota não pode ser somada com a seleção atual." : "Selecionar para somar"}
+                          />
+                        </td>
+
+                        <td className="p-3">
+                          <div className="font-medium">{c.admin?.nome || "—"}</div>
+                          <div className="text-xs text-muted-foreground">Parceiro: {c.partner?.nome || "—"}</div>
+                        </td>
+
+                        <td className="p-3">{c.segmento}</td>
+
+                        <td className="p-3">
+                          <button
+                            type="button"
+                            className={`font-semibold ${isAdmin ? "underline underline-offset-2 hover:opacity-80" : ""}`}
+                            onClick={() => (isAdmin ? openManageDialog(c) : undefined)}
+                            disabled={!isAdmin}
+                            title={isAdmin ? "Ver/Editar/Excluir" : undefined}
+                          >
+                            {c.codigo}
+                          </button>
+                          {c.numero_proposta ? <div className="text-xs text-muted-foreground">Proposta: {c.numero_proposta}</div> : null}
+                        </td>
+
+                        <td className="p-3">{formatBRL(Number(c.credito_disponivel || 0))}</td>
+                        <td className="p-3">{formatBRL(c._calc.entrada)}</td>
+                        <td className="p-3">{formatBRL(c._calc.comissaoVendedor)}</td>
+
+                        <td className="p-3">
+                          {c.prazo_restante}x de {formatBRL(Number(c.valor_parcela || 0))}
+                        </td>
+
+                        <td className="p-3">
+                          {c.status === "disponivel" ? (
+                            <Badge className="gap-1">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Disponível
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="gap-1">
+                              <Lock className="h-3 w-3" />
+                              Reservada
+                            </Badge>
+                          )}
+                        </td>
+
+                        <td className="p-3 text-right">
+                          {c.status === "disponivel" ? (
+                            <div className="flex items-center justify-end gap-2">
+                              {/* resumo (copiar direto) */}
+                              <Button variant="outline" size="icon" onClick={() => copyRowResumo(c)} title="Resumo">
+                                <Copy className="h-4 w-4" />
                               </Button>
-                            ) : (
-                              <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}>Reservar</Button>
-                            )}
-                          </div>
-                        ) : (
-                          <Button variant="outline" disabled>
-                            Indisponível
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+
+                              {isAdmin ? (
+                                <Button
+                                  onClick={async () => {
+                                    resetReserveForm();
+                                    setOpenReserve({ open: true, cota: c });
+                                    await loadRequestsForCota(c.id);
+                                  }}
+                                >
+                                  Reservar
+                                </Button>
+                              ) : (
+                                <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}>Reservar</Button>
+                              )}
+                            </div>
+                          ) : (
+                            <Button variant="outline" disabled>
+                              Indisponível
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
         </CardContent>
       </Card>
+
+      {/* ====== OVERLAY: SOMAR (preview story) ====== */}
+      <Dialog open={openSum} onOpenChange={setOpenSum}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Resumo</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* preview story */}
+            <div className="flex justify-center">
+              <div className="w-full max-w-sm">
+                <div
+                  className="relative rounded-2xl border shadow-sm overflow-hidden"
+                  style={{ aspectRatio: "9 / 16" as any }}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#1E293F] via-[#0f172a] to-[#A11C27]" />
+                  <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_45%),radial-gradient(circle_at_80%_70%,rgba(181,165,115,0.35),transparent_45%)]" />
+                  <div className="relative p-5 h-full flex flex-col">
+                    <div className="text-white/90 text-sm font-semibold tracking-wide">Consulmax • Estoque</div>
+                    <div className="mt-3 text-white text-[13px] leading-relaxed whitespace-pre-wrap">
+                      {sumText || "Selecione uma ou mais cotas para ver o resumo"}
+                    </div>
+                    <div className="mt-auto pt-4 text-white/70 text-xs">
+                      Dica: você pode printar este card em formato de story.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* text */}
+            <div className="space-y-2">
+              <Label>Texto</Label>
+              <textarea
+                className="w-full min-h-[340px] rounded-md border bg-background p-3 text-sm"
+                readOnly
+                value={sumText || ""}
+                placeholder="Selecione uma ou mais cotas na lista para ver o resumo."
+              />
+              <div className="text-xs text-muted-foreground">
+                Taxa: juros compostos (PV = crédito; FV = soma das parcelas + entrada; n = quantidade de parcelas).
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setOpenSum(false)}>
+              Fechar
+            </Button>
+            <Button onClick={() => copyToClipboard(sumText)} disabled={!sumText.trim()}>
+              <Copy className="h-4 w-4 mr-2" />
+              Copiar texto
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ====== DIALOG: CADASTRAR COTA (ADMIN) ====== */}
       <Dialog open={openCreate} onOpenChange={setOpenCreate}>
@@ -1181,102 +1306,6 @@ export default function EstoqueContempladas() {
         </DialogContent>
       </Dialog>
 
-      {/* ====== DIALOG: RESUMO (SOMA INTELIGENTE) ====== */}
-      <Dialog
-        open={openShare.open}
-        onOpenChange={(v) =>
-          setOpenShare((prev) => ({
-            open: v,
-            anchorId: v ? prev.anchorId : null,
-            baseSegmento: v ? prev.baseSegmento : null,
-            basePartnerId: v ? prev.basePartnerId : null,
-            baseAdminId: v ? prev.baseAdminId : null,
-            selectedIds: v ? prev.selectedIds : [],
-          }))
-        }
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Resumo</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div className="rounded-md border p-3 text-sm">
-              <div className="font-semibold">Selecione uma ou mais cotas para ver o resumo</div>
-              <div className="text-muted-foreground">
-                Regra: <b>mesmo Parceiro</b>, <b>mesma Administradora</b> e <b>mesmo Segmento</b>.
-              </div>
-            </div>
-
-            <div className="max-h-56 overflow-auto rounded-md border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr className="text-left">
-                    <th className="p-2 w-12"></th>
-                    <th className="p-2">Código</th>
-                    <th className="p-2">Segmento</th>
-                    <th className="p-2">Administradora</th>
-                    <th className="p-2">Parceiro</th>
-                    <th className="p-2">Crédito</th>
-                    <th className="p-2">Parcela</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectableForShare.map((c: any) => {
-                    const checked = openShare.selectedIds.includes(c.id);
-                    const disabled = !!c._shareDisabled;
-                    return (
-                      <tr key={c.id} className="border-t">
-                        <td className="p-2">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={disabled}
-                            onChange={(e) => toggleShareSelected(c.id, e.target.checked)}
-                            title={disabled ? "Só pode somar cotas do mesmo parceiro/administradora/segmento" : "Selecionar"}
-                          />
-                        </td>
-                        <td className="p-2 font-medium">{c.codigo}</td>
-                        <td className="p-2">{c.segmento}</td>
-                        <td className="p-2">{c.admin?.nome || "—"}</td>
-                        <td className="p-2">{c.partner?.nome || "—"}</td>
-                        <td className="p-2">{formatBRL(Number(c.credito_disponivel || 0))}</td>
-                        <td className="p-2">
-                          {c.prazo_restante}x de {formatBRL(Number(c.valor_parcela || 0))}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Texto</Label>
-              <textarea className="w-full min-h-[200px] rounded-md border bg-background p-3 text-sm" readOnly value={shareText} />
-              <div className="text-xs text-muted-foreground">
-                Taxa: juros compostos (PV = crédito; FV = soma das parcelas + entrada; n = total de parcelas).
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter className="mt-2">
-            <Button
-              variant="outline"
-              onClick={() =>
-                setOpenShare({ open: false, anchorId: null, baseSegmento: null, basePartnerId: null, baseAdminId: null, selectedIds: [] })
-              }
-            >
-              Fechar
-            </Button>
-            <Button onClick={() => copyToClipboard(shareText)} disabled={!shareText.trim()}>
-              <Copy className="h-4 w-4 mr-2" />
-              Copiar texto
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* ====== DIALOG: RESERVAR (VENDEDOR) ====== */}
       <Dialog
         open={openVendorReserve.open}
@@ -1375,10 +1404,6 @@ export default function EstoqueContempladas() {
                     ))}
                   </SelectContent>
                 </Select>
-
-                <div className="text-xs text-muted-foreground">
-                  Se selecionar, o sistema amarra o vendedor e o % combinados e marca a solicitação como <b>convertida</b>.
-                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

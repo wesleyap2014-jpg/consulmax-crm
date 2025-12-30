@@ -11,16 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
-import {
-  PlusCircle,
-  Loader2,
-  PhoneOutgoing,
-  Lock,
-  CheckCircle2,
-  Copy,
-  Trash2,
-  Pencil,
-} from "lucide-react";
+import { PlusCircle, Loader2, PhoneOutgoing, Lock, CheckCircle2, Copy, Trash2, Pencil } from "lucide-react";
 
 type Segmento = "Automóvel" | "Imóvel" | "Motocicletas" | "Serviços";
 type Status = "disponivel" | "reservada";
@@ -81,6 +72,10 @@ function formatBRL(v: number) {
   const n = Number(v || 0);
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
+function formatBRLNoSymbol(v: number) {
+  const n = Number(v || 0);
+  return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 function clampPct(p: number) {
   return Math.min(0.05, Math.max(0.01, p));
 }
@@ -104,7 +99,6 @@ function safeInt(n: any) {
   const v = Math.floor(Number(n || 0));
   return Number.isFinite(v) ? v : 0;
 }
-
 function calcCompoundRateMonthly(pv: number, fv: number, n: number) {
   const PV = Number(pv || 0);
   const FV = Number(fv || 0);
@@ -113,7 +107,7 @@ function calcCompoundRateMonthly(pv: number, fv: number, n: number) {
   return Math.pow(FV / PV, 1 / N) - 1;
 }
 
-const WHATSAPP_RESERVA_NUMBER = "5569993917465"; // número oficial Consulmax
+const WHATSAPP_RESERVA_NUMBER = "5569993917465";
 const NONE = "__none__";
 
 export default function EstoqueContempladas() {
@@ -187,13 +181,15 @@ export default function EstoqueContempladas() {
     cota: null,
   });
 
-  // share dialog (copiar resumo / soma inteligente)
+  // share dialog (resumo / soma inteligente)
   const [openShare, setOpenShare] = useState<{
     open: boolean;
     anchorId: string | null;
     baseSegmento: Segmento | null;
+    basePartnerId: string | null;
+    baseAdminId: string | null;
     selectedIds: string[];
-  }>({ open: false, anchorId: null, baseSegmento: null, selectedIds: [] });
+  }>({ open: false, anchorId: null, baseSegmento: null, basePartnerId: null, baseAdminId: null, selectedIds: [] });
 
   // manage dialog (admin ver/editar/excluir)
   const [openManage, setOpenManage] = useState<{ open: boolean; cota: CotaRow | null }>({ open: false, cota: null });
@@ -410,7 +406,6 @@ export default function EstoqueContempladas() {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
-  // vendedor cria solicitação no banco + abre WhatsApp
   async function vendorRequestReserve(c: CotaRow) {
     if (!me?.id) return;
 
@@ -422,7 +417,6 @@ export default function EstoqueContempladas() {
         status: "aberta",
       });
 
-      // se der erro, ainda abre o WhatsApp (pra não travar o vendedor)
       if (error) console.warn("Falha ao registrar solicitação, mas seguindo para WhatsApp:", error);
     } catch (err) {
       console.warn("Erro ao registrar solicitação, mas seguindo para WhatsApp:", err);
@@ -440,7 +434,6 @@ export default function EstoqueContempladas() {
     return path;
   }
 
-  // ✅ UPSERT por nome (evita duplicate key)
   async function createPartnerIfNeeded(): Promise<string> {
     if (createTabPartner === "select") {
       if (!partnerId) throw new Error("Selecione um parceiro (ou cadastre um novo).");
@@ -469,7 +462,6 @@ export default function EstoqueContempladas() {
     return id;
   }
 
-  // ✅ UPSERT por nome (evita duplicate key)
   async function createAdminIfNeeded(): Promise<string> {
     if (createTabAdmin === "select") {
       if (!adminId) throw new Error("Selecione uma administradora (ou cadastre uma nova).");
@@ -529,7 +521,6 @@ export default function EstoqueContempladas() {
 
       setOpenCreate(false);
 
-      // reset
       setPartnerId("");
       setAdminId("");
       setNewPartnerName("");
@@ -569,7 +560,6 @@ export default function EstoqueContempladas() {
     setSelectedRequestId(NONE);
   }
 
-  // carrega solicitações abertas quando admin abre reserva
   async function loadRequestsForCota(cotaId: string) {
     if (!isAdmin) return;
 
@@ -632,7 +622,6 @@ export default function EstoqueContempladas() {
 
       if (error) throw error;
 
-      // se escolheu uma solicitação, amarra: convertida + cancela as outras
       if (selectedRequestId !== NONE) {
         await supabase.from("stock_reservation_requests").update({ status: "convertida" }).eq("id", selectedRequestId);
 
@@ -654,14 +643,24 @@ export default function EstoqueContempladas() {
     }
   }
 
-  // ========= Copiar resumo (individual ou soma inteligente) =========
+  // ========= Resumo (individual ou soma inteligente) =========
   const selectableForShare = useMemo(() => {
-    const base = openShare.baseSegmento;
-    return rows.map((r: any) => ({
-      ...r,
-      _shareDisabled: base ? r.segmento !== base : false,
-    }));
-  }, [rows, openShare.baseSegmento]);
+    const baseSeg = openShare.baseSegmento;
+    const basePartner = openShare.basePartnerId;
+    const baseAdmin = openShare.baseAdminId;
+
+    return rows.map((r: any) => {
+      const rPartner = r.partner?.id || null;
+      const rAdmin = r.admin?.id || null;
+
+      const disabled =
+        (baseSeg ? r.segmento !== baseSeg : false) ||
+        (basePartner ? rPartner !== basePartner : false) ||
+        (baseAdmin ? rAdmin !== baseAdmin : false);
+
+      return { ...r, _shareDisabled: disabled };
+    });
+  }, [rows, openShare.baseSegmento, openShare.basePartnerId, openShare.baseAdminId]);
 
   const selectedShareRows = useMemo(() => {
     const set = new Set(openShare.selectedIds);
@@ -680,20 +679,32 @@ export default function EstoqueContempladas() {
       0
     );
 
-    const prazoSet = new Set(selectedShareRows.map((c: any) => Number(c.prazo_restante || 0)));
-    const parcelaSet = new Set(selectedShareRows.map((c: any) => Number(c.valor_parcela || 0)));
+    const nTotal = Math.max(
+      1,
+      selectedShareRows.reduce((acc, c: any) => acc + Number(c.prazo_restante || 0), 0)
+    );
 
-    const prazos = selectedShareRows.map((c: any) => Number(c.prazo_restante || 0));
-    const parcelas = selectedShareRows.map((c: any) => Number(c.valor_parcela || 0));
-    const minPrazo = Math.min(...prazos);
-    const maxPrazo = Math.max(...prazos);
-    const minParcela = Math.min(...parcelas);
-    const maxParcela = Math.max(...parcelas);
+    // Parcelas em “faixas” (concatena cotas selecionadas): 1..n1, (n1+1)..(n1+n2) etc.
+    const parcelasSegments = selectedShareRows
+      .map((c: any) => ({
+        n: Math.max(0, safeInt(c.prazo_restante)),
+        valor: Number(c.valor_parcela || 0),
+      }))
+      .filter((x) => x.n > 0)
+      // ordem: maior parcela primeiro (fica mais natural pra leitura do exemplo)
+      .sort((a, b) => b.valor - a.valor || b.n - a.n);
 
-    const parcelasLine =
-      prazoSet.size === 1 && parcelaSet.size === 1
-        ? `${minPrazo}x de ${formatBRL(minParcela)}`
-        : `${minPrazo}–${maxPrazo}x de ${formatBRL(minParcela)}–${formatBRL(maxParcela)}`;
+    let cursor = 1;
+    const parcelasLines: string[] = [];
+    for (const s of parcelasSegments) {
+      const start = cursor;
+      const end = cursor + s.n - 1;
+      parcelasLines.push(`${start} a ${end}: ${formatBRLNoSymbol(s.valor)}`);
+      cursor = end + 1;
+    }
+
+    const parcelasBlock =
+      parcelasLines.length > 0 ? `🧾 Parcelas:\n${parcelasLines.join("\n")}` : `🧾 Parcelas:\n1 a ${nTotal}: 0,00`;
 
     const codigoLine =
       selectedShareRows.length === 1
@@ -702,38 +713,19 @@ export default function EstoqueContempladas() {
 
     const txTransfer = selectedShareRows.reduce((acc, c: any) => acc + 0.01 * Number(c.credito_contratado || 0), 0);
 
-    // taxa: se n variar, calcula 1 taxa; se variar, calcula range
-    let taxaLine = "";
-    if (prazoSet.size === 1) {
-      const n = minPrazo;
-      const fv = parcelasTotal + entradaTotal;
-      const rm = calcCompoundRateMonthly(creditTotal, fv, n);
-      const ra = Math.pow(1 + rm, 12) - 1;
-      taxaLine = `${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a.`;
-    } else {
-      const rates = selectedShareRows.map((c: any) => {
-        const pv = Number(c.credito_disponivel || 0);
-        const ent = Number(c._calc?.entrada || 0);
-        const fv = Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0) + ent;
-        const n = Number(c.prazo_restante || 0) || 1;
-        const rm = calcCompoundRateMonthly(pv, fv, n);
-        const ra = Math.pow(1 + rm, 12) - 1;
-        return { rm, ra };
-      });
-      const minRm = Math.min(...rates.map((r) => r.rm));
-      const maxRm = Math.max(...rates.map((r) => r.rm));
-      const minRa = Math.min(...rates.map((r) => r.ra));
-      const maxRa = Math.max(...rates.map((r) => r.ra));
-      taxaLine = `${pct2Human(minRm)}–${pct2Human(maxRm)} a.m. ou ${pct2Human(minRa)}–${pct2Human(maxRa)} a.a.`;
-    }
+    const fv = parcelasTotal + entradaTotal;
+    const rm = calcCompoundRateMonthly(creditTotal, fv, nTotal);
+    const ra = Math.pow(1 + rm, 12) - 1;
+
+    const taxaLine = `${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a.`;
 
     return (
       `📄 Carta Contemplada • ${seg} 🎯\n` +
       `💰 Crédito: ${formatBRL(creditTotal)}\n` +
       `💳 Entrada: ${formatBRL(entradaTotal)}\n` +
-      `🧾 Parcelas: ${parcelasLine}\n` +
+      `${parcelasBlock}\n` +
       `🆔 Código: ${codigoLine}\n` +
-      `🔁 Tx. Transferência: 1% sobre o Crédito Contratado — ${formatBRL(txTransfer)} 💵\n` +
+      `🔁 Tx. Transferência: ${formatBRL(txTransfer)} 💵\n` +
       `📈 Taxa: ${taxaLine} 📊\n`
     );
   }, [selectedShareRows]);
@@ -743,6 +735,8 @@ export default function EstoqueContempladas() {
       open: true,
       anchorId: c.id,
       baseSegmento: c.segmento as Segmento,
+      basePartnerId: c.partner?.id || null,
+      baseAdminId: c.admin?.id || null,
       selectedIds: [c.id],
     });
   }
@@ -752,9 +746,8 @@ export default function EstoqueContempladas() {
       const next = new Set(prev.selectedIds);
       if (checked) next.add(id);
       else next.delete(id);
-      const list = Array.from(next);
 
-      // mantém pelo menos 1 selecionado (âncora)
+      const list = Array.from(next);
       if (list.length === 0 && prev.anchorId) list.push(prev.anchorId);
 
       return { ...prev, selectedIds: list };
@@ -823,9 +816,7 @@ export default function EstoqueContempladas() {
     const c = openManage.cota;
     if (!c) return;
 
-    const ok = window.confirm(
-      `Excluir a cota "${c.codigo}"?\n\nEssa ação não pode ser desfeita.`
-    );
+    const ok = window.confirm(`Excluir a cota "${c.codigo}"?\n\nEssa ação não pode ser desfeita.`);
     if (!ok) return;
 
     setDeleting(true);
@@ -1004,13 +995,8 @@ export default function EstoqueContempladas() {
                       <td className="p-3 text-right">
                         {c.status === "disponivel" ? (
                           <div className="flex items-center justify-end gap-2">
-                            {/* copiar resumo (abre dialog com soma inteligente) */}
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => openShareDialogFromRow(c)}
-                              title="Copiar resumo para redes/WhatsApp"
-                            >
+                            {/* resumo */}
+                            <Button variant="outline" size="icon" onClick={() => openShareDialogFromRow(c)} title="Resumo">
                               <Copy className="h-4 w-4" />
                             </Button>
 
@@ -1195,7 +1181,7 @@ export default function EstoqueContempladas() {
         </DialogContent>
       </Dialog>
 
-      {/* ====== DIALOG: COPIAR RESUMO (SOMA INTELIGENTE) ====== */}
+      {/* ====== DIALOG: RESUMO (SOMA INTELIGENTE) ====== */}
       <Dialog
         open={openShare.open}
         onOpenChange={(v) =>
@@ -1203,20 +1189,22 @@ export default function EstoqueContempladas() {
             open: v,
             anchorId: v ? prev.anchorId : null,
             baseSegmento: v ? prev.baseSegmento : null,
+            basePartnerId: v ? prev.basePartnerId : null,
+            baseAdminId: v ? prev.baseAdminId : null,
             selectedIds: v ? prev.selectedIds : [],
           }))
         }
       >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Copiar resumo para redes/WhatsApp</DialogTitle>
+            <DialogTitle>Resumo</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-3">
             <div className="rounded-md border p-3 text-sm">
-              <div className="font-semibold">Soma inteligente</div>
+              <div className="font-semibold">Selecione uma ou mais cotas para ver o resumo</div>
               <div className="text-muted-foreground">
-                Selecione mais cotas para somar — <b>somente do mesmo segmento</b>.
+                Regra: <b>mesmo Parceiro</b>, <b>mesma Administradora</b> e <b>mesmo Segmento</b>.
               </div>
             </div>
 
@@ -1227,6 +1215,8 @@ export default function EstoqueContempladas() {
                     <th className="p-2 w-12"></th>
                     <th className="p-2">Código</th>
                     <th className="p-2">Segmento</th>
+                    <th className="p-2">Administradora</th>
+                    <th className="p-2">Parceiro</th>
                     <th className="p-2">Crédito</th>
                     <th className="p-2">Parcela</th>
                   </tr>
@@ -1243,11 +1233,13 @@ export default function EstoqueContempladas() {
                             checked={checked}
                             disabled={disabled}
                             onChange={(e) => toggleShareSelected(c.id, e.target.checked)}
-                            title={disabled ? "Só pode somar cotas do mesmo segmento" : "Selecionar"}
+                            title={disabled ? "Só pode somar cotas do mesmo parceiro/administradora/segmento" : "Selecionar"}
                           />
                         </td>
                         <td className="p-2 font-medium">{c.codigo}</td>
                         <td className="p-2">{c.segmento}</td>
+                        <td className="p-2">{c.admin?.nome || "—"}</td>
+                        <td className="p-2">{c.partner?.nome || "—"}</td>
                         <td className="p-2">{formatBRL(Number(c.credito_disponivel || 0))}</td>
                         <td className="p-2">
                           {c.prazo_restante}x de {formatBRL(Number(c.valor_parcela || 0))}
@@ -1261,19 +1253,20 @@ export default function EstoqueContempladas() {
 
             <div className="space-y-2">
               <Label>Texto</Label>
-              <textarea
-                className="w-full min-h-[180px] rounded-md border bg-background p-3 text-sm"
-                readOnly
-                value={shareText}
-              />
+              <textarea className="w-full min-h-[200px] rounded-md border bg-background p-3 text-sm" readOnly value={shareText} />
               <div className="text-xs text-muted-foreground">
-                Taxa calculada por juros compostos (PV = crédito; FV = soma das parcelas + entrada; n = parcelas).
+                Taxa: juros compostos (PV = crédito; FV = soma das parcelas + entrada; n = total de parcelas).
               </div>
             </div>
           </div>
 
           <DialogFooter className="mt-2">
-            <Button variant="outline" onClick={() => setOpenShare({ open: false, anchorId: null, baseSegmento: null, selectedIds: [] })}>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setOpenShare({ open: false, anchorId: null, baseSegmento: null, basePartnerId: null, baseAdminId: null, selectedIds: [] })
+              }
+            >
               Fechar
             </Button>
             <Button onClick={() => copyToClipboard(shareText)} disabled={!shareText.trim()}>
@@ -1350,7 +1343,6 @@ export default function EstoqueContempladas() {
                 </div>
               </div>
 
-              {/* Solicitações abertas */}
               <div className="space-y-2">
                 <Label>Solicitação aberta (opcional, recomendado)</Label>
                 <Select
@@ -1481,7 +1473,8 @@ export default function EstoqueContempladas() {
                   <div>
                     <div className="font-semibold">{openManage.cota.codigo}</div>
                     <div className="text-muted-foreground">
-                      {openManage.cota.admin?.nome || "—"} • {openManage.cota.segmento} • {openManage.cota.status === "disponivel" ? "Disponível" : "Reservada"}
+                      {openManage.cota.admin?.nome || "—"} • {openManage.cota.segmento} •{" "}
+                      {openManage.cota.status === "disponivel" ? "Disponível" : "Reservada"}
                     </div>
                   </div>
 

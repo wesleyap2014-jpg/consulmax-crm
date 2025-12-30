@@ -7,23 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
-import { PlusCircle, Loader2, PhoneOutgoing, Lock, CheckCircle2 } from "lucide-react";
+import {
+  PlusCircle,
+  Loader2,
+  PhoneOutgoing,
+  Lock,
+  CheckCircle2,
+  Copy,
+  Trash2,
+  Pencil,
+} from "lucide-react";
 
 type Segmento = "Automóvel" | "Imóvel" | "Motocicletas" | "Serviços";
 type Status = "disponivel" | "reservada";
@@ -90,6 +87,9 @@ function clampPct(p: number) {
 function pctToHuman(p: number) {
   return `${(p * 100).toFixed(0)}%`;
 }
+function pct2Human(p: number) {
+  return `${(p * 100).toFixed(2).replace(".", ",")}%`;
+}
 function toTelDigits(t: string) {
   return (t || "").replace(/\D/g, "");
 }
@@ -100,6 +100,18 @@ function parseBRNumber(input: string) {
   const n = Number(normalized);
   return Number.isFinite(n) ? n : 0;
 }
+function safeInt(n: any) {
+  const v = Math.floor(Number(n || 0));
+  return Number.isFinite(v) ? v : 0;
+}
+
+function calcCompoundRateMonthly(pv: number, fv: number, n: number) {
+  const PV = Number(pv || 0);
+  const FV = Number(fv || 0);
+  const N = Math.max(1, Math.floor(Number(n || 0)));
+  if (PV <= 0 || FV <= 0) return 0;
+  return Math.pow(FV / PV, 1 / N) - 1;
+}
 
 const WHATSAPP_RESERVA_NUMBER = "5569993917465"; // número oficial Consulmax
 const NONE = "__none__";
@@ -108,6 +120,8 @@ export default function EstoqueContempladas() {
   const [loading, setLoading] = useState(false);
   const [savingCota, setSavingCota] = useState(false);
   const [savingReserve, setSavingReserve] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [me, setMe] = useState<UserRow | null>(null);
   const isAdmin = useMemo(() => {
@@ -119,6 +133,28 @@ export default function EstoqueContempladas() {
     console.error(title, err);
     const msg = (err?.message || err?.error_description || err?.toString?.() || "Erro desconhecido") as string;
     window.alert(`${title}\n\n${msg}`);
+  }
+
+  async function copyToClipboard(text: string) {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      window.alert("Texto copiado ✅");
+    } catch (e) {
+      console.warn("Falha ao copiar:", e);
+      window.alert("Não consegui copiar automaticamente. Selecione e copie manualmente.");
+    }
   }
 
   // filtros
@@ -151,6 +187,17 @@ export default function EstoqueContempladas() {
     cota: null,
   });
 
+  // share dialog (copiar resumo / soma inteligente)
+  const [openShare, setOpenShare] = useState<{
+    open: boolean;
+    anchorId: string | null;
+    baseSegmento: Segmento | null;
+    selectedIds: string[];
+  }>({ open: false, anchorId: null, baseSegmento: null, selectedIds: [] });
+
+  // manage dialog (admin ver/editar/excluir)
+  const [openManage, setOpenManage] = useState<{ open: boolean; cota: CotaRow | null }>({ open: false, cota: null });
+
   // ====== Form Create ======
   const [createTabPartner, setCreateTabPartner] = useState<"select" | "new">("select");
   const [createTabAdmin, setCreateTabAdmin] = useState<"select" | "new">("select");
@@ -164,6 +211,7 @@ export default function EstoqueContempladas() {
   const [newAdminLogo, setNewAdminLogo] = useState<File | null>(null);
 
   const [segmento, setSegmento] = useState<Segmento>("Automóvel");
+  const [codigoCota, setCodigoCota] = useState("");
   const [numeroProposta, setNumeroProposta] = useState("");
   const [creditoContratado, setCreditoContratado] = useState("");
   const [creditoDisponivel, setCreditoDisponivel] = useState("");
@@ -183,6 +231,19 @@ export default function EstoqueContempladas() {
   // solicitações abertas
   const [reserveRequests, setReserveRequests] = useState<ReservationRequest[]>([]);
   const [selectedRequestId, setSelectedRequestId] = useState<string>(NONE);
+
+  // ====== Form Edit (Admin Manage) ======
+  const [editPartnerId, setEditPartnerId] = useState<string>("");
+  const [editAdminId, setEditAdminId] = useState<string>("");
+  const [editSegmento, setEditSegmento] = useState<Segmento>("Automóvel");
+  const [editCodigo, setEditCodigo] = useState("");
+  const [editNumeroProposta, setEditNumeroProposta] = useState("");
+  const [editCreditoContratado, setEditCreditoContratado] = useState("");
+  const [editCreditoDisponivel, setEditCreditoDisponivel] = useState("");
+  const [editPrazoRestante, setEditPrazoRestante] = useState("");
+  const [editValorParcela, setEditValorParcela] = useState("");
+  const [editComissaoCorretora, setEditComissaoCorretora] = useState("");
+  const [editValorPagoCliente, setEditValorPagoCliente] = useState("");
 
   async function loadMe() {
     const { data: auth } = await supabase.auth.getUser();
@@ -389,12 +450,7 @@ export default function EstoqueContempladas() {
     const nome = newPartnerName.trim();
     if (!nome) throw new Error("Informe o nome do parceiro.");
 
-    const { data, error } = await supabase
-      .from("stock_partners")
-      .upsert({ nome }, { onConflict: "nome" })
-      .select("id")
-      .single();
-
+    const { data, error } = await supabase.from("stock_partners").upsert({ nome }, { onConflict: "nome" }).select("id").single();
     if (error) throw error;
 
     const id = data.id as string;
@@ -423,12 +479,7 @@ export default function EstoqueContempladas() {
     const nome = newAdminName.trim();
     if (!nome) throw new Error("Informe o nome da administradora.");
 
-    const { data, error } = await supabase
-      .from("stock_admins")
-      .upsert({ nome }, { onConflict: "nome" })
-      .select("id")
-      .single();
-
+    const { data, error } = await supabase.from("stock_admins").upsert({ nome }, { onConflict: "nome" }).select("id").single();
     if (error) throw error;
 
     const id = data.id as string;
@@ -455,7 +506,11 @@ export default function EstoqueContempladas() {
       const pid = await createPartnerIfNeeded();
       const aid = await createAdminIfNeeded();
 
+      const cod = codigoCota.trim();
+      if (!cod) throw new Error("Informe o código da cota.");
+
       const payload = {
+        codigo: cod,
         partner_id: pid,
         admin_id: aid,
         segmento,
@@ -484,6 +539,8 @@ export default function EstoqueContempladas() {
       setCreateTabPartner("select");
       setCreateTabAdmin("select");
 
+      setSegmento("Automóvel");
+      setCodigoCota("");
       setNumeroProposta("");
       setCreditoContratado("");
       setCreditoDisponivel("");
@@ -530,7 +587,6 @@ export default function EstoqueContempladas() {
     }
 
     const base = (data || []) as ReservationRequest[];
-    // adiciona nome do vendedor via cache (vendedores list)
     const enriched = base.map((r) => ({
       ...r,
       vendor_nome: vendedoresById.get(r.vendor_id)?.nome || "Vendedor",
@@ -598,15 +654,200 @@ export default function EstoqueContempladas() {
     }
   }
 
+  // ========= Copiar resumo (individual ou soma inteligente) =========
+  const selectableForShare = useMemo(() => {
+    const base = openShare.baseSegmento;
+    return rows.map((r: any) => ({
+      ...r,
+      _shareDisabled: base ? r.segmento !== base : false,
+    }));
+  }, [rows, openShare.baseSegmento]);
+
+  const selectedShareRows = useMemo(() => {
+    const set = new Set(openShare.selectedIds);
+    return rows.filter((r: any) => set.has(r.id));
+  }, [rows, openShare.selectedIds]);
+
+  const shareText = useMemo(() => {
+    if (!selectedShareRows.length) return "";
+
+    const seg = selectedShareRows[0].segmento as Segmento;
+
+    const creditTotal = selectedShareRows.reduce((acc, c: any) => acc + Number(c.credito_disponivel || 0), 0);
+    const entradaTotal = selectedShareRows.reduce((acc, c: any) => acc + Number(c._calc?.entrada || 0), 0);
+    const parcelasTotal = selectedShareRows.reduce(
+      (acc, c: any) => acc + Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0),
+      0
+    );
+
+    const prazoSet = new Set(selectedShareRows.map((c: any) => Number(c.prazo_restante || 0)));
+    const parcelaSet = new Set(selectedShareRows.map((c: any) => Number(c.valor_parcela || 0)));
+
+    const prazos = selectedShareRows.map((c: any) => Number(c.prazo_restante || 0));
+    const parcelas = selectedShareRows.map((c: any) => Number(c.valor_parcela || 0));
+    const minPrazo = Math.min(...prazos);
+    const maxPrazo = Math.max(...prazos);
+    const minParcela = Math.min(...parcelas);
+    const maxParcela = Math.max(...parcelas);
+
+    const parcelasLine =
+      prazoSet.size === 1 && parcelaSet.size === 1
+        ? `${minPrazo}x de ${formatBRL(minParcela)}`
+        : `${minPrazo}–${maxPrazo}x de ${formatBRL(minParcela)}–${formatBRL(maxParcela)}`;
+
+    const codigoLine =
+      selectedShareRows.length === 1
+        ? selectedShareRows[0].codigo
+        : selectedShareRows.map((c: any) => c.codigo).filter(Boolean).join(", ");
+
+    const txTransfer = selectedShareRows.reduce((acc, c: any) => acc + 0.01 * Number(c.credito_contratado || 0), 0);
+
+    // taxa: se n variar, calcula 1 taxa; se variar, calcula range
+    let taxaLine = "";
+    if (prazoSet.size === 1) {
+      const n = minPrazo;
+      const fv = parcelasTotal + entradaTotal;
+      const rm = calcCompoundRateMonthly(creditTotal, fv, n);
+      const ra = Math.pow(1 + rm, 12) - 1;
+      taxaLine = `${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a.`;
+    } else {
+      const rates = selectedShareRows.map((c: any) => {
+        const pv = Number(c.credito_disponivel || 0);
+        const ent = Number(c._calc?.entrada || 0);
+        const fv = Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0) + ent;
+        const n = Number(c.prazo_restante || 0) || 1;
+        const rm = calcCompoundRateMonthly(pv, fv, n);
+        const ra = Math.pow(1 + rm, 12) - 1;
+        return { rm, ra };
+      });
+      const minRm = Math.min(...rates.map((r) => r.rm));
+      const maxRm = Math.max(...rates.map((r) => r.rm));
+      const minRa = Math.min(...rates.map((r) => r.ra));
+      const maxRa = Math.max(...rates.map((r) => r.ra));
+      taxaLine = `${pct2Human(minRm)}–${pct2Human(maxRm)} a.m. ou ${pct2Human(minRa)}–${pct2Human(maxRa)} a.a.`;
+    }
+
+    return (
+      `📄 Carta Contemplada • ${seg} 🎯\n` +
+      `💰 Crédito: ${formatBRL(creditTotal)}\n` +
+      `💳 Entrada: ${formatBRL(entradaTotal)}\n` +
+      `🧾 Parcelas: ${parcelasLine}\n` +
+      `🆔 Código: ${codigoLine}\n` +
+      `🔁 Tx. Transferência: 1% sobre o Crédito Contratado — ${formatBRL(txTransfer)} 💵\n` +
+      `📈 Taxa: ${taxaLine} 📊\n`
+    );
+  }, [selectedShareRows]);
+
+  function openShareDialogFromRow(c: any) {
+    setOpenShare({
+      open: true,
+      anchorId: c.id,
+      baseSegmento: c.segmento as Segmento,
+      selectedIds: [c.id],
+    });
+  }
+
+  function toggleShareSelected(id: string, checked: boolean) {
+    setOpenShare((prev) => {
+      const next = new Set(prev.selectedIds);
+      if (checked) next.add(id);
+      else next.delete(id);
+      const list = Array.from(next);
+
+      // mantém pelo menos 1 selecionado (âncora)
+      if (list.length === 0 && prev.anchorId) list.push(prev.anchorId);
+
+      return { ...prev, selectedIds: list };
+    });
+  }
+
+  // ========= Admin Manage (ver/editar/excluir) =========
+  function openManageDialog(c: any) {
+    if (!isAdmin) return;
+
+    setEditPartnerId(c.partner?.id || "");
+    setEditAdminId(c.admin?.id || "");
+    setEditSegmento(c.segmento);
+    setEditCodigo(c.codigo || "");
+    setEditNumeroProposta(c.numero_proposta || "");
+    setEditCreditoContratado(String(c.credito_contratado ?? ""));
+    setEditCreditoDisponivel(String(c.credito_disponivel ?? ""));
+    setEditPrazoRestante(String(c.prazo_restante ?? ""));
+    setEditValorParcela(String(c.valor_parcela ?? ""));
+    setEditComissaoCorretora(String(c.comissao_corretora ?? ""));
+    setEditValorPagoCliente(String(c.valor_pago_ao_cliente ?? ""));
+
+    setOpenManage({ open: true, cota: c });
+  }
+
+  async function saveManageEdits() {
+    if (!isAdmin) return;
+    const c = openManage.cota;
+    if (!c) return;
+
+    setSavingEdit(true);
+    try {
+      const cod = editCodigo.trim();
+      if (!cod) throw new Error("Informe o código da cota.");
+      if (!editPartnerId) throw new Error("Selecione o parceiro.");
+      if (!editAdminId) throw new Error("Selecione a administradora.");
+
+      const payload = {
+        codigo: cod,
+        partner_id: editPartnerId,
+        admin_id: editAdminId,
+        segmento: editSegmento,
+        numero_proposta: editNumeroProposta.trim() || null,
+        credito_contratado: parseBRNumber(editCreditoContratado),
+        credito_disponivel: parseBRNumber(editCreditoDisponivel),
+        prazo_restante: Math.max(0, safeInt(parseBRNumber(editPrazoRestante))),
+        valor_parcela: parseBRNumber(editValorParcela),
+        comissao_corretora: parseBRNumber(editComissaoCorretora),
+        valor_pago_ao_cliente: parseBRNumber(editValorPagoCliente),
+      };
+
+      const { error } = await supabase.from("stock_cotas").update(payload).eq("id", c.id);
+      if (error) throw error;
+
+      setOpenManage({ open: false, cota: null });
+      await loadCotas();
+    } catch (err) {
+      notifyError("Não foi possível salvar as alterações", err);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function deleteCota() {
+    if (!isAdmin) return;
+    const c = openManage.cota;
+    if (!c) return;
+
+    const ok = window.confirm(
+      `Excluir a cota "${c.codigo}"?\n\nEssa ação não pode ser desfeita.`
+    );
+    if (!ok) return;
+
+    setDeleting(true);
+    try {
+      const { error } = await supabase.from("stock_cotas").delete().eq("id", c.id);
+      if (error) throw error;
+
+      setOpenManage({ open: false, cota: null });
+      await loadCotas();
+    } catch (err) {
+      notifyError("Não foi possível excluir a cota", err);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="p-4 space-y-4">
       <Card className="border-none shadow-sm">
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <div>
-            <CardTitle>Estoque • Cotas Contempladas (Interno)</CardTitle>
-            <div className="text-sm text-muted-foreground">
-              Por padrão mostrando <b>Disponíveis</b>. Comissão recalcula Entrada/Comissão em tempo real.
-            </div>
+            <CardTitle>Estoque • Cotas Contempladas</CardTitle>
           </div>
 
           <div className="flex items-center gap-2">
@@ -650,16 +891,10 @@ export default function EstoqueContempladas() {
             <div className="md:col-span-3">
               <Label>Status</Label>
               <div className="flex gap-2">
-                <Button
-                  variant={statusFilter === "disponivel" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("disponivel")}
-                >
+                <Button variant={statusFilter === "disponivel" ? "default" : "outline"} onClick={() => setStatusFilter("disponivel")}>
                   Disponíveis
                 </Button>
-                <Button
-                  variant={statusFilter === "reservada" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("reservada")}
-                >
+                <Button variant={statusFilter === "reservada" ? "default" : "outline"} onClick={() => setStatusFilter("reservada")}>
                   Reservadas
                 </Button>
                 <Button variant={statusFilter === "all" ? "default" : "outline"} onClick={() => setStatusFilter("all")}>
@@ -680,10 +915,7 @@ export default function EstoqueContempladas() {
 
             <div className="md:col-span-2">
               <Label>Comissão do vendedor</Label>
-              <Select
-                value={String(Math.round(commissionPct * 100))}
-                onValueChange={(v) => saveCommissionSetting(Number(v) / 100)}
-              >
+              <Select value={String(Math.round(commissionPct * 100))} onValueChange={(v) => saveCommissionSetting(Number(v) / 100)}>
                 <SelectTrigger>
                   <SelectValue placeholder="5%" />
                 </SelectTrigger>
@@ -739,10 +971,16 @@ export default function EstoqueContempladas() {
                       </td>
                       <td className="p-3">{c.segmento}</td>
                       <td className="p-3">
-                        <div className="font-semibold">{c.codigo}</div>
-                        {c.numero_proposta ? (
-                          <div className="text-xs text-muted-foreground">Proposta: {c.numero_proposta}</div>
-                        ) : null}
+                        <button
+                          type="button"
+                          className={`font-semibold ${isAdmin ? "underline underline-offset-2 hover:opacity-80" : ""}`}
+                          onClick={() => (isAdmin ? openManageDialog(c) : undefined)}
+                          disabled={!isAdmin}
+                          title={isAdmin ? "Ver/Editar/Excluir" : undefined}
+                        >
+                          {c.codigo}
+                        </button>
+                        {c.numero_proposta ? <div className="text-xs text-muted-foreground">Proposta: {c.numero_proposta}</div> : null}
                       </td>
                       <td className="p-3">{formatBRL(Number(c.credito_disponivel || 0))}</td>
                       <td className="p-3">{formatBRL(c._calc.entrada)}</td>
@@ -765,19 +1003,31 @@ export default function EstoqueContempladas() {
                       </td>
                       <td className="p-3 text-right">
                         {c.status === "disponivel" ? (
-                          isAdmin ? (
+                          <div className="flex items-center justify-end gap-2">
+                            {/* copiar resumo (abre dialog com soma inteligente) */}
                             <Button
-                              onClick={async () => {
-                                resetReserveForm();
-                                setOpenReserve({ open: true, cota: c });
-                                await loadRequestsForCota(c.id);
-                              }}
+                              variant="outline"
+                              size="icon"
+                              onClick={() => openShareDialogFromRow(c)}
+                              title="Copiar resumo para redes/WhatsApp"
                             >
-                              Reservar
+                              <Copy className="h-4 w-4" />
                             </Button>
-                          ) : (
-                            <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}>Reservar</Button>
-                          )
+
+                            {isAdmin ? (
+                              <Button
+                                onClick={async () => {
+                                  resetReserveForm();
+                                  setOpenReserve({ open: true, cota: c });
+                                  await loadRequestsForCota(c.id);
+                                }}
+                              >
+                                Reservar
+                              </Button>
+                            ) : (
+                              <Button onClick={() => setOpenVendorReserve({ open: true, cota: c })}>Reservar</Button>
+                            )}
+                          </div>
                         ) : (
                           <Button variant="outline" disabled>
                             Indisponível
@@ -830,11 +1080,7 @@ export default function EstoqueContempladas() {
                 </TabsContent>
 
                 <TabsContent value="new" className="space-y-2">
-                  <Input
-                    value={newPartnerName}
-                    onChange={(e) => setNewPartnerName(e.target.value)}
-                    placeholder="Nome do parceiro"
-                  />
+                  <Input value={newPartnerName} onChange={(e) => setNewPartnerName(e.target.value)} placeholder="Nome do parceiro" />
                   <Input type="file" accept="image/*" onChange={(e) => setNewPartnerLogo(e.target.files?.[0] || null)} />
                   <div className="text-xs text-muted-foreground">
                     Logo vai para bucket <b>stock_assets</b>.
@@ -872,11 +1118,7 @@ export default function EstoqueContempladas() {
                 </TabsContent>
 
                 <TabsContent value="new" className="space-y-2">
-                  <Input
-                    value={newAdminName}
-                    onChange={(e) => setNewAdminName(e.target.value)}
-                    placeholder="Nome da administradora"
-                  />
+                  <Input value={newAdminName} onChange={(e) => setNewAdminName(e.target.value)} placeholder="Nome da administradora" />
                   <Input type="file" accept="image/*" onChange={(e) => setNewAdminLogo(e.target.files?.[0] || null)} />
                   <div className="text-xs text-muted-foreground">
                     Logo vai para bucket <b>stock_assets</b>.
@@ -898,6 +1140,11 @@ export default function EstoqueContempladas() {
                   <SelectItem value="Serviços">Serviços</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Código da cota</Label>
+              <Input value={codigoCota} onChange={(e) => setCodigoCota(e.target.value)} placeholder="Ex: 3798" />
             </div>
 
             <div className="space-y-2">
@@ -948,6 +1195,95 @@ export default function EstoqueContempladas() {
         </DialogContent>
       </Dialog>
 
+      {/* ====== DIALOG: COPIAR RESUMO (SOMA INTELIGENTE) ====== */}
+      <Dialog
+        open={openShare.open}
+        onOpenChange={(v) =>
+          setOpenShare((prev) => ({
+            open: v,
+            anchorId: v ? prev.anchorId : null,
+            baseSegmento: v ? prev.baseSegmento : null,
+            selectedIds: v ? prev.selectedIds : [],
+          }))
+        }
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Copiar resumo para redes/WhatsApp</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded-md border p-3 text-sm">
+              <div className="font-semibold">Soma inteligente</div>
+              <div className="text-muted-foreground">
+                Selecione mais cotas para somar — <b>somente do mesmo segmento</b>.
+              </div>
+            </div>
+
+            <div className="max-h-56 overflow-auto rounded-md border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr className="text-left">
+                    <th className="p-2 w-12"></th>
+                    <th className="p-2">Código</th>
+                    <th className="p-2">Segmento</th>
+                    <th className="p-2">Crédito</th>
+                    <th className="p-2">Parcela</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectableForShare.map((c: any) => {
+                    const checked = openShare.selectedIds.includes(c.id);
+                    const disabled = !!c._shareDisabled;
+                    return (
+                      <tr key={c.id} className="border-t">
+                        <td className="p-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={disabled}
+                            onChange={(e) => toggleShareSelected(c.id, e.target.checked)}
+                            title={disabled ? "Só pode somar cotas do mesmo segmento" : "Selecionar"}
+                          />
+                        </td>
+                        <td className="p-2 font-medium">{c.codigo}</td>
+                        <td className="p-2">{c.segmento}</td>
+                        <td className="p-2">{formatBRL(Number(c.credito_disponivel || 0))}</td>
+                        <td className="p-2">
+                          {c.prazo_restante}x de {formatBRL(Number(c.valor_parcela || 0))}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Texto</Label>
+              <textarea
+                className="w-full min-h-[180px] rounded-md border bg-background p-3 text-sm"
+                readOnly
+                value={shareText}
+              />
+              <div className="text-xs text-muted-foreground">
+                Taxa calculada por juros compostos (PV = crédito; FV = soma das parcelas + entrada; n = parcelas).
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setOpenShare({ open: false, anchorId: null, baseSegmento: null, selectedIds: [] })}>
+              Fechar
+            </Button>
+            <Button onClick={() => copyToClipboard(shareText)} disabled={!shareText.trim()}>
+              <Copy className="h-4 w-4 mr-2" />
+              Copiar texto
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ====== DIALOG: RESERVAR (VENDEDOR) ====== */}
       <Dialog
         open={openVendorReserve.open}
@@ -974,9 +1310,7 @@ export default function EstoqueContempladas() {
                 <div>
                   <b>Mensagem será enviada para:</b> {WHATSAPP_RESERVA_NUMBER}
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  A solicitação fica registrada no banco para o admin ver.
-                </div>
+                <div className="text-xs text-muted-foreground mt-1">A solicitação fica registrada no banco para o admin ver.</div>
               </div>
             </div>
           ) : null}
@@ -1044,8 +1378,7 @@ export default function EstoqueContempladas() {
                     <SelectItem value={NONE}>Nenhuma</SelectItem>
                     {reserveRequests.map((r) => (
                       <SelectItem key={r.id} value={r.id}>
-                        {r.vendor_nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} —{" "}
-                        {new Date(r.created_at).toLocaleString("pt-BR")}
+                        {r.vendor_nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} — {new Date(r.created_at).toLocaleString("pt-BR")}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1129,6 +1462,136 @@ export default function EstoqueContempladas() {
             <Button onClick={() => reserveCotaAdmin()} disabled={savingReserve}>
               {savingReserve ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
               Confirmar reserva
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ====== DIALOG: GERENCIAR COTA (ADMIN) ====== */}
+      <Dialog open={openManage.open} onOpenChange={(v) => setOpenManage({ open: v, cota: v ? openManage.cota : null })}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Gerenciar cota</DialogTitle>
+          </DialogHeader>
+
+          {openManage.cota ? (
+            <div className="space-y-4">
+              <div className="rounded-md border p-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">{openManage.cota.codigo}</div>
+                    <div className="text-muted-foreground">
+                      {openManage.cota.admin?.nome || "—"} • {openManage.cota.segmento} • {openManage.cota.status === "disponivel" ? "Disponível" : "Reservada"}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={deleteCota} disabled={deleting || savingEdit}>
+                      {deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                      Excluir
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Parceiro</Label>
+                  <Select value={editPartnerId} onValueChange={setEditPartnerId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione um parceiro" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {partners.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Administradora</Label>
+                  <Select value={editAdminId} onValueChange={setEditAdminId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a administradora" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {admins.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Segmento</Label>
+                  <Select value={editSegmento} onValueChange={(v: any) => setEditSegmento(v)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Automóvel">Automóvel</SelectItem>
+                      <SelectItem value="Imóvel">Imóvel</SelectItem>
+                      <SelectItem value="Motocicletas">Motocicletas</SelectItem>
+                      <SelectItem value="Serviços">Serviços</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Código da cota</Label>
+                  <Input value={editCodigo} onChange={(e) => setEditCodigo(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Nº da proposta</Label>
+                  <Input value={editNumeroProposta} onChange={(e) => setEditNumeroProposta(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Crédito contratado</Label>
+                  <Input value={editCreditoContratado} onChange={(e) => setEditCreditoContratado(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Crédito disponível</Label>
+                  <Input value={editCreditoDisponivel} onChange={(e) => setEditCreditoDisponivel(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Prazo restante (meses)</Label>
+                  <Input value={editPrazoRestante} onChange={(e) => setEditPrazoRestante(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Valor da parcela</Label>
+                  <Input value={editValorParcela} onChange={(e) => setEditValorParcela(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Comissão exigida pela corretora</Label>
+                  <Input value={editComissaoCorretora} onChange={(e) => setEditComissaoCorretora(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Valor pago ao cliente (cedente)</Label>
+                  <Input value={editValorPagoCliente} onChange={(e) => setEditValorPagoCliente(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setOpenManage({ open: false, cota: null })} disabled={savingEdit || deleting}>
+              Fechar
+            </Button>
+            <Button onClick={saveManageEdits} disabled={savingEdit || deleting}>
+              {savingEdit ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Pencil className="h-4 w-4 mr-2" />}
+              Salvar alterações
             </Button>
           </DialogFooter>
         </DialogContent>

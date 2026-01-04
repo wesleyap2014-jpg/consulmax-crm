@@ -629,6 +629,11 @@ export default function EstoqueContempladas() {
 
       if (error) throw error;
 
+      /**
+       * CORREÇÃO:
+       * - Se escolheu uma solicitação, converte ela e cancela as demais abertas.
+       * - Se NÃO escolheu nenhuma, cancela todas as solicitações abertas dessa cota (evita request pendurada).
+       */
       if (selectedRequestId !== NONE) {
         await supabase.from("stock_reservation_requests").update({ status: "convertida" }).eq("id", selectedRequestId);
 
@@ -638,6 +643,12 @@ export default function EstoqueContempladas() {
           .eq("cota_id", c.id)
           .eq("status", "aberta")
           .neq("id", selectedRequestId);
+      } else {
+        await supabase
+          .from("stock_reservation_requests")
+          .update({ status: "cancelada" })
+          .eq("cota_id", c.id)
+          .eq("status", "aberta");
       }
 
       setOpenReserve({ open: false, cota: null });
@@ -742,10 +753,7 @@ export default function EstoqueContempladas() {
     const creditTotal = selected.reduce((acc, c) => acc + Number(c.credito_disponivel || 0), 0);
     const entradaTotal = selected.reduce((acc, c) => acc + Number(c._calc?.entrada || 0), 0);
 
-    const parcelasTotal = selected.reduce(
-      (acc, c) => acc + Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0),
-      0
-    );
+    const parcelasTotal = selected.reduce((acc, c) => acc + Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0), 0);
 
     // n para taxa: aqui seguimos sua regra “n = quantidade de parcelas”
     // (para soma, usamos a soma dos prazos, como você pediu originalmente para o cálculo da taxa)
@@ -860,6 +868,68 @@ export default function EstoqueContempladas() {
       notifyError("Não foi possível excluir a cota", err);
     } finally {
       setDeleting(false);
+    }
+  }
+
+  /**
+   * CORREÇÃO / MELHORIA:
+   * Admin pode "reabrir para venda" uma cota reservada (ex.: transferência falhou).
+   * - Volta status para "disponivel"
+   * - Limpa dados de reserva (comprador, sinal, vendedor/% etc.)
+   * - Cancela quaisquer solicitações abertas pendentes (evita ficar request pendurada)
+   * - (Opcional) tenta remover o arquivo do sinal do bucket
+   */
+  async function reopenToSale() {
+    if (!isAdmin) return;
+    const c = openManage.cota;
+    if (!c) return;
+
+    const ok = window.confirm(
+      `Reabrir a cota "${c.codigo}" para venda?\n\nIsso vai cancelar a reserva e limpar dados do comprador/sinal.`
+    );
+    if (!ok) return;
+
+    setSavingEdit(true);
+    try {
+      // (Opcional) remover arquivo do sinal do Storage
+      if (c.sinal_comprovante_path) {
+        try {
+          await supabase.storage.from("stock_sinais").remove([c.sinal_comprovante_path]);
+        } catch (e) {
+          console.warn("Não consegui remover o arquivo do sinal (seguindo mesmo assim):", e);
+        }
+      }
+
+      // Cancela quaisquer solicitações ainda abertas pra essa cota
+      await supabase
+        .from("stock_reservation_requests")
+        .update({ status: "cancelada" })
+        .eq("cota_id", c.id)
+        .eq("status", "aberta");
+
+      const { error } = await supabase
+        .from("stock_cotas")
+        .update({
+          status: "disponivel",
+          reservado_em: null,
+          reservado_por: null,
+          comprador_nome: null,
+          comprador_cpf: null,
+          sinal_comprovante_path: null,
+          vendedor_id: null,
+          vendedor_pct: null,
+        })
+        .eq("id", c.id);
+
+      if (error) throw error;
+
+      showToast("Cota reaberta para venda ✅");
+      setOpenManage({ open: false, cota: null });
+      await loadCotas();
+    } catch (err) {
+      notifyError("Não foi possível reabrir a cota", err);
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -1108,10 +1178,7 @@ export default function EstoqueContempladas() {
             {/* preview story */}
             <div className="flex justify-center">
               <div className="w-full max-w-sm">
-                <div
-                  className="relative rounded-2xl border shadow-sm overflow-hidden"
-                  style={{ aspectRatio: "9 / 16" as any }}
-                >
+                <div className="relative rounded-2xl border shadow-sm overflow-hidden" style={{ aspectRatio: "9 / 16" as any }}>
                   <div className="absolute inset-0 bg-gradient-to-br from-[#1E293F] via-[#0f172a] to-[#A11C27]" />
                   <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_45%),radial-gradient(circle_at_80%_70%,rgba(181,165,115,0.35),transparent_45%)]" />
                   <div className="relative p-5 h-full flex flex-col">
@@ -1119,9 +1186,7 @@ export default function EstoqueContempladas() {
                     <div className="mt-3 text-white text-[13px] leading-relaxed whitespace-pre-wrap">
                       {sumText || "Selecione uma ou mais cotas para ver o resumo"}
                     </div>
-                    <div className="mt-auto pt-4 text-white/70 text-xs">
-                      Dica: você pode printar este card em formato de story.
-                    </div>
+                    <div className="mt-auto pt-4 text-white/70 text-xs">Dica: você pode printar este card em formato de story.</div>
                   </div>
                 </div>
               </div>
@@ -1399,7 +1464,8 @@ export default function EstoqueContempladas() {
                     <SelectItem value={NONE}>Nenhuma</SelectItem>
                     {reserveRequests.map((r) => (
                       <SelectItem key={r.id} value={r.id}>
-                        {r.vendor_nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} — {new Date(r.created_at).toLocaleString("pt-BR")}
+                        {r.vendor_nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} —{" "}
+                        {new Date(r.created_at).toLocaleString("pt-BR")}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1504,6 +1570,12 @@ export default function EstoqueContempladas() {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {openManage.cota.status === "reservada" ? (
+                      <Button variant="outline" onClick={reopenToSale} disabled={deleting || savingEdit}>
+                        Reabrir para venda
+                      </Button>
+                    ) : null}
+
                     <Button variant="outline" onClick={deleteCota} disabled={deleting || savingEdit}>
                       {deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
                       Excluir

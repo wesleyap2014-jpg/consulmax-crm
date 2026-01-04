@@ -6,6 +6,7 @@ import {
   UserCheck, Briefcase, Calendar, Calculator, FileText, Wallet, Layers, UserCog,
   SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight, Trophy,
   CalendarClock, LineChart, ClipboardList,
+  BadgeCheck, // ✅ NOVO ícone para "Contempladas"
 } from 'lucide-react'
 
 type SidebarProps = { onNavigate?: () => void }
@@ -23,6 +24,10 @@ const items: NavItem[] = [
   { to: '/oportunidades',    label: 'Oportunidades',            icon: Briefcase },
   { to: '/propostas',        label: 'Propostas',                icon: FileText },
   { to: '/carteira',         label: 'Carteira',                 icon: Wallet },
+
+  // ✅ NOVO: Contempladas
+  { to: '/estoque-contempladas', label: 'Contempladas',         icon: BadgeCheck },
+
   { to: '/fluxo-de-caixa',   label: 'Fluxo de Caixa',           icon: LineChart, onlyForWesley: true },
   { to: '/giro-de-carteira', label: 'Giro de Carteira',         icon: CalendarClock },
   { to: '/gestao-de-grupos', label: 'Gestão de Grupos',         icon: Layers },

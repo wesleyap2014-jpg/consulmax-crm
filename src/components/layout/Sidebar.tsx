@@ -1,87 +1,65 @@
-import { NavLink, Link, useLocation } from 'react-router-dom'
-import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from 'react'
-import { supabase } from '@/lib/supabaseClient'
-import type { LucideIcon } from 'lucide-react'
+import { NavLink, Link, useLocation } from "react-router-dom";
+import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import type { LucideIcon } from "lucide-react";
 import {
-  UserCheck, Briefcase, Calendar, Calculator, FileText, Wallet, Layers, UserCog,
-  SlidersHorizontal, BarChart3, Link as LinkIcon, ChevronsLeft, ChevronsRight, Trophy,
-  CalendarClock, LineChart, ClipboardList,
-  BadgeCheck, // ✅ NOVO ícone para "Contempladas"
-} from 'lucide-react'
+  Briefcase,
+  Calculator,
+  FileText,
+  Wallet,
+  Layers,
+  UserCog,
+  SlidersHorizontal,
+  BarChart3,
+  ChevronsLeft,
+  ChevronsRight,
+  Trophy,
+  CalendarClock,
+  LineChart,
+  ClipboardList,
+  BadgeCheck,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 
-type SidebarProps = { onNavigate?: () => void }
+type SidebarProps = { onNavigate?: () => void };
 
-const WESLEY_ID = '524f9d55-48c0-4c56-9ab8-7e6115e7c0b0'
+const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
 
-type NavItem = {
-  to: string
-  label: string
-  icon: LucideIcon
-  onlyForWesley?: boolean
-}
+const LOGO_URL = "/logo-consulmax.png?v=3";
+const FALLBACK_URL = "/favicon.ico?v=3";
 
-const items: NavItem[] = [
-  { to: '/oportunidades',    label: 'Oportunidades',            icon: Briefcase },
-  { to: '/propostas',        label: 'Propostas',                icon: FileText },
-  { to: '/carteira',         label: 'Carteira',                 icon: Wallet },
-
-  // ✅ NOVO: Contempladas
-  { to: '/estoque-contempladas', label: 'Contempladas',         icon: BadgeCheck },
-
-  { to: '/fluxo-de-caixa',   label: 'Fluxo de Caixa',           icon: LineChart, onlyForWesley: true },
-  { to: '/giro-de-carteira', label: 'Giro de Carteira',         icon: CalendarClock },
-  { to: '/gestao-de-grupos', label: 'Gestão de Grupos',         icon: Layers },
-  { to: '/clientes',         label: 'Clientes',                 icon: UserCheck },
-  { to: '/agenda',           label: 'Agenda',                   icon: Calendar },
-
-  // ✅ Planejamento & Playbook
-  { to: '/planejamento',     label: 'Planejamento & Playbook',  icon: ClipboardList },
-
-  // ✅ NOVO: Relatórios
-  { to: '/relatorios',       label: 'Relatórios',               icon: BarChart3 },
-
-  { to: '/comissoes',        label: 'Comissões',                icon: BarChart3 },
-  { to: '/ranking',          label: 'Ranking',                  icon: Trophy },
-  { to: '/usuarios',         label: 'Usuários',                 icon: UserCog },
-  { to: '/parametros',       label: 'Parâmetros',               icon: SlidersHorizontal },
-  { to: '/links',            label: 'Links Úteis',              icon: LinkIcon },
-]
-
-const LOGO_URL = '/logo-consulmax.png?v=3'
-const FALLBACK_URL = '/favicon.ico?v=3'
-
-type AdminRow = { id: string; name: string; slug: string | null }
+type AdminRow = { id: string; name: string; slug: string | null };
 
 type NavAlerts = {
-  oportunidades: boolean
-  fluxoCaixa: boolean
-  gestaoGrupos: boolean
-  agenda: boolean
-}
+  oportunidades: boolean;
+  fluxoCaixa: boolean;
+  gestaoGrupos: boolean;
+};
 
 /** ====== Liquid Glass ====== */
 const glassSidebarBase: CSSProperties = {
-  position: 'relative',
-  background: 'rgba(255,255,255,.55)',
-  borderRight: '1px solid rgba(255,255,255,.35)',
-  backdropFilter: 'saturate(160%) blur(10px)',
-  WebkitBackdropFilter: 'saturate(160%) blur(10px)',
-  boxShadow: 'inset -8px 0 30px rgba(181,165,115,.10)',
-}
+  position: "relative",
+  background: "rgba(255,255,255,.55)",
+  borderRight: "1px solid rgba(255,255,255,.35)",
+  backdropFilter: "saturate(160%) blur(10px)",
+  WebkitBackdropFilter: "saturate(160%) blur(10px)",
+  boxShadow: "inset -8px 0 30px rgba(181,165,115,.10)",
+};
 
 const activePillStyle: CSSProperties = {
-  background: 'linear-gradient(180deg, rgba(161,28,39,1) 0%, rgba(161,28,39,.96) 100%)',
-  border: '1px solid rgba(255,255,255,.18)',
-  boxShadow: '0 6px 18px rgba(161,28,39,.25), inset 0 -8px 20px rgba(255,255,255,.12)',
-}
+  background: "linear-gradient(180deg, rgba(161,28,39,1) 0%, rgba(161,28,39,.96) 100%)",
+  border: "1px solid rgba(255,255,255,.18)",
+  boxShadow: "0 6px 18px rgba(161,28,39,.25), inset 0 -8px 20px rgba(255,255,255,.12)",
+};
 
 const glassHoverPill: CSSProperties = {
-  background: 'rgba(255,255,255,.58)',
-  border: '1px solid rgba(255,255,255,.35)',
-  boxShadow: 'inset 0 1px 2px rgba(0,0,0,.04)',
-  backdropFilter: 'blur(6px)',
-  WebkitBackdropFilter: 'blur(6px)',
-}
+  background: "rgba(255,255,255,.58)",
+  border: "1px solid rgba(255,255,255,.35)",
+  boxShadow: "inset 0 1px 2px rgba(0,0,0,.04)",
+  backdropFilter: "blur(6px)",
+  WebkitBackdropFilter: "blur(6px)",
+};
 
 const SidebarLiquidBG: FC = () => (
   <div style={sbLiquidCanvas} aria-hidden>
@@ -90,89 +68,79 @@ const SidebarLiquidBG: FC = () => (
     <span style={{ ...sbBlob, ...sbBlob2 }} />
     <span style={{ ...sbGoldGlow }} />
   </div>
-)
+);
 
 const sbLiquidCanvas: CSSProperties = {
-  position: 'absolute',
+  position: "absolute",
   inset: 0,
   zIndex: 0,
-  overflow: 'hidden',
-  pointerEvents: 'none',
-}
+  overflow: "hidden",
+  pointerEvents: "none",
+};
 
 const sbBlob: CSSProperties = {
-  position: 'absolute',
+  position: "absolute",
   width: 280,
   height: 280,
-  borderRadius: '50%',
-  filter: 'blur(40px)',
+  borderRadius: "50%",
+  filter: "blur(40px)",
   opacity: 0.55,
-}
+};
 const sbBlob1: CSSProperties = {
   left: -80,
   top: -60,
-  background: 'radial-gradient(closest-side, #A11C27, rgba(161,28,39,0))',
-  animation: 'sbFloat1 26s ease-in-out infinite',
-}
+  background: "radial-gradient(closest-side, #A11C27, rgba(161,28,39,0))",
+  animation: "sbFloat1 26s ease-in-out infinite",
+};
 const sbBlob2: CSSProperties = {
   right: -90,
   bottom: -60,
-  background: 'radial-gradient(closest-side, #1E293F, rgba(30,41,63,0))',
-  animation: 'sbFloat2 30s ease-in-out infinite',
-}
+  background: "radial-gradient(closest-side, #1E293F, rgba(30,41,63,0))",
+  animation: "sbFloat2 30s ease-in-out infinite",
+};
 const sbGoldGlow: CSSProperties = {
-  position: 'absolute',
+  position: "absolute",
   right: -60,
-  top: '45%',
+  top: "45%",
   width: 180,
   height: 180,
-  borderRadius: '50%',
-  background: 'radial-gradient(closest-side, rgba(181,165,115,.35), rgba(181,165,115,0))',
-  filter: 'blur(30px)',
+  borderRadius: "50%",
+  background: "radial-gradient(closest-side, rgba(181,165,115,.35), rgba(181,165,115,0))",
+  filter: "blur(30px)",
   opacity: 0.6,
-}
+};
 const sbLiquidKeyframes = `
 @keyframes sbFloat1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(18px,14px) scale(1.06)} 100%{transform:translate(0,0) scale(1)} }
 @keyframes sbFloat2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-16px,-10px) scale(1.05)} 100%{transform:translate(0,0) scale(1)} }
-`
+`;
 
 /** ====== Helpers de data / alertas ====== */
-
-/** Data local de hoje em YYYY-MM-DD (sem usar toISOString pra não “voltar” um dia) */
 function todayDateStr() {
-  const d = new Date()
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}`
-}
-
-/** Intervalo de um dia em ISO (UTC) a partir de uma data local YYYY-MM-DD */
-function dayRangeISO(dateStr: string) {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  const start = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0)
-  const end = new Date(y, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999)
-  return { startIso: start.toISOString(), endIso: end.toISOString() }
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 /** Oportunidades atrasadas */
 async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
-      .from('opportunities')
-      .select('id, expected_close_at, estagio')
-      .lt('expected_close_at', todayStr)
-      .not('estagio', 'in', '("Fechado (Ganho)","Fechado (Perdido)")')
-      .limit(1)
+      .from("opportunities")
+      .select("id, expected_close_at, estagio")
+      .lt("expected_close_at", todayStr)
+      .not("estagio", "in", '("Fechado (Ganho)","Fechado (Perdido)")')
+      .limit(1);
 
     if (error) {
-      console.error('Erro ao verificar oportunidades atrasadas:', error.message)
-      return false
+      console.error("Erro ao verificar oportunidades atrasadas:", error.message);
+      return false;
     }
-    return !!(data && data.length > 0)
+    return !!(data && data.length > 0);
   } catch (e) {
-    console.error('Erro inesperado em checkOpportunitiesAlert:', e)
-    return false
+    console.error("Erro inesperado em checkOpportunitiesAlert:", e);
+    return false;
   }
 }
 
@@ -180,21 +148,21 @@ async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
 async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
-      .from('cash_flows')
-      .select('id')
-      .eq('data', todayStr)
-      .in('tipo', ['entrada', 'saida'])
-      .eq('created_by', WESLEY_ID)
-      .limit(1)
+      .from("cash_flows")
+      .select("id")
+      .eq("data", todayStr)
+      .in("tipo", ["entrada", "saida"])
+      .eq("created_by", WESLEY_ID)
+      .limit(1);
 
     if (error) {
-      console.error('Erro ao verificar fluxo de caixa do dia:', error.message)
-      return false
+      console.error("Erro ao verificar fluxo de caixa do dia:", error.message);
+      return false;
     }
-    return !!(data && data.length > 0)
+    return !!(data && data.length > 0);
   } catch (e) {
-    console.error('Erro inesperado em checkCashFlowAlert:', e)
-    return false
+    console.error("Erro inesperado em checkCashFlowAlert:", e);
+    return false;
   }
 }
 
@@ -202,42 +170,19 @@ async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
 async function checkGroupsAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
-      .from('groups')
-      .select('id')
-      .or(
-        `prox_vencimento.eq.${todayStr},prox_sorteio.eq.${todayStr},prox_assembleia.eq.${todayStr}`
-      )
-      .limit(1)
+      .from("groups")
+      .select("id")
+      .or(`prox_vencimento.eq.${todayStr},prox_sorteio.eq.${todayStr},prox_assembleia.eq.${todayStr}`)
+      .limit(1);
 
     if (error) {
-      console.error('Erro ao verificar eventos de grupos hoje:', error.message)
-      return false
+      console.error("Erro ao verificar eventos de grupos hoje:", error.message);
+      return false;
     }
-    return !!(data && data.length > 0)
+    return !!(data && data.length > 0);
   } catch (e) {
-    console.error('Erro inesperado em checkGroupsAlert:', e)
-    return false
-  }
-}
-
-/** Agenda – inicio_at é timestamp/timestamptz */
-async function checkAgendaAlert(startIso: string, endIso: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase
-      .from('agenda_eventos')
-      .select('id')
-      .gte('inicio_at', startIso)
-      .lte('inicio_at', endIso)
-      .limit(1)
-
-    if (error) {
-      console.error('Erro ao verificar eventos de agenda hoje:', error.message)
-      return false
-    }
-    return !!(data && data.length > 0)
-  } catch (e) {
-    console.error('Erro inesperado em checkAgendaAlert:', e)
-    return false
+    console.error("Erro inesperado em checkGroupsAlert:", e);
+    return false;
   }
 }
 
@@ -246,154 +191,270 @@ const AlertDot: FC = () => (
     className="ml-2 h-2.5 w-2.5 rounded-full bg-[#A11C27] animate-pulse shadow-[0_0_0_4px_rgba(161,28,39,0.25)]"
     aria-label="Há pendências para hoje"
   />
-)
+);
+
+type FlatItem = {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  onlyForWesley?: boolean;
+  showDot?: boolean;
+  end?: boolean;
+};
+
+function isAnyPathActive(pathname: string, prefixes: string[]) {
+  return prefixes.some((p) => pathname === p || pathname.startsWith(p));
+}
 
 /** ====== Componente ====== */
 export default function Sidebar({ onNavigate }: SidebarProps) {
-  const location = useLocation()
-  const simuladoresActive = useMemo(
-    () => location.pathname.startsWith('/simuladores'),
-    [location.pathname]
-  )
+  const location = useLocation();
+  const pathname = location.pathname;
 
   // Colapsar com persistência
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('@consulmax:sidebar-collapsed') === '1'
+      return localStorage.getItem("@consulmax:sidebar-collapsed") === "1";
     } catch {
-      return false
+      return false;
     }
-  })
+  });
   useEffect(() => {
     try {
-      localStorage.setItem('@consulmax:sidebar-collapsed', collapsed ? '1' : '0')
+      localStorage.setItem("@consulmax:sidebar-collapsed", collapsed ? "1" : "0");
     } catch {}
-  }, [collapsed])
-
-  const simListId = useId()
-  const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive)
-  useEffect(() => {
-    setSimGroupOpen(simuladoresActive)
-  }, [simuladoresActive])
+  }, [collapsed]);
 
   // fecha drawer no mobile ao navegar
   useEffect(() => {
-    onNavigate?.()
-  }, [location.pathname, onNavigate])
+    onNavigate?.();
+  }, [location.pathname, onNavigate]);
 
-  // Carregar administradoras
-  const [admins, setAdmins] = useState<AdminRow[]>([])
-  const [adminsLoading, setAdminsLoading] = useState(false)
-  const [embraconId, setEmbraconId] = useState<string | null>(null)
+  // Carregar administradoras (Simuladores)
+  const [admins, setAdmins] = useState<AdminRow[]>([]);
+  const [adminsLoading, setAdminsLoading] = useState(false);
+  const [embraconId, setEmbraconId] = useState<string | null>(null);
 
   useEffect(() => {
-    let alive = true
-    ;(async () => {
-      setAdminsLoading(true)
+    let alive = true;
+    (async () => {
+      setAdminsLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('sim_admins')
-          .select('id, name, slug')
-          .order('name', { ascending: true })
-        if (!alive) return
+        const { data, error } = await supabase.from("sim_admins").select("id, name, slug").order("name", {
+          ascending: true,
+        });
+        if (!alive) return;
+
         if (error) {
-          console.error('Erro ao carregar administradoras:', error.message)
-          setAdmins([])
-          setEmbraconId(null)
+          console.error("Erro ao carregar administradoras:", error.message);
+          setAdmins([]);
+          setEmbraconId(null);
         } else {
-          const list = data ?? []
-          setAdmins(list as AdminRow[])
-          const embr = list.find(
-            (a) => (a as AdminRow).name?.toLowerCase?.() === 'embracon'
-          ) as AdminRow | undefined
-          setEmbraconId(embr?.id ?? null)
+          const list = (data ?? []) as AdminRow[];
+          setAdmins(list);
+          const embr = list.find((a) => a.name?.toLowerCase?.() === "embracon");
+          setEmbraconId(embr?.id ?? null);
         }
       } catch (e: any) {
-        if (!alive) return
-        console.error('Erro inesperado ao carregar administradoras:', e?.message || e)
-        setAdmins([])
-        setEmbraconId(null)
+        if (!alive) return;
+        console.error("Erro inesperado ao carregar administradoras:", e?.message || e);
+        setAdmins([]);
+        setEmbraconId(null);
       } finally {
-        if (alive) setAdminsLoading(false)
+        if (alive) setAdminsLoading(false);
       }
-    })()
+    })();
+
     return () => {
-      alive = false
-    }
-  }, [location.pathname])
+      alive = false;
+    };
+  }, []);
+
+  const simuladoresActive = useMemo(() => pathname.startsWith("/simuladores"), [pathname]);
 
   // Usuário autenticado (para esconder Fluxo de Caixa pros demais)
-  const [authUserId, setAuthUserId] = useState<string | null>(null)
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
   useEffect(() => {
-    let alive = true
-    ;(async () => {
+    let alive = true;
+    (async () => {
       try {
-        const { data, error } = await supabase.auth.getUser()
-        if (!alive) return
-        if (error || !data?.user) {
-          setAuthUserId(null)
-        } else {
-          setAuthUserId(data.user.id)
-        }
+        const { data, error } = await supabase.auth.getUser();
+        if (!alive) return;
+        if (error || !data?.user) setAuthUserId(null);
+        else setAuthUserId(data.user.id);
       } catch {
-        if (!alive) return
-        setAuthUserId(null)
+        if (!alive) return;
+        setAuthUserId(null);
       }
-    })()
+    })();
     return () => {
-      alive = false
-    }
-  }, [])
+      alive = false;
+    };
+  }, []);
 
-  // Alerts de hoje
-  const [navAlerts, setNavAlerts] = useState({
+  // Alerts de hoje (somente para os itens que ficaram no menu)
+  const [navAlerts, setNavAlerts] = useState<NavAlerts>({
     oportunidades: false,
     fluxoCaixa: false,
     gestaoGrupos: false,
-    agenda: false,
-  })
+  });
 
   useEffect(() => {
-    let alive = true
-    const todayStr = todayDateStr()
-    const { startIso, endIso } = dayRangeISO(todayStr)
+    let alive = true;
+    const todayStr = todayDateStr();
 
     const loadAlerts = async () => {
       try {
-        const [hasOpp, hasCash, hasGroups, hasAgenda] = await Promise.all([
+        const [hasOpp, hasCash, hasGroups] = await Promise.all([
           checkOpportunitiesAlert(todayStr),
           checkCashFlowAlert(todayStr),
           checkGroupsAlert(todayStr),
-          checkAgendaAlert(startIso, endIso),
-        ])
+        ]);
 
-        if (!alive) return
+        if (!alive) return;
         setNavAlerts({
           oportunidades: hasOpp,
           fluxoCaixa: hasCash,
           gestaoGrupos: hasGroups,
-          agenda: hasAgenda,
-        })
+        });
       } catch (e) {
-        if (!alive) return
-        console.error('Erro ao carregar alertas de navegação:', e)
+        if (!alive) return;
+        console.error("Erro ao carregar alertas de navegação:", e);
       }
-    }
+    };
 
-    loadAlerts()
-    const interval = window.setInterval(loadAlerts, 5 * 60 * 1000)
+    loadAlerts();
+    const interval = window.setInterval(loadAlerts, 5 * 60 * 1000);
     return () => {
-      alive = false
-      window.clearInterval(interval)
-    }
-  }, [])
+      alive = false;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   // classes utilitárias colapsado
-  const widthClass = collapsed ? 'md:w-20 w-full' : 'md:w-64 w-full'
-  const textHidden = collapsed
-    ? 'opacity-0 pointer-events-none select-none w-0'
-    : 'opacity-100'
-  const pillPadding = collapsed ? 'px-2.5' : 'px-3'
+  const widthClass = collapsed ? "md:w-20 w-full" : "md:w-64 w-full";
+  const textHidden = collapsed ? "opacity-0 pointer-events-none select-none w-0" : "opacity-100";
+  const pillPadding = collapsed ? "px-2.5" : "px-3";
+
+  // ====== Grupos (ativos e abertos) ======
+  const vendasActive = useMemo(
+    () =>
+      isAnyPathActive(pathname, [
+        "/planejamento",
+        "/oportunidades",
+        "/simuladores",
+        "/propostas",
+        "/ranking",
+        "/estoque-contempladas",
+      ]),
+    [pathname]
+  );
+  const posActive = useMemo(
+    () => isAnyPathActive(pathname, ["/giro-de-carteira", "/gestao-de-grupos", "/clientes"]),
+    [pathname]
+  );
+  const adminActive = useMemo(() => isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros"]), [pathname]);
+  const finActive = useMemo(() => isAnyPathActive(pathname, ["/comissoes", "/fluxo-de-caixa"]), [pathname]);
+
+  const vendasListId = useId();
+  const posListId = useId();
+  const adminListId = useId();
+  const finListId = useId();
+  const simListId = useId();
+
+  const [vendasOpen, setVendasOpen] = useState(vendasActive);
+  const [posOpen, setPosOpen] = useState(posActive);
+  const [adminOpen, setAdminOpen] = useState(adminActive);
+  const [finOpen, setFinOpen] = useState(finActive);
+
+  useEffect(() => {
+    setVendasOpen(vendasActive);
+    setPosOpen(posActive);
+    setAdminOpen(adminActive);
+    setFinOpen(finActive);
+  }, [vendasActive, posActive, adminActive, finActive]);
+
+  const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive);
+  useEffect(() => {
+    setSimGroupOpen(simuladoresActive);
+  }, [simuladoresActive]);
+
+  // Href para Simuladores no modo colapsado
+  const simuladoresHref = useMemo(() => {
+    if (embraconId) return `/simuladores/${embraconId}`;
+    if (admins.length > 0) return `/simuladores/${admins[0].id}`;
+    return "/simuladores/add";
+  }, [embraconId, admins]);
+
+  // ====== Itens “flat” (modo colapsado) ======
+  const flatItems: FlatItem[] = useMemo(
+    () => [
+      // Vendas
+      { to: "/planejamento", label: "Planejamento", icon: ClipboardList, end: true },
+      { to: "/oportunidades", label: "Oportunidades", icon: Briefcase, showDot: navAlerts.oportunidades, end: true },
+      { to: simuladoresHref, label: "Simuladores", icon: Calculator, end: false },
+      { to: "/propostas", label: "Propostas", icon: FileText, end: true },
+      { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
+      { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
+
+      // Pós-venda
+      { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
+      { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
+      { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
+
+      // Administrativo
+      { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
+      { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
+      { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
+
+      // Financeiro
+      { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
+      { to: "/fluxo-de-caixa", label: "Fluxo de Caixa", icon: LineChart, onlyForWesley: true, showDot: navAlerts.fluxoCaixa, end: true },
+    ],
+    [navAlerts, simuladoresHref]
+  );
+
+  const renderGroupHeader = (
+    opts: {
+      title: string;
+      icon: LucideIcon;
+      open: boolean;
+      setOpen: (v: boolean) => void;
+      active: boolean;
+      controlsId: string;
+    }
+  ) => {
+    const Icon = opts.icon;
+    return (
+      <button
+        type="button"
+        onClick={() => setOpenCollapsedAware(opts.setOpen)}
+        className={`
+          w-full text-left ${pillPadding} py-2.5 rounded-2xl transition-colors
+          flex items-center justify-between
+          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+          ${opts.active ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}
+        `}
+        style={opts.active ? activePillStyle : glassHoverPill}
+        aria-expanded={opts.open}
+        aria-controls={opts.controlsId}
+        title={opts.title}
+      >
+        <span className="flex items-center gap-2">
+          <Icon className="h-4 w-4" />
+          <span>{opts.title}</span>
+        </span>
+        <span className="text-xs opacity-80" aria-hidden>
+          {opts.open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </span>
+      </button>
+    );
+  };
+
+  const setOpenCollapsedAware = (setter: (v: boolean) => void) => {
+    if (collapsed) return;
+    setter((v: any) => !v);
+  };
 
   return (
     <aside
@@ -422,16 +483,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           loading="eager"
           className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
           onError={(e) => {
-            ;(e.currentTarget as HTMLImageElement).src = FALLBACK_URL
+            (e.currentTarget as HTMLImageElement).src = FALLBACK_URL;
           }}
         />
-        <div
-          className={`flex flex-col leading-tight transition-opacity duration-200 ${textHidden}`}
-        >
+        <div className={`flex flex-col leading-tight transition-opacity duration-200 ${textHidden}`}>
           <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
-          <span className="text-xs text-consulmax-secondary -mt-0.5">
-            Maximize as suas conquistas
-          </span>
+          <span className="text-xs text-consulmax-secondary -mt-0.5">Maximize as suas conquistas</span>
         </div>
       </Link>
 
@@ -440,180 +497,415 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         <button
           type="button"
           onClick={() => {
-            if (!collapsed) setSimGroupOpen(false)
-            setCollapsed((v) => !v)
+            // ao colapsar, fecha tudo que é dropdown
+            if (!collapsed) {
+              setVendasOpen(false);
+              setPosOpen(false);
+              setAdminOpen(false);
+              setFinOpen(false);
+              setSimGroupOpen(false);
+            }
+            setCollapsed((v) => !v);
           }}
           className="inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40"
-          title={collapsed ? 'Expandir barra lateral' : 'Ocultar barra lateral'}
-          aria-label={collapsed ? 'Expandir barra lateral' : 'Ocultar barra lateral'}
+          title={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
+          aria-label={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
           style={glassHoverPill}
         >
-          {collapsed ? (
-            <ChevronsRight className="h-4 w-4" />
-          ) : (
-            <ChevronsLeft className="h-4 w-4" />
-          )}
+          {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
           {!collapsed && <span className="ml-1.5">Ocultar</span>}
         </button>
       </div>
 
       {/* Navegação */}
       <nav className="relative z-[1] grid gap-2">
-        {/* Oportunidades */}
-        <NavLink
-          to="/oportunidades"
-          className={({ isActive }) =>
-            `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-             ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-             ${collapsed ? 'justify-center' : ''}`
-          }
-          style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-          onClick={() => onNavigate?.()}
-          title="Oportunidades"
-          end
-        >
-          <Briefcase className="h-4 w-4" />
-          {!collapsed && (
-            <span className="flex items-center justify-between w-full">
-              <span>Oportunidades</span>
-              {navAlerts.oportunidades && <AlertDot />}
-            </span>
-          )}
-        </NavLink>
-
-        {/* Simuladores (grupo) */}
-        <div>
-          <button
-            type="button"
-            onClick={() => !collapsed && setSimGroupOpen((v) => !v)}
-            className={`
-              w-full text-left ${pillPadding} py-2.5 rounded-2xl transition-colors
-              flex items-center justify-between
-              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-              ${simuladoresActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-              ${collapsed ? 'justify-center' : ''}
-            `}
-            style={simuladoresActive ? activePillStyle : glassHoverPill}
-            aria-expanded={!collapsed && simGroupOpen}
-            aria-controls={simListId}
-            title="Simuladores"
-          >
-            <span className="flex items-center gap-2">
-              <Calculator className="h-4 w-4" />
-              {!collapsed && <span>Simuladores</span>}
-            </span>
-            {!collapsed && (
-              <span className="text-xs opacity-80" aria-hidden>
-                {simGroupOpen ? '▾' : '▸'}
-              </span>
-            )}
-          </button>
-
-          {!collapsed && simGroupOpen && (
-            <div id={simListId} className="ml-6 grid gap-1 mt-1">
-              {adminsLoading && (
-                <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>
-              )}
-
-              {!adminsLoading &&
-                admins.length > 0 &&
-                admins.map((ad) => (
-                  <NavLink
-                    key={ad.id}
-                    to={`/simuladores/${ad.id}`}
-                    className={({ isActive }) =>
-                      `${pillPadding} py-2.5 rounded-2xl transition-colors
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                       ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                    }
-                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                    onClick={() => onNavigate?.()}
-                  >
-                    {ad.name}
-                  </NavLink>
-                ))}
-
-              {!adminsLoading && admins.length === 0 && embraconId && (
+        {/* ===== MODO COLAPSADO (flat) ===== */}
+        {collapsed && (
+          <>
+            {flatItems
+              .filter((i) => !i.onlyForWesley || authUserId === WESLEY_ID)
+              .map((i) => (
                 <NavLink
-                  to={`/simuladores/${embraconId}`}
+                  key={`${i.to}-${i.label}`}
+                  to={i.to}
                   className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}
+                     justify-center`
                   }
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
+                  title={i.label}
+                  end={i.end}
                 >
-                  Embracon
+                  <i.icon className="h-4 w-4" />
                 </NavLink>
-              )}
+              ))}
+          </>
+        )}
 
-              <NavLink
-                to="/simuladores/add"
-                className={({ isActive }) =>
-                  `${pillPadding} py-2.5 rounded-2xl transition-colors
-                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                   ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}`
-                }
-                style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                onClick={() => onNavigate?.()}
-              >
-                + Add Administradora
-              </NavLink>
-            </div>
-          )}
-        </div>
+        {/* ===== MODO EXPANDIDO (grupos) ===== */}
+        {!collapsed && (
+          <>
+            {/* VENDAS */}
+            {renderGroupHeader({
+              title: "Vendas",
+              icon: Wallet,
+              open: vendasOpen,
+              setOpen: setVendasOpen,
+              active: vendasActive,
+              controlsId: vendasListId,
+            })}
+            {vendasOpen && (
+              <div id={vendasListId} className="ml-2 grid gap-2 mt-0.5">
+                {/* Planejamento */}
+                <NavLink
+                  to="/planejamento"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Planejamento"
+                  end
+                >
+                  <ClipboardList className="h-4 w-4" />
+                  <span className="flex items-center justify-between w-full">
+                    <span>Planejamento</span>
+                  </span>
+                </NavLink>
 
-        {/* Propostas */}
-        <NavLink
-          to="/propostas"
-          className={({ isActive }) =>
-            `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-             ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-             ${collapsed ? 'justify-center' : ''}`
-          }
-          style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-          onClick={() => onNavigate?.()}
-          title="Propostas"
-          end
-        >
-          <FileText className="h-4 w-4" />
-          {!collapsed && 'Propostas'}
-        </NavLink>
+                {/* Oportunidades */}
+                <NavLink
+                  to="/oportunidades"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Oportunidades"
+                  end
+                >
+                  <Briefcase className="h-4 w-4" />
+                  <span className="flex items-center justify-between w-full">
+                    <span>Oportunidades</span>
+                    {navAlerts.oportunidades && <AlertDot />}
+                  </span>
+                </NavLink>
 
-        {/* Demais itens */}
-        {items
-          .filter((i) => i.to !== '/oportunidades' && i.to !== '/propostas')
-          .filter((i) => !i.onlyForWesley || authUserId === WESLEY_ID)
-          .map((i) => (
-            <NavLink
-              key={i.to}
-              to={i.to}
-              className={({ isActive }) =>
-                `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                 ${isActive ? 'bg-consulmax-primary text-white' : 'hover:bg-consulmax-neutral'}
-                 ${collapsed ? 'justify-center' : ''}`
-              }
-              style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-              onClick={() => onNavigate?.()}
-              title={i.label}
-              end
-            >
-              <i.icon className="h-4 w-4" />
-              {!collapsed && (
-                <span className="flex items-center justify-between w-full">
-                  <span>{i.label}</span>
-                  {i.to === '/fluxo-de-caixa' && navAlerts.fluxoCaixa && <AlertDot />}
-                  {i.to === '/gestao-de-grupos' && navAlerts.gestaoGrupos && <AlertDot />}
-                  {i.to === '/agenda' && navAlerts.agenda && <AlertDot />}
-                </span>
-              )}
-            </NavLink>
-          ))}
+                {/* Simuladores (subgrupo) */}
+                <div className="ml-0">
+                  <button
+                    type="button"
+                    onClick={() => setSimGroupOpen((v) => !v)}
+                    className={`
+                      w-full text-left ${pillPadding} py-2.5 rounded-2xl transition-colors
+                      flex items-center justify-between
+                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                      ${simuladoresActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}
+                    `}
+                    style={simuladoresActive ? activePillStyle : glassHoverPill}
+                    aria-expanded={simGroupOpen}
+                    aria-controls={simListId}
+                    title="Simuladores"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Calculator className="h-4 w-4" />
+                      <span>Simuladores</span>
+                    </span>
+                    <span className="text-xs opacity-80" aria-hidden>
+                      {simGroupOpen ? "▾" : "▸"}
+                    </span>
+                  </button>
+
+                  {simGroupOpen && (
+                    <div id={simListId} className="ml-6 grid gap-1 mt-1">
+                      {adminsLoading && <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>}
+
+                      {!adminsLoading &&
+                        admins.length > 0 &&
+                        admins.map((ad) => (
+                          <NavLink
+                            key={ad.id}
+                            to={`/simuladores/${ad.id}`}
+                            className={({ isActive }) =>
+                              `${pillPadding} py-2.5 rounded-2xl transition-colors
+                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                               ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                            }
+                            style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                            onClick={() => onNavigate?.()}
+                          >
+                            {ad.name}
+                          </NavLink>
+                        ))}
+
+                      {!adminsLoading && admins.length === 0 && embraconId && (
+                        <NavLink
+                          to={`/simuladores/${embraconId}`}
+                          className={({ isActive }) =>
+                            `${pillPadding} py-2.5 rounded-2xl transition-colors
+                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                             ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                          }
+                          style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                          onClick={() => onNavigate?.()}
+                        >
+                          Embracon
+                        </NavLink>
+                      )}
+
+                      <NavLink
+                        to="/simuladores/add"
+                        className={({ isActive }) =>
+                          `${pillPadding} py-2.5 rounded-2xl transition-colors
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                           ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                        }
+                        style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                        onClick={() => onNavigate?.()}
+                      >
+                        + Add Administradora
+                      </NavLink>
+                    </div>
+                  )}
+                </div>
+
+                {/* Propostas */}
+                <NavLink
+                  to="/propostas"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Propostas"
+                  end
+                >
+                  <FileText className="h-4 w-4" />
+                  Propostas
+                </NavLink>
+
+                {/* Ranking */}
+                <NavLink
+                  to="/ranking"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Ranking"
+                  end
+                >
+                  <Trophy className="h-4 w-4" />
+                  Ranking
+                </NavLink>
+
+                {/* Contempladas */}
+                <NavLink
+                  to="/estoque-contempladas"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Contempladas"
+                  end
+                >
+                  <BadgeCheck className="h-4 w-4" />
+                  Contempladas
+                </NavLink>
+              </div>
+            )}
+
+            {/* PÓS-VENDA */}
+            {renderGroupHeader({
+              title: "Pós-venda",
+              icon: CalendarClock,
+              open: posOpen,
+              setOpen: setPosOpen,
+              active: posActive,
+              controlsId: posListId,
+            })}
+            {posOpen && (
+              <div id={posListId} className="ml-2 grid gap-2 mt-0.5">
+                <NavLink
+                  to="/giro-de-carteira"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Giro de Carteira"
+                  end
+                >
+                  <CalendarClock className="h-4 w-4" />
+                  Giro de Carteira
+                </NavLink>
+
+                <NavLink
+                  to="/gestao-de-grupos"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Gestão de Grupos"
+                  end
+                >
+                  <Layers className="h-4 w-4" />
+                  <span className="flex items-center justify-between w-full">
+                    <span>Gestão de Grupos</span>
+                    {navAlerts.gestaoGrupos && <AlertDot />}
+                  </span>
+                </NavLink>
+
+                <NavLink
+                  to="/clientes"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Clientes"
+                  end
+                >
+                  <UserCog className="h-4 w-4" />
+                  Clientes
+                </NavLink>
+              </div>
+            )}
+
+            {/* ADMINISTRATIVO */}
+            {renderGroupHeader({
+              title: "Administrativo",
+              icon: SlidersHorizontal,
+              open: adminOpen,
+              setOpen: setAdminOpen,
+              active: adminActive,
+              controlsId: adminListId,
+            })}
+            {adminOpen && (
+              <div id={adminListId} className="ml-2 grid gap-2 mt-0.5">
+                <NavLink
+                  to="/relatorios"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Relatórios"
+                  end
+                >
+                  <BarChart3 className="h-4 w-4" />
+                  Relatórios
+                </NavLink>
+
+                <NavLink
+                  to="/usuarios"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Usuários"
+                  end
+                >
+                  <UserCog className="h-4 w-4" />
+                  Usuários
+                </NavLink>
+
+                <NavLink
+                  to="/parametros"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Parâmetros"
+                  end
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                  Parâmetros
+                </NavLink>
+              </div>
+            )}
+
+            {/* FINANCEIRO */}
+            {renderGroupHeader({
+              title: "Financeiro",
+              icon: LineChart,
+              open: finOpen,
+              setOpen: setFinOpen,
+              active: finActive,
+              controlsId: finListId,
+            })}
+            {finOpen && (
+              <div id={finListId} className="ml-2 grid gap-2 mt-0.5">
+                <NavLink
+                  to="/comissoes"
+                  className={({ isActive }) =>
+                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                  }
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Comissões"
+                  end
+                >
+                  <BarChart3 className="h-4 w-4" />
+                  Comissões
+                </NavLink>
+
+                {(!authUserId || authUserId === WESLEY_ID) && (
+                  <NavLink
+                    to="/fluxo-de-caixa"
+                    className={({ isActive }) =>
+                      `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+                       ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
+                    }
+                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                    onClick={() => onNavigate?.()}
+                    title="Fluxo de Caixa"
+                    end
+                  >
+                    <LineChart className="h-4 w-4" />
+                    <span className="flex items-center justify-between w-full">
+                      <span>Fluxo de Caixa</span>
+                      {navAlerts.fluxoCaixa && <AlertDot />}
+                    </span>
+                  </NavLink>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </nav>
     </aside>
-  )
+  );
 }

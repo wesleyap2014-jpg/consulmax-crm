@@ -12,12 +12,9 @@ import {
   RefreshCcw,
   AlertTriangle,
   Calendar,
-  Users,
   Briefcase,
   Wallet,
   Target,
-  BadgeCheck,
-  FileText,
   Rocket,
   MessageCircle,
   ArrowRight,
@@ -49,7 +46,7 @@ type AgendaRow = {
 type OppRow = {
   id: string;
   valor_credito: number | null;
-  stage: string; // opportunity_stage
+  stage: string;
   expected_close_at: string | null;
   vendedor_id: string;
   lead_id: string;
@@ -212,7 +209,6 @@ export default function Inicio() {
     const { startYMD, endYMD } = rangeMonth;
 
     // ===== Oportunidades atrasadas =====
-    // stage fechado = fechado_ganho / fechado_perdido
     let oppQ = supabase
       .from("opportunities")
       .select("id,valor_credito,stage,expected_close_at,vendedor_id,lead_id")
@@ -230,7 +226,7 @@ export default function Inicio() {
     const overdueOppCount = (oppRows || []).length;
     const overdueOppTotal = (oppRows || []).reduce((acc, r) => acc + (Number(r.valor_credito || 0) || 0), 0);
 
-    // Enriquecer com lead (nome/telefone) — pega no máximo 12
+    // Enriquecer com lead (nome/telefone)
     const leadIds = Array.from(new Set((oppRows || []).map((o) => o.lead_id).filter(Boolean)));
     let leadsMap = new Map<string, LeadRow>();
     if (leadIds.length) {
@@ -252,7 +248,6 @@ export default function Inicio() {
       .order("inicio_at", { ascending: true })
       .limit(10);
 
-    // vendedor vê apenas dele; admin pode filtrar um vendedor específico
     if (!admin) agQ = agQ.eq("user_id", scopeUserId);
     if (admin && scopeUserId !== ALL) agQ = agQ.eq("user_id", scopeUserId);
 
@@ -260,13 +255,9 @@ export default function Inicio() {
     if (agErr) throw agErr;
     const todayEventsCount = (agRows || []).length;
 
-    // ===== Eventos de grupos hoje (venc/sorteio/assembleia) =====
+    // ===== Eventos de grupos hoje =====
     const orExpr = `prox_vencimento.eq.${today},prox_sorteio.eq.${today},prox_assembleia.eq.${today}`;
-    const { data: gRows, error: gErr } = await supabase
-      .from("groups")
-      .select("id")
-      .or(orExpr)
-      .limit(200);
+    const { data: gRows, error: gErr } = await supabase.from("groups").select("id").or(orExpr).limit(200);
     if (gErr) throw gErr;
     const todayGroupsCount = (gRows || []).length;
 
@@ -322,12 +313,8 @@ export default function Inicio() {
     if (vscErr) throw vscErr;
     const vendasSemComissaoCount = (vscRows || []).length;
 
-    // ===== Comissões pendentes (não pago e não estorno) =====
-    let comQ = supabase
-      .from("commissions")
-      .select("id,vendedor_id,valor_total,status")
-      .order("created_at", { ascending: false })
-      .limit(300);
+    // ===== Comissões pendentes =====
+    let comQ = supabase.from("commissions").select("id,vendedor_id,valor_total,status").order("created_at", { ascending: false }).limit(300);
 
     if (!admin) comQ = comQ.eq("vendedor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) comQ = comQ.eq("vendedor_id", scopeUserId);
@@ -375,13 +362,8 @@ export default function Inicio() {
     if (!me) return;
     const admin = isAdmin(me);
 
-    const scopeUserId =
-      admin && vendorScope !== ALL ? vendorScope : (!admin ? me.id : ALL);
-
-    const scopeAuthId =
-      scopeUserId === ALL
-        ? me.auth_user_id // se admin em ALL, mostra giro do admin mesmo
-        : (usersById.get(scopeUserId)?.auth_user_id || me.auth_user_id);
+    const scopeUserId = admin && vendorScope !== ALL ? vendorScope : !admin ? me.id : ALL;
+    const scopeAuthId = scopeUserId === ALL ? me.auth_user_id : usersById.get(scopeUserId)?.auth_user_id || me.auth_user_id;
 
     if (hard) setRefreshing(true);
     try {
@@ -412,26 +394,26 @@ export default function Inicio() {
 
   const admin = isAdmin(me);
 
-  const glassCard =
-    "bg-white/5 border-white/10 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.25)]";
+  // Light Glass (para fundo claro)
+  const glassCard = "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";
 
   if (loading) {
     return (
       <div className="p-6">
-        <div className="text-white/80">Carregando Início…</div>
+        <div className="text-slate-600 text-sm">Carregando Início…</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-[calc(100vh-64px)] p-6 text-white">
+    <div className="min-h-[calc(100vh-64px)] p-6 text-slate-900">
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="text-2xl font-semibold">
-            Bem-vindo, <span className="text-white">{me?.nome?.split(" ")?.[0] || "Max"}</span> 👋
+            Bem-vindo, <span className="text-slate-900">{me?.nome?.split(" ")?.[0] || "Max"}</span> 👋
           </div>
-          <div className="text-white/70 text-sm">
+          <div className="text-slate-600 text-sm">
             Hoje é <span className="font-medium">{rangeToday.ymd}</span> • Painel de comando do CRM
           </div>
         </div>
@@ -440,7 +422,7 @@ export default function Inicio() {
           {admin && (
             <div className="min-w-[260px]">
               <Select value={vendorScope} onValueChange={setVendorScope}>
-                <SelectTrigger className="bg-white/5 border-white/10">
+                <SelectTrigger className="bg-white border border-slate-200 text-slate-900">
                   <SelectValue placeholder="Vendedor: Todos" />
                 </SelectTrigger>
                 <SelectContent>
@@ -459,7 +441,7 @@ export default function Inicio() {
 
           <Button
             variant="secondary"
-            className="bg-white/10 hover:bg-white/15 text-white border border-white/10"
+            className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
             onClick={() => reload(true)}
             disabled={refreshing}
             title="Atualizar painel"
@@ -474,18 +456,15 @@ export default function Inicio() {
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <Card className={glassCard}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <AlertTriangle className="h-4 w-4" /> Oportunidades atrasadas
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-semibold">{kpi.overdueOppCount}</div>
-            <div className="text-white/70 text-sm mt-1">{fmtBRL(kpi.overdueOppTotal)}</div>
+            <div className="text-slate-600 text-sm mt-1">{fmtBRL(kpi.overdueOppTotal)}</div>
             <div className="mt-3">
-              <Button
-                className="bg-white/10 hover:bg-white/15 border border-white/10"
-                onClick={() => nav("/oportunidades")}
-              >
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/oportunidades")}>
                 Ver Oportunidades <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>
@@ -494,20 +473,17 @@ export default function Inicio() {
 
         <Card className={glassCard}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <Calendar className="h-4 w-4" /> Agenda de hoje
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-semibold">{kpi.todayEventsCount}</div>
-            <div className="text-white/70 text-sm mt-1">
+            <div className="text-slate-600 text-sm mt-1">
               {admin && vendorScope !== ALL ? `Filtrado: ${scopedUser?.nome || "—"}` : admin ? "Visão geral" : "Somente seus eventos"}
             </div>
             <div className="mt-3">
-              <Button
-                className="bg-white/10 hover:bg-white/15 border border-white/10"
-                onClick={() => nav("/agenda")}
-              >
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/agenda")}>
                 Abrir Agenda <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>
@@ -516,18 +492,15 @@ export default function Inicio() {
 
         <Card className={glassCard}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <Briefcase className="h-4 w-4" /> Vendas no mês
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">{fmtBRL(kpi.monthSalesTotal)}</div>
-            <div className="text-white/70 text-sm mt-1">Período: mês atual</div>
+            <div className="text-slate-600 text-sm mt-1">Período: mês atual</div>
             <div className="mt-3">
-              <Button
-                className="bg-white/10 hover:bg-white/15 border border-white/10"
-                onClick={() => nav("/relatorios")}
-              >
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/relatorios")}>
                 Ver Relatórios <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>
@@ -536,18 +509,15 @@ export default function Inicio() {
 
         <Card className={glassCard}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <Wallet className="h-4 w-4" /> Carteira ativa
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">{fmtBRL(kpi.carteiraAtivaTotal)}</div>
-            <div className="text-white/70 text-sm mt-1">Somatório (codigo = 00)</div>
+            <div className="text-slate-600 text-sm mt-1">Somatório (codigo = 00)</div>
             <div className="mt-3">
-              <Button
-                className="bg-white/10 hover:bg-white/15 border border-white/10"
-                onClick={() => nav("/carteira")}
-              >
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/carteira")}>
                 Abrir Carteira <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>
@@ -559,34 +529,34 @@ export default function Inicio() {
       <div className="mt-6 grid grid-cols-1 xl:grid-cols-3 gap-4">
         <Card className={`${glassCard} xl:col-span-2`}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <Rocket className="h-4 w-4" /> Ações rápidas
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              <Button className="bg-white/10 hover:bg-white/15 border border-white/10 justify-between" onClick={() => nav("/oportunidades")}>
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/oportunidades")}>
                 Nova / Gerir Oportunidades <ArrowRight className="h-4 w-4" />
               </Button>
-              <Button className="bg-white/10 hover:bg-white/15 border border-white/10 justify-between" onClick={() => nav("/simuladores")}>
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/simuladores")}>
                 Simular <ArrowRight className="h-4 w-4" />
               </Button>
-              <Button className="bg-white/10 hover:bg-white/15 border border-white/10 justify-between" onClick={() => nav("/propostas")}>
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/propostas")}>
                 Gerar Proposta <ArrowRight className="h-4 w-4" />
               </Button>
-              <Button className="bg-white/10 hover:bg-white/15 border border-white/10 justify-between" onClick={() => nav("/comissoes")}>
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/comissoes")}>
                 Comissões <ArrowRight className="h-4 w-4" />
               </Button>
-              <Button className="bg-white/10 hover:bg-white/15 border border-white/10 justify-between" onClick={() => nav("/gestao-de-grupos")}>
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/gestao-de-grupos")}>
                 Gestão de Grupos <ArrowRight className="h-4 w-4" />
               </Button>
-              <Button className="bg-white/10 hover:bg-white/15 border border-white/10 justify-between" onClick={() => nav("/estoque-contempladas")}>
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/estoque-contempladas")}>
                 Contempladas <ArrowRight className="h-4 w-4" />
               </Button>
-              <Button className="bg-white/10 hover:bg-white/15 border border-white/10 justify-between" onClick={() => nav("/planejamento")}>
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/planejamento")}>
                 Maximize-se (Playbook) <ArrowRight className="h-4 w-4" />
               </Button>
-              <Button className="bg-white/10 hover:bg-white/15 border border-white/10 justify-between" onClick={() => nav("/relatorios")}>
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/relatorios")}>
                 Extrair Relatório <ArrowRight className="h-4 w-4" />
               </Button>
             </div>
@@ -595,49 +565,39 @@ export default function Inicio() {
 
         <Card className={glassCard}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <Target className="h-4 w-4" /> Alertas do sistema
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
-              <div className="text-white/80">Grupos com evento hoje</div>
-              <Badge variant="secondary" className="bg-white/10 border border-white/10 text-white">
-                {kpi.todayGroupsCount}
-              </Badge>
+              <div className="text-slate-700">Grupos com evento hoje</div>
+              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.todayGroupsCount}</Badge>
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="text-white/80">Vendas sem comissão</div>
-              <Badge variant="secondary" className="bg-white/10 border border-white/10 text-white">
-                {kpi.vendasSemComissaoCount}
-              </Badge>
+              <div className="text-slate-700">Vendas sem comissão</div>
+              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.vendasSemComissaoCount}</Badge>
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="text-white/80">Comissões pendentes</div>
-              <Badge variant="secondary" className="bg-white/10 border border-white/10 text-white">
-                {kpi.commissionsPendingCount}
-              </Badge>
+              <div className="text-slate-700">Comissões pendentes</div>
+              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.commissionsPendingCount}</Badge>
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="text-white/80">Total pendente</div>
-              <div className="text-white font-medium">{fmtBRL(kpi.commissionsPendingTotal)}</div>
+              <div className="text-slate-700">Total pendente</div>
+              <div className="text-slate-900 font-medium">{fmtBRL(kpi.commissionsPendingTotal)}</div>
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="text-white/80">Giro pendente</div>
-              <Badge variant="secondary" className="bg-white/10 border border-white/10 text-white">
-                {kpi.giroDueCount}
-              </Badge>
+              <div className="text-slate-700">Giro pendente</div>
+              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.giroDueCount}</Badge>
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="text-white/80">Solicitações de reserva</div>
-              <Badge variant="secondary" className="bg-white/10 border border-white/10 text-white">
-                {kpi.openStockReqCount}
-              </Badge>
+              <div className="text-slate-700">Solicitações de reserva</div>
+              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.openStockReqCount}</Badge>
             </div>
           </CardContent>
         </Card>
@@ -647,22 +607,21 @@ export default function Inicio() {
       <div className="mt-6 grid grid-cols-1 xl:grid-cols-3 gap-4">
         <Card className={`${glassCard} xl:col-span-2`}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <AlertTriangle className="h-4 w-4" /> Atrasadas (top 12)
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {overdueOpps.length === 0 ? (
-              <div className="text-white/60 text-sm">Nada atrasado por aqui. 👏</div>
+              <div className="text-slate-500 text-sm">Nada atrasado por aqui. 👏</div>
             ) : (
               overdueOpps.map((o) => (
-                <div key={o.id} className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                <div key={o.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">
-                      {o.lead_nome || "Lead"}{" "}
-                      <span className="text-white/60">• {o.stage}</span>
+                      {o.lead_nome || "Lead"} <span className="text-slate-500">• {o.stage}</span>
                     </div>
-                    <div className="text-xs text-white/60 truncate">
+                    <div className="text-xs text-slate-500 truncate">
                       Fecha em: {o.expected_close_at || "—"} • {o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}
                     </div>
                   </div>
@@ -675,33 +634,29 @@ export default function Inicio() {
 
         <Card className={glassCard}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <Calendar className="h-4 w-4" /> Próximos eventos (hoje)
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {todayEvents.length === 0 ? (
-              <div className="text-white/60 text-sm">Sem eventos marcados hoje.</div>
+              <div className="text-slate-500 text-sm">Sem eventos marcados hoje.</div>
             ) : (
               todayEvents.map((e) => (
-                <div key={e.id} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
                   <div className="text-sm font-medium truncate">{e.titulo}</div>
-                  <div className="text-xs text-white/60 truncate">
+                  <div className="text-xs text-slate-500 truncate">
                     {fmtDT(e.inicio_at)} • {e.cliente_nome || e.lead_nome || "—"}
                   </div>
                   <div className="mt-2 flex gap-2">
-                    <Button
-                      size="sm"
-                      className="bg-white/10 hover:bg-white/15 border border-white/10"
-                      onClick={() => nav("/agenda")}
-                    >
+                    <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/agenda")}>
                       Abrir <ArrowRight className="h-4 w-4 ml-1" />
                     </Button>
                     {e.videocall_url ? (
                       <Button
                         size="sm"
                         variant="secondary"
-                        className="bg-white/10 hover:bg-white/15 text-white border border-white/10"
+                        className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
                         onClick={() => window.open(e.videocall_url!, "_blank")}
                       >
                         Vídeo <ArrowRight className="h-4 w-4 ml-1" />
@@ -719,16 +674,15 @@ export default function Inicio() {
       <div className="mt-6">
         <Card className={glassCard}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-white/80 flex items-center gap-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <MessageCircle className="h-4 w-4" /> Maximize-se
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div className="text-white/80">
-              Hoje, foca em 1 coisa: <span className="font-semibold">follow-up com data</span>.  
-              Quem deixa “aberto” vira “vou ver e te aviso”.
+            <div className="text-slate-700">
+              Hoje, foca em 1 coisa: <span className="font-semibold">follow-up com data</span>. Quem deixa “aberto” vira “vou ver e te aviso”.
             </div>
-            <Button className="bg-white/10 hover:bg-white/15 border border-white/10" onClick={() => nav("/planejamento")}>
+            <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/planejamento")}>
               Abrir Playbook <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
           </CardContent>

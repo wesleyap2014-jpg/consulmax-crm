@@ -202,8 +202,30 @@ type FlatItem = {
   end?: boolean;
 };
 
+type GroupKey = "vendas" | "pos" | "admin" | "fin";
+
 function isAnyPathActive(pathname: string, prefixes: string[]) {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p));
+}
+
+function groupForPath(pathname: string): GroupKey {
+  if (
+    isAnyPathActive(pathname, [
+      "/planejamento",
+      "/oportunidades",
+      "/simuladores",
+      "/propostas",
+      "/ranking",
+      "/estoque-contempladas",
+    ])
+  )
+    return "vendas";
+
+  if (isAnyPathActive(pathname, ["/carteira", "/giro-de-carteira", "/gestao-de-grupos", "/clientes"])) return "pos";
+
+  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros"])) return "admin";
+
+  return "fin";
 }
 
 /** ====== Componente ====== */
@@ -294,7 +316,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     };
   }, []);
 
-  // Alerts de hoje (somente para os itens que ficaram no menu)
+  // Alerts de hoje
   const [navAlerts, setNavAlerts] = useState<NavAlerts>({
     oportunidades: false,
     fluxoCaixa: false,
@@ -338,44 +360,16 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   const textHidden = collapsed ? "opacity-0 pointer-events-none select-none w-0" : "opacity-100";
   const pillPadding = collapsed ? "px-2.5" : "px-3";
 
-  // ====== Grupos (ativos e abertos) ======
-  const vendasActive = useMemo(
-    () =>
-      isAnyPathActive(pathname, [
-        "/planejamento",
-        "/oportunidades",
-        "/simuladores",
-        "/propostas",
-        "/ranking",
-        "/estoque-contempladas",
-      ]),
-    [pathname]
-  );
-  const posActive = useMemo(
-    () => isAnyPathActive(pathname, ["/giro-de-carteira", "/gestao-de-grupos", "/clientes", "/carteira"]),
-    [pathname]
-  );
-  const adminActive = useMemo(() => isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros"]), [pathname]);
-  const finActive = useMemo(() => isAnyPathActive(pathname, ["/comissoes", "/fluxo-de-caixa"]), [pathname]);
-
-  const vendasListId = useId();
-  const posListId = useId();
-  const adminListId = useId();
-  const finListId = useId();
-  const simListId = useId();
-
-  const [vendasOpen, setVendasOpen] = useState(vendasActive);
-  const [posOpen, setPosOpen] = useState(posActive);
-  const [adminOpen, setAdminOpen] = useState(adminActive);
-  const [finOpen, setFinOpen] = useState(finActive);
+  // Accordion: só 1 grupo aberto
+  const currentGroup = useMemo<GroupKey>(() => groupForPath(pathname), [pathname]);
+  const [openGroup, setOpenGroup] = useState<GroupKey>(currentGroup);
 
   useEffect(() => {
-    setVendasOpen(vendasActive);
-    setPosOpen(posActive);
-    setAdminOpen(adminActive);
-    setFinOpen(finActive);
-  }, [vendasActive, posActive, adminActive, finActive]);
+    if (!collapsed) setOpenGroup(currentGroup);
+  }, [currentGroup, collapsed]);
 
+  // subgrupo Simuladores abre quando a rota é /simuladores
+  const simListId = useId();
   const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive);
   useEffect(() => {
     setSimGroupOpen(simuladoresActive);
@@ -399,11 +393,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
       { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
 
-      // Pós-venda (✅ inclui Carteira aqui)
+      // Pós-venda (✅ Carteira primeiro)
+      { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
       { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
       { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
       { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
-      { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
 
       // Administrativo
       { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
@@ -424,50 +418,38 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     [navAlerts, simuladoresHref]
   );
 
-  const setOpenCollapsedAware = (setter: any) => {
-    if (collapsed) return;
-    setter((v: boolean) => !v);
-  };
-
-  const renderGroupHeader = (opts: {
-    title: string;
-    icon: LucideIcon;
-    open: boolean;
-    setOpen: (v: any) => void;
-    active: boolean;
-    controlsId: string;
-  }) => {
-    const Icon = opts.icon;
-    return (
-      <button
-        type="button"
-        onClick={() => setOpenCollapsedAware(opts.setOpen)}
-        className={`
-          w-full text-left ${pillPadding} py-2.5 rounded-2xl transition-colors
-          flex items-center justify-between
-          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-          ${opts.active ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}
-        `}
-        style={opts.active ? activePillStyle : glassHoverPill}
-        aria-expanded={opts.open}
-        aria-controls={opts.controlsId}
-        title={opts.title}
-      >
-        <span className="flex items-center gap-2">
-          <Icon className="h-4 w-4" />
-          <span>{opts.title}</span>
-        </span>
-        <span className="text-xs opacity-80" aria-hidden>
-          {opts.open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </span>
-      </button>
-    );
-  };
-
   const pillClass = (isActive: boolean) =>
     `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
      ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`;
+
+  // Título pequeno (sem pill), clicável para accordion
+  const renderSectionTitle = (key: GroupKey, title: string) => {
+    const isOpen = openGroup === key;
+    const isActive = currentGroup === key;
+
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          if (collapsed) return;
+          setOpenGroup((prev) => (prev === key ? prev : key)); // accordion: troca e mantém 1 aberto
+        }}
+        className={`
+          mt-2 flex w-full items-center justify-between px-1.5 py-1
+          text-[11px] uppercase tracking-wide
+          ${isActive ? "text-consulmax-primary font-semibold" : "text-consulmax-secondary/80"}
+          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/30
+        `}
+        aria-expanded={isOpen}
+      >
+        <span>{title}</span>
+        <span className="opacity-80" aria-hidden>
+          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </span>
+      </button>
+    );
+  };
 
   return (
     <aside
@@ -506,15 +488,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       </Link>
 
       {/* Botão ocultar/expandir */}
-      <div className="relative z-[1] mb-4">
+      <div className="relative z-[1] mb-2">
         <button
           type="button"
           onClick={() => {
             if (!collapsed) {
-              setVendasOpen(false);
-              setPosOpen(false);
-              setAdminOpen(false);
-              setFinOpen(false);
               setSimGroupOpen(false);
             }
             setCollapsed((v) => !v);
@@ -552,20 +530,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           </>
         )}
 
-        {/* ===== MODO EXPANDIDO (grupos) ===== */}
+        {/* ===== MODO EXPANDIDO (accordion + títulos pequenos) ===== */}
         {!collapsed && (
           <>
             {/* VENDAS */}
-            {renderGroupHeader({
-              title: "Vendas",
-              icon: Wallet,
-              open: vendasOpen,
-              setOpen: setVendasOpen,
-              active: vendasActive,
-              controlsId: vendasListId,
-            })}
-            {vendasOpen && (
-              <div id={vendasListId} className="ml-2 grid gap-2 mt-0.5">
+            {renderSectionTitle("vendas", "Vendas")}
+            {openGroup === "vendas" && (
+              <div className="ml-1 grid gap-2">
                 <NavLink
                   to="/planejamento"
                   className={({ isActive }) => pillClass(isActive)}
@@ -593,8 +564,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   </span>
                 </NavLink>
 
-                {/* Simuladores (subgrupo) */}
-                <div className="ml-0">
+                {/* Simuladores (subgrupo dentro de Vendas) */}
+                <div>
                   <button
                     type="button"
                     onClick={() => setSimGroupOpen((v) => !v)}
@@ -705,16 +676,22 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             )}
 
             {/* PÓS-VENDA */}
-            {renderGroupHeader({
-              title: "Pós-venda",
-              icon: CalendarClock,
-              open: posOpen,
-              setOpen: setPosOpen,
-              active: posActive,
-              controlsId: posListId,
-            })}
-            {posOpen && (
-              <div id={posListId} className="ml-2 grid gap-2 mt-0.5">
+            {renderSectionTitle("pos", "Pós-venda")}
+            {openGroup === "pos" && (
+              <div className="ml-1 grid gap-2">
+                {/* ✅ Carteira primeiro */}
+                <NavLink
+                  to="/carteira"
+                  className={({ isActive }) => pillClass(isActive)}
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Carteira"
+                  end
+                >
+                  <Wallet className="h-4 w-4" />
+                  Carteira
+                </NavLink>
+
                 <NavLink
                   to="/giro-de-carteira"
                   className={({ isActive }) => pillClass(isActive)}
@@ -753,33 +730,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   <UserCog className="h-4 w-4" />
                   Clientes
                 </NavLink>
-
-                {/* ✅ Carteira dentro de Pós-venda */}
-                <NavLink
-                  to="/carteira"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={() => onNavigate?.()}
-                  title="Carteira"
-                  end
-                >
-                  <Wallet className="h-4 w-4" />
-                  Carteira
-                </NavLink>
               </div>
             )}
 
             {/* ADMINISTRATIVO */}
-            {renderGroupHeader({
-              title: "Administrativo",
-              icon: SlidersHorizontal,
-              open: adminOpen,
-              setOpen: setAdminOpen,
-              active: adminActive,
-              controlsId: adminListId,
-            })}
-            {adminOpen && (
-              <div id={adminListId} className="ml-2 grid gap-2 mt-0.5">
+            {renderSectionTitle("admin", "Administrativo")}
+            {openGroup === "admin" && (
+              <div className="ml-1 grid gap-2">
                 <NavLink
                   to="/relatorios"
                   className={({ isActive }) => pillClass(isActive)}
@@ -819,16 +776,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             )}
 
             {/* FINANCEIRO */}
-            {renderGroupHeader({
-              title: "Financeiro",
-              icon: LineChart,
-              open: finOpen,
-              setOpen: setFinOpen,
-              active: finActive,
-              controlsId: finListId,
-            })}
-            {finOpen && (
-              <div id={finListId} className="ml-2 grid gap-2 mt-0.5">
+            {renderSectionTitle("fin", "Financeiro")}
+            {openGroup === "fin" && (
+              <div className="ml-1 grid gap-2">
                 <NavLink
                   to="/comissoes"
                   className={({ isActive }) => pillClass(isActive)}

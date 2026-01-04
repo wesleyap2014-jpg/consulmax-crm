@@ -240,9 +240,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     (async () => {
       setAdminsLoading(true);
       try {
-        const { data, error } = await supabase.from("sim_admins").select("id, name, slug").order("name", {
-          ascending: true,
-        });
+        const { data, error } = await supabase
+          .from("sim_admins")
+          .select("id, name, slug")
+          .order("name", { ascending: true });
+
         if (!alive) return;
 
         if (error) {
@@ -350,7 +352,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     [pathname]
   );
   const posActive = useMemo(
-    () => isAnyPathActive(pathname, ["/giro-de-carteira", "/gestao-de-grupos", "/clientes"]),
+    () => isAnyPathActive(pathname, ["/giro-de-carteira", "/gestao-de-grupos", "/clientes", "/carteira"]),
     [pathname]
   );
   const adminActive = useMemo(() => isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros"]), [pathname]);
@@ -397,10 +399,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
       { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
 
-      // Pós-venda
+      // Pós-venda (✅ inclui Carteira aqui)
       { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
       { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
       { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
+      { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
 
       // Administrativo
       { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
@@ -409,21 +412,31 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
       // Financeiro
       { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
-      { to: "/fluxo-de-caixa", label: "Fluxo de Caixa", icon: LineChart, onlyForWesley: true, showDot: navAlerts.fluxoCaixa, end: true },
+      {
+        to: "/fluxo-de-caixa",
+        label: "Fluxo de Caixa",
+        icon: LineChart,
+        onlyForWesley: true,
+        showDot: navAlerts.fluxoCaixa,
+        end: true,
+      },
     ],
     [navAlerts, simuladoresHref]
   );
 
-  const renderGroupHeader = (
-    opts: {
-      title: string;
-      icon: LucideIcon;
-      open: boolean;
-      setOpen: (v: boolean) => void;
-      active: boolean;
-      controlsId: string;
-    }
-  ) => {
+  const setOpenCollapsedAware = (setter: any) => {
+    if (collapsed) return;
+    setter((v: boolean) => !v);
+  };
+
+  const renderGroupHeader = (opts: {
+    title: string;
+    icon: LucideIcon;
+    open: boolean;
+    setOpen: (v: any) => void;
+    active: boolean;
+    controlsId: string;
+  }) => {
     const Icon = opts.icon;
     return (
       <button
@@ -451,10 +464,10 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     );
   };
 
-  const setOpenCollapsedAware = (setter: (v: boolean) => void) => {
-    if (collapsed) return;
-    setter((v: any) => !v);
-  };
+  const pillClass = (isActive: boolean) =>
+    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
+     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
+     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`;
 
   return (
     <aside
@@ -497,7 +510,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         <button
           type="button"
           onClick={() => {
-            // ao colapsar, fecha tudo que é dropdown
             if (!collapsed) {
               setVendasOpen(false);
               setPosOpen(false);
@@ -528,12 +540,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 <NavLink
                   key={`${i.to}-${i.label}`}
                   to={i.to}
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}
-                     justify-center`
-                  }
+                  className={({ isActive }) => `${pillClass(isActive)} justify-center`}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title={i.label}
@@ -559,33 +566,21 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             })}
             {vendasOpen && (
               <div id={vendasListId} className="ml-2 grid gap-2 mt-0.5">
-                {/* Planejamento */}
                 <NavLink
                   to="/planejamento"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Planejamento"
                   end
                 >
                   <ClipboardList className="h-4 w-4" />
-                  <span className="flex items-center justify-between w-full">
-                    <span>Planejamento</span>
-                  </span>
+                  Planejamento
                 </NavLink>
 
-                {/* Oportunidades */}
                 <NavLink
                   to="/oportunidades"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Oportunidades"
@@ -603,12 +598,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   <button
                     type="button"
                     onClick={() => setSimGroupOpen((v) => !v)}
-                    className={`
-                      w-full text-left ${pillPadding} py-2.5 rounded-2xl transition-colors
-                      flex items-center justify-between
-                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                      ${simuladoresActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}
-                    `}
+                    className={pillClass(simuladoresActive) + " w-full justify-between"}
                     style={simuladoresActive ? activePillStyle : glassHoverPill}
                     aria-expanded={simGroupOpen}
                     aria-controls={simListId}
@@ -676,14 +666,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   )}
                 </div>
 
-                {/* Propostas */}
                 <NavLink
                   to="/propostas"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Propostas"
@@ -693,14 +678,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   Propostas
                 </NavLink>
 
-                {/* Ranking */}
                 <NavLink
                   to="/ranking"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Ranking"
@@ -710,14 +690,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   Ranking
                 </NavLink>
 
-                {/* Contempladas */}
                 <NavLink
                   to="/estoque-contempladas"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Contempladas"
@@ -742,11 +717,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
               <div id={posListId} className="ml-2 grid gap-2 mt-0.5">
                 <NavLink
                   to="/giro-de-carteira"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Giro de Carteira"
@@ -758,11 +729,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
                 <NavLink
                   to="/gestao-de-grupos"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Gestão de Grupos"
@@ -777,11 +744,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
                 <NavLink
                   to="/clientes"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Clientes"
@@ -789,6 +752,19 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 >
                   <UserCog className="h-4 w-4" />
                   Clientes
+                </NavLink>
+
+                {/* ✅ Carteira dentro de Pós-venda */}
+                <NavLink
+                  to="/carteira"
+                  className={({ isActive }) => pillClass(isActive)}
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Carteira"
+                  end
+                >
+                  <Wallet className="h-4 w-4" />
+                  Carteira
                 </NavLink>
               </div>
             )}
@@ -806,11 +782,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
               <div id={adminListId} className="ml-2 grid gap-2 mt-0.5">
                 <NavLink
                   to="/relatorios"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Relatórios"
@@ -822,11 +794,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
                 <NavLink
                   to="/usuarios"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Usuários"
@@ -838,11 +806,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
                 <NavLink
                   to="/parametros"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Parâmetros"
@@ -867,11 +831,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
               <div id={finListId} className="ml-2 grid gap-2 mt-0.5">
                 <NavLink
                   to="/comissoes"
-                  className={({ isActive }) =>
-                    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                  }
+                  className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={() => onNavigate?.()}
                   title="Comissões"
@@ -884,11 +844,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 {(!authUserId || authUserId === WESLEY_ID) && (
                   <NavLink
                     to="/fluxo-de-caixa"
-                    className={({ isActive }) =>
-                      `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                       ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                    }
+                    className={({ isActive }) => pillClass(isActive)}
                     style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                     onClick={() => onNavigate?.()}
                     title="Fluxo de Caixa"

@@ -140,6 +140,9 @@ export default function EstoqueContempladas() {
     return r === "admin";
   }, [me]);
 
+  // ✅ detecta se o enum já aceita "transferida"
+  const [supportsTransferida, setSupportsTransferida] = useState<boolean>(false);
+
   function notifyError(title: string, err: any) {
     console.error(title, err);
     const msg = (err?.message || err?.error_description || err?.toString?.() || "Erro desconhecido") as string;
@@ -273,6 +276,26 @@ export default function EstoqueContempladas() {
     if (!error && data) setMe(data as any);
   }
 
+  async function detectEnumTransferidaSupport() {
+    // tenta usar o valor "transferida" numa query; se der erro de enum, não suporta
+    try {
+      const { error } = await supabase.from("stock_cotas").select("id").eq("status", "transferida").limit(1);
+      if (error) {
+        const msg = (error as any)?.message || "";
+        if (msg.toLowerCase().includes("invalid input value for enum")) {
+          setSupportsTransferida(false);
+          // se o usuário estiver com filtro em transferida, evita travar
+          setStatusFilter((prev) => (prev === "transferida" ? "disponivel" : prev));
+          return;
+        }
+      }
+      setSupportsTransferida(true);
+    } catch {
+      setSupportsTransferida(false);
+      setStatusFilter((prev) => (prev === "transferida" ? "disponivel" : prev));
+    }
+  }
+
   async function loadBaseLists() {
     const [p, a] = await Promise.all([
       supabase.from("stock_partners").select("id,nome,logo_path").order("nome"),
@@ -318,6 +341,9 @@ export default function EstoqueContempladas() {
   async function loadCotas() {
     setLoading(true);
     try {
+      // se não suporta "transferida", impede filtro "transferida" pra não dar erro
+      const effectiveStatus = !supportsTransferida && statusFilter === "transferida" ? "disponivel" : statusFilter;
+
       let q = supabase
         .from("stock_cotas")
         .select(
@@ -334,7 +360,7 @@ export default function EstoqueContempladas() {
         )
         .order("created_at", { ascending: false });
 
-      if (statusFilter !== "all") q = q.eq("status", statusFilter);
+      if (effectiveStatus !== "all") q = q.eq("status", effectiveStatus);
       if (segFilter !== "all") q = q.eq("segmento", segFilter);
 
       const min = parseBRNumber(minValue);
@@ -356,6 +382,7 @@ export default function EstoqueContempladas() {
   useEffect(() => {
     (async () => {
       await loadMe();
+      await detectEnumTransferidaSupport();
     })();
   }, []);
 
@@ -373,7 +400,7 @@ export default function EstoqueContempladas() {
       await loadCotas();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
+  }, [isAdmin, supportsTransferida]);
 
   useEffect(() => {
     loadCotas();
@@ -640,8 +667,6 @@ export default function EstoqueContempladas() {
 
       if (error) throw error;
 
-      // Se escolheu uma solicitação, converte ela e cancela as demais abertas.
-      // Se NÃO escolheu, cancela todas as abertas dessa cota (evita request pendurada).
       if (selectedRequestId !== NONE) {
         await supabase.from("stock_reservation_requests").update({ status: "convertida" }).eq("id", selectedRequestId);
 
@@ -729,9 +754,7 @@ export default function EstoqueContempladas() {
 
     for (const n of uniqueNsAsc) {
       const end = n;
-      if (end >= start) {
-        lines.push(`${start} a ${end}: ${formatBRLNoSymbol(currentTotal)}`);
-      }
+      if (end >= start) lines.push(`${start} a ${end}: ${formatBRLNoSymbol(currentTotal)}`);
       currentTotal = currentTotal - (byN.get(n) || 0);
       start = n + 1;
     }
@@ -863,9 +886,6 @@ export default function EstoqueContempladas() {
     }
   }
 
-  /**
-   * Admin pode "reabrir para venda" uma cota reservada
-   */
   async function reopenToSale() {
     if (!isAdmin) return;
     const c = openManage.cota;
@@ -918,17 +938,20 @@ export default function EstoqueContempladas() {
     }
   }
 
-  /**
-   * NOVO: Finalizar transferência
-   * - Marca a cota como "transferida" (não fica mais em "reservada")
-   * - Mantém dados do comprador/sinal para auditoria
-   *
-   * Observação: isso pressupõe que a coluna "status" é text e aceita "transferida".
-   */
   async function finalizeTransfer() {
     if (!isAdmin) return;
     const c = openManage.cota;
     if (!c) return;
+
+    if (!supportsTransferida) {
+      window.alert(
+        `Seu banco ainda NÃO aceita o status "transferida".\n\n` +
+          `Rode este SQL no Supabase:\n\n` +
+          `ALTER TYPE public.stock_cota_status ADD VALUE 'transferida';\n\n` +
+          `Depois recarregue a página e tente novamente.`
+      );
+      return;
+    }
 
     const ok = window.confirm(
       `Finalizar o processo de transferência da cota "${c.codigo}"?\n\nIsso vai marcar a cota como TRANSFERIDA (concluída).`
@@ -945,6 +968,7 @@ export default function EstoqueContempladas() {
       await loadCotas();
     } catch (err) {
       notifyError("Não foi possível finalizar a transferência", err);
+      await detectEnumTransferidaSupport();
     } finally {
       setSavingEdit(false);
     }
@@ -952,7 +976,6 @@ export default function EstoqueContempladas() {
 
   return (
     <div className="p-4 space-y-4 relative">
-      {/* toast */}
       {toast ? (
         <div className="fixed top-4 right-4 z-50 rounded-lg border bg-background/95 px-4 py-2 text-sm shadow-md">
           {toast}
@@ -1016,7 +1039,7 @@ export default function EstoqueContempladas() {
               </Select>
             </div>
 
-            <div className="md:col-span-4">
+            <div className="md:col-span-5">
               <Label>Status</Label>
               <div className="flex flex-wrap gap-2">
                 <Button variant={statusFilter === "disponivel" ? "default" : "outline"} onClick={() => setStatusFilter("disponivel")}>
@@ -1025,13 +1048,26 @@ export default function EstoqueContempladas() {
                 <Button variant={statusFilter === "reservada" ? "default" : "outline"} onClick={() => setStatusFilter("reservada")}>
                   Reservadas
                 </Button>
-                <Button variant={statusFilter === "transferida" ? "default" : "outline"} onClick={() => setStatusFilter("transferida")}>
-                  Transferidas
-                </Button>
+
+                {supportsTransferida ? (
+                  <Button
+                    variant={statusFilter === "transferida" ? "default" : "outline"}
+                    onClick={() => setStatusFilter("transferida")}
+                  >
+                    Transferidas
+                  </Button>
+                ) : null}
+
                 <Button variant={statusFilter === "all" ? "default" : "outline"} onClick={() => setStatusFilter("all")}>
                   Todas
                 </Button>
               </div>
+
+              {!supportsTransferida ? (
+                <div className="text-xs text-muted-foreground mt-1">
+                  Obs: status <b>transferida</b> ainda não está habilitado no banco (enum).
+                </div>
+              ) : null}
             </div>
 
             <div className="md:col-span-2">
@@ -1044,30 +1080,30 @@ export default function EstoqueContempladas() {
               <Input value={maxValue} onChange={(e) => setMaxValue(e.target.value)} placeholder="Ex: 300.000" />
             </div>
 
-            <div className="md:col-span-1">
-              <Label>Comissão</Label>
-              <Select value={String(Math.round(commissionPct * 100))} onValueChange={(v) => saveCommissionSetting(Number(v) / 100)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="5%" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">1%</SelectItem>
-                  <SelectItem value="2">2%</SelectItem>
-                  <SelectItem value="3">3%</SelectItem>
-                  <SelectItem value="4">4%</SelectItem>
-                  <SelectItem value="5">5%</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="text-[11px] text-muted-foreground mt-1">
-                Atual: <b>{commissionPctHuman}</b>
+            <div className="md:col-span-12 flex items-end justify-between gap-3 flex-wrap">
+              <div className="min-w-[220px]">
+                <Label>Comissão</Label>
+                <Select value={String(Math.round(commissionPct * 100))} onValueChange={(v) => saveCommissionSetting(Number(v) / 100)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="5%" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1%</SelectItem>
+                    <SelectItem value="2">2%</SelectItem>
+                    <SelectItem value="3">3%</SelectItem>
+                    <SelectItem value="4">4%</SelectItem>
+                    <SelectItem value="5">5%</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Atual: <b>{commissionPctHuman}</b>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={() => loadCotas()}>
-              Aplicar filtro de valor
-            </Button>
+              <Button variant="outline" onClick={() => loadCotas()}>
+                Aplicar filtro de valor
+              </Button>
+            </div>
           </div>
 
           {/* tabela */}
@@ -1102,7 +1138,6 @@ export default function EstoqueContempladas() {
 
                     return (
                       <tr key={c.id} className={`border-t ${dim ? "opacity-40" : ""}`}>
-                        {/* seleção */}
                         <td className="p-3">
                           <input
                             type="checkbox"
@@ -1205,7 +1240,6 @@ export default function EstoqueContempladas() {
           </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* preview story */}
             <div className="flex justify-center">
               <div className="w-full max-w-sm">
                 <div className="relative rounded-2xl border shadow-sm overflow-hidden" style={{ aspectRatio: "9 / 16" as any }}>
@@ -1222,7 +1256,6 @@ export default function EstoqueContempladas() {
               </div>
             </div>
 
-            {/* text */}
             <div className="space-y-2">
               <Label>Texto</Label>
               <textarea
@@ -1257,7 +1290,6 @@ export default function EstoqueContempladas() {
           </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Parceiro */}
             <div className="space-y-2">
               <Label>Parceiro</Label>
               <Tabs value={createTabPartner} onValueChange={(v: any) => setCreateTabPartner(v)}>
@@ -1295,7 +1327,6 @@ export default function EstoqueContempladas() {
               </Tabs>
             </div>
 
-            {/* Administradora */}
             <div className="space-y-2">
               <Label>Administradora</Label>
               <Tabs value={createTabAdmin} onValueChange={(v: any) => setCreateTabAdmin(v)}>
@@ -1604,7 +1635,6 @@ export default function EstoqueContempladas() {
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap justify-end">
-                    {/* NOVO: finalizar transferência */}
                     {openManage.cota.status === "reservada" ? (
                       <Button variant="default" onClick={finalizeTransfer} disabled={deleting || savingEdit}>
                         <CheckCheck className="h-4 w-4 mr-2" />

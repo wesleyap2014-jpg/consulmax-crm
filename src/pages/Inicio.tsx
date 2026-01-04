@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import {
   RefreshCcw,
@@ -87,6 +88,26 @@ type CommissionRow = {
 
 type GiroDueRow = { owner_auth_id: string; due_count: number };
 
+type MetaRow = {
+  vendedor_id: string;
+  ano: number;
+  m01: number;
+  m02: number;
+  m03: number;
+  m04: number;
+  m05: number;
+  m06: number;
+  m07: number;
+  m08: number;
+  m09: number;
+  m10: number;
+  m11: number;
+  m12: number;
+};
+
+const ALL = "__all__";
+
+/** ===================== Helpers ===================== */
 function todayYMD() {
   const d = new Date();
   const y = d.getFullYear();
@@ -95,7 +116,6 @@ function todayYMD() {
   return `${y}-${m}-${day}`;
 }
 function fmtDateBRFromYMD(ymd: string) {
-  // "2026-01-04" -> "04/01/2026"
   const [y, m, d] = (ymd || "").split("-");
   if (!y || !m || !d) return ymd;
   return `${d}/${m}/${y}`;
@@ -134,8 +154,23 @@ function isAdmin(u?: UserRow | null) {
   const r = (u?.role || u?.user_role || "").toLowerCase();
   return r === "admin";
 }
+function isClosedStage(stage?: string | null) {
+  const low = (stage || "").trim().toLowerCase();
+  return (
+    low === "fechado_ganho" ||
+    low === "fechado_perdido" ||
+    low === "fechado (ganho)" ||
+    low === "fechado (perdido)" ||
+    low.startsWith("fechado_") ||
+    low.startsWith("fechado ")
+  );
+}
+function metaFieldForMonth(month: number) {
+  const mm = String(month).padStart(2, "0"); // 01..12
+  return `m${mm}` as keyof MetaRow;
+}
 
-// Donut simples via SVG (sem depender de Recharts)
+/** ===================== Donut via SVG ===================== */
 function Donut({
   pct,
   size = 132,
@@ -162,7 +197,7 @@ function Donut({
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="rgba(148,163,184,0.35)" // slate-400-ish
+          stroke="rgba(148,163,184,0.35)"
           strokeWidth={stroke}
         />
         <circle
@@ -170,7 +205,7 @@ function Donut({
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="rgba(15,23,42,0.9)" // slate-900-ish
+          stroke="rgba(15,23,42,0.9)"
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={`${dash} ${c - dash}`}
@@ -197,15 +232,14 @@ export default function Inicio() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
+  // Filtro admin (ALL ou users.id). Vendedor fica travado no próprio.
+  const [vendorScope, setVendorScope] = useState<string>(ALL);
+  const scopedUser = useMemo(() => (vendorScope === ALL ? null : usersById.get(vendorScope) || null), [vendorScope, usersById]);
+
   const rangeToday = useMemo(() => {
     const now = new Date();
     const ymd = todayYMD();
-    return {
-      ymd,
-      br: fmtDateBRFromYMD(ymd),
-      startISO: startOfDayISO(now),
-      endISO: endOfDayISO(now),
-    };
+    return { ymd, br: fmtDateBRFromYMD(ymd), startISO: startOfDayISO(now), endISO: endOfDayISO(now) };
   }, []);
   const rangeMonth = useMemo(() => monthRangeYMD(new Date()), []);
 
@@ -219,7 +253,7 @@ export default function Inicio() {
 
     monthSalesTotal: 0,
     monthSalesMeta: 0,
-    monthSalesPct: 0, // % da meta realizada (0..100)
+    monthSalesPct: 0,
 
     carteiraAtivaTotal: 0,
 
@@ -258,43 +292,32 @@ export default function Inicio() {
 
     setMe(meRow || null);
     setUsers(usersRows || []);
-  }
 
-  function isClosedStage(stage?: string | null) {
-    const st = (stage || "").trim();
-    const low = st.toLowerCase();
-    // cobre padrões antigos e atuais
-    return (
-      low === "fechado_ganho" ||
-      low === "fechado_perdido" ||
-      low === "fechado (ganho)" ||
-      low === "fechado (perdido)" ||
-      low.startsWith("fechado_") ||
-      low.startsWith("fechado ")
-    );
+    // default do filtro:
+    const admin = isAdmin(meRow || null);
+    setVendorScope(admin ? ALL : (meRow?.id || ALL));
   }
 
   async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
     const today = rangeToday.ymd;
     const { startYMD, endYMD, year, month } = rangeMonth;
 
-    // ===== Oportunidades atrasadas (NÃO trazer fechado_ganho/fechado_perdido) =====
+    // ===== Oportunidades atrasadas (sem Fechado) =====
     let oppQ = supabase
       .from("opportunities")
       .select("id,valor_credito,stage,expected_close_at,vendedor_id,lead_id")
       .lt("expected_close_at", today)
-      // mantém filtro no banco para os valores conhecidos
       .not("stage", "in", '("fechado_ganho","fechado_perdido","Fechado (Ganho)","Fechado (Perdido)")')
       .order("expected_close_at", { ascending: true })
       .limit(12);
 
-    // RBAC: admin vê tudo; vendedor vê só o próprio
     if (!admin) oppQ = oppQ.eq("vendedor_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) oppQ = oppQ.eq("vendedor_id", scopeUserId);
 
     const { data: oppRowsRaw, error: oppErr } = await oppQ;
     if (oppErr) throw oppErr;
 
-    // fallback: garante que não entra nada "fechado_*" mesmo se o stage vier diferente
+    // Garantia extra client-side
     const oppRows = (oppRowsRaw || []).filter((o: any) => !isClosedStage(o?.stage));
 
     const overdueOppCount = oppRows.length;
@@ -313,7 +336,7 @@ export default function Inicio() {
       return { ...o, lead_nome: ld?.nome, lead_tel: ld?.telefone || null };
     });
 
-    // ===== Agenda de hoje (view enriquecida) =====
+    // ===== Agenda de hoje =====
     let agQ = supabase
       .from("v_agenda_eventos_enriquecida")
       .select("id,tipo,titulo,inicio_at,fim_at,user_id,cliente_nome,lead_nome,telefone,videocall_url")
@@ -323,6 +346,7 @@ export default function Inicio() {
       .limit(10);
 
     if (!admin) agQ = agQ.eq("user_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) agQ = agQ.eq("user_id", scopeUserId);
 
     const { data: agRows, error: agErr } = await agQ;
     if (agErr) throw agErr;
@@ -342,51 +366,35 @@ export default function Inicio() {
       .lt("data_venda", endYMD);
 
     if (!admin) salesQ = salesQ.eq("vendedor_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) salesQ = salesQ.eq("vendedor_id", scopeUserId);
 
     const { data: salesRows, error: salesErr } = await salesQ;
     if (salesErr) throw salesErr;
-    const monthSalesTotal = (salesRows || []).reduce((acc, r) => acc + (Number((r as any).valor_venda || 0) || 0), 0);
+    const monthSalesTotal = (salesRows || []).reduce((acc, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Meta do mês (para donut: Meta x Venda) =====
-    // Observação: baseado no que você já usa na Carteira (metas_vendedores).
-    // Esperado: metas_vendedores(vendedor_id, ano, meta_mensal, meta_anual)
-    let monthSalesMeta = 0;
-    try {
-      let metaQ = supabase
-        .from("metas_vendedores")
-        .select("vendedor_id,ano,meta_mensal,meta_anual")
-        .eq("ano", year);
+    // ===== Meta do mês (metas_vendedores: m01..m12) =====
+    const field = metaFieldForMonth(month);
+    let metaQ = supabase.from("metas_vendedores").select(`vendedor_id,ano,${field}`).eq("ano", year);
 
-      if (!admin) metaQ = metaQ.eq("vendedor_id", scopeUserId);
+    if (!admin) metaQ = metaQ.eq("vendedor_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) metaQ = metaQ.eq("vendedor_id", scopeUserId);
 
-      const { data: metaRows, error: metaErr } = await metaQ;
-      if (metaErr) throw metaErr;
+    const { data: metaRows, error: metaErr } = await metaQ;
+    if (metaErr) throw metaErr;
 
-      const rows = (metaRows || []) as any[];
-      // se houver mais de uma linha por vendedor/ano, somamos (admin pode ter vários vendedores)
-      monthSalesMeta = rows.reduce((acc, r) => {
-        const mm = Number(r?.meta_mensal || 0) || 0;
-        const ma = Number(r?.meta_anual || 0) || 0;
-        const fallback = ma > 0 ? ma / 12 : 0;
-        return acc + (mm > 0 ? mm : fallback);
-      }, 0);
-    } catch {
-      // se a tabela/colunas ainda não estiverem prontas, meta fica 0 (não quebra o painel)
-      monthSalesMeta = 0;
-    }
-
-    const monthSalesPct =
-      monthSalesMeta > 0 ? Math.min(100, Math.max(0, (monthSalesTotal / monthSalesMeta) * 100)) : 0;
+    const monthSalesMeta = (metaRows || []).reduce((acc: number, r: any) => acc + (Number(r?.[field] || 0) || 0), 0);
+    const monthSalesPct = monthSalesMeta > 0 ? Math.min(100, Math.max(0, (monthSalesTotal / monthSalesMeta) * 100)) : 0;
 
     // ===== Carteira ativa (codigo='00') =====
     let cartQ = supabase.from("vendas").select("valor_venda,vendedor_id,codigo").eq("codigo", "00");
     if (!admin) cartQ = cartQ.eq("vendedor_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) cartQ = cartQ.eq("vendedor_id", scopeUserId);
 
     const { data: cartRows, error: cartErr } = await cartQ;
     if (cartErr) throw cartErr;
-    const carteiraAtivaTotal = (cartRows || []).reduce((acc, r) => acc + (Number((r as any).valor_venda || 0) || 0), 0);
+    const carteiraAtivaTotal = (cartRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Reservas (solicitações abertas) =====
+    // ===== Reservas abertas =====
     let reqQ = supabase
       .from("stock_reservation_requests")
       .select("id,cota_id,vendor_id,vendor_pct,status,created_at")
@@ -395,12 +403,13 @@ export default function Inicio() {
       .limit(10);
 
     if (!admin) reqQ = reqQ.eq("vendor_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) reqQ = reqQ.eq("vendor_id", scopeUserId);
 
     const { data: reqRows, error: reqErr } = await reqQ;
     if (reqErr) throw reqErr;
     const openStockReqCount = (reqRows || []).length;
 
-    // ===== Vendas sem comissão (view) =====
+    // ===== Vendas sem comissão =====
     let vscQ = supabase
       .from("v_vendas_sem_comissao")
       .select("id,data_venda,vendedor_id,vendedor_nome,segmento,tabela,administradora,numero_proposta,credito")
@@ -408,36 +417,44 @@ export default function Inicio() {
       .limit(10);
 
     if (!admin) vscQ = vscQ.eq("vendedor_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) vscQ = vscQ.eq("vendedor_id", scopeUserId);
 
     const { data: vscRows, error: vscErr } = await vscQ;
     if (vscErr) throw vscErr;
     const vendasSemComissaoCount = (vscRows || []).length;
 
     // ===== Comissões pendentes =====
-    let comQ = supabase
-      .from("commissions")
-      .select("id,vendedor_id,valor_total,status,created_at")
-      .order("created_at", { ascending: false })
-      .limit(300);
+    let comQ = supabase.from("commissions").select("id,vendedor_id,valor_total,status,created_at").order("created_at", { ascending: false }).limit(300);
 
     if (!admin) comQ = comQ.eq("vendedor_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) comQ = comQ.eq("vendedor_id", scopeUserId);
 
     const { data: comRows, error: comErr } = await comQ;
     if (comErr) throw comErr;
 
-    const pend = (comRows || []).filter((c: any) => {
+    const pend = (comRows || []).filter((c: CommissionRow) => {
       const st = (c.status || "").toLowerCase();
       return st && st !== "pago" && st !== "estorno";
     });
     const commissionsPendingCount = pend.length;
     const commissionsPendingTotal = pend.reduce((acc: number, r: any) => acc + (Number(r.valor_total || 0) || 0), 0);
 
-    // ===== Giro pendente (view) =====
+    // ===== Giro pendente =====
     let giroDueCount = 0;
     if (admin) {
-      const { data: giroAll, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
-      if (giroAllErr) throw giroAllErr;
-      giroDueCount = (giroAll || []).reduce((acc, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
+      if (scopeUserId === ALL) {
+        const { data: giroAll, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
+        if (giroAllErr) throw giroAllErr;
+        giroDueCount = (giroAll || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
+      } else {
+        const { data: giroRow, error: giroErr } = await supabase
+          .from("v_giro_due_count")
+          .select("owner_auth_id,due_count")
+          .eq("owner_auth_id", scopeAuthId)
+          .maybeSingle();
+        if (giroErr) throw giroErr;
+        giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
+      }
     } else {
       const { data: giroRow, error: giroErr } = await supabase
         .from("v_giro_due_count")
@@ -478,14 +495,14 @@ export default function Inicio() {
 
   async function reload(hard = false) {
     if (!me) return;
-
     const admin = isAdmin(me);
 
-    // ✅ Regra nova:
-    // - Admin vê TUDO (sem filtro por vendedor)
-    // - Vendedor logado vê SOMENTE o próprio (baseado no auth user id -> users.id)
-    const scopeUserId = admin ? me.id : me.id;
-    const scopeAuthId = me.auth_user_id;
+    // ✅ Comportamento correto:
+    // - Admin: pode ver tudo (ALL) ou filtrar por vendedor (users.id)
+    // - Vendedor: trava no próprio (me.id)
+    const scopeUserId = admin ? vendorScope : me.id;
+    const scopeAuthId =
+      admin && scopeUserId !== ALL ? (usersById.get(scopeUserId)?.auth_user_id || me.auth_user_id) : me.auth_user_id;
 
     if (hard) setRefreshing(true);
     try {
@@ -507,12 +524,16 @@ export default function Inicio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Quando `me` carregar, faz o primeiro load do painel
+  // recarrega quando filtro muda (admin) ou quando users chegou
   useEffect(() => {
     if (!me) return;
+    // evita tentativa de filtrar por vendedor antes de usersById ter o cara
+    const admin = isAdmin(me);
+    if (admin && vendorScope !== ALL && !usersById.has(vendorScope)) return;
+
     reload(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.id]);
+  }, [vendorScope, me?.id, users.length]);
 
   const admin = isAdmin(me);
 
@@ -541,6 +562,26 @@ export default function Inicio() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {admin && (
+            <div className="min-w-[260px]">
+              <Select value={vendorScope} onValueChange={setVendorScope}>
+                <SelectTrigger className="bg-white border border-slate-200 text-slate-900">
+                  <SelectValue placeholder="Vendedor: Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Todos (Admin)</SelectItem>
+                  {users
+                    .filter((u) => (u.role || u.user_role || "").toLowerCase() !== "viewer")
+                    .map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.nome}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <Button
             variant="secondary"
             className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
@@ -581,7 +622,9 @@ export default function Inicio() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-semibold">{kpi.todayEventsCount}</div>
-            <div className="text-slate-600 text-sm mt-1">{admin ? "Visão geral (Admin)" : "Somente seus eventos"}</div>
+            <div className="text-slate-600 text-sm mt-1">
+              {admin && vendorScope !== ALL ? `Filtrado: ${scopedUser?.nome || "—"}` : admin ? "Visão geral" : "Somente seus eventos"}
+            </div>
             <div className="mt-3">
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/agenda")}>
                 Abrir Agenda <ArrowRight className="h-4 w-4 ml-2" />
@@ -590,7 +633,7 @@ export default function Inicio() {
           </CardContent>
         </Card>
 
-        {/* Vendas no mês (Donut Meta x Realizado) */}
+        {/* Donut Meta x Vendas */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -608,7 +651,7 @@ export default function Inicio() {
                 <div className="text-sm text-slate-600">Realizado</div>
                 <div className="text-lg font-semibold text-slate-900">{fmtBRL(kpi.monthSalesTotal)}</div>
 
-                <div className="mt-2 text-sm text-slate-600">Meta</div>
+                <div className="mt-2 text-sm text-slate-600">Meta do mês</div>
                 <div className="text-base font-semibold text-slate-900">{fmtBRL(kpi.monthSalesMeta)}</div>
 
                 <div className="mt-3">
@@ -618,12 +661,6 @@ export default function Inicio() {
                 </div>
               </div>
             </div>
-
-            {kpi.monthSalesMeta <= 0 ? (
-              <div className="mt-3 text-xs text-slate-500">
-                *Meta do mês não encontrada (metas_vendedores). Se quiser, eu ajusto o select conforme o schema exato da sua tabela.
-              </div>
-            ) : null}
           </CardContent>
         </Card>
 
@@ -809,7 +846,7 @@ export default function Inicio() {
         </Card>
       </div>
 
-      {/* (mantidos no state caso você queira usar depois; não renderiza por enquanto) */}
+      {/* mantidos no state (caso você queira renderizar uma lista depois) */}
       {/* stockReqs: {stockReqs.length} | vendasSemComissao: {vendasSemComissao.length} */}
     </div>
   );

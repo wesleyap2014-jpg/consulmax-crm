@@ -8,6 +8,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 
 // ==== Lazy pages (mantém lazy no resto) ====
 const Login                   = React.lazy(() => import("./pages/Login"));
+const Inicio                  = React.lazy(() => import("./pages/Inicio")); // ✅ NOVO: Home
 const Clientes                = React.lazy(() => import("./pages/Clientes"));
 const Oportunidades           = React.lazy(() => import("./pages/Oportunidades"));
 const Agenda                  = React.lazy(() => import("./pages/Agenda"));
@@ -72,7 +73,12 @@ export const router = createBrowserRouter([
       {
         element: <App />, // layout principal
         children: [
-          { index: true, element: <Navigate to="/oportunidades" replace /> },
+          // ✅ AGORA o CRM abre na página Início após login
+          { index: true, element: withSuspense(<Inicio />) },
+
+          // (opcional) se você quiser uma URL explícita pra Home:
+          // { path: "inicio", element: withSuspense(<Inicio />) },
+
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },
 
           { path: "oportunidades",  element: withSuspense(<Oportunidades />) },
@@ -131,7 +137,7 @@ export const router = createBrowserRouter([
           { path: "links-uteis", element: <Navigate to="/links" replace /> },
           { path: "linksuteis",  element: <Navigate to="/links" replace /> },
 
-          { path: "*", element: <Navigate to="/oportunidades" replace /> },
+          { path: "*", element: <Navigate to="/" replace /> }, // ✅ volta pra Home
         ],
       },
     ],

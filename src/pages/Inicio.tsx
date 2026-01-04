@@ -8,17 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-import {
-  RefreshCcw,
-  AlertTriangle,
-  Calendar,
-  Briefcase,
-  Wallet,
-  Target,
-  Rocket,
-  MessageCircle,
-  ArrowRight,
-} from "lucide-react";
+import { RefreshCcw, AlertTriangle, Calendar, Briefcase, Wallet, Target, Rocket, MessageCircle, ArrowRight } from "lucide-react";
 
 /** ===================== Tipos ===================== */
 type UserRow = {
@@ -46,7 +36,8 @@ type AgendaRow = {
 type OppRow = {
   id: string;
   valor_credito: number | null;
-  stage: string;
+  stage: string | null;
+  estagio: string | null;
   expected_close_at: string | null;
   vendedor_id: string;
   lead_id: string;
@@ -154,20 +145,36 @@ function isAdmin(u?: UserRow | null) {
   const r = (u?.role || u?.user_role || "").toLowerCase();
   return r === "admin";
 }
-function isClosedStage(stage?: string | null) {
-  const low = (stage || "").trim().toLowerCase();
-  return (
-    low === "fechado_ganho" ||
-    low === "fechado_perdido" ||
-    low === "fechado (ganho)" ||
-    low === "fechado (perdido)" ||
-    low.startsWith("fechado_") ||
-    low.startsWith("fechado ")
-  );
+function stageIsClosed(stage?: string | null, estagio?: string | null) {
+  const st = (stage || "").trim().toLowerCase();
+  const es = (estagio || "").trim().toLowerCase();
+
+  // stage (padrão "UI")
+  if (st === "fechado_ganho" || st === "fechado_perdido") return true;
+
+  // estagio (padrão "DB" português)
+  if (es === "fechado (ganho)".toLowerCase() || es === "fechado (perdido)".toLowerCase()) return true;
+
+  // variações defensivas
+  if (st.startsWith("fechado")) return true;
+  if (es.startsWith("fechado")) return true;
+
+  return false;
 }
 function metaFieldForMonth(month: number) {
   const mm = String(month).padStart(2, "0"); // 01..12
   return `m${mm}` as keyof MetaRow;
+}
+function humanErr(e: any) {
+  if (!e) return "Erro desconhecido.";
+  if (typeof e === "string") return e;
+  const msg = e?.message || e?.error_description || e?.details || e?.hint;
+  if (msg) return String(msg);
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
 }
 
 /** ===================== Donut via SVG ===================== */
@@ -192,14 +199,7 @@ function Donut({
   return (
     <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="block">
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          fill="none"
-          stroke="rgba(148,163,184,0.35)"
-          strokeWidth={stroke}
-        />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(148,163,184,0.35)" strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -227,6 +227,7 @@ export default function Inicio() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const [me, setMe] = useState<UserRow | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -282,6 +283,7 @@ export default function Inicio() {
       .eq("auth_user_id", authId)
       .maybeSingle();
     if (meErr) throw meErr;
+    if (!meRow) throw new Error("Usuário não encontrado na tabela users.");
 
     const { data: usersRows, error: usersErr } = await supabase
       .from("users")
@@ -290,24 +292,25 @@ export default function Inicio() {
       .order("nome", { ascending: true });
     if (usersErr) throw usersErr;
 
-    setMe(meRow || null);
-    setUsers(usersRows || []);
+    const admin = isAdmin(meRow);
+    const initialScope = admin ? ALL : meRow.id;
 
-    // default do filtro:
-    const admin = isAdmin(meRow || null);
-    setVendorScope(admin ? ALL : (meRow?.id || ALL));
+    return { meRow, usersRows: usersRows || [], admin, initialScope };
   }
 
   async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
     const today = rangeToday.ymd;
     const { startYMD, endYMD, year, month } = rangeMonth;
 
-    // ===== Oportunidades atrasadas (sem Fechado) =====
+    // ===== Oportunidades atrasadas (sem Fechado Ganho/Perdido) =====
     let oppQ = supabase
       .from("opportunities")
-      .select("id,valor_credito,stage,expected_close_at,vendedor_id,lead_id")
+      .select("id,valor_credito,stage,estagio,expected_close_at,vendedor_id,lead_id")
       .lt("expected_close_at", today)
-      .not("stage", "in", '("fechado_ganho","fechado_perdido","Fechado (Ganho)","Fechado (Perdido)")')
+      // filtra no stage (UI)
+      .not("stage", "in", '("fechado_ganho","fechado_perdido")')
+      // filtra no estagio (DB pt-BR)
+      .not("estagio", "in", '("Fechado (Ganho)","Fechado (Perdido)")')
       .order("expected_close_at", { ascending: true })
       .limit(12);
 
@@ -318,7 +321,7 @@ export default function Inicio() {
     if (oppErr) throw oppErr;
 
     // Garantia extra client-side
-    const oppRows = (oppRowsRaw || []).filter((o: any) => !isClosedStage(o?.stage));
+    const oppRows = (oppRowsRaw || []).filter((o: any) => !stageIsClosed(o?.stage, o?.estagio));
 
     const overdueOppCount = oppRows.length;
     const overdueOppTotal = oppRows.reduce((acc: number, r: any) => acc + (Number(r.valor_credito || 0) || 0), 0);
@@ -370,7 +373,7 @@ export default function Inicio() {
 
     const { data: salesRows, error: salesErr } = await salesQ;
     if (salesErr) throw salesErr;
-    const monthSalesTotal = (salesRows || []).reduce((acc, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
+    const monthSalesTotal = (salesRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
     // ===== Meta do mês (metas_vendedores: m01..m12) =====
     const field = metaFieldForMonth(month);
@@ -465,6 +468,7 @@ export default function Inicio() {
       giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
     }
 
+    // ✅ Só atualiza states se deu tudo certo (não “zera” o painel em erro)
     setOverdueOpps(overdueOppsEnriched);
     setTodayEvents((agRows || []) as any);
     setStockReqs(reqRows || []);
@@ -505,39 +509,71 @@ export default function Inicio() {
       admin && scopeUserId !== ALL ? (usersById.get(scopeUserId)?.auth_user_id || me.auth_user_id) : me.auth_user_id;
 
     if (hard) setRefreshing(true);
+    setErrMsg(null);
+
     try {
       await loadDashboard(scopeUserId, scopeAuthId, admin);
+    } catch (e) {
+      console.error("[Inicio] loadDashboard error:", e);
+      setErrMsg(humanErr(e));
     } finally {
       if (hard) setRefreshing(false);
     }
   }
 
   useEffect(() => {
+    let alive = true;
+
     (async () => {
       setLoading(true);
+      setErrMsg(null);
+
       try {
-        await loadMeAndUsers();
+        const { meRow, usersRows, admin, initialScope } = await loadMeAndUsers();
+        if (!alive) return;
+
+        setMe(meRow);
+        setUsers(usersRows);
+        setVendorScope(initialScope);
+
+        // ✅ carrega imediatamente (não depende só do effect do filtro)
+        const scopeUserId = admin ? initialScope : meRow.id;
+        const scopeAuthId =
+          admin && scopeUserId !== ALL ? (usersRows.find((u) => u.id === scopeUserId)?.auth_user_id || meRow.auth_user_id) : meRow.auth_user_id;
+
+        await loadDashboard(scopeUserId, scopeAuthId, admin);
+      } catch (e) {
+        console.error("[Inicio] init error:", e);
+        if (!alive) return;
+        setErrMsg(humanErr(e));
       } finally {
+        if (!alive) return;
         setLoading(false);
       }
     })();
+
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // recarrega quando filtro muda (admin) ou quando users chegou
+  // Quando muda o filtro (admin), recarrega
   useEffect(() => {
     if (!me) return;
-    // evita tentativa de filtrar por vendedor antes de usersById ter o cara
     const admin = isAdmin(me);
-    if (admin && vendorScope !== ALL && !usersById.has(vendorScope)) return;
+    if (!admin) return;
+
+    // evita tentar filtrar para um id que ainda não foi carregado
+    if (vendorScope !== ALL && !usersById.has(vendorScope)) return;
 
     reload(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vendorScope, me?.id, users.length]);
+  }, [vendorScope]);
 
   const admin = isAdmin(me);
 
-  // Light Glass (para fundo claro)
+  // Light Glass
   const glassCard = "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";
 
   if (loading) {
@@ -595,6 +631,27 @@ export default function Inicio() {
         </div>
       </div>
 
+      {/* Erro visível (para não ficar “zerado” sem explicação) */}
+      {errMsg ? (
+        <div className="mt-5">
+          <Card className={`${glassCard} border-red-200`}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-red-700 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" /> Erro ao carregar o painel
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-slate-700">
+              <div className="mb-2">
+                O painel ficou zerado porque uma das consultas falhou. Copia essa mensagem e me manda:
+              </div>
+              <pre className="whitespace-pre-wrap break-words rounded-md bg-white border border-slate-200 p-3 text-xs text-slate-800">
+                {errMsg}
+              </pre>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
       {/* KPIs */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <Card className={glassCard}>
@@ -642,11 +699,7 @@ export default function Inicio() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-4">
-              <Donut
-                pct={kpi.monthSalesPct}
-                centerTop={`${kpi.monthSalesPct.toFixed(1).replace(".", ",")}%`}
-                centerBottom="da meta"
-              />
+              <Donut pct={kpi.monthSalesPct} centerTop={`${kpi.monthSalesPct.toFixed(1).replace(".", ",")}%`} centerBottom="da meta" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-slate-600">Realizado</div>
                 <div className="text-lg font-semibold text-slate-900">{fmtBRL(kpi.monthSalesTotal)}</div>
@@ -776,7 +829,8 @@ export default function Inicio() {
                 <div key={o.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">
-                      {o.lead_nome || "Lead"} <span className="text-slate-500">• {o.stage}</span>
+                      {o.lead_nome || "Lead"}{" "}
+                      <span className="text-slate-500">• {(o.estagio || o.stage || "—") as any}</span>
                     </div>
                     <div className="text-xs text-slate-500 truncate">
                       Fecha em: {o.expected_close_at || "—"} • {o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}
@@ -846,7 +900,7 @@ export default function Inicio() {
         </Card>
       </div>
 
-      {/* mantidos no state (caso você queira renderizar uma lista depois) */}
+      {/* (mantidos caso você queira renderizar depois) */}
       {/* stockReqs: {stockReqs.length} | vendasSemComissao: {vendasSemComissao.length} */}
     </div>
   );

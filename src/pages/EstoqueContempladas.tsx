@@ -11,10 +11,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
-import { PlusCircle, Loader2, PhoneOutgoing, Lock, CheckCircle2, Copy, Trash2, Pencil } from "lucide-react";
+import {
+  PlusCircle,
+  Loader2,
+  PhoneOutgoing,
+  Lock,
+  CheckCircle2,
+  Copy,
+  Trash2,
+  Pencil,
+  Calculator,
+  CheckCheck,
+} from "lucide-react";
 
 type Segmento = "Automóvel" | "Imóvel" | "Motocicletas" | "Serviços";
-type Status = "disponivel" | "reservada";
+type Status = "disponivel" | "reservada" | "transferida";
 
 type UserRow = {
   id: string;
@@ -150,7 +161,7 @@ export default function EstoqueContempladas() {
         document.execCommand("copy");
         document.body.removeChild(ta);
       }
-      showToast("Resumo copiado para a área de transferência ✅");
+      showToast("Resumo copiado ✅");
     } catch (e) {
       console.warn("Falha ao copiar:", e);
       window.alert("Não consegui copiar automaticamente. Selecione e copie manualmente.");
@@ -159,7 +170,7 @@ export default function EstoqueContempladas() {
 
   // filtros
   const [segFilter, setSegFilter] = useState<"all" | Segmento>("all");
-  const [statusFilter, setStatusFilter] = useState<"disponivel" | "reservada" | "all">("disponivel");
+  const [statusFilter, setStatusFilter] = useState<Status | "all">("disponivel");
   const [minValue, setMinValue] = useState<string>("");
   const [maxValue, setMaxValue] = useState<string>("");
 
@@ -187,10 +198,10 @@ export default function EstoqueContempladas() {
     cota: null,
   });
 
-  // soma/resumo overlay (somar)
+  // soma/resumo overlay
   const [openSum, setOpenSum] = useState(false);
 
-  // seleção (soma inteligente) direto na lista
+  // seleção (soma inteligente)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [anchorRule, setAnchorRule] = useState<{
     partnerId: string | null;
@@ -198,7 +209,7 @@ export default function EstoqueContempladas() {
     segmento: Segmento | null;
   } | null>(null);
 
-  // manage dialog (admin ver/editar/excluir)
+  // manage dialog (admin)
   const [openManage, setOpenManage] = useState<{ open: boolean; cota: CotaRow | null }>({ open: false, cota: null });
 
   // ====== Form Create ======
@@ -629,11 +640,8 @@ export default function EstoqueContempladas() {
 
       if (error) throw error;
 
-      /**
-       * CORREÇÃO:
-       * - Se escolheu uma solicitação, converte ela e cancela as demais abertas.
-       * - Se NÃO escolheu nenhuma, cancela todas as solicitações abertas dessa cota (evita request pendurada).
-       */
+      // Se escolheu uma solicitação, converte ela e cancela as demais abertas.
+      // Se NÃO escolheu, cancela todas as abertas dessa cota (evita request pendurada).
       if (selectedRequestId !== NONE) {
         await supabase.from("stock_reservation_requests").update({ status: "convertida" }).eq("id", selectedRequestId);
 
@@ -644,11 +652,7 @@ export default function EstoqueContempladas() {
           .eq("status", "aberta")
           .neq("id", selectedRequestId);
       } else {
-        await supabase
-          .from("stock_reservation_requests")
-          .update({ status: "cancelada" })
-          .eq("cota_id", c.id)
-          .eq("status", "aberta");
+        await supabase.from("stock_reservation_requests").update({ status: "cancelada" }).eq("cota_id", c.id).eq("status", "aberta");
       }
 
       setOpenReserve({ open: false, cota: null });
@@ -680,7 +684,6 @@ export default function EstoqueContempladas() {
     setSelectedIds((prev) => {
       const set = new Set(prev);
 
-      // definir âncora ao selecionar o primeiro
       if (checked) {
         if (!anchorRule) {
           setAnchorRule(getRuleFromRow(r));
@@ -688,7 +691,6 @@ export default function EstoqueContempladas() {
           return Array.from(set);
         }
 
-        // se já existe âncora, só permite se obedecer
         if (!matchesRule(r, anchorRule)) {
           showToast("Essa cota não obedece a regra da seleção atual.");
           return prev;
@@ -698,21 +700,15 @@ export default function EstoqueContempladas() {
         return Array.from(set);
       }
 
-      // desmarcar
       set.delete(id);
       const next = Array.from(set);
-
-      // se virou vazio, reseta âncora
       if (next.length === 0) setAnchorRule(null);
-
       return next;
     });
   }
 
   // ========= Resumo / texto =========
   function buildParcelRangesForSelected(selected: any[]) {
-    // Correção: somar VALORES mensais em sobreposição (não somar prazos)
-    // Meses 1..minN: soma de todas parcelas; após cada vencimento (n), remove parcela daquela cota
     const items = selected
       .map((c) => ({
         n: Math.max(0, safeInt(c.prazo_restante)),
@@ -722,7 +718,6 @@ export default function EstoqueContempladas() {
 
     if (items.length === 0) return ["1 a 0: 0,00"];
 
-    // agrupa por n (pra retirar em bloco)
     const byN = new Map<number, number>(); // n -> soma parcelas com esse n
     for (const it of items) byN.set(it.n, (byN.get(it.n) || 0) + it.v);
 
@@ -737,7 +732,6 @@ export default function EstoqueContempladas() {
       if (end >= start) {
         lines.push(`${start} a ${end}: ${formatBRLNoSymbol(currentTotal)}`);
       }
-      // após o mês "n", a(s) cota(s) com n acaba(m)
       currentTotal = currentTotal - (byN.get(n) || 0);
       start = n + 1;
     }
@@ -755,8 +749,6 @@ export default function EstoqueContempladas() {
 
     const parcelasTotal = selected.reduce((acc, c) => acc + Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0), 0);
 
-    // n para taxa: aqui seguimos sua regra “n = quantidade de parcelas”
-    // (para soma, usamos a soma dos prazos, como você pediu originalmente para o cálculo da taxa)
     const nTaxa = Math.max(1, selected.reduce((acc, c) => acc + Number(c.prazo_restante || 0), 0));
 
     const codigoLine = selected.length === 1 ? selected[0].codigo : selected.map((c) => c.codigo).filter(Boolean).join(", ");
@@ -872,12 +864,7 @@ export default function EstoqueContempladas() {
   }
 
   /**
-   * CORREÇÃO / MELHORIA:
-   * Admin pode "reabrir para venda" uma cota reservada (ex.: transferência falhou).
-   * - Volta status para "disponivel"
-   * - Limpa dados de reserva (comprador, sinal, vendedor/% etc.)
-   * - Cancela quaisquer solicitações abertas pendentes (evita ficar request pendurada)
-   * - (Opcional) tenta remover o arquivo do sinal do bucket
+   * Admin pode "reabrir para venda" uma cota reservada
    */
   async function reopenToSale() {
     if (!isAdmin) return;
@@ -891,7 +878,6 @@ export default function EstoqueContempladas() {
 
     setSavingEdit(true);
     try {
-      // (Opcional) remover arquivo do sinal do Storage
       if (c.sinal_comprovante_path) {
         try {
           await supabase.storage.from("stock_sinais").remove([c.sinal_comprovante_path]);
@@ -900,7 +886,6 @@ export default function EstoqueContempladas() {
         }
       }
 
-      // Cancela quaisquer solicitações ainda abertas pra essa cota
       await supabase
         .from("stock_reservation_requests")
         .update({ status: "cancelada" })
@@ -933,6 +918,38 @@ export default function EstoqueContempladas() {
     }
   }
 
+  /**
+   * NOVO: Finalizar transferência
+   * - Marca a cota como "transferida" (não fica mais em "reservada")
+   * - Mantém dados do comprador/sinal para auditoria
+   *
+   * Observação: isso pressupõe que a coluna "status" é text e aceita "transferida".
+   */
+  async function finalizeTransfer() {
+    if (!isAdmin) return;
+    const c = openManage.cota;
+    if (!c) return;
+
+    const ok = window.confirm(
+      `Finalizar o processo de transferência da cota "${c.codigo}"?\n\nIsso vai marcar a cota como TRANSFERIDA (concluída).`
+    );
+    if (!ok) return;
+
+    setSavingEdit(true);
+    try {
+      const { error } = await supabase.from("stock_cotas").update({ status: "transferida" }).eq("id", c.id);
+      if (error) throw error;
+
+      showToast("Transferência finalizada ✅");
+      setOpenManage({ open: false, cota: null });
+      await loadCotas();
+    } catch (err) {
+      notifyError("Não foi possível finalizar a transferência", err);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   return (
     <div className="p-4 space-y-4 relative">
       {/* toast */}
@@ -942,10 +959,16 @@ export default function EstoqueContempladas() {
         </div>
       ) : null}
 
-      {/* botão Somar (canto inferior esquerdo) */}
-      <div className="fixed bottom-4 left-4 z-40">
-        <Button onClick={() => setOpenSum(true)} disabled={selectedIds.length < 1}>
-          Somar
+      {/* BOTÃO SOMAR: canto inferior direito + ícone calculadora */}
+      <div className="fixed bottom-4 right-4 z-40">
+        <Button
+          onClick={() => setOpenSum(true)}
+          disabled={selectedIds.length < 1}
+          size="icon"
+          className="rounded-full shadow-md"
+          title={selectedIds.length < 1 ? "Selecione cotas para somar" : "Somar (resumo)"}
+        >
+          <Calculator className="h-5 w-5" />
         </Button>
       </div>
 
@@ -993,14 +1016,17 @@ export default function EstoqueContempladas() {
               </Select>
             </div>
 
-            <div className="md:col-span-3">
+            <div className="md:col-span-4">
               <Label>Status</Label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button variant={statusFilter === "disponivel" ? "default" : "outline"} onClick={() => setStatusFilter("disponivel")}>
                   Disponíveis
                 </Button>
                 <Button variant={statusFilter === "reservada" ? "default" : "outline"} onClick={() => setStatusFilter("reservada")}>
                   Reservadas
+                </Button>
+                <Button variant={statusFilter === "transferida" ? "default" : "outline"} onClick={() => setStatusFilter("transferida")}>
+                  Transferidas
                 </Button>
                 <Button variant={statusFilter === "all" ? "default" : "outline"} onClick={() => setStatusFilter("all")}>
                   Todas
@@ -1018,8 +1044,8 @@ export default function EstoqueContempladas() {
               <Input value={maxValue} onChange={(e) => setMaxValue(e.target.value)} placeholder="Ex: 300.000" />
             </div>
 
-            <div className="md:col-span-2">
-              <Label>Comissão do vendedor</Label>
+            <div className="md:col-span-1">
+              <Label>Comissão</Label>
               <Select value={String(Math.round(commissionPct * 100))} onValueChange={(v) => saveCommissionSetting(Number(v) / 100)}>
                 <SelectTrigger>
                   <SelectValue placeholder="5%" />
@@ -1032,7 +1058,7 @@ export default function EstoqueContempladas() {
                   <SelectItem value="5">5%</SelectItem>
                 </SelectContent>
               </Select>
-              <div className="text-xs text-muted-foreground mt-1">
+              <div className="text-[11px] text-muted-foreground mt-1">
                 Atual: <b>{commissionPctHuman}</b>
               </div>
             </div>
@@ -1121,10 +1147,15 @@ export default function EstoqueContempladas() {
                               <CheckCircle2 className="h-3 w-3" />
                               Disponível
                             </Badge>
-                          ) : (
+                          ) : c.status === "reservada" ? (
                             <Badge variant="secondary" className="gap-1">
                               <Lock className="h-3 w-3" />
                               Reservada
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="gap-1">
+                              <CheckCheck className="h-3 w-3" />
+                              Transferida
                             </Badge>
                           )}
                         </td>
@@ -1132,7 +1163,6 @@ export default function EstoqueContempladas() {
                         <td className="p-3 text-right">
                           {c.status === "disponivel" ? (
                             <div className="flex items-center justify-end gap-2">
-                              {/* resumo (copiar direto) */}
                               <Button variant="outline" size="icon" onClick={() => copyRowResumo(c)} title="Resumo">
                                 <Copy className="h-4 w-4" />
                               </Button>
@@ -1565,11 +1595,23 @@ export default function EstoqueContempladas() {
                     <div className="font-semibold">{openManage.cota.codigo}</div>
                     <div className="text-muted-foreground">
                       {openManage.cota.admin?.nome || "—"} • {openManage.cota.segmento} •{" "}
-                      {openManage.cota.status === "disponivel" ? "Disponível" : "Reservada"}
+                      {openManage.cota.status === "disponivel"
+                        ? "Disponível"
+                        : openManage.cota.status === "reservada"
+                        ? "Reservada"
+                        : "Transferida"}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
+                    {/* NOVO: finalizar transferência */}
+                    {openManage.cota.status === "reservada" ? (
+                      <Button variant="default" onClick={finalizeTransfer} disabled={deleting || savingEdit}>
+                        <CheckCheck className="h-4 w-4 mr-2" />
+                        Finalizar transferência
+                      </Button>
+                    ) : null}
+
                     {openManage.cota.status === "reservada" ? (
                       <Button variant="outline" onClick={reopenToSale} disabled={deleting || savingEdit}>
                         Reabrir para venda

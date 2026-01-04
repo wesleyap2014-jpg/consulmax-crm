@@ -12,8 +12,8 @@ import { RefreshCcw, AlertTriangle, Calendar, Briefcase, Wallet, Target, Rocket,
 
 /** ===================== Tipos ===================== */
 type UserRow = {
-  id: string;
-  auth_user_id: string;
+  id: string; // users.id
+  auth_user_id: string; // users.auth_user_id
   nome: string;
   role: string; // enum user_role
   user_role?: string | null; // legado
@@ -26,7 +26,7 @@ type AgendaRow = {
   titulo: string;
   inicio_at: string;
   fim_at: string;
-  user_id: string | null;
+  user_id: string | null; // auth_user_id (na view)
   cliente_nome?: string | null;
   lead_nome?: string | null;
   telefone?: string | null;
@@ -39,7 +39,7 @@ type OppRow = {
   stage: string | null;
   estagio: string | null;
   expected_close_at: string | null;
-  vendedor_id: string;
+  vendedor_id: string; // auth_user_id
   lead_id: string;
 };
 
@@ -52,7 +52,7 @@ type LeadRow = {
 type StockReqRow = {
   id: string;
   cota_id: string;
-  vendor_id: string;
+  vendor_id: string; // users.id
   vendor_pct: number;
   status: string;
   created_at: string;
@@ -61,7 +61,7 @@ type StockReqRow = {
 type VendaSemComissaoRow = {
   id: string;
   data_venda: string | null;
-  vendedor_id: string | null;
+  vendedor_id: string | null; // geralmente auth_user_id (vindo de vendas)
   vendedor_nome: string | null;
   segmento: string | null;
   tabela: string | null;
@@ -72,29 +72,12 @@ type VendaSemComissaoRow = {
 
 type CommissionRow = {
   id: string;
-  vendedor_id: string;
+  vendedor_id: string; // users.id
   valor_total: number | null;
   status: string | null; // commission_status
 };
 
 type GiroDueRow = { owner_auth_id: string; due_count: number };
-
-type MetaRow = {
-  vendedor_id: string;
-  ano: number;
-  m01: number;
-  m02: number;
-  m03: number;
-  m04: number;
-  m05: number;
-  m06: number;
-  m07: number;
-  m08: number;
-  m09: number;
-  m10: number;
-  m11: number;
-  m12: number;
-};
 
 const ALL = "__all__";
 
@@ -149,13 +132,9 @@ function stageIsClosed(stage?: string | null, estagio?: string | null) {
   const st = (stage || "").trim().toLowerCase();
   const es = (estagio || "").trim().toLowerCase();
 
-  // stage (padrão "UI")
   if (st === "fechado_ganho" || st === "fechado_perdido") return true;
-
-  // estagio (padrão "DB" português)
   if (es === "fechado (ganho)".toLowerCase() || es === "fechado (perdido)".toLowerCase()) return true;
 
-  // variações defensivas
   if (st.startsWith("fechado")) return true;
   if (es.startsWith("fechado")) return true;
 
@@ -163,7 +142,7 @@ function stageIsClosed(stage?: string | null, estagio?: string | null) {
 }
 function metaFieldForMonth(month: number) {
   const mm = String(month).padStart(2, "0"); // 01..12
-  return `m${mm}` as keyof MetaRow;
+  return `m${mm}` as any;
 }
 function humanErr(e: any) {
   if (!e) return "Erro desconhecido.";
@@ -233,7 +212,7 @@ export default function Inicio() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
-  // Filtro admin (ALL ou users.id). Vendedor fica travado no próprio.
+  // 🔥 filtro admin (value = users.id)
   const [vendorScope, setVendorScope] = useState<string>(ALL);
   const scopedUser = useMemo(() => (vendorScope === ALL ? null : usersById.get(vendorScope) || null), [vendorScope, usersById]);
 
@@ -244,7 +223,7 @@ export default function Inicio() {
   }, []);
   const rangeMonth = useMemo(() => monthRangeYMD(new Date()), []);
 
-  // ======= Dados da Home =======
+  // ======= KPIs =======
   const [kpi, setKpi] = useState({
     overdueOppCount: 0,
     overdueOppTotal: 0,
@@ -298,31 +277,31 @@ export default function Inicio() {
     return { meRow, usersRows: usersRows || [], admin, initialScope };
   }
 
+  /**
+   * scopeUserId  = users.id (usado por metas/comissões/reservas)
+   * scopeAuthId  = users.auth_user_id (usado por oportunidades/vendas/agenda/carteira/giro)
+   */
   async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
     const today = rangeToday.ymd;
     const { startYMD, endYMD, year, month } = rangeMonth;
 
-    // ===== Oportunidades atrasadas (sem Fechado Ganho/Perdido) =====
+    // ===== Oportunidades atrasadas (filtra por auth_user_id) =====
     let oppQ = supabase
       .from("opportunities")
       .select("id,valor_credito,stage,estagio,expected_close_at,vendedor_id,lead_id")
       .lt("expected_close_at", today)
-      // filtra no stage (UI)
       .not("stage", "in", '("fechado_ganho","fechado_perdido")')
-      // filtra no estagio (DB pt-BR)
       .not("estagio", "in", '("Fechado (Ganho)","Fechado (Perdido)")')
       .order("expected_close_at", { ascending: true })
       .limit(12);
 
-    if (!admin) oppQ = oppQ.eq("vendedor_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) oppQ = oppQ.eq("vendedor_id", scopeUserId);
+    if (!admin) oppQ = oppQ.eq("vendedor_id", scopeAuthId);
+    if (admin && scopeAuthId !== ALL) oppQ = oppQ.eq("vendedor_id", scopeAuthId);
 
     const { data: oppRowsRaw, error: oppErr } = await oppQ;
     if (oppErr) throw oppErr;
 
-    // Garantia extra client-side
     const oppRows = (oppRowsRaw || []).filter((o: any) => !stageIsClosed(o?.stage, o?.estagio));
-
     const overdueOppCount = oppRows.length;
     const overdueOppTotal = oppRows.reduce((acc: number, r: any) => acc + (Number(r.valor_credito || 0) || 0), 0);
 
@@ -339,7 +318,7 @@ export default function Inicio() {
       return { ...o, lead_nome: ld?.nome, lead_tel: ld?.telefone || null };
     });
 
-    // ===== Agenda de hoje =====
+    // ===== Agenda de hoje (filtra por auth_user_id) =====
     let agQ = supabase
       .from("v_agenda_eventos_enriquecida")
       .select("id,tipo,titulo,inicio_at,fim_at,user_id,cliente_nome,lead_nome,telefone,videocall_url")
@@ -348,34 +327,34 @@ export default function Inicio() {
       .order("inicio_at", { ascending: true })
       .limit(10);
 
-    if (!admin) agQ = agQ.eq("user_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) agQ = agQ.eq("user_id", scopeUserId);
+    if (!admin) agQ = agQ.eq("user_id", scopeAuthId);
+    if (admin && scopeAuthId !== ALL) agQ = agQ.eq("user_id", scopeAuthId);
 
     const { data: agRows, error: agErr } = await agQ;
     if (agErr) throw agErr;
     const todayEventsCount = (agRows || []).length;
 
-    // ===== Eventos de grupos hoje =====
+    // ===== Eventos de grupos hoje (global) =====
     const orExpr = `prox_vencimento.eq.${today},prox_sorteio.eq.${today},prox_assembleia.eq.${today}`;
     const { data: gRows, error: gErr } = await supabase.from("groups").select("id").or(orExpr).limit(200);
     if (gErr) throw gErr;
     const todayGroupsCount = (gRows || []).length;
 
-    // ===== Vendas do mês =====
+    // ===== Vendas do mês (filtra por auth_user_id) =====
     let salesQ = supabase
       .from("vendas")
       .select("valor_venda,vendedor_id,data_venda")
       .gte("data_venda", startYMD)
       .lt("data_venda", endYMD);
 
-    if (!admin) salesQ = salesQ.eq("vendedor_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) salesQ = salesQ.eq("vendedor_id", scopeUserId);
+    if (!admin) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
+    if (admin && scopeAuthId !== ALL) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
 
     const { data: salesRows, error: salesErr } = await salesQ;
     if (salesErr) throw salesErr;
     const monthSalesTotal = (salesRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Meta do mês (metas_vendedores: m01..m12) =====
+    // ===== Meta do mês (filtra por users.id) =====
     const field = metaFieldForMonth(month);
     let metaQ = supabase.from("metas_vendedores").select(`vendedor_id,ano,${field}`).eq("ano", year);
 
@@ -388,16 +367,16 @@ export default function Inicio() {
     const monthSalesMeta = (metaRows || []).reduce((acc: number, r: any) => acc + (Number(r?.[field] || 0) || 0), 0);
     const monthSalesPct = monthSalesMeta > 0 ? Math.min(100, Math.max(0, (monthSalesTotal / monthSalesMeta) * 100)) : 0;
 
-    // ===== Carteira ativa (codigo='00') =====
+    // ===== Carteira ativa (filtra por auth_user_id) =====
     let cartQ = supabase.from("vendas").select("valor_venda,vendedor_id,codigo").eq("codigo", "00");
-    if (!admin) cartQ = cartQ.eq("vendedor_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) cartQ = cartQ.eq("vendedor_id", scopeUserId);
+    if (!admin) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
+    if (admin && scopeAuthId !== ALL) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
 
     const { data: cartRows, error: cartErr } = await cartQ;
     if (cartErr) throw cartErr;
     const carteiraAtivaTotal = (cartRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Reservas abertas =====
+    // ===== Reservas abertas (filtra por users.id) =====
     let reqQ = supabase
       .from("stock_reservation_requests")
       .select("id,cota_id,vendor_id,vendor_pct,status,created_at")
@@ -412,21 +391,21 @@ export default function Inicio() {
     if (reqErr) throw reqErr;
     const openStockReqCount = (reqRows || []).length;
 
-    // ===== Vendas sem comissão =====
+    // ===== Vendas sem comissão (view vindo de vendas → filtra por auth_user_id) =====
     let vscQ = supabase
       .from("v_vendas_sem_comissao")
       .select("id,data_venda,vendedor_id,vendedor_nome,segmento,tabela,administradora,numero_proposta,credito")
       .order("data_venda", { ascending: false })
       .limit(10);
 
-    if (!admin) vscQ = vscQ.eq("vendedor_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) vscQ = vscQ.eq("vendedor_id", scopeUserId);
+    if (!admin) vscQ = vscQ.eq("vendedor_id", scopeAuthId);
+    if (admin && scopeAuthId !== ALL) vscQ = vscQ.eq("vendedor_id", scopeAuthId);
 
     const { data: vscRows, error: vscErr } = await vscQ;
     if (vscErr) throw vscErr;
     const vendasSemComissaoCount = (vscRows || []).length;
 
-    // ===== Comissões pendentes =====
+    // ===== Comissões pendentes (filtra por users.id) =====
     let comQ = supabase.from("commissions").select("id,vendedor_id,valor_total,status,created_at").order("created_at", { ascending: false }).limit(300);
 
     if (!admin) comQ = comQ.eq("vendedor_id", scopeUserId);
@@ -442,10 +421,11 @@ export default function Inicio() {
     const commissionsPendingCount = pend.length;
     const commissionsPendingTotal = pend.reduce((acc: number, r: any) => acc + (Number(r.valor_total || 0) || 0), 0);
 
-    // ===== Giro pendente =====
+    // ===== Giro pendente (view por auth_user_id) =====
     let giroDueCount = 0;
+
     if (admin) {
-      if (scopeUserId === ALL) {
+      if (scopeAuthId === ALL) {
         const { data: giroAll, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
         if (giroAllErr) throw giroAllErr;
         giroDueCount = (giroAll || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
@@ -468,7 +448,7 @@ export default function Inicio() {
       giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
     }
 
-    // ✅ Só atualiza states se deu tudo certo (não “zera” o painel em erro)
+    // ✅ Atualiza tudo junto (se deu erro, cai no catch e não “zera”)
     setOverdueOpps(overdueOppsEnriched);
     setTodayEvents((agRows || []) as any);
     setStockReqs(reqRows || []);
@@ -497,22 +477,35 @@ export default function Inicio() {
     });
   }
 
-  async function reload(hard = false) {
-    if (!me) return;
+  function getScopes() {
+    if (!me) return null;
     const admin = isAdmin(me);
 
-    // ✅ Comportamento correto:
-    // - Admin: pode ver tudo (ALL) ou filtrar por vendedor (users.id)
-    // - Vendedor: trava no próprio (me.id)
-    const scopeUserId = admin ? vendorScope : me.id;
-    const scopeAuthId =
-      admin && scopeUserId !== ALL ? (usersById.get(scopeUserId)?.auth_user_id || me.auth_user_id) : me.auth_user_id;
+    // Vendedor logado: travado no próprio
+    if (!admin) {
+      return { admin, scopeUserId: me.id, scopeAuthId: me.auth_user_id };
+    }
+
+    // Admin:
+    if (vendorScope === ALL) {
+      return { admin, scopeUserId: ALL, scopeAuthId: ALL };
+    }
+
+    const u = usersById.get(vendorScope);
+    if (!u) return { admin, scopeUserId: vendorScope, scopeAuthId: ALL };
+
+    return { admin, scopeUserId: u.id, scopeAuthId: u.auth_user_id };
+  }
+
+  async function reload(hard = false) {
+    const scopes = getScopes();
+    if (!scopes) return;
 
     if (hard) setRefreshing(true);
     setErrMsg(null);
 
     try {
-      await loadDashboard(scopeUserId, scopeAuthId, admin);
+      await loadDashboard(scopes.scopeUserId, scopes.scopeAuthId, scopes.admin);
     } catch (e) {
       console.error("[Inicio] loadDashboard error:", e);
       setErrMsg(humanErr(e));
@@ -536,12 +529,23 @@ export default function Inicio() {
         setUsers(usersRows);
         setVendorScope(initialScope);
 
-        // ✅ carrega imediatamente (não depende só do effect do filtro)
-        const scopeUserId = admin ? initialScope : meRow.id;
+        // ✅ carrega imediatamente
+        const scopeUserId = admin ? (initialScope === ALL ? ALL : meRow.id) : meRow.id;
         const scopeAuthId =
-          admin && scopeUserId !== ALL ? (usersRows.find((u) => u.id === scopeUserId)?.auth_user_id || meRow.auth_user_id) : meRow.auth_user_id;
+          admin
+            ? initialScope === ALL
+              ? ALL
+              : meRow.auth_user_id
+            : meRow.auth_user_id;
 
-        await loadDashboard(scopeUserId, scopeAuthId, admin);
+        // OBS: no init, para admin com ALL -> ALL/ALL (visão geral)
+        const initScopes = admin
+          ? initialScope === ALL
+            ? { su: ALL, sa: ALL }
+            : { su: meRow.id, sa: meRow.auth_user_id }
+          : { su: meRow.id, sa: meRow.auth_user_id };
+
+        await loadDashboard(initScopes.su, initScopes.sa, admin);
       } catch (e) {
         console.error("[Inicio] init error:", e);
         if (!alive) return;
@@ -558,22 +562,18 @@ export default function Inicio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Quando muda o filtro (admin), recarrega
+  // Quando muda filtro do admin, recarrega
   useEffect(() => {
     if (!me) return;
     const admin = isAdmin(me);
     if (!admin) return;
 
-    // evita tentar filtrar para um id que ainda não foi carregado
     if (vendorScope !== ALL && !usersById.has(vendorScope)) return;
-
     reload(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vendorScope]);
 
   const admin = isAdmin(me);
-
-  // Light Glass
   const glassCard = "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";
 
   if (loading) {
@@ -631,7 +631,7 @@ export default function Inicio() {
         </div>
       </div>
 
-      {/* Erro visível (para não ficar “zerado” sem explicação) */}
+      {/* Erro visível */}
       {errMsg ? (
         <div className="mt-5">
           <Card className={`${glassCard} border-red-200`}>
@@ -641,9 +641,7 @@ export default function Inicio() {
               </CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-slate-700">
-              <div className="mb-2">
-                O painel ficou zerado porque uma das consultas falhou. Copia essa mensagem e me manda:
-              </div>
+              <div className="mb-2">Copia essa mensagem e me manda:</div>
               <pre className="whitespace-pre-wrap break-words rounded-md bg-white border border-slate-200 p-3 text-xs text-slate-800">
                 {errMsg}
               </pre>
@@ -690,7 +688,6 @@ export default function Inicio() {
           </CardContent>
         </Card>
 
-        {/* Donut Meta x Vendas */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -829,8 +826,7 @@ export default function Inicio() {
                 <div key={o.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">
-                      {o.lead_nome || "Lead"}{" "}
-                      <span className="text-slate-500">• {(o.estagio || o.stage || "—") as any}</span>
+                      {o.lead_nome || "Lead"} <span className="text-slate-500">• {(o.estagio || o.stage || "—") as any}</span>
                     </div>
                     <div className="text-xs text-slate-500 truncate">
                       Fecha em: {o.expected_close_at || "—"} • {o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}

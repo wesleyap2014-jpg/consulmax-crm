@@ -76,25 +76,22 @@ export default function Header() {
     };
   }, [menuOpen]);
 
-  const fetchUsersRow = useCallback(
-    async (authUserId: string, signal?: AbortSignal) => {
-      // SELECT mínimo e direto; com timeout para não travar
-      const p = supabase
-        .from("users")
-        .select("nome, avatar_url")
-        .eq("auth_user_id", authUserId)
-        .maybeSingle();
+  const fetchUsersRow = useCallback(async (authUserId: string, signal?: AbortSignal) => {
+    // SELECT mínimo e direto; com timeout para não travar
+    const p = supabase
+      .from("users")
+      .select("nome, avatar_url")
+      .eq("auth_user_id", authUserId)
+      .maybeSingle();
 
-      const { data, error } = await withTimeout(p, 4000, "Carregar perfil");
-      if (signal?.aborted) return null;
-      if (error) {
-        console.error("users fetch error:", (error as any).message || error);
-        return null;
-      }
-      return data as { nome?: string | null; avatar_url?: string | null } | null;
-    },
-    []
-  );
+    const { data, error } = await withTimeout(p, 4000, "Carregar perfil");
+    if (signal?.aborted) return null;
+    if (error) {
+      console.error("users fetch error:", (error as any).message || error);
+      return null;
+    }
+    return data as { nome?: string | null; avatar_url?: string | null } | null;
+  }, []);
 
   // gera/renova signed URL quando há caminho de Storage
   const buildAvatarUrl = useCallback(async (path: string) => {
@@ -215,8 +212,7 @@ export default function Header() {
         user.email ||
         "";
       const quickEmail = user.email || "";
-      const quickAvatar =
-        (user.user_metadata as any)?.avatar_url || null;
+      const quickAvatar = (user.user_metadata as any)?.avatar_url || null;
 
       // Preenche se não houver cache
       if (!cachedRaw) {
@@ -280,10 +276,7 @@ export default function Header() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const initials = useMemo(
-    () => getInitials(profile.name, profile.email),
-    [profile.name, profile.email]
-  );
+  const initials = useMemo(() => getInitials(profile.name, profile.email), [profile.name, profile.email]);
 
   const handleSignOut = useCallback(async () => {
     try {
@@ -298,14 +291,26 @@ export default function Header() {
     load();
   }, [load]);
 
+  // ✅ NOVO: Clique na marca leva para o Início
+  const goHome = useCallback(() => {
+    setMenuOpen(false);
+    navigate("/", { replace: false });
+  }, [navigate]);
+
   return (
     <header
       className="sticky top-0 z-50 h-14 border-b bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:bg-slate-900/80 dark:border-slate-800"
       role="banner"
     >
       <div className="mx-auto flex h-full max-w-screen-2xl items-center justify-between px-4">
-        {/* Marca (coerente com a Sidebar) */}
-        <div className="flex items-center gap-3 font-extrabold text-slate-900 dark:text-slate-100">
+        {/* Marca (coerente com a Sidebar) — agora clicável */}
+        <button
+          type="button"
+          onClick={goHome}
+          className="group flex items-center gap-3 font-extrabold text-slate-900 dark:text-slate-100 cursor-pointer select-none rounded-lg px-1.5 py-1 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A11C27]/30"
+          aria-label="Ir para o início"
+          title="Ir para o início"
+        >
           <img
             src="/logo-consulmax.png?v=3"
             alt="Consulmax"
@@ -313,18 +318,15 @@ export default function Header() {
           />
           <div className="leading-tight">
             <span>Consulmax • </span>
-            <span className="text-[#A11C27]">Maximize as suas conquistas</span>
+            <span className="text-[#A11C27] group-hover:opacity-95">Maximize as suas conquistas</span>
           </div>
-        </div>
+        </button>
 
         {/* Usuário / Menu */}
         <div className="relative flex items-center gap-3">
           {/* Avatar / Iniciais */}
           {loading ? (
-            <div
-              className="h-9 w-9 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700"
-              aria-hidden
-            />
+            <div className="h-9 w-9 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden />
           ) : avatarUrl ? (
             <img
               src={avatarUrl}

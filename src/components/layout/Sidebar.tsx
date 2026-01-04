@@ -18,6 +18,8 @@ import {
   LineChart,
   ClipboardList,
   BadgeCheck,
+  Calendar,
+  Link as LinkIcon,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -35,6 +37,7 @@ type NavAlerts = {
   oportunidades: boolean;
   fluxoCaixa: boolean;
   gestaoGrupos: boolean;
+  agenda: boolean;
 };
 
 /** ====== Liquid Glass ====== */
@@ -123,7 +126,13 @@ function todayDateStr() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-/** Oportunidades atrasadas */
+function dayRangeISO(dateStr: string) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const start = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
+  const end = new Date(y, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999);
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
 async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -144,7 +153,6 @@ async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
   }
 }
 
-/** Fluxo de Caixa – usa coluna data (date) e compara string YYYY-MM-DD */
 async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -166,7 +174,6 @@ async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
   }
 }
 
-/** Gestão de Grupos – campos date */
 async function checkGroupsAlert(todayStr: string): Promise<boolean> {
   try {
     const { data, error } = await supabase
@@ -182,6 +189,26 @@ async function checkGroupsAlert(todayStr: string): Promise<boolean> {
     return !!(data && data.length > 0);
   } catch (e) {
     console.error("Erro inesperado em checkGroupsAlert:", e);
+    return false;
+  }
+}
+
+async function checkAgendaAlert(startIso: string, endIso: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from("agenda_eventos")
+      .select("id")
+      .gte("inicio_at", startIso)
+      .lte("inicio_at", endIso)
+      .limit(1);
+
+    if (error) {
+      console.error("Erro ao verificar eventos de agenda hoje:", error.message);
+      return false;
+    }
+    return !!(data && data.length > 0);
+  } catch (e) {
+    console.error("Erro inesperado em checkAgendaAlert:", e);
     return false;
   }
 }
@@ -202,7 +229,7 @@ type FlatItem = {
   end?: boolean;
 };
 
-type GroupKey = "vendas" | "pos" | "admin" | "fin";
+type GroupKey = "vendas" | "pos" | "admin" | "fin" | "max";
 
 function isAnyPathActive(pathname: string, prefixes: string[]) {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p));
@@ -213,6 +240,7 @@ function groupForPath(pathname: string): GroupKey {
     isAnyPathActive(pathname, [
       "/planejamento",
       "/oportunidades",
+      "/agenda",
       "/simuladores",
       "/propostas",
       "/ranking",
@@ -224,6 +252,8 @@ function groupForPath(pathname: string): GroupKey {
   if (isAnyPathActive(pathname, ["/carteira", "/giro-de-carteira", "/gestao-de-grupos", "/clientes"])) return "pos";
 
   if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros"])) return "admin";
+
+  if (isAnyPathActive(pathname, ["/links"])) return "max";
 
   return "fin";
 }
@@ -321,18 +351,21 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     oportunidades: false,
     fluxoCaixa: false,
     gestaoGrupos: false,
+    agenda: false,
   });
 
   useEffect(() => {
     let alive = true;
     const todayStr = todayDateStr();
+    const { startIso, endIso } = dayRangeISO(todayStr);
 
     const loadAlerts = async () => {
       try {
-        const [hasOpp, hasCash, hasGroups] = await Promise.all([
+        const [hasOpp, hasCash, hasGroups, hasAgenda] = await Promise.all([
           checkOpportunitiesAlert(todayStr),
           checkCashFlowAlert(todayStr),
           checkGroupsAlert(todayStr),
+          checkAgendaAlert(startIso, endIso),
         ]);
 
         if (!alive) return;
@@ -340,6 +373,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           oportunidades: hasOpp,
           fluxoCaixa: hasCash,
           gestaoGrupos: hasGroups,
+          agenda: hasAgenda,
         });
       } catch (e) {
         if (!alive) return;
@@ -388,12 +422,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       // Vendas
       { to: "/planejamento", label: "Planejamento", icon: ClipboardList, end: true },
       { to: "/oportunidades", label: "Oportunidades", icon: Briefcase, showDot: navAlerts.oportunidades, end: true },
+      { to: "/agenda", label: "Agenda", icon: Calendar, showDot: navAlerts.agenda, end: true },
       { to: simuladoresHref, label: "Simuladores", icon: Calculator, end: false },
       { to: "/propostas", label: "Propostas", icon: FileText, end: true },
       { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
       { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
 
-      // Pós-venda (✅ Carteira primeiro)
+      // Pós-venda (Carteira primeiro)
       { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
       { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
       { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
@@ -414,6 +449,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         showDot: navAlerts.fluxoCaixa,
         end: true,
       },
+
+      // Maximize-se
+      { to: "/links", label: "Links Úteis", icon: LinkIcon, end: true },
     ],
     [navAlerts, simuladoresHref]
   );
@@ -423,8 +461,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
      ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`;
 
-  // Título pequeno (sem pill), clicável para accordion
-  const renderSectionTitle = (key: GroupKey, title: string) => {
+  const renderSectionPill = (key: GroupKey, title: string, Icon: LucideIcon) => {
     const isOpen = openGroup === key;
     const isActive = currentGroup === key;
 
@@ -433,18 +470,19 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         type="button"
         onClick={() => {
           if (collapsed) return;
-          setOpenGroup((prev) => (prev === key ? prev : key)); // accordion: troca e mantém 1 aberto
+          setOpenGroup((prev) => (prev === key ? prev : key));
         }}
-        className={`
-          mt-2 flex w-full items-center justify-between px-1.5 py-1
-          text-[11px] uppercase tracking-wide
-          ${isActive ? "text-consulmax-primary font-semibold" : "text-consulmax-secondary/80"}
-          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/30
-        `}
+        className={`${pillPadding} py-2.5 rounded-2xl transition-colors w-full flex items-center justify-between
+                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
+        style={isActive ? activePillStyle : glassHoverPill}
         aria-expanded={isOpen}
+        title={title}
       >
-        <span>{title}</span>
-        <span className="opacity-80" aria-hidden>
+        <span className="flex items-center gap-2">
+          <Icon className="h-4 w-4" />
+          <span className="font-semibold">{title}</span>
+        </span>
+        <span className="opacity-90" aria-hidden>
           {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </span>
       </button>
@@ -488,13 +526,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       </Link>
 
       {/* Botão ocultar/expandir */}
-      <div className="relative z-[1] mb-2">
+      <div className="relative z-[1] mb-3">
         <button
           type="button"
           onClick={() => {
-            if (!collapsed) {
-              setSimGroupOpen(false);
-            }
+            if (!collapsed) setSimGroupOpen(false);
             setCollapsed((v) => !v);
           }}
           className="inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40"
@@ -530,11 +566,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           </>
         )}
 
-        {/* ===== MODO EXPANDIDO (accordion + títulos pequenos) ===== */}
+        {/* ===== MODO EXPANDIDO (accordion + títulos em pill) ===== */}
         {!collapsed && (
           <>
             {/* VENDAS */}
-            {renderSectionTitle("vendas", "Vendas")}
+            {renderSectionPill("vendas", "Vendas", Briefcase)}
             {openGroup === "vendas" && (
               <div className="ml-1 grid gap-2">
                 <NavLink
@@ -561,6 +597,22 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   <span className="flex items-center justify-between w-full">
                     <span>Oportunidades</span>
                     {navAlerts.oportunidades && <AlertDot />}
+                  </span>
+                </NavLink>
+
+                {/* ✅ Agenda em Vendas */}
+                <NavLink
+                  to="/agenda"
+                  className={({ isActive }) => pillClass(isActive)}
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Agenda"
+                  end
+                >
+                  <Calendar className="h-4 w-4" />
+                  <span className="flex items-center justify-between w-full">
+                    <span>Agenda</span>
+                    {navAlerts.agenda && <AlertDot />}
                   </span>
                 </NavLink>
 
@@ -676,10 +728,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             )}
 
             {/* PÓS-VENDA */}
-            {renderSectionTitle("pos", "Pós-venda")}
+            {renderSectionPill("pos", "Pós-venda", Wallet)}
             {openGroup === "pos" && (
               <div className="ml-1 grid gap-2">
-                {/* ✅ Carteira primeiro */}
                 <NavLink
                   to="/carteira"
                   className={({ isActive }) => pillClass(isActive)}
@@ -734,7 +785,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             )}
 
             {/* ADMINISTRATIVO */}
-            {renderSectionTitle("admin", "Administrativo")}
+            {renderSectionPill("admin", "Administrativo", SlidersHorizontal)}
             {openGroup === "admin" && (
               <div className="ml-1 grid gap-2">
                 <NavLink
@@ -776,7 +827,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             )}
 
             {/* FINANCEIRO */}
-            {renderSectionTitle("fin", "Financeiro")}
+            {renderSectionPill("fin", "Financeiro", LineChart)}
             {openGroup === "fin" && (
               <div className="ml-1 grid gap-2">
                 <NavLink
@@ -807,6 +858,24 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     </span>
                   </NavLink>
                 )}
+              </div>
+            )}
+
+            {/* MAXIMIZE-SE */}
+            {renderSectionPill("max", "Maximize-se", Trophy)}
+            {openGroup === "max" && (
+              <div className="ml-1 grid gap-2">
+                <NavLink
+                  to="/links"
+                  className={({ isActive }) => pillClass(isActive)}
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Links Úteis"
+                  end
+                >
+                  <LinkIcon className="h-4 w-4" />
+                  Links Úteis
+                </NavLink>
               </div>
             )}
           </>

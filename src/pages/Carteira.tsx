@@ -1,5 +1,5 @@
 // src/pages/Carteira.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import {
   PieChart,
@@ -53,9 +53,9 @@ type Venda = {
   segmento?: string | null;
   data_nascimento?: string | null;
   cancelada_em?: string | null; // timestamptz
-  inad?: boolean | null;
+  inad?: boolean | null; // flag de inadimplência
 
-  // ====== NOVOS CAMPOS (SQL já rodou) ======
+  // ====== NOVOS CAMPOS ======
   reativada_em?: string | null; // timestamptz
   contemplacao_tipo?: string | null; // 'Lance Livre' | 'Primeiro Lance Fixo' | 'Segundo Lance Fixo'
   contemplacao_pct?: number | null; // numeric(9,4)
@@ -64,11 +64,11 @@ type Venda = {
 };
 
 type AppUser = {
-  id: string;
+  id: string; // users.id (uuid)
   nome: string;
   email?: string | null;
   role?: string | null;
-  auth_user_id?: string | null;
+  auth_user_id?: string | null; // auth.users.id
 };
 
 const PRODUTOS: Produto[] = [
@@ -97,7 +97,6 @@ const formatNumberBR = (n: number) =>
   }).format(n);
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
-
 const onlyDigits = (s: string) => (s || "").replace(/\D/g, "");
 
 const formatDateBR = (isoDate?: string | null) => {
@@ -124,11 +123,9 @@ const isoFromDateInput = (dateStr: string) => {
   return d.toISOString();
 };
 
-// Formata automaticamente como CPF (11 dígitos) ou CNPJ (14 dígitos)
 const formatCPF = (s: string) => {
   const d = onlyDigits(s);
 
-  // CPF – até 11 dígitos
   if (d.length <= 11) {
     const cpf = d.slice(0, 11);
     const p1 = cpf.slice(0, 3);
@@ -142,7 +139,6 @@ const formatCPF = (s: string) => {
     return `${p1}.${p2}.${p3}-${p4}`;
   }
 
-  // CNPJ – até 14 dígitos
   const cnpj = d.slice(0, 14);
   const p1 = cnpj.slice(0, 2);
   const p2 = cnpj.slice(2, 5);
@@ -157,11 +153,9 @@ const formatCPF = (s: string) => {
   return `${p1}.${p2}.${p3}/${p4}-${p5}`;
 };
 
-// Valida CPF (11 dígitos) OU CNPJ (14 dígitos)
 const validateCPF = (doc: string) => {
   const d = onlyDigits(doc);
 
-  // ===== CPF =====
   if (d.length === 11) {
     if (/^(\d)\1{10}$/.test(d)) return false;
     const calc = (base: string, factor: number) => {
@@ -177,7 +171,6 @@ const validateCPF = (doc: string) => {
     return d1 === parseInt(d[9], 10) && d2 === parseInt(d[10], 10);
   }
 
-  // ===== CNPJ =====
   if (d.length === 14) {
     if (/^(\d)\1{13}$/.test(d)) return false;
 
@@ -285,46 +278,61 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
         </div>
         <div className="text-xs text-gray-500">{lead?.telefone ?? "—"}</div>
       </td>
+
       <td className="p-2">{venda.administradora}</td>
       <td className="p-2">{venda.numero_proposta}</td>
+
       <td className="p-2">
-        <input
-          value={grupo}
-          onChange={(e) => setGrupo(e.target.value)}
-          className="border rounded px-2 py-1 w-28"
-          disabled={!canEncarteirar}
-        />
+        {canEncarteirar ? (
+          <input
+            value={grupo}
+            onChange={(e) => setGrupo(e.target.value)}
+            className="border rounded px-2 py-1 w-28"
+          />
+        ) : (
+          <span className="text-sm text-gray-400">—</span>
+        )}
       </td>
+
       <td className="p-2">
-        <input
-          value={cota}
-          onChange={(e) => setCota(e.target.value)}
-          className="border rounded px-2 py-1 w-20"
-          disabled={!canEncarteirar}
-        />
+        {canEncarteirar ? (
+          <input
+            value={cota}
+            onChange={(e) => setCota(e.target.value)}
+            className="border rounded px-2 py-1 w-20"
+          />
+        ) : (
+          <span className="text-sm text-gray-400">—</span>
+        )}
       </td>
+
       <td className="p-2">
-        <input
-          value={codigo}
-          onChange={(e) => setCodigo(e.target.value)}
-          className="border rounded px-2 py-1 w-20"
-          disabled={!canEncarteirar}
-        />
+        {canEncarteirar ? (
+          <input
+            value={codigo}
+            onChange={(e) => setCodigo(e.target.value)}
+            className="border rounded px-2 py-1 w-20"
+          />
+        ) : (
+          <span className="text-sm text-gray-400">—</span>
+        )}
       </td>
+
       <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
+
       <td className="p-2">
         <div className="flex gap-2">
-          <button
-            className={`px-3 py-1 rounded ${
-              canEncarteirar
-                ? "bg-[#A11C27] text-white hover:opacity-90"
-                : "bg-gray-200 text-gray-500 cursor-not-allowed"
-            }`}
-            disabled={!canEncarteirar}
-            onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
-          >
-            ENCARTEIRAR
-          </button>
+          {canEncarteirar ? (
+            <button
+              className="px-3 py-1 rounded bg-[#A11C27] text-white hover:opacity-90"
+              onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
+            >
+              ENCARTEIRAR
+            </button>
+          ) : (
+            <span className="text-xs text-gray-400 self-center">Aguardando admin encarteirar</span>
+          )}
+
           <button
             className="px-3 py-1 rounded border hover:bg-gray-50"
             onClick={() => {
@@ -587,7 +595,13 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
             <select
               className="w-full border rounded-xl px-3 py-2"
               value={tmp.produto as Produto}
-              onChange={(e) => setTmp((p) => ({ ...p, produto: e.target.value as Produto }))}
+              onChange={(e) =>
+                setTmp((p) => ({
+                  ...p,
+                  produto: e.target.value as Produto,
+                  tabela: "", // ✅ quando muda produto, reseta tabela
+                }))
+              }
             >
               {PRODUTOS.map((p) => (
                 <option key={p} value={p}>
@@ -611,7 +625,13 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
             <input
               className="w-full border rounded-xl px-3 py-2"
               value={(tmp.administradora as string) ?? ""}
-              onChange={(e) => setTmp((p) => ({ ...p, administradora: e.target.value }))}
+              onChange={(e) =>
+                setTmp((p) => ({
+                  ...p,
+                  administradora: e.target.value,
+                  tabela: "", // ✅ mudou admin, tabela costuma mudar
+                }))
+              }
             />
           </div>
 
@@ -691,7 +711,6 @@ const Carteira: React.FC = () => {
   const [encarteiradas, setEncarteiradas] = useState<Venda[]>([]);
 
   const [loading, setLoading] = useState<boolean>(true);
-  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [err, setErr] = useState<string>("");
 
   const [q, setQ] = useState<string>("");
@@ -742,8 +761,7 @@ const Carteira: React.FC = () => {
     m: Array(12).fill(0),
   });
 
-  // admin escolhe users.id (metas_vendedores.vendedor_id)
-  const [selectedSeller, setSelectedSeller] = useState<string>(""); // "" = todos
+  const [selectedSeller, setSelectedSeller] = useState<string>(""); // users.id
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
   const [realizadoMensal, setRealizadoMensal] = useState<number[]>(Array(12).fill(0));
@@ -765,7 +783,7 @@ const Carteira: React.FC = () => {
   const [transferCpf, setTransferCpf] = useState<string>("");
   const [transferNascimento, setTransferNascimento] = useState<string>("");
 
-  // ===== Editor de cota =====
+  // Editor de cota
   const [cotaEditor, setCotaEditor] = useState<{ open: boolean; venda?: Venda; mode: CotaEditMode }>({
     open: false,
     venda: undefined,
@@ -788,122 +806,6 @@ const Carteira: React.FC = () => {
   const [ceInadEm, setCeInadEm] = useState<string>("");
   const [ceInadRev, setCeInadRev] = useState<string>("");
 
-  // evita rodar efeito de filtro antes do init completar
-  const didInitRef = useRef(false);
-
-  useEffect(() => {
-    setForm((f) => ({ ...f, tabela: "" }));
-  }, [form.produto]);
-
-  const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
-
-  function authIdFromSellerId(sellerId: string): string {
-    if (!sellerId) return "";
-    return users.find((u) => u.id === sellerId)?.auth_user_id || "";
-  }
-
-  async function insertVenda(payload: any) {
-    let { error } = await supabase.from("vendas").insert(payload as any);
-    if (error && /data_nascimento/.test(error.message || "")) {
-      const { error: e2 } = await supabase.from("vendas").insert({ ...payload, data_nascimento: undefined } as any);
-      if (e2) throw e2;
-    } else if (error) throw error;
-  }
-
-  async function updateVenda(id: string, patch: any) {
-    let { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
-    if (error && /data_nascimento/.test(error.message || "")) {
-      const { error: e2 } = await supabase
-        .from("vendas")
-        .update({ ...patch, data_nascimento: undefined } as any)
-        .eq("id", id);
-      if (e2) throw e2;
-    } else if (error) throw error;
-  }
-
-  // ✅ NOVO: carrega pendentes + encarteiradas respeitando RBAC e filtro do admin
-  const loadVendasForUI = async (sellerId: string, silent = false) => {
-    try {
-      if (!silent) setRefreshing(true);
-
-      const vendedorAuthToFilter =
-        isAdmin && sellerId ? authIdFromSellerId(sellerId) : "";
-
-      const pendQ = supabase
-        .from("vendas")
-        .select("*")
-        .eq("status", "nova")
-        .order("created_at", { ascending: false });
-
-      const encQ = supabase
-        .from("vendas")
-        .select("*")
-        .eq("status", "encarteirada")
-        .order("created_at", { ascending: false });
-
-      if (!isAdmin) {
-        // vendedor sempre no próprio auth_user_id
-        pendQ.eq("vendedor_id", userId);
-        encQ.eq("vendedor_id", userId);
-      } else if (sellerId) {
-        // admin filtrando por um vendedor específico
-        if (!vendedorAuthToFilter) {
-          // se por algum motivo não achar o auth_user_id, retorna vazio (evita “misturar tudo”)
-          setPendentes([]);
-          setEncarteiradas([]);
-          return;
-        }
-        pendQ.eq("vendedor_id", vendedorAuthToFilter);
-        encQ.eq("vendedor_id", vendedorAuthToFilter);
-      }
-
-      const [{ data: pend }, { data: enc }] = await Promise.all([pendQ, encQ]);
-
-      setPendentes((pend ?? []) as Venda[]);
-      setEncarteiradas((enc ?? []) as Venda[]);
-    } finally {
-      if (!silent) setRefreshing(false);
-    }
-  };
-
-  const prefillFromLead = async (leadId: string) => {
-    if (!leadId) return;
-    const { data: cliente } = await supabase
-      .from("clientes")
-      .select("cpf,data_nascimento")
-      .eq("lead_id", leadId)
-      .maybeSingle();
-
-    if (cliente?.cpf || cliente?.data_nascimento) {
-      setForm((f) => ({
-        ...f,
-        cpf: cliente.cpf ?? f.cpf,
-        data_nascimento: cliente.data_nascimento ?? f.data_nascimento,
-      }));
-      return;
-    }
-
-    const { data: lastVenda } = await supabase
-      .from("vendas")
-      .select("cpf,data_nascimento,administradora,produto,tabela")
-      .eq("lead_id", leadId)
-      .eq("status", "encarteirada")
-      .order("encarteirada_em", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (lastVenda) {
-      setForm((f) => ({
-        ...f,
-        cpf: lastVenda.cpf ?? f.cpf,
-        data_nascimento: lastVenda.data_nascimento ?? f.data_nascimento,
-        administradora: lastVenda.administradora ?? f.administradora,
-        produto: (lastVenda.produto as Produto) ?? f.produto,
-        tabela: lastVenda.tabela ?? f.tabela,
-      }));
-    }
-  };
-
   useEffect(() => {
     (async () => {
       try {
@@ -917,21 +819,36 @@ const Carteira: React.FC = () => {
         setUserEmail(uemail);
         setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
 
-        // Flag admin
         let adminFlag = false;
         try {
           const { data } = await supabase
             .from("users")
-            .select("email, role")
-            .eq("email", uemail)
+            .select("email, role, auth_user_id")
+            .or(`email.eq.${uemail},auth_user_id.eq.${uid}`)
             .maybeSingle();
           adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
         } catch {}
         setIsAdmin(adminFlag);
 
-        const [{ data: lds }, { data: admins }, { data: tables }, { data: us }] =
+        const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] =
           await Promise.all([
             supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
+            (async () => {
+              const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+              if (!adminFlag) q.eq("vendedor_id", uid);
+              const { data } = await q;
+              return data;
+            })(),
+            (async () => {
+              const q = supabase
+                .from("vendas")
+                .select("*")
+                .eq("status", "encarteirada")
+                .order("created_at", { ascending: false });
+              if (!adminFlag) q.eq("vendedor_id", uid);
+              const { data } = await q;
+              return data;
+            })(),
             supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
             supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
             supabase
@@ -945,41 +862,15 @@ const Carteira: React.FC = () => {
         setLeads(leadsArr);
         setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
 
+        setPendentes((pend ?? []) as Venda[]);
+        setEncarteiradas((enc ?? []) as Venda[]);
+
         setSimAdmins((admins ?? []) as any);
         setSimTables((tables ?? []) as any);
         setUsers((us ?? []) as AppUser[]);
 
-        // selectedSeller usa users.id
         const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
-        const initialSeller = adminFlag ? "" : myUserRow?.id ?? "";
-        setSelectedSeller(initialSeller);
-
-        // ✅ carregar vendas respeitando RBAC/filtro inicial
-        // (vendedor -> só dele; admin -> todos)
-        // precisa setar isAdmin/userId antes: usamos adminFlag/uid aqui
-        // então chamamos direto com regras equivalentes:
-        // para evitar depender do state ainda não atualizado, fazemos a query manual aqui:
-        const pendQ = supabase
-          .from("vendas")
-          .select("*")
-          .eq("status", "nova")
-          .order("created_at", { ascending: false });
-        const encQ = supabase
-          .from("vendas")
-          .select("*")
-          .eq("status", "encarteirada")
-          .order("created_at", { ascending: false });
-
-        if (!adminFlag) {
-          pendQ.eq("vendedor_id", uid);
-          encQ.eq("vendedor_id", uid);
-        }
-        const [{ data: pend }, { data: enc }] = await Promise.all([pendQ, encQ]);
-
-        setPendentes((pend ?? []) as Venda[]);
-        setEncarteiradas((enc ?? []) as Venda[]);
-
-        didInitRef.current = true;
+        setSelectedSeller(adminFlag ? "" : myUserRow?.id ?? "");
       } catch (e: any) {
         setErr(e.message || "Falha ao carregar Carteira.");
       } finally {
@@ -987,14 +878,6 @@ const Carteira: React.FC = () => {
       }
     })();
   }, []);
-
-  // ✅ quando admin troca o vendedor, atualiza as listas + carteira + chips
-  useEffect(() => {
-    if (!didInitRef.current) return;
-    // vendedor não precisa refazer por filtro (mas pode — não faz mal)
-    loadVendasForUI(selectedSeller, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSeller]);
 
   const pendentesComNome = useMemo(
     () =>
@@ -1058,6 +941,65 @@ const Carteira: React.FC = () => {
     );
   }, [encarteiradasFiltradas, leadMap]);
 
+  const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
+
+  async function insertVenda(payload: any) {
+    let { error } = await supabase.from("vendas").insert(payload as any);
+    if (error && /data_nascimento/.test(error.message || "")) {
+      const { error: e2 } = await supabase.from("vendas").insert({ ...payload, data_nascimento: undefined } as any);
+      if (e2) throw e2;
+    } else if (error) throw error;
+  }
+
+  async function updateVenda(id: string, patch: any) {
+    let { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
+    if (error && /data_nascimento/.test(error.message || "")) {
+      const { error: e2 } = await supabase
+        .from("vendas")
+        .update({ ...patch, data_nascimento: undefined } as any)
+        .eq("id", id);
+      if (e2) throw e2;
+    } else if (error) throw error;
+  }
+
+  const prefillFromLead = async (leadId: string) => {
+    if (!leadId) return;
+    const { data: cliente } = await supabase
+      .from("clientes")
+      .select("cpf,data_nascimento")
+      .eq("lead_id", leadId)
+      .maybeSingle();
+
+    if (cliente?.cpf || cliente?.data_nascimento) {
+      setForm((f) => ({
+        ...f,
+        cpf: cliente.cpf ?? f.cpf,
+        data_nascimento: cliente.data_nascimento ?? f.data_nascimento,
+      }));
+      // continua: vamos tentar puxar admin/prod/tabela também da última venda
+    }
+
+    const { data: lastVenda } = await supabase
+      .from("vendas")
+      .select("cpf,data_nascimento,administradora,produto,tabela")
+      .eq("lead_id", leadId)
+      .eq("status", "encarteirada")
+      .order("encarteirada_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastVenda) {
+      setForm((f) => ({
+        ...f,
+        cpf: lastVenda.cpf ?? f.cpf,
+        data_nascimento: lastVenda.data_nascimento ?? f.data_nascimento,
+        administradora: lastVenda.administradora ?? f.administradora,
+        produto: (lastVenda.produto as Produto) ?? f.produto,
+        tabela: lastVenda.tabela ?? f.tabela, // ✅ agora não vai ser apagado por useEffect
+      }));
+    }
+  };
+
   const registrarVenda = async () => {
     try {
       if (!form.lead_id) throw new Error("Selecione o Lead.");
@@ -1092,8 +1034,10 @@ const Carteira: React.FC = () => {
 
       await insertVenda(payload);
 
-      // recarrega respeitando filtro (admin pode estar filtrando; vendedor sempre no próprio)
-      await loadVendasForUI(selectedSeller, true);
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
 
       setForm({
         cpf: "",
@@ -1111,16 +1055,6 @@ const Carteira: React.FC = () => {
       setShowModal(false);
     } catch (e: any) {
       alert(e.message ?? "Erro ao registrar venda.");
-    }
-  };
-
-  const excluirVenda = async (vendaId: string) => {
-    try {
-      const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
-      if (error) throw error;
-      await loadVendasForUI(selectedSeller, true);
-    } catch (e: any) {
-      alert(e.message ?? "Erro ao excluir.");
     }
   };
 
@@ -1146,11 +1080,46 @@ const Carteira: React.FC = () => {
         .eq("id", vendaId);
       if (error) throw error;
 
-      await loadVendasForUI(selectedSeller, true);
+      const [{ data: pend }, { data: enc }] = await Promise.all([
+        (async () => {
+          const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+          if (!isAdmin) q.eq("vendedor_id", userId);
+          return await q;
+        })(),
+        (async () => {
+          const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+          if (!isAdmin) q.eq("vendedor_id", userId);
+          return await q;
+        })(),
+      ]);
+
+      setPendentes((pend ?? []) as Venda[]);
+      setEncarteiradas((enc ?? []) as Venda[]);
       await loadMetrics(selectedSeller, selectedYear);
     } catch (e: any) {
       alert(e.message ?? "Erro ao encarteirar.");
     }
+  };
+
+  const excluirVenda = async (vendaId: string) => {
+    try {
+      const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
+      if (error) throw error;
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao excluir.");
+    }
+  };
+
+  const reloadEncarteiradas = async () => {
+    const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+    if (!isAdmin) encQuery.eq("vendedor_id", userId);
+    const { data: enc } = await encQuery;
+    setEncarteiradas((enc ?? []) as Venda[]);
   };
 
   const salvarEdicaoPendente = async (venda: Venda, novo: Partial<Venda>) => {
@@ -1168,7 +1137,11 @@ const Carteira: React.FC = () => {
       if (patch.produto) patch.segmento = normalizeProdutoToSegmento(patch.produto as Produto);
 
       await updateVenda(venda.id, patch);
-      await loadVendasForUI(selectedSeller, true);
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
 
       setEditVendaModal({ open: false, venda: undefined });
     } catch (e: any) {
@@ -1176,12 +1149,7 @@ const Carteira: React.FC = () => {
     }
   };
 
-  const reloadEncarteiradas = async () => {
-    // mantém compat com seu fluxo, mas agora respeita filtro também
-    await loadVendasForUI(selectedSeller, true);
-  };
-
-  // opções de tabelas filtradas por Administradora + Segmento (case/acento-insensível)
+  // ✅ opções de tabelas filtradas por Administradora + Segmento
   const tabelaOptions = useMemo(() => {
     const prod = (form.produto as Produto) || "Automóvel";
     const segFromProduto = normalizeProdutoToSegmento(prod) ?? prod;
@@ -1198,6 +1166,7 @@ const Carteira: React.FC = () => {
     });
   }, [form.produto, form.administradora, simTables, simAdmins]);
 
+  // ✅ opções de Produto condicionadas à Administradora selecionada
   const produtoOptionsForAdmin: Produto[] = useMemo(() => {
     const admName = (form.administradora as string) || "";
     const admId = simAdmins.find((a) => a.name === admName)?.id;
@@ -1269,7 +1238,7 @@ const Carteira: React.FC = () => {
   };
 
   const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
-    // ===== Metas (metas_vendedores) =====
+    // Metas
     if (sellerId) {
       const { data: metasRow } = await supabase
         .from("metas_vendedores")
@@ -1322,7 +1291,7 @@ const Carteira: React.FC = () => {
       setMetaMensal(sum);
     }
 
-    // ===== Realizado (vendas encarteiradas - canceladas) =====
+    // Realizado
     const ativasBase = supabase
       .from("vendas")
       .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
@@ -1339,7 +1308,7 @@ const Carteira: React.FC = () => {
       .gte("cancelada_em", `${year}-01-01`)
       .lte("cancelada_em", `${year}-12-31T23:59:59`);
 
-    const authIdToFilter = sellerId ? (users.find((u) => u.id === sellerId)?.auth_user_id || "") : "";
+    const authIdToFilter = sellerId ? users.find((u) => u.id === sellerId)?.auth_user_id || "" : "";
 
     const qAtivas = sellerId ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase;
     const qCanc = sellerId ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase;
@@ -1432,21 +1401,17 @@ const Carteira: React.FC = () => {
   );
 
   const handleOpenMeta = () => {
+    if (!isAdmin) return; // ✅ vendedor nem abre
     if (!users || users.length === 0) {
       alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
       return;
     }
 
-    const myUserRow = users.find((u) => u.auth_user_id === userId || u.email === userEmail);
-    const baseSeller = isAdmin ? "" : myUserRow?.id ?? "";
-
     setMetaForm({
-      vendedor_id: baseSeller,
+      vendedor_id: "",
       ano: selectedYear,
       m: Array(12).fill(0),
     });
-
-    if (baseSeller) loadMetaForForm(baseSeller, selectedYear);
 
     setMetaOverlay({ open: true });
   };
@@ -1636,7 +1601,7 @@ const Carteira: React.FC = () => {
   if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
 
   const tabelaOptionsForForm = tabelaOptions;
-  const adminNames = adminOptions.length ? adminOptions : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
+  const adminNames = adminOptions; // ✅ agora só os do banco
 
   const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
 
@@ -1646,8 +1611,8 @@ const Carteira: React.FC = () => {
         <div>
           <h1 className="text-2xl font-semibold">Carteira</h1>
           <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
-          {refreshing && <p className="text-xs text-gray-400 mt-1">Atualizando filtro…</p>}
         </div>
+
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowModal(true)}
@@ -1655,9 +1620,13 @@ const Carteira: React.FC = () => {
           >
             + Nova Venda
           </button>
-          <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
-            Cadastrar Meta
-          </button>
+
+          {/* ✅ vendedor não cadastra/edita meta */}
+          {isAdmin && (
+            <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
+              Cadastrar Meta
+            </button>
+          )}
         </div>
       </div>
 
@@ -1688,7 +1657,7 @@ const Carteira: React.FC = () => {
                 value={selectedSeller}
                 onChange={(e) => setSelectedSeller(e.target.value)}
               >
-                <option value="">Todos</option>
+                <option value="">Todos (selecione um vendedor)</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.nome || u.email || u.id}
@@ -1751,6 +1720,13 @@ const Carteira: React.FC = () => {
           <h2 className="text-lg font-medium">Encarteirar</h2>
           <span className="text-sm text-gray-500">{pendentes.length} nova(s) venda(s)</span>
         </div>
+
+        {!isAdmin && (
+          <div className="text-sm text-gray-500">
+            Você pode <strong>editar</strong> seus lançamentos, mas o <strong>encarteiramento</strong> é feito apenas pelo admin.
+          </div>
+        )}
+
         <div className="overflow-auto">
           <table className="min-w-[860px] w-full border border-gray-200 rounded-xl">
             <thead className="bg-gray-50">
@@ -1778,7 +1754,7 @@ const Carteira: React.FC = () => {
                   key={venda.id}
                   venda={venda}
                   lead={lead}
-                  canEncarteirar={isAdmin}
+                  canEncarteirar={isAdmin} // ✅ só admin enxerga inputs + botão
                   onSubmit={encarteirar}
                   onDelete={excluirVenda}
                   onViewVenda={(v, l) => openViewVenda(v, l)}
@@ -1915,7 +1891,7 @@ const Carteira: React.FC = () => {
                 <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly />
               </div>
 
-              {/* Ordem: Administradora -> Produto -> Tabela */}
+              {/* ✅ Ordem correta: Administradora -> Produto -> Tabela */}
               <div>
                 <label className="text-sm text-gray-600">Administradora</label>
                 <select
@@ -1942,13 +1918,17 @@ const Carteira: React.FC = () => {
                         }
                       }
 
-                      return { ...f, administradora: value, produto: nextProduto, tabela: "" };
+                      return {
+                        ...f,
+                        administradora: value,
+                        produto: nextProduto,
+                        tabela: "", // ✅ mudou admin, tabela zera
+                      };
                     });
                   }}
+                  disabled={adminNames.length === 0}
                 >
-                  <option value="">
-                    {adminNames.length ? "Selecione a administradora…" : "Selecione a administradora…"}
-                  </option>
+                  <option value="">{adminNames.length ? "Selecione a administradora…" : "Carregando administradoras…"}</option>
                   {adminNames.map((a) => (
                     <option key={a} value={a}>
                       {a}
@@ -1962,7 +1942,13 @@ const Carteira: React.FC = () => {
                 <select
                   className="w-full border rounded-xl px-3 py-2"
                   value={form.produto as Produto}
-                  onChange={(e) => onFormChange("produto", e.target.value as Produto)}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      produto: e.target.value as Produto,
+                      tabela: "", // ✅ mudou produto, tabela zera
+                    }))
+                  }
                 >
                   {produtoOptionsForAdmin.map((p) => (
                     <option key={p} value={p}>
@@ -2181,12 +2167,6 @@ const Carteira: React.FC = () => {
                   </div>
 
                   <div>
-                    <div className="text-gray-500">Encarteirada em</div>
-                    <div>{formatDateTimeBR(v.encarteirada_em)}</div>
-                  </div>
-
-                  {/* ===== Novos detalhes ===== */}
-                  <div>
                     <div className="text-gray-500">Cancelada em</div>
                     <div>{formatDateTimeBR(v.cancelada_em)}</div>
                   </div>
@@ -2329,8 +2309,8 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== Modal Cadastrar Meta ===================== */}
-      {metaOverlay.open && (
+      {/* ===================== Modal Cadastrar Meta (admin) ===================== */}
+      {isAdmin && metaOverlay.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
@@ -2355,7 +2335,6 @@ const Carteira: React.FC = () => {
                       setMetaForm((p) => ({ ...p, vendedor_id: "", m: Array(12).fill(0) }));
                     }
                   }}
-                  disabled={!isAdmin}
                 >
                   <option value="">Selecione</option>
                   {users.map((u) => (
@@ -2424,7 +2403,7 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== Modal Editor de Cota ===================== */}
+      {/* ===================== Modal Editor de Cota (igual ao seu) ===================== */}
       {cotaEditor.open && cotaEditor.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2487,29 +2466,17 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Grupo</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceGrupo}
-                        onChange={(e) => setCeGrupo(e.target.value)}
-                      />
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceGrupo} onChange={(e) => setCeGrupo(e.target.value)} />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Cota</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceCota}
-                        onChange={(e) => setCeCota(e.target.value)}
-                      />
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceCota} onChange={(e) => setCeCota(e.target.value)} />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Código</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceCodigo}
-                        onChange={(e) => setCeCodigo(e.target.value)}
-                      />
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceCodigo} onChange={(e) => setCeCodigo(e.target.value)} />
                       <div className="text-xs text-gray-500 mt-1">Ativa = <strong>00</strong></div>
                     </div>
                   </div>
@@ -2520,12 +2487,7 @@ const Carteira: React.FC = () => {
                       <div className="text-sm text-red-700 mt-1">Informe a data do cancelamento para registrar em <code>cancelada_em</code>.</div>
                       <div className="mt-3">
                         <label className="text-sm text-gray-700">Data do cancelamento</label>
-                        <input
-                          type="date"
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceCancelDate}
-                          onChange={(e) => setCeCancelDate(e.target.value)}
-                        />
+                        <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceCancelDate} onChange={(e) => setCeCancelDate(e.target.value)} />
                       </div>
                     </div>
                   )}
@@ -2536,12 +2498,7 @@ const Carteira: React.FC = () => {
                       <div className="text-sm text-green-700 mt-1">Informe a data da reativação para registrar em <code>reativada_em</code>.</div>
                       <div className="mt-3">
                         <label className="text-sm text-gray-700">Data da reativação</label>
-                        <input
-                          type="date"
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceReativDate}
-                          onChange={(e) => setCeReativDate(e.target.value)}
-                        />
+                        <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceReativDate} onChange={(e) => setCeReativDate(e.target.value)} />
                       </div>
                     </div>
                   )}
@@ -2582,12 +2539,7 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={ceContFlag}
-                      onChange={(e) => setCeContFlag(e.target.checked)}
-                    />
+                    <input type="checkbox" className="mr-2" checked={ceContFlag} onChange={(e) => setCeContFlag(e.target.checked)} />
                     Marcar como contemplada
                   </label>
                 </div>
@@ -2596,21 +2548,12 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da contemplação</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContDate}
-                        onChange={(e) => setCeContDate(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceContDate} onChange={(e) => setCeContDate(e.target.value)} />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Tipo de lance</label>
-                      <select
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContTipo}
-                        onChange={(e) => setCeContTipo(e.target.value)}
-                      >
+                      <select className="w-full border rounded-xl px-3 py-2" value={ceContTipo} onChange={(e) => setCeContTipo(e.target.value)}>
                         <option value="">Selecione…</option>
                         <option value="Lance Livre">Lance Livre</option>
                         <option value="Primeiro Lance Fixo">Primeiro Lance Fixo</option>
@@ -2620,12 +2563,7 @@ const Carteira: React.FC = () => {
 
                     <div>
                       <label className="text-sm text-gray-600">% do lance (4 casas)</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContPctRaw}
-                        onChange={(e) => setCeContPctRaw(e.target.value)}
-                        placeholder="Ex.: 41,2542%"
-                      />
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceContPctRaw} onChange={(e) => setCeContPctRaw(e.target.value)} placeholder="Ex.: 41,2542%" />
                       <div className="text-xs text-gray-500 mt-1">Será salvo como <code>numeric(9,4)</code>.</div>
                     </div>
                   </div>
@@ -2652,12 +2590,7 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={ceInadFlag}
-                      onChange={(e) => setCeInadFlag(e.target.checked)}
-                    />
+                    <input type="checkbox" className="mr-2" checked={ceInadFlag} onChange={(e) => setCeInadFlag(e.target.checked)} />
                     Marcar como inadimplente
                   </label>
                 </div>
@@ -2666,12 +2599,7 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data que inadimpliu</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceInadEm}
-                        onChange={(e) => setCeInadEm(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadEm} onChange={(e) => setCeInadEm(e.target.value)} />
                     </div>
                     <div className="border rounded-2xl p-4 bg-red-50 text-sm text-red-800">
                       Ao marcar, vamos salvar <code>inad = true</code> e <code>inad_em</code>. A reversão fica vazia.
@@ -2681,12 +2609,7 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da reversão</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceInadRev}
-                        onChange={(e) => setCeInadRev(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadRev} onChange={(e) => setCeInadRev(e.target.value)} />
                     </div>
                     <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-700">
                       Ao desmarcar, vamos salvar <code>inad = false</code> e registrar <code>inad_revertida_em</code>.

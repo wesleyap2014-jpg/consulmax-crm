@@ -1258,37 +1258,48 @@ const Carteira: React.FC = () => {
 
   const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
     // ===== Metas (metas_vendedores) =====
-    if (sellerId) {
-      const { data: metasRow } = await supabase
-        .from("metas_vendedores")
-        .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-        .eq("vendedor_id", sellerId)
-        .eq("ano", year)
-        .maybeSingle();
+if (!isAdmin) {
+  // vendedor: busca pela coluna auth_user_id (mais confiável e RLS-friendly)
+  const { data: metasRow } = await supabase
+    .from("metas_vendedores")
+    .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+    .eq("auth_user_id", userId)
+    .eq("ano", year)
+    .maybeSingle();
 
-      const m = metasRow
-        ? [
-            metasRow.m01, metasRow.m02, metasRow.m03, metasRow.m04, metasRow.m05, metasRow.m06,
-            metasRow.m07, metasRow.m08, metasRow.m09, metasRow.m10, metasRow.m11, metasRow.m12,
-          ].map((x: any) => Number(x || 0))
-        : Array(12).fill(0);
-      setMetaMensal(m);
-    } else {
-      const { data: metasAll } = await supabase
-        .from("metas_vendedores")
-        .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-        .eq("ano", year);
+  const m = metasRow
+    ? [metasRow.m01, metasRow.m02, metasRow.m03, metasRow.m04, metasRow.m05, metasRow.m06, metasRow.m07, metasRow.m08, metasRow.m09, metasRow.m10, metasRow.m11, metasRow.m12].map((x: any) => Number(x || 0))
+    : Array(12).fill(0);
 
-      const sum = Array(12).fill(0);
-      (metasAll ?? []).forEach((row: any) => {
-        const arr = [
-          row.m01, row.m02, row.m03, row.m04, row.m05, row.m06,
-          row.m07, row.m08, row.m09, row.m10, row.m11, row.m12,
-        ].map((x: any) => Number(x || 0));
-        for (let i = 0; i < 12; i++) sum[i] += arr[i];
-      });
-      setMetaMensal(sum);
-    }
+  setMetaMensal(m);
+} else if (sellerId) {
+  // admin filtrando um vendedor: usa users.id
+  const { data: metasRow } = await supabase
+    .from("metas_vendedores")
+    .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+    .eq("vendedor_id", sellerId)
+    .eq("ano", year)
+    .maybeSingle();
+
+  const m = metasRow
+    ? [metasRow.m01, metasRow.m02, metasRow.m03, metasRow.m04, metasRow.m05, metasRow.m06, metasRow.m07, metasRow.m08, metasRow.m09, metasRow.m10, metasRow.m11, metasRow.m12].map((x: any) => Number(x || 0))
+    : Array(12).fill(0);
+
+  setMetaMensal(m);
+} else {
+  // admin "Todos": soma todas do ano
+  const { data: metasAll } = await supabase
+    .from("metas_vendedores")
+    .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+    .eq("ano", year);
+
+  const sum = Array(12).fill(0);
+  (metasAll ?? []).forEach((row: any) => {
+    const arr = [row.m01,row.m02,row.m03,row.m04,row.m05,row.m06,row.m07,row.m08,row.m09,row.m10,row.m11,row.m12].map((x: any) => Number(x || 0));
+    for (let i = 0; i < 12; i++) sum[i] += arr[i];
+  });
+  setMetaMensal(sum);
+}
 
     // ===== Realizado (vendas encarteiradas - canceladas) =====
     const ativasBase = supabase

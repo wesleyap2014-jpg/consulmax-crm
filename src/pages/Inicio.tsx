@@ -590,7 +590,7 @@ export default function Inicio() {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="text-2xl font-semibold">
-            Bem-vindo, <span className="text-slate-900">{me?.nome?.split(" ")?.[0] || "Max"}</span> 👋
+            Bem-vindo(a), <span className="text-slate-900">{me?.nome?.split(" ")?.[0] || "Max"}</span> 👋
           </div>
           <div className="text-slate-600 text-sm">
             Hoje é <span className="font-medium">{rangeToday.br}</span> • Painel de comando do CRM

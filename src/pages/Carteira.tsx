@@ -33,7 +33,7 @@ type Venda = {
   lead_id: string;
   cpf: string;
   data_venda: string;
-  vendedor_id: string; // (no seu schema atual: auth_user_id / auth.users.id)
+  vendedor_id: string;
   produto: Produto;
   administradora: Administradora;
   forma_venda: FormaVenda;
@@ -52,25 +52,23 @@ type Venda = {
   created_at: string;
   segmento?: string | null;
   data_nascimento?: string | null;
-  cancelada_em?: string | null; // timestamptz
-  inad?: boolean | null;
+  cancelada_em?: string | null; // timestamptz (já existe no seu schema)
+  inad?: boolean | null; // flag de inadimplência
 
-  // ====== NOVOS CAMPOS ======
+  // ====== NOVOS CAMPOS (SQL já rodou) ======
   reativada_em?: string | null; // timestamptz
-  contemplacao_tipo?: string | null; // text
+  contemplacao_tipo?: string | null; // 'Lance Livre' | 'Primeiro Lance Fixo' | 'Segundo Lance Fixo'
   contemplacao_pct?: number | null; // numeric(9,4)
   inad_em?: string | null; // date
   inad_revertida_em?: string | null; // date
 };
 
 type AppUser = {
-  id: string; // public.users.id
+  id: string;
   nome: string;
   email?: string | null;
-  role?: string | null; // enum
-  user_role?: string | null; // legado
-  auth_user_id?: string | null; // auth.users.id
-  is_active?: boolean | null;
+  role?: string | null;
+  auth_user_id?: string | null; // mantenha este campo
 };
 
 const PRODUTOS: Produto[] = [
@@ -121,6 +119,7 @@ const formatDateTimeBR = (isoDate?: string | null) => {
 
 // Converte input date (YYYY-MM-DD) para timestamptz ISO (00:00 local -> ISO)
 const isoFromDateInput = (dateStr: string) => {
+  // usa meia-noite local e converte para ISO
   const d = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
@@ -168,7 +167,9 @@ const validateCPF = (doc: string) => {
     if (/^(\d)\1{10}$/.test(d)) return false;
     const calc = (base: string, factor: number) => {
       let sum = 0;
-      for (let i = 0; i < base.length; i++) sum += parseInt(base[i], 10) * (factor - i);
+      for (let i = 0; i < base.length; i++) {
+        sum += parseInt(base[i], 10) * (factor - i);
+      }
       const rest = (sum * 10) % 11;
       return rest === 10 ? 0 : rest;
     };
@@ -183,7 +184,9 @@ const validateCPF = (doc: string) => {
 
     const calc = (weights: number[], digits: string) => {
       let sum = 0;
-      for (let i = 0; i < weights.length; i++) sum += weights[i] * parseInt(digits[i], 10);
+      for (let i = 0; i < weights.length; i++) {
+        sum += weights[i] * parseInt(digits[i], 10);
+      }
       const rest = sum % 11;
       return rest < 2 ? 0 : 11 - rest;
     };
@@ -229,6 +232,7 @@ const parsePct4 = (raw: string): number | null => {
   if (!s) return null;
   const n = Number(s);
   if (Number.isNaN(n)) return null;
+  // clamp 0..100
   return Math.max(0, Math.min(100, n));
 };
 
@@ -362,11 +366,15 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onViewVenda, onOpenCotaEdi
           </span>
 
           {!!venda.contemplada && (
-            <span className="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-800">Contemplada</span>
+            <span className="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-800">
+              Contemplada
+            </span>
           )}
 
           {!!venda.inad && (
-            <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-700">Inadimplente</span>
+            <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-700">
+              Inadimplente
+            </span>
           )}
         </div>
       </td>
@@ -375,7 +383,11 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onViewVenda, onOpenCotaEdi
 
       <td className="p-2">
         <div className="flex items-center gap-2">
-          <button title="Ver venda" className="text-gray-500 hover:text-gray-800" onClick={() => onViewVenda(venda)}>
+          <button
+            title="Ver venda"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onViewVenda(venda)}
+          >
             👁️
           </button>
           <span>{venda.numero_proposta}</span>
@@ -433,11 +445,15 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
             <span className="text-xs text-gray-500 ml-2">{group.cliente.telefone ?? ""}</span>
           </div>
           <div className="text-sm text-gray-600">
-            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> •
-            Segmentos: {segs}
+            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd:{" "}
+            <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
           </div>
         </button>
-        <button title="Ver cotas" className="text-gray-500 hover:text-gray-800" onClick={() => setOpen(true)}>
+        <button
+          title="Ver cotas"
+          className="text-gray-500 hover:text-gray-800"
+          onClick={() => setOpen(true)}
+        >
           👁️
         </button>
       </div>
@@ -460,7 +476,13 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
             </thead>
             <tbody>
               {group.itens.map((v) => (
-                <LinhaCota key={v.id} venda={v} onViewVenda={onViewVenda} onOpenCotaEditor={onOpenCotaEditor} isAdmin={isAdmin} />
+                <LinhaCota
+                  key={v.id}
+                  venda={v}
+                  onViewVenda={onViewVenda}
+                  onOpenCotaEditor={onOpenCotaEditor}
+                  isAdmin={isAdmin}
+                />
               ))}
             </tbody>
           </table>
@@ -478,7 +500,13 @@ type EditarVendaPendenteModalProps = {
   onSave: (venda: Venda, novo: Partial<Venda>) => Promise<void>;
 };
 
-const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ open, venda, leads, onClose, onSave }) => {
+const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
+  open,
+  venda,
+  leads,
+  onClose,
+  onSave,
+}) => {
   const [tmp, setTmp] = useState<Partial<Venda>>({});
 
   useEffect(() => {
@@ -531,22 +559,40 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ ope
 
           <div>
             <label className="text-sm text-gray-600">CPF / CNPJ</label>
-            <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(tmp.cpf ?? "")} onChange={(e) => setTmp((p) => ({ ...p, cpf: e.target.value }))} />
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={formatCPF(tmp.cpf ?? "")}
+              onChange={(e) => setTmp((p) => ({ ...p, cpf: e.target.value }))}
+            />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Data da Venda</label>
-            <input type="date" className="w-full border rounded-xl px-3 py-2" value={tmp.data_venda ?? ""} onChange={(e) => setTmp((p) => ({ ...p, data_venda: e.target.value }))} />
+            <input
+              type="date"
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.data_venda ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, data_venda: e.target.value }))}
+            />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Data de Nascimento</label>
-            <input type="date" className="w-full border rounded-xl px-3 py-2" value={tmp.data_nascimento ?? ""} onChange={(e) => setTmp((p) => ({ ...p, data_nascimento: e.target.value }))} />
+            <input
+              type="date"
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.data_nascimento ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, data_nascimento: e.target.value }))}
+            />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Produto</label>
-            <select className="w-full border rounded-xl px-3 py-2" value={tmp.produto as Produto} onChange={(e) => setTmp((p) => ({ ...p, produto: e.target.value as Produto }))}>
+            <select
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.produto as Produto}
+              onChange={(e) => setTmp((p) => ({ ...p, produto: e.target.value as Produto }))}
+            >
               {PRODUTOS.map((p) => (
                 <option key={p} value={p}>
                   {p}
@@ -557,17 +603,29 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ ope
 
           <div>
             <label className="text-sm text-gray-600">Tabela</label>
-            <input className="w-full border rounded-xl px-3 py-2" value={tmp.tabela ?? ""} onChange={(e) => setTmp((p) => ({ ...p, tabela: e.target.value }))} />
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.tabela ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, tabela: e.target.value }))}
+            />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Administradora</label>
-            <input className="w-full border rounded-xl px-3 py-2" value={(tmp.administradora as string) ?? ""} onChange={(e) => setTmp((p) => ({ ...p, administradora: e.target.value }))} />
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={(tmp.administradora as string) ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, administradora: e.target.value }))}
+            />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Forma da Venda</label>
-            <select className="w-full border rounded-xl px-3 py-2" value={tmp.forma_venda as FormaVenda} onChange={(e) => setTmp((p) => ({ ...p, forma_venda: e.target.value as FormaVenda }))}>
+            <select
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.forma_venda as FormaVenda}
+              onChange={(e) => setTmp((p) => ({ ...p, forma_venda: e.target.value as FormaVenda }))}
+            >
               {FORMAS.map((f) => (
                 <option key={f} value={f}>
                   {f}
@@ -578,7 +636,11 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ ope
 
           <div>
             <label className="text-sm text-gray-600">Número da Proposta</label>
-            <input className="w-full border rounded-xl px-3 py-2" value={tmp.numero_proposta ?? ""} onChange={(e) => setTmp((p) => ({ ...p, numero_proposta: e.target.value }))} />
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.numero_proposta ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, numero_proposta: e.target.value }))}
+            />
           </div>
 
           <div>
@@ -594,7 +656,12 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ ope
 
           <div className="md:col-span-2">
             <label className="text-sm text-gray-600">Descrição</label>
-            <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={tmp.descricao ?? ""} onChange={(e) => setTmp((p) => ({ ...p, descricao: e.target.value }))} />
+            <textarea
+              className="w-full border rounded-xl px-3 py-2"
+              rows={3}
+              value={tmp.descricao ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, descricao: e.target.value }))}
+            />
           </div>
         </div>
 
@@ -602,7 +669,10 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ ope
           <button className="px-4 py-2 rounded-xl border mr-2" onClick={onClose}>
             Cancelar
           </button>
-          <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={() => onSave(venda, tmp)}>
+          <button
+            className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+            onClick={() => onSave(venda, tmp)}
+          >
             Salvar
           </button>
         </div>
@@ -614,14 +684,9 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ ope
 type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "inad" | "transfer";
 
 const Carteira: React.FC = () => {
-  // Auth (auth.users)
-  const [authUserId, setAuthUserId] = useState<string>(""); // auth.users.id
+  const [userId, setUserId] = useState<string>("");
   const [userEmail, setUserEmail] = useState<string>("");
   const [userName, setUserName] = useState<string>("");
-
-  // App (public.users)
-  const [myUsersId, setMyUsersId] = useState<string>(""); // public.users.id
-
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -649,9 +714,15 @@ const Carteira: React.FC = () => {
     data_nascimento: "",
   });
 
-  const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
+  const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({
+    open: false,
+  });
 
-  const [viewVendaModal, setViewVendaModal] = useState<{ open: boolean; venda?: Venda; lead?: Lead }>({ open: false });
+  const [viewVendaModal, setViewVendaModal] = useState<{
+    open: boolean;
+    venda?: Venda;
+    lead?: Lead;
+  }>({ open: false });
 
   const [simAdmins, setSimAdmins] = useState<Array<{ id: string; name: string }>>([]);
   const [simTables, setSimTables] = useState<
@@ -667,8 +738,6 @@ const Carteira: React.FC = () => {
   >([]);
 
   const [users, setUsers] = useState<AppUser[]>([]);
-
-  // Metas
   const [metaOverlay, setMetaOverlay] = useState<{ open: boolean }>({ open: false });
   const [metaForm, setMetaForm] = useState<{ vendedor_id: string; ano: number; m: number[] }>({
     vendedor_id: "",
@@ -676,79 +745,55 @@ const Carteira: React.FC = () => {
     m: Array(12).fill(0),
   });
 
-  // Filtro: para admin (public.users.id). Vendedor fica travado no próprio public.users.id.
-  const [selectedSeller, setSelectedSeller] = useState<string>("");
+  const [selectedSeller, setSelectedSeller] = useState<string>(""); // admin pode escolher; vendedor fixa no próprio
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
   const [realizadoMensal, setRealizadoMensal] = useState<number[]>(Array(12).fill(0));
 
   const metaAnual = useMemo(() => metaMensal.reduce((a, b) => a + b, 0), [metaMensal]);
   const realizadoAnual = useMemo(() => realizadoMensal.reduce((a, b) => a + b, 0), [realizadoMensal]);
-  const pct = metaAnual > 0 ? Math.max(0, Math.min(100, Math.round((realizadoAnual / metaAnual) * 100))) : 0;
+
+  const pct =
+    metaAnual > 0 ? Math.max(0, Math.min(100, Math.round((realizadoAnual / metaAnual) * 100))) : 0;
 
   const [leadSearch, setLeadSearch] = useState<string>(""); // busca de lead no modal
 
   // Modal de transferência de cota
-  const [transferModal, setTransferModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
+  const [transferModal, setTransferModal] = useState<{ open: boolean; venda?: Venda }>({
+    open: false,
+  });
   const [transferLeadId, setTransferLeadId] = useState<string>("");
   const [transferSearch, setTransferSearch] = useState<string>("");
   const [transferCpf, setTransferCpf] = useState<string>("");
   const [transferNascimento, setTransferNascimento] = useState<string>("");
 
-  // Editor de “Cota”
+  // ===== Novo: Editor de “Cota” com seleção de tipo de edição =====
   const [cotaEditor, setCotaEditor] = useState<{ open: boolean; venda?: Venda; mode: CotaEditMode }>({
     open: false,
     venda: undefined,
     mode: "pick",
   });
 
+  // states do editor (preenchidos ao abrir)
   const [ceGrupo, setCeGrupo] = useState<string>("");
   const [ceCota, setCeCota] = useState<string>("");
   const [ceCodigo, setCeCodigo] = useState<string>("");
 
-  const [ceCancelDate, setCeCancelDate] = useState<string>("");
-  const [ceReativDate, setCeReativDate] = useState<string>("");
+  const [ceCancelDate, setCeCancelDate] = useState<string>(""); // input date
+  const [ceReativDate, setCeReativDate] = useState<string>(""); // input date
 
   const [ceContFlag, setCeContFlag] = useState<boolean>(false);
-  const [ceContDate, setCeContDate] = useState<string>("");
-  const [ceContTipo, setCeContTipo] = useState<string>("");
-  const [ceContPctRaw, setCeContPctRaw] = useState<string>("");
+  const [ceContDate, setCeContDate] = useState<string>(""); // input date
+  const [ceContTipo, setCeContTipo] = useState<string>(""); // select
+  const [ceContPctRaw, setCeContPctRaw] = useState<string>(""); // input
 
   const [ceInadFlag, setCeInadFlag] = useState<boolean>(false);
-  const [ceInadEm, setCeInadEm] = useState<string>("");
-  const [ceInadRev, setCeInadRev] = useState<string>("");
+  const [ceInadEm, setCeInadEm] = useState<string>(""); // input date
+  const [ceInadRev, setCeInadRev] = useState<string>(""); // input date
 
-  // Sempre que muda produto no form, zera tabela (porque tabela depende de segmento)
   useEffect(() => {
     setForm((f) => ({ ...f, tabela: "" }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.produto]);
-
-  // Helpers de mapeamento (users.id <-> users.auth_user_id)
-  const usersById = useMemo(() => {
-    const m: Record<string, AppUser> = {};
-    users.forEach((u) => {
-      if (u?.id) m[u.id] = u;
-    });
-    return m;
-  }, [users]);
-
-  const selectedSellerAuth = useMemo(() => {
-    if (!selectedSeller) return "";
-    const u = usersById[selectedSeller];
-    return (u?.auth_user_id ?? "") || "";
-  }, [selectedSeller, usersById]);
-
-  // Admin: ao filtrar vendedor, também filtra listas e totais (sem mexer no fetch base)
-  const pendentesVisiveis = useMemo(() => {
-    if (isAdmin && selectedSeller && selectedSellerAuth) return pendentes.filter((v) => v.vendedor_id === selectedSellerAuth);
-    return pendentes;
-  }, [pendentes, isAdmin, selectedSeller, selectedSellerAuth]);
-
-  const encarteiradasVisiveis = useMemo(() => {
-    if (isAdmin && selectedSeller && selectedSellerAuth) return encarteiradas.filter((v) => v.vendedor_id === selectedSellerAuth);
-    return encarteiradas;
-  }, [encarteiradas, isAdmin, selectedSeller, selectedSellerAuth]);
 
   useEffect(() => {
     (async () => {
@@ -760,65 +805,50 @@ const Carteira: React.FC = () => {
         const { data: authData } = await supabase.auth.getUser();
         const uid = authData.user?.id ?? "";
         const uemail = authData.user?.email ?? "";
-        setAuthUserId(uid);
+        setUserId(uid);
         setUserEmail(uemail);
+        setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
 
-        // Descobre role e meu users.id pela auth_user_id (mais seguro que email)
-        let myRow: AppUser | null = null;
+        // Flag admin (tabela users)
+        let adminFlag = false;
         try {
           const { data } = await supabase
             .from("users")
-            .select("id,nome,email,role,user_role,auth_user_id,is_active")
-            .eq("auth_user_id", uid)
+            .select("email, role")
+            .eq("email", uemail)
             .maybeSingle();
-          myRow = (data as any) ?? null;
-        } catch {
-          myRow = null;
-        }
-
-        // Fallback por email (se não achou por auth_user_id)
-        if (!myRow && uemail) {
-          try {
-            const { data } = await supabase
-              .from("users")
-              .select("id,nome,email,role,user_role,auth_user_id,is_active")
-              .eq("email", uemail)
-              .maybeSingle();
-            myRow = (data as any) ?? null;
-          } catch {
-            myRow = null;
-          }
-        }
-
-        const roleResolved = ((myRow?.role ?? myRow?.user_role ?? "") as string).toLowerCase();
-        const adminFlag = roleResolved === "admin";
+          adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
+        } catch {}
         setIsAdmin(adminFlag);
 
-        setMyUsersId(myRow?.id ?? "");
-        setUserName((myRow?.nome ?? authData.user?.user_metadata?.nome ?? uemail ?? "Usuário") as string);
-
         // Carrega listas em paralelo
-        const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] = await Promise.all([
-          supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
-
-          (async () => {
-            const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-            if (!adminFlag) q.eq("vendedor_id", uid); // vendedor_id = auth_user_id
-            const { data } = await q;
-            return data;
-          })(),
-
-          (async () => {
-            const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
-            if (!adminFlag) q.eq("vendedor_id", uid);
-            const { data } = await q;
-            return data;
-          })(),
-
-          supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-          supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
-          supabase.from("users").select("id,nome,email,role,user_role,auth_user_id,is_active").eq("is_active", true).order("nome", { ascending: true }),
-        ]);
+        const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] =
+          await Promise.all([
+            supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
+            (async () => {
+              const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+              if (!adminFlag) q.eq("vendedor_id", uid); // vendedor_id = auth_user_id
+              const { data } = await q;
+              return data;
+            })(),
+            (async () => {
+              const q = supabase
+                .from("vendas")
+                .select("*")
+                .eq("status", "encarteirada")
+                .order("created_at", { ascending: false });
+              if (!adminFlag) q.eq("vendedor_id", uid);
+              const { data } = await q;
+              return data;
+            })(),
+            supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+            supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
+            supabase
+              .from("users")
+              .select("id,nome,email,role,auth_user_id")
+              .eq("is_active", true)
+              .order("nome", { ascending: true }),
+          ]);
 
         // Leads + mapa
         const leadsArr = (lds ?? []) as Lead[];
@@ -832,20 +862,13 @@ const Carteira: React.FC = () => {
         // Simuladores + Users
         setSimAdmins((admins ?? []) as any);
         setSimTables((tables ?? []) as any);
-        const usersArr = (us ?? []) as AppUser[];
-        setUsers(usersArr);
+        setUsers((us ?? []) as AppUser[]);
 
-        // selectedSeller: admin fica em "Todos" (""), vendedor trava no próprio public.users.id
-        if (adminFlag) {
-          setSelectedSeller("");
-        } else {
-          const row = myRow?.id
-            ? myRow
-            : usersArr.find((u) => u.auth_user_id === uid || (!!uemail && u.email === uemail)) ?? null;
-          setSelectedSeller(row?.id ?? "");
-        }
+        // Ajuste chave: selectedSeller deve usar users.id (não auth_user_id)
+        const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
+        setSelectedSeller(adminFlag ? "" : myUserRow?.id ?? "");
       } catch (e: any) {
-        setErr(e?.message || "Falha ao carregar Carteira.");
+        setErr(e.message || "Falha ao carregar Carteira.");
       } finally {
         setLoading(false);
       }
@@ -854,38 +877,39 @@ const Carteira: React.FC = () => {
 
   const pendentesComNome = useMemo(
     () =>
-      pendentesVisiveis.map((v) => ({
+      pendentes.map((v) => ({
         venda: v,
         lead: leadMap[v.lead_id],
       })),
-    [pendentesVisiveis, leadMap]
+    [pendentes, leadMap]
   );
 
   const encarteiradasFiltradas = useMemo(() => {
-    const base = encarteiradasVisiveis;
-    if (!q.trim()) return base;
+    if (!q.trim()) return encarteiradas;
     const s = q.toLowerCase();
-    return base.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
-  }, [q, encarteiradasVisiveis, leadMap]);
+    return encarteiradas.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
+  }, [q, encarteiradas, leadMap]);
 
   const totalAtivas = useMemo(
-    () => encarteiradasFiltradas.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
-    [encarteiradasFiltradas]
+    () =>
+      encarteiradas.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradas]
   );
 
   const totalCanceladas = useMemo(
-    () => encarteiradasFiltradas.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
-    [encarteiradasFiltradas]
+    () =>
+      encarteiradas.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradas]
   );
 
   const totalContempladas = useMemo(
-    () => encarteiradasFiltradas.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0),
-    [encarteiradasFiltradas]
+    () => encarteiradas.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradas]
   );
 
   const totalInadimplentes = useMemo(
-    () => encarteiradasFiltradas.reduce((a, v) => (v.inad ? a + (v.valor_venda || 0) : a), 0),
-    [encarteiradasFiltradas]
+    () => encarteiradas.reduce((a, v) => (v.inad ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradas]
   );
 
   const porCliente: ClienteGroup[] = useMemo(() => {
@@ -893,8 +917,7 @@ const Carteira: React.FC = () => {
     for (const v of encarteiradasFiltradas) {
       const lead = leadMap[v.lead_id];
       if (!lead) continue;
-
-      if (!map[lead.id]) {
+      if (!map[lead.id])
         map[lead.id] = {
           cliente: lead,
           itens: [],
@@ -902,18 +925,13 @@ const Carteira: React.FC = () => {
           qtdAtivas: 0,
           segmentos: new Set(),
         };
-      }
-
       map[lead.id].itens.push(v);
-
       if (isAtiva(v.codigo)) {
         map[lead.id].totalAtivas += v.valor_venda || 0;
         map[lead.id].qtdAtivas += 1;
       }
-
       map[lead.id].segmentos.add(v.produto);
     }
-
     return Object.values(map).sort((a, b) =>
       a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" })
     );
@@ -932,15 +950,21 @@ const Carteira: React.FC = () => {
   async function updateVenda(id: string, patch: any) {
     let { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
     if (error && /data_nascimento/.test(error.message || "")) {
-      const { error: e2 } = await supabase.from("vendas").update({ ...patch, data_nascimento: undefined } as any).eq("id", id);
+      const { error: e2 } = await supabase
+        .from("vendas")
+        .update({ ...patch, data_nascimento: undefined } as any)
+        .eq("id", id);
       if (e2) throw e2;
     } else if (error) throw error;
   }
 
   const prefillFromLead = async (leadId: string) => {
     if (!leadId) return;
-
-    const { data: cliente } = await supabase.from("clientes").select("cpf,data_nascimento").eq("lead_id", leadId).maybeSingle();
+    const { data: cliente } = await supabase
+      .from("clientes")
+      .select("cpf,data_nascimento")
+      .eq("lead_id", leadId)
+      .maybeSingle();
 
     if (cliente?.cpf || cliente?.data_nascimento) {
       setForm((f) => ({
@@ -983,14 +1007,11 @@ const Carteira: React.FC = () => {
       if (Number.isNaN(valor)) throw new Error("Valor inválido.");
 
       const segmento = normalizeProdutoToSegmento(form.produto as Produto);
-
-      if (form.tipo_venda === "Bolsão" && !form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão).");
-
       const payload: Partial<Venda> = {
         lead_id: form.lead_id,
         cpf: onlyDigits(form.cpf!),
         data_venda: form.data_venda!,
-        vendedor_id: authUserId, // sempre auth_user_id
+        vendedor_id: userId,
         produto: form.produto as Produto,
         administradora: (form.administradora as Administradora) || "",
         forma_venda: form.forma_venda as FormaVenda,
@@ -1005,11 +1026,12 @@ const Carteira: React.FC = () => {
         grupo: form.tipo_venda === "Bolsão" ? form.grupo || "" : null,
         codigo: "00",
       };
+      if (form.tipo_venda === "Bolsão" && !form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão).");
 
       await insertVenda(payload);
 
       const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-      if (!isAdmin) pendQuery.eq("vendedor_id", authUserId);
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
       const { data: pend } = await pendQuery;
       setPendentes((pend ?? []) as Venda[]);
 
@@ -1052,25 +1074,23 @@ const Carteira: React.FC = () => {
           segmento: segmento ?? undefined,
         })
         .eq("id", vendaId);
-
       if (error) throw error;
 
       const [{ data: pend }, { data: enc }] = await Promise.all([
         (async () => {
           const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-          if (!isAdmin) q.eq("vendedor_id", authUserId);
+          if (!isAdmin) q.eq("vendedor_id", userId);
           return await q;
         })(),
         (async () => {
           const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
-          if (!isAdmin) q.eq("vendedor_id", authUserId);
+          if (!isAdmin) q.eq("vendedor_id", userId);
           return await q;
         })(),
       ]);
 
       setPendentes((pend ?? []) as Venda[]);
       setEncarteiradas((enc ?? []) as Venda[]);
-
       await loadMetrics(selectedSeller, selectedYear);
     } catch (e: any) {
       alert(e.message ?? "Erro ao encarteirar.");
@@ -1083,7 +1103,7 @@ const Carteira: React.FC = () => {
       if (error) throw error;
 
       const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-      if (!isAdmin) pendQuery.eq("vendedor_id", authUserId);
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
       const { data: pend } = await pendQuery;
       setPendentes((pend ?? []) as Venda[]);
     } catch (e: any) {
@@ -1093,7 +1113,7 @@ const Carteira: React.FC = () => {
 
   const reloadEncarteiradas = async () => {
     const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
-    if (!isAdmin) encQuery.eq("vendedor_id", authUserId);
+    if (!isAdmin) encQuery.eq("vendedor_id", userId);
     const { data: enc } = await encQuery;
     setEncarteiradas((enc ?? []) as Venda[]);
   };
@@ -1104,21 +1124,18 @@ const Carteira: React.FC = () => {
       if (novo.numero_proposta && !novo.numero_proposta.trim()) throw new Error("Informe o número da proposta.");
 
       const patch: any = { ...novo };
-
       if (patch.cpf) patch.cpf = onlyDigits(patch.cpf);
-
       if (patch.valor_venda != null) {
         const valor = Number(patch.valor_venda);
         if (Number.isNaN(valor)) throw new Error("Valor inválido.");
         patch.valor_venda = valor;
       }
-
       if (patch.produto) patch.segmento = normalizeProdutoToSegmento(patch.produto as Produto);
 
       await updateVenda(venda.id, patch);
 
       const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-      if (!isAdmin) pendQuery.eq("vendedor_id", authUserId);
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
       const { data: pend } = await pendQuery;
       setPendentes((pend ?? []) as Venda[]);
 
@@ -1151,7 +1168,9 @@ const Carteira: React.FC = () => {
     const admId = simAdmins.find((a) => a.name === admName)?.id;
     if (!admId) return PRODUTOS;
 
-    const segSet = new Set(simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento)));
+    const segSet = new Set(
+      simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento))
+    );
 
     const filtered = PRODUTOS.filter((p) => {
       const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
@@ -1166,13 +1185,13 @@ const Carteira: React.FC = () => {
   const filteredLeads = useMemo(() => {
     if (!leadSearch.trim()) return leads;
     const s = leadSearch.toLowerCase();
-    return leads.filter((l) => (l.nome || "").toLowerCase().includes(s));
+    return leads.filter((l) => l.nome.toLowerCase().includes(s));
   }, [leadSearch, leads]);
 
   const filteredTransferLeads = useMemo(() => {
     if (!transferSearch.trim()) return leads;
     const s = transferSearch.toLowerCase();
-    return leads.filter((l) => (l.nome || "").toLowerCase().includes(s));
+    return leads.filter((l) => l.nome.toLowerCase().includes(s));
   }, [transferSearch, leads]);
 
   const onSelectLead = async (leadId: string) => {
@@ -1202,6 +1221,7 @@ const Carteira: React.FC = () => {
       };
 
       await updateVenda(transferModal.venda.id, patch);
+
       await reloadEncarteiradas();
 
       setTransferModal({ open: false, venda: undefined });
@@ -1214,51 +1234,34 @@ const Carteira: React.FC = () => {
     }
   };
 
-  const loadMetrics = async (sellerUsersId: string, year: number): Promise<void> => {
-    // Descobre auth_user_id do vendedor selecionado (ou tenta fallback)
-    const sellerAuth =
-      sellerUsersId
-        ? usersById[sellerUsersId]?.auth_user_id ||
-          users.find((u) => u.auth_user_id === sellerUsersId)?.auth_user_id ||
-          sellerUsersId
-        : "";
-
+  const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
     // ===== Metas (metas_vendedores) =====
-    if (sellerUsersId) {
-      // Usa vendedor_id (users.id) e também auth_user_id (novo campo) para garantir compat
-      let mq = supabase
+    if (sellerId) {
+      const { data: metasRow } = await supabase
         .from("metas_vendedores")
         .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-        .eq("ano", year);
-
-      if (sellerAuth) {
-        mq = mq.or(`vendedor_id.eq.${sellerUsersId},auth_user_id.eq.${sellerAuth}`);
-      } else {
-        mq = mq.eq("vendedor_id", sellerUsersId);
-      }
-
-      const { data: metasRow } = await mq.maybeSingle();
+        .eq("vendedor_id", sellerId)
+        .eq("ano", year)
+        .maybeSingle();
 
       const m = metasRow
         ? [
-            (metasRow as any).m01,
-            (metasRow as any).m02,
-            (metasRow as any).m03,
-            (metasRow as any).m04,
-            (metasRow as any).m05,
-            (metasRow as any).m06,
-            (metasRow as any).m07,
-            (metasRow as any).m08,
-            (metasRow as any).m09,
-            (metasRow as any).m10,
-            (metasRow as any).m11,
-            (metasRow as any).m12,
+            metasRow.m01,
+            metasRow.m02,
+            metasRow.m03,
+            metasRow.m04,
+            metasRow.m05,
+            metasRow.m06,
+            metasRow.m07,
+            metasRow.m08,
+            metasRow.m09,
+            metasRow.m10,
+            metasRow.m11,
+            metasRow.m12,
           ].map((x: any) => Number(x || 0))
         : Array(12).fill(0);
-
       setMetaMensal(m);
     } else {
-      // Todos (admin)
       const { data: metasAll } = await supabase
         .from("metas_vendedores")
         .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
@@ -1266,50 +1269,60 @@ const Carteira: React.FC = () => {
 
       const sum = Array(12).fill(0);
       (metasAll ?? []).forEach((row: any) => {
-        const arr = [row.m01, row.m02, row.m03, row.m04, row.m05, row.m06, row.m07, row.m08, row.m09, row.m10, row.m11, row.m12].map(
-          (x: any) => Number(x || 0)
-        );
+        const arr = [
+          row.m01,
+          row.m02,
+          row.m03,
+          row.m04,
+          row.m05,
+          row.m06,
+          row.m07,
+          row.m08,
+          row.m09,
+          row.m10,
+          row.m11,
+          row.m12,
+        ].map((x: any) => Number(x || 0));
         for (let i = 0; i < 12; i++) sum[i] += arr[i];
       });
       setMetaMensal(sum);
     }
 
     // ===== Realizado (vendas encarteiradas - canceladas) =====
-    const startISO = `${year}-01-01T00:00:00.000Z`;
-    const endISO = `${year}-12-31T23:59:59.999Z`;
-
     const ativasBase = supabase
       .from("vendas")
       .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
       .eq("status", "encarteirada")
       .eq("codigo", "00")
-      .gte("encarteirada_em", startISO)
-      .lte("encarteirada_em", endISO);
+      .gte("encarteirada_em", `${year}-01-01`)
+      .lte("encarteirada_em", `${year}-12-31T23:59:59`);
 
     const cancBase = supabase
       .from("vendas")
       .select("valor_venda, cancelada_em, vendedor_id, codigo, status")
       .eq("status", "encarteirada")
       .neq("codigo", "00")
-      .gte("cancelada_em", startISO)
-      .lte("cancelada_em", endISO);
+      .gte("cancelada_em", `${year}-01-01`)
+      .lte("cancelada_em", `${year}-12-31T23:59:59`);
 
-    const qAtivas = sellerAuth ? ativasBase.eq("vendedor_id", sellerAuth) : ativasBase;
-    const qCanc = sellerAuth ? cancBase.eq("vendedor_id", sellerAuth) : cancBase;
+    const authIdToFilter = sellerId ? users.find((u) => u.id === sellerId)?.auth_user_id || "" : "";
+
+    const qAtivas = sellerId ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase;
+    const qCanc = sellerId ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase;
 
     const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([qAtivas, qCanc]);
 
     const vendido = Array(12).fill(0);
     (vendasAtivas ?? []).forEach((v: any) => {
       const d = v.encarteirada_em ? new Date(v.encarteirada_em) : null;
-      if (!d || Number.isNaN(d.getTime())) return;
+      if (!d || isNaN(d.getTime())) return;
       vendido[d.getMonth()] += Number(v.valor_venda || 0);
     });
 
     const cancelado = Array(12).fill(0);
     (vendasCanc ?? []).forEach((v: any) => {
       const d = v.cancelada_em ? new Date(v.cancelada_em) : null;
-      if (!d || Number.isNaN(d.getTime())) return;
+      if (!d || isNaN(d.getTime())) return;
       cancelado[d.getMonth()] += Number(v.valor_venda || 0);
     });
 
@@ -1317,49 +1330,50 @@ const Carteira: React.FC = () => {
     setRealizadoMensal(realizado);
   };
 
-  const loadMetaForForm = async (sellerUsersId: string, year: number): Promise<void> => {
-    if (!sellerUsersId) {
-      setMetaForm((prev) => ({ ...prev, vendedor_id: sellerUsersId, ano: year, m: Array(12).fill(0) }));
+  const loadMetaForForm = async (sellerId: string, year: number): Promise<void> => {
+    if (!sellerId) {
+      setMetaForm((prev) => ({
+        ...prev,
+        vendedor_id: sellerId,
+        ano: year,
+        m: Array(12).fill(0),
+      }));
       return;
     }
 
-    const sellerAuth = usersById[sellerUsersId]?.auth_user_id || "";
-
-    let mq = supabase
+    const { data: metasRow } = await supabase
       .from("metas_vendedores")
       .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-      .eq("ano", year);
-
-    if (sellerAuth) mq = mq.or(`vendedor_id.eq.${sellerUsersId},auth_user_id.eq.${sellerAuth}`);
-    else mq = mq.eq("vendedor_id", sellerUsersId);
-
-    const { data: metasRow } = await mq.maybeSingle();
+      .eq("vendedor_id", sellerId)
+      .eq("ano", year)
+      .maybeSingle();
 
     const arr = metasRow
       ? [
-          (metasRow as any).m01,
-          (metasRow as any).m02,
-          (metasRow as any).m03,
-          (metasRow as any).m04,
-          (metasRow as any).m05,
-          (metasRow as any).m06,
-          (metasRow as any).m07,
-          (metasRow as any).m08,
-          (metasRow as any).m09,
-          (metasRow as any).m10,
-          (metasRow as any).m11,
-          (metasRow as any).m12,
+          metasRow.m01,
+          metasRow.m02,
+          metasRow.m03,
+          metasRow.m04,
+          metasRow.m05,
+          metasRow.m06,
+          metasRow.m07,
+          metasRow.m08,
+          metasRow.m09,
+          metasRow.m10,
+          metasRow.m11,
+          metasRow.m12,
         ].map((x: any) => Number(x || 0))
       : Array(12).fill(0);
 
-    setMetaForm((prev) => ({ ...prev, vendedor_id: sellerUsersId, ano: year, m: arr }));
+    setMetaForm((prev) => ({
+      ...prev,
+      vendedor_id: sellerId,
+      ano: year,
+      m: arr,
+    }));
   };
 
   useEffect(() => {
-    // Só carrega métricas quando já temos users (mapeamento) e ano pronto
-    if (!users || users.length === 0) return;
-    // Para vendedor: selectedSeller deve estar setado (users.id)
-    // Para admin: pode ser "" (Todos)
     loadMetrics(selectedSeller, selectedYear);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSeller, selectedYear, users]);
@@ -1384,15 +1398,21 @@ const Carteira: React.FC = () => {
   );
 
   const handleOpenMeta = () => {
-    if (!isAdmin) return;
+    if (!users || users.length === 0) {
+      alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
+      return;
+    }
+
+    const myUserRow = users.find((u) => u.auth_user_id === userId || u.email === userEmail);
+    const baseSeller = isAdmin ? "" : myUserRow?.id ?? "";
 
     setMetaForm({
-      vendedor_id: selectedSeller || "", // admin escolhe no modal mesmo, mas já pré-preenche se estiver filtrado
+      vendedor_id: baseSeller,
       ano: selectedYear,
       m: Array(12).fill(0),
     });
 
-    if (selectedSeller) loadMetaForForm(selectedSeller, selectedYear);
+    if (baseSeller) loadMetaForForm(baseSeller, selectedYear);
 
     setMetaOverlay({ open: true });
   };
@@ -1401,11 +1421,7 @@ const Carteira: React.FC = () => {
     try {
       if (!isAdmin) throw new Error("Somente administradores podem cadastrar metas.");
       if (!metaForm.vendedor_id) throw new Error("Selecione o vendedor.");
-
-      const sellerAuth = usersById[metaForm.vendedor_id]?.auth_user_id || "";
-
-      // payload com auth_user_id (novo campo) — e fallback se não existir (evita “inventar moda” em deploys)
-      const payloadBase: any = {
+      const payload: any = {
         vendedor_id: metaForm.vendedor_id,
         ano: metaForm.ano,
         m01: metaForm.m[0],
@@ -1421,9 +1437,6 @@ const Carteira: React.FC = () => {
         m11: metaForm.m[10],
         m12: metaForm.m[11],
       };
-
-      const payloadWithAuth = sellerAuth ? { ...payloadBase, auth_user_id: sellerAuth } : payloadBase;
-
       const { data: exists } = await supabase
         .from("metas_vendedores")
         .select("id")
@@ -1431,29 +1444,18 @@ const Carteira: React.FC = () => {
         .eq("ano", metaForm.ano)
         .maybeSingle();
 
-      // tenta com auth_user_id, se der erro de coluna, tenta sem
       if (exists?.id) {
-        let { error } = await supabase.from("metas_vendedores").update(payloadWithAuth).eq("id", exists.id);
-        if (error && /auth_user_id/i.test(error.message || "")) {
-          const { error: e2 } = await supabase.from("metas_vendedores").update(payloadBase).eq("id", exists.id);
-          if (e2) throw e2;
-        } else if (error) {
-          throw error;
-        }
+        const { error } = await supabase.from("metas_vendedores").update(payload).eq("id", exists.id);
+        if (error) throw error;
       } else {
-        let { error } = await supabase.from("metas_vendedores").insert(payloadWithAuth);
-        if (error && /auth_user_id/i.test(error.message || "")) {
-          const { error: e2 } = await supabase.from("metas_vendedores").insert(payloadBase);
-          if (e2) throw e2;
-        } else if (error) {
-          throw error;
-        }
+        const { error } = await supabase.from("metas_vendedores").insert(payload);
+        if (error) throw error;
       }
-
       setMetaOverlay({ open: false });
 
-      // Recarrega métricas (reflete imediatamente)
-      await loadMetrics(selectedSeller, selectedYear);
+      if (selectedSeller === metaForm.vendedor_id && selectedYear === metaForm.ano) {
+        setMetaMensal([...metaForm.m]);
+      }
     } catch (e: any) {
       alert(e.message || "Erro ao salvar metas.");
     }
@@ -1461,7 +1463,7 @@ const Carteira: React.FC = () => {
 
   const openViewVenda = (v: Venda, lead?: Lead) => setViewVendaModal({ open: true, venda: v, lead });
 
-  // Editor de cota
+  // ===== Novo: abrir editor de cota e preparar estados =====
   const openCotaEditor = (v: Venda) => {
     setCotaEditor({ open: true, venda: v, mode: "pick" });
 
@@ -1482,7 +1484,9 @@ const Carteira: React.FC = () => {
     setCeInadRev(v.inad_revertida_em ?? "");
   };
 
-  const closeCotaEditor = () => setCotaEditor({ open: false, venda: undefined, mode: "pick" });
+  const closeCotaEditor = () => {
+    setCotaEditor({ open: false, venda: undefined, mode: "pick" });
+  };
 
   const saveCotaCodigo = async () => {
     try {
@@ -1495,18 +1499,28 @@ const Carteira: React.FC = () => {
 
       if (!ceGrupo.trim() || !ceCota.trim() || !ceCodigo.trim()) throw new Error("Preencha Grupo, Cota e Código.");
 
+      // Se mudou de 00 -> outro: exige data cancelamento
       if (prevAtiva && !nextAtiva) {
         if (!ceCancelDate) throw new Error("Informe a data do cancelamento.");
       }
 
+      // Se mudou de outro -> 00: exige data reativação
       if (!prevAtiva && nextAtiva) {
         if (!ceReativDate) throw new Error("Informe a data da reativação.");
       }
 
-      const patch: any = { grupo: ceGrupo, cota: ceCota, codigo: ceCodigo };
+      const patch: any = {
+        grupo: ceGrupo,
+        cota: ceCota,
+        codigo: ceCodigo,
+      };
 
-      if (prevAtiva && !nextAtiva) patch.cancelada_em = isoFromDateInput(ceCancelDate);
-      if (!prevAtiva && nextAtiva) patch.reativada_em = isoFromDateInput(ceReativDate);
+      if (prevAtiva && !nextAtiva) {
+        patch.cancelada_em = isoFromDateInput(ceCancelDate);
+      }
+      if (!prevAtiva && nextAtiva) {
+        patch.reativada_em = isoFromDateInput(ceReativDate);
+      }
 
       await updateVenda(v.id, patch);
       await reloadEncarteiradas();
@@ -1538,7 +1552,7 @@ const Carteira: React.FC = () => {
         if (pct == null) throw new Error("Informe o % do lance (ex.: 41,2542%).");
 
         patch.contemplada = true;
-        patch.data_contemplacao = ceContDate;
+        patch.data_contemplacao = ceContDate; // date
         patch.contemplacao_tipo = ceContTipo;
         patch.contemplacao_pct = Number(pct.toFixed(4));
       }
@@ -1561,14 +1575,17 @@ const Carteira: React.FC = () => {
       const patch: any = {};
 
       if (ceInadFlag) {
+        // marcar inadimplente
         if (!ceInadEm) throw new Error("Informe a data que inadimpliu.");
         patch.inad = true;
         patch.inad_em = ceInadEm;
-        patch.inad_revertida_em = null;
+        patch.inad_revertida_em = null; // reset
       } else {
+        // desmarcar inadimplente
         if (!ceInadRev) throw new Error("Informe a data da reversão da inadimplência.");
         patch.inad = false;
         patch.inad_revertida_em = ceInadRev;
+        // mantém inad_em (histórico), se você quiser zerar depois a gente ajusta
       }
 
       await updateVenda(v.id, patch);
@@ -1595,34 +1612,23 @@ const Carteira: React.FC = () => {
 
   const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
 
-  // Para listar vendedores no select: normalmente só vendedores (mas deixo admin também se quiser)
-  const sellerOptions = useMemo(() => {
-    return users.filter((u) => {
-      const rr = ((u.role ?? u.user_role ?? "") as string).toLowerCase();
-      return rr === "vendedor" || rr === "admin";
-    });
-  }, [users]);
-
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Carteira</h1>
-          <p className="text-gray-500 text-sm">
-            Gerencie vendas e encarteiramento.{isAdmin && selectedSeller ? " (filtrado por vendedor)" : ""}
-          </p>
+          <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
         </div>
-
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowModal(true)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">
+          <button
+            onClick={() => setShowModal(true)}
+            className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+          >
             + Nova Venda
           </button>
-
-          {isAdmin && (
-            <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
-              Cadastrar Meta
-            </button>
-          )}
+          <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
+            Cadastrar Meta
+          </button>
         </div>
       </div>
 
@@ -1632,7 +1638,11 @@ const Carteira: React.FC = () => {
           <h2 className="text-lg font-medium">Metas</h2>
 
           <div className="flex items-center gap-2">
-            <select className="border rounded-xl px-3 py-2" value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
+            <select
+              className="border rounded-xl px-3 py-2"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+            >
               {Array.from({ length: 6 }).map((_, i) => {
                 const y = new Date().getFullYear() - 1 + i;
                 return (
@@ -1644,9 +1654,13 @@ const Carteira: React.FC = () => {
             </select>
 
             {isAdmin && (
-              <select className="border rounded-xl px-3 py-2" value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)}>
-                <option value="">Todos</option>
-                {sellerOptions.map((u) => (
+              <select
+                className="border rounded-xl px-3 py-2"
+                value={selectedSeller}
+                onChange={(e) => setSelectedSeller(e.target.value)}
+              >
+                <option value="">Todos (selecione um vendedor)</option>
+                {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.nome || u.email || u.id}
                   </option>
@@ -1706,7 +1720,7 @@ const Carteira: React.FC = () => {
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Encarteirar</h2>
-          <span className="text-sm text-gray-500">{pendentesVisiveis.length} nova(s) venda(s)</span>
+          <span className="text-sm text-gray-500">{pendentes.length} nova(s) venda(s)</span>
         </div>
         <div className="overflow-auto">
           <table className="min-w-[860px] w-full border border-gray-200 rounded-xl">
@@ -1761,7 +1775,10 @@ const Carteira: React.FC = () => {
         <div className="px-4 py-3 rounded-2xl bg-red-100 text-red-900">
           Inadimplentes: <strong className="ml-1">{currency(totalInadimplentes)}</strong>
         </div>
-        <button className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50" onClick={() => setShowCarteira((s) => !s)}>
+        <button
+          className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
+          onClick={() => setShowCarteira((s) => !s)}
+        >
           {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
         </button>
       </div>
@@ -1810,7 +1827,11 @@ const Carteira: React.FC = () => {
                     value={leadSearch}
                     onChange={(e) => setLeadSearch(e.target.value)}
                   />
-                  <select className="w-full border rounded-xl px-3 py-2" value={form.lead_id ?? ""} onChange={(e) => onSelectLead(e.target.value)}>
+                  <select
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={form.lead_id ?? ""}
+                    onChange={(e) => onSelectLead(e.target.value)}
+                  >
                     <option value="">Selecione um lead…</option>
                     {filteredLeads.map((l) => (
                       <option key={l.id} value={l.id}>
@@ -1823,7 +1844,11 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[form.lead_id as string]?.telefone ?? ""} readOnly />
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={leadMap[form.lead_id as string]?.telefone ?? ""}
+                  readOnly
+                />
               </div>
 
               <div>
@@ -1838,12 +1863,22 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Data da Venda</label>
-                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_venda ?? ""} onChange={(e) => onFormChange("data_venda", e.target.value)} />
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.data_venda ?? ""}
+                  onChange={(e) => onFormChange("data_venda", e.target.value)}
+                />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Data de Nascimento</label>
-                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_nascimento ?? ""} onChange={(e) => onFormChange("data_nascimento", e.target.value)} />
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.data_nascimento ?? ""}
+                  onChange={(e) => onFormChange("data_nascimento", e.target.value)}
+                />
               </div>
 
               <div>
@@ -1864,19 +1899,27 @@ const Carteira: React.FC = () => {
                       let nextProduto = f.produto as Produto;
 
                       if (admId) {
-                        const segSet = new Set(simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento)));
+                        const segSet = new Set(
+                          simTables
+                            .filter((t) => t.admin_id === admId)
+                            .map((t) => normalizeSegmentLabel(t.segmento))
+                        );
                         const allowed = PRODUTOS.filter((p) => {
                           const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
                           return segSet.has(seg);
                         });
-                        if (allowed.length && !allowed.includes(nextProduto as Produto)) nextProduto = allowed[0];
+                        if (allowed.length && !allowed.includes(nextProduto as Produto)) {
+                          nextProduto = allowed[0];
+                        }
                       }
 
                       return { ...f, administradora: value, produto: nextProduto, tabela: "" };
                     });
                   }}
                 >
-                  <option value="">{adminNames.length ? "Selecione a administradora…" : "Selecione a administradora…"}</option>
+                  <option value="">
+                    {adminNames.length ? "Selecione a administradora…" : "Selecione a administradora…"}
+                  </option>
                   {adminNames.map((a) => (
                     <option key={a} value={a}>
                       {a}
@@ -1887,7 +1930,11 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Produto (Segmento)</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.produto as Produto} onChange={(e) => onFormChange("produto", e.target.value as Produto)}>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.produto as Produto}
+                  onChange={(e) => onFormChange("produto", e.target.value as Produto)}
+                >
                   {produtoOptionsForAdmin.map((p) => (
                     <option key={p} value={p}>
                       {p}
@@ -1904,7 +1951,9 @@ const Carteira: React.FC = () => {
                   onChange={(e) => onFormChange("tabela", e.target.value)}
                   disabled={tabelaOptionsForForm.length === 0}
                 >
-                  <option value="">{tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
+                  <option value="">
+                    {tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}
+                  </option>
                   {tabelaOptionsForForm.map((t) => (
                     <option key={t.id} value={t.nome_tabela}>
                       {t.nome_tabela}
@@ -1915,7 +1964,11 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Forma da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.forma_venda as FormaVenda} onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.forma_venda as FormaVenda}
+                  onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}
+                >
                   {FORMAS.map((f) => (
                     <option key={f} value={f}>
                       {f}
@@ -1926,17 +1979,30 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Número da Proposta *</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={form.numero_proposta ?? ""} onChange={(e) => onFormChange("numero_proposta", e.target.value)} />
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.numero_proposta ?? ""}
+                  onChange={(e) => onFormChange("numero_proposta", e.target.value)}
+                />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Valor da Venda</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={(form.valor_venda as any) ?? ""} onChange={(e) => onFormChange("valor_venda", e.target.value)} placeholder="R$ 0,00" />
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={(form.valor_venda as any) ?? ""}
+                  onChange={(e) => onFormChange("valor_venda", e.target.value)}
+                  placeholder="R$ 0,00"
+                />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Tipo da Venda</label>
-                <select className="w-full border rounded-xl px-3 py-2" value={form.tipo_venda ?? "Normal"} onChange={(e) => onFormChange("tipo_venda", e.target.value)}>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.tipo_venda ?? "Normal"}
+                  onChange={(e) => onFormChange("tipo_venda", e.target.value)}
+                >
                   <option>Normal</option>
                   <option>Contemplada</option>
                   <option>Bolsão</option>
@@ -1946,13 +2012,24 @@ const Carteira: React.FC = () => {
               {form.tipo_venda === "Bolsão" && (
                 <div>
                   <label className="text-sm text-gray-600">Grupo (Bolsão)</label>
-                  <input className="w-full border rounded-xl px-3 py-2" value={form.grupo ?? ""} onChange={(e) => onFormChange("grupo", e.target.value)} placeholder="Informe o número do grupo" />
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={form.grupo ?? ""}
+                    onChange={(e) => onFormChange("grupo", e.target.value)}
+                    placeholder="Informe o número do grupo"
+                  />
                 </div>
               )}
 
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Descrição da Venda</label>
-                <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={form.descricao ?? ""} onChange={(e) => onFormChange("descricao", e.target.value)} placeholder="Estratégias de contemplação, observações…" />
+                <textarea
+                  className="w-full border rounded-xl px-3 py-2"
+                  rows={3}
+                  value={form.descricao ?? ""}
+                  onChange={(e) => onFormChange("descricao", e.target.value)}
+                  placeholder="Estratégias de contemplação, observações…"
+                />
               </div>
             </div>
 
@@ -1997,13 +2074,7 @@ const Carteira: React.FC = () => {
             {(() => {
               const v = viewVendaModal.venda!;
               const lead = viewVendaModal.lead;
-
-              // vendedor_id na venda é auth_user_id (mas tratamos compat se vier users.id)
-              const vendedor =
-                users.find((u) => u.auth_user_id === v.vendedor_id) ||
-                users.find((u) => u.id === v.vendedor_id) ||
-                null;
-
+              const vendedor = users.find((u) => u.auth_user_id === v.vendedor_id);
               const vendedorNome = vendedor?.nome || vendedor?.email || v.vendedor_id;
 
               return (
@@ -2023,12 +2094,12 @@ const Carteira: React.FC = () => {
                   </div>
                   <div>
                     <div className="text-gray-500">Data de Nascimento</div>
-                    <div>{v.data_nascimento ? formatDateBR(v.data_nascimento) : "—"}</div>
+                    <div>{v.data_nascimento ?? "—"}</div>
                   </div>
 
                   <div>
                     <div className="text-gray-500">Data da Venda</div>
-                    <div>{formatDateBR(v.data_venda)}</div>
+                    <div>{v.data_venda}</div>
                   </div>
                   <div>
                     <div className="text-gray-500">Vendedor</div>
@@ -2080,6 +2151,7 @@ const Carteira: React.FC = () => {
                     <div>{v.cota ?? "—"}</div>
                   </div>
 
+                  {/* ===== Novos detalhes ===== */}
                   <div>
                     <div className="text-gray-500">Cancelada em</div>
                     <div>{formatDateTimeBR(v.cancelada_em)}</div>
@@ -2152,8 +2224,17 @@ const Carteira: React.FC = () => {
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Novo Cliente (Lead)</label>
                 <div className="flex flex-col gap-2">
-                  <input className="w-full border rounded-xl px-3 py-2" placeholder="Buscar pelo nome do lead…" value={transferSearch} onChange={(e) => setTransferSearch(e.target.value)} />
-                  <select className="w-full border rounded-xl px-3 py-2" value={transferLeadId} onChange={(e) => setTransferLeadId(e.target.value)}>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    placeholder="Buscar pelo nome do lead…"
+                    value={transferSearch}
+                    onChange={(e) => setTransferSearch(e.target.value)}
+                  />
+                  <select
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={transferLeadId}
+                    onChange={(e) => setTransferLeadId(e.target.value)}
+                  >
                     <option value="">Selecione um lead…</option>
                     {filteredTransferLeads.map((l) => (
                       <option key={l.id} value={l.id}>
@@ -2166,12 +2247,22 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">CPF / CNPJ *</label>
-                <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(transferCpf)} onChange={(e) => setTransferCpf(e.target.value)} placeholder="000.000.000-00 ou 00.000.000/0000-00" />
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={formatCPF(transferCpf)}
+                  onChange={(e) => setTransferCpf(e.target.value)}
+                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Data de Nascimento</label>
-                <input type="date" className="w-full border rounded-xl px-3 py-2" value={transferNascimento} onChange={(e) => setTransferNascimento(e.target.value)} />
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={transferNascimento}
+                  onChange={(e) => setTransferNascimento(e.target.value)}
+                />
               </div>
 
               <div>
@@ -2180,7 +2271,11 @@ const Carteira: React.FC = () => {
               </div>
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.telefone ?? ""} readOnly />
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={selectedTransferLead?.telefone ?? ""}
+                  readOnly
+                />
               </div>
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">E-mail</label>
@@ -2200,8 +2295,8 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== Modal Cadastrar Meta (Admin) ===================== */}
-      {metaOverlay.open && isAdmin && (
+      {/* ===================== Modal Cadastrar Meta ===================== */}
+      {metaOverlay.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
@@ -2220,12 +2315,16 @@ const Carteira: React.FC = () => {
                   onChange={(e) => {
                     const id = e.target.value;
                     setMetaForm((p) => ({ ...p, vendedor_id: id }));
-                    if (id) loadMetaForForm(id, metaForm.ano);
-                    else setMetaForm((p) => ({ ...p, vendedor_id: "", m: Array(12).fill(0) }));
+                    if (id) {
+                      loadMetaForForm(id, metaForm.ano);
+                    } else {
+                      setMetaForm((p) => ({ ...p, vendedor_id: "", m: Array(12).fill(0) }));
+                    }
                   }}
+                  disabled={!isAdmin}
                 >
                   <option value="">Selecione</option>
-                  {sellerOptions.map((u) => (
+                  {users.map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.nome || u.email || u.id}
                     </option>
@@ -2291,14 +2390,16 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== Modal Editor de Cota ===================== */}
+      {/* ===================== NOVO: Modal Editor de Cota ===================== */}
       {cotaEditor.open && cotaEditor.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-semibold">Editar Cota • {cotaEditor.venda.numero_proposta}</h3>
-                <p className="text-xs text-gray-500">Escolha o tipo de edição. (Cancelamento/Reativação exigem data quando o código muda)</p>
+                <p className="text-xs text-gray-500">
+                  Escolha o tipo de edição. (Cancelamento/Reativação exigem data quando o código muda)
+                </p>
               </div>
               <button onClick={closeCotaEditor} className="text-gray-500 hover:text-gray-800">
                 ✕
@@ -2308,24 +2409,36 @@ const Carteira: React.FC = () => {
             {/* Seleção do tipo */}
             {cotaEditor.mode === "pick" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}>
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}
+                >
                   <div className="font-medium">🔢 Alterar Grupo / Cota / Código</div>
                   <div className="text-sm text-gray-600 mt-1">
                     Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong> pede data de reativação.
                   </div>
                 </button>
 
-                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}>
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}
+                >
                   <div className="font-medium">⇄ Transferir</div>
                   <div className="text-sm text-gray-600 mt-1">Abre o overlay de transferência para outro lead.</div>
                 </button>
 
-                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}>
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}
+                >
                   <div className="font-medium">🏁 Contemplada</div>
                   <div className="text-sm text-gray-600 mt-1">Data + Tipo (lance) + % com 4 casas (ex.: 41,2542%).</div>
                 </button>
 
-                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}>
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}
+                >
                   <div className="font-medium">⚠️ Inadimplência</div>
                   <div className="text-sm text-gray-600 mt-1">Marcar/desmarcar com data de início e data de reversão.</div>
                 </button>
@@ -2333,77 +2446,94 @@ const Carteira: React.FC = () => {
             )}
 
             {/* Alterar Grupo/Cota/Código */}
-            {cotaEditor.mode === "cota_codigo" &&
-              (() => {
-                const prevAtiva = isAtiva(cotaEditor.venda!.codigo);
-                const nextAtiva = isAtiva(ceCodigo);
+            {cotaEditor.mode === "cota_codigo" && (() => {
+              const prevAtiva = isAtiva(cotaEditor.venda!.codigo);
+              const nextAtiva = isAtiva(ceCodigo);
 
-                return (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-sm text-gray-600">Grupo</label>
-                        <input className="w-full border rounded-xl px-3 py-2" value={ceGrupo} onChange={(e) => setCeGrupo(e.target.value)} />
-                      </div>
-
-                      <div>
-                        <label className="text-sm text-gray-600">Cota</label>
-                        <input className="w-full border rounded-xl px-3 py-2" value={ceCota} onChange={(e) => setCeCota(e.target.value)} />
-                      </div>
-
-                      <div>
-                        <label className="text-sm text-gray-600">Código</label>
-                        <input className="w-full border rounded-xl px-3 py-2" value={ceCodigo} onChange={(e) => setCeCodigo(e.target.value)} />
-                        <div className="text-xs text-gray-500 mt-1">
-                          Ativa = <strong>00</strong>
-                        </div>
-                      </div>
+              return (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-sm text-gray-600">Grupo</label>
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceGrupo}
+                        onChange={(e) => setCeGrupo(e.target.value)}
+                      />
                     </div>
 
-                    {prevAtiva && !nextAtiva && (
-                      <div className="border rounded-2xl p-4 bg-red-50">
-                        <div className="font-medium text-red-800">Cancelamento detectado (00 → {ceCodigo || "..."})</div>
-                        <div className="text-sm text-red-700 mt-1">
-                          Informe a data do cancelamento para registrar em <code>cancelada_em</code>.
-                        </div>
-                        <div className="mt-3">
-                          <label className="text-sm text-gray-700">Data do cancelamento</label>
-                          <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceCancelDate} onChange={(e) => setCeCancelDate(e.target.value)} />
-                        </div>
-                      </div>
-                    )}
+                    <div>
+                      <label className="text-sm text-gray-600">Cota</label>
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceCota}
+                        onChange={(e) => setCeCota(e.target.value)}
+                      />
+                    </div>
 
-                    {!prevAtiva && nextAtiva && (
-                      <div className="border rounded-2xl p-4 bg-green-50">
-                        <div className="font-medium text-green-800">Reativação detectada ({cotaEditor.venda!.codigo} → 00)</div>
-                        <div className="text-sm text-green-700 mt-1">
-                          Informe a data da reativação para registrar em <code>reativada_em</code>.
-                        </div>
-                        <div className="mt-3">
-                          <label className="text-sm text-gray-700">Data da reativação</label>
-                          <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceReativDate} onChange={(e) => setCeReativDate(e.target.value)} />
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between">
-                      <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
-                        Voltar
-                      </button>
-                      <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveCotaCodigo}>
-                        Salvar
-                      </button>
+                    <div>
+                      <label className="text-sm text-gray-600">Código</label>
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceCodigo}
+                        onChange={(e) => setCeCodigo(e.target.value)}
+                      />
+                      <div className="text-xs text-gray-500 mt-1">Ativa = <strong>00</strong></div>
                     </div>
                   </div>
-                );
-              })()}
+
+                  {prevAtiva && !nextAtiva && (
+                    <div className="border rounded-2xl p-4 bg-red-50">
+                      <div className="font-medium text-red-800">Cancelamento detectado (00 → {ceCodigo || "..."})</div>
+                      <div className="text-sm text-red-700 mt-1">Informe a data do cancelamento para registrar em <code>cancelada_em</code>.</div>
+                      <div className="mt-3">
+                        <label className="text-sm text-gray-700">Data do cancelamento</label>
+                        <input
+                          type="date"
+                          className="w-full border rounded-xl px-3 py-2"
+                          value={ceCancelDate}
+                          onChange={(e) => setCeCancelDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {!prevAtiva && nextAtiva && (
+                    <div className="border rounded-2xl p-4 bg-green-50">
+                      <div className="font-medium text-green-800">Reativação detectada ({cotaEditor.venda!.codigo} → 00)</div>
+                      <div className="text-sm text-green-700 mt-1">Informe a data da reativação para registrar em <code>reativada_em</code>.</div>
+                      <div className="mt-3">
+                        <label className="text-sm text-gray-700">Data da reativação</label>
+                        <input
+                          type="date"
+                          className="w-full border rounded-xl px-3 py-2"
+                          value={ceReativDate}
+                          onChange={(e) => setCeReativDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
+                      Voltar
+                    </button>
+                    <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveCotaCodigo}>
+                      Salvar
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Transferir */}
             {cotaEditor.mode === "transfer" && (
               <div className="space-y-4">
                 <div className="border rounded-2xl p-4 bg-gray-50">
                   <div className="font-medium">Você está indo para o overlay de transferência</div>
-                  <div className="text-sm text-gray-600 mt-1">Vamos abrir a tela de transferência para selecionar o novo lead e preencher CPF/CNPJ e nascimento.</div>
+                  <div className="text-sm text-gray-600 mt-1">
+                    Vamos abrir a tela de transferência para selecionar o novo lead e preencher CPF/CNPJ e nascimento.
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -2422,7 +2552,12 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input type="checkbox" className="mr-2" checked={ceContFlag} onChange={(e) => setCeContFlag(e.target.checked)} />
+                    <input
+                      type="checkbox"
+                      className="mr-2"
+                      checked={ceContFlag}
+                      onChange={(e) => setCeContFlag(e.target.checked)}
+                    />
                     Marcar como contemplada
                   </label>
                 </div>
@@ -2431,12 +2566,21 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da contemplação</label>
-                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceContDate} onChange={(e) => setCeContDate(e.target.value)} />
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceContDate}
+                        onChange={(e) => setCeContDate(e.target.value)}
+                      />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Tipo de lance</label>
-                      <select className="w-full border rounded-xl px-3 py-2" value={ceContTipo} onChange={(e) => setCeContTipo(e.target.value)}>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceContTipo}
+                        onChange={(e) => setCeContTipo(e.target.value)}
+                      >
                         <option value="">Selecione…</option>
                         <option value="Lance Livre">Lance Livre</option>
                         <option value="Primeiro Lance Fixo">Primeiro Lance Fixo</option>
@@ -2446,10 +2590,13 @@ const Carteira: React.FC = () => {
 
                     <div>
                       <label className="text-sm text-gray-600">% do lance (4 casas)</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={ceContPctRaw} onChange={(e) => setCeContPctRaw(e.target.value)} placeholder="Ex.: 41,2542%" />
-                      <div className="text-xs text-gray-500 mt-1">
-                        Será salvo como <code>numeric(9,4)</code>.
-                      </div>
+                      <input
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceContPctRaw}
+                        onChange={(e) => setCeContPctRaw(e.target.value)}
+                        placeholder="Ex.: 41,2542%"
+                      />
+                      <div className="text-xs text-gray-500 mt-1">Será salvo como <code>numeric(9,4)</code>.</div>
                     </div>
                   </div>
                 )}
@@ -2476,7 +2623,12 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input type="checkbox" className="mr-2" checked={ceInadFlag} onChange={(e) => setCeInadFlag(e.target.checked)} />
+                    <input
+                      type="checkbox"
+                      className="mr-2"
+                      checked={ceInadFlag}
+                      onChange={(e) => setCeInadFlag(e.target.checked)}
+                    />
                     Marcar como inadimplente
                   </label>
                 </div>
@@ -2485,7 +2637,12 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data que inadimpliu</label>
-                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadEm} onChange={(e) => setCeInadEm(e.target.value)} />
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceInadEm}
+                        onChange={(e) => setCeInadEm(e.target.value)}
+                      />
                     </div>
                     <div className="border rounded-2xl p-4 bg-red-50 text-sm text-red-800">
                       Ao marcar, vamos salvar <code>inad = true</code> e <code>inad_em</code>. A reversão fica vazia.
@@ -2495,7 +2652,12 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da reversão</label>
-                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadRev} onChange={(e) => setCeInadRev(e.target.value)} />
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceInadRev}
+                        onChange={(e) => setCeInadRev(e.target.value)}
+                      />
                     </div>
                     <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-700">
                       Ao desmarcar, vamos salvar <code>inad = false</code> e registrar <code>inad_revertida_em</code>.
@@ -2516,11 +2678,6 @@ const Carteira: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Debug leve (não aparece muito) */}
-      <div className="text-[10px] text-gray-400">
-        authUserId: {authUserId || "—"} • myUsersId: {myUsersId || "—"}
-      </div>
     </div>
   );
 };

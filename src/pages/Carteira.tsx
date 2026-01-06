@@ -33,7 +33,7 @@ type Venda = {
   lead_id: string;
   cpf: string;
   data_venda: string;
-  vendedor_id: string;
+  vendedor_id: string; // aqui é auth_user_id (conforme seu schema)
   produto: Produto;
   administradora: Administradora;
   forma_venda: FormaVenda;
@@ -52,23 +52,23 @@ type Venda = {
   created_at: string;
   segmento?: string | null;
   data_nascimento?: string | null;
-  cancelada_em?: string | null; // timestamptz (já existe no seu schema)
-  inad?: boolean | null; // flag de inadimplência
+  cancelada_em?: string | null; // timestamptz
+  inad?: boolean | null;
 
-  // ====== NOVOS CAMPOS (SQL já rodou) ======
+  // ====== NOVOS CAMPOS ======
   reativada_em?: string | null; // timestamptz
-  contemplacao_tipo?: string | null; // 'Lance Livre' | 'Primeiro Lance Fixo' | 'Segundo Lance Fixo'
+  contemplacao_tipo?: string | null;
   contemplacao_pct?: number | null; // numeric(9,4)
   inad_em?: string | null; // date
   inad_revertida_em?: string | null; // date
 };
 
 type AppUser = {
-  id: string;
+  id: string; // users.id
   nome: string;
   email?: string | null;
   role?: string | null;
-  auth_user_id?: string | null; // mantenha este campo
+  auth_user_id?: string | null; // auth.users.id
 };
 
 const PRODUTOS: Produto[] = [
@@ -119,7 +119,6 @@ const formatDateTimeBR = (isoDate?: string | null) => {
 
 // Converte input date (YYYY-MM-DD) para timestamptz ISO (00:00 local -> ISO)
 const isoFromDateInput = (dateStr: string) => {
-  // usa meia-noite local e converte para ISO
   const d = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
@@ -129,7 +128,6 @@ const isoFromDateInput = (dateStr: string) => {
 const formatCPF = (s: string) => {
   const d = onlyDigits(s);
 
-  // CPF – até 11 dígitos
   if (d.length <= 11) {
     const cpf = d.slice(0, 11);
     const p1 = cpf.slice(0, 3);
@@ -143,7 +141,6 @@ const formatCPF = (s: string) => {
     return `${p1}.${p2}.${p3}-${p4}`;
   }
 
-  // CNPJ – até 14 dígitos
   const cnpj = d.slice(0, 14);
   const p1 = cnpj.slice(0, 2);
   const p2 = cnpj.slice(2, 5);
@@ -158,18 +155,15 @@ const formatCPF = (s: string) => {
   return `${p1}.${p2}.${p3}/${p4}-${p5}`;
 };
 
-// Valida CPF (11 dígitos) OU CNPJ (14 dígitos)
+// Valida CPF (11) OU CNPJ (14)
 const validateCPF = (doc: string) => {
   const d = onlyDigits(doc);
 
-  // ===== CPF =====
   if (d.length === 11) {
     if (/^(\d)\1{10}$/.test(d)) return false;
     const calc = (base: string, factor: number) => {
       let sum = 0;
-      for (let i = 0; i < base.length; i++) {
-        sum += parseInt(base[i], 10) * (factor - i);
-      }
+      for (let i = 0; i < base.length; i++) sum += parseInt(base[i], 10) * (factor - i);
       const rest = (sum * 10) % 11;
       return rest === 10 ? 0 : rest;
     };
@@ -178,15 +172,12 @@ const validateCPF = (doc: string) => {
     return d1 === parseInt(d[9], 10) && d2 === parseInt(d[10], 10);
   }
 
-  // ===== CNPJ =====
   if (d.length === 14) {
     if (/^(\d)\1{13}$/.test(d)) return false;
 
     const calc = (weights: number[], digits: string) => {
       let sum = 0;
-      for (let i = 0; i < weights.length; i++) {
-        sum += weights[i] * parseInt(digits[i], 10);
-      }
+      for (let i = 0; i < weights.length; i++) sum += weights[i] * parseInt(digits[i], 10);
       const rest = sum % 11;
       return rest < 2 ? 0 : 11 - rest;
     };
@@ -211,7 +202,6 @@ function normalizeProdutoToSegmento(produto: Produto | string | null | undefined
   return p;
 }
 
-// normaliza rótulos de segmento ("IMÓVEL", "Imóvel", "IMÓVEL ESTENDIDO" etc.)
 function normalizeSegmentLabel(s: string | null | undefined): string {
   return (s || "")
     .toString()
@@ -226,13 +216,12 @@ const parsePct4 = (raw: string): number | null => {
   const s = (raw || "")
     .replace(/\s/g, "")
     .replace("%", "")
-    .replace(/\./g, "") // remove milhar
+    .replace(/\./g, "")
     .replace(",", ".")
     .replace(/[^\d.]/g, "");
   if (!s) return null;
   const n = Number(s);
   if (Number.isNaN(n)) return null;
-  // clamp 0..100
   return Math.max(0, Math.min(100, n));
 };
 
@@ -372,9 +361,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onViewVenda, onOpenCotaEdi
           )}
 
           {!!venda.inad && (
-            <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-700">
-              Inadimplente
-            </span>
+            <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-700">Inadimplente</span>
           )}
         </div>
       </td>
@@ -449,11 +436,7 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
             <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
           </div>
         </button>
-        <button
-          title="Ver cotas"
-          className="text-gray-500 hover:text-gray-800"
-          onClick={() => setOpen(true)}
-        >
+        <button title="Ver cotas" className="text-gray-500 hover:text-gray-800" onClick={() => setOpen(true)}>
           👁️
         </button>
       </div>
@@ -684,7 +667,7 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
 type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "inad" | "transfer";
 
 const Carteira: React.FC = () => {
-  const [userId, setUserId] = useState<string>("");
+  const [userId, setUserId] = useState<string>(""); // auth.users.id
   const [userEmail, setUserEmail] = useState<string>("");
   const [userName, setUserName] = useState<string>("");
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -714,9 +697,7 @@ const Carteira: React.FC = () => {
     data_nascimento: "",
   });
 
-  const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({
-    open: false,
-  });
+  const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
 
   const [viewVendaModal, setViewVendaModal] = useState<{
     open: boolean;
@@ -745,7 +726,8 @@ const Carteira: React.FC = () => {
     m: Array(12).fill(0),
   });
 
-  const [selectedSeller, setSelectedSeller] = useState<string>(""); // admin pode escolher; vendedor fixa no próprio
+  // admin escolhe users.id; vendedor fica travado no próprio users.id
+  const [selectedSeller, setSelectedSeller] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
   const [realizadoMensal, setRealizadoMensal] = useState<number[]>(Array(12).fill(0));
@@ -756,117 +738,129 @@ const Carteira: React.FC = () => {
   const pct =
     metaAnual > 0 ? Math.max(0, Math.min(100, Math.round((realizadoAnual / metaAnual) * 100))) : 0;
 
-  const [leadSearch, setLeadSearch] = useState<string>(""); // busca de lead no modal
+  const [leadSearch, setLeadSearch] = useState<string>("");
 
   // Modal de transferência de cota
-  const [transferModal, setTransferModal] = useState<{ open: boolean; venda?: Venda }>({
-    open: false,
-  });
+  const [transferModal, setTransferModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
   const [transferLeadId, setTransferLeadId] = useState<string>("");
   const [transferSearch, setTransferSearch] = useState<string>("");
   const [transferCpf, setTransferCpf] = useState<string>("");
   const [transferNascimento, setTransferNascimento] = useState<string>("");
 
-  // ===== Novo: Editor de “Cota” com seleção de tipo de edição =====
+  // Editor de “Cota”
   const [cotaEditor, setCotaEditor] = useState<{ open: boolean; venda?: Venda; mode: CotaEditMode }>({
     open: false,
     venda: undefined,
     mode: "pick",
   });
 
-  // states do editor (preenchidos ao abrir)
   const [ceGrupo, setCeGrupo] = useState<string>("");
   const [ceCota, setCeCota] = useState<string>("");
   const [ceCodigo, setCeCodigo] = useState<string>("");
 
-  const [ceCancelDate, setCeCancelDate] = useState<string>(""); // input date
-  const [ceReativDate, setCeReativDate] = useState<string>(""); // input date
+  const [ceCancelDate, setCeCancelDate] = useState<string>("");
+  const [ceReativDate, setCeReativDate] = useState<string>("");
 
   const [ceContFlag, setCeContFlag] = useState<boolean>(false);
-  const [ceContDate, setCeContDate] = useState<string>(""); // input date
-  const [ceContTipo, setCeContTipo] = useState<string>(""); // select
-  const [ceContPctRaw, setCeContPctRaw] = useState<string>(""); // input
+  const [ceContDate, setCeContDate] = useState<string>("");
+  const [ceContTipo, setCeContTipo] = useState<string>("");
+  const [ceContPctRaw, setCeContPctRaw] = useState<string>("");
 
   const [ceInadFlag, setCeInadFlag] = useState<boolean>(false);
-  const [ceInadEm, setCeInadEm] = useState<string>(""); // input date
-  const [ceInadRev, setCeInadRev] = useState<string>(""); // input date
+  const [ceInadEm, setCeInadEm] = useState<string>("");
+  const [ceInadRev, setCeInadRev] = useState<string>("");
 
+  // ===== helpers de ID =====
+  const authIdFromSellerId = useMemo(() => {
+    if (!selectedSeller) return "";
+    return users.find((u) => u.id === selectedSeller)?.auth_user_id ?? "";
+  }, [selectedSeller, users]);
+
+  const getAuthByUserId = (sellerUserId: string) => {
+    if (!sellerUserId) return "";
+    return users.find((u) => u.id === sellerUserId)?.auth_user_id ?? "";
+  };
+
+  // ao trocar produto, zera tabela
   useEffect(() => {
     setForm((f) => ({ ...f, tabela: "" }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.produto]);
 
+  // ===== Carregamento inicial =====
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
         setErr("");
 
-        // Auth
         const { data: authData } = await supabase.auth.getUser();
         const uid = authData.user?.id ?? "";
         const uemail = authData.user?.email ?? "";
+
         setUserId(uid);
         setUserEmail(uemail);
         setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
 
-        // Flag admin (tabela users)
+        // Flag admin (tabela users) - por email
         let adminFlag = false;
         try {
-          const { data } = await supabase
-            .from("users")
-            .select("email, role")
-            .eq("email", uemail)
-            .maybeSingle();
+          const { data } = await supabase.from("users").select("email, role").eq("email", uemail).maybeSingle();
           adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
         } catch {}
         setIsAdmin(adminFlag);
 
-        // Carrega listas em paralelo
-        const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] =
-          await Promise.all([
-            supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
-            (async () => {
-              const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
-              if (!adminFlag) q.eq("vendedor_id", uid); // vendedor_id = auth_user_id
-              const { data } = await q;
-              return data;
-            })(),
-            (async () => {
-              const q = supabase
-                .from("vendas")
-                .select("*")
-                .eq("status", "encarteirada")
-                .order("created_at", { ascending: false });
-              if (!adminFlag) q.eq("vendedor_id", uid);
-              const { data } = await q;
-              return data;
-            })(),
-            supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
-            supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
-            supabase
-              .from("users")
-              .select("id,nome,email,role,auth_user_id")
-              .eq("is_active", true)
-              .order("nome", { ascending: true }),
-          ]);
+        // Carrega tudo em paralelo
+        const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] = await Promise.all([
+          supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
+          (async () => {
+            const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+            if (!adminFlag) q.eq("vendedor_id", uid);
+            const { data } = await q;
+            return data;
+          })(),
+          (async () => {
+            const q = supabase
+              .from("vendas")
+              .select("*")
+              .eq("status", "encarteirada")
+              .order("created_at", { ascending: false });
+            if (!adminFlag) q.eq("vendedor_id", uid);
+            const { data } = await q;
+            return data;
+          })(),
+          supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+          supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
+          supabase
+            .from("users")
+            .select("id,nome,email,role,auth_user_id")
+            .eq("is_active", true)
+            .order("nome", { ascending: true }),
+        ]);
 
-        // Leads + mapa
         const leadsArr = (lds ?? []) as Lead[];
         setLeads(leadsArr);
         setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
 
-        // Vendas
         setPendentes((pend ?? []) as Venda[]);
         setEncarteiradas((enc ?? []) as Venda[]);
 
-        // Simuladores + Users
         setSimAdmins((admins ?? []) as any);
         setSimTables((tables ?? []) as any);
         setUsers((us ?? []) as AppUser[]);
 
-        // Ajuste chave: selectedSeller deve usar users.id (não auth_user_id)
+        // selectedSeller: admin = "" (Todos), vendedor = seu users.id
         const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
-        setSelectedSeller(adminFlag ? "" : myUserRow?.id ?? "");
+        if (adminFlag) {
+          setSelectedSeller("");
+        } else {
+          const myId = myUserRow?.id ?? "";
+          setSelectedSeller(myId);
+          if (!myId) {
+            // sem users.id -> não dá pra carregar metas certas
+            console.warn("Usuário não encontrado em public.users para travar selectedSeller.");
+          }
+        }
       } catch (e: any) {
         setErr(e.message || "Falha ao carregar Carteira.");
       } finally {
@@ -875,41 +869,57 @@ const Carteira: React.FC = () => {
     })();
   }, []);
 
+  // ===== filtros por vendedor (admin) aplicados no que o usuário enxerga =====
+  const pendentesVisiveis = useMemo(() => {
+    if (!isAdmin) return pendentes;
+    if (!selectedSeller) return pendentes;
+    const authId = getAuthByUserId(selectedSeller);
+    if (!authId) return [];
+    return pendentes.filter((v) => v.vendedor_id === authId);
+  }, [pendentes, isAdmin, selectedSeller, users]);
+
+  const encarteiradasVisiveisBase = useMemo(() => {
+    if (!isAdmin) return encarteiradas;
+    if (!selectedSeller) return encarteiradas;
+    const authId = getAuthByUserId(selectedSeller);
+    if (!authId) return [];
+    return encarteiradas.filter((v) => v.vendedor_id === authId);
+  }, [encarteiradas, isAdmin, selectedSeller, users]);
+
   const pendentesComNome = useMemo(
     () =>
-      pendentes.map((v) => ({
+      pendentesVisiveis.map((v) => ({
         venda: v,
         lead: leadMap[v.lead_id],
       })),
-    [pendentes, leadMap]
+    [pendentesVisiveis, leadMap]
   );
 
   const encarteiradasFiltradas = useMemo(() => {
-    if (!q.trim()) return encarteiradas;
+    const base = encarteiradasVisiveisBase;
+    if (!q.trim()) return base;
     const s = q.toLowerCase();
-    return encarteiradas.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
-  }, [q, encarteiradas, leadMap]);
+    return base.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
+  }, [q, encarteiradasVisiveisBase, leadMap]);
 
   const totalAtivas = useMemo(
-    () =>
-      encarteiradas.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
-    [encarteiradas]
+    () => encarteiradasFiltradas.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradasFiltradas]
   );
 
   const totalCanceladas = useMemo(
-    () =>
-      encarteiradas.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
-    [encarteiradas]
+    () => encarteiradasFiltradas.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradasFiltradas]
   );
 
   const totalContempladas = useMemo(
-    () => encarteiradas.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0),
-    [encarteiradas]
+    () => encarteiradasFiltradas.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradasFiltradas]
   );
 
   const totalInadimplentes = useMemo(
-    () => encarteiradas.reduce((a, v) => (v.inad ? a + (v.valor_venda || 0) : a), 0),
-    [encarteiradas]
+    () => encarteiradasFiltradas.reduce((a, v) => (v.inad ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradasFiltradas]
   );
 
   const porCliente: ClienteGroup[] = useMemo(() => {
@@ -917,7 +927,8 @@ const Carteira: React.FC = () => {
     for (const v of encarteiradasFiltradas) {
       const lead = leadMap[v.lead_id];
       if (!lead) continue;
-      if (!map[lead.id])
+
+      if (!map[lead.id]) {
         map[lead.id] = {
           cliente: lead,
           itens: [],
@@ -925,6 +936,8 @@ const Carteira: React.FC = () => {
           qtdAtivas: 0,
           segmentos: new Set(),
         };
+      }
+
       map[lead.id].itens.push(v);
       if (isAtiva(v.codigo)) {
         map[lead.id].totalAtivas += v.valor_venda || 0;
@@ -932,6 +945,7 @@ const Carteira: React.FC = () => {
       }
       map[lead.id].segmentos.add(v.produto);
     }
+
     return Object.values(map).sort((a, b) =>
       a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" })
     );
@@ -940,26 +954,31 @@ const Carteira: React.FC = () => {
   const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
 
   async function insertVenda(payload: any) {
-    let { error } = await supabase.from("vendas").insert(payload as any);
+    const { error } = await supabase.from("vendas").insert(payload as any);
     if (error && /data_nascimento/.test(error.message || "")) {
       const { error: e2 } = await supabase.from("vendas").insert({ ...payload, data_nascimento: undefined } as any);
       if (e2) throw e2;
-    } else if (error) throw error;
+      return;
+    }
+    if (error) throw error;
   }
 
   async function updateVenda(id: string, patch: any) {
-    let { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
+    const { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
     if (error && /data_nascimento/.test(error.message || "")) {
       const { error: e2 } = await supabase
         .from("vendas")
         .update({ ...patch, data_nascimento: undefined } as any)
         .eq("id", id);
       if (e2) throw e2;
-    } else if (error) throw error;
+      return;
+    }
+    if (error) throw error;
   }
 
   const prefillFromLead = async (leadId: string) => {
     if (!leadId) return;
+
     const { data: cliente } = await supabase
       .from("clientes")
       .select("cpf,data_nascimento")
@@ -1011,7 +1030,7 @@ const Carteira: React.FC = () => {
         lead_id: form.lead_id,
         cpf: onlyDigits(form.cpf!),
         data_venda: form.data_venda!,
-        vendedor_id: userId,
+        vendedor_id: userId, // auth_user_id
         produto: form.produto as Produto,
         administradora: (form.administradora as Administradora) || "",
         forma_venda: form.forma_venda as FormaVenda,
@@ -1026,6 +1045,7 @@ const Carteira: React.FC = () => {
         grupo: form.tipo_venda === "Bolsão" ? form.grupo || "" : null,
         codigo: "00",
       };
+
       if (form.tipo_venda === "Bolsão" && !form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão).");
 
       await insertVenda(payload);
@@ -1047,6 +1067,7 @@ const Carteira: React.FC = () => {
         tabela: "",
         data_nascimento: "",
       });
+
       setLeadSearch("");
       setShowModal(false);
     } catch (e: any) {
@@ -1074,18 +1095,21 @@ const Carteira: React.FC = () => {
           segmento: segmento ?? undefined,
         })
         .eq("id", vendaId);
+
       if (error) throw error;
 
       const [{ data: pend }, { data: enc }] = await Promise.all([
         (async () => {
           const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
           if (!isAdmin) q.eq("vendedor_id", userId);
-          return await q;
+          const r = await q;
+          return r;
         })(),
         (async () => {
           const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
           if (!isAdmin) q.eq("vendedor_id", userId);
-          return await q;
+          const r = await q;
+          return r;
         })(),
       ]);
 
@@ -1145,7 +1169,7 @@ const Carteira: React.FC = () => {
     }
   };
 
-  // opções de tabelas filtradas por Administradora + Segmento (case/acento-insensível)
+  // tabelas filtradas por Admin + Segmento
   const tabelaOptions = useMemo(() => {
     const prod = (form.produto as Produto) || "Automóvel";
     const segFromProduto = normalizeProdutoToSegmento(prod) ?? prod;
@@ -1162,15 +1186,13 @@ const Carteira: React.FC = () => {
     });
   }, [form.produto, form.administradora, simTables, simAdmins]);
 
-  // opções de Produto condicionadas à Administradora selecionada
+  // produtos permitidos para a administradora
   const produtoOptionsForAdmin: Produto[] = useMemo(() => {
     const admName = (form.administradora as string) || "";
     const admId = simAdmins.find((a) => a.name === admName)?.id;
     if (!admId) return PRODUTOS;
 
-    const segSet = new Set(
-      simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento))
-    );
+    const segSet = new Set(simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento)));
 
     const filtered = PRODUTOS.filter((p) => {
       const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
@@ -1221,7 +1243,6 @@ const Carteira: React.FC = () => {
       };
 
       await updateVenda(transferModal.venda.id, patch);
-
       await reloadEncarteiradas();
 
       setTransferModal({ open: false, venda: undefined });
@@ -1234,15 +1255,24 @@ const Carteira: React.FC = () => {
     }
   };
 
+  // ====== MÉTRICAS (metas + realizado) ======
   const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
-    // ===== Metas (metas_vendedores) =====
+    // -------- Metas (metas_vendedores) --------
     if (sellerId) {
-      const { data: metasRow } = await supabase
+      const authId = getAuthByUserId(sellerId);
+      // usa os dois IDs: vendedor_id (users.id) OU auth_user_id
+      let q = supabase
         .from("metas_vendedores")
         .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-        .eq("vendedor_id", sellerId)
-        .eq("ano", year)
-        .maybeSingle();
+        .eq("ano", year);
+
+      if (authId) {
+        q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
+      } else {
+        q = q.eq("vendedor_id", sellerId);
+      }
+
+      const { data: metasRow } = await q.maybeSingle();
 
       const m = metasRow
         ? [
@@ -1260,6 +1290,7 @@ const Carteira: React.FC = () => {
             metasRow.m12,
           ].map((x: any) => Number(x || 0))
         : Array(12).fill(0);
+
       setMetaMensal(m);
     } else {
       const { data: metasAll } = await supabase
@@ -1285,10 +1316,11 @@ const Carteira: React.FC = () => {
         ].map((x: any) => Number(x || 0));
         for (let i = 0; i < 12; i++) sum[i] += arr[i];
       });
+
       setMetaMensal(sum);
     }
 
-    // ===== Realizado (vendas encarteiradas - canceladas) =====
+    // -------- Realizado (encarteiradas ativas - canceladas) --------
     const ativasBase = supabase
       .from("vendas")
       .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
@@ -1305,10 +1337,10 @@ const Carteira: React.FC = () => {
       .gte("cancelada_em", `${year}-01-01`)
       .lte("cancelada_em", `${year}-12-31T23:59:59`);
 
-    const authIdToFilter = sellerId ? users.find((u) => u.id === sellerId)?.auth_user_id || "" : "";
+    const authIdToFilter = sellerId ? getAuthByUserId(sellerId) : "";
 
-    const qAtivas = sellerId ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase;
-    const qCanc = sellerId ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase;
+    const qAtivas = sellerId ? (authIdToFilter ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase.eq("vendedor_id", "__none__")) : ativasBase;
+    const qCanc = sellerId ? (authIdToFilter ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase.eq("vendedor_id", "__none__")) : cancBase;
 
     const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([qAtivas, qCanc]);
 
@@ -1326,27 +1358,25 @@ const Carteira: React.FC = () => {
       cancelado[d.getMonth()] += Number(v.valor_venda || 0);
     });
 
-    const realizado = vendido.map((v: number, i: number) => v - cancelado[i]);
-    setRealizadoMensal(realizado);
+    setRealizadoMensal(vendido.map((v: number, i: number) => v - cancelado[i]));
   };
 
   const loadMetaForForm = async (sellerId: string, year: number): Promise<void> => {
     if (!sellerId) {
-      setMetaForm((prev) => ({
-        ...prev,
-        vendedor_id: sellerId,
-        ano: year,
-        m: Array(12).fill(0),
-      }));
+      setMetaForm((prev) => ({ ...prev, vendedor_id: sellerId, ano: year, m: Array(12).fill(0) }));
       return;
     }
 
-    const { data: metasRow } = await supabase
+    const authId = getAuthByUserId(sellerId);
+    let q = supabase
       .from("metas_vendedores")
       .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-      .eq("vendedor_id", sellerId)
-      .eq("ano", year)
-      .maybeSingle();
+      .eq("ano", year);
+
+    if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
+    else q = q.eq("vendedor_id", sellerId);
+
+    const { data: metasRow } = await q.maybeSingle();
 
     const arr = metasRow
       ? [
@@ -1365,18 +1395,16 @@ const Carteira: React.FC = () => {
         ].map((x: any) => Number(x || 0))
       : Array(12).fill(0);
 
-    setMetaForm((prev) => ({
-      ...prev,
-      vendedor_id: sellerId,
-      ano: year,
-      m: arr,
-    }));
+    setMetaForm((prev) => ({ ...prev, vendedor_id: sellerId, ano: year, m: arr }));
   };
 
+  // carrega métricas quando muda filtro/ano e quando users chega
   useEffect(() => {
+    // se vendedor e não tem selectedSeller ainda, evita “sumir” tudo
+    if (!isAdmin && !selectedSeller) return;
     loadMetrics(selectedSeller, selectedYear);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSeller, selectedYear, users]);
+  }, [selectedSeller, selectedYear, users, isAdmin]);
 
   const donutData = useMemo(() => {
     const reached = Math.max(0, Math.min(realizadoAnual, metaAnual));
@@ -1398,21 +1426,20 @@ const Carteira: React.FC = () => {
   );
 
   const handleOpenMeta = () => {
+    if (!isAdmin) return;
+
     if (!users || users.length === 0) {
       alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
       return;
     }
 
-    const myUserRow = users.find((u) => u.auth_user_id === userId || u.email === userEmail);
-    const baseSeller = isAdmin ? "" : myUserRow?.id ?? "";
-
     setMetaForm({
-      vendedor_id: baseSeller,
+      vendedor_id: selectedSeller || "",
       ano: selectedYear,
       m: Array(12).fill(0),
     });
 
-    if (baseSeller) loadMetaForForm(baseSeller, selectedYear);
+    if (selectedSeller) loadMetaForForm(selectedSeller, selectedYear);
 
     setMetaOverlay({ open: true });
   };
@@ -1421,8 +1448,12 @@ const Carteira: React.FC = () => {
     try {
       if (!isAdmin) throw new Error("Somente administradores podem cadastrar metas.");
       if (!metaForm.vendedor_id) throw new Error("Selecione o vendedor.");
+
+      const authId = getAuthByUserId(metaForm.vendedor_id);
+
       const payload: any = {
-        vendedor_id: metaForm.vendedor_id,
+        vendedor_id: metaForm.vendedor_id, // users.id
+        auth_user_id: authId || null, // ✅ reforço (mesmo que trigger exista)
         ano: metaForm.ano,
         m01: metaForm.m[0],
         m02: metaForm.m[1],
@@ -1437,12 +1468,13 @@ const Carteira: React.FC = () => {
         m11: metaForm.m[10],
         m12: metaForm.m[11],
       };
-      const { data: exists } = await supabase
-        .from("metas_vendedores")
-        .select("id")
-        .eq("vendedor_id", metaForm.vendedor_id)
-        .eq("ano", metaForm.ano)
-        .maybeSingle();
+
+      // encontra se já existe por vendedor_id+ano OU auth_user_id+ano
+      let q = supabase.from("metas_vendedores").select("id").eq("ano", metaForm.ano);
+      if (authId) q = q.or(`vendedor_id.eq.${metaForm.vendedor_id},auth_user_id.eq.${authId}`);
+      else q = q.eq("vendedor_id", metaForm.vendedor_id);
+
+      const { data: exists } = await q.maybeSingle();
 
       if (exists?.id) {
         const { error } = await supabase.from("metas_vendedores").update(payload).eq("id", exists.id);
@@ -1451,6 +1483,7 @@ const Carteira: React.FC = () => {
         const { error } = await supabase.from("metas_vendedores").insert(payload);
         if (error) throw error;
       }
+
       setMetaOverlay({ open: false });
 
       if (selectedSeller === metaForm.vendedor_id && selectedYear === metaForm.ano) {
@@ -1463,7 +1496,7 @@ const Carteira: React.FC = () => {
 
   const openViewVenda = (v: Venda, lead?: Lead) => setViewVendaModal({ open: true, venda: v, lead });
 
-  // ===== Novo: abrir editor de cota e preparar estados =====
+  // ===== Editor de cota =====
   const openCotaEditor = (v: Venda) => {
     setCotaEditor({ open: true, venda: v, mode: "pick" });
 
@@ -1484,9 +1517,7 @@ const Carteira: React.FC = () => {
     setCeInadRev(v.inad_revertida_em ?? "");
   };
 
-  const closeCotaEditor = () => {
-    setCotaEditor({ open: false, venda: undefined, mode: "pick" });
-  };
+  const closeCotaEditor = () => setCotaEditor({ open: false, venda: undefined, mode: "pick" });
 
   const saveCotaCodigo = async () => {
     try {
@@ -1499,28 +1530,18 @@ const Carteira: React.FC = () => {
 
       if (!ceGrupo.trim() || !ceCota.trim() || !ceCodigo.trim()) throw new Error("Preencha Grupo, Cota e Código.");
 
-      // Se mudou de 00 -> outro: exige data cancelamento
       if (prevAtiva && !nextAtiva) {
         if (!ceCancelDate) throw new Error("Informe a data do cancelamento.");
       }
 
-      // Se mudou de outro -> 00: exige data reativação
       if (!prevAtiva && nextAtiva) {
         if (!ceReativDate) throw new Error("Informe a data da reativação.");
       }
 
-      const patch: any = {
-        grupo: ceGrupo,
-        cota: ceCota,
-        codigo: ceCodigo,
-      };
+      const patch: any = { grupo: ceGrupo, cota: ceCota, codigo: ceCodigo };
 
-      if (prevAtiva && !nextAtiva) {
-        patch.cancelada_em = isoFromDateInput(ceCancelDate);
-      }
-      if (!prevAtiva && nextAtiva) {
-        patch.reativada_em = isoFromDateInput(ceReativDate);
-      }
+      if (prevAtiva && !nextAtiva) patch.cancelada_em = isoFromDateInput(ceCancelDate);
+      if (!prevAtiva && nextAtiva) patch.reativada_em = isoFromDateInput(ceReativDate);
 
       await updateVenda(v.id, patch);
       await reloadEncarteiradas();
@@ -1552,14 +1573,13 @@ const Carteira: React.FC = () => {
         if (pct == null) throw new Error("Informe o % do lance (ex.: 41,2542%).");
 
         patch.contemplada = true;
-        patch.data_contemplacao = ceContDate; // date
+        patch.data_contemplacao = ceContDate;
         patch.contemplacao_tipo = ceContTipo;
         patch.contemplacao_pct = Number(pct.toFixed(4));
       }
 
       await updateVenda(v.id, patch);
       await reloadEncarteiradas();
-
       closeCotaEditor();
     } catch (e: any) {
       alert(e.message ?? "Erro ao salvar contemplação.");
@@ -1575,22 +1595,18 @@ const Carteira: React.FC = () => {
       const patch: any = {};
 
       if (ceInadFlag) {
-        // marcar inadimplente
         if (!ceInadEm) throw new Error("Informe a data que inadimpliu.");
         patch.inad = true;
         patch.inad_em = ceInadEm;
-        patch.inad_revertida_em = null; // reset
+        patch.inad_revertida_em = null;
       } else {
-        // desmarcar inadimplente
         if (!ceInadRev) throw new Error("Informe a data da reversão da inadimplência.");
         patch.inad = false;
         patch.inad_revertida_em = ceInadRev;
-        // mantém inad_em (histórico), se você quiser zerar depois a gente ajusta
       }
 
       await updateVenda(v.id, patch);
       await reloadEncarteiradas();
-
       closeCotaEditor();
     } catch (e: any) {
       alert(e.message ?? "Erro ao salvar inadimplência.");
@@ -1608,7 +1624,9 @@ const Carteira: React.FC = () => {
   if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
 
   const tabelaOptionsForForm = tabelaOptions;
-  const adminNames = adminOptions.length ? adminOptions : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
+  const adminNames = adminOptions.length
+    ? adminOptions
+    : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
 
   const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
 
@@ -1626,9 +1644,13 @@ const Carteira: React.FC = () => {
           >
             + Nova Venda
           </button>
-          <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
-            Cadastrar Meta
-          </button>
+
+          {/* ✅ vendedor não cadastra meta */}
+          {isAdmin && (
+            <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
+              Cadastrar Meta
+            </button>
+          )}
         </div>
       </div>
 
@@ -1659,7 +1681,7 @@ const Carteira: React.FC = () => {
                 value={selectedSeller}
                 onChange={(e) => setSelectedSeller(e.target.value)}
               >
-                <option value="">Todos (selecione um vendedor)</option>
+                <option value="">Todos</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.nome || u.email || u.id}
@@ -1704,6 +1726,14 @@ const Carteira: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* ✅ debug leve pra você ver o filtro (só aparece pro admin) */}
+        {isAdmin && selectedSeller && (
+          <div className="text-xs text-gray-500">
+            Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> • auth_user_id:{" "}
+            <strong>{authIdFromSellerId || "—"}</strong>
+          </div>
+        )}
       </section>
 
       {/* ===================== Busca ===================== */}
@@ -1720,8 +1750,9 @@ const Carteira: React.FC = () => {
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Encarteirar</h2>
-          <span className="text-sm text-gray-500">{pendentes.length} nova(s) venda(s)</span>
+          <span className="text-sm text-gray-500">{pendentesVisiveis.length} nova(s) venda(s)</span>
         </div>
+
         <div className="overflow-auto">
           <table className="min-w-[860px] w-full border border-gray-200 rounded-xl">
             <thead className="bg-gray-50">
@@ -1900,26 +1931,20 @@ const Carteira: React.FC = () => {
 
                       if (admId) {
                         const segSet = new Set(
-                          simTables
-                            .filter((t) => t.admin_id === admId)
-                            .map((t) => normalizeSegmentLabel(t.segmento))
+                          simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento))
                         );
                         const allowed = PRODUTOS.filter((p) => {
                           const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
                           return segSet.has(seg);
                         });
-                        if (allowed.length && !allowed.includes(nextProduto as Produto)) {
-                          nextProduto = allowed[0];
-                        }
+                        if (allowed.length && !allowed.includes(nextProduto as Produto)) nextProduto = allowed[0];
                       }
 
                       return { ...f, administradora: value, produto: nextProduto, tabela: "" };
                     });
                   }}
                 >
-                  <option value="">
-                    {adminNames.length ? "Selecione a administradora…" : "Selecione a administradora…"}
-                  </option>
+                  <option value="">Selecione a administradora…</option>
                   {adminNames.map((a) => (
                     <option key={a} value={a}>
                       {a}
@@ -2051,7 +2076,7 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== Modal Editar Venda Pendente ===================== */}
+      {/* Modal Editar Venda Pendente */}
       <EditarVendaPendenteModal
         open={editVendaModal.open}
         venda={editVendaModal.venda}
@@ -2060,7 +2085,7 @@ const Carteira: React.FC = () => {
         onSave={salvarEdicaoPendente}
       />
 
-      {/* ===================== Modal Ver Venda ===================== */}
+      {/* Modal Ver Venda */}
       {viewVendaModal.open && viewVendaModal.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2151,7 +2176,6 @@ const Carteira: React.FC = () => {
                     <div>{v.cota ?? "—"}</div>
                   </div>
 
-                  {/* ===== Novos detalhes ===== */}
                   <div>
                     <div className="text-gray-500">Cancelada em</div>
                     <div>{formatDateTimeBR(v.cancelada_em)}</div>
@@ -2209,7 +2233,7 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== Modal Transferir Cota ===================== */}
+      {/* Modal Transferir Cota */}
       {transferModal.open && transferModal.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2271,11 +2295,7 @@ const Carteira: React.FC = () => {
               </div>
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={selectedTransferLead?.telefone ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.telefone ?? ""} readOnly />
               </div>
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">E-mail</label>
@@ -2295,7 +2315,7 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== Modal Cadastrar Meta ===================== */}
+      {/* Modal Cadastrar Meta */}
       {metaOverlay.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2315,11 +2335,8 @@ const Carteira: React.FC = () => {
                   onChange={(e) => {
                     const id = e.target.value;
                     setMetaForm((p) => ({ ...p, vendedor_id: id }));
-                    if (id) {
-                      loadMetaForForm(id, metaForm.ano);
-                    } else {
-                      setMetaForm((p) => ({ ...p, vendedor_id: "", m: Array(12).fill(0) }));
-                    }
+                    if (id) loadMetaForForm(id, metaForm.ano);
+                    else setMetaForm((p) => ({ ...p, vendedor_id: "", m: Array(12).fill(0) }));
                   }}
                   disabled={!isAdmin}
                 >
@@ -2390,7 +2407,7 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== NOVO: Modal Editor de Cota ===================== */}
+      {/* Modal Editor de Cota */}
       {cotaEditor.open && cotaEditor.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2406,46 +2423,32 @@ const Carteira: React.FC = () => {
               </button>
             </div>
 
-            {/* Seleção do tipo */}
             {cotaEditor.mode === "pick" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}>
                   <div className="font-medium">🔢 Alterar Grupo / Cota / Código</div>
                   <div className="text-sm text-gray-600 mt-1">
                     Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong> pede data de reativação.
                   </div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}>
                   <div className="font-medium">⇄ Transferir</div>
                   <div className="text-sm text-gray-600 mt-1">Abre o overlay de transferência para outro lead.</div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}>
                   <div className="font-medium">🏁 Contemplada</div>
                   <div className="text-sm text-gray-600 mt-1">Data + Tipo (lance) + % com 4 casas (ex.: 41,2542%).</div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}>
                   <div className="font-medium">⚠️ Inadimplência</div>
                   <div className="text-sm text-gray-600 mt-1">Marcar/desmarcar com data de início e data de reversão.</div>
                 </button>
               </div>
             )}
 
-            {/* Alterar Grupo/Cota/Código */}
             {cotaEditor.mode === "cota_codigo" && (() => {
               const prevAtiva = isAtiva(cotaEditor.venda!.codigo);
               const nextAtiva = isAtiva(ceCodigo);
@@ -2455,29 +2458,17 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Grupo</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceGrupo}
-                        onChange={(e) => setCeGrupo(e.target.value)}
-                      />
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceGrupo} onChange={(e) => setCeGrupo(e.target.value)} />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Cota</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceCota}
-                        onChange={(e) => setCeCota(e.target.value)}
-                      />
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceCota} onChange={(e) => setCeCota(e.target.value)} />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Código</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceCodigo}
-                        onChange={(e) => setCeCodigo(e.target.value)}
-                      />
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceCodigo} onChange={(e) => setCeCodigo(e.target.value)} />
                       <div className="text-xs text-gray-500 mt-1">Ativa = <strong>00</strong></div>
                     </div>
                   </div>
@@ -2488,12 +2479,7 @@ const Carteira: React.FC = () => {
                       <div className="text-sm text-red-700 mt-1">Informe a data do cancelamento para registrar em <code>cancelada_em</code>.</div>
                       <div className="mt-3">
                         <label className="text-sm text-gray-700">Data do cancelamento</label>
-                        <input
-                          type="date"
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceCancelDate}
-                          onChange={(e) => setCeCancelDate(e.target.value)}
-                        />
+                        <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceCancelDate} onChange={(e) => setCeCancelDate(e.target.value)} />
                       </div>
                     </div>
                   )}
@@ -2504,12 +2490,7 @@ const Carteira: React.FC = () => {
                       <div className="text-sm text-green-700 mt-1">Informe a data da reativação para registrar em <code>reativada_em</code>.</div>
                       <div className="mt-3">
                         <label className="text-sm text-gray-700">Data da reativação</label>
-                        <input
-                          type="date"
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceReativDate}
-                          onChange={(e) => setCeReativDate(e.target.value)}
-                        />
+                        <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceReativDate} onChange={(e) => setCeReativDate(e.target.value)} />
                       </div>
                     </div>
                   )}
@@ -2526,7 +2507,6 @@ const Carteira: React.FC = () => {
               );
             })()}
 
-            {/* Transferir */}
             {cotaEditor.mode === "transfer" && (
               <div className="space-y-4">
                 <div className="border rounded-2xl p-4 bg-gray-50">
@@ -2547,17 +2527,11 @@ const Carteira: React.FC = () => {
               </div>
             )}
 
-            {/* Contemplação */}
             {cotaEditor.mode === "contemplacao" && (
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={ceContFlag}
-                      onChange={(e) => setCeContFlag(e.target.checked)}
-                    />
+                    <input type="checkbox" className="mr-2" checked={ceContFlag} onChange={(e) => setCeContFlag(e.target.checked)} />
                     Marcar como contemplada
                   </label>
                 </div>
@@ -2566,21 +2540,12 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da contemplação</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContDate}
-                        onChange={(e) => setCeContDate(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceContDate} onChange={(e) => setCeContDate(e.target.value)} />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Tipo de lance</label>
-                      <select
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContTipo}
-                        onChange={(e) => setCeContTipo(e.target.value)}
-                      >
+                      <select className="w-full border rounded-xl px-3 py-2" value={ceContTipo} onChange={(e) => setCeContTipo(e.target.value)}>
                         <option value="">Selecione…</option>
                         <option value="Lance Livre">Lance Livre</option>
                         <option value="Primeiro Lance Fixo">Primeiro Lance Fixo</option>
@@ -2618,17 +2583,11 @@ const Carteira: React.FC = () => {
               </div>
             )}
 
-            {/* Inadimplência */}
             {cotaEditor.mode === "inad" && (
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={ceInadFlag}
-                      onChange={(e) => setCeInadFlag(e.target.checked)}
-                    />
+                    <input type="checkbox" className="mr-2" checked={ceInadFlag} onChange={(e) => setCeInadFlag(e.target.checked)} />
                     Marcar como inadimplente
                   </label>
                 </div>
@@ -2637,12 +2596,7 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data que inadimpliu</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceInadEm}
-                        onChange={(e) => setCeInadEm(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadEm} onChange={(e) => setCeInadEm(e.target.value)} />
                     </div>
                     <div className="border rounded-2xl p-4 bg-red-50 text-sm text-red-800">
                       Ao marcar, vamos salvar <code>inad = true</code> e <code>inad_em</code>. A reversão fica vazia.
@@ -2652,12 +2606,7 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da reversão</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceInadRev}
-                        onChange={(e) => setCeInadRev(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadRev} onChange={(e) => setCeInadRev(e.target.value)} />
                     </div>
                     <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-700">
                       Ao desmarcar, vamos salvar <code>inad = false</code> e registrar <code>inad_revertida_em</code>.

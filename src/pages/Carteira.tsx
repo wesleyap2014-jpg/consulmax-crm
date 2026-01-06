@@ -34,12 +34,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 
 import {
@@ -60,8 +55,8 @@ type AppUser = {
   auth_user_id: string; // users.auth_user_id (auth.uid())
   nome: string;
   email?: string | null;
-  role?: string | null; // enum legacy
-  user_role?: string | null; // texto
+  role?: string | null;
+  user_role?: string | null;
   is_active?: boolean | null;
 };
 
@@ -96,8 +91,8 @@ type SimTable = {
 
 type Venda = {
   id: string;
-  data_venda?: string | null; // date
-  vendedor_id?: string | null; // (na sua base, geralmente guarda auth_user_id)
+  data_venda?: string | null;
+  vendedor_id?: string | null;
   segmento?: string | null;
   tabela?: string | null;
   administradora?: string | null;
@@ -106,19 +101,19 @@ type Venda = {
   cliente_lead_id?: string | null;
   lead_id?: string | null;
 
-  // carteira
   grupo?: string | null;
   cota?: string | null;
-  codigo?: string | null; // '00' ativa
-  encarteirada_em?: string | null; // timestamptz
-  tipo_venda?: string | null; // Normal/Contemplada/Bolsão
+  codigo?: string | null;
+  encarteirada_em?: string | null;
+  tipo_venda?: string | null;
   contemplada?: boolean | null;
-  data_contemplacao?: string | null; // date
+  data_contemplacao?: string | null;
   contemplacao_tipo?: string | null;
   contemplacao_pct?: number | null;
 
-  cancelada_em?: string | null; // timestamptz
-  reativada_em?: string | null; // timestamptz
+  cancelada_em?: string | null;
+  reativada_em?: string | null;
+
   inad?: boolean | null;
   inad_em?: string | null;
   inad_revertida_em?: string | null;
@@ -140,7 +135,7 @@ type Venda = {
 type MetaRow = {
   id?: string;
   vendedor_id: string; // users.id
-  auth_user_id?: string | null; // auth uid (novo campo)
+  auth_user_id?: string | null; // novo campo
   ano: number;
   m01?: number | null;
   m02?: number | null;
@@ -159,13 +154,22 @@ type MetaRow = {
 /** ===================== Consts/Helpers ===================== */
 const ALL = "__all__";
 
-function currency(v: any) {
+function currencyBR(v: any) {
   const n = Number(v || 0);
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function isCodigoAtivo(codigo?: string | null) {
+  return String(codigo || "").trim() === "00";
+}
+
+function safeNum(x: any) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function clamp01(n: number) {
-  if (!isFinite(n)) return 0;
+  if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
 }
 
@@ -190,11 +194,9 @@ function formatDateTimeBR(iso?: string | null) {
 }
 
 function isoFromDateInput(dateStr: string) {
-  // yyyy-mm-dd -> yyyy-mm-dd
   return dateStr?.trim() || null;
 }
 
-// Normalização simples (case/acento-insensível)
 function normText(s: any) {
   return String(s || "")
     .normalize("NFD")
@@ -203,7 +205,6 @@ function normText(s: any) {
     .trim();
 }
 
-// Segmento vindo do "produto" (fallback)
 function normalizeProdutoToSegmento(produto: any) {
   const p = normText(produto);
   if (!p) return "";
@@ -219,7 +220,7 @@ function monthIndexFromISO(iso?: string | null) {
   if (!iso) return -1;
   const d = new Date(iso);
   if (isNaN(d.getTime())) return -1;
-  return d.getMonth(); // 0..11
+  return d.getMonth();
 }
 
 function yearFromISO(iso?: string | null) {
@@ -229,22 +230,14 @@ function yearFromISO(iso?: string | null) {
   return d.getFullYear();
 }
 
-function isCodigoAtivo(codigo?: string | null) {
-  return String(codigo || "").trim() === "00";
-}
-
-function safeNum(x: any) {
-  const n = Number(x);
-  return isFinite(n) ? n : 0;
-}
-
 /** ===================== Página ===================== */
 export default function Carteira() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [authUserId, setAuthUserId] = useState<string | null>(null); // auth.uid
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [me, setMe] = useState<AppUser | null>(null);
+
   const isAdmin = useMemo(() => {
     const r = (me?.role || me?.user_role || "").toLowerCase();
     return r === "admin";
@@ -267,20 +260,16 @@ export default function Carteira() {
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [selectedSeller, setSelectedSeller] = useState<string>(ALL); // users.id (admin) ou ALL
 
-  // Data
   const [vendas, setVendas] = useState<Venda[]>([]);
   const [leadsById, setLeadsById] = useState<Record<string, Lead>>({});
   const [clientesById, setClientesById] = useState<Record<string, Cliente>>({});
 
-  // Meta (12 meses)
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
 
-  // UI
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"pendentes" | "encarteiradas">("pendentes");
   const [showCarteiraValues, setShowCarteiraValues] = useState(true);
 
-  // Modais
   const [openNovaVenda, setOpenNovaVenda] = useState(false);
   const [openEditarPendente, setOpenEditarPendente] = useState(false);
   const [openVerVenda, setOpenVerVenda] = useState(false);
@@ -290,11 +279,9 @@ export default function Carteira() {
 
   const [activeVenda, setActiveVenda] = useState<Venda | null>(null);
 
-  // Nova venda: lookups
   const [simAdmins, setSimAdmins] = useState<SimAdmin[]>([]);
   const [simTables, setSimTables] = useState<SimTable[]>([]);
 
-  // Nova venda form
   const [nvLeadQuery, setNvLeadQuery] = useState("");
   const [nvLeadResults, setNvLeadResults] = useState<Lead[]>([]);
   const [nvLead, setNvLead] = useState<Lead | null>(null);
@@ -304,19 +291,18 @@ export default function Carteira() {
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   });
 
-  const [nvAdminId, setNvAdminId] = useState<string>(""); // sim_admins.id
-  const [nvProduto, setNvProduto] = useState<string>(""); // texto "produto"
-  const [nvSegmento, setNvSegmento] = useState<string>(""); // derivado
-  const [nvTabelaId, setNvTabelaId] = useState<string>(""); // sim_tables.id
+  const [nvAdminId, setNvAdminId] = useState<string>("");
+  const [nvProduto, setNvProduto] = useState<string>("");
+  const [nvSegmento, setNvSegmento] = useState<string>("");
+  const [nvTabelaId, setNvTabelaId] = useState<string>("");
   const [nvNumeroProposta, setNvNumeroProposta] = useState<string>("");
   const [nvValorVenda, setNvValorVenda] = useState<string>("");
 
-  const [nvTipoVenda, setNvTipoVenda] = useState<string>("Normal"); // Normal/Contemplada/Bolsão
+  const [nvTipoVenda, setNvTipoVenda] = useState<string>("Normal");
   const [nvGrupo, setNvGrupo] = useState<string>("");
   const [nvCota, setNvCota] = useState<string>("");
   const [nvCodigo, setNvCodigo] = useState<string>("00");
 
-  // Meta modal form (admin)
   const [metaForm, setMetaForm] = useState<number[]>(Array(12).fill(0));
   const [metaSaving, setMetaSaving] = useState(false);
 
@@ -334,21 +320,17 @@ export default function Carteira() {
     const uid = auth.user?.id || null;
     setAuthUserId(uid);
 
-    // users ativos
     const { data: usersRows, error: usersErr } = await supabase
       .from("users")
       .select("id,auth_user_id,nome,email,role,user_role,is_active")
       .eq("is_active", true)
       .order("nome", { ascending: true });
 
-    if (usersErr) {
-      console.warn("[Carteira] usersErr:", usersErr.message);
-    }
+    if (usersErr) console.warn("[Carteira] usersErr:", usersErr.message);
 
     const us = (usersRows || []) as AppUser[];
     setUsers(us);
 
-    // meu profile
     const my = uid ? us.find((u) => u.auth_user_id === uid) || null : null;
     setMe(my);
   }
@@ -367,70 +349,6 @@ export default function Carteira() {
 
     setSimAdmins((aRows || []).map((r: any) => ({ id: r.id, name: r.name, slug: r.slug })) as SimAdmin[]);
     setSimTables((tRows || []) as any);
-  }
-
-  /** ===================== Load data (vendas + leads/clientes) ===================== */
-  async function loadData() {
-    if (!authUserId) return;
-
-    setRefreshing(true);
-    try {
-      // 1) vendas do ano (para métricas e listas)
-      let vendasQ = supabase
-        .from("vendas")
-        .select("*")
-        .gte("data_venda", `${selectedYear}-01-01`)
-        .lte("data_venda", `${selectedYear}-12-31`)
-        .order("data_venda", { ascending: false });
-
-      if (sellerAuthId) {
-        vendasQ = vendasQ.eq("vendedor_id", sellerAuthId);
-      }
-
-      const { data: vendasRows, error: vendasErr } = await vendasQ;
-      if (vendasErr) {
-        console.warn("[Carteira] vendasErr:", vendasErr.message);
-      }
-
-      const vs = (vendasRows || []) as Venda[];
-      setVendas(vs);
-
-      // 2) leads/clientes envolvidos (para nomes)
-      const leadIds = Array.from(new Set(vs.map((v) => v.lead_id).filter(Boolean))) as string[];
-      const clienteIds = Array.from(new Set(vs.map((v) => v.cliente_lead_id).filter(Boolean))) as string[];
-
-      const [leadsRes, clientesRes] = await Promise.all([
-        leadIds.length
-          ? supabase
-              .from("leads")
-              .select("id,nome,telefone,email,cpf,data_nascimento")
-              .in("id", leadIds)
-          : Promise.resolve({ data: [] as any[] }),
-        clienteIds.length
-          ? supabase
-              .from("clientes")
-              .select("id,nome,cpf,telefone,email,data_nascimento,observacoes")
-              .in("id", clienteIds)
-          : Promise.resolve({ data: [] as any[] }),
-      ]);
-
-      const leadsMap: Record<string, Lead> = {};
-      (leadsRes.data || []).forEach((l: any) => (leadsMap[l.id] = l));
-      setLeadsById(leadsMap);
-
-      const clientesMap: Record<string, Cliente> = {};
-      (clientesRes.data || []).forEach((c: any) => (clientesMap[c.id] = c));
-      setClientesById(clientesMap);
-
-      // 3) META (AQUI É O PONTO QUE ESTAVA TE TRAVANDO) ✅
-      // - vendedor: metas_vendedores.auth_user_id = auth.uid()
-      // - admin filtrado: auth_user_id do vendedor selecionado
-      // - admin "Todos": soma metas de todos no ano
-      await loadMetaForContext();
-    } finally {
-      setRefreshing(false);
-      setLoading(false);
-    }
   }
 
   /** ===================== Load Meta (corrigido) ===================== */
@@ -500,6 +418,62 @@ export default function Carteira() {
     setMetaMensal(m);
   }
 
+  /** ===================== Load data (vendas + leads/clientes + meta) ===================== */
+  async function loadData() {
+    if (!authUserId) return;
+
+    setRefreshing(true);
+    try {
+      let vendasQ = supabase
+        .from("vendas")
+        .select("*")
+        .gte("data_venda", `${selectedYear}-01-01`)
+        .lte("data_venda", `${selectedYear}-12-31`)
+        .order("data_venda", { ascending: false });
+
+      if (sellerAuthId) {
+        vendasQ = vendasQ.eq("vendedor_id", sellerAuthId);
+      }
+
+      const { data: vendasRows, error: vendasErr } = await vendasQ;
+      if (vendasErr) console.warn("[Carteira] vendasErr:", vendasErr.message);
+
+      const vs = (vendasRows || []) as Venda[];
+      setVendas(vs);
+
+      const leadIds = Array.from(new Set(vs.map((v) => v.lead_id).filter(Boolean))) as string[];
+      const clienteIds = Array.from(new Set(vs.map((v) => v.cliente_lead_id).filter(Boolean))) as string[];
+
+      const [leadsRes, clientesRes] = await Promise.all([
+        leadIds.length
+          ? supabase
+              .from("leads")
+              .select("id,nome,telefone,email,cpf,data_nascimento")
+              .in("id", leadIds)
+          : Promise.resolve({ data: [] as any[] }),
+        clienteIds.length
+          ? supabase
+              .from("clientes")
+              .select("id,nome,cpf,telefone,email,data_nascimento,observacoes")
+              .in("id", clienteIds)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+      const leadsMap: Record<string, Lead> = {};
+      (leadsRes.data || []).forEach((l: any) => (leadsMap[l.id] = l));
+      setLeadsById(leadsMap);
+
+      const clientesMap: Record<string, Cliente> = {};
+      (clientesRes.data || []).forEach((c: any) => (clientesMap[c.id] = c));
+      setClientesById(clientesMap);
+
+      await loadMetaForContext();
+    } finally {
+      setRefreshing(false);
+      setLoading(false);
+    }
+  }
+
   /** ===================== Bootstrap ===================== */
   useEffect(() => {
     (async () => {
@@ -510,15 +484,13 @@ export default function Carteira() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // trava filtro de vendedor quando não admin
   useEffect(() => {
     if (!loading && authUserId && me) {
-      if (!isAdmin) setSelectedSeller(ALL); // UI usa ALL mas sellerAuthId filtra pelo authUserId automaticamente
+      if (!isAdmin) setSelectedSeller(ALL);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, authUserId, me, isAdmin]);
 
-  // (re)load data quando muda ano/vendedor
   useEffect(() => {
     if (!authUserId) return;
     loadData();
@@ -526,13 +498,8 @@ export default function Carteira() {
   }, [authUserId, selectedYear, selectedSeller, isAdmin]);
 
   /** ===================== Derived: listas ===================== */
-  const vendasPendentes = useMemo(() => {
-    return vendas.filter((v) => !v.encarteirada_em);
-  }, [vendas]);
-
-  const vendasEncarteiradas = useMemo(() => {
-    return vendas.filter((v) => !!v.encarteirada_em);
-  }, [vendas]);
+  const vendasPendentes = useMemo(() => vendas.filter((v) => !v.encarteirada_em), [vendas]);
+  const vendasEncarteiradas = useMemo(() => vendas.filter((v) => !!v.encarteirada_em), [vendas]);
 
   const filteredPendentes = useMemo(() => {
     const q = normText(query);
@@ -574,20 +541,16 @@ export default function Carteira() {
     const contempladas = vendasEncarteiradas.filter((v) => !!v.contemplada);
     const inad = vendasEncarteiradas.filter((v) => !!v.inad);
 
-    // carteira por cliente: soma valor_venda só das ativas
     const sumByCliente: Record<string, number> = {};
     ativas.forEach((v) => {
       const cid = v.cliente_lead_id || v.lead_id || "—";
       sumByCliente[cid] = (sumByCliente[cid] || 0) + safeNum(v.valor_venda);
     });
-
     const carteiraTotal = Object.values(sumByCliente).reduce((a, b) => a + b, 0);
 
-    // realizado por mês: encarteiradas ativas no mês (por encarteirada_em) menos canceladas no mês (por cancelada_em)
     const realizado = Array(12).fill(0);
     const meta = metaMensal || Array(12).fill(0);
 
-    // positivo (encarteiramento)
     vendasEncarteiradas.forEach((v) => {
       const y = yearFromISO(v.encarteirada_em || "");
       if (y !== selectedYear) return;
@@ -598,13 +561,11 @@ export default function Carteira() {
       }
     });
 
-    // negativo (cancelamento) — quando codigo != 00 e tiver cancelada_em dentro do ano
     vendasEncarteiradas.forEach((v) => {
       const y = yearFromISO(v.cancelada_em || "");
       if (y !== selectedYear) return;
       const m = monthIndexFromISO(v.cancelada_em || "");
       if (m < 0) return;
-      // se cancelou, desconta valor_venda do mês do cancelamento
       if (!isCodigoAtivo(v.codigo) || v.cancelada_em) {
         realizado[m] -= safeNum(v.valor_venda);
       }
@@ -647,7 +608,7 @@ export default function Carteira() {
     ];
   }, [kpis.metaTotal, kpis.realizadoTotal]);
 
-  const donutColors = ["#A11C27", "#1E293F"]; // Consulmax rubi + navy
+  const donutColors = ["#A11C27", "#1E293F"];
 
   /** ===================== Lead search (Nova Venda) ===================== */
   async function searchLeads(q: string) {
@@ -662,9 +623,7 @@ export default function Carteira() {
       .or(`nome.ilike.%${qq}%,telefone.ilike.%${qq}%,email.ilike.%${qq}%`)
       .limit(12);
 
-    if (error) {
-      console.warn("[Carteira] leadSearchErr:", error.message);
-    }
+    if (error) console.warn("[Carteira] leadSearchErr:", error.message);
     setNvLeadResults((data || []) as any);
   }
 
@@ -676,51 +635,20 @@ export default function Carteira() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nvLeadQuery, openNovaVenda]);
 
-  // Quando escolhe lead, tenta prefill (clientes ou última venda encarteirada)
-  async function prefillFromLead(lead: Lead) {
-    // tenta cliente por lead_id
-    const { data: cliente } = await supabase
-      .from("clientes")
-      .select("id,nome,cpf,telefone,email,data_nascimento,lead_id")
-      .eq("lead_id", lead.id)
-      .limit(1)
-      .maybeSingle();
-
-    if (cliente?.cpf) {
-      // você pode usar se precisar
-    }
-
-    // pega última venda encarteirada desse lead para prefill cpf/nascimento
-    const { data: lastVenda } = await supabase
-      .from("vendas")
-      .select("cpf,nascimento,telefone,email")
-      .eq("lead_id", lead.id)
-      .not("encarteirada_em", "is", null)
-      .order("encarteirada_em", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    // (opcional) você pode mostrar no UI — aqui só guardamos no próprio lead se vier vazio
-    if (lastVenda) {
-      // nada crítico pro fluxo atual
-    }
+  async function prefillFromLead(_lead: Lead) {
+    // mantendo como noop (igual antes) — você pode expandir depois
   }
 
-  /** ===================== Nova venda: tabelas filtradas por segmento ===================== */
   const selectedAdminName = useMemo(() => {
     return simAdmins.find((a) => a.id === nvAdminId)?.name || "";
   }, [simAdmins, nvAdminId]);
 
   useEffect(() => {
-    // Deriva segmento do "produto" (fallback)
-    if (nvProduto && !nvSegmento) {
-      setNvSegmento(normalizeProdutoToSegmento(nvProduto));
-    }
+    if (nvProduto && !nvSegmento) setNvSegmento(normalizeProdutoToSegmento(nvProduto));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nvProduto]);
 
   useEffect(() => {
-    // limpa tabela se mudou admin/segmento
     setNvTabelaId("");
   }, [nvAdminId, nvSegmento]);
 
@@ -741,17 +669,14 @@ export default function Carteira() {
     setActiveVenda(v);
     setOpenVerVenda(true);
   }
-
   function openEditPendente(v: Venda) {
     setActiveVenda(v);
     setOpenEditarPendente(true);
   }
-
   function openEditCota(v: Venda) {
     setActiveVenda(v);
     setOpenEditorCota(true);
   }
-
   function openTransfer(v: Venda) {
     setActiveVenda(v);
     setOpenTransferencia(true);
@@ -777,34 +702,18 @@ export default function Carteira() {
   async function saveNovaVenda() {
     if (!authUserId) return;
 
-    if (!nvLead) {
-      alert("Selecione um lead.");
-      return;
-    }
-    if (!nvAdminId) {
-      alert("Selecione a Administradora.");
-      return;
-    }
-    if (!nvProduto.trim()) {
-      alert("Informe o Produto.");
-      return;
-    }
+    if (!nvLead) return alert("Selecione um lead.");
+    if (!nvAdminId) return alert("Selecione a Administradora.");
+    if (!nvProduto.trim()) return alert("Informe o Produto.");
+
     const segmento = nvSegmento || normalizeProdutoToSegmento(nvProduto);
-    if (!segmento) {
-      alert("Não foi possível definir o Segmento.");
-      return;
-    }
-    if (!nvTabelaId) {
-      alert("Selecione a Tabela.");
-      return;
-    }
-    if (!nvNumeroProposta.trim()) {
-      alert("Informe o Nº da Proposta.");
-      return;
-    }
+    if (!segmento) return alert("Não foi possível definir o Segmento.");
+
+    if (!nvTabelaId) return alert("Selecione a Tabela.");
+    if (!nvNumeroProposta.trim()) return alert("Informe o Nº da Proposta.");
+
     if (nvTipoVenda === "Bolsão" && !nvGrupo.trim()) {
-      alert("Para Bolsão, o Grupo é obrigatório.");
-      return;
+      return alert("Para Bolsão, o Grupo é obrigatório.");
     }
 
     const table = simTables.find((t) => t.id === nvTabelaId);
@@ -812,7 +721,7 @@ export default function Carteira() {
 
     const payload: Partial<Venda> = {
       data_venda: isoFromDateInput(nvDataVenda),
-      vendedor_id: authUserId, // padrão atual do teu CRM: salva auth uid
+      vendedor_id: authUserId,
       administradora: admin?.name || table?.administradora || "",
       produto: nvProduto.trim(),
       segmento,
@@ -843,6 +752,7 @@ export default function Carteira() {
 
   async function encarteirarVenda(v: Venda) {
     if (!isAdmin) return;
+
     const grupo = prompt("Grupo:");
     if (!grupo) return;
     const cota = prompt("Cota:");
@@ -872,15 +782,11 @@ export default function Carteira() {
 
   async function saveMetaAdmin() {
     if (!isAdmin) return;
-    if (selectedSeller === ALL) {
-      alert("Selecione um vendedor para cadastrar meta.");
-      return;
-    }
+    if (selectedSeller === ALL) return alert("Selecione um vendedor para cadastrar meta.");
 
     const seller = usersById[selectedSeller];
     if (!seller?.id || !seller.auth_user_id) {
-      alert("Vendedor inválido (sem auth_user_id).");
-      return;
+      return alert("Vendedor inválido (sem auth_user_id).");
     }
 
     setMetaSaving(true);
@@ -904,7 +810,6 @@ export default function Carteira() {
         m12: safeNum(metaForm[11]),
       };
 
-      // upsert por (vendedor_id, ano) — você já tem unique(vendedor_id, ano)
       const { error } = await supabase
         .from("metas_vendedores")
         .upsert(payload as any, { onConflict: "vendedor_id,ano" });
@@ -924,7 +829,6 @@ export default function Carteira() {
 
   function openMetaDialog() {
     if (!isAdmin) return;
-    // prefill com metaMensal atual
     setMetaForm([...(metaMensal || Array(12).fill(0))]);
     setOpenMeta(true);
   }
@@ -946,7 +850,6 @@ export default function Carteira() {
   /** ===================== UI ===================== */
   return (
     <div className="p-4 space-y-4">
-      {/* Header */}
       <Card className="border border-white/10 bg-white/5 backdrop-blur-md">
         <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
@@ -1044,31 +947,14 @@ export default function Carteira() {
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-            <KpiCard
-              title="Ativas"
-              value={String(kpis.ativasCount)}
-              icon={<CheckCircle2 className="h-4 w-4" />}
-            />
-            <KpiCard
-              title="Canceladas"
-              value={String(kpis.canceladasCount)}
-              icon={<XCircle className="h-4 w-4" />}
-            />
-            <KpiCard
-              title="Contempladas"
-              value={String(kpis.contempladasCount)}
-              icon={<CheckCircle2 className="h-4 w-4" />}
-            />
-            <KpiCard
-              title="Inadimplentes"
-              value={String(kpis.inadCount)}
-              icon={<AlertTriangle className="h-4 w-4" />}
-            />
+            <KpiCard title="Ativas" value={String(kpis.ativasCount)} icon={<CheckCircle2 className="h-4 w-4" />} />
+            <KpiCard title="Canceladas" value={String(kpis.canceladasCount)} icon={<XCircle className="h-4 w-4" />} />
+            <KpiCard title="Contempladas" value={String(kpis.contempladasCount)} icon={<CheckCircle2 className="h-4 w-4" />} />
+            <KpiCard title="Inadimplentes" value={String(kpis.inadCount)} icon={<AlertTriangle className="h-4 w-4" />} />
             <KpiCard
               title="Carteira"
-              value={showCarteiraValues ? currency(kpis.carteiraTotal) : "•••••"}
+              value={showCarteiraValues ? currencyBR(kpis.carteiraTotal) : "•••••"}
               icon={
                 <button
                   className="text-xs text-white/70 hover:text-white"
@@ -1081,18 +967,13 @@ export default function Carteira() {
             />
             <KpiCard
               title="% Meta (Ano)"
-              value={
-                kpis.metaTotal > 0
-                  ? `${(kpis.pctAno * 100).toFixed(1).replace(".", ",")}%`
-                  : "—"
-              }
+              value={kpis.metaTotal > 0 ? `${(kpis.pctAno * 100).toFixed(1).replace(".", ",")}%` : "—"}
               icon={<Target className="h-4 w-4" />}
             />
           </div>
 
           <Separator className="bg-white/10" />
 
-          {/* Meta charts */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card className="border border-white/10 bg-white/5 backdrop-blur-md">
               <CardHeader>
@@ -1102,28 +983,19 @@ export default function Carteira() {
                 <div className="relative w-full h-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie
-                        data={donutAnoData}
-                        dataKey="value"
-                        nameKey="name"
-                        innerRadius={55}
-                        outerRadius={80}
-                        paddingAngle={2}
-                      >
+                      <Pie data={donutAnoData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2}>
                         {donutAnoData.map((_, idx) => (
                           <Cell key={idx} fill={donutColors[idx % donutColors.length]} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(v: any) => currency(v)} />
+                      <Tooltip formatter={(v: any) => currencyBR(v)} />
                     </PieChart>
                   </ResponsiveContainer>
 
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="text-center">
                       <div className="text-xl font-semibold">
-                        {kpis.metaTotal > 0
-                          ? `${(kpis.pctAno * 100).toFixed(1).replace(".", ",")}%`
-                          : "—"}
+                        {kpis.metaTotal > 0 ? `${(kpis.pctAno * 100).toFixed(1).replace(".", ",")}%` : "—"}
                       </div>
                       <div className="text-xs text-white/60">da meta anual</div>
                     </div>
@@ -1131,8 +1003,8 @@ export default function Carteira() {
                 </div>
 
                 <div className="mt-2 text-xs text-white/70 flex justify-between">
-                  <span>Meta: {currency(kpis.metaTotal)}</span>
-                  <span>Realizado: {currency(kpis.realizadoTotal)}</span>
+                  <span>Meta: {currencyBR(kpis.metaTotal)}</span>
+                  <span>Realizado: {currencyBR(kpis.realizadoTotal)}</span>
                 </div>
               </CardContent>
             </Card>
@@ -1146,8 +1018,12 @@ export default function Carteira() {
                   <LineChart data={chartMes}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                     <XAxis dataKey="mes" />
-                    <YAxis tickFormatter={(v) => (Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v))} />
-                    <Tooltip formatter={(v: any) => currency(v)} />
+                    <YAxis
+                      tickFormatter={(v) =>
+                        Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}k` : String(v)
+                      }
+                    />
+                    <Tooltip formatter={(v: any) => currencyBR(v)} />
                     <Line type="monotone" dataKey="meta" strokeWidth={2} dot={false} />
                     <Line type="monotone" dataKey="realizado" strokeWidth={2} dot={false} />
                   </LineChart>
@@ -1158,7 +1034,6 @@ export default function Carteira() {
         </CardContent>
       </Card>
 
-      {/* Tabs listas */}
       <Card className="border border-white/10 bg-white/5 backdrop-blur-md">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Vendas</CardTitle>
@@ -1170,7 +1045,8 @@ export default function Carteira() {
                 Pendentes <Badge className="ml-2 bg-white/10">{filteredPendentes.length}</Badge>
               </TabsTrigger>
               <TabsTrigger value="encarteiradas">
-                Encarteiradas <Badge className="ml-2 bg-white/10">{filteredEncarteiradas.length}</Badge>
+                Encarteiradas{" "}
+                <Badge className="ml-2 bg-white/10">{filteredEncarteiradas.length}</Badge>
               </TabsTrigger>
             </TabsList>
 
@@ -1226,7 +1102,6 @@ export default function Carteira() {
           </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Lead */}
             <div className="space-y-2">
               <Label>Buscar Lead</Label>
               <Input
@@ -1268,7 +1143,6 @@ export default function Carteira() {
               )}
             </div>
 
-            {/* Dados */}
             <div className="space-y-3">
               <div className="grid gap-1">
                 <Label>Data da venda</Label>
@@ -1426,7 +1300,7 @@ export default function Carteira() {
                 <Info label="Tabela">{activeVenda.tabela || "—"}</Info>
                 <Info label="Produto">{activeVenda.produto || "—"}</Info>
                 <Info label="Segmento">{activeVenda.segmento || "—"}</Info>
-                <Info label="Valor">{currency(activeVenda.valor_venda)}</Info>
+                <Info label="Valor">{currencyBR(activeVenda.valor_venda)}</Info>
                 <Info label="Data venda">{formatDateBR(activeVenda.data_venda)}</Info>
                 <Info label="Encarteirada em">{formatDateTimeBR(activeVenda.encarteirada_em)}</Info>
                 <Info label="Grupo/Cota">
@@ -1453,7 +1327,7 @@ export default function Carteira() {
         </DialogContent>
       </Dialog>
 
-      {/* ===== Dialog: Editar Pendente (simples, mantém funcionalidades sem encarteirar) ===== */}
+      {/* ===== Dialog: Editar Pendente ===== */}
       <Dialog open={openEditarPendente} onOpenChange={setOpenEditarPendente}>
         <DialogContent className="max-w-2xl bg-[#0b1220] border border-white/10">
           <DialogHeader>
@@ -1528,65 +1402,63 @@ export default function Carteira() {
             <DialogTitle>Cadastrar/Editar Meta</DialogTitle>
           </DialogHeader>
 
-          {!isAdmin ? (
-            <div className="text-sm text-white/60">Apenas admin.</div>
-          ) : selectedSeller === ALL ? (
-            <div className="text-sm text-white/60">
-              Selecione um vendedor no filtro para cadastrar meta.
+        {!isAdmin ? (
+          <div className="text-sm text-white/60">Apenas admin.</div>
+        ) : selectedSeller === ALL ? (
+          <div className="text-sm text-white/60">
+            Selecione um vendedor no filtro para cadastrar meta.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="text-sm text-white/70">
+              Vendedor: <span className="text-white">{usersById[selectedSeller]?.nome}</span> • Ano:{" "}
+              <span className="text-white">{selectedYear}</span>
             </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="text-sm text-white/70">
-                Vendedor: <span className="text-white">{usersById[selectedSeller]?.nome}</span> • Ano:{" "}
-                <span className="text-white">{selectedYear}</span>
-              </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {Array.from({ length: 12 }).map((_, i) => (
-                  <div key={i} className="grid gap-1">
-                    <Label>{monthLabel(i)}</Label>
-                    <Input
-                      value={String(metaForm[i] ?? 0)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        const n = Number(v.replace(",", "."));
-                        setMetaForm((old) => {
-                          const cp = [...old];
-                          cp[i] = isFinite(n) ? n : 0;
-                          return cp;
-                        });
-                      }}
-                      className="bg-white/5 border-white/10"
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <DialogFooter>
-                <Button
-                  variant="secondary"
-                  className="bg-white/10 border border-white/10"
-                  onClick={() => setOpenMeta(false)}
-                  disabled={metaSaving}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  className="bg-[#A11C27] hover:bg-[#8d1822]"
-                  onClick={saveMetaAdmin}
-                  disabled={metaSaving}
-                >
-                  {metaSaving ? "Salvando..." : "Salvar meta"}
-                </Button>
-              </DialogFooter>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {Array.from({ length: 12 }).map((_, i) => (
+                <div key={i} className="grid gap-1">
+                  <Label>{monthLabel(i)}</Label>
+                  <Input
+                    value={String(metaForm[i] ?? 0)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const n = Number(v.replace(",", "."));
+                      setMetaForm((old) => {
+                        const cp = [...old];
+                        cp[i] = Number.isFinite(n) ? n : 0;
+                        return cp;
+                      });
+                    }}
+                    className="bg-white/5 border-white/10"
+                  />
+                </div>
+              ))}
             </div>
-          )}
+
+            <DialogFooter>
+              <Button
+                variant="secondary"
+                className="bg-white/10 border border-white/10"
+                onClick={() => setOpenMeta(false)}
+                disabled={metaSaving}
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="bg-[#A11C27] hover:bg-[#8d1822]"
+                onClick={saveMetaAdmin}
+                disabled={metaSaving}
+              >
+                {metaSaving ? "Salvando..." : "Salvar meta"}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
         </DialogContent>
       </Dialog>
 
-      {loading && (
-        <div className="text-sm text-white/60">Carregando…</div>
-      )}
+      {loading && <div className="text-sm text-white/60">Carregando…</div>}
     </div>
   );
 }
@@ -1670,6 +1542,7 @@ function VendaTable({
                 (v.cliente_lead_id && clientesById[v.cliente_lead_id]?.nome) ||
                 (v.lead_id && leadsById[v.lead_id]?.nome) ||
                 "—";
+
               const vend = v.vendedor_id ? usersByAuth[v.vendedor_id]?.nome : null;
 
               const status = v.encarteirada_em
@@ -1677,8 +1550,8 @@ function VendaTable({
                   ? v.inad
                     ? "Inadimplente"
                     : v.contemplada
-                      ? "Contemplada"
-                      : "Ativa"
+                    ? "Contemplada"
+                    : "Ativa"
                   : "Cancelada"
                 : "Pendente";
 
@@ -1688,7 +1561,7 @@ function VendaTable({
                   <td className="p-3">{v.numero_proposta || "—"}</td>
                   <td className="p-3">{v.administradora || "—"}</td>
                   <td className="p-3">{v.produto || "—"}</td>
-                  <td className="p-3">{currency(v.valor_venda)}</td>
+                  <td className="p-3">{currencyBR(v.valor_venda)}</td>
                   <td className="p-3">{vend || "—"}</td>
                   <td className="p-3">
                     <Badge className="bg-white/10">{status}</Badge>
@@ -1742,16 +1615,7 @@ function VendaTable({
   );
 }
 
-function isCodigoAtivo(codigo?: string | null) {
-  return String(codigo || "").trim() === "00";
-}
-
-function currency(v: any) {
-  const n = Number(v || 0);
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
-/** ===== Editar Pendente (mantém, sem mexer em encarteirar) ===== */
+/** ===== Editar Pendente ===== */
 function EditarPendente({
   venda,
   onCancel,
@@ -1794,37 +1658,20 @@ function EditarPendente({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="grid gap-1">
           <Label>Nº Proposta</Label>
-          <Input
-            value={numeroProposta}
-            onChange={(e) => setNumeroProposta(e.target.value)}
-            className="bg-white/5 border-white/10"
-          />
+          <Input value={numeroProposta} onChange={(e) => setNumeroProposta(e.target.value)} className="bg-white/5 border-white/10" />
         </div>
         <div className="grid gap-1">
           <Label>Valor</Label>
-          <Input
-            value={valor}
-            onChange={(e) => setValor(e.target.value)}
-            className="bg-white/5 border-white/10"
-          />
+          <Input value={valor} onChange={(e) => setValor(e.target.value)} className="bg-white/5 border-white/10" />
         </div>
         <div className="grid gap-1">
           <Label>Produto</Label>
-          <Input
-            value={produto}
-            onChange={(e) => setProduto(e.target.value)}
-            className="bg-white/5 border-white/10"
-          />
+          <Input value={produto} onChange={(e) => setProduto(e.target.value)} className="bg-white/5 border-white/10" />
         </div>
       </div>
 
       <DialogFooter>
-        <Button
-          variant="secondary"
-          className="bg-white/10 border border-white/10"
-          onClick={onCancel}
-          disabled={saving}
-        >
+        <Button variant="secondary" className="bg-white/10 border border-white/10" onClick={onCancel} disabled={saving}>
           Cancelar
         </Button>
         <Button className="bg-[#A11C27] hover:bg-[#8d1822]" onClick={save} disabled={saving}>
@@ -1877,9 +1724,8 @@ function EditorCota({
   async function save() {
     if (!isAdmin) return;
 
-    // regras simples de data quando muda código
-    const wasAtivo = String(venda.codigo || "").trim() === "00";
-    const willAtivo = String(codigo || "").trim() === "00";
+    const wasAtivo = isCodigoAtivo(venda.codigo);
+    const willAtivo = isCodigoAtivo(codigo);
 
     if (wasAtivo && !willAtivo && !canceladaEm) {
       alert("Ao mudar de 00 para outro código, informe a data de cancelamento.");
@@ -1888,10 +1734,6 @@ function EditorCota({
     if (!wasAtivo && willAtivo && !reativadaEm) {
       alert("Ao reativar para 00, informe a data de reativação.");
       return;
-    }
-    if (!inad && !!venda.inad && !inadRevEm) {
-      // se está marcando inad=false (voltando), exige data de reversão
-      // (ajuste conforme sua regra)
     }
 
     setSaving(true);
@@ -1929,9 +1771,7 @@ function EditorCota({
 
   return (
     <div className="space-y-4">
-      {!isAdmin && (
-        <div className="text-sm text-white/60">Somente admin pode editar cota.</div>
-      )}
+      {!isAdmin && <div className="text-sm text-white/60">Somente admin pode editar cota.</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="grid gap-1">
@@ -1966,36 +1806,13 @@ function EditorCota({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="rounded-lg border border-white/10 bg-white/5 p-3">
           <Label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={contemplada}
-              onChange={(e) => setContemplada(e.target.checked)}
-            />
+            <input type="checkbox" checked={contemplada} onChange={(e) => setContemplada(e.target.checked)} />
             Contemplada
           </Label>
           <div className="mt-2 grid gap-2">
-            <Input
-              type="date"
-              value={dataCont}
-              onChange={(e) => setDataCont(e.target.value)}
-              disabled={!contemplada}
-              className="bg-white/5 border-white/10"
-              placeholder="Data"
-            />
-            <Input
-              value={contTipo}
-              onChange={(e) => setContTipo(e.target.value)}
-              disabled={!contemplada}
-              className="bg-white/5 border-white/10"
-              placeholder="Tipo (ex.: Lance / Sorteio)"
-            />
-            <Input
-              value={contPct}
-              onChange={(e) => setContPct(e.target.value)}
-              disabled={!contemplada}
-              className="bg-white/5 border-white/10"
-              placeholder="% (ex.: 25,0000)"
-            />
+            <Input type="date" value={dataCont} onChange={(e) => setDataCont(e.target.value)} disabled={!contemplada} className="bg-white/5 border-white/10" />
+            <Input value={contTipo} onChange={(e) => setContTipo(e.target.value)} disabled={!contemplada} className="bg-white/5 border-white/10" placeholder="Tipo (ex.: Lance / Sorteio)" />
+            <Input value={contPct} onChange={(e) => setContPct(e.target.value)} disabled={!contemplada} className="bg-white/5 border-white/10" placeholder="% (ex.: 25,0000)" />
           </div>
         </div>
 
@@ -2005,22 +1822,8 @@ function EditorCota({
             Inadimplente
           </Label>
           <div className="mt-2 grid gap-2">
-            <Input
-              type="date"
-              value={inadEm}
-              onChange={(e) => setInadEm(e.target.value)}
-              disabled={!inad}
-              className="bg-white/5 border-white/10"
-              placeholder="Inad em"
-            />
-            <Input
-              type="date"
-              value={inadRevEm}
-              onChange={(e) => setInadRevEm(e.target.value)}
-              disabled={inad}
-              className="bg-white/5 border-white/10"
-              placeholder="Revertida em"
-            />
+            <Input type="date" value={inadEm} onChange={(e) => setInadEm(e.target.value)} disabled={!inad} className="bg-white/5 border-white/10" />
+            <Input type="date" value={inadRevEm} onChange={(e) => setInadRevEm(e.target.value)} disabled={inad} className="bg-white/5 border-white/10" />
           </div>
         </div>
 
@@ -2061,14 +1864,10 @@ function TransferenciaCota({
 
   async function save() {
     if (!isAdmin) return;
-    if (!novoLeadId.trim()) {
-      alert("Informe o lead_id de destino (uuid).");
-      return;
-    }
+    if (!novoLeadId.trim()) return alert("Informe o lead_id de destino (uuid).");
 
     setSaving(true);
     try {
-      // transfere vínculo
       const { error } = await supabase
         .from("vendas")
         .update({

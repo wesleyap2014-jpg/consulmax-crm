@@ -1,1377 +1,2606 @@
 // src/pages/Carteira.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
-
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
-import {
-  ResponsiveContainer,
   PieChart,
   Pie,
   Cell,
-  Tooltip,
+  ResponsiveContainer,
   LineChart,
   Line,
   XAxis,
   YAxis,
-  CartesianGrid,
+  Tooltip,
+  Legend,
 } from "recharts";
 
-import {
-  Loader2,
-  Plus,
-  RefreshCw,
-  Pencil,
-  Eye,
-  ShieldCheck,
-  UserRound,
-  Save,
-  X,
-  ArrowRightLeft,
-} from "lucide-react";
+type Lead = { id: string; nome: string; telefone?: string | null; email?: string | null };
 
-/** ===================== Tipos ===================== */
-type UserRole = "admin" | "vendedor" | string;
+type Produto =
+  | "Automóvel"
+  | "Imóvel"
+  | "Serviço"
+  | "Motocicleta"
+  | "Pesados"
+  | "Imóvel Estendido"
+  | "Consórcio Ouro";
 
-type UserRow = {
-  id: string; // public.users.id
-  auth_user_id: string; // supabase auth uid
-  nome?: string | null;
-  email?: string | null;
-  role?: UserRole | null;
-  user_role?: UserRole | null; // legado
-  is_active?: boolean | null;
-};
+type FormaVenda = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
+type Administradora = string;
 
-type MetaRow = {
+type Venda = {
   id: string;
-  vendedor_id: string; // public.users.id
-  auth_user_id: string | null; // novo campo (pode ter null em registros antigos)
-  ano: number;
-  m01?: number | null;
-  m02?: number | null;
-  m03?: number | null;
-  m04?: number | null;
-  m05?: number | null;
-  m06?: number | null;
-  m07?: number | null;
-  m08?: number | null;
-  m09?: number | null;
-  m10?: number | null;
-  m11?: number | null;
-  m12?: number | null;
-};
-
-type VendaRow = {
-  id: string;
-  data_venda?: string | null; // date
-  vendedor_id?: string | null; // IMPORTANT: aqui é auth_user_id (pelo teu schema/memória)
-  segmento?: string | null;
-  produto?: string | null;
-  administradora?: string | null;
-  tabela?: string | null;
-  forma_venda?: string | null;
-  numero_proposta?: string | null;
-
-  lead_id?: string | null;
-  cliente_lead_id?: string | null;
-
-  nome?: string | null; // (se você já enriquece no backend/view, senão fica vazio)
-  telefone?: string | null;
-  email?: string | null;
-
-  valor_venda?: number | null;
-
-  // encarteiramento / status
-  encarteirada_em?: string | null; // timestamptz
-  grupo?: string | null;
-  cota?: string | null;
-  codigo?: string | null; // '00' ativa
-  cancelada_em?: string | null;
-
-  contemplada?: boolean | null;
-  data_contemplacao?: string | null;
-
-  inad?: boolean | null;
-  inad_em?: string | null;
-  inad_revertida_em?: string | null;
-
-  descricao?: string | null;
-  status?: string | null;
-  status_inicial?: string | null;
-
-  // campos novos (se existirem)
-  reativada_em?: string | null;
-  contemplacao_tipo?: string | null;
-  contemplacao_pct?: number | null;
-};
-
-type VendaForm = {
-  data_venda: string; // YYYY-MM-DD
-  vendedor_auth_id: string; // auth uid
-  segmento: string;
-  produto: string;
-  administradora: string;
-  tabela: string;
-  forma_venda: string;
+  lead_id: string;
+  cpf: string;
+  data_venda: string;
+  vendedor_id: string; // auth_user_id (uuid) no seu schema
+  produto: Produto;
+  administradora: Administradora;
+  forma_venda: FormaVenda;
   numero_proposta: string;
-  valor_venda: string; // texto moeda
-  telefone: string;
-  email: string;
-  descricao: string;
-  // encarteiramento
-  grupo: string;
-  cota: string;
-  codigo: string; // default '00'
+  valor_venda: number;
+  tipo_venda: "Normal" | "Contemplada" | "Bolsão";
+  descricao: string | null;
+  status: "nova" | "encarteirada";
+  grupo: string | null;
+  cota: string | null;
+  codigo: string | null;
+  encarteirada_em: string | null;
+  contemplada?: boolean | null;
+  data_contemplacao?: string | null; // date
+  tabela?: string | null;
+  created_at: string;
+  segmento?: string | null;
+  data_nascimento?: string | null;
+  cancelada_em?: string | null; // timestamptz
+  inad?: boolean | null; // flag de inadimplência
+
+  // ====== NOVOS CAMPOS (SQL já rodou) ======
+  reativada_em?: string | null; // timestamptz
+  contemplacao_tipo?: string | null; // 'Lance Livre' | 'Primeiro Lance Fixo' | 'Segundo Lance Fixo'
+  contemplacao_pct?: number | null; // numeric(9,4)
+  inad_em?: string | null; // date
+  inad_revertida_em?: string | null; // date
 };
 
-const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+type AppUser = {
+  id: string;
+  nome: string;
+  email?: string | null;
+  role?: string | null;
+  auth_user_id?: string | null; // importante p/ mapear filtro
+};
 
-function currency(n?: number | null) {
-  if (n == null || Number.isNaN(n)) return "—";
-  return BRL.format(n);
-}
+const PRODUTOS: Produto[] = [
+  "Automóvel",
+  "Imóvel",
+  "Serviço",
+  "Motocicleta",
+  "Pesados",
+  "Imóvel Estendido",
+  "Consórcio Ouro",
+];
 
-function toISODateInput(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+const FORMAS: FormaVenda[] = ["Parcela Cheia", "Reduzida 25%", "Reduzida 50%"];
 
-function formatDateBR(iso?: string | null) {
-  if (!iso) return "—";
-  // aceita date "YYYY-MM-DD" ou timestamptz
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) {
-    // se for exatamente YYYY-MM-DD
-    const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-    return iso;
+const currency = (n: number) =>
+  new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 2,
+  }).format(n);
+
+const formatNumberBR = (n: number) =>
+  new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+
+const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
+const onlyDigits = (s: string) => (s || "").replace(/\D/g, "");
+
+const formatDateBR = (isoDate?: string | null) => {
+  if (!isoDate) return "—";
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return isoDate;
+  return new Intl.DateTimeFormat("pt-BR").format(d);
+};
+
+const formatDateTimeBR = (isoDate?: string | null) => {
+  if (!isoDate) return "—";
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return isoDate;
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(d);
+};
+
+// Converte input date (YYYY-MM-DD) para timestamptz ISO (00:00 local -> ISO)
+const isoFromDateInput = (dateStr: string) => {
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+};
+
+// Formata automaticamente como CPF (11 dígitos) ou CNPJ (14 dígitos)
+const formatCPF = (s: string) => {
+  const d = onlyDigits(s);
+
+  if (d.length <= 11) {
+    const cpf = d.slice(0, 11);
+    const p1 = cpf.slice(0, 3);
+    const p2 = cpf.slice(3, 6);
+    const p3 = cpf.slice(6, 9);
+    const p4 = cpf.slice(9, 11);
+
+    if (cpf.length <= 3) return p1;
+    if (cpf.length <= 6) return `${p1}.${p2}`;
+    if (cpf.length <= 9) return `${p1}.${p2}.${p3}`;
+    return `${p1}.${p2}.${p3}-${p4}`;
   }
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yy = d.getFullYear();
-  return `${dd}/${mm}/${yy}`;
+
+  const cnpj = d.slice(0, 14);
+  const p1 = cnpj.slice(0, 2);
+  const p2 = cnpj.slice(2, 5);
+  const p3 = cnpj.slice(5, 8);
+  const p4 = cnpj.slice(8, 12);
+  const p5 = cnpj.slice(12, 14);
+
+  if (cnpj.length <= 2) return p1;
+  if (cnpj.length <= 5) return `${p1}.${p2}`;
+  if (cnpj.length <= 8) return `${p1}.${p2}.${p3}`;
+  if (cnpj.length <= 12) return `${p1}.${p2}.${p3}/${p4}`;
+  return `${p1}.${p2}.${p3}/${p4}-${p5}`;
+};
+
+// Valida CPF (11 dígitos) OU CNPJ (14 dígitos)
+const validateCPF = (doc: string) => {
+  const d = onlyDigits(doc);
+
+  if (d.length === 11) {
+    if (/^(\d)\1{10}$/.test(d)) return false;
+    const calc = (base: string, factor: number) => {
+      let sum = 0;
+      for (let i = 0; i < base.length; i++) sum += parseInt(base[i], 10) * (factor - i);
+      const rest = (sum * 10) % 11;
+      return rest === 10 ? 0 : rest;
+    };
+    const d1 = calc(d.slice(0, 9), 10);
+    const d2 = calc(d.slice(0, 10), 11);
+    return d1 === parseInt(d[9], 10) && d2 === parseInt(d[10], 10);
+  }
+
+  if (d.length === 14) {
+    if (/^(\d)\1{13}$/.test(d)) return false;
+
+    const calc = (weights: number[], digits: string) => {
+      let sum = 0;
+      for (let i = 0; i < weights.length; i++) sum += weights[i] * parseInt(digits[i], 10);
+      const rest = sum % 11;
+      return rest < 2 ? 0 : 11 - rest;
+    };
+
+    const w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const w2 = [6, ...w1];
+
+    const d1 = calc(w1, d.slice(0, 12));
+    const d2 = calc(w2, d.slice(0, 13));
+
+    return d1 === parseInt(d[12], 10) && d2 === parseInt(d[13], 10);
+  }
+
+  return false;
+};
+
+function normalizeProdutoToSegmento(produto: Produto | string | null | undefined): string | null {
+  const p = (produto || "").toString().trim();
+  if (!p) return null;
+  if (p === "Imóvel Estendido") return "Imóvel";
+  if (p === "Serviço") return "Serviços";
+  return p;
 }
 
-function parseMoneyBR(value: string): number {
-  // "1.234.567,89" -> 1234567.89
-  const clean = value.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
-  const n = Number(clean.replace(/[^\d.-]/g, ""));
-  return Number.isFinite(n) ? n : 0;
+function normalizeSegmentLabel(s: string | null | undefined): string {
+  return (s || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
-function pctHuman(num: number) {
-  // 0.1234 -> "12,34%"
-  const p = num * 100;
-  return `${p.toFixed(2).replace(".", ",")}%`;
-}
+const parsePct4 = (raw: string): number | null => {
+  const s = (raw || "")
+    .replace(/\s/g, "")
+    .replace("%", "")
+    .replace(/\./g, "")
+    .replace(",", ".")
+    .replace(/[^\d.]/g, "");
+  if (!s) return null;
+  const n = Number(s);
+  if (Number.isNaN(n)) return null;
+  return Math.max(0, Math.min(100, n));
+};
 
-function monthKey(i1: number) {
-  return String(i1).padStart(2, "0"); // 1..12
-}
+const formatPct4 = (n?: number | null) => {
+  if (n == null || Number.isNaN(Number(n))) return "";
+  return new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  }).format(Number(n));
+};
 
-/** ===================== Donut Meta ===================== */
-function DonutMeta({
-  title,
-  realizado,
-  meta,
-}: {
-  title: string;
-  realizado: number;
-  meta: number;
-}) {
-  const safeMeta = meta > 0 ? meta : 0;
-  const pct = safeMeta > 0 ? Math.min(1, Math.max(0, realizado / safeMeta)) : 0;
+type LinhaEncarteirarProps = {
+  venda: Venda;
+  lead?: Lead;
+  canEncarteirar: boolean;
+  onSubmit: (vendaId: string, grupo: string, cota: string, codigo: string) => Promise<void>;
+  onDelete: (vendaId: string) => Promise<void>;
+  onViewVenda: (v: Venda, lead?: Lead) => void;
+  onOpenEditarVenda: (v: Venda) => void;
+};
 
-  const data = useMemo(
-    () => [
-      { name: "Realizado", value: pct },
-      { name: "Falta", value: 1 - pct },
-    ],
-    [pct]
-  );
+const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
+  venda,
+  lead,
+  canEncarteirar,
+  onSubmit,
+  onDelete,
+  onViewVenda,
+  onOpenEditarVenda,
+}) => {
+  const [grupo, setGrupo] = useState("");
+  const [cota, setCota] = useState("");
+  const [codigo, setCodigo] = useState("");
 
   return (
-    <Card className="border-white/10 bg-white/5 backdrop-blur-xl">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="h-44">
-        <div className="h-full w-full relative">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={data}
-                dataKey="value"
-                nameKey="name"
-                innerRadius="70%"
-                outerRadius="95%"
-                startAngle={90}
-                endAngle={-270}
-                stroke="transparent"
-              >
-                <Cell />
-                <Cell />
-              </Pie>
-              <Tooltip
-                formatter={(v: any, name: any) => [
-                  name === "Realizado" ? pctHuman(Number(v)) : pctHuman(Number(v)),
-                  name,
-                ]}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-            <div className="text-xl font-bold">{pctHuman(pct)}</div>
-            <div className="text-xs text-muted-foreground">
-              {currency(realizado)} / {currency(meta)}
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** ===================== Página ===================== */
-export default function Carteira() {
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
-  const [me, setMe] = useState<UserRow | null>(null);
-
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const usersById = useMemo(() => {
-    const m = new Map<string, UserRow>();
-    users.forEach((u) => m.set(u.id, u));
-    return m;
-  }, [users]);
-
-  const usersByAuth = useMemo(() => {
-    const m = new Map<string, UserRow>();
-    users.forEach((u) => m.set(u.auth_user_id, u));
-    return m;
-  }, [users]);
-
-  const role: UserRole | null = (me?.role ?? me?.user_role ?? null) as any;
-  const isAdmin = role === "admin";
-
-  // filtro vendedor (admin)
-  const [selectedSellerId, setSelectedSellerId] = useState<string>("__all__");
-
-  // ano
-  const now = new Date();
-  const [year, setYear] = useState<number>(now.getFullYear());
-
-  // busca
-  const [search, setSearch] = useState("");
-
-  // dados
-  const [metasRows, setMetasRows] = useState<MetaRow[]>([]);
-  const [vendas, setVendas] = useState<VendaRow[]>([]);
-
-  // dialogs
-  const [openNovaVenda, setOpenNovaVenda] = useState(false);
-  const [openEditarVenda, setOpenEditarVenda] = useState<null | VendaRow>(null);
-  const [openVerVenda, setOpenVerVenda] = useState<null | VendaRow>(null);
-  const [openMetaEditor, setOpenMetaEditor] = useState(false);
-
-  /** ========= RBAC: filtros efetivos ========= */
-  const effectiveAuthFilter = useMemo(() => {
-    // auth_user_id para filtrar vendas/meta quando necessário
-    if (!authUserId) return null;
-
-    if (!isAdmin) return authUserId;
-
-    if (selectedSellerId === "__all__") return null;
-
-    const u = usersById.get(selectedSellerId);
-    return u?.auth_user_id ?? null;
-  }, [authUserId, isAdmin, selectedSellerId, usersById]);
-
-  /** ========= Meta agregada (m01..m12) conforme RBAC ========= */
-  const metaTotals = useMemo(() => {
-    // normaliza auth_user_id ausente em metas antigas usando usersById
-    const rowsNormalized = metasRows.map((r) => {
-      const auth =
-        r.auth_user_id ??
-        usersById.get(r.vendedor_id)?.auth_user_id ??
-        null;
-      return { ...r, auth_user_id: auth };
-    });
-
-    const rowsFiltered = (() => {
-      if (!authUserId) return [];
-      if (!isAdmin) {
-        return rowsNormalized.filter((r) => r.auth_user_id === authUserId);
-      }
-      if (selectedSellerId === "__all__") return rowsNormalized;
-      const auth = usersById.get(selectedSellerId)?.auth_user_id ?? null;
-      if (!auth) return [];
-      return rowsNormalized.filter((r) => r.auth_user_id === auth);
-    })();
-
-    const sum = (key: keyof MetaRow) =>
-      rowsFiltered.reduce((acc, r) => acc + (Number(r[key] ?? 0) || 0), 0);
-
-    return {
-      m01: sum("m01"),
-      m02: sum("m02"),
-      m03: sum("m03"),
-      m04: sum("m04"),
-      m05: sum("m05"),
-      m06: sum("m06"),
-      m07: sum("m07"),
-      m08: sum("m08"),
-      m09: sum("m09"),
-      m10: sum("m10"),
-      m11: sum("m11"),
-      m12: sum("m12"),
-    };
-  }, [metasRows, authUserId, isAdmin, selectedSellerId, usersById]);
-
-  const monthIndex = now.getMonth() + 1; // 1..12
-  const metaMes = (metaTotals as any)[`m${monthKey(monthIndex)}`] ?? 0;
-  const metaAno = Object.values(metaTotals).reduce((a, b) => a + (b || 0), 0);
-
-  /** ========= Realizado por mês (encarteiradas/canceladas) ========= */
-  const realizadoByMonth = useMemo(() => {
-    const map = new Map<number, number>();
-    for (let m = 1; m <= 12; m++) map.set(m, 0);
-
-    // regra (conforme teu baseline/memória):
-    // realizado mensal = vendas encarteiradas ativas (codigo='00' por encarteirada_em)
-    // menos canceladas (codigo!='00' por cancelada_em)
-    vendas.forEach((v) => {
-      const codigo = (v.codigo ?? "00").trim();
-      const enc = v.encarteirada_em ? new Date(v.encarteirada_em) : null;
-      const canc = v.cancelada_em ? new Date(v.cancelada_em) : null;
-      const val = Number(v.valor_venda ?? 0) || 0;
-
-      if (enc && enc.getFullYear() === year) {
-        const m = enc.getMonth() + 1;
-        if (codigo === "00") map.set(m, (map.get(m) || 0) + val);
-      }
-
-      if (canc && canc.getFullYear() === year) {
-        const m = canc.getMonth() + 1;
-        if (codigo !== "00") map.set(m, (map.get(m) || 0) - val);
-      }
-    });
-
-    return map;
-  }, [vendas, year]);
-
-  const realizadoMes = realizadoByMonth.get(monthIndex) || 0;
-  const realizadoAno = Array.from(realizadoByMonth.values()).reduce((a, b) => a + b, 0);
-
-  /** ========= Carteira ativa total ========= */
-  const carteiraAtiva = useMemo(() => {
-    // somatório apenas cotas ativas codigo='00' (valor_venda)
-    return vendas.reduce((acc, v) => {
-      const codigo = (v.codigo ?? "00").trim();
-      if (codigo !== "00") return acc;
-      const val = Number(v.valor_venda ?? 0) || 0;
-      return acc + val;
-    }, 0);
-  }, [vendas]);
-
-  /** ========= Dataset chart ========= */
-  const chartData = useMemo(() => {
-    const labels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-    return labels.map((name, idx) => {
-      const m = idx + 1;
-      const realizado = realizadoByMonth.get(m) || 0;
-      const meta = (metaTotals as any)[`m${monthKey(m)}`] ?? 0;
-      return { name, meta, realizado };
-    });
-  }, [realizadoByMonth, metaTotals]);
-
-  /** ===================== Fetch ===================== */
-  async function loadAll() {
-    setLoading(true);
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      const auid = auth?.user?.id ?? null;
-      setAuthUserId(auid);
-
-      // users ativos
-      const { data: usersData, error: usersErr } = await supabase
-        .from("users")
-        .select("id, auth_user_id, nome, email, role, user_role, is_active")
-        .eq("is_active", true)
-        .order("nome", { ascending: true });
-
-      if (usersErr) throw usersErr;
-      const usersList = (usersData ?? []) as UserRow[];
-      setUsers(usersList);
-
-      const meRow = auid ? usersList.find((u) => u.auth_user_id === auid) ?? null : null;
-      setMe(meRow);
-
-      // metas do ano
-      const { data: metasData, error: metasErr } = await supabase
-        .from("metas_vendedores")
-        .select("id, vendedor_id, auth_user_id, ano, m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-        .eq("ano", year);
-
-      if (metasErr) throw metasErr;
-      setMetasRows((metasData ?? []) as MetaRow[]);
-
-      // vendas (trazemos um range maior pra carteira + cálculo)
-      // IMPORTANT: vendedor filtra por vendas.vendedor_id (auth_user_id)
-      let vendasQuery = supabase
-        .from("vendas")
-        .select(
-          "id,data_venda,vendedor_id,segmento,produto,administradora,tabela,forma_venda,numero_proposta,lead_id,cliente_lead_id,nome,telefone,email,valor_venda,encarteirada_em,grupo,cota,codigo,cancelada_em,contemplada,data_contemplacao,inad,inad_em,inad_revertida_em,descricao,status,status_inicial,reativada_em,contemplacao_tipo,contemplacao_pct"
-        );
-
-      if (effectiveAuthFilter) {
-        vendasQuery = vendasQuery.eq("vendedor_id", effectiveAuthFilter);
-      }
-
-      // opcional: limita por período (ano corrente +- 1)
-      const start = `${year - 1}-01-01`;
-      const end = `${year + 1}-12-31`;
-      vendasQuery = vendasQuery.gte("data_venda", start).lte("data_venda", end);
-
-      const { data: vendasData, error: vendasErr } = await vendasQuery.order("created_at", { ascending: false });
-
-      // se created_at não existe no select acima, ignora: fallback
-      if (vendasErr) {
-        // fallback sem order created_at
-        const { data: vd2, error: ve2 } = await (effectiveAuthFilter
-          ? supabase
-              .from("vendas")
-              .select(
-                "id,data_venda,vendedor_id,segmento,produto,administradora,tabela,forma_venda,numero_proposta,lead_id,cliente_lead_id,nome,telefone,email,valor_venda,encarteirada_em,grupo,cota,codigo,cancelada_em,contemplada,data_contemplacao,inad,inad_em,inad_revertida_em,descricao,status,status_inicial,reativada_em,contemplacao_tipo,contemplacao_pct"
-              )
-              .eq("vendedor_id", effectiveAuthFilter)
-              .gte("data_venda", start)
-              .lte("data_venda", end)
-          : supabase
-              .from("vendas")
-              .select(
-                "id,data_venda,vendedor_id,segmento,produto,administradora,tabela,forma_venda,numero_proposta,lead_id,cliente_lead_id,nome,telefone,email,valor_venda,encarteirada_em,grupo,cota,codigo,cancelada_em,contemplada,data_contemplacao,inad,inad_em,inad_revertida_em,descricao,status,status_inicial,reativada_em,contemplacao_tipo,contemplacao_pct"
-              )
-              .gte("data_venda", start)
-              .lte("data_venda", end));
-        if (ve2) throw ve2;
-        setVendas((vd2 ?? []) as VendaRow[]);
-      } else {
-        setVendas((vendasData ?? []) as VendaRow[]);
-      }
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Erro ao carregar Carteira.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function refresh() {
-    setRefreshing(true);
-    try {
-      await loadAll();
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
-  useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    loadAll();
-    // year muda -> recarrega
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, selectedSellerId]);
-
-  /** ===================== Listas / Filtros ===================== */
-  const vendasFiltradas = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return vendas;
-
-    return vendas.filter((v) => {
-      const nome = (v.nome ?? "").toLowerCase();
-      const proposta = (v.numero_proposta ?? "").toLowerCase();
-      const admin = (v.administradora ?? "").toLowerCase();
-      const tabela = (v.tabela ?? "").toLowerCase();
-      const grupo = (v.grupo ?? "").toLowerCase();
-      const cota = (v.cota ?? "").toLowerCase();
-      return (
-        nome.includes(q) ||
-        proposta.includes(q) ||
-        admin.includes(q) ||
-        tabela.includes(q) ||
-        grupo.includes(q) ||
-        cota.includes(q)
-      );
-    });
-  }, [vendas, search]);
-
-  const pendentes = useMemo(() => vendasFiltradas.filter((v) => !v.encarteirada_em), [vendasFiltradas]);
-  const encarteiradas = useMemo(() => vendasFiltradas.filter((v) => !!v.encarteirada_em), [vendasFiltradas]);
-
-  /** ===================== Ações (CRUD básico) ===================== */
-  function buildEmptyForm(): VendaForm {
-    return {
-      data_venda: toISODateInput(new Date()),
-      vendedor_auth_id: effectiveAuthFilter ?? authUserId ?? "",
-      segmento: "",
-      produto: "",
-      administradora: "",
-      tabela: "",
-      forma_venda: "",
-      numero_proposta: "",
-      valor_venda: "",
-      telefone: "",
-      email: "",
-      descricao: "",
-      grupo: "",
-      cota: "",
-      codigo: "00",
-    };
-  }
-
-  const [form, setForm] = useState<VendaForm>(buildEmptyForm());
-  useEffect(() => {
-    setForm(buildEmptyForm());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openNovaVenda]);
-
-  function canEditMeta() {
-    return isAdmin;
-  }
-
-  function canEncarteirar() {
-    return isAdmin;
-  }
-
-  async function saveNovaVenda() {
-    if (!authUserId) return;
-    const vendedorAuth = form.vendedor_auth_id || authUserId;
-
-    if (!form.administradora.trim() || !form.produto.trim() || !form.tabela.trim()) {
-      alert("Informe Administradora, Produto e Tabela.");
-      return;
-    }
-
-    const payload: any = {
-      data_venda: form.data_venda,
-      vendedor_id: vendedorAuth, // auth_user_id no vendas
-      segmento: form.segmento || null,
-      produto: form.produto || null,
-      administradora: form.administradora || null,
-      tabela: form.tabela || null,
-      forma_venda: form.forma_venda || null,
-      numero_proposta: form.numero_proposta || null,
-      valor_venda: parseMoneyBR(form.valor_venda || "0") || 0,
-      telefone: form.telefone || null,
-      email: form.email || null,
-      descricao: form.descricao || null,
-      codigo: "00",
-    };
-
-    const { error } = await supabase.from("vendas").insert(payload);
-    if (error) {
-      console.error(error);
-      alert(error.message);
-      return;
-    }
-    setOpenNovaVenda(false);
-    await refresh();
-  }
-
-  async function saveEditarVenda(v: VendaRow, patch: Partial<VendaForm>) {
-    const payload: any = {};
-
-    if (patch.data_venda != null) payload.data_venda = patch.data_venda;
-    if (patch.segmento != null) payload.segmento = patch.segmento || null;
-    if (patch.produto != null) payload.produto = patch.produto || null;
-    if (patch.administradora != null) payload.administradora = patch.administradora || null;
-    if (patch.tabela != null) payload.tabela = patch.tabela || null;
-    if (patch.forma_venda != null) payload.forma_venda = patch.forma_venda || null;
-    if (patch.numero_proposta != null) payload.numero_proposta = patch.numero_proposta || null;
-    if (patch.valor_venda != null) payload.valor_venda = parseMoneyBR(patch.valor_venda || "0") || 0;
-    if (patch.telefone != null) payload.telefone = patch.telefone || null;
-    if (patch.email != null) payload.email = patch.email || null;
-    if (patch.descricao != null) payload.descricao = patch.descricao || null;
-
-    const { error } = await supabase.from("vendas").update(payload).eq("id", v.id);
-    if (error) {
-      console.error(error);
-      alert(error.message);
-      return;
-    }
-    setOpenEditarVenda(null);
-    await refresh();
-  }
-
-  async function encarteirarVenda(v: VendaRow, grupo: string, cota: string, codigo: string) {
-    if (!canEncarteirar()) {
-      alert("Somente admin pode encarteirar.");
-      return;
-    }
-    if (!grupo.trim() || !cota.trim() || !codigo.trim()) {
-      alert("Informe Grupo, Cota e Código.");
-      return;
-    }
-
-    const payload: any = {
-      grupo: grupo.trim(),
-      cota: cota.trim(),
-      codigo: codigo.trim(),
-      encarteirada_em: new Date().toISOString(),
-    };
-
-    const { error } = await supabase.from("vendas").update(payload).eq("id", v.id);
-    if (error) {
-      console.error(error);
-      alert(error.message);
-      return;
-    }
-    await refresh();
-  }
-
-  /** ===================== Metas: editor (admin) ===================== */
-  const [metaEdit, setMetaEdit] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (!openMetaEditor) return;
-    const toText = (n: number) => String(n || 0);
-    setMetaEdit({
-      m01: toText(metaTotals.m01 || 0),
-      m02: toText(metaTotals.m02 || 0),
-      m03: toText(metaTotals.m03 || 0),
-      m04: toText(metaTotals.m04 || 0),
-      m05: toText(metaTotals.m05 || 0),
-      m06: toText(metaTotals.m06 || 0),
-      m07: toText(metaTotals.m07 || 0),
-      m08: toText(metaTotals.m08 || 0),
-      m09: toText(metaTotals.m09 || 0),
-      m10: toText(metaTotals.m10 || 0),
-      m11: toText(metaTotals.m11 || 0),
-      m12: toText(metaTotals.m12 || 0),
-    });
-  }, [openMetaEditor, metaTotals]);
-
-  function getMetaOwnerForUpsert(): { vendedor_id: string; auth_user_id: string } | null {
-    if (!isAdmin) return null;
-    if (selectedSellerId === "__all__") return null; // não faz sentido cadastrar meta agregada
-    const u = usersById.get(selectedSellerId);
-    if (!u) return null;
-    return { vendedor_id: u.id, auth_user_id: u.auth_user_id };
-  }
-
-  async function saveMeta() {
-    if (!canEditMeta()) return;
-    const owner = getMetaOwnerForUpsert();
-    if (!owner) {
-      alert("Selecione um vendedor específico (não 'Todos') para cadastrar/editar meta.");
-      return;
-    }
-
-    const payload: any = {
-      vendedor_id: owner.vendedor_id,
-      auth_user_id: owner.auth_user_id,
-      ano: year,
-      m01: parseMoneyBR(metaEdit.m01 || "0"),
-      m02: parseMoneyBR(metaEdit.m02 || "0"),
-      m03: parseMoneyBR(metaEdit.m03 || "0"),
-      m04: parseMoneyBR(metaEdit.m04 || "0"),
-      m05: parseMoneyBR(metaEdit.m05 || "0"),
-      m06: parseMoneyBR(metaEdit.m06 || "0"),
-      m07: parseMoneyBR(metaEdit.m07 || "0"),
-      m08: parseMoneyBR(metaEdit.m08 || "0"),
-      m09: parseMoneyBR(metaEdit.m09 || "0"),
-      m10: parseMoneyBR(metaEdit.m10 || "0"),
-      m11: parseMoneyBR(metaEdit.m11 || "0"),
-      m12: parseMoneyBR(metaEdit.m12 || "0"),
-    };
-
-    // upsert por (vendedor_id, ano) — se você tiver unique nisso
-    const { error } = await supabase
-      .from("metas_vendedores")
-      .upsert(payload, { onConflict: "vendedor_id,ano" });
-
-    if (error) {
-      console.error(error);
-      alert(error.message);
-      return;
-    }
-
-    setOpenMetaEditor(false);
-    await refresh();
-  }
-
-  /** ===================== UI ===================== */
-  const sellerName = useMemo(() => {
-    if (!isAdmin) return me?.nome ?? "Meu Painel";
-    if (selectedSellerId === "__all__") return "Todos";
-    return usersById.get(selectedSellerId)?.nome ?? "Vendedor";
-  }, [isAdmin, me?.nome, selectedSellerId, usersById]);
-
-  if (loading) {
-    return (
-      <div className="p-6">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Carregando Carteira...
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-4 md:p-6 space-y-4">
-      {/* Header */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold">Carteira</h1>
-            {isAdmin ? (
-              <Badge className="bg-white/10 border-white/10 text-white">
-                <ShieldCheck className="h-3.5 w-3.5 mr-1" />
-                Admin
-              </Badge>
-            ) : (
-              <Badge className="bg-white/10 border-white/10 text-white">
-                <UserRound className="h-3.5 w-3.5 mr-1" />
-                Vendedor
-              </Badge>
-            )}
-          </div>
-          <div className="text-sm text-muted-foreground">
-            Visão: <span className="font-medium">{sellerName}</span>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2 md:flex-row md:items-center">
-          {isAdmin && (
-            <div className="min-w-[260px]">
-              <Label className="text-xs">Vendedor</Label>
-              <Select value={selectedSellerId} onValueChange={setSelectedSellerId}>
-                <SelectTrigger className="bg-white/5 border-white/10">
-                  <SelectValue placeholder="Selecione" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Todos</SelectItem>
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.nome ?? u.email ?? u.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          <div className="min-w-[140px]">
-            <Label className="text-xs">Ano</Label>
-            <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
-              <SelectTrigger className="bg-white/5 border-white/10">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Array.from({ length: 5 }).map((_, i) => {
-                  const y = now.getFullYear() - 2 + i;
-                  return (
-                    <SelectItem key={y} value={String(y)}>
-                      {y}
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <Button
-            variant="secondary"
-            className="bg-white/10 border border-white/10"
-            onClick={refresh}
-            disabled={refreshing}
-            title="Atualizar"
+    <tr className="border-t">
+      <td className="p-2">
+        <div className="flex items-center gap-2">
+          <button
+            title="Ver venda"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onViewVenda(venda, lead)}
           >
-            {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          </Button>
-
-          <Button onClick={() => setOpenNovaVenda(true)} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Nova venda
-          </Button>
-
-          {canEditMeta() && (
-            <Button
-              variant="secondary"
-              className="bg-white/10 border border-white/10"
-              onClick={() => setOpenMetaEditor(true)}
-              disabled={selectedSellerId === "__all__"}
-              title={selectedSellerId === "__all__" ? "Selecione um vendedor para editar meta" : "Editar meta"}
-            >
-              <Pencil className="h-4 w-4 mr-2" />
-              Meta
-            </Button>
-          )}
+            👁️
+          </button>
+          <div className="font-medium">{lead?.nome ?? "—"}</div>
+          <button
+            title="Editar pendente"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onOpenEditarVenda(venda)}
+          >
+            ✏️
+          </button>
         </div>
-      </div>
-
-      {/* KPIs + Donuts */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <DonutMeta title="Meta do mês x Realizado" realizado={realizadoMes} meta={metaMes} />
-        <DonutMeta title="Meta do ano x Realizado" realizado={realizadoAno} meta={metaAno} />
-        <Card className="border-white/10 bg-white/5 backdrop-blur-xl">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Carteira ativa (código 00)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="text-2xl font-bold">{currency(carteiraAtiva)}</div>
-            <div className="text-xs text-muted-foreground">
-              Base: soma de <span className="font-medium">valor_venda</span> nas cotas ativas.
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Linha Meta vs Realizado */}
-      <Card className="border-white/10 bg-white/5 backdrop-blur-xl">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-semibold">Meta vs Realizado (mês a mês)</CardTitle>
-        </CardHeader>
-        <CardContent className="h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip formatter={(v: any) => currency(Number(v) || 0)} />
-              <Line type="monotone" dataKey="meta" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="realizado" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* Busca */}
-      <div className="flex flex-col md:flex-row gap-2 md:items-end md:justify-between">
-        <div className="w-full md:max-w-md">
-          <Label className="text-xs">Buscar</Label>
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cliente, proposta, administradora, tabela, grupo, cota..."
-            className="bg-white/5 border-white/10"
-          />
-        </div>
-        <div className="text-xs text-muted-foreground">
-          Pendentes: <span className="font-semibold">{pendentes.length}</span> • Encarteiradas:{" "}
-          <span className="font-semibold">{encarteiradas.length}</span>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <Tabs defaultValue="encarteiradas" className="w-full">
-        <TabsList className="bg-white/5 border border-white/10">
-          <TabsTrigger value="encarteiradas">Encarteiradas</TabsTrigger>
-          <TabsTrigger value="pendentes">Pendentes</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="encarteiradas" className="mt-3">
-          <VendasTable
-            items={encarteiradas}
-            usersByAuth={usersByAuth}
-            onView={(v) => setOpenVerVenda(v)}
-            onEdit={(v) => setOpenEditarVenda(v)}
-            canEdit={true}
-            canEncarteirar={false}
-            onEncarteirar={async () => {}}
-          />
-        </TabsContent>
-
-        <TabsContent value="pendentes" className="mt-3">
-          <VendasTable
-            items={pendentes}
-            usersByAuth={usersByAuth}
-            onView={(v) => setOpenVerVenda(v)}
-            onEdit={(v) => setOpenEditarVenda(v)}
-            canEdit={true}
-            canEncarteirar={canEncarteirar()}
-            onEncarteirar={async (v) => {
-              const g = prompt("Grupo:");
-              if (g == null) return;
-              const c = prompt("Cota:");
-              if (c == null) return;
-              const cod = prompt("Código (00 ativo):", "00");
-              if (cod == null) return;
-              await encarteirarVenda(v, g, c, cod);
+        <div className="text-xs text-gray-500">{lead?.telefone ?? "—"}</div>
+      </td>
+      <td className="p-2">{venda.administradora}</td>
+      <td className="p-2">{venda.numero_proposta}</td>
+      <td className="p-2">
+        <input
+          value={grupo}
+          onChange={(e) => setGrupo(e.target.value)}
+          className="border rounded px-2 py-1 w-28"
+          disabled={!canEncarteirar}
+        />
+      </td>
+      <td className="p-2">
+        <input
+          value={cota}
+          onChange={(e) => setCota(e.target.value)}
+          className="border rounded px-2 py-1 w-20"
+          disabled={!canEncarteirar}
+        />
+      </td>
+      <td className="p-2">
+        <input
+          value={codigo}
+          onChange={(e) => setCodigo(e.target.value)}
+          className="border rounded px-2 py-1 w-20"
+          disabled={!canEncarteirar}
+        />
+      </td>
+      <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
+      <td className="p-2">
+        <div className="flex gap-2">
+          <button
+            className={`px-3 py-1 rounded ${
+              canEncarteirar
+                ? "bg-[#A11C27] text-white hover:opacity-90"
+                : "bg-gray-200 text-gray-500 cursor-not-allowed"
+            }`}
+            disabled={!canEncarteirar}
+            onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
+          >
+            ENCARTEIRAR
+          </button>
+          <button
+            className="px-3 py-1 rounded border hover:bg-gray-50"
+            onClick={() => {
+              if (confirm("Excluir este lançamento? Essa ação não pode ser desfeita.")) onDelete(venda.id);
             }}
-          />
-        </TabsContent>
-      </Tabs>
+          >
+            Excluir
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+};
 
-      {/* Dialog Nova Venda */}
-      <Dialog open={openNovaVenda} onOpenChange={setOpenNovaVenda}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Nova venda (pendente)</DialogTitle>
-          </DialogHeader>
+type LinhaCotaProps = {
+  venda: Venda;
+  onViewVenda: (v: Venda) => void;
+  onOpenCotaEditor: (v: Venda) => void;
+  isAdmin: boolean;
+};
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <Label>Data da venda</Label>
-              <Input
-                type="date"
-                value={form.data_venda}
-                onChange={(e) => setForm((s) => ({ ...s, data_venda: e.target.value }))}
-              />
-            </div>
+const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onViewVenda, onOpenCotaEditor, isAdmin }) => {
+  const ativa = isAtiva(venda.codigo);
 
-            <div>
-              <Label>Vendedor</Label>
-              <div className="text-sm bg-white/5 border border-white/10 rounded-md px-3 py-2">
-                {!isAdmin ? (me?.nome ?? "Você") : selectedSellerId === "__all__" ? "Selecione um vendedor no topo" : sellerName}
-              </div>
-              <div className="text-[11px] text-muted-foreground mt-1">
-                Regra: vendedor sempre grava em <span className="font-medium">vendas.vendedor_id = auth_user_id</span>.
-              </div>
-            </div>
+  return (
+    <tr className="border-t">
+      <td className="p-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`px-2 py-1 rounded-full text-xs ${
+              ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+            }`}
+          >
+            {ativa ? "Ativa" : "Cancelada"}
+          </span>
 
-            <div>
-              <Label>Administradora *</Label>
-              <Input value={form.administradora} onChange={(e) => setForm((s) => ({ ...s, administradora: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Produto *</Label>
-              <Input value={form.produto} onChange={(e) => setForm((s) => ({ ...s, produto: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Tabela *</Label>
-              <Input value={form.tabela} onChange={(e) => setForm((s) => ({ ...s, tabela: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Segmento</Label>
-              <Input value={form.segmento} onChange={(e) => setForm((s) => ({ ...s, segmento: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Nº Proposta</Label>
-              <Input value={form.numero_proposta} onChange={(e) => setForm((s) => ({ ...s, numero_proposta: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Valor venda</Label>
-              <Input value={form.valor_venda} onChange={(e) => setForm((s) => ({ ...s, valor_venda: e.target.value }))} placeholder="Ex: 1300000,00" />
-            </div>
-            <div>
-              <Label>Telefone</Label>
-              <Input value={form.telefone} onChange={(e) => setForm((s) => ({ ...s, telefone: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Email</Label>
-              <Input value={form.email} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} />
-            </div>
-            <div className="md:col-span-2">
-              <Label>Descrição</Label>
-              <Input value={form.descricao} onChange={(e) => setForm((s) => ({ ...s, descricao: e.target.value }))} />
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button variant="secondary" onClick={() => setOpenNovaVenda(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={saveNovaVenda}
-              disabled={
-                (!isAdmin && !authUserId) ||
-                (isAdmin && selectedSellerId === "__all__") ||
-                !form.administradora.trim() ||
-                !form.produto.trim() ||
-                !form.tabela.trim()
-              }
-            >
-              <Save className="h-4 w-4 mr-2" />
-              Salvar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Dialog Editar Venda */}
-      <EditarVendaDialog
-        openVenda={openEditarVenda}
-        onClose={() => setOpenEditarVenda(null)}
-        onSave={saveEditarVenda}
-      />
-
-      {/* Dialog Ver Venda */}
-      <VerVendaDialog openVenda={openVerVenda} onClose={() => setOpenVerVenda(null)} usersByAuth={usersByAuth} />
-
-      {/* Dialog Meta Editor */}
-      <Dialog open={openMetaEditor} onOpenChange={setOpenMetaEditor}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Meta anual ({year}) — {sellerName}</DialogTitle>
-          </DialogHeader>
-
-          {selectedSellerId === "__all__" ? (
-            <div className="text-sm text-muted-foreground">
-              Selecione um vendedor específico no topo para editar/cadastrar a meta.
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {Array.from({ length: 12 }).map((_, idx) => {
-                  const m = idx + 1;
-                  const key = `m${monthKey(m)}`;
-                  return (
-                    <div key={key}>
-                      <Label>{key.toUpperCase()}</Label>
-                      <Input
-                        value={metaEdit[key] ?? "0"}
-                        onChange={(e) => setMetaEdit((s) => ({ ...s, [key]: e.target.value }))}
-                        placeholder="0"
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="text-[11px] text-muted-foreground mt-2">
-                ✅ Salva em <span className="font-medium">metas_vendedores</span> com <span className="font-medium">vendedor_id (users.id)</span> e <span className="font-medium">auth_user_id</span> para RBAC.
-              </div>
-
-              <DialogFooter className="gap-2 mt-4">
-                <Button variant="secondary" onClick={() => setOpenMetaEditor(false)}>
-                  <X className="h-4 w-4 mr-2" />
-                  Fechar
-                </Button>
-                <Button onClick={saveMeta}>
-                  <Save className="h-4 w-4 mr-2" />
-                  Salvar meta
-                </Button>
-              </DialogFooter>
-            </>
+          {!!venda.contemplada && (
+            <span className="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-800">
+              Contemplada
+            </span>
           )}
-        </DialogContent>
-      </Dialog>
+
+          {!!venda.inad && (
+            <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-700">
+              Inadimplente
+            </span>
+          )}
+        </div>
+      </td>
+
+      <td className="p-2">{venda.administradora}</td>
+
+      <td className="p-2">
+        <div className="flex items-center gap-2">
+          <button
+            title="Ver venda"
+            className="text-gray-500 hover:text-gray-800"
+            onClick={() => onViewVenda(venda)}
+          >
+            👁️
+          </button>
+          <span>{venda.numero_proposta}</span>
+        </div>
+      </td>
+
+      <td className="p-2">{venda.produto}</td>
+      <td className="p-2">{venda.grupo ?? "—"}</td>
+      <td className="p-2">{venda.cota ?? "—"}</td>
+      <td className="p-2">{venda.codigo ?? "—"}</td>
+      <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
+
+      <td className="p-2">
+        {isAdmin ? (
+          <button
+            className="px-3 py-1 rounded border hover:bg-gray-50"
+            onClick={() => onOpenCotaEditor(venda)}
+            title="Editar cota"
+          >
+            ✏️ Editar
+          </button>
+        ) : (
+          <span className="text-xs text-gray-400">Somente admin edita</span>
+        )}
+      </td>
+    </tr>
+  );
+};
+
+type ClienteGroup = {
+  cliente: Lead;
+  itens: Venda[];
+  totalAtivas: number;
+  qtdAtivas: number;
+  segmentos: Set<string>;
+};
+
+type ClienteBlocoProps = {
+  group: ClienteGroup;
+  onViewVenda: (v: Venda) => void;
+  onOpenCotaEditor: (v: Venda) => void;
+  isAdmin: boolean;
+};
+
+const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenCotaEditor, isAdmin }) => {
+  const [open, setOpen] = useState(false);
+  const segs = Array.from(group.segmentos).join("; ");
+
+  return (
+    <div className="border rounded-2xl p-4">
+      <div className="w-full flex items-center justify-between">
+        <button className="text-left" onClick={() => setOpen((o) => !o)}>
+          <div className="font-medium">
+            {group.cliente.nome}
+            <span className="text-xs text-gray-500 ml-2">{group.cliente.telefone ?? ""}</span>
+          </div>
+          <div className="text-sm text-gray-600">
+            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd:{" "}
+            <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
+          </div>
+        </button>
+        <button
+          title="Ver cotas"
+          className="text-gray-500 hover:text-gray-800"
+          onClick={() => setOpen(true)}
+        >
+          👁️
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-3 overflow-auto">
+          <table className="min-w-[1050px] w-full border border-gray-200 rounded-xl">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2">Status</th>
+                <th className="text-left p-2">Adm</th>
+                <th className="text-left p-2">Proposta</th>
+                <th className="text-left p-2">Segmento</th>
+                <th className="text-left p-2">Grupo</th>
+                <th className="text-left p-2">Cota</th>
+                <th className="text-left p-2">Código</th>
+                <th className="text-left p-2">Valor</th>
+                <th className="text-left p-2">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {group.itens.map((v) => (
+                <LinhaCota
+                  key={v.id}
+                  venda={v}
+                  onViewVenda={onViewVenda}
+                  onOpenCotaEditor={onOpenCotaEditor}
+                  isAdmin={isAdmin}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
-}
+};
 
-/** ===================== Tabela ===================== */
-function VendasTable({
-  items,
-  usersByAuth,
-  onView,
-  onEdit,
-  canEdit,
-  canEncarteirar,
-  onEncarteirar,
-}: {
-  items: VendaRow[];
-  usersByAuth: Map<string, UserRow>;
-  onView: (v: VendaRow) => void;
-  onEdit: (v: VendaRow) => void;
-  canEdit: boolean;
-  canEncarteirar: boolean;
-  onEncarteirar: (v: VendaRow) => Promise<void> | void;
-}) {
-  return (
-    <Card className="border-white/10 bg-white/5 backdrop-blur-xl">
-      <CardContent className="p-0 overflow-auto">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-black/20 backdrop-blur border-b border-white/10">
-            <tr className="text-left">
-              <th className="p-3">Cliente</th>
-              <th className="p-3">Proposta</th>
-              <th className="p-3">Adm/Tabela</th>
-              <th className="p-3">Valor</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Vendedor</th>
-              <th className="p-3 text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((v) => {
-              const vendedorNome = v.vendedor_id ? usersByAuth.get(v.vendedor_id)?.nome ?? "—" : "—";
-              const codigo = (v.codigo ?? "00").trim();
-              const status =
-                v.encarteirada_em
-                  ? codigo === "00"
-                    ? "Ativa"
-                    : v.inad
-                    ? "Inadimplente"
-                    : "Cancelada"
-                  : "Pendente";
+type EditarVendaPendenteModalProps = {
+  open: boolean;
+  venda?: Venda;
+  leads: Lead[];
+  onClose: () => void;
+  onSave: (venda: Venda, novo: Partial<Venda>) => Promise<void>;
+};
 
-              return (
-                <tr key={v.id} className="border-b border-white/5 hover:bg-white/5">
-                  <td className="p-3">
-                    <div className="font-medium">{v.nome ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">{v.telefone ?? ""}</div>
-                  </td>
-                  <td className="p-3">{v.numero_proposta ?? "—"}</td>
-                  <td className="p-3">
-                    <div>{v.administradora ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">{v.tabela ?? ""}</div>
-                  </td>
-                  <td className="p-3">{currency(v.valor_venda)}</td>
-                  <td className="p-3">
-                    <Badge className="bg-white/10 border-white/10 text-white">{status}</Badge>
-                    {v.encarteirada_em && (
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Encarteirada: {formatDateBR(v.encarteirada_em)}
-                      </div>
-                    )}
-                  </td>
-                  <td className="p-3">{vendedorNome}</td>
-                  <td className="p-3">
-                    <div className="flex items-center justify-end gap-2">
-                      <Button variant="secondary" className="bg-white/10 border border-white/10" onClick={() => onView(v)}>
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      {canEdit && (
-                        <Button variant="secondary" className="bg-white/10 border border-white/10" onClick={() => onEdit(v)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {canEncarteirar && (
-                        <Button className="gap-2" onClick={() => onEncarteirar(v)}>
-                          <ArrowRightLeft className="h-4 w-4" />
-                          Encarteirar
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-
-            {items.length === 0 && (
-              <tr>
-                <td colSpan={7} className="p-6 text-center text-muted-foreground">
-                  Nenhum registro encontrado.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** ===================== Dialog Editar ===================== */
-function EditarVendaDialog({
-  openVenda,
+const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
+  open,
+  venda,
+  leads,
   onClose,
   onSave,
-}: {
-  openVenda: VendaRow | null;
-  onClose: () => void;
-  onSave: (v: VendaRow, patch: Partial<VendaForm>) => Promise<void>;
-}) {
-  const [local, setLocal] = useState<Partial<VendaForm>>({});
+}) => {
+  const [tmp, setTmp] = useState<Partial<Venda>>({});
 
   useEffect(() => {
-    if (!openVenda) return;
-    setLocal({
-      data_venda: openVenda.data_venda ?? "",
-      segmento: openVenda.segmento ?? "",
-      produto: openVenda.produto ?? "",
-      administradora: openVenda.administradora ?? "",
-      tabela: openVenda.tabela ?? "",
-      forma_venda: openVenda.forma_venda ?? "",
-      numero_proposta: openVenda.numero_proposta ?? "",
-      valor_venda: openVenda.valor_venda != null ? String(openVenda.valor_venda).replace(".", ",") : "",
-      telefone: openVenda.telefone ?? "",
-      email: openVenda.email ?? "",
-      descricao: openVenda.descricao ?? "",
+    if (!open || !venda) return;
+    setTmp({
+      lead_id: venda.lead_id,
+      cpf: venda.cpf,
+      data_venda: venda.data_venda,
+      produto: venda.produto,
+      administradora: venda.administradora,
+      forma_venda: venda.forma_venda,
+      numero_proposta: venda.numero_proposta,
+      valor_venda: venda.valor_venda,
+      tipo_venda: venda.tipo_venda,
+      descricao: venda.descricao,
+      tabela: venda.tabela,
+      grupo: venda.grupo || "",
+      data_nascimento: venda.data_nascimento || "",
     });
-  }, [openVenda]);
+  }, [open, venda]);
 
-  if (!openVenda) return null;
+  if (!open || !venda) return null;
 
   return (
-    <Dialog open={!!openVenda} onOpenChange={(o) => (!o ? onClose() : null)}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Editar venda</DialogTitle>
-        </DialogHeader>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-semibold">Venda • {venda.numero_proposta}</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-800">
+            ✕
+          </button>
+        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="md:col-span-2">
+            <label className="text-sm text-gray-600">Pessoa (Lead)</label>
+            <select
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.lead_id ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, lead_id: e.target.value }))}
+            >
+              <option value="">Selecione um lead…</option>
+              {leads.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.nome} {l.telefone ? `• ${l.telefone}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div>
-            <Label>Data</Label>
-            <Input
+            <label className="text-sm text-gray-600">CPF / CNPJ</label>
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={formatCPF(tmp.cpf ?? "")}
+              onChange={(e) => setTmp((p) => ({ ...p, cpf: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <label className="text-sm text-gray-600">Data da Venda</label>
+            <input
               type="date"
-              value={local.data_venda ?? ""}
-              onChange={(e) => setLocal((s) => ({ ...s, data_venda: e.target.value }))}
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.data_venda ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, data_venda: e.target.value }))}
             />
           </div>
+
           <div>
-            <Label>Nº Proposta</Label>
-            <Input
-              value={local.numero_proposta ?? ""}
-              onChange={(e) => setLocal((s) => ({ ...s, numero_proposta: e.target.value }))}
+            <label className="text-sm text-gray-600">Data de Nascimento</label>
+            <input
+              type="date"
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.data_nascimento ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, data_nascimento: e.target.value }))}
             />
           </div>
+
           <div>
-            <Label>Administradora</Label>
-            <Input
-              value={local.administradora ?? ""}
-              onChange={(e) => setLocal((s) => ({ ...s, administradora: e.target.value }))}
+            <label className="text-sm text-gray-600">Produto</label>
+            <select
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.produto as Produto}
+              onChange={(e) => setTmp((p) => ({ ...p, produto: e.target.value as Produto }))}
+            >
+              {PRODUTOS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-sm text-gray-600">Tabela</label>
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.tabela ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, tabela: e.target.value }))}
             />
           </div>
+
           <div>
-            <Label>Tabela</Label>
-            <Input value={local.tabela ?? ""} onChange={(e) => setLocal((s) => ({ ...s, tabela: e.target.value }))} />
-          </div>
-          <div>
-            <Label>Produto</Label>
-            <Input value={local.produto ?? ""} onChange={(e) => setLocal((s) => ({ ...s, produto: e.target.value }))} />
-          </div>
-          <div>
-            <Label>Segmento</Label>
-            <Input value={local.segmento ?? ""} onChange={(e) => setLocal((s) => ({ ...s, segmento: e.target.value }))} />
-          </div>
-          <div>
-            <Label>Forma de venda</Label>
-            <Input
-              value={local.forma_venda ?? ""}
-              onChange={(e) => setLocal((s) => ({ ...s, forma_venda: e.target.value }))}
+            <label className="text-sm text-gray-600">Administradora</label>
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={(tmp.administradora as string) ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, administradora: e.target.value }))}
             />
           </div>
+
           <div>
-            <Label>Valor venda</Label>
-            <Input
-              value={local.valor_venda ?? ""}
-              onChange={(e) => setLocal((s) => ({ ...s, valor_venda: e.target.value }))}
-              placeholder="Ex: 1300000,00"
+            <label className="text-sm text-gray-600">Forma da Venda</label>
+            <select
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.forma_venda as FormaVenda}
+              onChange={(e) => setTmp((p) => ({ ...p, forma_venda: e.target.value as FormaVenda }))}
+            >
+              {FORMAS.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-sm text-gray-600">Número da Proposta</label>
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={tmp.numero_proposta ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, numero_proposta: e.target.value }))}
             />
           </div>
+
           <div>
-            <Label>Telefone</Label>
-            <Input value={local.telefone ?? ""} onChange={(e) => setLocal((s) => ({ ...s, telefone: e.target.value }))} />
+            <label className="text-sm text-gray-600">Valor da Venda</label>
+            <input
+              className="w-full border rounded-xl px-3 py-2"
+              value={(tmp.valor_venda as any) ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, valor_venda: Number(e.target.value) }))}
+              type="number"
+              step="0.01"
+            />
           </div>
-          <div>
-            <Label>Email</Label>
-            <Input value={local.email ?? ""} onChange={(e) => setLocal((s) => ({ ...s, email: e.target.value }))} />
-          </div>
+
           <div className="md:col-span-2">
-            <Label>Descrição</Label>
-            <Input value={local.descricao ?? ""} onChange={(e) => setLocal((s) => ({ ...s, descricao: e.target.value }))} />
+            <label className="text-sm text-gray-600">Descrição</label>
+            <textarea
+              className="w-full border rounded-xl px-3 py-2"
+              rows={3}
+              value={tmp.descricao ?? ""}
+              onChange={(e) => setTmp((p) => ({ ...p, descricao: e.target.value }))}
+            />
           </div>
         </div>
 
-        <DialogFooter className="gap-2">
-          <Button variant="secondary" onClick={onClose}>
+        <div className="text-right">
+          <button className="px-4 py-2 rounded-xl border mr-2" onClick={onClose}>
             Cancelar
-          </Button>
-          <Button
-            onClick={async () => {
-              await onSave(openVenda, local);
-            }}
+          </button>
+          <button
+            className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+            onClick={() => onSave(venda, tmp)}
           >
-            <Save className="h-4 w-4 mr-2" />
             Salvar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** ===================== Dialog Ver ===================== */
-function VerVendaDialog({
-  openVenda,
-  onClose,
-  usersByAuth,
-}: {
-  openVenda: VendaRow | null;
-  onClose: () => void;
-  usersByAuth: Map<string, UserRow>;
-}) {
-  if (!openVenda) return null;
-
-  const vendedorNome = openVenda.vendedor_id ? usersByAuth.get(openVenda.vendedor_id)?.nome ?? "—" : "—";
-
-  return (
-    <Dialog open={!!openVenda} onOpenChange={(o) => (!o ? onClose() : null)}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Detalhes da venda</DialogTitle>
-        </DialogHeader>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-          <Info label="Cliente" value={openVenda.nome ?? "—"} />
-          <Info label="Telefone" value={openVenda.telefone ?? "—"} />
-          <Info label="Email" value={openVenda.email ?? "—"} />
-          <Info label="Vendedor" value={vendedorNome} />
-
-          <Info label="Data venda" value={formatDateBR(openVenda.data_venda)} />
-          <Info label="Proposta" value={openVenda.numero_proposta ?? "—"} />
-
-          <Info label="Administradora" value={openVenda.administradora ?? "—"} />
-          <Info label="Produto" value={openVenda.produto ?? "—"} />
-          <Info label="Tabela" value={openVenda.tabela ?? "—"} />
-          <Info label="Segmento" value={openVenda.segmento ?? "—"} />
-
-          <Info label="Valor" value={currency(openVenda.valor_venda)} />
-          <Info label="Status" value={openVenda.encarteirada_em ? "Encarteirada" : "Pendente"} />
-
-          <Info label="Encarteirada em" value={formatDateBR(openVenda.encarteirada_em)} />
-          <Info label="Grupo / Cota" value={`${openVenda.grupo ?? "—"} / ${openVenda.cota ?? "—"}`} />
-
-          <Info label="Código" value={openVenda.codigo ?? "—"} />
-          <Info label="Cancelada em" value={formatDateBR(openVenda.cancelada_em)} />
-
-          <Info label="Contemplada" value={openVenda.contemplada ? "Sim" : "Não"} />
-          <Info label="Data contemplação" value={formatDateBR(openVenda.data_contemplacao)} />
-
-          <Info label="Inadimplente" value={openVenda.inad ? "Sim" : "Não"} />
-          <Info label="Inad em" value={formatDateBR(openVenda.inad_em)} />
-
-          <div className="md:col-span-2">
-            <Info label="Descrição" value={openVenda.descricao ?? "—"} />
-          </div>
+          </button>
         </div>
-
-        <DialogFooter className="gap-2">
-          <Button variant="secondary" onClick={onClose}>
-            Fechar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function Info({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-white/5 border border-white/10 rounded-md p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="font-medium">{value}</div>
+      </div>
     </div>
   );
-}
+};
+
+type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "inad" | "transfer";
+
+const Carteira: React.FC = () => {
+  const [userId, setUserId] = useState<string>("");
+  const [userEmail, setUserEmail] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [leadMap, setLeadMap] = useState<Record<string, Lead>>({});
+  const [pendentes, setPendentes] = useState<Venda[]>([]);
+  const [encarteiradas, setEncarteiradas] = useState<Venda[]>([]);
+
+  const [loading, setLoading] = useState<boolean>(true);
+  const [err, setErr] = useState<string>("");
+
+  const [q, setQ] = useState<string>("");
+  const [showCarteira, setShowCarteira] = useState<boolean>(true);
+
+  const [showModal, setShowModal] = useState<boolean>(false);
+  const [form, setForm] = useState<Partial<Venda>>({
+    cpf: "",
+    data_venda: new Date().toISOString().slice(0, 10),
+    produto: "Automóvel",
+    administradora: "",
+    forma_venda: "Parcela Cheia",
+    tipo_venda: "Normal",
+    descricao: "",
+    grupo: "",
+    tabela: "",
+    data_nascimento: "",
+  });
+
+  const [editVendaModal, setEditVendaModal] = useState<{ open: boolean; venda?: Venda }>({
+    open: false,
+  });
+
+  const [viewVendaModal, setViewVendaModal] = useState<{
+    open: boolean;
+    venda?: Venda;
+    lead?: Lead;
+  }>({ open: false });
+
+  const [simAdmins, setSimAdmins] = useState<Array<{ id: string; name: string }>>([]);
+  const [simTables, setSimTables] = useState<
+    Array<{
+      id: string;
+      admin_id: string;
+      segmento: string;
+      nome_tabela: string;
+      faixa_min?: number | null;
+      faixa_max?: number | null;
+      prazo_limite?: number | null;
+    }>
+  >([]);
+
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [metaOverlay, setMetaOverlay] = useState<{ open: boolean }>({ open: false });
+  const [metaForm, setMetaForm] = useState<{ vendedor_id: string; ano: number; m: number[] }>({
+    vendedor_id: "",
+    ano: new Date().getFullYear(),
+    m: Array(12).fill(0),
+  });
+
+  const [selectedSeller, setSelectedSeller] = useState<string>(""); // admin pode escolher (users.id); vendedor fixa no próprio
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
+  const [realizadoMensal, setRealizadoMensal] = useState<number[]>(Array(12).fill(0));
+
+  const metaAnual = useMemo(() => metaMensal.reduce((a, b) => a + b, 0), [metaMensal]);
+  const realizadoAnual = useMemo(() => realizadoMensal.reduce((a, b) => a + b, 0), [realizadoMensal]);
+
+  const pct =
+    metaAnual > 0 ? Math.max(0, Math.min(100, Math.round((realizadoAnual / metaAnual) * 100))) : 0;
+
+  const [leadSearch, setLeadSearch] = useState<string>(""); // busca de lead no modal
+
+  // Modal de transferência de cota
+  const [transferModal, setTransferModal] = useState<{ open: boolean; venda?: Venda }>({
+    open: false,
+  });
+  const [transferLeadId, setTransferLeadId] = useState<string>("");
+  const [transferSearch, setTransferSearch] = useState<string>("");
+  const [transferCpf, setTransferCpf] = useState<string>("");
+  const [transferNascimento, setTransferNascimento] = useState<string>("");
+
+  // ===== Editor de Cota =====
+  const [cotaEditor, setCotaEditor] = useState<{ open: boolean; venda?: Venda; mode: CotaEditMode }>({
+    open: false,
+    venda: undefined,
+    mode: "pick",
+  });
+
+  const [ceGrupo, setCeGrupo] = useState<string>("");
+  const [ceCota, setCeCota] = useState<string>("");
+  const [ceCodigo, setCeCodigo] = useState<string>("");
+
+  const [ceCancelDate, setCeCancelDate] = useState<string>("");
+  const [ceReativDate, setCeReativDate] = useState<string>("");
+
+  const [ceContFlag, setCeContFlag] = useState<boolean>(false);
+  const [ceContDate, setCeContDate] = useState<string>("");
+  const [ceContTipo, setCeContTipo] = useState<string>("");
+  const [ceContPctRaw, setCeContPctRaw] = useState<string>("");
+
+  const [ceInadFlag, setCeInadFlag] = useState<boolean>(false);
+  const [ceInadEm, setCeInadEm] = useState<string>("");
+  const [ceInadRev, setCeInadRev] = useState<string>("");
+
+  useEffect(() => {
+    setForm((f) => ({ ...f, tabela: "" }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.produto]);
+
+  // ===== Maps rápidos =====
+  const usersById = useMemo(() => {
+    const m: Record<string, AppUser> = {};
+    (users ?? []).forEach((u) => {
+      m[u.id] = u;
+    });
+    return m;
+  }, [users]);
+
+  const selectedSellerAuthId = useMemo(() => {
+    if (!selectedSeller) return "";
+    return (usersById[selectedSeller]?.auth_user_id ?? "") || "";
+  }, [selectedSeller, usersById]);
+
+  // ===== Resolver auth_user_id mesmo se users ainda não tiver pronto =====
+  const resolveAuthUserIdBySellerId = useCallback(
+    async (sellerId: string): Promise<string> => {
+      if (!sellerId) return "";
+      const local = usersById[sellerId]?.auth_user_id ?? "";
+      if (local) return local;
+
+      // fallback: busca direto no banco (evita "realizado = 0" em casos de mapeamento faltando)
+      const { data, error } = await supabase
+        .from("users")
+        .select("auth_user_id")
+        .eq("id", sellerId)
+        .maybeSingle();
+
+      if (error) return "";
+      return (data?.auth_user_id ?? "") || "";
+    },
+    [usersById]
+  );
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        setErr("");
+
+        const { data: authData } = await supabase.auth.getUser();
+        const uid = authData.user?.id ?? "";
+        const uemail = authData.user?.email ?? "";
+        setUserId(uid);
+        setUserEmail(uemail);
+        setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
+
+        let adminFlag = false;
+        try {
+          const { data } = await supabase.from("users").select("email, role").eq("email", uemail).maybeSingle();
+          adminFlag = (data?.role ?? "").toString().toLowerCase() === "admin";
+        } catch {}
+        setIsAdmin(adminFlag);
+
+        const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] =
+          await Promise.all([
+            supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
+            (async () => {
+              const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+              if (!adminFlag) q.eq("vendedor_id", uid);
+              const { data } = await q;
+              return data;
+            })(),
+            (async () => {
+              const q = supabase
+                .from("vendas")
+                .select("*")
+                .eq("status", "encarteirada")
+                .order("created_at", { ascending: false });
+              if (!adminFlag) q.eq("vendedor_id", uid);
+              const { data } = await q;
+              return data;
+            })(),
+            supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
+            supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
+            supabase
+              .from("users")
+              .select("id,nome,email,role,auth_user_id")
+              .eq("is_active", true)
+              .order("nome", { ascending: true }),
+          ]);
+
+        const leadsArr = (lds ?? []) as Lead[];
+        setLeads(leadsArr);
+        setLeadMap(Object.fromEntries(leadsArr.map((l: any) => [l.id, l])));
+
+        setPendentes((pend ?? []) as Venda[]);
+        setEncarteiradas((enc ?? []) as Venda[]);
+
+        setSimAdmins((admins ?? []) as any);
+        setSimTables((tables ?? []) as any);
+        setUsers((us ?? []) as AppUser[]);
+
+        // Ajuste chave: selectedSeller usa users.id (não auth_user_id)
+        const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
+        setSelectedSeller(adminFlag ? "" : myUserRow?.id ?? "");
+      } catch (e: any) {
+        setErr(e.message || "Falha ao carregar Carteira.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // ===== FILTRO ADMIN: aplica na página inteira (sem refetch) =====
+  const pendentesVisiveis = useMemo(() => {
+    if (!isAdmin) return pendentes;
+    if (!selectedSeller) return pendentes;
+    const authId = selectedSellerAuthId;
+    if (!authId) return [];
+    return pendentes.filter((v) => v.vendedor_id === authId);
+  }, [pendentes, isAdmin, selectedSeller, selectedSellerAuthId]);
+
+  const encarteiradasVisiveis = useMemo(() => {
+    if (!isAdmin) return encarteiradas;
+    if (!selectedSeller) return encarteiradas;
+    const authId = selectedSellerAuthId;
+    if (!authId) return [];
+    return encarteiradas.filter((v) => v.vendedor_id === authId);
+  }, [encarteiradas, isAdmin, selectedSeller, selectedSellerAuthId]);
+
+  const pendentesComNome = useMemo(
+    () =>
+      pendentesVisiveis.map((v) => ({
+        venda: v,
+        lead: leadMap[v.lead_id],
+      })),
+    [pendentesVisiveis, leadMap]
+  );
+
+  const encarteiradasFiltradas = useMemo(() => {
+    if (!q.trim()) return encarteiradasVisiveis;
+    const s = q.toLowerCase();
+    return encarteiradasVisiveis.filter((v) => leadMap[v.lead_id]?.nome?.toLowerCase().includes(s));
+  }, [q, encarteiradasVisiveis, leadMap]);
+
+  const totalAtivas = useMemo(
+    () => encarteiradasVisiveis.reduce((a, v) => (isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradasVisiveis]
+  );
+
+  const totalCanceladas = useMemo(
+    () => encarteiradasVisiveis.reduce((a, v) => (!isAtiva(v.codigo) ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradasVisiveis]
+  );
+
+  const totalContempladas = useMemo(
+    () => encarteiradasVisiveis.reduce((a, v) => (v.contemplada ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradasVisiveis]
+  );
+
+  const totalInadimplentes = useMemo(
+    () => encarteiradasVisiveis.reduce((a, v) => (v.inad ? a + (v.valor_venda || 0) : a), 0),
+    [encarteiradasVisiveis]
+  );
+
+  const porCliente: ClienteGroup[] = useMemo(() => {
+    const map: Record<string, ClienteGroup> = {};
+    for (const v of encarteiradasFiltradas) {
+      const lead = leadMap[v.lead_id];
+      if (!lead) continue;
+      if (!map[lead.id])
+        map[lead.id] = {
+          cliente: lead,
+          itens: [],
+          totalAtivas: 0,
+          qtdAtivas: 0,
+          segmentos: new Set(),
+        };
+      map[lead.id].itens.push(v);
+      if (isAtiva(v.codigo)) {
+        map[lead.id].totalAtivas += v.valor_venda || 0;
+        map[lead.id].qtdAtivas += 1;
+      }
+      map[lead.id].segmentos.add(v.produto);
+    }
+    return Object.values(map).sort((a, b) =>
+      a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" })
+    );
+  }, [encarteiradasFiltradas, leadMap]);
+
+  const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
+
+  async function insertVenda(payload: any) {
+    let { error } = await supabase.from("vendas").insert(payload as any);
+    if (error && /data_nascimento/.test(error.message || "")) {
+      const { error: e2 } = await supabase.from("vendas").insert({ ...payload, data_nascimento: undefined } as any);
+      if (e2) throw e2;
+    } else if (error) throw error;
+  }
+
+  async function updateVenda(id: string, patch: any) {
+    let { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
+    if (error && /data_nascimento/.test(error.message || "")) {
+      const { error: e2 } = await supabase
+        .from("vendas")
+        .update({ ...patch, data_nascimento: undefined } as any)
+        .eq("id", id);
+      if (e2) throw e2;
+    } else if (error) throw error;
+  }
+
+  const prefillFromLead = async (leadId: string) => {
+    if (!leadId) return;
+    const { data: cliente } = await supabase
+      .from("clientes")
+      .select("cpf,data_nascimento")
+      .eq("lead_id", leadId)
+      .maybeSingle();
+
+    if (cliente?.cpf || cliente?.data_nascimento) {
+      setForm((f) => ({
+        ...f,
+        cpf: cliente.cpf ?? f.cpf,
+        data_nascimento: cliente.data_nascimento ?? f.data_nascimento,
+      }));
+      return;
+    }
+
+    const { data: lastVenda } = await supabase
+      .from("vendas")
+      .select("cpf,data_nascimento,administradora,produto,tabela")
+      .eq("lead_id", leadId)
+      .eq("status", "encarteirada")
+      .order("encarteirada_em", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastVenda) {
+      setForm((f) => ({
+        ...f,
+        cpf: lastVenda.cpf ?? f.cpf,
+        data_nascimento: lastVenda.data_nascimento ?? f.data_nascimento,
+        administradora: lastVenda.administradora ?? f.administradora,
+        produto: (lastVenda.produto as Produto) ?? f.produto,
+        tabela: lastVenda.tabela ?? f.tabela,
+      }));
+    }
+  };
+
+  const registrarVenda = async () => {
+    try {
+      if (!form.lead_id) throw new Error("Selecione o Lead.");
+      if (!form.cpf?.trim()) throw new Error("CPF/CNPJ é obrigatório.");
+      if (!validateCPF(form.cpf)) throw new Error("CPF ou CNPJ inválido.");
+      if (!form.numero_proposta?.trim()) throw new Error("Número da proposta é obrigatório.");
+
+      const valor = Number((form.valor_venda as any)?.toString().replace(/\./g, "").replace(",", "."));
+      if (Number.isNaN(valor)) throw new Error("Valor inválido.");
+
+      const segmento = normalizeProdutoToSegmento(form.produto as Produto);
+      const payload: Partial<Venda> = {
+        lead_id: form.lead_id,
+        cpf: onlyDigits(form.cpf!),
+        data_venda: form.data_venda!,
+        vendedor_id: userId,
+        produto: form.produto as Produto,
+        administradora: (form.administradora as Administradora) || "",
+        forma_venda: form.forma_venda as FormaVenda,
+        numero_proposta: form.numero_proposta!,
+        valor_venda: valor,
+        tipo_venda: (form.tipo_venda as any) ?? "Normal",
+        descricao: form.descricao ?? "",
+        status: "nova",
+        tabela: form.tabela || null,
+        segmento: segmento ?? undefined,
+        data_nascimento: form.data_nascimento || null,
+        grupo: form.tipo_venda === "Bolsão" ? form.grupo || "" : null,
+        codigo: "00",
+      };
+      if (form.tipo_venda === "Bolsão" && !form.grupo?.trim()) throw new Error("Informe o número do Grupo (Bolsão).");
+
+      await insertVenda(payload);
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
+
+      setForm({
+        cpf: "",
+        data_venda: new Date().toISOString().slice(0, 10),
+        produto: "Automóvel",
+        administradora: simAdmins[0]?.name ?? "",
+        forma_venda: "Parcela Cheia",
+        tipo_venda: "Normal",
+        descricao: "",
+        grupo: "",
+        tabela: "",
+        data_nascimento: "",
+      });
+      setLeadSearch("");
+      setShowModal(false);
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao registrar venda.");
+    }
+  };
+
+  const encarteirar = async (vendaId: string, grupo: string, cota: string, codigo: string) => {
+    try {
+      if (!isAdmin) throw new Error("Somente administradores podem encarteirar.");
+      if (!grupo?.trim() || !cota?.trim() || !codigo?.trim()) throw new Error("Preencha Grupo, Cota e Código.");
+
+      const { data: vOne, error: selErr } = await supabase.from("vendas").select("produto").eq("id", vendaId).maybeSingle();
+      if (selErr) throw selErr;
+      const segmento = normalizeProdutoToSegmento(vOne?.produto as Produto);
+
+      const { error } = await supabase
+        .from("vendas")
+        .update({
+          grupo,
+          cota,
+          codigo,
+          status: "encarteirada",
+          encarteirada_em: new Date().toISOString(),
+          segmento: segmento ?? undefined,
+        })
+        .eq("id", vendaId);
+      if (error) throw error;
+
+      const [{ data: pend }, { data: enc }] = await Promise.all([
+        (async () => {
+          const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+          if (!isAdmin) q.eq("vendedor_id", userId);
+          return await q;
+        })(),
+        (async () => {
+          const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+          if (!isAdmin) q.eq("vendedor_id", userId);
+          return await q;
+        })(),
+      ]);
+
+      setPendentes((pend ?? []) as Venda[]);
+      setEncarteiradas((enc ?? []) as Venda[]);
+      await loadMetrics(selectedSeller, selectedYear);
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao encarteirar.");
+    }
+  };
+
+  const excluirVenda = async (vendaId: string) => {
+    try {
+      const { error } = await supabase.from("vendas").delete().eq("id", vendaId);
+      if (error) throw error;
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao excluir.");
+    }
+  };
+
+  const reloadEncarteiradas = async () => {
+    const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+    if (!isAdmin) encQuery.eq("vendedor_id", userId);
+    const { data: enc } = await encQuery;
+    setEncarteiradas((enc ?? []) as Venda[]);
+  };
+
+  const salvarEdicaoPendente = async (venda: Venda, novo: Partial<Venda>) => {
+    try {
+      if (novo.cpf && !validateCPF(novo.cpf)) throw new Error("CPF ou CNPJ inválido.");
+      if (novo.numero_proposta && !novo.numero_proposta.trim()) throw new Error("Informe o número da proposta.");
+
+      const patch: any = { ...novo };
+      if (patch.cpf) patch.cpf = onlyDigits(patch.cpf);
+      if (patch.valor_venda != null) {
+        const valor = Number(patch.valor_venda);
+        if (Number.isNaN(valor)) throw new Error("Valor inválido.");
+        patch.valor_venda = valor;
+      }
+      if (patch.produto) patch.segmento = normalizeProdutoToSegmento(patch.produto as Produto);
+
+      await updateVenda(venda.id, patch);
+
+      const pendQuery = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
+      if (!isAdmin) pendQuery.eq("vendedor_id", userId);
+      const { data: pend } = await pendQuery;
+      setPendentes((pend ?? []) as Venda[]);
+
+      setEditVendaModal({ open: false, venda: undefined });
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao salvar.");
+    }
+  };
+
+  const tabelaOptions = useMemo(() => {
+    const prod = (form.produto as Produto) || "Automóvel";
+    const segFromProduto = normalizeProdutoToSegmento(prod) ?? prod;
+    const prodNorm = normalizeSegmentLabel(segFromProduto);
+
+    const admName = (form.administradora as string) || "";
+    const admId = simAdmins.find((a) => a.name === admName)?.id;
+
+    return simTables.filter((t) => {
+      if (admId && t.admin_id !== admId) return false;
+      if (!prodNorm) return true;
+      const segNorm = normalizeSegmentLabel(t.segmento);
+      return segNorm === prodNorm;
+    });
+  }, [form.produto, form.administradora, simTables, simAdmins]);
+
+  const produtoOptionsForAdmin: Produto[] = useMemo(() => {
+    const admName = (form.administradora as string) || "";
+    const admId = simAdmins.find((a) => a.name === admName)?.id;
+    if (!admId) return PRODUTOS;
+
+    const segSet = new Set(simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento)));
+
+    const filtered = PRODUTOS.filter((p) => {
+      const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
+      return segSet.has(seg);
+    });
+
+    return filtered.length ? filtered : PRODUTOS;
+  }, [form.administradora, simAdmins, simTables]);
+
+  const adminOptions = useMemo(() => simAdmins.map((a) => a.name), [simAdmins]);
+
+  const filteredLeads = useMemo(() => {
+    if (!leadSearch.trim()) return leads;
+    const s = leadSearch.toLowerCase();
+    return leads.filter((l) => l.nome.toLowerCase().includes(s));
+  }, [leadSearch, leads]);
+
+  const filteredTransferLeads = useMemo(() => {
+    if (!transferSearch.trim()) return leads;
+    const s = transferSearch.toLowerCase();
+    return leads.filter((l) => l.nome.toLowerCase().includes(s));
+  }, [transferSearch, leads]);
+
+  const onSelectLead = async (leadId: string) => {
+    onFormChange("lead_id", leadId);
+    await prefillFromLead(leadId);
+  };
+
+  const openTransfer = (v: Venda) => {
+    setTransferModal({ open: true, venda: v });
+    setTransferLeadId("");
+    setTransferSearch("");
+    setTransferCpf("");
+    setTransferNascimento("");
+  };
+
+  const handleTransferSave = async () => {
+    try {
+      if (!transferModal.venda) return;
+      if (!transferLeadId) throw new Error("Selecione o novo lead.");
+      if (!transferCpf.trim()) throw new Error("CPF/CNPJ é obrigatório.");
+      if (!validateCPF(transferCpf)) throw new Error("CPF ou CNPJ inválido.");
+
+      const patch: Partial<Venda> = {
+        lead_id: transferLeadId,
+        cpf: onlyDigits(transferCpf),
+        data_nascimento: transferNascimento || null,
+      };
+
+      await updateVenda(transferModal.venda.id, patch);
+
+      await reloadEncarteiradas();
+
+      setTransferModal({ open: false, venda: undefined });
+      setTransferLeadId("");
+      setTransferSearch("");
+      setTransferCpf("");
+      setTransferNascimento("");
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao transferir cota.");
+    }
+  };
+
+  const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
+    // ===== Metas (metas_vendedores) =====
+    if (sellerId) {
+      const { data: metasRow } = await supabase
+        .from("metas_vendedores")
+        .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+        .eq("vendedor_id", sellerId)
+        .eq("ano", year)
+        .maybeSingle();
+
+      const m = metasRow
+        ? [
+            metasRow.m01, metasRow.m02, metasRow.m03, metasRow.m04, metasRow.m05, metasRow.m06,
+            metasRow.m07, metasRow.m08, metasRow.m09, metasRow.m10, metasRow.m11, metasRow.m12,
+          ].map((x: any) => Number(x || 0))
+        : Array(12).fill(0);
+      setMetaMensal(m);
+    } else {
+      const { data: metasAll } = await supabase
+        .from("metas_vendedores")
+        .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+        .eq("ano", year);
+
+      const sum = Array(12).fill(0);
+      (metasAll ?? []).forEach((row: any) => {
+        const arr = [
+          row.m01, row.m02, row.m03, row.m04, row.m05, row.m06,
+          row.m07, row.m08, row.m09, row.m10, row.m11, row.m12,
+        ].map((x: any) => Number(x || 0));
+        for (let i = 0; i < 12; i++) sum[i] += arr[i];
+      });
+      setMetaMensal(sum);
+    }
+
+    // ===== Realizado (vendas encarteiradas - canceladas) =====
+    const ativasBase = supabase
+      .from("vendas")
+      .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
+      .eq("status", "encarteirada")
+      .eq("codigo", "00")
+      .gte("encarteirada_em", `${year}-01-01`)
+      .lte("encarteirada_em", `${year}-12-31T23:59:59`);
+
+    const cancBase = supabase
+      .from("vendas")
+      .select("valor_venda, cancelada_em, vendedor_id, codigo, status")
+      .eq("status", "encarteirada")
+      .neq("codigo", "00")
+      .gte("cancelada_em", `${year}-01-01`)
+      .lte("cancelada_em", `${year}-12-31T23:59:59`);
+
+    const authIdToFilter = sellerId ? await resolveAuthUserIdBySellerId(sellerId) : "";
+
+    const qAtivas = sellerId ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase;
+    const qCanc = sellerId ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase;
+
+    const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([qAtivas, qCanc]);
+
+    const vendido = Array(12).fill(0);
+    (vendasAtivas ?? []).forEach((v: any) => {
+      const d = v.encarteirada_em ? new Date(v.encarteirada_em) : null;
+      if (!d || isNaN(d.getTime())) return;
+      vendido[d.getMonth()] += Number(v.valor_venda || 0);
+    });
+
+    const cancelado = Array(12).fill(0);
+    (vendasCanc ?? []).forEach((v: any) => {
+      const d = v.cancelada_em ? new Date(v.cancelada_em) : null;
+      if (!d || isNaN(d.getTime())) return;
+      cancelado[d.getMonth()] += Number(v.valor_venda || 0);
+    });
+
+    const realizado = vendido.map((v: number, i: number) => v - cancelado[i]);
+    setRealizadoMensal(realizado);
+  };
+
+  const loadMetaForForm = async (sellerId: string, year: number): Promise<void> => {
+    if (!sellerId) {
+      setMetaForm((prev) => ({
+        ...prev,
+        vendedor_id: sellerId,
+        ano: year,
+        m: Array(12).fill(0),
+      }));
+      return;
+    }
+
+    const { data: metasRow } = await supabase
+      .from("metas_vendedores")
+      .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
+      .eq("vendedor_id", sellerId)
+      .eq("ano", year)
+      .maybeSingle();
+
+    const arr = metasRow
+      ? [
+          metasRow.m01, metasRow.m02, metasRow.m03, metasRow.m04, metasRow.m05, metasRow.m06,
+          metasRow.m07, metasRow.m08, metasRow.m09, metasRow.m10, metasRow.m11, metasRow.m12,
+        ].map((x: any) => Number(x || 0))
+      : Array(12).fill(0);
+
+    setMetaForm((prev) => ({
+      ...prev,
+      vendedor_id: sellerId,
+      ano: year,
+      m: arr,
+    }));
+  };
+
+  useEffect(() => {
+    // Carrega métricas tanto para "Todos" quanto para vendedor específico
+    loadMetrics(selectedSeller, selectedYear);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSeller, selectedYear]);
+
+  const donutData = useMemo(() => {
+    const reached = Math.max(0, Math.min(realizadoAnual, metaAnual));
+    const remaining = Math.max(0, metaAnual - reached);
+    return [
+      { name: "Atingido", value: reached },
+      { name: "Restante", value: remaining },
+    ];
+  }, [metaAnual, realizadoAnual]);
+
+  const lineData = useMemo(
+    () =>
+      Array.from({ length: 12 }).map((_, i) => ({
+        name: ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"][i],
+        Meta: metaMensal[i] || 0,
+        Realizado: realizadoMensal[i] || 0,
+      })),
+    [metaMensal, realizadoMensal]
+  );
+
+  const handleOpenMeta = () => {
+    if (!isAdmin) {
+      alert("Somente administradores podem cadastrar/editar metas.");
+      return;
+    }
+    if (!users || users.length === 0) {
+      alert("Aguarde carregar os vendedores antes de cadastrar a meta.");
+      return;
+    }
+
+    const baseSeller = selectedSeller || users[0]?.id || "";
+
+    setMetaForm({
+      vendedor_id: baseSeller,
+      ano: selectedYear,
+      m: Array(12).fill(0),
+    });
+
+    if (baseSeller) loadMetaForForm(baseSeller, selectedYear);
+
+    setMetaOverlay({ open: true });
+  };
+
+  const saveMeta = async () => {
+    try {
+      if (!isAdmin) throw new Error("Somente administradores podem cadastrar metas.");
+      if (!metaForm.vendedor_id) throw new Error("Selecione o vendedor.");
+      const payload: any = {
+        vendedor_id: metaForm.vendedor_id,
+        ano: metaForm.ano,
+        m01: metaForm.m[0],
+        m02: metaForm.m[1],
+        m03: metaForm.m[2],
+        m04: metaForm.m[3],
+        m05: metaForm.m[4],
+        m06: metaForm.m[5],
+        m07: metaForm.m[6],
+        m08: metaForm.m[7],
+        m09: metaForm.m[8],
+        m10: metaForm.m[9],
+        m11: metaForm.m[10],
+        m12: metaForm.m[11],
+      };
+      const { data: exists } = await supabase
+        .from("metas_vendedores")
+        .select("id")
+        .eq("vendedor_id", metaForm.vendedor_id)
+        .eq("ano", metaForm.ano)
+        .maybeSingle();
+
+      if (exists?.id) {
+        const { error } = await supabase.from("metas_vendedores").update(payload).eq("id", exists.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("metas_vendedores").insert(payload);
+        if (error) throw error;
+      }
+      setMetaOverlay({ open: false });
+
+      if (selectedSeller === metaForm.vendedor_id && selectedYear === metaForm.ano) {
+        setMetaMensal([...metaForm.m]);
+      }
+    } catch (e: any) {
+      alert(e.message || "Erro ao salvar metas.");
+    }
+  };
+
+  const openViewVenda = (v: Venda, lead?: Lead) => setViewVendaModal({ open: true, venda: v, lead });
+
+  const openCotaEditor = (v: Venda) => {
+    setCotaEditor({ open: true, venda: v, mode: "pick" });
+
+    setCeGrupo(v.grupo ?? "");
+    setCeCota(v.cota ?? "");
+    setCeCodigo(v.codigo ?? "");
+
+    setCeCancelDate(v.cancelada_em ? new Date(v.cancelada_em).toISOString().slice(0, 10) : "");
+    setCeReativDate(v.reativada_em ? new Date(v.reativada_em).toISOString().slice(0, 10) : "");
+
+    setCeContFlag(!!v.contemplada);
+    setCeContDate(v.data_contemplacao ?? "");
+    setCeContTipo(v.contemplacao_tipo ?? "");
+    setCeContPctRaw(v.contemplacao_pct != null ? formatPct4(v.contemplacao_pct) : "");
+
+    setCeInadFlag(!!v.inad);
+    setCeInadEm(v.inad_em ?? "");
+    setCeInadRev(v.inad_revertida_em ?? "");
+  };
+
+  const closeCotaEditor = () => {
+    setCotaEditor({ open: false, venda: undefined, mode: "pick" });
+  };
+
+  const saveCotaCodigo = async () => {
+    try {
+      if (!isAdmin) throw new Error("Somente admin pode editar.");
+      const v = cotaEditor.venda;
+      if (!v) return;
+
+      const prevAtiva = isAtiva(v.codigo);
+      const nextAtiva = isAtiva(ceCodigo);
+
+      if (!ceGrupo.trim() || !ceCota.trim() || !ceCodigo.trim()) throw new Error("Preencha Grupo, Cota e Código.");
+
+      if (prevAtiva && !nextAtiva) {
+        if (!ceCancelDate) throw new Error("Informe a data do cancelamento.");
+      }
+
+      if (!prevAtiva && nextAtiva) {
+        if (!ceReativDate) throw new Error("Informe a data da reativação.");
+      }
+
+      const patch: any = {
+        grupo: ceGrupo,
+        cota: ceCota,
+        codigo: ceCodigo,
+      };
+
+      if (prevAtiva && !nextAtiva) patch.cancelada_em = isoFromDateInput(ceCancelDate);
+      if (!prevAtiva && nextAtiva) patch.reativada_em = isoFromDateInput(ceReativDate);
+
+      await updateVenda(v.id, patch);
+      await reloadEncarteiradas();
+      await loadMetrics(selectedSeller, selectedYear);
+
+      closeCotaEditor();
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao salvar alterações de cota.");
+    }
+  };
+
+  const saveContemplacao = async () => {
+    try {
+      if (!isAdmin) throw new Error("Somente admin pode editar.");
+      const v = cotaEditor.venda;
+      if (!v) return;
+
+      const patch: any = {};
+
+      if (!ceContFlag) {
+        patch.contemplada = false;
+        patch.data_contemplacao = null;
+        patch.contemplacao_tipo = null;
+        patch.contemplacao_pct = null;
+      } else {
+        if (!ceContDate) throw new Error("Informe a data da contemplação.");
+        if (!ceContTipo) throw new Error("Selecione o tipo de contemplação (lance).");
+        const pct = parsePct4(ceContPctRaw);
+        if (pct == null) throw new Error("Informe o % do lance (ex.: 41,2542%).");
+
+        patch.contemplada = true;
+        patch.data_contemplacao = ceContDate;
+        patch.contemplacao_tipo = ceContTipo;
+        patch.contemplacao_pct = Number(pct.toFixed(4));
+      }
+
+      await updateVenda(v.id, patch);
+      await reloadEncarteiradas();
+
+      closeCotaEditor();
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao salvar contemplação.");
+    }
+  };
+
+  const saveInad = async () => {
+    try {
+      if (!isAdmin) throw new Error("Somente admin pode editar.");
+      const v = cotaEditor.venda;
+      if (!v) return;
+
+      const patch: any = {};
+
+      if (ceInadFlag) {
+        if (!ceInadEm) throw new Error("Informe a data que inadimpliu.");
+        patch.inad = true;
+        patch.inad_em = ceInadEm;
+        patch.inad_revertida_em = null;
+      } else {
+        if (!ceInadRev) throw new Error("Informe a data da reversão da inadimplência.");
+        patch.inad = false;
+        patch.inad_revertida_em = ceInadRev;
+      }
+
+      await updateVenda(v.id, patch);
+      await reloadEncarteiradas();
+
+      closeCotaEditor();
+    } catch (e: any) {
+      alert(e.message ?? "Erro ao salvar inadimplência.");
+    }
+  };
+
+  const goTransferFromEditor = () => {
+    const v = cotaEditor.venda;
+    if (!v) return;
+    closeCotaEditor();
+    openTransfer(v);
+  };
+
+  if (loading) return <div className="p-6 text-sm text-gray-600">Carregando carteira…</div>;
+  if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
+
+  const tabelaOptionsForForm = tabelaOptions;
+  const adminNames = adminOptions.length ? adminOptions : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
+
+  const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Carteira</h1>
+          <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowModal(true)}
+            className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+          >
+            + Nova Venda
+          </button>
+
+          {/* Vendedor não cadastra meta */}
+          {isAdmin && (
+            <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
+              Cadastrar Meta
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ===================== Metas ===================== */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Metas</h2>
+
+          <div className="flex items-center gap-2">
+            <select
+              className="border rounded-xl px-3 py-2"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+            >
+              {Array.from({ length: 6 }).map((_, i) => {
+                const y = new Date().getFullYear() - 1 + i;
+                return (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                );
+              })}
+            </select>
+
+            {isAdmin && (
+              <select
+                className="border rounded-xl px-3 py-2"
+                value={selectedSeller}
+                onChange={(e) => setSelectedSeller(e.target.value)}
+              >
+                <option value="">Todos</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nome || u.email || u.id}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="border rounded-2xl p-4 flex items-center justify-center relative">
+            <div className="absolute top-3 left-4 text-sm text-gray-500">Meta anual: {currency(metaAnual)}</div>
+            <div className="absolute top-3 right-4 text-sm text-gray-500">Atingido: {currency(realizadoAnual)}</div>
+            <div className="w-full h-64">
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={donutData} innerRadius={80} outerRadius={110} dataKey="value">
+                    <Cell key="atingido" fill="#1E293F" />
+                    <Cell key="restante" fill="#A11C27" />
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="text-2xl font-semibold">{pct}%</div>
+            </div>
+          </div>
+
+          <div className="lg:col-span-2 border rounded-2xl p-4">
+            <div className="w-full h-64">
+              <ResponsiveContainer>
+                <LineChart data={lineData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip formatter={(v: any) => currency(Number(v || 0))} />
+                  <Legend />
+                  <Line type="monotone" dataKey="Realizado" stroke="#1E293F" strokeWidth={3} dot={false} />
+                  <Line type="monotone" dataKey="Meta" stroke="#A11C27" strokeWidth={3} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ===================== Busca ===================== */}
+      <div className="flex items-center gap-3">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Pesquisar cliente pelo nome…"
+          className="w-full border rounded-xl px-3 py-2 outline-none focus:ring"
+        />
+      </div>
+
+      {/* ===================== Encarteirar ===================== */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Encarteirar</h2>
+          <span className="text-sm text-gray-500">{pendentesVisiveis.length} nova(s) venda(s)</span>
+        </div>
+        <div className="overflow-auto">
+          <table className="min-w-[860px] w-full border border-gray-200 rounded-xl">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2">Cliente</th>
+                <th className="text-left p-2">Adm</th>
+                <th className="text-left p-2">Proposta</th>
+                <th className="text-left p-2">Grupo</th>
+                <th className="text-left p-2">Cota</th>
+                <th className="text-left p-2">Código</th>
+                <th className="text-left p-2">Valor</th>
+                <th className="text-left p-2 w-56">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendentesComNome.length === 0 && (
+                <tr>
+                  <td className="p-3 text-gray-500" colSpan={8}>
+                    Sem novas vendas para encarteirar.
+                  </td>
+                </tr>
+              )}
+              {pendentesComNome.map(({ venda, lead }) => (
+                <LinhaEncarteirar
+                  key={venda.id}
+                  venda={venda}
+                  lead={lead}
+                  canEncarteirar={isAdmin}
+                  onSubmit={encarteirar}
+                  onDelete={excluirVenda}
+                  onViewVenda={(v, l) => openViewVenda(v, l)}
+                  onOpenEditarVenda={(v) => setEditVendaModal({ open: true, venda: v })}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ===================== Chips Totais ===================== */}
+      <div className="flex items-center gap-4">
+        <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">
+          Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong>
+        </div>
+        <div className="px-4 py-3 rounded-2xl bg-gray-100">
+          Canceladas: <strong className="ml-1">{currency(totalCanceladas)}</strong>
+        </div>
+        <div className="px-4 py-3 rounded-2xl bg-amber-100 text-amber-900">
+          Contempladas: <strong className="ml-1">{currency(totalContempladas)}</strong>
+        </div>
+        <div className="px-4 py-3 rounded-2xl bg-red-100 text-red-900">
+          Inadimplentes: <strong className="ml-1">{currency(totalInadimplentes)}</strong>
+        </div>
+        <button
+          className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
+          onClick={() => setShowCarteira((s) => !s)}
+        >
+          {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
+        </button>
+      </div>
+
+      {/* ===================== Carteira por Cliente ===================== */}
+      {showCarteira && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-medium">Carteira</h2>
+          {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
+          {porCliente.map((group) => (
+            <ClienteBloco
+              key={group.cliente.id}
+              group={group}
+              isAdmin={isAdmin}
+              onViewVenda={(v) => openViewVenda(v, leadMap[v.lead_id])}
+              onOpenCotaEditor={openCotaEditor}
+            />
+          ))}
+        </section>
+      )}
+
+      {/* ===================== Modal Nova Venda ===================== */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-semibold">Nova Venda</h3>
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setLeadSearch("");
+                }}
+                className="text-gray-500 hover:text-gray-800"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="text-sm text-gray-600">Pessoa (Lead)</label>
+                <div className="flex flex-col gap-2">
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    placeholder="Buscar pelo nome do lead…"
+                    value={leadSearch}
+                    onChange={(e) => setLeadSearch(e.target.value)}
+                  />
+                  <select
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={form.lead_id ?? ""}
+                    onChange={(e) => onSelectLead(e.target.value)}
+                  >
+                    <option value="">Selecione um lead…</option>
+                    {filteredLeads.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.nome} {l.telefone ? `• ${l.telefone}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Telefone</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={leadMap[form.lead_id as string]?.telefone ?? ""}
+                  readOnly
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">CPF / CNPJ *</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={formatCPF(form.cpf ?? "")}
+                  onChange={(e) => onFormChange("cpf", e.target.value)}
+                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Data da Venda</label>
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.data_venda ?? ""}
+                  onChange={(e) => onFormChange("data_venda", e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Data de Nascimento</label>
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.data_nascimento ?? ""}
+                  onChange={(e) => onFormChange("data_nascimento", e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Vendedor</label>
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly />
+              </div>
+
+              {/* Ordem: Administradora -> Produto -> Tabela */}
+              <div>
+                <label className="text-sm text-gray-600">Administradora</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={(form.administradora as string) ?? ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setForm((f) => {
+                      const admId = simAdmins.find((a) => a.name === value)?.id;
+                      let nextProduto = f.produto as Produto;
+
+                      if (admId) {
+                        const segSet = new Set(
+                          simTables
+                            .filter((t) => t.admin_id === admId)
+                            .map((t) => normalizeSegmentLabel(t.segmento))
+                        );
+                        const allowed = PRODUTOS.filter((p) => {
+                          const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
+                          return segSet.has(seg);
+                        });
+                        if (allowed.length && !allowed.includes(nextProduto as Produto)) {
+                          nextProduto = allowed[0];
+                        }
+                      }
+
+                      return { ...f, administradora: value, produto: nextProduto, tabela: "" };
+                    });
+                  }}
+                >
+                  <option value="">
+                    {adminNames.length ? "Selecione a administradora…" : "Selecione a administradora…"}
+                  </option>
+                  {adminNames.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Produto (Segmento)</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.produto as Produto}
+                  onChange={(e) => onFormChange("produto", e.target.value as Produto)}
+                >
+                  {produtoOptionsForAdmin.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Tabela</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.tabela ?? ""}
+                  onChange={(e) => onFormChange("tabela", e.target.value)}
+                  disabled={tabelaOptionsForForm.length === 0}
+                >
+                  <option value="">
+                    {tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}
+                  </option>
+                  {tabelaOptionsForForm.map((t) => (
+                    <option key={t.id} value={t.nome_tabela}>
+                      {t.nome_tabela}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Forma da Venda</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.forma_venda as FormaVenda}
+                  onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}
+                >
+                  {FORMAS.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Número da Proposta *</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.numero_proposta ?? ""}
+                  onChange={(e) => onFormChange("numero_proposta", e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Valor da Venda</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={(form.valor_venda as any) ?? ""}
+                  onChange={(e) => onFormChange("valor_venda", e.target.value)}
+                  placeholder="R$ 0,00"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Tipo da Venda</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={form.tipo_venda ?? "Normal"}
+                  onChange={(e) => onFormChange("tipo_venda", e.target.value)}
+                >
+                  <option>Normal</option>
+                  <option>Contemplada</option>
+                  <option>Bolsão</option>
+                </select>
+              </div>
+
+              {form.tipo_venda === "Bolsão" && (
+                <div>
+                  <label className="text-sm text-gray-600">Grupo (Bolsão)</label>
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={form.grupo ?? ""}
+                    onChange={(e) => onFormChange("grupo", e.target.value)}
+                    placeholder="Informe o número do grupo"
+                  />
+                </div>
+              )}
+
+              <div className="md:col-span-2">
+                <label className="text-sm text-gray-600">Descrição da Venda</label>
+                <textarea
+                  className="w-full border rounded-xl px-3 py-2"
+                  rows={3}
+                  value={form.descricao ?? ""}
+                  onChange={(e) => onFormChange("descricao", e.target.value)}
+                  placeholder="Estratégias de contemplação, observações…"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setLeadSearch("");
+                }}
+                className="px-4 py-2 rounded-xl border"
+              >
+                Cancelar
+              </button>
+              <button onClick={registrarVenda} className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90">
+                Registrar Venda
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== Modal Editar Venda Pendente ===================== */}
+      <EditarVendaPendenteModal
+        open={editVendaModal.open}
+        venda={editVendaModal.venda}
+        leads={leads}
+        onClose={() => setEditVendaModal({ open: false, venda: undefined })}
+        onSave={salvarEdicaoPendente}
+      />
+
+      {/* ===================== Modal Ver Venda ===================== */}
+      {viewVendaModal.open && viewVendaModal.venda && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-semibold">Detalhes da Venda</h3>
+              <button onClick={() => setViewVendaModal({ open: false })} className="text-gray-500 hover:text-gray-800">
+                ✕
+              </button>
+            </div>
+
+            {(() => {
+              const v = viewVendaModal.venda!;
+              const lead = viewVendaModal.lead;
+              const vendedor = users.find((u) => u.auth_user_id === v.vendedor_id);
+              const vendedorNome = vendedor?.nome || vendedor?.email || v.vendedor_id;
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <div className="text-gray-500">Cliente</div>
+                    <div>{lead?.nome ?? "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Telefone</div>
+                    <div>{lead?.telefone ?? "—"}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">CPF / CNPJ</div>
+                    <div>{formatCPF(v.cpf ?? "") || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Data de Nascimento</div>
+                    <div>{v.data_nascimento ?? "—"}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Data da Venda</div>
+                    <div>{v.data_venda}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Vendedor</div>
+                    <div>{vendedorNome}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Segmento</div>
+                    <div>{v.produto}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Administradora</div>
+                    <div>{v.administradora}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Tabela</div>
+                    <div>{v.tabela ?? "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Forma da Venda</div>
+                    <div>{v.forma_venda}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Nº Proposta</div>
+                    <div>{v.numero_proposta}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Valor</div>
+                    <div>{currency(v.valor_venda || 0)}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Status</div>
+                    <div>{v.status}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Código</div>
+                    <div>{v.codigo ?? "—"}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Grupo</div>
+                    <div>{v.grupo ?? "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Cota</div>
+                    <div>{v.cota ?? "—"}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Cancelada em</div>
+                    <div>{formatDateTimeBR(v.cancelada_em)}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Reativada em</div>
+                    <div>{formatDateTimeBR(v.reativada_em)}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Contemplada</div>
+                    <div>{v.contemplada ? "Sim" : "Não"}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Data da contemplação</div>
+                    <div>{formatDateBR(v.data_contemplacao)}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Tipo de lance</div>
+                    <div>{v.contemplacao_tipo ?? "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">% do lance</div>
+                    <div>{v.contemplacao_pct != null ? `${formatPct4(v.contemplacao_pct)}%` : "—"}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-500">Inadimplente</div>
+                    <div>{v.inad ? "Sim" : "Não"}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Inadimplência (início)</div>
+                    <div>{formatDateBR(v.inad_em)}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-500">Inadimplência (reversão)</div>
+                    <div>{formatDateBR(v.inad_revertida_em)}</div>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <div className="text-gray-500">Descrição</div>
+                    <div className="whitespace-pre-wrap">{v.descricao ?? "—"}</div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="text-right">
+              <button className="px-4 py-2 rounded-xl border" onClick={() => setViewVendaModal({ open: false })}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== Modal Transferir Cota ===================== */}
+      {transferModal.open && transferModal.venda && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-semibold">Transferir Cota • {transferModal.venda.numero_proposta}</h3>
+              <button onClick={() => setTransferModal({ open: false, venda: undefined })} className="text-gray-500 hover:text-gray-800">
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="md:col-span-2">
+                <label className="text-sm text-gray-600">Novo Cliente (Lead)</label>
+                <div className="flex flex-col gap-2">
+                  <input
+                    className="w-full border rounded-xl px-3 py-2"
+                    placeholder="Buscar pelo nome do lead…"
+                    value={transferSearch}
+                    onChange={(e) => setTransferSearch(e.target.value)}
+                  />
+                  <select
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={transferLeadId}
+                    onChange={(e) => setTransferLeadId(e.target.value)}
+                  >
+                    <option value="">Selecione um lead…</option>
+                    {filteredTransferLeads.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.nome} {l.telefone ? `• ${l.telefone}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">CPF / CNPJ *</label>
+                <input
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={formatCPF(transferCpf)}
+                  onChange={(e) => setTransferCpf(e.target.value)}
+                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Data de Nascimento</label>
+                <input
+                  type="date"
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={transferNascimento}
+                  onChange={(e) => setTransferNascimento(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Nome do Lead</label>
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.nome ?? ""} readOnly />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Telefone</label>
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.telefone ?? ""} readOnly />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-sm text-gray-600">E-mail</label>
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.email ?? ""} readOnly />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+              <button className="px-4 py-2 rounded-xl border" onClick={() => setTransferModal({ open: false, venda: undefined })}>
+                Cancelar
+              </button>
+              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={handleTransferSave}>
+                Confirmar Transferência
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== Modal Cadastrar Meta (somente admin) ===================== */}
+      {isAdmin && metaOverlay.open && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-semibold">Cadastrar Meta</h3>
+              <button onClick={() => setMetaOverlay({ open: false })} className="text-gray-500 hover:text-gray-800">
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2">
+                <label className="text-sm text-gray-600">Vendedor</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={metaForm.vendedor_id}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setMetaForm((p) => ({ ...p, vendedor_id: id }));
+                    if (id) loadMetaForForm(id, metaForm.ano);
+                    else setMetaForm((p) => ({ ...p, vendedor_id: "", m: Array(12).fill(0) }));
+                  }}
+                  disabled={!isAdmin}
+                >
+                  <option value="">Selecione</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.nome || u.email || u.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm text-gray-600">Ano</label>
+                <select
+                  className="w-full border rounded-xl px-3 py-2"
+                  value={metaForm.ano}
+                  onChange={(e) => {
+                    const newYear = Number(e.target.value);
+                    setMetaForm((p) => ({ ...p, ano: newYear }));
+                    if (metaForm.vendedor_id) loadMetaForForm(metaForm.vendedor_id, newYear);
+                  }}
+                >
+                  {Array.from({ length: 6 }).map((_, i) => {
+                    const y = new Date().getFullYear() - 1 + i;
+                    return (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"].map((m, i) => (
+                <div key={i}>
+                  <label className="text-sm text-gray-600">{m}</label>
+                  <input
+                    type="text"
+                    className="w-full border rounded-xl px-3 py-2"
+                    value={formatNumberBR(metaForm.m[i] || 0)}
+                    onChange={(e) =>
+                      setMetaForm((p) => {
+                        const arr = [...p.m];
+                        const raw = e.target.value;
+                        const normalized = raw.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
+                        const n = normalized ? Number(normalized) : 0;
+                        arr[i] = Number.isNaN(n) ? 0 : n;
+                        return { ...p, m: arr };
+                      })
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+              <button className="px-4 py-2 rounded-xl border" onClick={() => setMetaOverlay({ open: false })}>
+                Cancelar
+              </button>
+              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={saveMeta}>
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== Modal Editor de Cota ===================== */}
+      {cotaEditor.open && cotaEditor.venda && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-semibold">Editar Cota • {cotaEditor.venda.numero_proposta}</h3>
+                <p className="text-xs text-gray-500">
+                  Escolha o tipo de edição. (Cancelamento/Reativação exigem data quando o código muda)
+                </p>
+              </div>
+              <button onClick={closeCotaEditor} className="text-gray-500 hover:text-gray-800">
+                ✕
+              </button>
+            </div>
+
+            {cotaEditor.mode === "pick" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}
+                >
+                  <div className="font-medium">🔢 Alterar Grupo / Cota / Código</div>
+                  <div className="text-sm text-gray-600 mt-1">
+                    Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong> pede data de reativação.
+                  </div>
+                </button>
+
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}
+                >
+                  <div className="font-medium">⇄ Transferir</div>
+                  <div className="text-sm text-gray-600 mt-1">Abre o overlay de transferência para outro lead.</div>
+                </button>
+
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}
+                >
+                  <div className="font-medium">🏁 Contemplada</div>
+                  <div className="text-sm text-gray-600 mt-1">Data + Tipo (lance) + % com 4 casas (ex.: 41,2542%).</div>
+                </button>
+
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}
+                >
+                  <div className="font-medium">⚠️ Inadimplência</div>
+                  <div className="text-sm text-gray-600 mt-1">Marcar/desmarcar com data de início e data de reversão.</div>
+                </button>
+              </div>
+            )}
+
+            {cotaEditor.mode === "cota_codigo" && (() => {
+              const prevAtiva = isAtiva(cotaEditor.venda!.codigo);
+              const nextAtiva = isAtiva(ceCodigo);
+
+              return (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-sm text-gray-600">Grupo</label>
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceGrupo} onChange={(e) => setCeGrupo(e.target.value)} />
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Cota</label>
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceCota} onChange={(e) => setCeCota(e.target.value)} />
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Código</label>
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceCodigo} onChange={(e) => setCeCodigo(e.target.value)} />
+                      <div className="text-xs text-gray-500 mt-1">Ativa = <strong>00</strong></div>
+                    </div>
+                  </div>
+
+                  {prevAtiva && !nextAtiva && (
+                    <div className="border rounded-2xl p-4 bg-red-50">
+                      <div className="font-medium text-red-800">Cancelamento detectado (00 → {ceCodigo || "..."})</div>
+                      <div className="text-sm text-red-700 mt-1">Informe a data do cancelamento para registrar em <code>cancelada_em</code>.</div>
+                      <div className="mt-3">
+                        <label className="text-sm text-gray-700">Data do cancelamento</label>
+                        <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceCancelDate} onChange={(e) => setCeCancelDate(e.target.value)} />
+                      </div>
+                    </div>
+                  )}
+
+                  {!prevAtiva && nextAtiva && (
+                    <div className="border rounded-2xl p-4 bg-green-50">
+                      <div className="font-medium text-green-800">Reativação detectada ({cotaEditor.venda!.codigo} → 00)</div>
+                      <div className="text-sm text-green-700 mt-1">Informe a data da reativação para registrar em <code>reativada_em</code>.</div>
+                      <div className="mt-3">
+                        <label className="text-sm text-gray-700">Data da reativação</label>
+                        <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceReativDate} onChange={(e) => setCeReativDate(e.target.value)} />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
+                      Voltar
+                    </button>
+                    <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveCotaCodigo}>
+                      Salvar
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {cotaEditor.mode === "transfer" && (
+              <div className="space-y-4">
+                <div className="border rounded-2xl p-4 bg-gray-50">
+                  <div className="font-medium">Você está indo para o overlay de transferência</div>
+                  <div className="text-sm text-gray-600 mt-1">
+                    Vamos abrir a tela de transferência para selecionar o novo lead e preencher CPF/CNPJ e nascimento.
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
+                    Voltar
+                  </button>
+                  <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={goTransferFromEditor}>
+                    Abrir Transferência
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {cotaEditor.mode === "contemplacao" && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium">
+                    <input type="checkbox" className="mr-2" checked={ceContFlag} onChange={(e) => setCeContFlag(e.target.checked)} />
+                    Marcar como contemplada
+                  </label>
+                </div>
+
+                {ceContFlag && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-sm text-gray-600">Data da contemplação</label>
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceContDate} onChange={(e) => setCeContDate(e.target.value)} />
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">Tipo de lance</label>
+                      <select className="w-full border rounded-xl px-3 py-2" value={ceContTipo} onChange={(e) => setCeContTipo(e.target.value)}>
+                        <option value="">Selecione…</option>
+                        <option value="Lance Livre">Lance Livre</option>
+                        <option value="Primeiro Lance Fixo">Primeiro Lance Fixo</option>
+                        <option value="Segundo Lance Fixo">Segundo Lance Fixo</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">% do lance (4 casas)</label>
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceContPctRaw} onChange={(e) => setCeContPctRaw(e.target.value)} placeholder="Ex.: 41,2542%" />
+                      <div className="text-xs text-gray-500 mt-1">Será salvo como <code>numeric(9,4)</code>.</div>
+                    </div>
+                  </div>
+                )}
+
+                {!ceContFlag && (
+                  <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-600">
+                    Ao desmarcar, vamos limpar <code>data_contemplacao</code>, <code>contemplacao_tipo</code> e <code>contemplacao_pct</code>.
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
+                    Voltar
+                  </button>
+                  <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveContemplacao}>
+                    Salvar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {cotaEditor.mode === "inad" && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium">
+                    <input type="checkbox" className="mr-2" checked={ceInadFlag} onChange={(e) => setCeInadFlag(e.target.checked)} />
+                    Marcar como inadimplente
+                  </label>
+                </div>
+
+                {ceInadFlag ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-sm text-gray-600">Data que inadimpliu</label>
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadEm} onChange={(e) => setCeInadEm(e.target.value)} />
+                    </div>
+                    <div className="border rounded-2xl p-4 bg-red-50 text-sm text-red-800">
+                      Ao marcar, vamos salvar <code>inad = true</code> e <code>inad_em</code>. A reversão fica vazia.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-sm text-gray-600">Data da reversão</label>
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadRev} onChange={(e) => setCeInadRev(e.target.value)} />
+                    </div>
+                    <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-700">
+                      Ao desmarcar, vamos salvar <code>inad = false</code> e registrar <code>inad_revertida_em</code>.
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
+                    Voltar
+                  </button>
+                  <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveInad}>
+                    Salvar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Carteira;

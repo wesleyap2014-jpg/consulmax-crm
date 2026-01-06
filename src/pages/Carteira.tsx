@@ -1377,10 +1377,10 @@ if (!isAdmin) {
   };
 
   useEffect(() => {
-    // Carrega métricas tanto para "Todos" quanto para vendedor específico
-    loadMetrics(selectedSeller, selectedYear);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSeller, selectedYear]);
+  if (!userId) return; // evita buscar com userId vazio
+  loadMetrics(selectedSeller, selectedYear);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [selectedSeller, selectedYear, users, userId, isAdmin]);
 
   const donutData = useMemo(() => {
     const reached = Math.max(0, Math.min(realizadoAnual, metaAnual));

@@ -1,6 +1,18 @@
 // src/pages/Carteira.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+} from "recharts";
 
 type Lead = { id: string; nome: string; telefone?: string | null; email?: string | null };
 
@@ -494,63 +506,6 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
         </button>
       </div>
 
-      const MONTHS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-
-type MiniDonutMesProps = {
-  mesLabel: string;
-  meta: number;
-  realizado: number;
-};
-
-function MiniDonutMes({ mesLabel, meta, realizado }: MiniDonutMesProps) {
-  const safeMeta = Number(meta || 0);
-  const safeReal = Number(realizado || 0);
-
-  // % exibido (NÃO trava em 100)
-  const pct = safeMeta > 0 ? (safeReal / safeMeta) * 100 : 0;
-
-  // Donut visual (não passa de 100% por limitações do gráfico)
-  const realizadoParaDonut = safeMeta > 0 ? Math.min(safeReal, safeMeta) : 0;
-  const restanteParaDonut = safeMeta > 0 ? Math.max(safeMeta - safeReal, 0) : 0;
-
-  const data = [
-    { name: "Realizado", value: realizadoParaDonut },
-    { name: "Restante", value: restanteParaDonut },
-  ];
-
-  return (
-    <div className="rounded-xl border bg-white/40 p-3 backdrop-blur">
-      <div className="text-xs font-medium text-slate-600">{mesLabel}</div>
-
-      <div className="mt-2 flex items-center gap-3">
-        <div className="relative h-16 w-16">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={data} dataKey="value" innerRadius={20} outerRadius={30} startAngle={90} endAngle={-270}>
-                <Cell />
-                <Cell />
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
-
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-[11px] font-semibold text-slate-800">{pct.toFixed(0)}%</div>
-          </div>
-        </div>
-
-        <div className="min-w-0">
-          <div className="text-[11px] text-slate-600">
-            Meta: <span className="font-semibold text-slate-800">{safeMeta.toLocaleString("pt-BR")}</span>
-          </div>
-          <div className="text-[11px] text-slate-600">
-            Realizado: <span className="font-semibold text-slate-800">{safeReal.toLocaleString("pt-BR")}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
       {open && (
         <div className="mt-3 overflow-auto">
           <table className="min-w-[1050px] w-full border border-gray-200 rounded-xl">
@@ -776,6 +731,9 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
 
 type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "inad" | "transfer";
 
+// ✅ sentinel interno (só para vendedor quando não acha users.id)
+const SELF_SELLER = "__me__";
+
 const Carteira: React.FC = () => {
   const [userId, setUserId] = useState<string>(""); // auth.users.id
   const [userEmail, setUserEmail] = useState<string>("");
@@ -836,7 +794,7 @@ const Carteira: React.FC = () => {
     m: Array(12).fill(0),
   });
 
-  // admin escolhe users.id; vendedor fica travado no próprio users.id
+  // admin escolhe users.id; vendedor fica travado no próprio users.id (ou SELF_SELLER como fallback)
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
@@ -881,15 +839,17 @@ const Carteira: React.FC = () => {
   const [ceInadRev, setCeInadRev] = useState<string>("");
 
   // ===== helpers de ID =====
-  const authIdFromSellerId = useMemo(() => {
-    if (!selectedSeller) return "";
-    return users.find((u) => u.id === selectedSeller)?.auth_user_id ?? "";
-  }, [selectedSeller, users]);
-
   const getAuthByUserId = (sellerUserId: string) => {
     if (!sellerUserId) return "";
+    if (sellerUserId === SELF_SELLER) return userId; // fallback vendedor
     return users.find((u) => u.id === sellerUserId)?.auth_user_id ?? "";
   };
+
+  const authIdFromSellerId = useMemo(() => {
+    if (!selectedSeller) return "";
+    return getAuthByUserId(selectedSeller);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSeller, users, userId]);
 
   // ao trocar produto, zera tabela
   useEffect(() => {
@@ -959,16 +919,15 @@ const Carteira: React.FC = () => {
         setSimTables((tables ?? []) as any);
         setUsers((us ?? []) as AppUser[]);
 
-        // selectedSeller: admin = "" (Todos), vendedor = seu users.id
+        // selectedSeller: admin = "" (Todos), vendedor = seu users.id (ou SELF_SELLER fallback)
         const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
         if (adminFlag) {
           setSelectedSeller("");
         } else {
           const myId = myUserRow?.id ?? "";
-          setSelectedSeller(myId);
+          setSelectedSeller(myId || SELF_SELLER);
           if (!myId) {
-            // sem users.id -> não dá pra carregar metas certas
-            console.warn("Usuário não encontrado em public.users para travar selectedSeller.");
+            console.warn("Usuário não encontrado em public.users; usando fallback SELF_SELLER via auth_user_id.");
           }
         }
       } catch (e: any) {
@@ -986,7 +945,7 @@ const Carteira: React.FC = () => {
     const authId = getAuthByUserId(selectedSeller);
     if (!authId) return [];
     return pendentes.filter((v) => v.vendedor_id === authId);
-  }, [pendentes, isAdmin, selectedSeller, users]);
+  }, [pendentes, isAdmin, selectedSeller, users, userId]);
 
   const encarteiradasVisiveisBase = useMemo(() => {
     if (!isAdmin) return encarteiradas;
@@ -994,7 +953,7 @@ const Carteira: React.FC = () => {
     const authId = getAuthByUserId(selectedSeller);
     if (!authId) return [];
     return encarteiradas.filter((v) => v.vendedor_id === authId);
-  }, [encarteiradas, isAdmin, selectedSeller, users]);
+  }, [encarteiradas, isAdmin, selectedSeller, users, userId]);
 
   const pendentesComNome = useMemo(
     () =>
@@ -1281,29 +1240,27 @@ const Carteira: React.FC = () => {
 
   // tabelas filtradas por Admin + Segmento
   const tabelaOptions = useMemo(() => {
-  const prod = (form.produto as Produto) || "Automóvel";
-  const admName = (form.administradora as string) || "";
-  const admId = simAdmins.find((a) => a.name === admName)?.id;
+    const prod = (form.produto as Produto) || "Automóvel";
+    const admName = (form.administradora as string) || "";
+    const admId = simAdmins.find((a) => a.name === admName)?.id;
 
-  const filtered = simTables.filter((t) => {
-    if (admId && t.admin_id !== admId) return false;
+    const filtered = simTables.filter((t) => {
+      if (admId && t.admin_id !== admId) return false;
+      return produtoMatchesTableSegment(prod, t.segmento);
+    });
 
-    // filtra por "produto selecionado" (sem colapsar Imóvel Estendido -> Imóvel)
-    return produtoMatchesTableSegment(prod, t.segmento);
-  });
+    // ✅ DEDUPE no front: mostra 1 por nome_tabela
+    const seen = new Set<string>();
+    const unique = filtered.filter((t) => {
+      const key = normalizeTableName(t.nome_tabela);
+      if (!key) return false;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
-  // ✅ DEDUPE no front: mostra 1 por nome_tabela
-  const seen = new Set<string>();
-  const unique = filtered.filter((t) => {
-    const key = normalizeTableName(t.nome_tabela);
-    if (!key) return false;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  return unique;
-}, [form.produto, form.administradora, simTables, simAdmins]);
+    return unique;
+  }, [form.produto, form.administradora, simTables, simAdmins]);
 
   // produtos permitidos para a administradora
   const produtoOptionsForAdmin: Produto[] = useMemo(() => {
@@ -1376,16 +1333,22 @@ const Carteira: React.FC = () => {
 
   // ====== MÉTRICAS (metas + realizado) ======
   const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
+    const sellerIsSelf = sellerId === SELF_SELLER;
+
     // -------- Metas (metas_vendedores) --------
     if (sellerId) {
       const authId = getAuthByUserId(sellerId);
-      // usa os dois IDs: vendedor_id (users.id) OU auth_user_id
+
       let q = supabase
         .from("metas_vendedores")
         .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
         .eq("ano", year);
 
-      if (authId) {
+      if (sellerIsSelf) {
+        // vendedor sem users.id -> filtra por auth_user_id
+        q = q.eq("auth_user_id", authId || userId);
+      } else if (authId) {
+        // usa os dois IDs: vendedor_id (users.id) OU auth_user_id
         q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
       } else {
         q = q.eq("vendedor_id", sellerId);
@@ -1463,6 +1426,7 @@ const Carteira: React.FC = () => {
         ? ativasBase.eq("vendedor_id", authIdToFilter)
         : ativasBase.eq("vendedor_id", "__none__")
       : ativasBase;
+
     const qCanc = sellerId
       ? authIdToFilter
         ? cancBase.eq("vendedor_id", authIdToFilter)
@@ -1500,7 +1464,8 @@ const Carteira: React.FC = () => {
       .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
       .eq("ano", year);
 
-    if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
+    if (sellerId === SELF_SELLER) q = q.eq("auth_user_id", authId || userId);
+    else if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
     else q = q.eq("vendedor_id", sellerId);
 
     const { data: metasRow } = await q.maybeSingle();
@@ -1527,7 +1492,6 @@ const Carteira: React.FC = () => {
 
   // carrega métricas quando muda filtro/ano e quando users chega
   useEffect(() => {
-    // se vendedor e não tem selectedSeller ainda, evita “sumir” tudo
     if (!isAdmin && !selectedSeller) return;
     loadMetrics(selectedSeller, selectedYear);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1575,12 +1539,13 @@ const Carteira: React.FC = () => {
     try {
       if (!isAdmin) throw new Error("Somente administradores podem cadastrar metas.");
       if (!metaForm.vendedor_id) throw new Error("Selecione o vendedor.");
+      if (metaForm.vendedor_id === SELF_SELLER) throw new Error("Selecione um vendedor válido.");
 
       const authId = getAuthByUserId(metaForm.vendedor_id);
 
       const payload: any = {
         vendedor_id: metaForm.vendedor_id, // users.id
-        auth_user_id: authId || null, // ✅ reforço (mesmo que trigger exista)
+        auth_user_id: authId || null,
         ano: metaForm.ano,
         m01: metaForm.m[0],
         m02: metaForm.m[1],
@@ -1839,25 +1804,23 @@ const Carteira: React.FC = () => {
           </div>
 
           <div className="lg:col-span-2 border rounded-2xl p-4">
-  <div className="flex items-center justify-between mb-3">
-    <div className="font-medium">Meta x Realizado (mês a mês)</div>
-    <div className="text-xs text-gray-500">Percentual no centro não limita em 100%</div>
-  </div>
+            <div className="w-full h-64">
+              <ResponsiveContainer>
+                <LineChart data={lineData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip formatter={(v: any) => currency(Number(v || 0))} />
+                  <Legend />
+                  <Line type="monotone" dataKey="Realizado" stroke="#1E293F" strokeWidth={3} dot={false} />
+                  <Line type="monotone" dataKey="Meta" stroke="#A11C27" strokeWidth={3} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
 
-  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-    {MONTHS.map((label, i) => (
-      <MiniDonutMes
-        key={label}
-        mesLabel={label}
-        meta={metaMensal[i] || 0}
-        realizado={realizadoMensal[i] || 0}
-      />
-    ))}
-  </div>
-</div>
-
-        {/* ✅ debug leve pra você ver o filtro (só aparece pro admin) */}
-        {isAdmin && selectedSeller && (
+        {/* ✅ debug leve pro admin */}
+        {isAdmin && selectedSeller && selectedSeller !== SELF_SELLER && (
           <div className="text-xs text-gray-500">
             Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> •
             auth_user_id: <strong>{authIdFromSellerId || "—"}</strong>
@@ -2250,12 +2213,12 @@ const Carteira: React.FC = () => {
                   </div>
                   <div>
                     <div className="text-gray-500">Data de Nascimento</div>
-                    <div>{v.data_nascimento ?? "—"}</div>
+                    <div>{formatDateBR(v.data_nascimento)}</div>
                   </div>
 
                   <div>
                     <div className="text-gray-500">Data da Venda</div>
-                    <div>{v.data_venda}</div>
+                    <div>{formatDateBR(v.data_venda)}</div>
                   </div>
                   <div>
                     <div className="text-gray-500">Vendedor</div>

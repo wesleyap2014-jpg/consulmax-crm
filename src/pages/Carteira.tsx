@@ -502,53 +502,54 @@ type MiniDonutMesProps = {
   realizado: number;
 };
 
-const MiniDonutMes: React.FC<MiniDonutMesProps> = ({ mesLabel, meta, realizado }) => {
-  const metaSafe = Number(meta || 0);
-  const realSafe = Number(realizado || 0);
+function MiniDonutMes({ mesLabel, meta, realizado }: MiniDonutMesProps) {
+  const safeMeta = Number(meta || 0);
+  const safeReal = Number(realizado || 0);
 
-  // % atingido (não trava em 100% no TEXTO)
-  const pctRaw = metaSafe > 0 ? (realSafe / metaSafe) * 100 : 0;
+  // % exibido (NÃO trava em 100)
+  const pct = safeMeta > 0 ? (safeReal / safeMeta) * 100 : 0;
 
-  // Para o donut não "quebrar", a fatia visual fica no máximo 100%,
-  // mas o número no meio pode passar de 100% (ex.: 132,45%).
-  const pctFill = Math.max(0, Math.min(100, pctRaw));
-  const rest = Math.max(0, 100 - pctFill);
+  // Donut visual (não passa de 100% por limitações do gráfico)
+  const realizadoParaDonut = safeMeta > 0 ? Math.min(safeReal, safeMeta) : 0;
+  const restanteParaDonut = safeMeta > 0 ? Math.max(safeMeta - safeReal, 0) : 0;
+
+  const data = [
+    { name: "Realizado", value: realizadoParaDonut },
+    { name: "Restante", value: restanteParaDonut },
+  ];
 
   return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="relative h-[72px] w-[72px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={[
-                { name: "Realizado", value: pctFill },
-                { name: "Restante", value: rest },
-              ]}
-              dataKey="value"
-              innerRadius={22}
-              outerRadius={32}
-              startAngle={90}
-              endAngle={-270}
-              stroke="none"
-              isAnimationActive={false}
-            >
-              <Cell fill="#A11C27" />
-              <Cell fill="rgba(30,41,63,0.12)" />
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
+    <div className="rounded-xl border bg-white/40 p-3 backdrop-blur">
+      <div className="text-xs font-medium text-slate-600">{mesLabel}</div>
 
-        <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
-          <div className="text-[12px] font-semibold text-slate-900">
-            {pctRaw.toLocaleString("pt-BR", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}%
+      <div className="mt-2 flex items-center gap-3">
+        <div className="relative h-16 w-16">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={data} dataKey="value" innerRadius={20} outerRadius={30} startAngle={90} endAngle={-270}>
+                <Cell />
+                <Cell />
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-[11px] font-semibold text-slate-800">{pct.toFixed(0)}%</div>
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <div className="text-[11px] text-slate-600">
+            Meta: <span className="font-semibold text-slate-800">{safeMeta.toLocaleString("pt-BR")}</span>
+          </div>
+          <div className="text-[11px] text-slate-600">
+            Realizado: <span className="font-semibold text-slate-800">{safeReal.toLocaleString("pt-BR")}</span>
           </div>
         </div>
       </div>
-
-      <div className="text-[11px] text-slate-600">{mesLabel}</div>
     </div>
   );
-};
+}
 
       {open && (
         <div className="mt-3 overflow-auto">

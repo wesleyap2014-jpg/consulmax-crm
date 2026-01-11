@@ -43,7 +43,7 @@ const C = {
   glass: "rgba(255,255,255,.55)",
 };
 
-const CONCENTRACAO_ALERTA = 0.10; // 10%
+const CONCENTRACAO_ALERTA = 0.1; // 10%
 
 /* =========================
    Tipos (DB)
@@ -52,7 +52,7 @@ type UUID = string;
 
 type VendaRow = {
   id: UUID;
-  vendedor_id: UUID | null; // IMPORTANT: referencia users.id
+  vendedor_id: UUID | null; // pode ser users.id OU auth_user_id (vamos suportar os 2)
 
   administradora: string | null;
   segmento: string | null;
@@ -92,8 +92,8 @@ type LeadRow = {
 };
 
 type UserRow = {
-  id: UUID; // IMPORTANT
-  auth_user_id: UUID;
+  id: UUID; // users.id
+  auth_user_id: UUID; // auth.users.id
   nome: string | null;
   user_role?: string | null;
   role?: string | null;
@@ -322,7 +322,7 @@ export default function Relatorios() {
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
 
-  const [fVendedor, setFVendedor] = useState<string>("all"); // users.id
+  const [fVendedor, setFVendedor] = useState<string>("all"); // pode ser users.id ou auth_user_id (o que vier em vendas.vendedor_id)
   const [fAdmin, setFAdmin] = useState<string>("all");
   const [fSeg, setFSeg] = useState<string>("all");
   const [fTabela, setFTabela] = useState<string>("all");
@@ -331,7 +331,7 @@ export default function Relatorios() {
 
   // dados
   const [loading, setLoading] = useState(false);
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null); // auth.users.id
   const [myUserId, setMyUserId] = useState<string | null>(null); // users.id
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -358,9 +358,9 @@ export default function Relatorios() {
   const todayYMD = useMemo(() => todayLocalYMD(), []);
 
   /* =========================
-     Carrega auth + role (corrigido)
+     Carrega auth + role
      - authUserId: supabase auth user id
-     - myUserId: users.id (referência usada em vendas.vendedor_id)
+     - myUserId: users.id
   ========================= */
   useEffect(() => {
     let alive = true;
@@ -413,26 +413,53 @@ export default function Relatorios() {
     };
   }, []);
 
+  /* =========================
+     Helpers: Vendedor (nome) + ID preferido do vendedor logado
+     - Corrige "—" quando vendas.vendedor_id estiver gravado como auth_user_id
+     - Mantém layout e comportamento, só troca a resolução do nome/ID
+  ========================= */
+  const vendorName = (sellerId: string | null) => {
+    if (!sellerId) return "—";
+    return usersMap[sellerId]?.nome || usersByAuth[sellerId]?.nome || "—";
+  };
+
+  const myVendorFilterId = useMemo(() => {
+    if (isAdmin) return "all";
+
+    // preferir um id que realmente exista nos dados que vieram da tabela vendas
+    const hasUsersId = myUserId ? vendas.some((v) => (v.vendedor_id || "") === myUserId) : false;
+    const hasAuthId = authUserId ? vendas.some((v) => (v.vendedor_id || "") === authUserId) : false;
+
+    if (hasUsersId && myUserId) return myUserId;
+    if (hasAuthId && authUserId) return authUserId;
+
+    // fallback: tenta users.id, senão auth id, senão all
+    return myUserId || authUserId || "all";
+  }, [isAdmin, myUserId, authUserId, vendas]);
+
   // default do filtro vendedor:
   // - admin: all
-  // - vendedor: meu users.id
+  // - vendedor: meu id (o que existir em vendas.vendedor_id)
   useEffect(() => {
-    if (!myUserId) return;
-    if (isAdmin) setFVendedor("all");
-    else setFVendedor(myUserId);
-  }, [isAdmin, myUserId]);
+    if (isAdmin) {
+      setFVendedor("all");
+      return;
+    }
+    // vendedor: trava no próprio (mas usando o id certo que bate nos dados)
+    setFVendedor(myVendorFilterId);
+  }, [isAdmin, myVendorFilterId]);
 
   /* =========================
      Fetch principal (UI)
      - Admin: tudo (sem filtro vendedor)
-     - Vendedor: somente dele (vendas.vendedor_id = myUserId)
+     - Vendedor: somente dele (vendas.vendedor_id = users.id OU auth_user_id)
   ========================= */
   async function fetchAllUI() {
-    if (!myUserId) return;
+    if (!myUserId && !authUserId) return;
 
     setLoading(true);
     try {
-      // users (nome do vendedor) - mapeando por users.id
+      // users (nome do vendedor)
       const { data: usersData, error: usersErr } = await supabase
         .from("users")
         .select("id, auth_user_id, nome, user_role, role, is_active")
@@ -484,7 +511,18 @@ export default function Relatorios() {
         .order("encarteirada_em", { ascending: false })
         .gte("encarteirada_em", defaultMin);
 
-      if (!isAdmin) q = q.eq("vendedor_id", myUserId);
+      // ✅ RBAC: vendedor só vê as próprias vendas (suporta users.id OU auth_user_id)
+      if (!isAdmin) {
+        const parts: string[] = [];
+        if (myUserId) parts.push(`vendedor_id.eq.${myUserId}`);
+        if (authUserId) parts.push(`vendedor_id.eq.${authUserId}`);
+        if (parts.length === 1) {
+          const only = myUserId || authUserId!;
+          q = q.eq("vendedor_id", only);
+        } else if (parts.length > 1) {
+          q = q.or(parts.join(","));
+        }
+      }
 
       const { data: vendasData, error: vendasErr } = await q;
       if (vendasErr) {
@@ -527,10 +565,10 @@ export default function Relatorios() {
   }
 
   useEffect(() => {
-    if (!myUserId) return;
+    if (!myUserId && !authUserId) return;
     fetchAllUI();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myUserId, isAdmin]);
+  }, [myUserId, authUserId, isAdmin]);
 
   /* =========================
      Status (UI e export)
@@ -587,7 +625,7 @@ export default function Relatorios() {
       });
     }
 
-    // vendedor é users.id
+    // vendedor (valor exatamente como está em vendas.vendedor_id)
     if (fVendedor !== "all") rows = rows.filter((v) => (v.vendedor_id || "") === fVendedor);
 
     if (fAdmin !== "all") rows = rows.filter((v) => (v.administradora || "") === fAdmin);
@@ -1011,6 +1049,7 @@ export default function Relatorios() {
       const lead = leadsMap[r.lead_id];
       const nm = (lead?.nome || "Cliente").toString();
       const label = nm.slice(0, 18) + (nm.length > 18 ? "…" : "");
+      // ✅ Pareto em % humano com 2 casas (mantido)
       return { name: label, pct100: r.pct * 100, cum100: cum * 100 };
     });
 
@@ -1043,16 +1082,16 @@ export default function Relatorios() {
       { key: "0-1", label: "0–1%", from: 0, to: 0.01 },
       { key: "1-2", label: "1–2%", from: 0.01, to: 0.02 },
       { key: "2-5", label: "2–5%", from: 0.02, to: 0.05 },
-      { key: "5-10", label: "5–10%", from: 0.05, to: 0.10 },
-      { key: "10-20", label: "10–20%", from: 0.10, to: 0.20 },
-      { key: "20+", label: "20%+", from: 0.20, to: 1.0 },
+      { key: "5-10", label: "5–10%", from: 0.05, to: 0.1 },
+      { key: "10-20", label: "10–20%", from: 0.1, to: 0.2 },
+      { key: "20+", label: "20%+", from: 0.2, to: 1.0 },
     ];
 
     const counts = buckets.map((b) => ({ ...b, qtd: 0 }));
     for (const r of concRows) {
       const idx = counts.findIndex((b) => r.pct >= b.from && r.pct < b.to);
       if (idx >= 0) counts[idx].qtd += 1;
-      else if (r.pct >= 0.20) counts[counts.length - 1].qtd += 1;
+      else if (r.pct >= 0.2) counts[counts.length - 1].qtd += 1;
     }
 
     const max = Math.max(1, ...counts.map((c) => c.qtd));
@@ -1076,14 +1115,6 @@ export default function Relatorios() {
     return total > 0 ? leadDialogAtivoTotal / total : 0;
   }, [leadDialogAtivoTotal, totalsCarteira.ativoValue]);
 
-  /* =========================
-     UI helpers
-========================= */
-  const vendorName = (userId: string | null) => {
-    if (!userId) return "—";
-    return usersMap[userId]?.nome || "—";
-  };
-
   const leadName = (lid: string | null) => {
     if (!lid) return "—";
     return leadsMap[lid]?.nome || lid;
@@ -1098,7 +1129,7 @@ export default function Relatorios() {
      Export (histórico completo)
 ========================= */
   async function exportReport() {
-    if (!myUserId) return;
+    if (!myUserId && !authUserId) return;
 
     setExportLoading(true);
     try {
@@ -1130,8 +1161,18 @@ export default function Relatorios() {
         )
         .order("encarteirada_em", { ascending: false });
 
-      // trava por perfil
-      if (!isAdmin) q = q.eq("vendedor_id", myUserId);
+      // ✅ trava por perfil (suporta users.id OU auth_user_id)
+      if (!isAdmin) {
+        const parts: string[] = [];
+        if (myUserId) parts.push(`vendedor_id.eq.${myUserId}`);
+        if (authUserId) parts.push(`vendedor_id.eq.${authUserId}`);
+        if (parts.length === 1) {
+          const only = myUserId || authUserId!;
+          q = q.eq("vendedor_id", only);
+        } else if (parts.length > 1) {
+          q = q.or(parts.join(","));
+        }
+      }
 
       // filtros globais
       if (fVendedor !== "all") q = q.eq("vendedor_id", fVendedor);
@@ -1149,13 +1190,13 @@ export default function Relatorios() {
 
       const list = (data || []) as VendaRow[];
 
-      // carregar users faltantes
+      // carregar users faltantes (tenta bater tanto por id quanto por auth_user_id)
       const vendorIds = Array.from(new Set(list.map((v) => v.vendedor_id).filter(Boolean) as string[]));
       if (vendorIds.length) {
         const { data: uData } = await supabase
           .from("users")
           .select("id, auth_user_id, nome, user_role, role, is_active")
-          .in("id", vendorIds);
+          .or(`id.in.(${vendorIds.join(",")}),auth_user_id.in.(${vendorIds.join(",")})`);
 
         if (uData?.length) {
           const mId = { ...usersMap };
@@ -1176,10 +1217,7 @@ export default function Relatorios() {
         const m = { ...leadsMap };
         for (let i = 0; i < leadIds.length; i += chunkSize) {
           const chunk = leadIds.slice(i, i + chunkSize);
-          const { data: lData } = await supabase
-            .from("leads")
-            .select("id, nome, telefone, email, origem")
-            .in("id", chunk);
+          const { data: lData } = await supabase.from("leads").select("id, nome, telefone, email, origem").in("id", chunk);
 
           lData?.forEach((l: any) => (m[l.id] = l));
         }
@@ -1208,7 +1246,7 @@ export default function Relatorios() {
         });
       }
 
-      // HEADERS (VENDAS agora inclui Cliente + Proposta)
+      // HEADERS (VENDAS inclui Cliente + Proposta)
       const headers = [
         "Vendedor",
         "Cliente",
@@ -1279,12 +1317,7 @@ export default function Relatorios() {
           </p>
         </div>
 
-        <Button
-          variant="outline"
-          onClick={() => setExportOpen(true)}
-          disabled={!myUserId}
-          className="rounded-xl"
-        >
+        <Button variant="outline" onClick={() => setExportOpen(true)} disabled={!myUserId && !authUserId} className="rounded-xl">
           <Download className="h-4 w-4 mr-2" />
           Extrair Relatório
         </Button>
@@ -1325,8 +1358,8 @@ export default function Relatorios() {
                   <SelectItem value="all">Todos</SelectItem>
                   {distincts.vends
                     .filter((id) => {
-                      const u = usersMap[id];
-                      // opcional: esconder inativos da lista (não afeta admin ver dados)
+                      // ✅ não quebra quando id é auth_user_id
+                      const u = usersMap[id] || usersByAuth[id];
                       return u ? u.is_active !== false : true;
                     })
                     .map((id) => (
@@ -1443,7 +1476,7 @@ export default function Relatorios() {
                   setFTipoVenda("all");
                   setFContemplada("all");
                   if (isAdmin) setFVendedor("all");
-                  else if (myUserId) setFVendedor(myUserId);
+                  else setFVendedor(myVendorFilterId);
                 }}
               >
                 Limpar filtros
@@ -1528,7 +1561,7 @@ export default function Relatorios() {
                 pct: inad126.currentWindow.pct,
               },
             ].map((x) => {
-              const alarm = x.pct > 0.30;
+              const alarm = x.pct > 0.3;
               const restante = Math.max(0, x.soldValue - x.cancelValue);
 
               const pieData = [
@@ -1555,7 +1588,6 @@ export default function Relatorios() {
                     </CardTitle>
                   </CardHeader>
 
-                  {/* ✅ FIX: não estoura mais pra fora */}
                   <CardContent className="space-y-2">
                     <div className="h-[240px] relative">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1566,22 +1598,10 @@ export default function Relatorios() {
                           </Pie>
                           <RTooltip formatter={(v: any, n: any) => [fmtBRL(safeNum(v)), String(n)]} />
                           <Legend />
-                          <text
-                            x="50%"
-                            y="50%"
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                            style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}
-                          >
+                          <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}>
                             {fmtPctHuman(x.pct, 1)}
                           </text>
-                          <text
-                            x="50%"
-                            y="58%"
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                            style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}
-                          >
+                          <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}>
                             cancelado
                           </text>
                         </PieChart>
@@ -1870,7 +1890,7 @@ export default function Relatorios() {
             </GlassCard>
           </div>
 
-          {/* ✅ NOVO: Taxa de contemplação por tipo + por administradora */}
+          {/* Taxa de contemplação por tipo + por administradora */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
               <CardHeader className="pb-2">
@@ -1933,11 +1953,7 @@ export default function Relatorios() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="adm" hide />
                     <YAxis domain={[0, 100]} tickFormatter={(v) => fmtPct100Human(Number(v), 2)} />
-                    <RTooltip
-                      formatter={(v: any, n: any) => [fmtPct100Human(Number(v), 2), String(n)]}
-                      labelFormatter={(l) => `Administradora: ${l}`}
-                      contentStyle={{ borderRadius: 12 }}
-                    />
+                    <RTooltip formatter={(v: any, n: any) => [fmtPct100Human(Number(v), 2), String(n)]} labelFormatter={(l) => `Administradora: ${l}`} contentStyle={{ borderRadius: 12 }} />
                     <Legend />
                     <Bar dataKey="Lance Livre" stackId="a" fill={C.navy} />
                     <Bar dataKey="Primeiro Lance Fixo" stackId="a" fill={C.gold} />
@@ -2225,7 +2241,6 @@ export default function Relatorios() {
           <GlassCard>
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
-                {/* ✅ título ajustado */}
                 <span>Concentração - Top 10</span>
                 <div className="flex items-center gap-2">
                   <Badge tone="info">Top 10: {fmtPctHuman(paretoData.sumTop10, 2)}</Badge>
@@ -2238,18 +2253,9 @@ export default function Relatorios() {
                 <ComposedChart data={paretoData.rows}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" interval={0} tick={{ fontSize: 11 }} />
-                  {/* ✅ % humano 2 casas */}
                   <YAxis yAxisId="left" tickFormatter={(v) => fmtPct100Human(Number(v), 2)} domain={[0, 100]} />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tickFormatter={(v) => fmtPct100Human(Number(v), 2)}
-                    domain={[0, 100]}
-                  />
-                  <RTooltip
-                    formatter={(v: any, n: any) => [fmtPct100Human(Number(v), 2), String(n)]}
-                    contentStyle={{ borderRadius: 12 }}
-                  />
+                  <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => fmtPct100Human(Number(v), 2)} domain={[0, 100]} />
+                  <RTooltip formatter={(v: any, n: any) => [fmtPct100Human(Number(v), 2), String(n)]} contentStyle={{ borderRadius: 12 }} />
                   <Legend />
                   <Bar yAxisId="left" dataKey="pct100" name="Participação" fill={C.navy} radius={[8, 8, 0, 0]} />
                   <Line yAxisId="right" dataKey="cum100" name="Acumulado" stroke={C.gold} strokeWidth={3} dot={false} />
@@ -2364,12 +2370,7 @@ export default function Relatorios() {
                       Página {concPage} / {concTotalPages} • {concRows.length} clientes
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        className="rounded-xl"
-                        onClick={() => setConcPage((p) => Math.max(1, p - 1))}
-                        disabled={concPage <= 1}
-                      >
+                      <Button variant="outline" className="rounded-xl" onClick={() => setConcPage((p) => Math.max(1, p - 1))} disabled={concPage <= 1}>
                         Anterior
                       </Button>
                       <Button
@@ -2402,8 +2403,7 @@ export default function Relatorios() {
                           {leadName(leadDialogId)}
                         </div>
                         <div className="text-xs mt-1" style={{ color: C.muted }}>
-                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} •{" "}
-                          {leadsMap[leadDialogId]?.origem || "—"}
+                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} • {leadsMap[leadDialogId]?.origem || "—"}
                         </div>
 
                         <div className="text-xs mt-2 flex items-center gap-2 flex-wrap" style={{ color: C.muted }}>
@@ -2412,11 +2412,7 @@ export default function Relatorios() {
                             {fmtBRL(leadDialogAtivoTotal)}
                           </span>
                           <Badge tone={leadDialogPct >= CONCENTRACAO_ALERTA ? "danger" : "info"}>{fmtPctHuman(leadDialogPct, 1)} da carteira</Badge>
-                          {leadDialogPct >= CONCENTRACAO_ALERTA ? (
-                            <Badge tone="danger">Cliente concentrado (≥ 10%)</Badge>
-                          ) : (
-                            <Badge tone="ok">OK</Badge>
-                          )}
+                          {leadDialogPct >= CONCENTRACAO_ALERTA ? <Badge tone="danger">Cliente concentrado (≥ 10%)</Badge> : <Badge tone="ok">OK</Badge>}
                         </div>
                       </div>
 

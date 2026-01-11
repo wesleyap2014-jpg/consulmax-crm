@@ -496,51 +496,56 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
 
       const MONTHS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
-const MiniDonutMes: React.FC<{
+type MiniDonutMesProps = {
   mesLabel: string;
   meta: number;
   realizado: number;
-}> = ({ mesLabel, meta, realizado }) => {
-  const m = Number(meta || 0);
-  const r = Number(realizado || 0);
+};
 
-  // % NÃO trava em 100
-  const pct = m > 0 ? (r / m) * 100 : 0;
+const MiniDonutMes: React.FC<MiniDonutMesProps> = ({ mesLabel, meta, realizado }) => {
+  const metaSafe = Number(meta || 0);
+  const realSafe = Number(realizado || 0);
 
-  // Donut: visual enche até o máximo entre meta e realizado (se passou da meta, fica cheio)
-  const reached = Math.max(0, r);
-  const total = Math.max(m, reached, 1); // evita total=0
-  const remaining = Math.max(0, total - reached);
+  // % atingido (não trava em 100% no TEXTO)
+  const pctRaw = metaSafe > 0 ? (realSafe / metaSafe) * 100 : 0;
 
-  const data = [
-    { name: "Atingido", value: reached },
-    { name: "Restante", value: remaining },
-  ];
+  // Para o donut não "quebrar", a fatia visual fica no máximo 100%,
+  // mas o número no meio pode passar de 100% (ex.: 132,45%).
+  const pctFill = Math.max(0, Math.min(100, pctRaw));
+  const rest = Math.max(0, 100 - pctFill);
 
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="w-24 h-24 relative">
-        <ResponsiveContainer>
+      <div className="relative h-[72px] w-[72px]">
+        <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={data} innerRadius={30} outerRadius={40} dataKey="value" stroke="none">
-              <Cell key="atingido" fill="#1E293F" />
-              <Cell key="restante" fill="#E5E7EB" />
+            <Pie
+              data={[
+                { name: "Realizado", value: pctFill },
+                { name: "Restante", value: rest },
+              ]}
+              dataKey="value"
+              innerRadius={22}
+              outerRadius={32}
+              startAngle={90}
+              endAngle={-270}
+              stroke="none"
+              isAnimationActive={false}
+            >
+              <Cell fill="#A11C27" />
+              <Cell fill="rgba(30,41,63,0.12)" />
             </Pie>
           </PieChart>
         </ResponsiveContainer>
 
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-sm font-semibold">
-            {m > 0 ? `${Math.round(pct)}%` : "—"}
+        <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+          <div className="text-[12px] font-semibold text-slate-900">
+            {pctRaw.toLocaleString("pt-BR", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}%
           </div>
         </div>
       </div>
 
-      <div className="text-xs font-medium">{mesLabel}</div>
-      <div className="text-[11px] text-gray-500 leading-tight text-center">
-        <div>Meta: {currency(m)}</div>
-        <div>Real: {currency(r)}</div>
-      </div>
+      <div className="text-[11px] text-slate-600">{mesLabel}</div>
     </div>
   );
 };

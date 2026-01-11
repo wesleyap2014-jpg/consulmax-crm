@@ -1,18 +1,6 @@
 // src/pages/Carteira.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-} from "recharts";
 
 type Lead = { id: string; nome: string; telefone?: string | null; email?: string | null };
 
@@ -505,6 +493,57 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
           👁️
         </button>
       </div>
+
+      const MONTHS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+const MiniDonutMes: React.FC<{
+  mesLabel: string;
+  meta: number;
+  realizado: number;
+}> = ({ mesLabel, meta, realizado }) => {
+  const m = Number(meta || 0);
+  const r = Number(realizado || 0);
+
+  // % NÃO trava em 100
+  const pct = m > 0 ? (r / m) * 100 : 0;
+
+  // Donut: visual enche até o máximo entre meta e realizado (se passou da meta, fica cheio)
+  const reached = Math.max(0, r);
+  const total = Math.max(m, reached, 1); // evita total=0
+  const remaining = Math.max(0, total - reached);
+
+  const data = [
+    { name: "Atingido", value: reached },
+    { name: "Restante", value: remaining },
+  ];
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="w-24 h-24 relative">
+        <ResponsiveContainer>
+          <PieChart>
+            <Pie data={data} innerRadius={30} outerRadius={40} dataKey="value" stroke="none">
+              <Cell key="atingido" fill="#1E293F" />
+              <Cell key="restante" fill="#E5E7EB" />
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="text-sm font-semibold">
+            {m > 0 ? `${Math.round(pct)}%` : "—"}
+          </div>
+        </div>
+      </div>
+
+      <div className="text-xs font-medium">{mesLabel}</div>
+      <div className="text-[11px] text-gray-500 leading-tight text-center">
+        <div>Meta: {currency(m)}</div>
+        <div>Real: {currency(r)}</div>
+      </div>
+    </div>
+  );
+};
 
       {open && (
         <div className="mt-3 overflow-auto">
@@ -1794,20 +1833,22 @@ const Carteira: React.FC = () => {
           </div>
 
           <div className="lg:col-span-2 border rounded-2xl p-4">
-            <div className="w-full h-64">
-              <ResponsiveContainer>
-                <LineChart data={lineData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(v: any) => currency(Number(v || 0))} />
-                  <Legend />
-                  <Line type="monotone" dataKey="Realizado" stroke="#1E293F" strokeWidth={3} dot={false} />
-                  <Line type="monotone" dataKey="Meta" stroke="#A11C27" strokeWidth={3} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
+  <div className="flex items-center justify-between mb-3">
+    <div className="font-medium">Meta x Realizado (mês a mês)</div>
+    <div className="text-xs text-gray-500">Percentual no centro não limita em 100%</div>
+  </div>
+
+  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+    {MONTHS.map((label, i) => (
+      <MiniDonutMes
+        key={label}
+        mesLabel={label}
+        meta={metaMensal[i] || 0}
+        realizado={realizadoMensal[i] || 0}
+      />
+    ))}
+  </div>
+</div>
 
         {/* ✅ debug leve pra você ver o filtro (só aparece pro admin) */}
         {isAdmin && selectedSeller && (

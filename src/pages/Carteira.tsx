@@ -197,6 +197,8 @@ const validateCPF = (doc: string) => {
 function normalizeProdutoToSegmento(produto: Produto | string | null | undefined): string | null {
   const p = (produto || "").toString().trim();
   if (!p) return null;
+  // ⚠️ Mantemos essa normalização para o campo "segmento" em vendas (como estava),
+  // pois outras partes do CRM podem depender disso.
   if (p === "Imóvel Estendido") return "Imóvel";
   if (p === "Serviço") return "Serviços";
   return p;
@@ -209,6 +211,61 @@ function normalizeSegmentLabel(s: string | null | undefined): string {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+}
+
+/**
+ * ✅ CORREÇÃO (TABELAS POR SEGMENTO)
+ * Para filtrar sim_tables.segmento corretamente, NÃO podemos colapsar "Imóvel Estendido" -> "Imóvel".
+ * Então criamos um matcher de segmento (produto selecionado -> candidatos normalizados),
+ * cobrindo variações comuns (singular/plural e hífen/espaço).
+ */
+function segmentCandidatesForProduto(produto: Produto | string | null | undefined): string[] {
+  const p = (produto || "").toString().trim();
+  if (!p) return [];
+
+  const key = (x: string) => normalizeSegmentLabel(x);
+  const set = new Set<string>();
+
+  const add = (x: string) => {
+    const k = key(x);
+    if (k) set.add(k);
+  };
+
+  // base (como veio no select)
+  add(p);
+
+  // variações por produto (singular/plural e nomes conhecidos)
+  if (p === "Automóvel") {
+    add("Automóveis");
+  } else if (p === "Imóvel") {
+    add("Imóveis");
+  } else if (p === "Imóvel Estendido") {
+    // IMPORTANTÍSSIMO: manter separado de "Imóvel"
+    add("Imóveis Estendidos");
+    add("Imóvel-Estendido");
+    add("Imóveis-Estendidos");
+  } else if (p === "Serviço") {
+    add("Serviços");
+    add("Servico");
+    add("Servicos");
+  } else if (p === "Motocicleta") {
+    add("Motocicletas");
+  } else if (p === "Pesados") {
+    add("Pesado");
+  } else if (p === "Consórcio Ouro") {
+    add("Consorcio Ouro");
+    add("Consórcio de Ouro");
+    add("Consorcio de Ouro");
+  }
+
+  return Array.from(set);
+}
+
+function produtoMatchesTableSegment(produto: Produto, tableSegment: string | null | undefined): boolean {
+  const segNorm = normalizeSegmentLabel(tableSegment);
+  if (!segNorm) return false;
+  const candidates = segmentCandidatesForProduto(produto);
+  return candidates.includes(segNorm);
 }
 
 // Percentual com 4 casas (input humano -> number)
@@ -355,9 +412,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onViewVenda, onOpenCotaEdi
           </span>
 
           {!!venda.contemplada && (
-            <span className="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-800">
-              Contemplada
-            </span>
+            <span className="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-800">Contemplada</span>
           )}
 
           {!!venda.inad && (
@@ -1172,17 +1227,15 @@ const Carteira: React.FC = () => {
   // tabelas filtradas por Admin + Segmento
   const tabelaOptions = useMemo(() => {
     const prod = (form.produto as Produto) || "Automóvel";
-    const segFromProduto = normalizeProdutoToSegmento(prod) ?? prod;
-    const prodNorm = normalizeSegmentLabel(segFromProduto);
-
     const admName = (form.administradora as string) || "";
     const admId = simAdmins.find((a) => a.name === admName)?.id;
 
     return simTables.filter((t) => {
       if (admId && t.admin_id !== admId) return false;
-      if (!prodNorm) return true;
-      const segNorm = normalizeSegmentLabel(t.segmento);
-      return segNorm === prodNorm;
+
+      // ✅ CORREÇÃO: filtra por "produto selecionado" (sem colapsar Imóvel Estendido -> Imóvel)
+      // e com tolerância a variações singular/plural.
+      return produtoMatchesTableSegment(prod, t.segmento);
     });
   }, [form.produto, form.administradora, simTables, simAdmins]);
 
@@ -1195,8 +1248,8 @@ const Carteira: React.FC = () => {
     const segSet = new Set(simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento)));
 
     const filtered = PRODUTOS.filter((p) => {
-      const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
-      return segSet.has(seg);
+      const candidates = segmentCandidatesForProduto(p);
+      return candidates.some((c) => segSet.has(c));
     });
 
     return filtered.length ? filtered : PRODUTOS;
@@ -1339,8 +1392,16 @@ const Carteira: React.FC = () => {
 
     const authIdToFilter = sellerId ? getAuthByUserId(sellerId) : "";
 
-    const qAtivas = sellerId ? (authIdToFilter ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase.eq("vendedor_id", "__none__")) : ativasBase;
-    const qCanc = sellerId ? (authIdToFilter ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase.eq("vendedor_id", "__none__")) : cancBase;
+    const qAtivas = sellerId
+      ? authIdToFilter
+        ? ativasBase.eq("vendedor_id", authIdToFilter)
+        : ativasBase.eq("vendedor_id", "__none__")
+      : ativasBase;
+    const qCanc = sellerId
+      ? authIdToFilter
+        ? cancBase.eq("vendedor_id", authIdToFilter)
+        : cancBase.eq("vendedor_id", "__none__")
+      : cancBase;
 
     const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([qAtivas, qCanc]);
 
@@ -1730,8 +1791,8 @@ const Carteira: React.FC = () => {
         {/* ✅ debug leve pra você ver o filtro (só aparece pro admin) */}
         {isAdmin && selectedSeller && (
           <div className="text-xs text-gray-500">
-            Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> • auth_user_id:{" "}
-            <strong>{authIdFromSellerId || "—"}</strong>
+            Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> •
+            auth_user_id: <strong>{authIdFromSellerId || "—"}</strong>
           </div>
         )}
       </section>
@@ -1933,10 +1994,12 @@ const Carteira: React.FC = () => {
                         const segSet = new Set(
                           simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento))
                         );
+
                         const allowed = PRODUTOS.filter((p) => {
-                          const seg = normalizeSegmentLabel(normalizeProdutoToSegmento(p) ?? p);
-                          return segSet.has(seg);
+                          const candidates = segmentCandidatesForProduto(p);
+                          return candidates.some((c) => segSet.has(c));
                         });
+
                         if (allowed.length && !allowed.includes(nextProduto as Produto)) nextProduto = allowed[0];
                       }
 
@@ -2239,7 +2302,10 @@ const Carteira: React.FC = () => {
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Transferir Cota • {transferModal.venda.numero_proposta}</h3>
-              <button onClick={() => setTransferModal({ open: false, venda: undefined })} className="text-gray-500 hover:text-gray-800">
+              <button
+                onClick={() => setTransferModal({ open: false, venda: undefined })}
+                className="text-gray-500 hover:text-gray-800"
+              >
                 ✕
               </button>
             </div>
@@ -2291,23 +2357,41 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Nome do Lead</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.nome ?? ""} readOnly />
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={selectedTransferLead?.nome ?? ""}
+                  readOnly
+                />
               </div>
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.telefone ?? ""} readOnly />
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={selectedTransferLead?.telefone ?? ""}
+                  readOnly
+                />
               </div>
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">E-mail</label>
-                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.email ?? ""} readOnly />
+                <input
+                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
+                  value={selectedTransferLead?.email ?? ""}
+                  readOnly
+                />
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-3">
-              <button className="px-4 py-2 rounded-xl border" onClick={() => setTransferModal({ open: false, venda: undefined })}>
+              <button
+                className="px-4 py-2 rounded-xl border"
+                onClick={() => setTransferModal({ open: false, venda: undefined })}
+              >
                 Cancelar
               </button>
-              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={handleTransferSave}>
+              <button
+                className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
+                onClick={handleTransferSave}
+              >
                 Confirmar Transferência
               </button>
             </div>
@@ -2425,87 +2509,139 @@ const Carteira: React.FC = () => {
 
             {cotaEditor.mode === "pick" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}>
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}
+                >
                   <div className="font-medium">🔢 Alterar Grupo / Cota / Código</div>
                   <div className="text-sm text-gray-600 mt-1">
-                    Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong> pede data de reativação.
+                    Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong>{" "}
+                    pede data de reativação.
                   </div>
                 </button>
 
-                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}>
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}
+                >
                   <div className="font-medium">⇄ Transferir</div>
                   <div className="text-sm text-gray-600 mt-1">Abre o overlay de transferência para outro lead.</div>
                 </button>
 
-                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}>
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}
+                >
                   <div className="font-medium">🏁 Contemplada</div>
                   <div className="text-sm text-gray-600 mt-1">Data + Tipo (lance) + % com 4 casas (ex.: 41,2542%).</div>
                 </button>
 
-                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}>
+                <button
+                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
+                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}
+                >
                   <div className="font-medium">⚠️ Inadimplência</div>
                   <div className="text-sm text-gray-600 mt-1">Marcar/desmarcar com data de início e data de reversão.</div>
                 </button>
               </div>
             )}
 
-            {cotaEditor.mode === "cota_codigo" && (() => {
-              const prevAtiva = isAtiva(cotaEditor.venda!.codigo);
-              const nextAtiva = isAtiva(ceCodigo);
+            {cotaEditor.mode === "cota_codigo" &&
+              (() => {
+                const prevAtiva = isAtiva(cotaEditor.venda!.codigo);
+                const nextAtiva = isAtiva(ceCodigo);
 
-              return (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div>
-                      <label className="text-sm text-gray-600">Grupo</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={ceGrupo} onChange={(e) => setCeGrupo(e.target.value)} />
-                    </div>
+                return (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-sm text-gray-600">Grupo</label>
+                        <input
+                          className="w-full border rounded-xl px-3 py-2"
+                          value={ceGrupo}
+                          onChange={(e) => setCeGrupo(e.target.value)}
+                        />
+                      </div>
 
-                    <div>
-                      <label className="text-sm text-gray-600">Cota</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={ceCota} onChange={(e) => setCeCota(e.target.value)} />
-                    </div>
+                      <div>
+                        <label className="text-sm text-gray-600">Cota</label>
+                        <input
+                          className="w-full border rounded-xl px-3 py-2"
+                          value={ceCota}
+                          onChange={(e) => setCeCota(e.target.value)}
+                        />
+                      </div>
 
-                    <div>
-                      <label className="text-sm text-gray-600">Código</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={ceCodigo} onChange={(e) => setCeCodigo(e.target.value)} />
-                      <div className="text-xs text-gray-500 mt-1">Ativa = <strong>00</strong></div>
-                    </div>
-                  </div>
-
-                  {prevAtiva && !nextAtiva && (
-                    <div className="border rounded-2xl p-4 bg-red-50">
-                      <div className="font-medium text-red-800">Cancelamento detectado (00 → {ceCodigo || "..."})</div>
-                      <div className="text-sm text-red-700 mt-1">Informe a data do cancelamento para registrar em <code>cancelada_em</code>.</div>
-                      <div className="mt-3">
-                        <label className="text-sm text-gray-700">Data do cancelamento</label>
-                        <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceCancelDate} onChange={(e) => setCeCancelDate(e.target.value)} />
+                      <div>
+                        <label className="text-sm text-gray-600">Código</label>
+                        <input
+                          className="w-full border rounded-xl px-3 py-2"
+                          value={ceCodigo}
+                          onChange={(e) => setCeCodigo(e.target.value)}
+                        />
+                        <div className="text-xs text-gray-500 mt-1">
+                          Ativa = <strong>00</strong>
+                        </div>
                       </div>
                     </div>
-                  )}
 
-                  {!prevAtiva && nextAtiva && (
-                    <div className="border rounded-2xl p-4 bg-green-50">
-                      <div className="font-medium text-green-800">Reativação detectada ({cotaEditor.venda!.codigo} → 00)</div>
-                      <div className="text-sm text-green-700 mt-1">Informe a data da reativação para registrar em <code>reativada_em</code>.</div>
-                      <div className="mt-3">
-                        <label className="text-sm text-gray-700">Data da reativação</label>
-                        <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceReativDate} onChange={(e) => setCeReativDate(e.target.value)} />
+                    {prevAtiva && !nextAtiva && (
+                      <div className="border rounded-2xl p-4 bg-red-50">
+                        <div className="font-medium text-red-800">
+                          Cancelamento detectado (00 → {ceCodigo || "..."})
+                        </div>
+                        <div className="text-sm text-red-700 mt-1">
+                          Informe a data do cancelamento para registrar em <code>cancelada_em</code>.
+                        </div>
+                        <div className="mt-3">
+                          <label className="text-sm text-gray-700">Data do cancelamento</label>
+                          <input
+                            type="date"
+                            className="w-full border rounded-xl px-3 py-2"
+                            value={ceCancelDate}
+                            onChange={(e) => setCeCancelDate(e.target.value)}
+                          />
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  <div className="flex items-center justify-between">
-                    <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
-                      Voltar
-                    </button>
-                    <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveCotaCodigo}>
-                      Salvar
-                    </button>
+                    {!prevAtiva && nextAtiva && (
+                      <div className="border rounded-2xl p-4 bg-green-50">
+                        <div className="font-medium text-green-800">
+                          Reativação detectada ({cotaEditor.venda!.codigo} → 00)
+                        </div>
+                        <div className="text-sm text-green-700 mt-1">
+                          Informe a data da reativação para registrar em <code>reativada_em</code>.
+                        </div>
+                        <div className="mt-3">
+                          <label className="text-sm text-gray-700">Data da reativação</label>
+                          <input
+                            type="date"
+                            className="w-full border rounded-xl px-3 py-2"
+                            value={ceReativDate}
+                            onChange={(e) => setCeReativDate(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <button
+                        className="px-4 py-2 rounded-xl border"
+                        onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
+                      >
+                        Voltar
+                      </button>
+                      <button
+                        className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+                        onClick={saveCotaCodigo}
+                      >
+                        Salvar
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })()}
+                );
+              })()}
 
             {cotaEditor.mode === "transfer" && (
               <div className="space-y-4">
@@ -2517,10 +2653,16 @@ const Carteira: React.FC = () => {
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
+                  <button
+                    className="px-4 py-2 rounded-xl border"
+                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
+                  >
                     Voltar
                   </button>
-                  <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={goTransferFromEditor}>
+                  <button
+                    className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
+                    onClick={goTransferFromEditor}
+                  >
                     Abrir Transferência
                   </button>
                 </div>
@@ -2531,7 +2673,12 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input type="checkbox" className="mr-2" checked={ceContFlag} onChange={(e) => setCeContFlag(e.target.checked)} />
+                    <input
+                      type="checkbox"
+                      className="mr-2"
+                      checked={ceContFlag}
+                      onChange={(e) => setCeContFlag(e.target.checked)}
+                    />
                     Marcar como contemplada
                   </label>
                 </div>
@@ -2540,12 +2687,21 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da contemplação</label>
-                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceContDate} onChange={(e) => setCeContDate(e.target.value)} />
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceContDate}
+                        onChange={(e) => setCeContDate(e.target.value)}
+                      />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Tipo de lance</label>
-                      <select className="w-full border rounded-xl px-3 py-2" value={ceContTipo} onChange={(e) => setCeContTipo(e.target.value)}>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceContTipo}
+                        onChange={(e) => setCeContTipo(e.target.value)}
+                      >
                         <option value="">Selecione…</option>
                         <option value="Lance Livre">Lance Livre</option>
                         <option value="Primeiro Lance Fixo">Primeiro Lance Fixo</option>
@@ -2561,22 +2717,31 @@ const Carteira: React.FC = () => {
                         onChange={(e) => setCeContPctRaw(e.target.value)}
                         placeholder="Ex.: 41,2542%"
                       />
-                      <div className="text-xs text-gray-500 mt-1">Será salvo como <code>numeric(9,4)</code>.</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Será salvo como <code>numeric(9,4)</code>.
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {!ceContFlag && (
                   <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-600">
-                    Ao desmarcar, vamos limpar <code>data_contemplacao</code>, <code>contemplacao_tipo</code> e <code>contemplacao_pct</code>.
+                    Ao desmarcar, vamos limpar <code>data_contemplacao</code>, <code>contemplacao_tipo</code> e{" "}
+                    <code>contemplacao_pct</code>.
                   </div>
                 )}
 
                 <div className="flex items-center justify-between">
-                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
+                  <button
+                    className="px-4 py-2 rounded-xl border"
+                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
+                  >
                     Voltar
                   </button>
-                  <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveContemplacao}>
+                  <button
+                    className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+                    onClick={saveContemplacao}
+                  >
                     Salvar
                   </button>
                 </div>
@@ -2587,7 +2752,12 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input type="checkbox" className="mr-2" checked={ceInadFlag} onChange={(e) => setCeInadFlag(e.target.checked)} />
+                    <input
+                      type="checkbox"
+                      className="mr-2"
+                      checked={ceInadFlag}
+                      onChange={(e) => setCeInadFlag(e.target.checked)}
+                    />
                     Marcar como inadimplente
                   </label>
                 </div>
@@ -2596,7 +2766,12 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data que inadimpliu</label>
-                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadEm} onChange={(e) => setCeInadEm(e.target.value)} />
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceInadEm}
+                        onChange={(e) => setCeInadEm(e.target.value)}
+                      />
                     </div>
                     <div className="border rounded-2xl p-4 bg-red-50 text-sm text-red-800">
                       Ao marcar, vamos salvar <code>inad = true</code> e <code>inad_em</code>. A reversão fica vazia.
@@ -2606,7 +2781,12 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da reversão</label>
-                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadRev} onChange={(e) => setCeInadRev(e.target.value)} />
+                      <input
+                        type="date"
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceInadRev}
+                        onChange={(e) => setCeInadRev(e.target.value)}
+                      />
                     </div>
                     <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-700">
                       Ao desmarcar, vamos salvar <code>inad = false</code> e registrar <code>inad_revertida_em</code>.
@@ -2615,10 +2795,16 @@ const Carteira: React.FC = () => {
                 )}
 
                 <div className="flex items-center justify-between">
-                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
+                  <button
+                    className="px-4 py-2 rounded-xl border"
+                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
+                  >
                     Voltar
                   </button>
-                  <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveInad}>
+                  <button
+                    className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
+                    onClick={saveInad}
+                  >
                     Salvar
                   </button>
                 </div>

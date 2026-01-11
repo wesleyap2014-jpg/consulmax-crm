@@ -1,18 +1,7 @@
 // src/pages/Carteira.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-} from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 type Lead = { id: string; nome: string; telefone?: string | null; email?: string | null };
 
@@ -33,7 +22,7 @@ type Venda = {
   lead_id: string;
   cpf: string;
   data_venda: string;
-  vendedor_id: string; // aqui é auth_user_id (conforme seu schema)
+  vendedor_id: string; // auth_user_id (conforme seu schema)
   produto: Produto;
   administradora: Administradora;
   forma_venda: FormaVenda;
@@ -83,6 +72,8 @@ const PRODUTOS: Produto[] = [
 
 const FORMAS: FormaVenda[] = ["Parcela Cheia", "Reduzida 25%", "Reduzida 50%"];
 
+const MONTHS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
 const currency = (n: number) =>
   new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -95,6 +86,9 @@ const formatNumberBR = (n: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
+
+const formatPctHuman = (n: number, digits = 1) =>
+  `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: digits }).format(n)}%`;
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
@@ -226,8 +220,6 @@ function normalizeTableName(s: string | null | undefined): string {
 /**
  * ✅ CORREÇÃO (TABELAS POR SEGMENTO)
  * Para filtrar sim_tables.segmento corretamente, NÃO podemos colapsar "Imóvel Estendido" -> "Imóvel".
- * Então criamos um matcher de segmento (produto selecionado -> candidatos normalizados),
- * cobrindo variações comuns (singular/plural e hífen/espaço).
  */
 function segmentCandidatesForProduto(produto: Produto | string | null | undefined): string[] {
   const p = (produto || "").toString().trim();
@@ -241,16 +233,13 @@ function segmentCandidatesForProduto(produto: Produto | string | null | undefine
     if (k) set.add(k);
   };
 
-  // base (como veio no select)
   add(p);
 
-  // variações por produto (singular/plural e nomes conhecidos)
   if (p === "Automóvel") {
     add("Automóveis");
   } else if (p === "Imóvel") {
     add("Imóveis");
   } else if (p === "Imóvel Estendido") {
-    // IMPORTANTÍSSIMO: manter separado de "Imóvel"
     add("Imóveis Estendidos");
     add("Imóvel-Estendido");
     add("Imóveis-Estendidos");
@@ -497,8 +486,8 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
             <span className="text-xs text-gray-500 ml-2">{group.cliente.telefone ?? ""}</span>
           </div>
           <div className="text-sm text-gray-600">
-            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd:{" "}
-            <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
+            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> •
+            Segmentos: {segs}
           </div>
         </button>
         <button title="Ver cotas" className="text-gray-500 hover:text-gray-800" onClick={() => setOpen(true)}>
@@ -731,8 +720,88 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
 
 type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "inad" | "transfer";
 
-// ✅ sentinel interno (só para vendedor quando não acha users.id)
-const SELF_SELLER = "__me__";
+type MiniDonutProps = {
+  label: string;
+  meta: number;
+  realizado: number;
+};
+
+const MiniDonut: React.FC<MiniDonutProps> = ({ label, meta, realizado }) => {
+  const hasMeta = meta > 0;
+  const pct = hasMeta ? (realizado / meta) * 100 : null; // ✅ sem travar em 100%
+
+  const data = useMemo(() => {
+    if (!hasMeta) {
+      // Sem meta: mostra realizado (ou um "zero" pra desenhar o donut)
+      if (realizado > 0) return [{ name: "Realizado", value: realizado }];
+      return [{ name: "Sem meta", value: 1 }];
+    }
+
+    if (realizado <= meta) {
+      return [
+        { name: "Realizado", value: Math.max(0, realizado) },
+        { name: "Restante", value: Math.max(0, meta - realizado) },
+      ];
+    }
+
+    // Estourou a meta: mostramos "Meta" + "Excedente"
+    return [
+      { name: "Meta", value: meta },
+      { name: "Excedente", value: Math.max(0, realizado - meta) },
+    ];
+  }, [hasMeta, meta, realizado]);
+
+  const centerText = useMemo(() => {
+    if (!hasMeta) return realizado > 0 ? "Sem meta" : "—";
+    if (pct == null || Number.isNaN(pct)) return "—";
+    return formatPctHuman(pct, 1);
+  }, [hasMeta, pct, realizado]);
+
+  return (
+    <div className="border rounded-2xl p-3">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-[11px] text-gray-500">{hasMeta ? `Meta: ${currency(meta)}` : "Sem meta"}</div>
+      </div>
+
+      <div className="mt-2 relative">
+        <div className="w-full h-28">
+          <ResponsiveContainer>
+            <PieChart>
+              <Pie data={data} innerRadius={34} outerRadius={50} dataKey="value" stroke="none">
+                {data.map((d, i) => {
+                  // cores Consulmax
+                  if (!hasMeta) return <Cell key={`${label}-${i}`} fill={realizado > 0 ? "#1E293F" : "#E5E7EB"} />;
+                  if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`${label}-${i}`} fill="#1E293F" />;
+                  if (d.name === "Restante") return <Cell key={`${label}-${i}`} fill="#A11C27" />;
+                  // Excedente
+                  return <Cell key={`${label}-${i}`} fill="#B5A573" />;
+                })}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="text-sm font-semibold">{centerText}</div>
+        </div>
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-gray-600">
+        <div>
+          <div className="text-gray-500">Realizado</div>
+          <div className="font-medium text-gray-800">{currency(realizado || 0)}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">{hasMeta && realizado > meta ? "Excedente" : "Restante"}</div>
+          <div className="font-medium text-gray-800">
+            {hasMeta ? currency(Math.max(0, meta - Math.min(meta, realizado))) : "—"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Carteira: React.FC = () => {
   const [userId, setUserId] = useState<string>(""); // auth.users.id
@@ -794,7 +863,7 @@ const Carteira: React.FC = () => {
     m: Array(12).fill(0),
   });
 
-  // admin escolhe users.id; vendedor fica travado no próprio users.id (ou SELF_SELLER como fallback)
+  // admin escolhe users.id; vendedor fica travado no próprio users.id
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
@@ -803,8 +872,13 @@ const Carteira: React.FC = () => {
   const metaAnual = useMemo(() => metaMensal.reduce((a, b) => a + b, 0), [metaMensal]);
   const realizadoAnual = useMemo(() => realizadoMensal.reduce((a, b) => a + b, 0), [realizadoMensal]);
 
-  const pct =
-    metaAnual > 0 ? Math.max(0, Math.min(100, Math.round((realizadoAnual / metaAnual) * 100))) : 0;
+  // ✅ sem cap em 100 (pode ser 132%, 245%...)
+  const pctAnual = useMemo(() => {
+    if (metaAnual <= 0) return null;
+    const p = (realizadoAnual / metaAnual) * 100;
+    if (!Number.isFinite(p)) return null;
+    return p;
+  }, [metaAnual, realizadoAnual]);
 
   const [leadSearch, setLeadSearch] = useState<string>("");
 
@@ -839,17 +913,15 @@ const Carteira: React.FC = () => {
   const [ceInadRev, setCeInadRev] = useState<string>("");
 
   // ===== helpers de ID =====
-  const getAuthByUserId = (sellerUserId: string) => {
-    if (!sellerUserId) return "";
-    if (sellerUserId === SELF_SELLER) return userId; // fallback vendedor
-    return users.find((u) => u.id === sellerUserId)?.auth_user_id ?? "";
-  };
-
   const authIdFromSellerId = useMemo(() => {
     if (!selectedSeller) return "";
-    return getAuthByUserId(selectedSeller);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSeller, users, userId]);
+    return users.find((u) => u.id === selectedSeller)?.auth_user_id ?? "";
+  }, [selectedSeller, users]);
+
+  const getAuthByUserId = (sellerUserId: string) => {
+    if (!sellerUserId) return "";
+    return users.find((u) => u.id === sellerUserId)?.auth_user_id ?? "";
+  };
 
   // ao trocar produto, zera tabela
   useEffect(() => {
@@ -919,16 +991,14 @@ const Carteira: React.FC = () => {
         setSimTables((tables ?? []) as any);
         setUsers((us ?? []) as AppUser[]);
 
-        // selectedSeller: admin = "" (Todos), vendedor = seu users.id (ou SELF_SELLER fallback)
+        // selectedSeller: admin = "" (Todos), vendedor = seu users.id
         const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
         if (adminFlag) {
           setSelectedSeller("");
         } else {
           const myId = myUserRow?.id ?? "";
-          setSelectedSeller(myId || SELF_SELLER);
-          if (!myId) {
-            console.warn("Usuário não encontrado em public.users; usando fallback SELF_SELLER via auth_user_id.");
-          }
+          setSelectedSeller(myId);
+          if (!myId) console.warn("Usuário não encontrado em public.users para travar selectedSeller.");
         }
       } catch (e: any) {
         setErr(e.message || "Falha ao carregar Carteira.");
@@ -945,7 +1015,7 @@ const Carteira: React.FC = () => {
     const authId = getAuthByUserId(selectedSeller);
     if (!authId) return [];
     return pendentes.filter((v) => v.vendedor_id === authId);
-  }, [pendentes, isAdmin, selectedSeller, users, userId]);
+  }, [pendentes, isAdmin, selectedSeller, users]);
 
   const encarteiradasVisiveisBase = useMemo(() => {
     if (!isAdmin) return encarteiradas;
@@ -953,7 +1023,7 @@ const Carteira: React.FC = () => {
     const authId = getAuthByUserId(selectedSeller);
     if (!authId) return [];
     return encarteiradas.filter((v) => v.vendedor_id === authId);
-  }, [encarteiradas, isAdmin, selectedSeller, users, userId]);
+  }, [encarteiradas, isAdmin, selectedSeller, users]);
 
   const pendentesComNome = useMemo(
     () =>
@@ -998,13 +1068,7 @@ const Carteira: React.FC = () => {
       if (!lead) continue;
 
       if (!map[lead.id]) {
-        map[lead.id] = {
-          cliente: lead,
-          itens: [],
-          totalAtivas: 0,
-          qtdAtivas: 0,
-          segmentos: new Set(),
-        };
+        map[lead.id] = { cliente: lead, itens: [], totalAtivas: 0, qtdAtivas: 0, segmentos: new Set() };
       }
 
       map[lead.id].itens.push(v);
@@ -1035,10 +1099,7 @@ const Carteira: React.FC = () => {
   async function updateVenda(id: string, patch: any) {
     const { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
     if (error && /data_nascimento/.test(error.message || "")) {
-      const { error: e2 } = await supabase
-        .from("vendas")
-        .update({ ...patch, data_nascimento: undefined } as any)
-        .eq("id", id);
+      const { error: e2 } = await supabase.from("vendas").update({ ...patch, data_nascimento: undefined } as any).eq("id", id);
       if (e2) throw e2;
       return;
     }
@@ -1172,13 +1233,13 @@ const Carteira: React.FC = () => {
           const q = supabase.from("vendas").select("*").eq("status", "nova").order("created_at", { ascending: false });
           if (!isAdmin) q.eq("vendedor_id", userId);
           const r = await q;
-          return r;
+          return r.data;
         })(),
         (async () => {
           const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
           if (!isAdmin) q.eq("vendedor_id", userId);
           const r = await q;
-          return r;
+          return r.data;
         })(),
       ]);
 
@@ -1249,7 +1310,6 @@ const Carteira: React.FC = () => {
       return produtoMatchesTableSegment(prod, t.segmento);
     });
 
-    // ✅ DEDUPE no front: mostra 1 por nome_tabela
     const seen = new Set<string>();
     const unique = filtered.filter((t) => {
       const key = normalizeTableName(t.nome_tabela);
@@ -1333,26 +1393,13 @@ const Carteira: React.FC = () => {
 
   // ====== MÉTRICAS (metas + realizado) ======
   const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
-    const sellerIsSelf = sellerId === SELF_SELLER;
-
     // -------- Metas (metas_vendedores) --------
     if (sellerId) {
       const authId = getAuthByUserId(sellerId);
+      let q = supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
 
-      let q = supabase
-        .from("metas_vendedores")
-        .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-        .eq("ano", year);
-
-      if (sellerIsSelf) {
-        // vendedor sem users.id -> filtra por auth_user_id
-        q = q.eq("auth_user_id", authId || userId);
-      } else if (authId) {
-        // usa os dois IDs: vendedor_id (users.id) OU auth_user_id
-        q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
-      } else {
-        q = q.eq("vendedor_id", sellerId);
-      }
+      if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
+      else q = q.eq("vendedor_id", sellerId);
 
       const { data: metasRow } = await q.maybeSingle();
 
@@ -1459,13 +1506,9 @@ const Carteira: React.FC = () => {
     }
 
     const authId = getAuthByUserId(sellerId);
-    let q = supabase
-      .from("metas_vendedores")
-      .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-      .eq("ano", year);
+    let q = supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
 
-    if (sellerId === SELF_SELLER) q = q.eq("auth_user_id", authId || userId);
-    else if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
+    if (authId) q = q.or(`vendedor_id.eq.${sellerId},auth_user_id.eq.${authId}`);
     else q = q.eq("vendedor_id", sellerId);
 
     const { data: metasRow } = await q.maybeSingle();
@@ -1497,24 +1540,25 @@ const Carteira: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSeller, selectedYear, users, isAdmin]);
 
-  const donutData = useMemo(() => {
-    const reached = Math.max(0, Math.min(realizadoAnual, metaAnual));
-    const remaining = Math.max(0, metaAnual - reached);
+  // Donut anual (com excedente quando estoura)
+  const donutAnualData = useMemo(() => {
+    if (metaAnual <= 0) {
+      if (realizadoAnual > 0) return [{ name: "Realizado", value: realizadoAnual }];
+      return [{ name: "Sem meta", value: 1 }];
+    }
+
+    if (realizadoAnual <= metaAnual) {
+      return [
+        { name: "Realizado", value: Math.max(0, realizadoAnual) },
+        { name: "Restante", value: Math.max(0, metaAnual - realizadoAnual) },
+      ];
+    }
+
     return [
-      { name: "Atingido", value: reached },
-      { name: "Restante", value: remaining },
+      { name: "Meta", value: metaAnual },
+      { name: "Excedente", value: Math.max(0, realizadoAnual - metaAnual) },
     ];
   }, [metaAnual, realizadoAnual]);
-
-  const lineData = useMemo(
-    () =>
-      Array.from({ length: 12 }).map((_, i) => ({
-        name: ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"][i],
-        Meta: metaMensal[i] || 0,
-        Realizado: realizadoMensal[i] || 0,
-      })),
-    [metaMensal, realizadoMensal]
-  );
 
   const handleOpenMeta = () => {
     if (!isAdmin) return;
@@ -1539,7 +1583,6 @@ const Carteira: React.FC = () => {
     try {
       if (!isAdmin) throw new Error("Somente administradores podem cadastrar metas.");
       if (!metaForm.vendedor_id) throw new Error("Selecione o vendedor.");
-      if (metaForm.vendedor_id === SELF_SELLER) throw new Error("Selecione um vendedor válido.");
 
       const authId = getAuthByUserId(metaForm.vendedor_id);
 
@@ -1561,7 +1604,6 @@ const Carteira: React.FC = () => {
         m12: metaForm.m[11],
       };
 
-      // encontra se já existe por vendedor_id+ano OU auth_user_id+ano
       let q = supabase.from("metas_vendedores").select("id").eq("ano", metaForm.ano);
       if (authId) q = q.or(`vendedor_id.eq.${metaForm.vendedor_id},auth_user_id.eq.${authId}`);
       else q = q.eq("vendedor_id", metaForm.vendedor_id);
@@ -1716,10 +1758,7 @@ const Carteira: React.FC = () => {
   if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
 
   const tabelaOptionsForForm = tabelaOptions;
-  const adminNames = adminOptions.length
-    ? adminOptions
-    : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
-
+  const adminNames = adminOptions.length ? adminOptions : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
   const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
 
   return (
@@ -1730,14 +1769,10 @@ const Carteira: React.FC = () => {
           <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowModal(true)}
-            className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-          >
+          <button onClick={() => setShowModal(true)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">
             + Nova Venda
           </button>
 
-          {/* ✅ vendedor não cadastra meta */}
           {isAdmin && (
             <button onClick={handleOpenMeta} className="px-4 py-2 rounded-xl border hover:bg-gray-50">
               Cadastrar Meta
@@ -1752,11 +1787,7 @@ const Carteira: React.FC = () => {
           <h2 className="text-lg font-medium">Metas</h2>
 
           <div className="flex items-center gap-2">
-            <select
-              className="border rounded-xl px-3 py-2"
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
-            >
+            <select className="border rounded-xl px-3 py-2" value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
               {Array.from({ length: 6 }).map((_, i) => {
                 const y = new Date().getFullYear() - 1 + i;
                 return (
@@ -1768,11 +1799,7 @@ const Carteira: React.FC = () => {
             </select>
 
             {isAdmin && (
-              <select
-                className="border rounded-xl px-3 py-2"
-                value={selectedSeller}
-                onChange={(e) => setSelectedSeller(e.target.value)}
-              >
+              <select className="border rounded-xl px-3 py-2" value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)}>
                 <option value="">Todos</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
@@ -1784,46 +1811,57 @@ const Carteira: React.FC = () => {
           </div>
         </div>
 
+        {/* ✅ VISUAL NOVO: anual + 12 mini donuts (mensal) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Donut anual */}
           <div className="border rounded-2xl p-4 flex items-center justify-center relative">
             <div className="absolute top-3 left-4 text-sm text-gray-500">Meta anual: {currency(metaAnual)}</div>
             <div className="absolute top-3 right-4 text-sm text-gray-500">Atingido: {currency(realizadoAnual)}</div>
+
             <div className="w-full h-64">
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={donutData} innerRadius={80} outerRadius={110} dataKey="value">
-                    <Cell key="atingido" fill="#1E293F" />
-                    <Cell key="restante" fill="#A11C27" />
+                  <Pie data={donutAnualData} innerRadius={80} outerRadius={110} dataKey="value" stroke="none">
+                    {donutAnualData.map((d, i) => {
+                      if (metaAnual <= 0) return <Cell key={`anual-${i}`} fill={realizadoAnual > 0 ? "#1E293F" : "#E5E7EB"} />;
+                      if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`anual-${i}`} fill="#1E293F" />;
+                      if (d.name === "Restante") return <Cell key={`anual-${i}`} fill="#A11C27" />;
+                      return <Cell key={`anual-${i}`} fill="#B5A573" />; // Excedente
+                    })}
                   </Pie>
                 </PieChart>
               </ResponsiveContainer>
             </div>
+
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-2xl font-semibold">{pct}%</div>
+              <div className="text-2xl font-semibold">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}</div>
             </div>
           </div>
 
+          {/* 12 mini donuts */}
           <div className="lg:col-span-2 border rounded-2xl p-4">
-            <div className="w-full h-64">
-              <ResponsiveContainer>
-                <LineChart data={lineData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(v: any) => currency(Number(v || 0))} />
-                  <Legend />
-                  <Line type="monotone" dataKey="Realizado" stroke="#1E293F" strokeWidth={3} dot={false} />
-                  <Line type="monotone" dataKey="Meta" stroke="#A11C27" strokeWidth={3} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm text-gray-600">
+                Metas mensais • <span className="font-medium text-gray-800">Meta</span>, <span className="font-medium text-gray-800">Realizado</span> e %
+                (pode passar de 100%)
+              </div>
+              <div className="text-xs text-gray-500">
+                Total no ano: <strong className="text-gray-800">{currency(realizadoAnual)}</strong>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {MONTHS.map((m, idx) => (
+                <MiniDonut key={m} label={m} meta={metaMensal[idx] || 0} realizado={realizadoMensal[idx] || 0} />
+              ))}
             </div>
           </div>
         </div>
 
-        {/* ✅ debug leve pro admin */}
-        {isAdmin && selectedSeller && selectedSeller !== SELF_SELLER && (
+        {isAdmin && selectedSeller && (
           <div className="text-xs text-gray-500">
-            Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> •
-            auth_user_id: <strong>{authIdFromSellerId || "—"}</strong>
+            Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> • auth_user_id:{" "}
+            <strong>{authIdFromSellerId || "—"}</strong>
           </div>
         )}
       </section>
@@ -1898,10 +1936,7 @@ const Carteira: React.FC = () => {
         <div className="px-4 py-3 rounded-2xl bg-red-100 text-red-900">
           Inadimplentes: <strong className="ml-1">{currency(totalInadimplentes)}</strong>
         </div>
-        <button
-          className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
-          onClick={() => setShowCarteira((s) => !s)}
-        >
+        <button className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50" onClick={() => setShowCarteira((s) => !s)}>
           {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
         </button>
       </div>
@@ -1950,11 +1985,7 @@ const Carteira: React.FC = () => {
                     value={leadSearch}
                     onChange={(e) => setLeadSearch(e.target.value)}
                   />
-                  <select
-                    className="w-full border rounded-xl px-3 py-2"
-                    value={form.lead_id ?? ""}
-                    onChange={(e) => onSelectLead(e.target.value)}
-                  >
+                  <select className="w-full border rounded-xl px-3 py-2" value={form.lead_id ?? ""} onChange={(e) => onSelectLead(e.target.value)}>
                     <option value="">Selecione um lead…</option>
                     {filteredLeads.map((l) => (
                       <option key={l.id} value={l.id}>
@@ -1967,11 +1998,7 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={leadMap[form.lead_id as string]?.telefone ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[form.lead_id as string]?.telefone ?? ""} readOnly />
               </div>
 
               <div>
@@ -1986,12 +2013,7 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Data da Venda</label>
-                <input
-                  type="date"
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.data_venda ?? ""}
-                  onChange={(e) => onFormChange("data_venda", e.target.value)}
-                />
+                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_venda ?? ""} onChange={(e) => onFormChange("data_venda", e.target.value)} />
               </div>
 
               <div>
@@ -2049,11 +2071,7 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Produto (Segmento)</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.produto as Produto}
-                  onChange={(e) => onFormChange("produto", e.target.value as Produto)}
-                >
+                <select className="w-full border rounded-xl px-3 py-2" value={form.produto as Produto} onChange={(e) => onFormChange("produto", e.target.value as Produto)}>
                   {produtoOptionsForAdmin.map((p) => (
                     <option key={p} value={p}>
                       {p}
@@ -2070,9 +2088,7 @@ const Carteira: React.FC = () => {
                   onChange={(e) => onFormChange("tabela", e.target.value)}
                   disabled={tabelaOptionsForForm.length === 0}
                 >
-                  <option value="">
-                    {tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}
-                  </option>
+                  <option value="">{tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
                   {tabelaOptionsForForm.map((t) => (
                     <option key={t.id} value={t.nome_tabela}>
                       {t.nome_tabela}
@@ -2083,11 +2099,7 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Forma da Venda</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.forma_venda as FormaVenda}
-                  onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}
-                >
+                <select className="w-full border rounded-xl px-3 py-2" value={form.forma_venda as FormaVenda} onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}>
                   {FORMAS.map((f) => (
                     <option key={f} value={f}>
                       {f}
@@ -2098,11 +2110,7 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Número da Proposta *</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.numero_proposta ?? ""}
-                  onChange={(e) => onFormChange("numero_proposta", e.target.value)}
-                />
+                <input className="w-full border rounded-xl px-3 py-2" value={form.numero_proposta ?? ""} onChange={(e) => onFormChange("numero_proposta", e.target.value)} />
               </div>
 
               <div>
@@ -2117,11 +2125,7 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Tipo da Venda</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.tipo_venda ?? "Normal"}
-                  onChange={(e) => onFormChange("tipo_venda", e.target.value)}
-                >
+                <select className="w-full border rounded-xl px-3 py-2" value={form.tipo_venda ?? "Normal"} onChange={(e) => onFormChange("tipo_venda", e.target.value)}>
                   <option>Normal</option>
                   <option>Contemplada</option>
                   <option>Bolsão</option>
@@ -2213,12 +2217,12 @@ const Carteira: React.FC = () => {
                   </div>
                   <div>
                     <div className="text-gray-500">Data de Nascimento</div>
-                    <div>{formatDateBR(v.data_nascimento)}</div>
+                    <div>{v.data_nascimento ?? "—"}</div>
                   </div>
 
                   <div>
                     <div className="text-gray-500">Data da Venda</div>
-                    <div>{formatDateBR(v.data_venda)}</div>
+                    <div>{v.data_venda}</div>
                   </div>
                   <div>
                     <div className="text-gray-500">Vendedor</div>
@@ -2333,10 +2337,7 @@ const Carteira: React.FC = () => {
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Transferir Cota • {transferModal.venda.numero_proposta}</h3>
-              <button
-                onClick={() => setTransferModal({ open: false, venda: undefined })}
-                className="text-gray-500 hover:text-gray-800"
-              >
+              <button onClick={() => setTransferModal({ open: false, venda: undefined })} className="text-gray-500 hover:text-gray-800">
                 ✕
               </button>
             </div>
@@ -2345,17 +2346,8 @@ const Carteira: React.FC = () => {
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Novo Cliente (Lead)</label>
                 <div className="flex flex-col gap-2">
-                  <input
-                    className="w-full border rounded-xl px-3 py-2"
-                    placeholder="Buscar pelo nome do lead…"
-                    value={transferSearch}
-                    onChange={(e) => setTransferSearch(e.target.value)}
-                  />
-                  <select
-                    className="w-full border rounded-xl px-3 py-2"
-                    value={transferLeadId}
-                    onChange={(e) => setTransferLeadId(e.target.value)}
-                  >
+                  <input className="w-full border rounded-xl px-3 py-2" placeholder="Buscar pelo nome do lead…" value={transferSearch} onChange={(e) => setTransferSearch(e.target.value)} />
+                  <select className="w-full border rounded-xl px-3 py-2" value={transferLeadId} onChange={(e) => setTransferLeadId(e.target.value)}>
                     <option value="">Selecione um lead…</option>
                     {filteredTransferLeads.map((l) => (
                       <option key={l.id} value={l.id}>
@@ -2368,61 +2360,33 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">CPF / CNPJ *</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={formatCPF(transferCpf)}
-                  onChange={(e) => setTransferCpf(e.target.value)}
-                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
-                />
+                <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(transferCpf)} onChange={(e) => setTransferCpf(e.target.value)} placeholder="000.000.000-00 ou 00.000.000/0000-00" />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Data de Nascimento</label>
-                <input
-                  type="date"
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={transferNascimento}
-                  onChange={(e) => setTransferNascimento(e.target.value)}
-                />
+                <input type="date" className="w-full border rounded-xl px-3 py-2" value={transferNascimento} onChange={(e) => setTransferNascimento(e.target.value)} />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Nome do Lead</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={selectedTransferLead?.nome ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.nome ?? ""} readOnly />
               </div>
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={selectedTransferLead?.telefone ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.telefone ?? ""} readOnly />
               </div>
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">E-mail</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={selectedTransferLead?.email ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.email ?? ""} readOnly />
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-3">
-              <button
-                className="px-4 py-2 rounded-xl border"
-                onClick={() => setTransferModal({ open: false, venda: undefined })}
-              >
+              <button className="px-4 py-2 rounded-xl border" onClick={() => setTransferModal({ open: false, venda: undefined })}>
                 Cancelar
               </button>
-              <button
-                className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
-                onClick={handleTransferSave}
-              >
+              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={handleTransferSave}>
                 Confirmar Transferência
               </button>
             </div>
@@ -2488,7 +2452,7 @@ const Carteira: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"].map((m, i) => (
+              {MONTHS.map((m, i) => (
                 <div key={i}>
                   <label className="text-sm text-gray-600">{m}</label>
                   <input
@@ -2529,9 +2493,7 @@ const Carteira: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-semibold">Editar Cota • {cotaEditor.venda.numero_proposta}</h3>
-                <p className="text-xs text-gray-500">
-                  Escolha o tipo de edição. (Cancelamento/Reativação exigem data quando o código muda)
-                </p>
+                <p className="text-xs text-gray-500">Escolha o tipo de edição. (Cancelamento/Reativação exigem data quando o código muda)</p>
               </div>
               <button onClick={closeCotaEditor} className="text-gray-500 hover:text-gray-800">
                 ✕
@@ -2540,37 +2502,24 @@ const Carteira: React.FC = () => {
 
             {cotaEditor.mode === "pick" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}>
                   <div className="font-medium">🔢 Alterar Grupo / Cota / Código</div>
                   <div className="text-sm text-gray-600 mt-1">
-                    Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong>{" "}
-                    pede data de reativação.
+                    Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong> pede data de reativação.
                   </div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}>
                   <div className="font-medium">⇄ Transferir</div>
                   <div className="text-sm text-gray-600 mt-1">Abre o overlay de transferência para outro lead.</div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}>
                   <div className="font-medium">🏁 Contemplada</div>
                   <div className="text-sm text-gray-600 mt-1">Data + Tipo (lance) + % com 4 casas (ex.: 41,2542%).</div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}>
                   <div className="font-medium">⚠️ Inadimplência</div>
                   <div className="text-sm text-gray-600 mt-1">Marcar/desmarcar com data de início e data de reversão.</div>
                 </button>
@@ -2587,29 +2536,17 @@ const Carteira: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
                         <label className="text-sm text-gray-600">Grupo</label>
-                        <input
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceGrupo}
-                          onChange={(e) => setCeGrupo(e.target.value)}
-                        />
+                        <input className="w-full border rounded-xl px-3 py-2" value={ceGrupo} onChange={(e) => setCeGrupo(e.target.value)} />
                       </div>
 
                       <div>
                         <label className="text-sm text-gray-600">Cota</label>
-                        <input
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceCota}
-                          onChange={(e) => setCeCota(e.target.value)}
-                        />
+                        <input className="w-full border rounded-xl px-3 py-2" value={ceCota} onChange={(e) => setCeCota(e.target.value)} />
                       </div>
 
                       <div>
                         <label className="text-sm text-gray-600">Código</label>
-                        <input
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceCodigo}
-                          onChange={(e) => setCeCodigo(e.target.value)}
-                        />
+                        <input className="w-full border rounded-xl px-3 py-2" value={ceCodigo} onChange={(e) => setCeCodigo(e.target.value)} />
                         <div className="text-xs text-gray-500 mt-1">
                           Ativa = <strong>00</strong>
                         </div>
@@ -2618,55 +2555,35 @@ const Carteira: React.FC = () => {
 
                     {prevAtiva && !nextAtiva && (
                       <div className="border rounded-2xl p-4 bg-red-50">
-                        <div className="font-medium text-red-800">
-                          Cancelamento detectado (00 → {ceCodigo || "..."})
-                        </div>
+                        <div className="font-medium text-red-800">Cancelamento detectado (00 → {ceCodigo || "..."})</div>
                         <div className="text-sm text-red-700 mt-1">
                           Informe a data do cancelamento para registrar em <code>cancelada_em</code>.
                         </div>
                         <div className="mt-3">
                           <label className="text-sm text-gray-700">Data do cancelamento</label>
-                          <input
-                            type="date"
-                            className="w-full border rounded-xl px-3 py-2"
-                            value={ceCancelDate}
-                            onChange={(e) => setCeCancelDate(e.target.value)}
-                          />
+                          <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceCancelDate} onChange={(e) => setCeCancelDate(e.target.value)} />
                         </div>
                       </div>
                     )}
 
                     {!prevAtiva && nextAtiva && (
                       <div className="border rounded-2xl p-4 bg-green-50">
-                        <div className="font-medium text-green-800">
-                          Reativação detectada ({cotaEditor.venda!.codigo} → 00)
-                        </div>
+                        <div className="font-medium text-green-800">Reativação detectada ({cotaEditor.venda!.codigo} → 00)</div>
                         <div className="text-sm text-green-700 mt-1">
                           Informe a data da reativação para registrar em <code>reativada_em</code>.
                         </div>
                         <div className="mt-3">
                           <label className="text-sm text-gray-700">Data da reativação</label>
-                          <input
-                            type="date"
-                            className="w-full border rounded-xl px-3 py-2"
-                            value={ceReativDate}
-                            onChange={(e) => setCeReativDate(e.target.value)}
-                          />
+                          <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceReativDate} onChange={(e) => setCeReativDate(e.target.value)} />
                         </div>
                       </div>
                     )}
 
                     <div className="flex items-center justify-between">
-                      <button
-                        className="px-4 py-2 rounded-xl border"
-                        onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
-                      >
+                      <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
                         Voltar
                       </button>
-                      <button
-                        className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-                        onClick={saveCotaCodigo}
-                      >
+                      <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveCotaCodigo}>
                         Salvar
                       </button>
                     </div>
@@ -2684,16 +2601,10 @@ const Carteira: React.FC = () => {
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <button
-                    className="px-4 py-2 rounded-xl border"
-                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
-                  >
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
                     Voltar
                   </button>
-                  <button
-                    className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
-                    onClick={goTransferFromEditor}
-                  >
+                  <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={goTransferFromEditor}>
                     Abrir Transferência
                   </button>
                 </div>
@@ -2704,12 +2615,7 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={ceContFlag}
-                      onChange={(e) => setCeContFlag(e.target.checked)}
-                    />
+                    <input type="checkbox" className="mr-2" checked={ceContFlag} onChange={(e) => setCeContFlag(e.target.checked)} />
                     Marcar como contemplada
                   </label>
                 </div>
@@ -2718,21 +2624,12 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da contemplação</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContDate}
-                        onChange={(e) => setCeContDate(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceContDate} onChange={(e) => setCeContDate(e.target.value)} />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Tipo de lance</label>
-                      <select
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContTipo}
-                        onChange={(e) => setCeContTipo(e.target.value)}
-                      >
+                      <select className="w-full border rounded-xl px-3 py-2" value={ceContTipo} onChange={(e) => setCeContTipo(e.target.value)}>
                         <option value="">Selecione…</option>
                         <option value="Lance Livre">Lance Livre</option>
                         <option value="Primeiro Lance Fixo">Primeiro Lance Fixo</option>
@@ -2742,37 +2639,23 @@ const Carteira: React.FC = () => {
 
                     <div>
                       <label className="text-sm text-gray-600">% do lance (4 casas)</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContPctRaw}
-                        onChange={(e) => setCeContPctRaw(e.target.value)}
-                        placeholder="Ex.: 41,2542%"
-                      />
-                      <div className="text-xs text-gray-500 mt-1">
-                        Será salvo como <code>numeric(9,4)</code>.
-                      </div>
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceContPctRaw} onChange={(e) => setCeContPctRaw(e.target.value)} placeholder="Ex.: 41,2542%" />
+                      <div className="text-xs text-gray-500 mt-1">Será salvo como <code>numeric(9,4)</code>.</div>
                     </div>
                   </div>
                 )}
 
                 {!ceContFlag && (
                   <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-600">
-                    Ao desmarcar, vamos limpar <code>data_contemplacao</code>, <code>contemplacao_tipo</code> e{" "}
-                    <code>contemplacao_pct</code>.
+                    Ao desmarcar, vamos limpar <code>data_contemplacao</code>, <code>contemplacao_tipo</code> e <code>contemplacao_pct</code>.
                   </div>
                 )}
 
                 <div className="flex items-center justify-between">
-                  <button
-                    className="px-4 py-2 rounded-xl border"
-                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
-                  >
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
                     Voltar
                   </button>
-                  <button
-                    className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-                    onClick={saveContemplacao}
-                  >
+                  <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveContemplacao}>
                     Salvar
                   </button>
                 </div>
@@ -2783,12 +2666,7 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={ceInadFlag}
-                      onChange={(e) => setCeInadFlag(e.target.checked)}
-                    />
+                    <input type="checkbox" className="mr-2" checked={ceInadFlag} onChange={(e) => setCeInadFlag(e.target.checked)} />
                     Marcar como inadimplente
                   </label>
                 </div>
@@ -2797,12 +2675,7 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data que inadimpliu</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceInadEm}
-                        onChange={(e) => setCeInadEm(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadEm} onChange={(e) => setCeInadEm(e.target.value)} />
                     </div>
                     <div className="border rounded-2xl p-4 bg-red-50 text-sm text-red-800">
                       Ao marcar, vamos salvar <code>inad = true</code> e <code>inad_em</code>. A reversão fica vazia.
@@ -2812,12 +2685,7 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da reversão</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceInadRev}
-                        onChange={(e) => setCeInadRev(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadRev} onChange={(e) => setCeInadRev(e.target.value)} />
                     </div>
                     <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-700">
                       Ao desmarcar, vamos salvar <code>inad = false</code> e registrar <code>inad_revertida_em</code>.
@@ -2826,16 +2694,10 @@ const Carteira: React.FC = () => {
                 )}
 
                 <div className="flex items-center justify-between">
-                  <button
-                    className="px-4 py-2 rounded-xl border"
-                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
-                  >
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
                     Voltar
                   </button>
-                  <button
-                    className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-                    onClick={saveInad}
-                  >
+                  <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveInad}>
                     Salvar
                   </button>
                 </div>

@@ -213,6 +213,16 @@ function normalizeSegmentLabel(s: string | null | undefined): string {
     .trim();
 }
 
+function normalizeTableName(s: string | null | undefined): string {
+  return (s || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
  * ✅ CORREÇÃO (TABELAS POR SEGMENTO)
  * Para filtrar sim_tables.segmento corretamente, NÃO podemos colapsar "Imóvel Estendido" -> "Imóvel".
@@ -1226,18 +1236,29 @@ const Carteira: React.FC = () => {
 
   // tabelas filtradas por Admin + Segmento
   const tabelaOptions = useMemo(() => {
-    const prod = (form.produto as Produto) || "Automóvel";
-    const admName = (form.administradora as string) || "";
-    const admId = simAdmins.find((a) => a.name === admName)?.id;
+  const prod = (form.produto as Produto) || "Automóvel";
+  const admName = (form.administradora as string) || "";
+  const admId = simAdmins.find((a) => a.name === admName)?.id;
 
-    return simTables.filter((t) => {
-      if (admId && t.admin_id !== admId) return false;
+  const filtered = simTables.filter((t) => {
+    if (admId && t.admin_id !== admId) return false;
 
-      // ✅ CORREÇÃO: filtra por "produto selecionado" (sem colapsar Imóvel Estendido -> Imóvel)
-      // e com tolerância a variações singular/plural.
-      return produtoMatchesTableSegment(prod, t.segmento);
-    });
-  }, [form.produto, form.administradora, simTables, simAdmins]);
+    // filtra por "produto selecionado" (sem colapsar Imóvel Estendido -> Imóvel)
+    return produtoMatchesTableSegment(prod, t.segmento);
+  });
+
+  // ✅ DEDUPE no front: mostra 1 por nome_tabela
+  const seen = new Set<string>();
+  const unique = filtered.filter((t) => {
+    const key = normalizeTableName(t.nome_tabela);
+    if (!key) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return unique;
+}, [form.produto, form.administradora, simTables, simAdmins]);
 
   // produtos permitidos para a administradora
   const produtoOptionsForAdmin: Produto[] = useMemo(() => {

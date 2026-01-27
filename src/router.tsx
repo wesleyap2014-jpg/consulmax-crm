@@ -29,6 +29,9 @@ const FluxoDeCaixa            = React.lazy(() => import("./pages/FluxoDeCaixa"))
 const Planejamento            = React.lazy(() => import("./pages/Planejamento"));
 const Relatorios              = React.lazy(() => import("./pages/Relatorios"));
 
+// ✅ NOVO: Procedimentos (KB)
+const Procedimentos           = React.lazy(() => import("./pages/Procedimentos"));
+
 // ✅ NOVO: Estoque de cotas contempladas (lazy)
 const EstoqueContempladas     = React.lazy(() => import("./pages/EstoqueContempladas"));
 
@@ -85,6 +88,9 @@ export const router = createBrowserRouter([
           { path: "clientes",       element: withSuspense(<Clientes />) },
           { path: "agenda",         element: withSuspense(<Agenda />) },
           { path: "planejamento",   element: withSuspense(<Planejamento />) },
+
+          // ✅ NOVO: Procedimentos (Wiki Operacional)
+          { path: "procedimentos",  element: withSuspense(<Procedimentos />) },
 
           // ✅ Relatórios
           { path: "relatorios",     element: withSuspense(<Relatorios />) },

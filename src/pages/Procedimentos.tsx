@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 
 import {
@@ -167,7 +166,14 @@ export default function Procedimentos() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [me, setMe] = useState<UserRow | null>(null);
-  const myRoleText = useMemo(() => (me?.user_role || (me?.role as any)?.toString?.() || me?.role || "") as string, [me]);
+  const myRoleText = useMemo(
+    () =>
+      (me?.user_role ||
+        (me?.role as any)?.toString?.() ||
+        (me?.role as any) ||
+        "") as string,
+    [me]
+  );
   const canEdit = useMemo(() => isOpsOrAdmin(myRoleText), [myRoleText]);
   const canApprove = useMemo(() => isAdmin(myRoleText), [myRoleText]);
 
@@ -240,13 +246,32 @@ export default function Procedimentos() {
   }
 
   async function loadDetails(procedureId: string) {
-    // carrega módulos opcionais em paralelo
     const [r1, r2, r3, r4, r5] = await Promise.all([
-      supabase.from("kb_roles").select("*").eq("procedure_id", procedureId).order("sort_order", { ascending: true }),
-      supabase.from("kb_documents").select("*").eq("procedure_id", procedureId).order("sort_order", { ascending: true }),
-      supabase.from("kb_ticket_fields").select("*").eq("procedure_id", procedureId).order("sort_order", { ascending: true }),
-      supabase.from("kb_assets").select("*").eq("procedure_id", procedureId).order("created_at", { ascending: false }),
-      supabase.from("kb_suggestions").select("*").eq("procedure_id", procedureId).order("created_at", { ascending: false }),
+      supabase
+        .from("kb_roles")
+        .select("*")
+        .eq("procedure_id", procedureId)
+        .order("sort_order", { ascending: true }),
+      supabase
+        .from("kb_documents")
+        .select("*")
+        .eq("procedure_id", procedureId)
+        .order("sort_order", { ascending: true }),
+      supabase
+        .from("kb_ticket_fields")
+        .select("*")
+        .eq("procedure_id", procedureId)
+        .order("sort_order", { ascending: true }),
+      supabase
+        .from("kb_assets")
+        .select("*")
+        .eq("procedure_id", procedureId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("kb_suggestions")
+        .select("*")
+        .eq("procedure_id", procedureId)
+        .order("created_at", { ascending: false }),
     ]);
 
     setRoles((r1.data as any) || []);
@@ -368,8 +393,7 @@ export default function Procedimentos() {
       channel: (draft.channel || "").trim() || null,
       sla_text: (draft.sla_text || "").trim() || null,
       flags: draft.flags || {},
-      // status: ops pode deixar draft/review; active só admin (RLS)
-      status: (draft.status as any) || "draft",
+      status: ((draft.status as any) || "draft") as any,
       updated_by: (await supabase.auth.getUser()).data.user?.id || null,
     };
 
@@ -487,7 +511,6 @@ export default function Procedimentos() {
     if (!active || !canEdit) return;
 
     try {
-      const ext = file.name.split(".").pop() || "bin";
       const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 120);
       const path = `procedure/${active.id}/${Date.now()}_${safe}`;
 
@@ -517,7 +540,6 @@ export default function Procedimentos() {
 
       await loadDetails(active.id);
     } catch (e: any) {
-      // normalmente aqui vai acusar policy do storage ainda não pronta
       alert(e?.message || "Erro ao enviar anexo (verifique policies do Storage).");
     }
   }
@@ -526,8 +548,10 @@ export default function Procedimentos() {
     try {
       const { data, error } = await supabase.storage
         .from("kb_assets")
-        .createSignedUrl(asset.file_path, 60); // 1 minuto
+        .createSignedUrl(asset.file_path, 60);
+
       if (error) throw error;
+
       const url = data?.signedUrl;
       if (url) window.open(url, "_blank");
     } catch (e: any) {
@@ -770,7 +794,6 @@ export default function Procedimentos() {
                       <SelectContent>
                         <SelectItem value="draft">Rascunho</SelectItem>
                         <SelectItem value="review">Em revisão</SelectItem>
-                        {/* active só admin — mas se ops tentar, RLS bloqueia */}
                         <SelectItem value="active">Ativo</SelectItem>
                       </SelectContent>
                     </Select>
@@ -874,7 +897,10 @@ export default function Procedimentos() {
                   <div className="space-y-2">
                     <div className="text-sm font-medium">Quando usar</div>
                     <div className="text-sm text-slate-700">{active.trigger || "—"}</div>
-                    <Separator />
+
+                    {/* divisor simples (sem Separator) */}
+                    <div className="h-px w-full bg-slate-200 my-3" />
+
                     <div className="text-sm font-medium">Como fazer</div>
                     {renderSimpleMd(active.steps_md)}
                   </div>
@@ -886,7 +912,6 @@ export default function Procedimentos() {
                       <div className="text-sm text-muted-foreground">Sem documentos cadastrados.</div>
                     ) : (
                       <>
-                        {/* Agrupa por role_key */}
                         {Object.entries(
                           docs.reduce<Record<string, KBDoc[]>>((acc, d) => {
                             const k = d.role_key || "geral";
@@ -909,7 +934,10 @@ export default function Procedimentos() {
                                 >
                                   <div className="min-w-0">
                                     <div className="text-sm font-medium text-slate-900">
-                                      {d.doc_name} {d.required ? "" : <span className="text-xs text-muted-foreground">(opcional)</span>}
+                                      {d.doc_name}{" "}
+                                      {!d.required && (
+                                        <span className="text-xs text-muted-foreground">(opcional)</span>
+                                      )}
                                     </div>
                                     <div className="text-xs text-muted-foreground">
                                       {[
@@ -944,7 +972,9 @@ export default function Procedimentos() {
                             <div className="min-w-0">
                               <div className="text-sm font-medium text-slate-900">
                                 {f.field_label}{" "}
-                                {!f.required && <span className="text-xs text-muted-foreground">(opcional)</span>}
+                                {!f.required && (
+                                  <span className="text-xs text-muted-foreground">(opcional)</span>
+                                )}
                               </div>
                               <div className="text-sm text-slate-700">{f.field_value}</div>
                             </div>

@@ -1,3 +1,4 @@
+// src/components/layout/Sidebar.tsx
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -22,6 +23,7 @@ import {
   Link as LinkIcon,
   ChevronDown,
   ChevronRight,
+  BookOpen,
 } from "lucide-react";
 
 type SidebarProps = { onNavigate?: () => void };
@@ -253,7 +255,7 @@ function groupForPath(pathname: string): GroupKey {
 
   if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros"])) return "admin";
 
-  if (isAnyPathActive(pathname, ["/links"])) return "max";
+  if (isAnyPathActive(pathname, ["/links", "/procedimentos"])) return "max";
 
   return "fin";
 }
@@ -263,7 +265,25 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   const location = useLocation();
   const pathname = location.pathname;
 
-  // Colapsar com persistência
+  // Detecta mobile/tablet (para ajustar colapso/width/scroll)
+  const [isSmall, setIsSmall] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = () => setIsSmall(mq.matches);
+    handler();
+    if ("addEventListener" in mq) mq.addEventListener("change", handler);
+    else mq.addListener(handler);
+    return () => {
+      if ("removeEventListener" in mq) mq.removeEventListener("change", handler);
+      else mq.removeListener(handler);
+    };
+  }, []);
+
+  // Colapsar com persistência (apenas desktop)
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("@consulmax:sidebar-collapsed") === "1";
@@ -271,6 +291,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       return false;
     }
   });
+  useEffect(() => {
+    // Em telas pequenas, forçamos expandido (menu em drawer já faz o papel de “compacto”)
+    if (isSmall && collapsed) setCollapsed(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSmall]);
+
   useEffect(() => {
     try {
       localStorage.setItem("@consulmax:sidebar-collapsed", collapsed ? "1" : "0");
@@ -292,10 +318,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     (async () => {
       setAdminsLoading(true);
       try {
-        const { data, error } = await supabase
-          .from("sim_admins")
-          .select("id, name, slug")
-          .order("name", { ascending: true });
+        const { data, error } = await supabase.from("sim_admins").select("id, name, slug").order("name", { ascending: true });
 
         if (!alive) return;
 
@@ -389,10 +412,15 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     };
   }, []);
 
-  // classes utilitárias colapsado
-  const widthClass = collapsed ? "md:w-20 w-full" : "md:w-64 w-full";
-  const textHidden = collapsed ? "opacity-0 pointer-events-none select-none w-0" : "opacity-100";
-  const pillPadding = collapsed ? "px-2.5" : "px-3";
+  // ====== Responsividade ======
+  // No mobile/tablet (drawer), NÃO usar w-full (isso estoura). Usar largura “panel”.
+  const widthClass = useMemo(() => {
+    if (isSmall) return "w-[92vw] max-w-[360px]";
+    return collapsed ? "md:w-20" : "md:w-64";
+  }, [isSmall, collapsed]);
+
+  const textHidden = collapsed ? "md:opacity-0 md:pointer-events-none md:select-none md:w-0 opacity-100" : "opacity-100";
+  const pillPadding = collapsed ? "md:px-2.5 px-3" : "px-3";
 
   // Accordion: só 1 grupo aberto
   const currentGroup = useMemo<GroupKey>(() => groupForPath(pathname), [pathname]);
@@ -428,7 +456,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
       { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
 
-      // Pós-venda (Carteira primeiro)
+      // Pós-venda
       { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
       { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
       { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
@@ -451,6 +479,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       },
 
       // Maximize-se
+      { to: "/procedimentos", label: "Procedimentos", icon: BookOpen, end: true },
       { to: "/links", label: "Links Úteis", icon: LinkIcon, end: true },
     ],
     [navAlerts, simuladoresHref]
@@ -492,7 +521,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   return (
     <aside
       className={`${widthClass} border-r md:shadow md:sticky md:top-14
-                  min-h-[calc(100vh-56px)] h-auto p-3 overflow-visible
+                  md:min-h-[calc(100vh-56px)] md:h-auto
+                  h-[calc(100vh-56px)] p-3 overflow-y-auto overflow-x-hidden
                   pb-[max(env(safe-area-inset-bottom),theme(spacing.6))]`}
       style={glassSidebarBase}
       role="navigation"
@@ -525,7 +555,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         </div>
       </Link>
 
-      {/* Botão ocultar/expandir */}
+      {/* Botão ocultar/expandir (apenas desktop) */}
       <div className="relative z-[1] mb-3">
         <button
           type="button"
@@ -533,7 +563,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             if (!collapsed) setSimGroupOpen(false);
             setCollapsed((v) => !v);
           }}
-          className="inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40"
+          className="hidden md:inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40"
           title={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
           aria-label={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
           style={glassHoverPill}
@@ -546,7 +576,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       {/* Navegação */}
       <nav className="relative z-[1] grid gap-2">
         {/* ===== MODO COLAPSADO (flat) ===== */}
-        {collapsed && (
+        {collapsed && !isSmall && (
           <>
             {flatItems
               .filter((i) => !i.onlyForWesley || authUserId === WESLEY_ID)
@@ -567,7 +597,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         )}
 
         {/* ===== MODO EXPANDIDO (accordion + títulos em pill) ===== */}
-        {!collapsed && (
+        {(!collapsed || isSmall) && (
           <>
             {/* VENDAS */}
             {renderSectionPill("vendas", "Vendas", Briefcase)}
@@ -600,7 +630,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   </span>
                 </NavLink>
 
-                {/* ✅ Agenda em Vendas */}
                 <NavLink
                   to="/agenda"
                   className={({ isActive }) => pillClass(isActive)}
@@ -865,6 +894,18 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             {renderSectionPill("max", "Maximize-se", Trophy)}
             {openGroup === "max" && (
               <div className="ml-1 grid gap-2">
+                <NavLink
+                  to="/procedimentos"
+                  className={({ isActive }) => pillClass(isActive)}
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={() => onNavigate?.()}
+                  title="Procedimentos"
+                  end
+                >
+                  <BookOpen className="h-4 w-4" />
+                  Procedimentos
+                </NavLink>
+
                 <NavLink
                   to="/links"
                   className={({ isActive }) => pillClass(isActive)}

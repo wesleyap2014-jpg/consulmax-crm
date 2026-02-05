@@ -23,6 +23,7 @@ import {
   Link as LinkIcon,
   ChevronDown,
   ChevronRight,
+  X,
 } from "lucide-react";
 
 type SidebarProps = { onNavigate?: () => void };
@@ -282,6 +283,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     };
   }, []);
 
+  // ✅ Drawer mobile: aberto/fechado (não interfere no colapsado desktop)
+  const [mobileOpen, setMobileOpen] = useState(false);
+
   // Colapsar com persistência (apenas desktop)
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
@@ -302,12 +306,28 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     } catch {}
   }, [collapsed]);
 
-  // fecha drawer no mobile ao navegar (fallback)
+  // ✅ Fecha o drawer no mobile sempre que navegar
   useEffect(() => {
+    if (isSmall) setMobileOpen(false);
     onNavigate?.();
-  }, [location.pathname, onNavigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
 
-  const handleNav = () => onNavigate?.();
+  // ✅ Trava scroll do body quando drawer estiver aberto (mobile)
+  useEffect(() => {
+    if (!isSmall) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = mobileOpen ? "hidden" : prev || "";
+    return () => {
+      document.body.style.overflow = prev || "";
+    };
+  }, [mobileOpen, isSmall]);
+
+  const handleNav = () => {
+    // fecha drawer e chama callback
+    if (isSmall) setMobileOpen(false);
+    onNavigate?.();
+  };
 
   // Carregar administradoras (Simuladores)
   const [admins, setAdmins] = useState<AdminRow[]>([]);
@@ -479,7 +499,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       },
 
       // Maximize-se
-      // ✅ Sem BookOpen (pode quebrar dependendo da versão do lucide-react)
       { to: "/procedimentos", label: "Procedimentos", icon: ClipboardList, end: true },
       { to: "/links", label: "Links Úteis", icon: LinkIcon, end: true },
     ],
@@ -523,7 +542,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     );
   };
 
-  return (
+  // ===== Wrapper do drawer no mobile =====
+  const AsideContent = (
     <aside
       className={`${widthClass} border-r md:shadow md:sticky md:top-14
                   md:min-h-[calc(100vh-56px)] md:h-auto
@@ -545,6 +565,22 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           borderBottom: "1px solid rgba(255,255,255,.35)",
         }}
       >
+        {/* Top bar mobile: botão fechar */}
+        {isSmall && (
+          <div className="flex items-center justify-end mb-2">
+            <button
+              type="button"
+              onClick={() => setMobileOpen(false)}
+              className="inline-flex items-center justify-center rounded-xl border px-2.5 py-2 hover:bg-white/60"
+              style={glassHoverPill}
+              aria-label="Fechar menu"
+              title="Fechar"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         {/* LOGO */}
         <Link
           to="/oportunidades"
@@ -944,5 +980,49 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         )}
       </nav>
     </aside>
+  );
+
+  return (
+    <>
+      {/* ✅ Mobile: botão para abrir menu (caso o header não tenha) */}
+      {/* Se você já tem um botão "Menu" no Header, pode remover este bloco sem problema */}
+      {isSmall && (
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          className="fixed top-16 left-3 z-[60] rounded-2xl border px-3 py-2 text-sm bg-white/70 backdrop-blur hover:bg-white/80"
+          style={{ borderColor: "rgba(255,255,255,.45)" }}
+          aria-label="Abrir menu"
+        >
+          Menu
+        </button>
+      )}
+
+      {/* ✅ Drawer overlay no mobile */}
+      {isSmall ? (
+        <>
+          {/* Backdrop clicável */}
+          {mobileOpen && (
+            <div
+              className="fixed inset-0 z-[50] bg-black/40"
+              onClick={() => setMobileOpen(false)}
+              aria-hidden
+            />
+          )}
+
+          {/* Drawer */}
+          <div
+            className={`fixed left-0 top-0 z-[55] h-dvh transform transition-transform duration-200 ${
+              mobileOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
+          >
+            {AsideContent}
+          </div>
+        </>
+      ) : (
+        // Desktop: sidebar normal
+        AsideContent
+      )}
+    </>
   );
 }

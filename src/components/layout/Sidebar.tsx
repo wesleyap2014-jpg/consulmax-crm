@@ -291,7 +291,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       return false;
     }
   });
-
   useEffect(() => {
     // Em telas pequenas, forçamos expandido (menu em drawer já faz o papel de “compacto”)
     if (isSmall && collapsed) setCollapsed(false);
@@ -304,15 +303,10 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     } catch {}
   }, [collapsed]);
 
-  // fecha drawer no mobile ao navegar (fallback)
+  // fecha drawer no mobile ao navegar
   useEffect(() => {
     onNavigate?.();
   }, [location.pathname, onNavigate]);
-
-  // Fecha drawer IMEDIATAMENTE ao clicar (experiência mobile “app-like”)
-  const handleNav = () => {
-    onNavigate?.();
-  };
 
   // Carregar administradoras (Simuladores)
   const [admins, setAdmins] = useState<AdminRow[]>([]);
@@ -491,12 +485,8 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     [navAlerts, simuladoresHref]
   );
 
-  // Feedback de toque (mobile): active/pressed
-  const mobileTapFx = "active:scale-[0.99] active:opacity-90";
-
   const pillClass = (isActive: boolean) =>
     `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-     ${mobileTapFx}
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
      ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`;
 
@@ -512,7 +502,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           setOpenGroup((prev) => (prev === key ? prev : key));
         }}
         className={`${pillPadding} py-2.5 rounded-2xl transition-colors w-full flex items-center justify-between
-                    ${mobileTapFx}
                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
         style={isActive ? activePillStyle : glassHoverPill}
         aria-expanded={isOpen}
@@ -541,60 +530,47 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     >
       {!collapsed && <SidebarLiquidBG />}
 
-      {/* HEADER (sticky no mobile/tablet pra ficar “app-like”) */}
-      <div
-        className="sticky top-0 z-[2] -mx-3 px-3 pt-0 pb-3"
-        style={{
-          background: "rgba(245,245,245,.65)",
-          backdropFilter: "saturate(160%) blur(10px)",
-          WebkitBackdropFilter: "saturate(160%) blur(10px)",
-          borderBottom: "1px solid rgba(255,255,255,.35)",
-        }}
+      {/* LOGO */}
+      <Link
+        to="/oportunidades"
+        className="relative z-[1] flex items-center gap-3 mb-2"
+        onClick={() => onNavigate?.()}
+        aria-label="Ir para Oportunidades"
       >
-        {/* LOGO */}
-        <Link
-          to="/oportunidades"
-          className="relative z-[1] flex items-center gap-3 mb-2"
-          onClick={handleNav}
-          aria-label="Ir para Oportunidades"
-        >
-          <img
-            src={LOGO_URL}
-            alt="Consulmax"
-            title="Consulmax"
-            width={40}
-            height={40}
-            loading="eager"
-            className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = FALLBACK_URL;
-            }}
-          />
-          <div className={`flex flex-col leading-tight transition-opacity duration-200 ${textHidden}`}>
-            <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
-            <span className="text-xs text-consulmax-secondary -mt-0.5">Maximize as suas conquistas</span>
-          </div>
-        </Link>
-
-        {/* Botão ocultar/expandir (apenas desktop) */}
-        <div className="relative z-[1]">
-          <button
-            type="button"
-            onClick={() => {
-              if (!collapsed) setSimGroupOpen(false);
-              setCollapsed((v) => !v);
-            }}
-            className={`hidden md:inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60
-                        ${mobileTapFx}
-                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
-            title={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
-            aria-label={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
-            style={glassHoverPill}
-          >
-            {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
-            {!collapsed && <span className="ml-1.5">Ocultar</span>}
-          </button>
+        <img
+          src={LOGO_URL}
+          alt="Consulmax"
+          title="Consulmax"
+          width={40}
+          height={40}
+          loading="eager"
+          className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).src = FALLBACK_URL;
+          }}
+        />
+        <div className={`flex flex-col leading-tight transition-opacity duration-200 ${textHidden}`}>
+          <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
+          <span className="text-xs text-consulmax-secondary -mt-0.5">Maximize as suas conquistas</span>
         </div>
+      </Link>
+
+      {/* Botão ocultar/expandir (apenas desktop) */}
+      <div className="relative z-[1] mb-3">
+        <button
+          type="button"
+          onClick={() => {
+            if (!collapsed) setSimGroupOpen(false);
+            setCollapsed((v) => !v);
+          }}
+          className="hidden md:inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40"
+          title={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
+          aria-label={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
+          style={glassHoverPill}
+        >
+          {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
+          {!collapsed && <span className="ml-1.5">Ocultar</span>}
+        </button>
       </div>
 
       {/* Navegação */}
@@ -610,7 +586,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to={i.to}
                   className={({ isActive }) => `${pillClass(isActive)} justify-center`}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title={i.label}
                   end={i.end}
                 >
@@ -631,7 +607,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/planejamento"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Planejamento"
                   end
                 >
@@ -643,7 +619,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/oportunidades"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Oportunidades"
                   end
                 >
@@ -658,7 +634,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/agenda"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Agenda"
                   end
                 >
@@ -701,12 +677,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                             to={`/simuladores/${ad.id}`}
                             className={({ isActive }) =>
                               `${pillPadding} py-2.5 rounded-2xl transition-colors
-                               ${mobileTapFx}
                                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                                ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
                             }
                             style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                            onClick={handleNav}
+                            onClick={() => onNavigate?.()}
                           >
                             {ad.name}
                           </NavLink>
@@ -717,12 +692,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                           to={`/simuladores/${embraconId}`}
                           className={({ isActive }) =>
                             `${pillPadding} py-2.5 rounded-2xl transition-colors
-                             ${mobileTapFx}
                              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                              ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
                           }
                           style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                          onClick={handleNav}
+                          onClick={() => onNavigate?.()}
                         >
                           Embracon
                         </NavLink>
@@ -732,12 +706,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                         to="/simuladores/add"
                         className={({ isActive }) =>
                           `${pillPadding} py-2.5 rounded-2xl transition-colors
-                           ${mobileTapFx}
                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
                            ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
                         }
                         style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                        onClick={handleNav}
+                        onClick={() => onNavigate?.()}
                       >
                         + Add Administradora
                       </NavLink>
@@ -749,7 +722,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/propostas"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Propostas"
                   end
                 >
@@ -761,7 +734,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/ranking"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Ranking"
                   end
                 >
@@ -773,7 +746,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/estoque-contempladas"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Contempladas"
                   end
                 >
@@ -791,7 +764,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/carteira"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Carteira"
                   end
                 >
@@ -803,7 +776,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/giro-de-carteira"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Giro de Carteira"
                   end
                 >
@@ -815,7 +788,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/gestao-de-grupos"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Gestão de Grupos"
                   end
                 >
@@ -830,7 +803,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/clientes"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Clientes"
                   end
                 >
@@ -848,7 +821,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/relatorios"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Relatórios"
                   end
                 >
@@ -860,7 +833,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/usuarios"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Usuários"
                   end
                 >
@@ -872,7 +845,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/parametros"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Parâmetros"
                   end
                 >
@@ -890,7 +863,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/comissoes"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Comissões"
                   end
                 >
@@ -903,7 +876,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     to="/fluxo-de-caixa"
                     className={({ isActive }) => pillClass(isActive)}
                     style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                    onClick={handleNav}
+                    onClick={() => onNavigate?.()}
                     title="Fluxo de Caixa"
                     end
                   >
@@ -925,7 +898,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/procedimentos"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Procedimentos"
                   end
                 >
@@ -937,7 +910,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   to="/links"
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
+                  onClick={() => onNavigate?.()}
                   title="Links Úteis"
                   end
                 >

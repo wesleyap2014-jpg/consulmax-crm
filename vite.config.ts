@@ -4,12 +4,10 @@ import react from "@vitejs/plugin-react";
 import path from "node:path";
 
 export default defineConfig({
-  // Garante caminhos absolutos corretos no Vercel e local
   base: "/",
 
   plugins: [
     react({
-      // habilita fast refresh estável
       jsxRuntime: "automatic",
     }),
   ],
@@ -20,18 +18,18 @@ export default defineConfig({
     },
   },
 
-  // Evita que libs herdadas que esperam "process.env" quebrem no browser
   define: {
+    // Evita quebrar libs que esperam process/env/global
     "process.env": {},
+    global: "globalThis",
   },
 
   server: {
-    host: true,       // acessível na rede local
-    port: 5173,       // padrão do Vite
-    strictPort: true, // evita variar porta (bom para envs com proxy)
+    host: true,
+    port: 5173,
+    strictPort: true,
   },
 
-  // preview local do build
   preview: {
     host: true,
     port: 4173,
@@ -41,10 +39,18 @@ export default defineConfig({
   build: {
     outDir: "dist",
     target: "es2022",
-    sourcemap: true, // útil para depurar “tela branca” em produção
+    sourcemap: true,
+
+    // Ajuda cache busting (Vite já faz hash, mas deixo explícito)
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
+      },
+    },
   },
 
-  // Otimizações (geralmente o Vite acerta, mas deixo explícito)
   optimizeDeps: {
     include: ["react", "react-dom", "react-router-dom", "lucide-react"],
   },

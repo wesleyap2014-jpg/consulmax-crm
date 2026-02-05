@@ -3,19 +3,37 @@
   <head>
     <meta charset="UTF-8" />
 
-    <!-- Favicons -->
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <link rel="shortcut icon" href="/favicon.ico" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>Consulmax CRM</title>
+    <meta
+      name="description"
+      content="CRM da Consulmax Consórcios — Maximize as suas conquistas."
+    />
+
+    <!-- Viewport (PWA + iOS notch) -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
 
     <!-- Manifest PWA -->
     <link rel="manifest" href="/manifest.webmanifest" />
 
-    <!-- Metas essenciais -->
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#A11C27" />
+    <!-- Theme color (alguns browsers respeitam por scheme) -->
+    <meta name="theme-color" content="#A11C27" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1E293F" media="(prefers-color-scheme: dark)" />
 
-    <title>Consulmax CRM</title>
+    <!-- Favicons / Icons -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+    <!-- iOS PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Consulmax" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- (Opcional, mas ajuda no Android/Chrome) -->
+    <meta name="mobile-web-app-capable" content="yes" />
 
     <!-- Meta Pixel (recomendado pela Meta: no <head>) -->
     <script>
@@ -34,13 +52,8 @@
         t.src = v;
         s = b.getElementsByTagName(e)[0];
         s.parentNode.insertBefore(t, s);
-      })(
-        window,
-        document,
-        "script",
-        "https://connect.facebook.net/en_US/fbevents.js"
-      );
-      fbq("init", "844879181425424"); // <-- seu Pixel ID
+      })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+      fbq("init", "844879181425424");
       fbq("track", "PageView");
     </script>
     <!-- Fim Meta Pixel -->
@@ -52,7 +65,7 @@
       <img
         height="1"
         width="1"
-        style="display:none"
+        style="display: none"
         src="https://www.facebook.com/tr?id=844879181425424&ev=PageView&noscript=1"
       />
     </noscript>
@@ -62,7 +75,7 @@
     <!-- App -->
     <script type="module" src="/src/main.tsx"></script>
 
-    <!-- Registro do Service Worker (necessário para “Instalar app”) -->
+    <!-- Registro do Service Worker (PWA) -->
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {

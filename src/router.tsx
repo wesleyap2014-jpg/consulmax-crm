@@ -7,33 +7,29 @@ import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 
 // ==== Lazy pages (mantém lazy no resto) ====
-const Login                   = React.lazy(() => import("./pages/Login"));
-const Inicio                  = React.lazy(() => import("./pages/Inicio")); // ✅ NOVO: Home
-const Clientes                = React.lazy(() => import("./pages/Clientes"));
-const Oportunidades           = React.lazy(() => import("./pages/Oportunidades"));
-const Agenda                  = React.lazy(() => import("./pages/Agenda"));
-const Simuladores             = React.lazy(() => import("./pages/Simuladores"));
-const Propostas               = React.lazy(() => import("./pages/Propostas"));
-const Comissoes               = React.lazy(() => import("./pages/Comissoes"));
-const Carteira                = React.lazy(() => import("./pages/Carteira"));
-const Usuarios                = React.lazy(() => import("./pages/Usuarios"));
-const GestaoDeGrupos          = React.lazy(() => import("./pages/GestaoDeGrupos"));
-const Parametros              = React.lazy(() => import("./pages/Parametros"));
-const TermsLGPD               = React.lazy(() => import("./pages/TermsLGPD"));
-const AlterarSenha            = React.lazy(() => import("./pages/AlterarSenha"));
+const Login = React.lazy(() => import("./pages/Login"));
+const Inicio = React.lazy(() => import("./pages/Inicio"));
+const Clientes = React.lazy(() => import("./pages/Clientes"));
+const Oportunidades = React.lazy(() => import("./pages/Oportunidades"));
+const Agenda = React.lazy(() => import("./pages/Agenda"));
+const Simuladores = React.lazy(() => import("./pages/Simuladores"));
+const Propostas = React.lazy(() => import("./pages/Propostas"));
+const Comissoes = React.lazy(() => import("./pages/Comissoes"));
+const Carteira = React.lazy(() => import("./pages/Carteira"));
+const Usuarios = React.lazy(() => import("./pages/Usuarios"));
+const GestaoDeGrupos = React.lazy(() => import("./pages/GestaoDeGrupos"));
+const Parametros = React.lazy(() => import("./pages/Parametros"));
+const TermsLGPD = React.lazy(() => import("./pages/TermsLGPD"));
+const AlterarSenha = React.lazy(() => import("./pages/AlterarSenha"));
 const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdministradora"));
-const LinksUteis              = React.lazy(() => import("./pages/LinksUteis"));
-const RankingVendedores       = React.lazy(() => import("./pages/RankingVendedores"));
-const PublicSimulador         = React.lazy(() => import("./pages/PublicSimulador"));
-const FluxoDeCaixa            = React.lazy(() => import("./pages/FluxoDeCaixa"));
-const Planejamento            = React.lazy(() => import("./pages/Planejamento"));
-const Relatorios              = React.lazy(() => import("./pages/Relatorios"));
-
-// ✅ NOVO: Procedimentos (KB)
-const Procedimentos           = React.lazy(() => import("./pages/Procedimentos"));
-
-// ✅ NOVO: Estoque de cotas contempladas (lazy)
-const EstoqueContempladas     = React.lazy(() => import("./pages/EstoqueContempladas"));
+const LinksUteis = React.lazy(() => import("./pages/LinksUteis"));
+const RankingVendedores = React.lazy(() => import("./pages/RankingVendedores"));
+const PublicSimulador = React.lazy(() => import("./pages/PublicSimulador"));
+const FluxoDeCaixa = React.lazy(() => import("./pages/FluxoDeCaixa"));
+const Planejamento = React.lazy(() => import("./pages/Planejamento"));
+const Relatorios = React.lazy(() => import("./pages/Relatorios"));
+const Procedimentos = React.lazy(() => import("./pages/Procedimentos"));
+const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas"));
 
 // ==== Giro de Carteira SEM lazy (import direto) ====
 import GiroDeCarteira from "./pages/GiroDeCarteira";
@@ -41,7 +37,13 @@ import GiroDeCarteira from "./pages/GiroDeCarteira";
 // Wrapper simples para Suspense
 function withSuspense(node: React.ReactNode) {
   return (
-    <React.Suspense fallback={<div className="p-4 text-sm text-gray-600">Carregando…</div>}>
+    <React.Suspense
+      fallback={
+        <div className="min-h-dvh p-4 text-sm text-gray-600 flex items-center justify-center">
+          Carregando…
+        </div>
+      }
+    >
       {node}
     </React.Suspense>
   );
@@ -60,7 +62,7 @@ function EB({ title, children }: { title?: string; children: React.ReactNode }) 
 export const router = createBrowserRouter([
   // ==== Rotas públicas (sem login) ====
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
-  { path: "/simular",          element: <Navigate to="/publico/simulador" replace /> },
+  { path: "/simular", element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
 
   // Login
@@ -76,45 +78,40 @@ export const router = createBrowserRouter([
       {
         element: <App />, // layout principal
         children: [
-          // ✅ AGORA o CRM abre na página Início após login
+          // Home pós-login (index)
           { index: true, element: withSuspense(<Inicio />) },
 
-          // (opcional) se você quiser uma URL explícita pra Home:
-          // { path: "inicio", element: withSuspense(<Inicio />) },
+          // ✅ Home com URL explícita (ajuda muito em deep link / PWA)
+          { path: "inicio", element: withSuspense(<Inicio />) },
 
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },
 
-          { path: "oportunidades",  element: withSuspense(<Oportunidades />) },
-          { path: "clientes",       element: withSuspense(<Clientes />) },
-          { path: "agenda",         element: withSuspense(<Agenda />) },
-          { path: "planejamento",   element: withSuspense(<Planejamento />) },
+          { path: "oportunidades", element: withSuspense(<Oportunidades />) },
+          { path: "clientes", element: withSuspense(<Clientes />) },
+          { path: "agenda", element: withSuspense(<Agenda />) },
+          { path: "planejamento", element: withSuspense(<Planejamento />) },
 
-          // ✅ NOVO: Procedimentos (Wiki Operacional)
-          { path: "procedimentos",  element: withSuspense(<Procedimentos />) },
+          { path: "procedimentos", element: withSuspense(<Procedimentos />) },
+          { path: "relatorios", element: withSuspense(<Relatorios />) },
 
-          // ✅ Relatórios
-          { path: "relatorios",     element: withSuspense(<Relatorios />) },
-
-          // ✅ NOVO: Estoque de cotas contempladas
           { path: "estoque-contempladas", element: withSuspense(<EstoqueContempladas />) },
-          { path: "estoque",              element: <Navigate to="/estoque-contempladas" replace /> },
-          { path: "cotas-contempladas",   element: <Navigate to="/estoque-contempladas" replace /> },
+          { path: "estoque", element: <Navigate to="/estoque-contempladas" replace /> },
+          { path: "cotas-contempladas", element: <Navigate to="/estoque-contempladas" replace /> },
 
           {
             path: "simuladores",
             children: [
-              { index: true,      element: withSuspense(<Simuladores />) },
+              { index: true, element: withSuspense(<Simuladores />) },
               { path: "embracon", element: withSuspense(<Simuladores />) },
-              { path: "add",      element: withSuspense(<AdicionarAdministradora />) },
-              { path: ":id",      element: withSuspense(<Simuladores />) },
+              { path: "add", element: withSuspense(<AdicionarAdministradora />) },
+              { path: ":id", element: withSuspense(<Simuladores />) },
             ],
           },
 
-          { path: "propostas",  element: withSuspense(<Propostas />) },
-          { path: "comissoes",  element: withSuspense(<Comissoes />) },
-          { path: "carteira",   element: withSuspense(<Carteira />) },
+          { path: "propostas", element: withSuspense(<Propostas />) },
+          { path: "comissoes", element: withSuspense(<Comissoes />) },
+          { path: "carteira", element: withSuspense(<Carteira />) },
 
-          // Fluxo de Caixa
           { path: "fluxo-de-caixa", element: withSuspense(<FluxoDeCaixa />) },
 
           // Giro de Carteira: import direto + ErrorBoundary com reset por rota
@@ -126,24 +123,24 @@ export const router = createBrowserRouter([
               </EB>
             ),
           },
-          { path: "giro",              element: <Navigate to="/giro-de-carteira" replace /> },
+          { path: "giro", element: <Navigate to="/giro-de-carteira" replace /> },
           { path: "giro-de-carteira/", element: <Navigate to="/giro-de-carteira" replace /> },
 
-          { path: "ranking",             element: withSuspense(<RankingVendedores />) },
-          { path: "ranking-vendedores",  element: <Navigate to="/ranking" replace /> },
-          { path: "vendedores/ranking",  element: <Navigate to="/ranking" replace /> },
-          { path: "ranking-vendas",      element: <Navigate to="/ranking" replace /> },
+          { path: "ranking", element: withSuspense(<RankingVendedores />) },
+          { path: "ranking-vendedores", element: <Navigate to="/ranking" replace /> },
+          { path: "vendedores/ranking", element: <Navigate to="/ranking" replace /> },
+          { path: "ranking-vendas", element: <Navigate to="/ranking" replace /> },
 
-          { path: "usuarios",         element: withSuspense(<Usuarios />) },
+          { path: "usuarios", element: withSuspense(<Usuarios />) },
           { path: "gestao-de-grupos", element: withSuspense(<GestaoDeGrupos />) },
-          { path: "parametros",       element: withSuspense(<Parametros />) },
-          { path: "lgpd",             element: withSuspense(<TermsLGPD />) },
+          { path: "parametros", element: withSuspense(<Parametros />) },
+          { path: "lgpd", element: withSuspense(<TermsLGPD />) },
 
-          { path: "links",       element: withSuspense(<LinksUteis />) },
+          { path: "links", element: withSuspense(<LinksUteis />) },
           { path: "links-uteis", element: <Navigate to="/links" replace /> },
-          { path: "linksuteis",  element: <Navigate to="/links" replace /> },
+          { path: "linksuteis", element: <Navigate to="/links" replace /> },
 
-          { path: "*", element: <Navigate to="/" replace /> }, // ✅ volta pra Home
+          { path: "*", element: <Navigate to="/" replace /> }, // volta pra Home
         ],
       },
     ],

@@ -1,5 +1,5 @@
 // src/components/auth/RequireAuth.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Outlet, Navigate, useLocation } from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
@@ -7,48 +7,63 @@ import { supabase } from "@/lib/supabaseClient";
 export default function RequireAuth() {
   const location = useLocation();
 
-  // Controla carregamento e sessão
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
 
+  const mountedRef = useRef(true);
+
   useEffect(() => {
+    mountedRef.current = true;
     let unsub: (() => void) | undefined;
 
-    // 1) Busca sessão atual (evita flash/tela em branco)
+    // Timeout de segurança: não deixa travar "Carregando…" para sempre
+    const t = window.setTimeout(() => {
+      if (!mountedRef.current) return;
+      setReady(true);
+    }, 8000);
+
     supabase.auth
       .getSession()
       .then(({ data, error }) => {
-        if (error) {
-          console.warn("[RequireAuth] getSession error:", error.message);
-        }
+        if (error) console.warn("[RequireAuth] getSession error:", error.message);
+        if (!mountedRef.current) return;
         setSession(data?.session ?? null);
       })
-      .finally(() => setReady(true));
+      .catch((e) => {
+        console.warn("[RequireAuth] getSession exception:", e?.message || e);
+      })
+      .finally(() => {
+        if (!mountedRef.current) return;
+        setReady(true);
+        window.clearTimeout(t);
+      });
 
-    // 2) Observa mudanças de autenticação (login/logout/refresh)
     const { data } = supabase.auth.onAuthStateChange((_event, s) => {
+      if (!mountedRef.current) return;
       setSession(s ?? null);
       setReady(true);
     });
+
     unsub = () => data.subscription.unsubscribe();
 
     return () => {
+      mountedRef.current = false;
+      window.clearTimeout(t);
       try {
         unsub?.();
       } catch {}
     };
   }, []);
 
-  // Loading “seguro”
   if (!ready) {
     return (
-      <div className="p-6 text-sm text-gray-600">
+      <div className="min-h-dvh p-6 text-sm text-gray-600 flex items-center justify-center">
         Carregando…
       </div>
     );
   }
 
-  // Sem sessão -> mandar para login, preservando a rota atual
+  // Se não tem sessão -> vai pro login preservando a rota atual
   if (!session) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
@@ -56,14 +71,11 @@ export default function RequireAuth() {
   // Checagem de flags para troca de senha
   const meta = session.user?.user_metadata || {};
   const mustChange =
-    meta.must_change_password === true ||
-    meta.require_password_change === true;
+    meta.must_change_password === true || meta.require_password_change === true;
 
-  // Redireciona para "Alterar Senha" se necessário (evita loop quando já está lá)
   if (mustChange && location.pathname !== "/alterar-senha") {
     return <Navigate to="/alterar-senha" replace />;
   }
 
-  // Autenticado e ok
   return <Outlet />;
 }

@@ -92,6 +92,10 @@ type Commission = {
   comprovante_url: string | null;
   cliente_nome?: string | null;
   numero_proposta?: string | null;
+
+  // 👇 cola aqui
+  venda_cancelada?: boolean;
+  venda_codigo?: string | null;
 };
 type CommissionFlow = {
   id: UUID;
@@ -689,33 +693,79 @@ export default function ComissoesPage() {
         if (!flowBy[f.commission_id].some((x) => x.mes === f.mes)) flowBy[f.commission_id].push(f as CommissionFlow);
       });
 
-      // clientes extras
-      let vendasExtras: Record<string, { clienteId?: string; numero_proposta?: string | null; cliente_nome?: string | null }> = {};
-      if (comms && comms.length) {
-        const { data: vendas } = await supabase
-          .from("vendas")
-          .select("id, numero_proposta, cliente_lead_id, lead_id")
-          .in("id", comms.map((c: any) => c.venda_id));
-        const cliIds = Array.from(new Set((vendas || []).map((v) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
-        let nomes: Record<string, string> = {};
-        if (cliIds.length) {
-          const { data: cli } = await supabase.from("leads").select("id, nome").in("id", cliIds);
-          (cli || []).forEach((c: any) => { nomes[c.id] = c.nome || ""; });
-        }
-        (vendas || []).forEach((v) => {
-          const cid = v.lead_id || v.cliente_lead_id || undefined;
-          vendasExtras[v.id] = { clienteId: cid, numero_proposta: v.numero_proposta || null, cliente_nome: cid ? (nomes[cid] || null) : null };
-        });
-      }
+      // clientes extras (inclui status de cancelamento da venda)
+let vendasExtras: Record<
+  string,
+  {
+    clienteId?: string;
+    numero_proposta?: string | null;
+    cliente_nome?: string | null;
+    codigo?: string | null;
+    cancelada_em?: string | null;
+    venda_cancelada?: boolean;
+  }
+> = {};
 
-      setRows(
-        (comms || []).map((c: any) => ({
-          ...(c as Commission),
-          flow: flowBy[c.id] || [],
-          cliente_nome: vendasExtras[c.venda_id]?.cliente_nome || null,
-          numero_proposta: vendasExtras[c.venda_id]?.numero_proposta || null,
-        })),
-      );
+if (comms && comms.length) {
+  const { data: vendas } = await supabase
+    .from("vendas")
+    .select("id, numero_proposta, cliente_lead_id, lead_id, codigo, cancelada_em")
+    .in("id", comms.map((c: any) => c.venda_id));
+
+  const cliIds = Array.from(
+    new Set(
+      (vendas || [])
+        .map((v: any) => v.lead_id || v.cliente_lead_id)
+        .filter(Boolean) as string[]
+    )
+  );
+
+  let nomes: Record<string, string> = {};
+  if (cliIds.length) {
+    const { data: cli } = await supabase.from("leads").select("id, nome").in("id", cliIds);
+    (cli || []).forEach((c: any) => {
+      nomes[c.id] = c.nome || "";
+    });
+  }
+
+  (vendas || []).forEach((v: any) => {
+    const cid = v.lead_id || v.cliente_lead_id || undefined;
+
+    // Regra de cancelamento: venda não ativa quando codigo != "00"
+    const codigo = v.codigo ?? null;
+    const cancelada_em = v.cancelada_em ?? null;
+    const venda_cancelada = !!codigo && codigo !== "00";
+
+    vendasExtras[v.id] = {
+      clienteId: cid,
+      numero_proposta: v.numero_proposta || null,
+      cliente_nome: cid ? (nomes[cid] || null) : null,
+      codigo,
+      cancelada_em,
+      venda_cancelada,
+    };
+  });
+}
+
+    const mappedRows =
+  (comms || []).map((c: any) => ({
+    ...(c as Commission),
+    flow: flowBy[c.id] || [],
+    cliente_nome: vendasExtras[c.venda_id]?.cliente_nome || null,
+    numero_proposta: vendasExtras[c.venda_id]?.numero_proposta || null,
+
+    // flags da venda
+    venda_cancelada: !!vendasExtras[c.venda_id]?.venda_cancelada,
+    venda_codigo: vendasExtras[c.venda_id]?.codigo ?? null,
+  })) || [];
+
+// 1) Quando a venda estiver cancelada, não mostrar em "comissões a pagar"
+const filteredRows =
+  status === "a_pagar"
+    ? mappedRows.filter((r) => !r.venda_cancelada)
+    : mappedRows;
+
+setRows(filteredRows);
 
       // vendas sem comissão (mesmo filtro RBAC)
       let qbV = supabase

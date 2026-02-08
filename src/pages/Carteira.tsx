@@ -724,26 +724,24 @@ type MiniDonutProps = {
   label: string;
   meta: number;
   realizado: number;
-  compact?: boolean; // ✅ para mobile (card horizontal)
 };
 
-const MiniDonut: React.FC<MiniDonutProps> = ({ label, meta, realizado, compact }) => {
+// ✅ MiniDonut (novo) — mais clean e MOBILE-FIRST
+const MiniDonut: React.FC<MiniDonutProps> = ({ label, meta, realizado }) => {
   const hasMeta = meta > 0;
-  const pct = hasMeta ? (realizado / meta) * 100 : null; // ✅ sem travar em 100%
+  const pct = hasMeta ? (realizado / meta) * 100 : null; // sem cap em 100
 
   const data = useMemo(() => {
     if (!hasMeta) {
       if (realizado > 0) return [{ name: "Realizado", value: realizado }];
       return [{ name: "Sem meta", value: 1 }];
     }
-
     if (realizado <= meta) {
       return [
         { name: "Realizado", value: Math.max(0, realizado) },
         { name: "Restante", value: Math.max(0, meta - realizado) },
       ];
     }
-
     return [
       { name: "Meta", value: meta },
       { name: "Excedente", value: Math.max(0, realizado - meta) },
@@ -751,76 +749,58 @@ const MiniDonut: React.FC<MiniDonutProps> = ({ label, meta, realizado, compact }
   }, [hasMeta, meta, realizado]);
 
   const centerText = useMemo(() => {
-    if (!hasMeta) return realizado > 0 ? "Sem meta" : "—";
-    if (pct == null || Number.isNaN(pct)) return "—";
-    return formatPctHuman(pct, 1);
-  }, [hasMeta, pct, realizado]);
+    if (!hasMeta) return "—";
+    if (pct == null || !Number.isFinite(pct)) return "—";
+    return formatPctHuman(pct, 0); // no card pequeno, mais legível sem casas
+  }, [hasMeta, pct]);
 
-  const restOrExced = useMemo(() => {
-    if (!hasMeta) return null;
-    if (realizado > meta) return Math.max(0, realizado - meta);
-    return Math.max(0, meta - realizado);
-  }, [hasMeta, meta, realizado]);
+  const rightLabel = useMemo(() => {
+    if (!hasMeta) return "—";
+    return realizado > meta ? "Exced." : "Rest.";
+  }, [hasMeta, realizado, meta]);
+
+  const rightValue = useMemo(() => {
+    if (!hasMeta) return "—";
+    if (realizado > meta) return currency(Math.max(0, realizado - meta));
+    return currency(Math.max(0, meta - realizado));
+  }, [hasMeta, realizado, meta]);
 
   return (
-    <div className={`border rounded-2xl ${compact ? "p-3" : "p-3"}`}>
+    <div className="rounded-2xl border bg-white p-3 shadow-sm">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-medium">{label}</div>
-        <div className="text-[11px] text-gray-500">{hasMeta ? `Meta: ${currency(meta)}` : "Sem meta"}</div>
+        <div className="text-sm font-semibold text-gray-900">{label}</div>
+        <div className="text-[11px] text-gray-500">{hasMeta ? `Meta ${currency(meta)}` : "Sem meta"}</div>
       </div>
 
-      <div className={`mt-2 relative ${compact ? "flex items-center gap-3" : ""}`}>
-        {/* Donut */}
-        <div className={`${compact ? "w-[92px] h-[92px] shrink-0" : "w-full h-28"}`}>
-          <ResponsiveContainer>
+      <div className="mt-2 flex items-center gap-3">
+        <div className="relative h-20 w-20 shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie
-                data={data}
-                innerRadius={compact ? 26 : 34}
-                outerRadius={compact ? 40 : 50}
-                dataKey="value"
-                stroke="none"
-              >
+              <Pie data={data} innerRadius={26} outerRadius={36} dataKey="value" stroke="none">
                 {data.map((d, i) => {
-                  // cores Consulmax
                   if (!hasMeta) return <Cell key={`${label}-${i}`} fill={realizado > 0 ? "#1E293F" : "#E5E7EB"} />;
                   if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`${label}-${i}`} fill="#1E293F" />;
                   if (d.name === "Restante") return <Cell key={`${label}-${i}`} fill="#A11C27" />;
-                  return <Cell key={`${label}-${i}`} fill="#B5A573" />; // Excedente
+                  return <Cell key={`${label}-${i}`} fill="#B5A573" />;
                 })}
               </Pie>
             </PieChart>
           </ResponsiveContainer>
+
+          <div className="absolute inset-0 grid place-items-center pointer-events-none">
+            <div className="text-sm font-bold text-gray-900">{centerText}</div>
+          </div>
         </div>
 
-        {/* Centro */}
-        <div className={`${compact ? "absolute left-0 top-0 w-[92px] h-[92px]" : "absolute inset-0"} flex items-center justify-center pointer-events-none`}>
-          <div className="text-sm font-semibold">{centerText}</div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] text-gray-500">Realizado</div>
+          <div className="truncate text-sm font-semibold text-gray-900">{currency(realizado || 0)}</div>
+
+          <div className="mt-2 flex items-center justify-between">
+            <div className="text-[11px] text-gray-500">{rightLabel}</div>
+            <div className="text-sm font-semibold text-gray-900">{rightValue}</div>
+          </div>
         </div>
-
-        {/* Infos (no compact vira coluna ao lado) */}
-        {compact ? (
-          <div className="flex-1 min-w-0">
-            <div className="text-[11px] text-gray-500">Realizado</div>
-            <div className="text-sm font-semibold text-gray-900 truncate">{currency(realizado || 0)}</div>
-
-            <div className="mt-2 text-[11px] text-gray-500">{hasMeta && realizado > meta ? "Excedente" : hasMeta ? "Restante" : "—"}</div>
-            <div className="text-sm font-semibold text-gray-900 truncate">
-              {hasMeta ? currency(restOrExced || 0) : "—"}
-            </div>
-          </div>
-        ) : (
-          <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-gray-600">
-            <div>
-              <div className="text-gray-500">Realizado</div>
-              <div className="font-medium text-gray-800">{currency(realizado || 0)}</div>
-            </div>
-            <div>
-              <div className="text-gray-500">{hasMeta && realizado > meta ? "Excedente" : "Restante"}</div>
-              <div className="font-medium text-gray-800">{hasMeta ? currency(restOrExced || 0) : "—"}</div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -891,10 +871,6 @@ const Carteira: React.FC = () => {
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
   const [realizadoMensal, setRealizadoMensal] = useState<number[]>(Array(12).fill(0));
-
-  // ✅ UX metas (mobile): abas e colapso
-  const [metaTab, setMetaTab] = useState<"anual" | "mensal">("anual");
-  const [metasOpen, setMetasOpen] = useState<boolean>(true);
 
   const metaAnual = useMemo(() => metaMensal.reduce((a, b) => a + b, 0), [metaMensal]);
   const realizadoAnual = useMemo(() => realizadoMensal.reduce((a, b) => a + b, 0), [realizadoMensal]);
@@ -1266,7 +1242,11 @@ const Carteira: React.FC = () => {
           return r.data;
         })(),
         (async () => {
-          const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+          const q = supabase
+            .from("vendas")
+            .select("*")
+            .eq("status", "encarteirada")
+            .order("created_at", { ascending: false });
           if (!isAdmin) q.eq("vendedor_id", userId);
           const r = await q;
           return r.data;
@@ -1296,7 +1276,11 @@ const Carteira: React.FC = () => {
   };
 
   const reloadEncarteiradas = async () => {
-    const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
+    const encQuery = supabase
+      .from("vendas")
+      .select("*")
+      .eq("status", "encarteirada")
+      .order("created_at", { ascending: false });
     if (!isAdmin) encQuery.eq("vendedor_id", userId);
     const { data: enc } = await encQuery;
     setEncarteiradas((enc ?? []) as Venda[]);
@@ -1788,17 +1772,19 @@ const Carteira: React.FC = () => {
   if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
 
   const tabelaOptionsForForm = tabelaOptions;
-  const adminOptionsList = adminOptions.length ? adminOptions : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
+  const adminOptionsNames = adminOptions.length
+    ? adminOptions
+    : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
   const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
-      <div className="flex items-start md:items-center justify-between gap-3">
-        <div className="min-w-0">
+    <div className="p-4 sm:p-6 space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
           <h1 className="text-2xl font-semibold">Carteira</h1>
           <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setShowModal(true)}
             className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
@@ -1814,23 +1800,14 @@ const Carteira: React.FC = () => {
         </div>
       </div>
 
-      {/* ===================== Metas ===================== */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-medium">Metas</h2>
-            <button
-              className="text-xs px-2 py-1 rounded-lg border hover:bg-gray-50"
-              onClick={() => setMetasOpen((v) => !v)}
-              title={metasOpen ? "Recolher" : "Expandir"}
-            >
-              {metasOpen ? "Ocultar" : "Mostrar"}
-            </button>
-          </div>
+      {/* ===================== Metas (NOVO layout clean + mobile-first) ===================== */}
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <h2 className="text-lg font-medium">Metas</h2>
 
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:flex md:items-center md:gap-2">
             <select
-              className="border rounded-xl px-3 py-2"
+              className="w-full border rounded-xl px-3 py-2"
               value={selectedYear}
               onChange={(e) => setSelectedYear(Number(e.target.value))}
             >
@@ -1846,7 +1823,7 @@ const Carteira: React.FC = () => {
 
             {isAdmin && (
               <select
-                className="border rounded-xl px-3 py-2"
+                className="w-full border rounded-xl px-3 py-2"
                 value={selectedSeller}
                 onChange={(e) => setSelectedSeller(e.target.value)}
               >
@@ -1861,162 +1838,83 @@ const Carteira: React.FC = () => {
           </div>
         </div>
 
-        {metasOpen && (
-          <>
-            {/* ✅ MOBILE: abas / DESKTOP: tudo junto */}
-            <div className="md:hidden flex items-center gap-2">
-              <button
-                className={`flex-1 px-3 py-2 rounded-xl border ${
-                  metaTab === "anual" ? "bg-[#1E293F] text-white border-[#1E293F]" : "hover:bg-gray-50"
-                }`}
-                onClick={() => setMetaTab("anual")}
-              >
-                Anual
-              </button>
-              <button
-                className={`flex-1 px-3 py-2 rounded-xl border ${
-                  metaTab === "mensal" ? "bg-[#1E293F] text-white border-[#1E293F]" : "hover:bg-gray-50"
-                }`}
-                onClick={() => setMetaTab("mensal")}
-              >
-                Mensal
-              </button>
-            </div>
-
-            {/* DESKTOP (grid) */}
-            <div className="hidden md:grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Donut anual */}
-              <div className="border rounded-2xl p-4 flex items-center justify-center relative">
-                <div className="absolute top-3 left-4 text-sm text-gray-500">Meta anual: {currency(metaAnual)}</div>
-                <div className="absolute top-3 right-4 text-sm text-gray-500">Atingido: {currency(realizadoAnual)}</div>
-
-                <div className="w-full h-64">
-                  <ResponsiveContainer>
-                    <PieChart>
-                      <Pie data={donutAnualData} innerRadius={80} outerRadius={110} dataKey="value" stroke="none">
-                        {donutAnualData.map((d, i) => {
-                          if (metaAnual <= 0)
-                            return (
-                              <Cell
-                                key={`anual-${i}`}
-                                fill={realizadoAnual > 0 ? "#1E293F" : "#E5E7EB"}
-                              />
-                            );
-                          if (d.name === "Realizado" || d.name === "Meta")
-                            return <Cell key={`anual-${i}`} fill="#1E293F" />;
-                          if (d.name === "Restante") return <Cell key={`anual-${i}`} fill="#A11C27" />;
-                          return <Cell key={`anual-${i}`} fill="#B5A573" />; // Excedente
-                        })}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Resumo anual (compacto + bonito no celular) */}
+          <div className="rounded-2xl border bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm text-gray-500">Resumo anual</div>
+                <div className="mt-1 text-2xl font-bold text-gray-900">
+                  {pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}
                 </div>
 
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-2xl font-semibold">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}</div>
+                <div className="mt-2 text-sm text-gray-700 space-y-1">
+                  <div>
+                    Meta: <strong>{currency(metaAnual)}</strong>
+                  </div>
+                  <div>
+                    Realizado: <strong>{currency(realizadoAnual)}</strong>
+                  </div>
+                  <div>
+                    {metaAnual > 0 && realizadoAnual > metaAnual ? "Excedente" : "Restante"}:{" "}
+                    <strong>{metaAnual > 0 ? currency(Math.abs(metaAnual - realizadoAnual)) : "—"}</strong>
+                  </div>
                 </div>
               </div>
 
-              {/* 12 mini donuts */}
-              <div className="lg:col-span-2 border rounded-2xl p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-sm text-gray-600">
-                    Metas mensais • <span className="font-medium text-gray-800">Meta</span>,{" "}
-                    <span className="font-medium text-gray-800">Realizado</span> e % (pode passar de 100%)
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    Total no ano: <strong className="text-gray-800">{currency(realizadoAnual)}</strong>
-                  </div>
-                </div>
+              <div className="h-28 w-28 relative shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={donutAnualData} innerRadius={40} outerRadius={54} dataKey="value" stroke="none">
+                      {donutAnualData.map((d, i) => {
+                        if (metaAnual <= 0)
+                          return <Cell key={`anual-${i}`} fill={realizadoAnual > 0 ? "#1E293F" : "#E5E7EB"} />;
+                        if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`anual-${i}`} fill="#1E293F" />;
+                        if (d.name === "Restante") return <Cell key={`anual-${i}`} fill="#A11C27" />;
+                        return <Cell key={`anual-${i}`} fill="#B5A573" />;
+                      })}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {MONTHS.map((m, idx) => (
-                    <MiniDonut key={m} label={m} meta={metaMensal[idx] || 0} realizado={realizadoMensal[idx] || 0} />
-                  ))}
+                <div className="absolute inset-0 grid place-items-center pointer-events-none">
+                  <div className="text-sm font-bold text-gray-900">
+                    {pctAnual == null ? "—" : formatPctHuman(pctAnual, 0)}
+                  </div>
                 </div>
               </div>
-            </div>
-
-            {/* MOBILE (mais leve): anual compacto OU carrossel mensal */}
-            <div className="md:hidden">
-              {metaTab === "anual" ? (
-                <div className="border rounded-2xl p-4 relative">
-                  <div className="flex items-center justify-between text-xs text-gray-500">
-                    <span>Meta: {currency(metaAnual)}</span>
-                    <span>Atingido: {currency(realizadoAnual)}</span>
-                  </div>
-
-                  <div className="mt-2 w-full h-52">
-                    <ResponsiveContainer>
-                      <PieChart>
-                        <Pie data={donutAnualData} innerRadius={62} outerRadius={88} dataKey="value" stroke="none">
-                          {donutAnualData.map((d, i) => {
-                            if (metaAnual <= 0)
-                              return (
-                                <Cell
-                                  key={`anual-m-${i}`}
-                                  fill={realizadoAnual > 0 ? "#1E293F" : "#E5E7EB"}
-                                />
-                              );
-                            if (d.name === "Realizado" || d.name === "Meta")
-                              return <Cell key={`anual-m-${i}`} fill="#1E293F" />;
-                            if (d.name === "Restante") return <Cell key={`anual-m-${i}`} fill="#A11C27" />;
-                            return <Cell key={`anual-m-${i}`} fill="#B5A573" />;
-                          })}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="text-2xl font-semibold">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}</div>
-                  </div>
-
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-xl bg-gray-50 p-3">
-                      <div className="text-gray-500">Meta anual</div>
-                      <div className="font-semibold text-gray-900">{currency(metaAnual)}</div>
-                    </div>
-                    <div className="rounded-xl bg-gray-50 p-3">
-                      <div className="text-gray-500">Realizado</div>
-                      <div className="font-semibold text-gray-900">{currency(realizadoAnual)}</div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="border rounded-2xl p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm font-medium">Mensal</div>
-                    <div className="text-xs text-gray-500">Arraste →</div>
-                  </div>
-
-                  <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
-                    {MONTHS.map((m, idx) => (
-                      <div key={m} className="snap-start shrink-0 w-[88%]">
-                        <MiniDonut
-                          label={m}
-                          meta={metaMensal[idx] || 0}
-                          realizado={realizadoMensal[idx] || 0}
-                          compact
-                        />
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-2 text-[11px] text-gray-500">
-                    Dica: no “Mensal”, cada card mostra meta, realizado e o % (pode passar de 100%).
-                  </div>
-                </div>
-              )}
             </div>
 
             {isAdmin && selectedSeller && (
-              <div className="text-xs text-gray-500">
-                Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> •
-                auth_user_id: <strong>{authIdFromSellerId || "—"}</strong>
+              <div className="mt-3 text-[11px] text-gray-500">
+                Vendedor:{" "}
+                <strong className="text-gray-800">{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong>
               </div>
             )}
-          </>
+          </div>
+
+          {/* Mensal (grid bom no celular) */}
+          <div className="lg:col-span-2 rounded-2xl border bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm text-gray-700">
+                Metas mensais <span className="text-xs text-gray-500">(pode passar de 100%)</span>
+              </div>
+              <div className="text-xs text-gray-500">Ano {selectedYear}</div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {MONTHS.map((m, idx) => (
+                <MiniDonut key={m} label={m} meta={metaMensal[idx] || 0} realizado={realizadoMensal[idx] || 0} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {isAdmin && selectedSeller && (
+          <div className="text-xs text-gray-500">
+            Filtro: vendedor <strong>{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong> • auth_user_id:{" "}
+            <strong>{authIdFromSellerId || "—"}</strong>
+          </div>
         )}
       </section>
 
@@ -2077,7 +1975,7 @@ const Carteira: React.FC = () => {
       </section>
 
       {/* ===================== Chips Totais ===================== */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-4">
         <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">
           Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong>
         </div>
@@ -2091,7 +1989,7 @@ const Carteira: React.FC = () => {
           Inadimplentes: <strong className="ml-1">{currency(totalInadimplentes)}</strong>
         </div>
         <button
-          className="ml-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
+          className="sm:ml-auto w-full sm:w-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
           onClick={() => setShowCarteira((s) => !s)}
         >
           {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
@@ -2214,9 +2112,7 @@ const Carteira: React.FC = () => {
                       let nextProduto = f.produto as Produto;
 
                       if (admId) {
-                        const segSet = new Set(
-                          simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento))
-                        );
+                        const segSet = new Set(simTables.filter((t) => t.admin_id === admId).map((t) => normalizeSegmentLabel(t.segmento)));
 
                         const allowed = PRODUTOS.filter((p) => {
                           const candidates = segmentCandidatesForProduto(p);
@@ -2231,7 +2127,7 @@ const Carteira: React.FC = () => {
                   }}
                 >
                   <option value="">Selecione a administradora…</option>
-                  {adminOptionsList.map((a) => (
+                  {adminOptionsNames.map((a) => (
                     <option key={a} value={a}>
                       {a}
                     </option>
@@ -2262,7 +2158,9 @@ const Carteira: React.FC = () => {
                   onChange={(e) => onFormChange("tabela", e.target.value)}
                   disabled={tabelaOptionsForForm.length === 0}
                 >
-                  <option value="">{tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
+                  <option value="">
+                    {tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}
+                  </option>
                   {tabelaOptionsForForm.map((t) => (
                     <option key={t.id} value={t.nome_tabela}>
                       {t.nome_tabela}
@@ -2523,10 +2421,7 @@ const Carteira: React.FC = () => {
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Transferir Cota • {transferModal.venda.numero_proposta}</h3>
-              <button
-                onClick={() => setTransferModal({ open: false, venda: undefined })}
-                className="text-gray-500 hover:text-gray-800"
-              >
+              <button onClick={() => setTransferModal({ open: false, venda: undefined })} className="text-gray-500 hover:text-gray-800">
                 ✕
               </button>
             </div>
@@ -2578,41 +2473,23 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Nome do Lead</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={selectedTransferLead?.nome ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.nome ?? ""} readOnly />
               </div>
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={selectedTransferLead?.telefone ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.telefone ?? ""} readOnly />
               </div>
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">E-mail</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={selectedTransferLead?.email ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={selectedTransferLead?.email ?? ""} readOnly />
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-3">
-              <button
-                className="px-4 py-2 rounded-xl border"
-                onClick={() => setTransferModal({ open: false, venda: undefined })}
-              >
+              <button className="px-4 py-2 rounded-xl border" onClick={() => setTransferModal({ open: false, venda: undefined })}>
                 Cancelar
               </button>
-              <button
-                className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
-                onClick={handleTransferSave}
-              >
+              <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={handleTransferSave}>
                 Confirmar Transferência
               </button>
             </div>
@@ -2719,9 +2596,7 @@ const Carteira: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-semibold">Editar Cota • {cotaEditor.venda.numero_proposta}</h3>
-                <p className="text-xs text-gray-500">
-                  Escolha o tipo de edição. (Cancelamento/Reativação exigem data quando o código muda)
-                </p>
+                <p className="text-xs text-gray-500">Escolha o tipo de edição. (Cancelamento/Reativação exigem data quando o código muda)</p>
               </div>
               <button onClick={closeCotaEditor} className="text-gray-500 hover:text-gray-800">
                 ✕
@@ -2736,8 +2611,7 @@ const Carteira: React.FC = () => {
                 >
                   <div className="font-medium">🔢 Alterar Grupo / Cota / Código</div>
                   <div className="text-sm text-gray-600 mt-1">
-                    Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar{" "}
-                    <strong>outro → 00</strong> pede data de reativação.
+                    Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong> pede data de reativação.
                   </div>
                 </button>
 
@@ -2754,9 +2628,7 @@ const Carteira: React.FC = () => {
                   onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}
                 >
                   <div className="font-medium">🏁 Contemplada</div>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Data + Tipo (lance) + % com 4 casas (ex.: 41,2542%).
-                  </div>
+                  <div className="text-sm text-gray-600 mt-1">Data + Tipo (lance) + % com 4 casas (ex.: 41,2542%).</div>
                 </button>
 
                 <button
@@ -2764,9 +2636,7 @@ const Carteira: React.FC = () => {
                   onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}
                 >
                   <div className="font-medium">⚠️ Inadimplência</div>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Marcar/desmarcar com data de início e data de reversão.
-                  </div>
+                  <div className="text-sm text-gray-600 mt-1">Marcar/desmarcar com data de início e data de reversão.</div>
                 </button>
               </div>
             )}
@@ -2781,29 +2651,17 @@ const Carteira: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
                         <label className="text-sm text-gray-600">Grupo</label>
-                        <input
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceGrupo}
-                          onChange={(e) => setCeGrupo(e.target.value)}
-                        />
+                        <input className="w-full border rounded-xl px-3 py-2" value={ceGrupo} onChange={(e) => setCeGrupo(e.target.value)} />
                       </div>
 
                       <div>
                         <label className="text-sm text-gray-600">Cota</label>
-                        <input
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceCota}
-                          onChange={(e) => setCeCota(e.target.value)}
-                        />
+                        <input className="w-full border rounded-xl px-3 py-2" value={ceCota} onChange={(e) => setCeCota(e.target.value)} />
                       </div>
 
                       <div>
                         <label className="text-sm text-gray-600">Código</label>
-                        <input
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={ceCodigo}
-                          onChange={(e) => setCeCodigo(e.target.value)}
-                        />
+                        <input className="w-full border rounded-xl px-3 py-2" value={ceCodigo} onChange={(e) => setCeCodigo(e.target.value)} />
                         <div className="text-xs text-gray-500 mt-1">
                           Ativa = <strong>00</strong>
                         </div>
@@ -2812,55 +2670,35 @@ const Carteira: React.FC = () => {
 
                     {prevAtiva && !nextAtiva && (
                       <div className="border rounded-2xl p-4 bg-red-50">
-                        <div className="font-medium text-red-800">
-                          Cancelamento detectado (00 → {ceCodigo || "..."})
-                        </div>
+                        <div className="font-medium text-red-800">Cancelamento detectado (00 → {ceCodigo || "..."})</div>
                         <div className="text-sm text-red-700 mt-1">
                           Informe a data do cancelamento para registrar em <code>cancelada_em</code>.
                         </div>
                         <div className="mt-3">
                           <label className="text-sm text-gray-700">Data do cancelamento</label>
-                          <input
-                            type="date"
-                            className="w-full border rounded-xl px-3 py-2"
-                            value={ceCancelDate}
-                            onChange={(e) => setCeCancelDate(e.target.value)}
-                          />
+                          <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceCancelDate} onChange={(e) => setCeCancelDate(e.target.value)} />
                         </div>
                       </div>
                     )}
 
                     {!prevAtiva && nextAtiva && (
                       <div className="border rounded-2xl p-4 bg-green-50">
-                        <div className="font-medium text-green-800">
-                          Reativação detectada ({cotaEditor.venda!.codigo} → 00)
-                        </div>
+                        <div className="font-medium text-green-800">Reativação detectada ({cotaEditor.venda!.codigo} → 00)</div>
                         <div className="text-sm text-green-700 mt-1">
                           Informe a data da reativação para registrar em <code>reativada_em</code>.
                         </div>
                         <div className="mt-3">
                           <label className="text-sm text-gray-700">Data da reativação</label>
-                          <input
-                            type="date"
-                            className="w-full border rounded-xl px-3 py-2"
-                            value={ceReativDate}
-                            onChange={(e) => setCeReativDate(e.target.value)}
-                          />
+                          <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceReativDate} onChange={(e) => setCeReativDate(e.target.value)} />
                         </div>
                       </div>
                     )}
 
                     <div className="flex items-center justify-between">
-                      <button
-                        className="px-4 py-2 rounded-xl border"
-                        onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
-                      >
+                      <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
                         Voltar
                       </button>
-                      <button
-                        className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-                        onClick={saveCotaCodigo}
-                      >
+                      <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveCotaCodigo}>
                         Salvar
                       </button>
                     </div>
@@ -2878,16 +2716,10 @@ const Carteira: React.FC = () => {
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <button
-                    className="px-4 py-2 rounded-xl border"
-                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
-                  >
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
                     Voltar
                   </button>
-                  <button
-                    className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90"
-                    onClick={goTransferFromEditor}
-                  >
+                  <button className="px-4 py-2 rounded-xl bg-[#A11C27] text-white hover:opacity-90" onClick={goTransferFromEditor}>
                     Abrir Transferência
                   </button>
                 </div>
@@ -2898,12 +2730,7 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={ceContFlag}
-                      onChange={(e) => setCeContFlag(e.target.checked)}
-                    />
+                    <input type="checkbox" className="mr-2" checked={ceContFlag} onChange={(e) => setCeContFlag(e.target.checked)} />
                     Marcar como contemplada
                   </label>
                 </div>
@@ -2912,21 +2739,12 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da contemplação</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContDate}
-                        onChange={(e) => setCeContDate(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceContDate} onChange={(e) => setCeContDate(e.target.value)} />
                     </div>
 
                     <div>
                       <label className="text-sm text-gray-600">Tipo de lance</label>
-                      <select
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContTipo}
-                        onChange={(e) => setCeContTipo(e.target.value)}
-                      >
+                      <select className="w-full border rounded-xl px-3 py-2" value={ceContTipo} onChange={(e) => setCeContTipo(e.target.value)}>
                         <option value="">Selecione…</option>
                         <option value="Lance Livre">Lance Livre</option>
                         <option value="Primeiro Lance Fixo">Primeiro Lance Fixo</option>
@@ -2936,37 +2754,23 @@ const Carteira: React.FC = () => {
 
                     <div>
                       <label className="text-sm text-gray-600">% do lance (4 casas)</label>
-                      <input
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceContPctRaw}
-                        onChange={(e) => setCeContPctRaw(e.target.value)}
-                        placeholder="Ex.: 41,2542%"
-                      />
-                      <div className="text-xs text-gray-500 mt-1">
-                        Será salvo como <code>numeric(9,4)</code>.
-                      </div>
+                      <input className="w-full border rounded-xl px-3 py-2" value={ceContPctRaw} onChange={(e) => setCeContPctRaw(e.target.value)} placeholder="Ex.: 41,2542%" />
+                      <div className="text-xs text-gray-500 mt-1">Será salvo como <code>numeric(9,4)</code>.</div>
                     </div>
                   </div>
                 )}
 
                 {!ceContFlag && (
                   <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-600">
-                    Ao desmarcar, vamos limpar <code>data_contemplacao</code>, <code>contemplacao_tipo</code> e{" "}
-                    <code>contemplacao_pct</code>.
+                    Ao desmarcar, vamos limpar <code>data_contemplacao</code>, <code>contemplacao_tipo</code> e <code>contemplacao_pct</code>.
                   </div>
                 )}
 
                 <div className="flex items-center justify-between">
-                  <button
-                    className="px-4 py-2 rounded-xl border"
-                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
-                  >
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
                     Voltar
                   </button>
-                  <button
-                    className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-                    onClick={saveContemplacao}
-                  >
+                  <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveContemplacao}>
                     Salvar
                   </button>
                 </div>
@@ -2977,12 +2781,7 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={ceInadFlag}
-                      onChange={(e) => setCeInadFlag(e.target.checked)}
-                    />
+                    <input type="checkbox" className="mr-2" checked={ceInadFlag} onChange={(e) => setCeInadFlag(e.target.checked)} />
                     Marcar como inadimplente
                   </label>
                 </div>
@@ -2991,12 +2790,7 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data que inadimpliu</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceInadEm}
-                        onChange={(e) => setCeInadEm(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadEm} onChange={(e) => setCeInadEm(e.target.value)} />
                     </div>
                     <div className="border rounded-2xl p-4 bg-red-50 text-sm text-red-800">
                       Ao marcar, vamos salvar <code>inad = true</code> e <code>inad_em</code>. A reversão fica vazia.
@@ -3006,12 +2800,7 @@ const Carteira: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="text-sm text-gray-600">Data da reversão</label>
-                      <input
-                        type="date"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={ceInadRev}
-                        onChange={(e) => setCeInadRev(e.target.value)}
-                      />
+                      <input type="date" className="w-full border rounded-xl px-3 py-2" value={ceInadRev} onChange={(e) => setCeInadRev(e.target.value)} />
                     </div>
                     <div className="border rounded-2xl p-4 bg-gray-50 text-sm text-gray-700">
                       Ao desmarcar, vamos salvar <code>inad = false</code> e registrar <code>inad_revertida_em</code>.
@@ -3020,16 +2809,10 @@ const Carteira: React.FC = () => {
                 )}
 
                 <div className="flex items-center justify-between">
-                  <button
-                    className="px-4 py-2 rounded-xl border"
-                    onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}
-                  >
+                  <button className="px-4 py-2 rounded-xl border" onClick={() => setCotaEditor((p) => ({ ...p, mode: "pick" }))}>
                     Voltar
                   </button>
-                  <button
-                    className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-                    onClick={saveInad}
-                  >
+                  <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={saveInad}>
                     Salvar
                   </button>
                 </div>

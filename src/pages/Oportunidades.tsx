@@ -52,6 +52,7 @@ const CONS = {
   sand: "#E0CE8C",
   tan: "#B5A573",
   grayBg: "#F5F5F5",
+  // paleta para os donuts (derivada das cores oficiais)
   donut: ["#A11C27", "#B5A573", "#1E293F", "#E0CE8C", "#8B1F2A", "#9C8B58", "#2B3B5A", "#F5E9B6"],
 };
 
@@ -112,6 +113,7 @@ const brToISO = (br: string) => {
   if (!m) return null;
   return `${m[3]}-${m[2]}-${m[1]}`;
 };
+// ordenar: mais atrasado primeiro; sem data no fim
 const tsOrInf = (iso?: string | null) => (iso ? new Date(iso + "T00:00:00").getTime() : Number.POSITIVE_INFINITY);
 
 /** ===================== Liquid BG (blobs animados) ===================== */
@@ -122,6 +124,7 @@ const LiquidBG: React.FC = () => {
       <span style={{ ...blob, ...blob1 }} />
       <span style={{ ...blob, ...blob2 }} />
       <span style={{ ...blob, ...blob3 }} />
+      {/* brilho dourado sutil no canto inferior direito */}
       <span style={{ ...goldGlow }} />
     </div>
   );
@@ -129,26 +132,8 @@ const LiquidBG: React.FC = () => {
 
 /** ===================== Página ===================== */
 export default function Oportunidades() {
-  const PAGE_BLOCK = 5; // desktop: até 5 por coluna
+  const PAGE_BLOCK = 5; // até 5 por coluna
   const [page, setPage] = useState(1);
-
-  // Responsivo (mobile/tablet)
-  const [isSmall, setIsSmall] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(max-width: 900px)").matches;
-  });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mq = window.matchMedia("(max-width: 900px)");
-    const handler = () => setIsSmall(mq.matches);
-    handler();
-    if ("addEventListener" in mq) mq.addEventListener("change", handler);
-    else mq.addListener(handler);
-    return () => {
-      if ("removeEventListener" in mq) mq.removeEventListener("change", handler);
-      else mq.removeListener(handler);
-    };
-  }, []);
 
   // usuário atual
   const [meId, setMeId] = useState<string | null>(null);
@@ -161,8 +146,11 @@ export default function Oportunidades() {
   // busca
   const [search, setSearch] = useState("");
 
+  // ✅ filtro por vendedor (não interfere no search)
+  const [selectedVendor, setSelectedVendor] = useState<string>("__all__");
+
   // modais
-  const [newLeadOpen, setNewLeadOpen] = useState(false);
+  const [newLeadOpen, setNewLeadOpen] = useState(false); // modal Novo Lead
   const [editLead, setEditLead] = useState<Lead | null>(null);
   const [reassignLead, setReassignLead] = useState<Lead | null>(null);
 
@@ -171,14 +159,14 @@ export default function Oportunidades() {
   const [newNote, setNewNote] = useState("");
   const [editDateBR, setEditDateBR] = useState("");
 
-  // novo lead
+  // novo lead (overlay rápido)
   const [nlNome, setNlNome] = useState("");
   const [nlTel, setNlTel] = useState("");
   const [nlEmail, setNlEmail] = useState("");
   const [nlOrigem, setNlOrigem] = useState<string>("Site");
   const [nlDesc, setNlDesc] = useState("");
 
-  // criar oportunidade
+  // criar oportunidade (modal próprio)
   const [newOppOpen, setNewOppOpen] = useState(false);
   const [leadId, setLeadId] = useState("");
   const [vendId, setVendId] = useState("");
@@ -190,18 +178,33 @@ export default function Oportunidades() {
   const [obs, setObs] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // donuts hover
+  // donuts hover state
   const [hoverWon, setHoverWon] = useState<string | null>(null);
   const [hoverLost, setHoverLost] = useState<string | null>(null);
 
   // Reatribuir Lead
   const [newOwnerId, setNewOwnerId] = useState<string>("");
 
-  // Drag & Drop (desktop)
+  // Drag & Drop: qual coluna está com "drag over"
   const [dragOverStage, setDragOverStage] = useState<StageUI | null>(null);
 
-  // Mobile: “aba” de estágio (em vez de 4 colunas)
-  const [mobileStage, setMobileStage] = useState<StageUI>("novo");
+  // ✅ Detecta mobile (para não “estragar” o layout que ficou ótimo)
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = () => setIsMobile(mq.matches);
+    handler();
+    if ("addEventListener" in mq) mq.addEventListener("change", handler);
+    else mq.addListener(handler);
+    return () => {
+      if ("removeEventListener" in mq) mq.removeEventListener("change", handler);
+      else mq.removeListener(handler);
+    };
+  }, []);
 
   useEffect(() => {
     if (reassignLead) setNewOwnerId(reassignLead.owner_id || "");
@@ -229,13 +232,21 @@ export default function Oportunidades() {
 
       const { data: o } = await supabase
         .from("opportunities")
-        .select("id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at")
+        .select(
+          "id, lead_id, vendedor_id, owner_id, segmento, valor_credito, observacao, score, estagio, expected_close_at, created_at"
+        )
         .order("created_at", { ascending: false });
       setLista((o || []) as Oportunidade[]);
     })();
   }, []);
 
-  /** ===================== KPI ===================== */
+  /** ===================== Base filtrada por vendedor ===================== */
+  const baseLista = useMemo(() => {
+    if (!selectedVendor || selectedVendor === "__all__") return lista;
+    return lista.filter((o) => o.vendedor_id === selectedVendor);
+  }, [lista, selectedVendor]);
+
+  /** ===================== KPI (respeita filtro + busca) ===================== */
   const kpi = useMemo(() => {
     const base: Record<StageUI, { qtd: number; total: number }> = {
       novo: { qtd: 0, total: 0 },
@@ -245,20 +256,20 @@ export default function Oportunidades() {
       fechado_ganho: { qtd: 0, total: 0 },
       fechado_perdido: { qtd: 0, total: 0 },
     };
-    for (const o of lista) {
+    for (const o of visiveisMemoFallback(baseLista, leads, vendedores, search)) {
       const stage = dbToUI[o.estagio as string] ?? "novo";
       base[stage].qtd += 1;
       base[stage].total += Number(o.valor_credito || 0);
     }
     return base;
-  }, [lista]);
+  }, [baseLista, leads, vendedores, search]);
 
   /** ===================== Busca / Filtro ===================== */
   const visiveis = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return lista;
+    if (!q) return baseLista;
 
-    return lista.filter((o) => {
+    return baseLista.filter((o) => {
       const lead = leads.find((l) => l.id === o.lead_id);
       const leadNome = (lead?.nome || "").toLowerCase();
       const vendNome = (vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "").toLowerCase();
@@ -282,7 +293,7 @@ export default function Oportunidades() {
         phone.includes(q)
       );
     });
-  }, [lista, leads, vendedores, search]);
+  }, [baseLista, leads, vendedores, search]);
 
   /** ===================== Colunas (ordenadas por atraso) ===================== */
   const orderByDue = (arr: Oportunidade[]) =>
@@ -305,7 +316,7 @@ export default function Oportunidades() {
     [visiveis]
   );
 
-  // paginação única (desktop)
+  // paginação única (5 por coluna)
   const totalPages = useMemo(() => {
     const pages = [
       Math.max(1, Math.ceil(colNovoAll.length / PAGE_BLOCK)),
@@ -317,6 +328,10 @@ export default function Oportunidades() {
   }, [colNovoAll.length, colQualAll.length, colPropAll.length, colNegAll.length]);
 
   const sliceByPage = (arr: Oportunidade[]) => {
+    // label mantido pra não gerar warnings em alguns coladores
+    theLoop: {
+      /* noop */
+    }
     const from = (page - 1) * PAGE_BLOCK;
     const to = from + PAGE_BLOCK;
     return arr.slice(from, to);
@@ -327,21 +342,10 @@ export default function Oportunidades() {
   const colPropostas = sliceByPage(colPropAll);
   const colNegociacao = sliceByPage(colNegAll);
 
-  // mobile: lista por estágio (sem paginação; fica scroll)
-  const mobileList = useMemo(() => {
-    const map: Record<StageUI, Oportunidade[]> = {
-      novo: colNovoAll,
-      qualificando: colQualAll,
-      proposta: colPropAll,
-      negociacao: colNegAll,
-      fechado_ganho: orderByDue(visiveis.filter((o) => (dbToUI[o.estagio as string] ?? "novo") === "fechado_ganho")),
-      fechado_perdido: orderByDue(visiveis.filter((o) => (dbToUI[o.estagio as string] ?? "novo") === "fechado_perdido")),
-    };
-    return map;
-  }, [colNovoAll, colQualAll, colPropAll, colNegAll, visiveis]);
-
   /** ===================== Ações ===================== */
+  // Novo Lead → cria oportunidade “Novo” automaticamente
   async function criarLead() {
+    // ✅ correção RLS: garantir owner_id no INSERT do lead
     if (!meId) {
       alert("Aguarde carregar seu usuário (login) antes de criar o lead.");
       return;
@@ -353,6 +357,8 @@ export default function Oportunidades() {
       email: nlEmail.trim().toLowerCase() || null,
       origem: nlOrigem || null,
       descricao: nlDesc.trim() || null,
+
+      // ESSENCIAL para passar em policies do tipo: owner_id = auth.uid()
       owner_id: meId,
     };
     if (!payloadLead.nome) return alert("Informe o nome do lead.");
@@ -365,6 +371,7 @@ export default function Oportunidades() {
       return;
     }
 
+    // cria oportunidade automaticamente no estágio "Novo"
     const payloadOpp = {
       lead_id: (lead as any).id,
       vendedor_id: meId as string,
@@ -383,12 +390,12 @@ export default function Oportunidades() {
       alert("Lead criado, mas falhou ao criar oportunidade: " + e2.message);
     } else {
       setLista((s) => [opp as Oportunidade, ...s]);
-      // se estiver no mobile e na aba "novo", já mostra
-      setMobileStage("novo");
     }
 
+    // atualizar leads (responsável pode ser o próprio)
     setLeads((s) => [lead as Lead, ...s]);
 
+    // reset
     setNlNome("");
     setNlTel("");
     setNlEmail("");
@@ -398,6 +405,7 @@ export default function Oportunidades() {
     alert("Lead criado e oportunidade adicionada ao estágio 'Novo'.");
   }
 
+  // Modal Nova Oportunidade
   function abrirModalNovaOpp() {
     setLeadId("");
     setVendId("");
@@ -448,14 +456,14 @@ export default function Oportunidades() {
     }
     setLista((s) => [data as Oportunidade, ...s]);
     setNewOppOpen(false);
-    setMobileStage(stageUI);
     alert("Oportunidade criada!");
   }
 
+  // Tratar (editar oportunidade)
   function openEdit(o: Oportunidade) {
     setEditing(o);
     setNewNote("");
-    setEditDateBR(isoToBR(o.expected_close_at));
+    setEditDateBR(isoToBR(o.expected_close_at)); // máscara BR
   }
   function closeEdit() {
     setEditing(null);
@@ -498,6 +506,7 @@ export default function Oportunidades() {
     closeEdit();
   }
 
+  // Editar Lead direto aqui
   async function saveLead() {
     if (!editLead) return;
     const payload = {
@@ -516,27 +525,33 @@ export default function Oportunidades() {
     setEditLead(null);
   }
 
+  // Reatribuir Lead (com botão salvar)
   async function doReassign() {
     if (!reassignLead || !newOwnerId) {
       alert("Selecione o novo responsável.");
       return;
     }
 
+    // 1) Atualiza o lead
     const { error: e1 } = await supabase.from("leads").update({ owner_id: newOwnerId }).eq("id", reassignLead.id);
+
     if (e1) {
       alert("Erro ao reatribuir: " + e1.message);
       return;
     }
 
+    // 2) Atualiza TODAS as oportunidades do lead (vendedor_id e owner_id)
     const { error: e2 } = await supabase
       .from("opportunities")
       .update({ vendedor_id: newOwnerId, owner_id: newOwnerId })
       .eq("lead_id", reassignLead.id);
 
     if (e2) {
+      // Mesmo se der erro aqui, o lead já foi reatribuído.
       alert("Lead atualizado, mas falhou ao reatribuir oportunidades: " + e2.message);
     }
 
+    // 3) Atualização otimista no estado
     setLeads((prev) => prev.map((l) => (l.id === reassignLead.id ? { ...l, owner_id: newOwnerId } : l)));
     setLista((prev) =>
       prev.map((o) => (o.lead_id === reassignLead.id ? { ...o, vendedor_id: newOwnerId, owner_id: newOwnerId } : o))
@@ -547,18 +562,16 @@ export default function Oportunidades() {
     alert("Lead reatribuído!");
   }
 
-  /** ===================== Drag & Drop (desktop) ===================== */
+  /** ===================== Drag & Drop ===================== */
   const getUIStageForOpp = (o: Oportunidade): StageUI => dbToUI[o.estagio as string] ?? "novo";
 
   function onCardDragStart(e: React.DragEvent<HTMLDivElement>, oppId: string) {
-    if (isSmall) return; // no mobile não usa drag
     e.dataTransfer.setData("text/plain", oppId);
     e.dataTransfer.effectAllowed = "move";
   }
 
   function onColumnDragOver(e: React.DragEvent<HTMLDivElement>, target: StageUI) {
-    if (isSmall) return;
-    e.preventDefault();
+    e.preventDefault(); // permite drop
     setDragOverStage(target);
   }
 
@@ -567,7 +580,6 @@ export default function Oportunidades() {
   }
 
   async function onColumnDrop(e: React.DragEvent<HTMLDivElement>, target: StageUI) {
-    if (isSmall) return;
     e.preventDefault();
     const oppId = e.dataTransfer.getData("text/plain");
     setDragOverStage(null);
@@ -579,18 +591,26 @@ export default function Oportunidades() {
     const fromStage = getUIStageForOpp(opp);
     if (fromStage === target) return;
 
+    // Otimista
     const prevLista = [...lista];
     const nextLista = lista.map((o) => (o.id === oppId ? { ...o, estagio: uiToDB[target] } : o));
     setLista(nextLista);
 
-    const { error, data } = await supabase.from("opportunities").update({ estagio: uiToDB[target] }).eq("id", oppId).select().single();
+    // Persistir
+    const { error, data } = await supabase
+      .from("opportunities")
+      .update({ estagio: uiToDB[target] })
+      .eq("id", oppId)
+      .select()
+      .single();
 
     if (error) {
-      setLista(prevLista);
+      setLista(prevLista); // rollback
       alert("Não foi possível mover a oportunidade: " + error.message);
       return;
     }
 
+    // Confirmar com retorno do banco (caso exista trigger/normalização)
     setLista((s) => s.map((o) => (o.id === oppId ? (data as Oportunidade) : o)));
   }
 
@@ -609,13 +629,9 @@ export default function Oportunidades() {
     </svg>
   );
 
-  const IconBtn: React.FC<React.PropsWithChildren<{ title?: string; disabled?: boolean; onClick?: () => void; href?: string }>> = ({
-    children,
-    title,
-    disabled,
-    onClick,
-    href,
-  }) =>
+  const IconBtn: React.FC<
+    React.PropsWithChildren<{ title?: string; disabled?: boolean; onClick?: () => void; href?: string }>
+  > = ({ children, title, disabled, onClick, href }) =>
     href ? (
       <a
         href={href}
@@ -628,23 +644,34 @@ export default function Oportunidades() {
         {children}
       </a>
     ) : (
-      <button title={title} onClick={onClick} disabled={disabled} style={{ ...iconBtn, ...(disabled ? iconBtnDisabled : {}) }}>
+      <button
+        title={title}
+        onClick={onClick}
+        disabled={disabled}
+        style={{ ...iconBtn, ...(disabled ? iconBtnDisabled : {}) }}
+      >
         {children}
       </button>
     );
 
-  /** ===================== Donuts ===================== */
+  /** ===================== Donuts (respeita filtro + busca) ===================== */
   const sumBySegment = (items: Oportunidade[]) => {
     const m = new Map<string, number>();
     for (const o of items) {
       const seg = o.segmento || "Outros";
       m.set(seg, (m.get(seg) || 0) + Number(o.valor_credito || 0));
     }
-    return Array.from(m.entries());
+    return Array.from(m.entries()); // [segmento, total]
   };
 
-  const wonPairs = useMemo(() => sumBySegment(lista.filter((o) => dbToUI[o.estagio as string] === "fechado_ganho")), [lista]);
-  const lostPairs = useMemo(() => sumBySegment(lista.filter((o) => dbToUI[o.estagio as string] === "fechado_perdido")), [lista]);
+  const wonPairs = useMemo(
+    () => sumBySegment(visiveis.filter((o) => dbToUI[o.estagio as string] === "fechado_ganho")),
+    [visiveis]
+  );
+  const lostPairs = useMemo(
+    () => sumBySegment(visiveis.filter((o) => dbToUI[o.estagio as string] === "fechado_perdido")),
+    [visiveis]
+  );
 
   const Donut: React.FC<{
     data: [string, number][];
@@ -663,6 +690,7 @@ export default function Oportunidades() {
       <div style={glassCard}>
         <div style={{ fontWeight: 800, color: CONS.ink, marginBottom: 6 }}>{title}</div>
         <svg width="160" height="160" viewBox="0 0 160 160" style={{ display: "block", margin: "0 auto" }}>
+          {/* fundo */}
           <circle cx={cx} cy={cy} r={r} stroke="rgba(0,0,0,.06)" strokeWidth="18" fill="none" />
           {data.map(([label, value], i) => {
             const frac = total ? value / total : 0;
@@ -693,11 +721,13 @@ export default function Oportunidades() {
               </g>
             );
           })}
+          {/* centro */}
           <text x="80" y="86" textAnchor="middle" fontSize="14" fill={CONS.ink} fontWeight={800}>
             {fmtCompact(total)}
           </text>
         </svg>
 
+        {/* legenda */}
         <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
           {data.map(([label, value], i) => {
             const color = CONS.donut[i % CONS.donut.length];
@@ -717,7 +747,15 @@ export default function Oportunidades() {
                   cursor: "default",
                 }}
               >
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: color, display: "inline-block" }} />
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 2,
+                    background: color,
+                    display: "inline-block",
+                  }}
+                />
                 <span style={{ flex: 1, color: CONS.ink, fontWeight: 700 }}>{label}</span>
                 <span style={{ color: "#475569" }}>{fmtCompact(value)}</span>
               </div>
@@ -732,51 +770,11 @@ export default function Oportunidades() {
   /** ===================== Render ===================== */
   const StageCard = ({ label, qtd, total }: { label: string; qtd: number; total: number }) => (
     <div style={glassSmallCard}>
-      <div style={{ fontWeight: 800, color: CONS.ink, marginBottom: 6 }}>{label}</div>
-      <div style={{ color: "#1f2937", fontSize: 13 }}>Qtd: {qtd}</div>
-      <div style={{ color: "#1f2937", fontSize: 13 }}>Valor: {fmtBRL(total)}</div>
+      <div style={{ fontWeight: 800, color: CONS.ink, marginBottom: 8 }}>{label}</div>
+      <div style={{ color: "#1f2937" }}>Qtd: {qtd}</div>
+      <div style={{ color: "#1f2937" }}>Valor: {fmtBRL(total)}</div>
     </div>
   );
-
-  const stageLabel = (s: StageUI) =>
-    ({
-      novo: "Novo",
-      qualificando: "Qualificando",
-      proposta: "Propostas",
-      negociacao: "Negociação",
-      fechado_ganho: "Fechado (Ganho)",
-      fechado_perdido: "Fechado (Perdido)",
-    }[s]);
-
-  const MobileStageChip = ({ s }: { s: StageUI }) => {
-    const active = mobileStage === s;
-    const qtd =
-      s === "novo"
-        ? colNovoAll.length
-        : s === "qualificando"
-          ? colQualAll.length
-          : s === "proposta"
-            ? colPropAll.length
-            : s === "negociacao"
-              ? colNegAll.length
-              : s === "fechado_ganho"
-                ? (visiveis.filter((o) => (dbToUI[o.estagio as string] ?? "novo") === "fechado_ganho").length || 0)
-                : (visiveis.filter((o) => (dbToUI[o.estagio as string] ?? "novo") === "fechado_perdido").length || 0);
-
-    return (
-      <button
-        type="button"
-        onClick={() => setMobileStage(s)}
-        style={{
-          ...chipBase,
-          ...(active ? chipActive : {}),
-        }}
-      >
-        <span style={{ fontWeight: 800 }}>{stageLabel(s)}</span>
-        <span style={{ fontSize: 12, opacity: 0.85 }}>{qtd}</span>
-      </button>
-    );
-  };
 
   const Card = (o: Oportunidade) => {
     const lead = leads.find((l) => l.id === o.lead_id);
@@ -794,83 +792,62 @@ export default function Oportunidades() {
       return null;
     })();
 
-    const phoneWA = normalizePhoneToWa(lead?.telefone);
-    const phoneTel = lead?.telefone ? onlyDigits(lead.telefone) : "";
-
     return (
       <div
         key={o.id}
-        style={{ ...cardRowGlass, ...(isSmall ? cardRowGlassMobile : {}) }}
-        draggable={!isSmall}
+        style={cardRowGlass}
+        draggable
         onDragStart={(e) => onCardDragStart(e, o.id)}
-        title={isSmall ? undefined : "Arraste para mudar de coluna"}
+        title="Arraste para mudar de coluna"
       >
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 900, color: CONS.ink, marginBottom: 4, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {lead?.nome || "-"}
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
-              <span style={pillMeta}>
-                <strong>Vendedor:</strong> {vend?.nome || "-"}
-              </span>
-              <span style={pillMeta}>
-                <strong>Segmento:</strong> {o.segmento}
-              </span>
-              <span style={pillMeta}>
-                <strong>Valor:</strong> {fmtBRL(Number(o.valor_credito || 0))}
-              </span>
-              <span style={pillMeta}>
-                <strong>Prob.:</strong> {"★".repeat(Math.max(1, Math.min(5, o.score)))}
-              </span>
-              {statusTag}
-              {o.expected_close_at && <span style={{ ...pillMeta, marginLeft: 0 }}><strong>Prev.:</strong> {isoToBR(o.expected_close_at)}</span>}
-            </div>
-
-            {/* ações */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <IconBtn title="Ligar" disabled={!phoneTel} href={phoneTel ? `tel:${phoneTel}` : undefined}>
-                📞
-              </IconBtn>
-              <IconBtn title="WhatsApp" disabled={!phoneWA} href={phoneWA ? `https://wa.me/${phoneWA}` : undefined}>
-                <WhatsappIcon />
-              </IconBtn>
-              <IconBtn title={lead?.email ? "E-mail" : "Sem e-mail"} disabled={!lead?.email} href={lead?.email ? `mailto:${lead.email}` : undefined}>
-                ✉️
-              </IconBtn>
-
-              {/* no mobile, reduzimos “ícones soltos” e destacamos o CTA */}
-              {!isSmall && (
-                <>
-                  <IconBtn title="Editar lead" onClick={() => setEditLead(lead!)}>
-                    ✏️
-                  </IconBtn>
-                  <IconBtn title="Reatribuir" onClick={() => setReassignLead(lead!)}>
-                    ⇄
-                  </IconBtn>
-                </>
-              )}
-
-              <button onClick={() => openEdit(o)} style={btnSmallPrimary}>
-                Tratar
-              </button>
-
-              {isSmall && (
-                <>
-                  <button onClick={() => setEditLead(lead!)} style={btnSmallGhost}>
-                    Editar
-                  </button>
-                  <button onClick={() => setReassignLead(lead!)} style={btnSmallGhost}>
-                    Reatribuir
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* drag hint desktop */}
-          {!isSmall && <div style={{ fontSize: 12, color: "#94a3b8", paddingTop: 2 }}>⠿</div>}
+        <div style={{ fontWeight: 700, color: CONS.ink, marginBottom: 4 }}>{lead?.nome || "-"}</div>
+        <div style={{ fontSize: 12, color: "#475569", marginBottom: 2 }}>
+          <strong>Vendedor:</strong> {vend?.nome || "-"}
+        </div>
+        <div style={{ fontSize: 12, color: "#475569" }}>
+          <strong>Segmento:</strong> {o.segmento}
+        </div>
+        <div style={{ fontSize: 12, color: "#475569" }}>
+          <strong>Valor:</strong> {fmtBRL(Number(o.valor_credito || 0))}
+        </div>
+        <div style={{ fontSize: 12, color: "#475569", marginBottom: 4 }}>
+          <strong>Prob.:</strong> {"★".repeat(Math.max(1, Math.min(5, o.score)))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          {/* Ligar */}
+          <IconBtn title="Ligar" disabled={!lead?.telefone} href={lead?.telefone ? `tel:${onlyDigits(lead.telefone)}` : undefined}>
+            📞
+          </IconBtn>
+          {/* WhatsApp */}
+          <IconBtn
+            title="WhatsApp"
+            disabled={!normalizePhoneToWa(lead?.telefone)}
+            href={normalizePhoneToWa(lead?.telefone) ? `https://wa.me/${normalizePhoneToWa(lead?.telefone)}` : undefined}
+          >
+            <WhatsappIcon />
+          </IconBtn>
+          {/* Email */}
+          <IconBtn title={lead?.email ? "E-mail" : "Sem e-mail"} disabled={!lead?.email} href={lead?.email ? `mailto:${lead.email}` : undefined}>
+            ✉️
+          </IconBtn>
+          {/* Editar lead */}
+          <IconBtn title="Editar lead" onClick={() => lead && setEditLead(lead)}>
+            ✏️
+          </IconBtn>
+          {/* Reatribuir */}
+          <IconBtn title="Reatribuir" onClick={() => lead && setReassignLead(lead)}>
+            ⇄
+          </IconBtn>
+          {/* Tratar */}
+          <button onClick={() => openEdit(o)} style={btnSmallPrimary}>
+            Tratar
+          </button>
+          {statusTag}
+          {o.expected_close_at && (
+            <span style={{ marginLeft: "auto", fontSize: 12, color: "#64748b" }}>
+              {new Date(o.expected_close_at + "T00:00:00").toLocaleDateString("pt-BR")}
+            </span>
+          )}
         </div>
       </div>
     );
@@ -893,172 +870,130 @@ export default function Oportunidades() {
     </div>
   );
 
-  const modalWrapStyle = (base: React.CSSProperties): React.CSSProperties => {
-    if (!isSmall) return base;
-    return {
-      ...base,
-      width: "min(720px, 96vw)",
-      maxHeight: "92vh",
-      overflowY: "auto",
-      borderRadius: 18,
-    };
-  };
-
-  const grid2Responsive: React.CSSProperties = isSmall
-    ? { display: "grid", gap: 12, gridTemplateColumns: "1fr" }
-    : grid2;
-
   return (
-    <div style={pageWrap(isSmall)}>
+    <div style={pageWrap}>
       <LiquidBG />
 
-      {/* Header Mobile/Desk (sticky) */}
-      <div style={topbarGlassSticky(isSmall)}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 900, color: CONS.ink, fontSize: isSmall ? 15 : 16, marginBottom: 6 }}>
-              Oportunidades
-            </div>
-            <input
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              style={{ ...input, ...inputGlass, margin: 0, width: "100%" }}
-              placeholder="Buscar por lead, vendedor, estágio ou telefone"
-            />
-          </div>
+      {/* Topbar */}
+      <div style={topbarGlass}>
+        <input
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          style={{ ...input, ...inputGlass, margin: 0, flex: 1, minWidth: 220 }}
+          placeholder="Buscar por lead, vendedor, estágio ou telefone"
+        />
 
-          {/* Ações (compactas no mobile) */}
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={() => setNewLeadOpen(true)} style={isSmall ? btnIconPrimary : btnPrimary} title="Novo Lead">
-              {isSmall ? "＋" : "+ Novo Lead"}
-            </button>
-            <button onClick={abrirModalNovaOpp} style={isSmall ? btnIconGhost : btnGhost} title="Nova Oportunidade">
-              {isSmall ? "◎" : "+ Nova Oportunidade"}
-            </button>
-          </div>
-        </div>
-
-        {/* KPIs (no mobile vira scroll horizontal) */}
-        <div style={{ marginTop: 12 }}>
-          <div style={sectionTitle}>Pipeline por estágio</div>
-          <div
-            style={
-              isSmall
-                ? { display: "flex", gap: 12, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" as any }
-                : { display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }
-            }
+        {/* ✅ filtro de vendedor (desktop: aparece / mobile: mantém layout compacto) */}
+        {!isMobile && (
+          <select
+            value={selectedVendor}
+            onChange={(e) => {
+              setSelectedVendor(e.target.value);
+              setPage(1);
+            }}
+            style={{ ...input, ...inputGlass, width: 260, margin: 0 }}
+            title="Filtrar por vendedor"
           >
-            <div style={isSmall ? { minWidth: 220 } : undefined}>
-              <StageCard label="Novo" qtd={kpi.novo.qtd} total={kpi.novo.total} />
-            </div>
-            <div style={isSmall ? { minWidth: 220 } : undefined}>
-              <StageCard label="Qualificando" qtd={kpi.qualificando.qtd} total={kpi.qualificando.total} />
-            </div>
-            <div style={isSmall ? { minWidth: 220 } : undefined}>
-              <StageCard label="Propostas" qtd={kpi.proposta.qtd} total={kpi.proposta.total} />
-            </div>
-            <div style={isSmall ? { minWidth: 220 } : undefined}>
-              <StageCard label="Negociação" qtd={kpi.negociacao.qtd} total={kpi.negociacao.total} />
-            </div>
-          </div>
+            <option value="__all__">Todos os vendedores</option>
+            {vendedores.map((v) => (
+              <option key={v.auth_user_id} value={v.auth_user_id}>
+                {v.nome}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <button onClick={() => setNewLeadOpen(true)} style={btnPrimary}>
+          + Novo Lead
+        </button>
+        <button onClick={abrirModalNovaOpp} style={btnGhost}>
+          + Nova Oportunidade
+        </button>
+      </div>
+
+      {/* Pipeline por estágio (4 colunas) */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={sectionTitle}>Pipeline por estágio</div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(4,minmax(0,1fr))",
+            gap: 16,
+          }}
+        >
+          <StageCard label="Novo" qtd={kpi.novo.qtd} total={kpi.novo.total} />
+          <StageCard label="Qualificando" qtd={kpi.qualificando.qtd} total={kpi.qualificando.total} />
+          <StageCard label="Propostas" qtd={kpi.proposta.qtd} total={kpi.proposta.total} />
+          <StageCard label="Negociação" qtd={kpi.negociacao.qtd} total={kpi.negociacao.total} />
         </div>
       </div>
 
-      {/* Conteúdo */}
-      <div style={{ position: "relative", zIndex: 1 }}>
-        {/* Board */}
-        <div style={glassCard}>
-          <div style={{ ...sectionTitle, marginTop: 0, marginBottom: 12 }}>Oportunidades</div>
-
-          {/* Mobile: tabs por estágio */}
-          {isSmall ? (
-            <>
-              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 6, WebkitOverflowScrolling: "touch" as any }}>
-                <MobileStageChip s="novo" />
-                <MobileStageChip s="qualificando" />
-                <MobileStageChip s="proposta" />
-                <MobileStageChip s="negociacao" />
-                <MobileStageChip s="fechado_ganho" />
-                <MobileStageChip s="fechado_perdido" />
-              </div>
-
-              <div style={{ marginTop: 10 }}>
-                {mobileList[mobileStage]?.length ? (
-                  <div style={{ display: "grid", gap: 10 }}>
-                    {mobileList[mobileStage].map((o) => (
-                      <Card key={o.id} {...o} />
-                    ))}
-                  </div>
-                ) : (
-                  <div style={emptyColGlass}>—</div>
-                )}
-              </div>
-
-              {/* dica */}
-              <div style={{ marginTop: 10, fontSize: 12, color: "#64748b" }}>
-                No celular, o board vira “abas”. No computador, você pode arrastar entre colunas.
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 16 }}>
-                <Column title="Novo" items={colNovo} stageUIKey="novo" />
-                <Column title="Qualificando" items={colQualificando} stageUIKey="qualificando" />
-                <Column title="Propostas" items={colPropostas} stageUIKey="proposta" />
-                <Column title="Negociação" items={colNegociacao} stageUIKey="negociacao" />
-              </div>
-
-              {/* paginação única (desktop) */}
-              <div style={pager}>
-                <button
-                  style={{ ...btnSecondary, opacity: page <= 1 ? 0.6 : 1 }}
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                >
-                  ‹ Anterior
-                </button>
-                <span style={{ fontSize: 12, color: "#475569" }}>
-                  Página {page} de {totalPages}
-                </span>
-                <button
-                  style={{ ...btnSecondary, opacity: page >= totalPages ? 0.6 : 1 }}
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                >
-                  Próxima ›
-                </button>
-              </div>
-            </>
-          )}
+      {/* Board */}
+      <div style={glassCard}>
+        <div style={{ ...sectionTitle, marginTop: 0, marginBottom: 14 }}>Oportunidades</div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "repeat(4,minmax(0,1fr))",
+            gap: 16,
+          }}
+        >
+          <Column title="Novo" items={colNovo} stageUIKey="novo" />
+          <Column title="Qualificando" items={colQualificando} stageUIKey="qualificando" />
+          <Column title="Propostas" items={colPropostas} stageUIKey="proposta" />
+          <Column title="Negociação" items={colNegociacao} stageUIKey="negociacao" />
         </div>
 
-        {/* Finalizados – Donuts (mobile vira 1 coluna) */}
-        <div style={{ display: "grid", gridTemplateColumns: isSmall ? "1fr" : "1fr 1fr", gap: 16 }}>
-          <Donut data={wonPairs} title="Fechado (Ganho)" hoverKey={hoverWon} setHover={setHoverWon} />
-          <Donut data={lostPairs} title="Fechado (Perdido)" hoverKey={hoverLost} setHover={setHoverLost} />
+        {/* paginação única */}
+        <div style={pager}>
+          <button
+            style={{ ...btnSecondary, opacity: page <= 1 ? 0.6 : 1 }}
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            ‹ Anterior
+          </button>
+          <span style={{ fontSize: 12, color: "#475569" }}>
+            Página {page} de {totalPages}
+          </span>
+          <button
+            style={{ ...btnSecondary, opacity: page >= totalPages ? 0.6 : 1 }}
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Próxima ›
+          </button>
         </div>
+      </div>
+
+      {/* Finalizados – Donuts */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+          gap: 16,
+        }}
+      >
+        <Donut data={wonPairs} title="Fechado (Ganho)" hoverKey={hoverWon} setHover={setHoverWon} />
+        <Donut data={lostPairs} title="Fechado (Perdido)" hoverKey={hoverLost} setHover={setHoverLost} />
       </div>
 
       {/* ===== Modal: Tratar ===== */}
       {editing && (
         <div style={modalBackdrop}>
-          <div style={modalWrapStyle(modalCardGlass)}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <h3 style={{ marginTop: 0, marginBottom: 0 }}>Tratar Lead</h3>
-              {isSmall && (
-                <button onClick={closeEdit} style={btnIconGhost} title="Fechar">
-                  ✕
-                </button>
-              )}
-            </div>
-
-            <div style={{ ...grid2Responsive, marginTop: 12 }}>
+          <div style={modalCardGlass}>
+            <h3 style={{ marginTop: 0 }}>Tratar Lead</h3>
+            <div style={{ ...grid2, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
               <div>
                 <label style={label}>Segmento</label>
-                <select value={editing.segmento} onChange={(e) => setEditing({ ...editing, segmento: e.target.value })} style={{ ...input, ...inputGlass }}>
+                <select
+                  value={editing.segmento}
+                  onChange={(e) => setEditing({ ...editing, segmento: e.target.value })}
+                  style={{ ...input, ...inputGlass }}
+                >
                   {segmentos.map((s) => (
                     <option key={s} value={s}>
                       {s}
@@ -1066,7 +1001,6 @@ export default function Oportunidades() {
                   ))}
                 </select>
               </div>
-
               <div>
                 <label style={label}>Valor do crédito (R$)</label>
                 <input
@@ -1075,10 +1009,13 @@ export default function Oportunidades() {
                   style={{ ...input, ...inputGlass }}
                 />
               </div>
-
               <div>
                 <label style={label}>Probabilidade</label>
-                <select value={String(editing.score)} onChange={(e) => setEditing({ ...editing, score: Number(e.target.value) })} style={{ ...input, ...inputGlass }}>
+                <select
+                  value={String(editing.score)}
+                  onChange={(e) => setEditing({ ...editing, score: Number(e.target.value) })}
+                  style={{ ...input, ...inputGlass }}
+                >
                   {[1, 2, 3, 4, 5].map((n) => (
                     <option key={n} value={n}>
                       {"★".repeat(n)}
@@ -1086,10 +1023,13 @@ export default function Oportunidades() {
                   ))}
                 </select>
               </div>
-
               <div>
                 <label style={label}>Estágio</label>
-                <select value={String(editing.estagio)} onChange={(e) => setEditing({ ...editing, estagio: e.target.value })} style={{ ...input, ...inputGlass }}>
+                <select
+                  value={String(editing.estagio)}
+                  onChange={(e) => setEditing({ ...editing, estagio: e.target.value })}
+                  style={{ ...input, ...inputGlass }}
+                >
                   <option value="Novo">Novo</option>
                   <option value="Qualificando">Qualificando</option>
                   <option value="Proposta">Proposta</option>
@@ -1098,7 +1038,6 @@ export default function Oportunidades() {
                   <option value="Fechado (Perdido)">Fechado (Perdido)</option>
                 </select>
               </div>
-
               <div>
                 <label style={label}>Previsão (dd/mm/aaaa)</label>
                 <input
@@ -1110,13 +1049,12 @@ export default function Oportunidades() {
                   style={{ ...input, ...inputGlass }}
                 />
               </div>
-
-              <div style={isSmall ? undefined : { gridColumn: "1 / span 2" }}>
+              <div style={{ gridColumn: isMobile ? "auto" : "1 / span 2" }}>
                 <label style={label}>Adicionar observação</label>
                 <textarea
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
-                  style={{ ...input, ...inputGlass, minHeight: isSmall ? 110 : 90 }}
+                  style={{ ...input, ...inputGlass, minHeight: 90 }}
                   placeholder="Escreva uma nova observação. O histórico anterior será mantido."
                 />
                 <div style={{ marginTop: 8, color: "#64748b", fontSize: 12 }}>
@@ -1140,15 +1078,13 @@ export default function Oportunidades() {
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               <button onClick={saveEdit} style={btnPrimary}>
-                Salvar
+                Salvar alterações
               </button>
-              {!isSmall && (
-                <button onClick={closeEdit} style={btnGhost}>
-                  Cancelar
-                </button>
-              )}
+              <button onClick={closeEdit} style={btnGhost}>
+                Cancelar
+              </button>
             </div>
           </div>
         </div>
@@ -1157,17 +1093,9 @@ export default function Oportunidades() {
       {/* ===== Modal: Novo Lead ===== */}
       {newLeadOpen && (
         <div style={modalBackdrop}>
-          <div style={modalWrapStyle(modalCardGlass)}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <h3 style={{ marginTop: 0, marginBottom: 0 }}>Novo Lead</h3>
-              {isSmall && (
-                <button onClick={() => setNewLeadOpen(false)} style={btnIconGhost} title="Fechar">
-                  ✕
-                </button>
-              )}
-            </div>
-
-            <div style={{ ...grid2Responsive, marginTop: 12 }}>
+          <div style={modalCardGlass}>
+            <h3 style={{ marginTop: 0 }}>Novo Lead</h3>
+            <div style={{ ...grid2, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
               <div>
                 <label style={label}>Nome</label>
                 <input value={nlNome} onChange={(e) => setNlNome(e.target.value)} style={{ ...input, ...inputGlass }} />
@@ -1191,21 +1119,18 @@ export default function Oportunidades() {
                   <option value="Relacionamento">Relacionamento</option>
                 </select>
               </div>
-              <div>
+              <div style={{ gridColumn: isMobile ? "auto" : "1 / span 2" }}>
                 <label style={label}>Descrição</label>
                 <input value={nlDesc} onChange={(e) => setNlDesc(e.target.value)} style={{ ...input, ...inputGlass }} />
               </div>
             </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               <button onClick={criarLead} disabled={loading} style={btnPrimary}>
-                {loading ? "Salvando..." : "Salvar"}
+                {loading ? "Salvando..." : "Salvar lead"}
               </button>
-              {!isSmall && (
-                <button onClick={() => setNewLeadOpen(false)} style={btnGhost}>
-                  Fechar
-                </button>
-              )}
+              <button onClick={() => setNewLeadOpen(false)} style={btnGhost}>
+                Fechar
+              </button>
             </div>
           </div>
         </div>
@@ -1214,17 +1139,9 @@ export default function Oportunidades() {
       {/* ===== Modal: Nova Oportunidade ===== */}
       {newOppOpen && (
         <div style={modalBackdrop}>
-          <div style={modalWrapStyle(modalCardGlass)}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <h3 style={{ marginTop: 0, marginBottom: 0 }}>Nova oportunidade</h3>
-              {isSmall && (
-                <button onClick={() => setNewOppOpen(false)} style={btnIconGhost} title="Fechar">
-                  ✕
-                </button>
-              )}
-            </div>
-
-            <div style={{ ...grid2Responsive, marginTop: 12 }}>
+          <div style={modalCardGlass}>
+            <h3 style={{ marginTop: 0 }}>Nova oportunidade</h3>
+            <div style={{ ...grid2, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
               <div>
                 <label style={label}>Selecionar um Lead</label>
                 <select value={leadId} onChange={(e) => setLeadId(e.target.value)} style={{ ...input, ...inputGlass }}>
@@ -1262,12 +1179,22 @@ export default function Oportunidades() {
 
               <div>
                 <label style={label}>Valor do crédito (R$)</label>
-                <input value={valor} onChange={(e) => setValor(e.target.value)} style={{ ...input, ...inputGlass }} placeholder="Ex.: 80.000,00" />
+                <input
+                  value={valor}
+                  onChange={(e) => setValor(e.target.value)}
+                  style={{ ...input, ...inputGlass }}
+                  placeholder="Ex.: 80.000,00"
+                />
               </div>
 
               <div>
                 <label style={label}>Observações</label>
-                <input value={obs} onChange={(e) => setObs(e.target.value)} style={{ ...input, ...inputGlass }} placeholder="Observação (opcional)" />
+                <input
+                  value={obs}
+                  onChange={(e) => setObs(e.target.value)}
+                  style={{ ...input, ...inputGlass }}
+                  placeholder="Observação (opcional)"
+                />
               </div>
 
               <div>
@@ -1306,15 +1233,13 @@ export default function Oportunidades() {
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               <button onClick={criarOportunidade} disabled={loading} style={btnPrimary}>
-                {loading ? "Criando..." : "Criar"}
+                {loading ? "Criando..." : "Criar oportunidade"}
               </button>
-              {!isSmall && (
-                <button onClick={() => setNewOppOpen(false)} style={btnGhost}>
-                  Fechar
-                </button>
-              )}
+              <button onClick={() => setNewOppOpen(false)} style={btnGhost}>
+                Fechar
+              </button>
             </div>
           </div>
         </div>
@@ -1323,20 +1248,16 @@ export default function Oportunidades() {
       {/* ===== Modal: Editar Lead ===== */}
       {editLead && (
         <div style={modalBackdrop}>
-          <div style={modalWrapStyle(modalCardGlassSmall)}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <h3 style={{ marginTop: 0, marginBottom: 0 }}>Editar Lead</h3>
-              {isSmall && (
-                <button onClick={() => setEditLead(null)} style={btnIconGhost} title="Fechar">
-                  ✕
-                </button>
-              )}
-            </div>
-
-            <div style={{ ...grid2Responsive, marginTop: 12 }}>
+          <div style={modalCardGlassSmall}>
+            <h3 style={{ marginTop: 0 }}>Editar Lead</h3>
+            <div style={{ ...grid2, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
               <div>
                 <label style={label}>Nome</label>
-                <input value={editLead.nome || ""} onChange={(e) => setEditLead({ ...editLead, nome: e.target.value })} style={{ ...input, ...inputGlass }} />
+                <input
+                  value={editLead.nome || ""}
+                  onChange={(e) => setEditLead({ ...editLead, nome: e.target.value })}
+                  style={{ ...input, ...inputGlass }}
+                />
               </div>
               <div>
                 <label style={label}>Telefone</label>
@@ -1348,11 +1269,19 @@ export default function Oportunidades() {
               </div>
               <div>
                 <label style={label}>E-mail</label>
-                <input value={editLead.email || ""} onChange={(e) => setEditLead({ ...editLead, email: e.target.value })} style={{ ...input, ...inputGlass }} />
+                <input
+                  value={editLead.email || ""}
+                  onChange={(e) => setEditLead({ ...editLead, email: e.target.value })}
+                  style={{ ...input, ...inputGlass }}
+                />
               </div>
               <div>
                 <label style={label}>Origem</label>
-                <select value={editLead.origem || "Site"} onChange={(e) => setEditLead({ ...editLead, origem: e.target.value })} style={{ ...input, ...inputGlass }}>
+                <select
+                  value={editLead.origem || "Site"}
+                  onChange={(e) => setEditLead({ ...editLead, origem: e.target.value })}
+                  style={{ ...input, ...inputGlass }}
+                >
                   <option value="Site">Site</option>
                   <option value="Redes Sociais">Redes Sociais</option>
                   <option value="Indicação">Indicação</option>
@@ -1361,21 +1290,22 @@ export default function Oportunidades() {
                   <option value="Relacionamento">Relacionamento</option>
                 </select>
               </div>
-              <div>
+              <div style={{ gridColumn: isMobile ? "auto" : "1 / span 2" }}>
                 <label style={label}>Descrição</label>
-                <input value={editLead.descricao || ""} onChange={(e) => setEditLead({ ...editLead, descricao: e.target.value })} style={{ ...input, ...inputGlass }} />
+                <input
+                  value={editLead.descricao || ""}
+                  onChange={(e) => setEditLead({ ...editLead, descricao: e.target.value })}
+                  style={{ ...input, ...inputGlass }}
+                />
               </div>
             </div>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               <button onClick={saveLead} style={btnPrimary}>
                 Salvar
               </button>
-              {!isSmall && (
-                <button onClick={() => setEditLead(null)} style={btnGhost}>
-                  Cancelar
-                </button>
-              )}
+              <button onClick={() => setEditLead(null)} style={btnGhost}>
+                Cancelar
+              </button>
             </div>
           </div>
         </div>
@@ -1384,20 +1314,11 @@ export default function Oportunidades() {
       {/* ===== Modal: Reatribuir ===== */}
       {reassignLead && (
         <div style={modalBackdrop}>
-          <div style={modalWrapStyle(modalCardGlassSmall)}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <h3 style={{ marginTop: 0, marginBottom: 0 }}>Reatribuir Lead</h3>
-              {isSmall && (
-                <button onClick={() => setReassignLead(null)} style={btnIconGhost} title="Fechar">
-                  ✕
-                </button>
-              )}
-            </div>
-
-            <p style={{ margin: "12px 0 8px", color: "#475569" }}>
+          <div style={modalCardGlassSmall}>
+            <h3 style={{ marginTop: 0, marginBottom: 12 }}>Reatribuir Lead</h3>
+            <p style={{ margin: "0 0 8px", color: "#475569" }}>
               <strong>Lead:</strong> {reassignLead.nome}
             </p>
-
             <select style={{ ...input, ...inputGlass }} value={newOwnerId} onChange={(e) => setNewOwnerId(e.target.value)}>
               <option value="">Selecionar usuário…</option>
               {vendedores.map((u) => (
@@ -1406,13 +1327,10 @@ export default function Oportunidades() {
                 </option>
               ))}
             </select>
-
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12, flexWrap: "wrap" }}>
-              {!isSmall && (
-                <button onClick={() => setReassignLead(null)} style={btnGhost}>
-                  Cancelar
-                </button>
-              )}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, flexWrap: "wrap" }}>
+              <button onClick={() => setReassignLead(null)} style={btnGhost}>
+                Cancelar
+              </button>
               <button onClick={doReassign} style={btnPrimary}>
                 Salvar
               </button>
@@ -1420,60 +1338,90 @@ export default function Oportunidades() {
           </div>
         </div>
       )}
-
-      {/* FAB (mobile) — acesso rápido */}
-      {isSmall && (
-        <div style={fabWrap}>
-          <button onClick={() => setNewLeadOpen(true)} style={fabPrimary} title="Novo Lead">
-            + Lead
-          </button>
-          <button onClick={abrirModalNovaOpp} style={fabGhost} title="Nova Oportunidade">
-            + Opp
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
+/**
+ * 🧩 Função auxiliar para evitar qualquer risco de “kpi antes de visiveis”
+ * (mantém o código robusto sem mexer em regras atuais)
+ */
+function visiveisMemoFallback(
+  baseLista: Oportunidade[],
+  leads: Lead[],
+  vendedores: Vendedor[],
+  search: string
+): Oportunidade[] {
+  const q = search.trim().toLowerCase();
+  if (!q) return baseLista;
+
+  return baseLista.filter((o) => {
+    const lead = leads.find((l) => l.id === o.lead_id);
+    const leadNome = (lead?.nome || "").toLowerCase();
+    const vendNome = (vendedores.find((v) => v.auth_user_id === o.vendedor_id)?.nome || "").toLowerCase();
+    const uiStage = dbToUI[o.estagio as string] ?? "novo";
+    const stageLabel =
+      {
+        novo: "novo",
+        qualificando: "qualificando",
+        proposta: "proposta",
+        negociacao: "negociação",
+        fechado_ganho: "fechado (ganho)",
+        fechado_perdido: "fechado (perdido)",
+      }[uiStage] || "";
+
+    const phone = lead?.telefone ? formatPhoneBR(lead.telefone).toLowerCase() : "";
+    return (
+      leadNome.includes(q) ||
+      vendNome.includes(q) ||
+      String(o.estagio).toLowerCase().includes(q) ||
+      stageLabel.includes(q) ||
+      phone.includes(q)
+    );
+  });
+}
+
 /** ===================== Estilos ===================== */
 const sectionTitle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 900,
+  fontSize: 14,
+  fontWeight: 800,
   color: CONS.ink,
   marginBottom: 10,
-  letterSpacing: 0.6,
+  letterSpacing: 0.2,
   textTransform: "uppercase",
 };
 
-const pageWrap = (isSmall: boolean): React.CSSProperties => ({
+const pageWrap: React.CSSProperties = {
   position: "relative",
   maxWidth: 1200,
-  margin: isSmall ? "10px auto" : "24px auto",
-  padding: isSmall ? "10px 12px 90px 12px" : "0 16px 24px 16px",
+  margin: "24px auto",
+  padding: "0 16px 24px 16px",
   fontFamily: "Inter, system-ui, Arial",
+  // leve gradiente de fundo para ajudar o glass
   background: "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)",
   borderRadius: 16,
   overflow: "hidden",
-});
+};
 
+/** ===== Liquid Glass base ===== */
 const glassBase: React.CSSProperties = {
   background: "rgba(255,255,255,.55)",
   border: "1px solid rgba(255,255,255,.35)",
-  boxShadow: "0 2px 14px rgba(0,0,0,.06), inset 0 -8px 30px rgba(181,165,115,.12)",
+  boxShadow: "0 2px 14px rgba(0,0,0,.06), inset 0 -8px 30px rgba(181,165,115,.12)", // brilho dourado (B5A573) sutil
   backdropFilter: "saturate(160%) blur(10px)",
   WebkitBackdropFilter: "saturate(160%) blur(10px)",
 };
 
-const topbarGlassSticky = (isSmall: boolean): React.CSSProperties => ({
+const topbarGlass: React.CSSProperties = {
   ...glassBase,
-  padding: isSmall ? 12 : 12,
+  padding: 12,
   borderRadius: 14,
   marginBottom: 16,
-  position: "sticky",
-  top: 8,
-  zIndex: 10,
-});
+  display: "flex",
+  gap: 12,
+  alignItems: "center",
+  flexWrap: "wrap",
+};
 
 const glassCard: React.CSSProperties = {
   ...glassBase,
@@ -1497,25 +1445,21 @@ const stageColGlass: React.CSSProperties = {
 };
 
 const stageColActive: React.CSSProperties = {
-  border: "1px dashed rgba(181,165,115,.8)",
+  border: "1px dashed rgba(181,165,115,.8)", // dourado
   background: "rgba(255,255,255,.7)",
   boxShadow: "0 0 0 3px rgba(224,206,140,.15) inset",
 };
 
 const stageTitle: React.CSSProperties = {
-  fontWeight: 900,
+  fontWeight: 800,
   color: CONS.ink,
   marginBottom: 8,
 };
 
 const cardRowGlass: React.CSSProperties = {
   ...glassBase,
-  borderRadius: 14,
-  padding: 12,
-};
-
-const cardRowGlassMobile: React.CSSProperties = {
-  padding: 12,
+  borderRadius: 12,
+  padding: 10,
 };
 
 const emptyColGlass: React.CSSProperties = {
@@ -1553,7 +1497,7 @@ const inputGlass: React.CSSProperties = {
 const label: React.CSSProperties = {
   display: "block",
   fontSize: 12,
-  fontWeight: 800,
+  fontWeight: 700,
   color: "#475569",
   marginBottom: 6,
 };
@@ -1565,17 +1509,17 @@ const btnPrimary: React.CSSProperties = {
   color: "#fff",
   border: 0,
   cursor: "pointer",
-  fontWeight: 800,
+  fontWeight: 700,
 };
 
 const btnSmallPrimary: React.CSSProperties = {
-  padding: "7px 10px",
+  padding: "6px 10px",
   borderRadius: 10,
   background: CONS.red,
   color: "#fff",
   border: 0,
   cursor: "pointer",
-  fontWeight: 800,
+  fontWeight: 600,
   whiteSpace: "nowrap",
 };
 
@@ -1586,19 +1530,7 @@ const btnGhost: React.CSSProperties = {
   color: CONS.ink,
   border: "1px solid rgba(255,255,255,.35)",
   cursor: "pointer",
-  fontWeight: 800,
-  backdropFilter: "blur(6px)",
-  WebkitBackdropFilter: "blur(6px)",
-};
-
-const btnSmallGhost: React.CSSProperties = {
-  padding: "7px 10px",
-  borderRadius: 10,
-  background: "rgba(255,255,255,.72)",
-  color: CONS.ink,
-  border: "1px solid rgba(255,255,255,.35)",
-  cursor: "pointer",
-  fontWeight: 800,
+  fontWeight: 700,
   backdropFilter: "blur(6px)",
   WebkitBackdropFilter: "blur(6px)",
 };
@@ -1609,49 +1541,19 @@ const btnSecondary: React.CSSProperties = {
   background: "rgba(241,245,249,.7)",
   color: "#0f172a",
   border: "1px solid rgba(255,255,255,.35)",
-  fontWeight: 700,
+  fontWeight: 600,
   cursor: "pointer",
   backdropFilter: "blur(4px)",
   WebkitBackdropFilter: "blur(4px)",
-};
-
-const btnIconPrimary: React.CSSProperties = {
-  width: 42,
-  height: 42,
-  borderRadius: 14,
-  background: CONS.red,
-  color: "#fff",
-  border: 0,
-  cursor: "pointer",
-  fontWeight: 900,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const btnIconGhost: React.CSSProperties = {
-  width: 42,
-  height: 42,
-  borderRadius: 14,
-  background: "rgba(255,255,255,.72)",
-  color: CONS.ink,
-  border: "1px solid rgba(255,255,255,.35)",
-  cursor: "pointer",
-  fontWeight: 900,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  backdropFilter: "blur(6px)",
-  WebkitBackdropFilter: "blur(6px)",
 };
 
 const iconBtn: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  width: 34,
-  height: 34,
-  borderRadius: 12,
+  width: 28,
+  height: 28,
+  borderRadius: 8,
   border: "1px solid rgba(255,255,255,.35)",
   background: "rgba(255,255,255,.65)",
   color: "#64748b",
@@ -1661,7 +1563,6 @@ const iconBtn: React.CSSProperties = {
   backdropFilter: "blur(4px)",
   WebkitBackdropFilter: "blur(4px)",
 };
-
 const iconBtnDisabled: React.CSSProperties = {
   opacity: 0.45,
   cursor: "not-allowed",
@@ -1673,6 +1574,7 @@ const pager: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "flex-end",
   marginTop: 12,
+  flexWrap: "wrap",
 };
 
 const modalBackdrop: React.CSSProperties = {
@@ -1684,7 +1586,6 @@ const modalBackdrop: React.CSSProperties = {
   zIndex: 50,
   backdropFilter: "blur(4px)",
   WebkitBackdropFilter: "blur(4px)",
-  padding: 10,
 };
 
 const modalCardGlass: React.CSSProperties = {
@@ -1716,7 +1617,7 @@ const tagDanger: React.CSSProperties = {
   padding: "2px 8px",
   borderRadius: 999,
   fontSize: 11,
-  fontWeight: 900,
+  fontWeight: 700,
 };
 const tagWarn: React.CSSProperties = {
   background: "#fef3c7",
@@ -1725,7 +1626,7 @@ const tagWarn: React.CSSProperties = {
   padding: "2px 8px",
   borderRadius: 999,
   fontSize: 11,
-  fontWeight: 900,
+  fontWeight: 700,
 };
 const tagSoft: React.CSSProperties = {
   background: "#ecfeff",
@@ -1734,78 +1635,10 @@ const tagSoft: React.CSSProperties = {
   padding: "2px 8px",
   borderRadius: 999,
   fontSize: 11,
-  fontWeight: 900,
+  fontWeight: 700,
 };
 
-const pillMeta: React.CSSProperties = {
-  fontSize: 12,
-  color: "#334155",
-  background: "rgba(255,255,255,.6)",
-  border: "1px solid rgba(255,255,255,.35)",
-  borderRadius: 999,
-  padding: "3px 8px",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-  backdropFilter: "blur(6px)",
-  WebkitBackdropFilter: "blur(6px)",
-};
-
-const chipBase: React.CSSProperties = {
-  border: "1px solid rgba(255,255,255,.35)",
-  background: "rgba(255,255,255,.65)",
-  borderRadius: 999,
-  padding: "8px 12px",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 10,
-  cursor: "pointer",
-  whiteSpace: "nowrap",
-  backdropFilter: "blur(6px)",
-  WebkitBackdropFilter: "blur(6px)",
-  color: CONS.ink,
-};
-
-const chipActive: React.CSSProperties = {
-  background: "rgba(161,28,39,.12)",
-  border: `1px solid rgba(161,28,39,.35)`,
-};
-
-const fabWrap: React.CSSProperties = {
-  position: "fixed",
-  left: 12,
-  right: 12,
-  bottom: 12,
-  display: "flex",
-  gap: 10,
-  zIndex: 30,
-};
-
-const fabPrimary: React.CSSProperties = {
-  flex: 1,
-  padding: "12px 14px",
-  borderRadius: 16,
-  background: CONS.red,
-  color: "#fff",
-  border: 0,
-  fontWeight: 900,
-  boxShadow: "0 12px 28px rgba(161,28,39,.25)",
-};
-
-const fabGhost: React.CSSProperties = {
-  flex: 1,
-  padding: "12px 14px",
-  borderRadius: 16,
-  background: "rgba(255,255,255,.8)",
-  color: CONS.ink,
-  border: "1px solid rgba(255,255,255,.35)",
-  fontWeight: 900,
-  backdropFilter: "blur(10px)",
-  WebkitBackdropFilter: "blur(10px)",
-  boxShadow: "0 12px 28px rgba(30,41,63,.10)",
-};
-
-/** ===== Liquid canvas styles ===== */
+/** ====== Liquid canvas styles ====== */
 const liquidCanvas: React.CSSProperties = {
   position: "absolute",
   inset: 0,
@@ -1858,7 +1691,19 @@ const goldGlow: React.CSSProperties = {
 };
 
 const liquidKeyframes = `
-@keyframes blobFloat1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(40px, 30px) scale(1.08)} 100%{transform:translate(0,0) scale(1)} }
-@keyframes blobFloat2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-30px, 20px) scale(1.05)} 100%{transform:translate(0,0) scale(1)} }
-@keyframes blobFloat3 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(20px, -30px) scale(1.06)} 100%{transform:translate(0,0) scale(1)} }
+@keyframes blobFloat1 {
+  0% { transform: translate(0,0) scale(1); }
+  50% { transform: translate(40px, 30px) scale(1.08); }
+  100% { transform: translate(0,0) scale(1); }
+}
+@keyframes blobFloat2 {
+  0% { transform: translate(0,0) scale(1); }
+  50% { transform: translate(-30px, 20px) scale(1.05); }
+  100% { transform: translate(0,0) scale(1); }
+}
+@keyframes blobFloat3 {
+  0% { transform: translate(0,0) scale(1); }
+  50% { transform: translate(20px, -30px) scale(1.06); }
+  100% { transform: translate(0,0) scale(1); }
+}
 `;

@@ -2112,7 +2112,7 @@ export default function ComissoesPage() {
                         Configurar
                       </Button>
                     </div>
-                    <div className="text-xs text-gray-500">Fica fixo (salvo no navegador).</div>
+                    <div className="text-xs text-gray-500"></div>
                   </div>
 
                   <div className="flex items-end gap-3">

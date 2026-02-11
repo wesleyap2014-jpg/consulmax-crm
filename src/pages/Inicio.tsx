@@ -6,25 +6,9 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-import {
-  RefreshCcw,
-  AlertTriangle,
-  Calendar,
-  Briefcase,
-  Wallet,
-  Target,
-  Rocket,
-  MessageCircle,
-  ArrowRight,
-} from "lucide-react";
+import { RefreshCcw, AlertTriangle, Calendar, Briefcase, Wallet, Target, Rocket, MessageCircle, ArrowRight } from "lucide-react";
 
 /** ===================== Tipos ===================== */
 type UserRow = {
@@ -91,7 +75,6 @@ type CommissionRow = {
   vendedor_id: string; // users.id
   valor_total: number | null;
   status: string | null; // commission_status
-  created_at?: string | null;
 };
 
 type GiroDueRow = { owner_auth_id: string; due_count: number };
@@ -150,7 +133,7 @@ function stageIsClosed(stage?: string | null, estagio?: string | null) {
   const es = (estagio || "").trim().toLowerCase();
 
   if (st === "fechado_ganho" || st === "fechado_perdido") return true;
-  if (es === "fechado (ganho)" || es === "fechado (perdido)") return true;
+  if (es === "fechado (ganho)".toLowerCase() || es === "fechado (perdido)".toLowerCase()) return true;
 
   if (st.startsWith("fechado")) return true;
   if (es.startsWith("fechado")) return true;
@@ -288,44 +271,27 @@ export default function Inicio() {
       .order("nome", { ascending: true });
     if (usersErr) throw usersErr;
 
-    return { meRow: meRow as UserRow, usersRows: (usersRows || []) as UserRow[] };
+    const admin = isAdmin(meRow);
+    const initialScope = admin ? ALL : meRow.id;
+
+    return { meRow, usersRows: usersRows || [], admin, initialScope };
   }
 
   /**
-   * scopeUserId = users.id (metas/comissões/reservas)
-   * scopeAuthId = users.auth_user_id (oportunidades/vendas/agenda/carteira/giro)
+   * scopeUserId  = users.id (usado por metas/comissões/reservas)
+   * scopeAuthId  = users.auth_user_id (usado por oportunidades/vendas/agenda/carteira/giro)
    */
-  function resolveScope(meRow: UserRow, usersMap: Map<string, UserRow>, scopeValue: string) {
-    const admin = isAdmin(meRow);
-
-    // vendedor travado nele
-    if (!admin) {
-      return { admin, scopeUserId: meRow.id, scopeAuthId: meRow.auth_user_id, label: meRow.nome };
-    }
-
-    // admin visão geral
-    if (scopeValue === ALL) {
-      return { admin, scopeUserId: ALL, scopeAuthId: ALL, label: "Todos (Admin)" };
-    }
-
-    const u = usersMap.get(scopeValue);
-    if (!u) {
-      // fallback: filtra o que dá (users.id), mas não quebra
-      return { admin, scopeUserId: scopeValue, scopeAuthId: ALL, label: "Vendedor" };
-    }
-
-    return { admin, scopeUserId: u.id, scopeAuthId: u.auth_user_id, label: u.nome };
-  }
-
   async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
     const today = rangeToday.ymd;
     const { startYMD, endYMD, year, month } = rangeMonth;
 
-    // ===== Oportunidades atrasadas (auth_user_id) =====
+    // ===== Oportunidades atrasadas (filtra por auth_user_id) =====
     let oppQ = supabase
       .from("opportunities")
       .select("id,valor_credito,stage,estagio,expected_close_at,vendedor_id,lead_id")
       .lt("expected_close_at", today)
+      .not("stage", "in", '("fechado_ganho","fechado_perdido")')
+      .not("estagio", "in", '("Fechado (Ganho)","Fechado (Perdido)")')
       .order("expected_close_at", { ascending: true })
       .limit(12);
 
@@ -352,7 +318,7 @@ export default function Inicio() {
       return { ...o, lead_nome: ld?.nome, lead_tel: ld?.telefone || null };
     });
 
-    // ===== Agenda de hoje (auth_user_id) =====
+    // ===== Agenda de hoje (filtra por auth_user_id) =====
     let agQ = supabase
       .from("v_agenda_eventos_enriquecida")
       .select("id,tipo,titulo,inicio_at,fim_at,user_id,cliente_nome,lead_nome,telefone,videocall_url")
@@ -374,7 +340,7 @@ export default function Inicio() {
     if (gErr) throw gErr;
     const todayGroupsCount = (gRows || []).length;
 
-    // ===== Vendas do mês (auth_user_id) =====
+    // ===== Vendas do mês (filtra por auth_user_id) =====
     let salesQ = supabase
       .from("vendas")
       .select("valor_venda,vendedor_id,data_venda")
@@ -388,7 +354,7 @@ export default function Inicio() {
     if (salesErr) throw salesErr;
     const monthSalesTotal = (salesRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Meta do mês (users.id) =====
+    // ===== Meta do mês (filtra por users.id) =====
     const field = metaFieldForMonth(month);
     let metaQ = supabase.from("metas_vendedores").select(`vendedor_id,ano,${field}`).eq("ano", year);
 
@@ -401,7 +367,7 @@ export default function Inicio() {
     const monthSalesMeta = (metaRows || []).reduce((acc: number, r: any) => acc + (Number(r?.[field] || 0) || 0), 0);
     const monthSalesPct = monthSalesMeta > 0 ? Math.min(100, Math.max(0, (monthSalesTotal / monthSalesMeta) * 100)) : 0;
 
-    // ===== Carteira ativa (auth_user_id) =====
+    // ===== Carteira ativa (filtra por auth_user_id) =====
     let cartQ = supabase.from("vendas").select("valor_venda,vendedor_id,codigo").eq("codigo", "00");
     if (!admin) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
@@ -410,7 +376,7 @@ export default function Inicio() {
     if (cartErr) throw cartErr;
     const carteiraAtivaTotal = (cartRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Reservas abertas (users.id) =====
+    // ===== Reservas abertas (filtra por users.id) =====
     let reqQ = supabase
       .from("stock_reservation_requests")
       .select("id,cota_id,vendor_id,vendor_pct,status,created_at")
@@ -425,7 +391,7 @@ export default function Inicio() {
     if (reqErr) throw reqErr;
     const openStockReqCount = (reqRows || []).length;
 
-    // ===== Vendas sem comissão (auth_user_id) =====
+    // ===== Vendas sem comissão (view vindo de vendas → filtra por auth_user_id) =====
     let vscQ = supabase
       .from("v_vendas_sem_comissao")
       .select("id,data_venda,vendedor_id,vendedor_nome,segmento,tabela,administradora,numero_proposta,credito")
@@ -439,12 +405,8 @@ export default function Inicio() {
     if (vscErr) throw vscErr;
     const vendasSemComissaoCount = (vscRows || []).length;
 
-    // ===== Comissões pendentes (users.id) =====
-    let comQ = supabase
-      .from("commissions")
-      .select("id,vendedor_id,valor_total,status,created_at")
-      .order("created_at", { ascending: false })
-      .limit(300);
+    // ===== Comissões pendentes (filtra por users.id) =====
+    let comQ = supabase.from("commissions").select("id,vendedor_id,valor_total,status,created_at").order("created_at", { ascending: false }).limit(300);
 
     if (!admin) comQ = comQ.eq("vendedor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) comQ = comQ.eq("vendedor_id", scopeUserId);
@@ -459,13 +421,23 @@ export default function Inicio() {
     const commissionsPendingCount = pend.length;
     const commissionsPendingTotal = pend.reduce((acc: number, r: any) => acc + (Number(r.valor_total || 0) || 0), 0);
 
-    // ===== Giro pendente (auth_user_id) =====
+    // ===== Giro pendente (view por auth_user_id) =====
     let giroDueCount = 0;
 
-    if (admin && scopeAuthId === ALL) {
-      const { data: giroAll, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
-      if (giroAllErr) throw giroAllErr;
-      giroDueCount = (giroAll || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
+    if (admin) {
+      if (scopeAuthId === ALL) {
+        const { data: giroAll, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
+        if (giroAllErr) throw giroAllErr;
+        giroDueCount = (giroAll || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
+      } else {
+        const { data: giroRow, error: giroErr } = await supabase
+          .from("v_giro_due_count")
+          .select("owner_auth_id,due_count")
+          .eq("owner_auth_id", scopeAuthId)
+          .maybeSingle();
+        if (giroErr) throw giroErr;
+        giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
+      }
     } else {
       const { data: giroRow, error: giroErr } = await supabase
         .from("v_giro_due_count")
@@ -476,7 +448,7 @@ export default function Inicio() {
       giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
     }
 
-    // ✅ Atualiza tudo junto
+    // ✅ Atualiza tudo junto (se deu erro, cai no catch e não “zera”)
     setOverdueOpps(overdueOppsEnriched);
     setTodayEvents((agRows || []) as any);
     setStockReqs(reqRows || []);
@@ -505,16 +477,35 @@ export default function Inicio() {
     });
   }
 
-  async function reload(hard = false) {
-    if (!me) return;
+  function getScopes() {
+    if (!me) return null;
     const admin = isAdmin(me);
-    const scope = resolveScope(me, usersById, vendorScope);
+
+    // Vendedor logado: travado no próprio
+    if (!admin) {
+      return { admin, scopeUserId: me.id, scopeAuthId: me.auth_user_id };
+    }
+
+    // Admin:
+    if (vendorScope === ALL) {
+      return { admin, scopeUserId: ALL, scopeAuthId: ALL };
+    }
+
+    const u = usersById.get(vendorScope);
+    if (!u) return { admin, scopeUserId: vendorScope, scopeAuthId: ALL };
+
+    return { admin, scopeUserId: u.id, scopeAuthId: u.auth_user_id };
+  }
+
+  async function reload(hard = false) {
+    const scopes = getScopes();
+    if (!scopes) return;
 
     if (hard) setRefreshing(true);
     setErrMsg(null);
 
     try {
-      await loadDashboard(scope.scopeUserId, scope.scopeAuthId, admin);
+      await loadDashboard(scopes.scopeUserId, scopes.scopeAuthId, scopes.admin);
     } catch (e) {
       console.error("[Inicio] loadDashboard error:", e);
       setErrMsg(humanErr(e));
@@ -531,21 +522,30 @@ export default function Inicio() {
       setErrMsg(null);
 
       try {
-        const { meRow, usersRows } = await loadMeAndUsers();
+        const { meRow, usersRows, admin, initialScope } = await loadMeAndUsers();
         if (!alive) return;
-
-        const admin = isAdmin(meRow);
-        const initialScope = admin ? ALL : meRow.id;
 
         setMe(meRow);
         setUsers(usersRows);
         setVendorScope(initialScope);
 
-        // carrega com escopo inicial
-        const usersMap = new Map(usersRows.map((u) => [u.id, u]));
-        const scope = resolveScope(meRow, usersMap, initialScope);
+        // ✅ carrega imediatamente
+        const scopeUserId = admin ? (initialScope === ALL ? ALL : meRow.id) : meRow.id;
+        const scopeAuthId =
+          admin
+            ? initialScope === ALL
+              ? ALL
+              : meRow.auth_user_id
+            : meRow.auth_user_id;
 
-        await loadDashboard(scope.scopeUserId, scope.scopeAuthId, admin);
+        // OBS: no init, para admin com ALL -> ALL/ALL (visão geral)
+        const initScopes = admin
+          ? initialScope === ALL
+            ? { su: ALL, sa: ALL }
+            : { su: meRow.id, sa: meRow.auth_user_id }
+          : { su: meRow.id, sa: meRow.auth_user_id };
+
+        await loadDashboard(initScopes.su, initScopes.sa, admin);
       } catch (e) {
         console.error("[Inicio] init error:", e);
         if (!alive) return;
@@ -565,7 +565,8 @@ export default function Inicio() {
   // Quando muda filtro do admin, recarrega
   useEffect(() => {
     if (!me) return;
-    if (!isAdmin(me)) return;
+    const admin = isAdmin(me);
+    if (!admin) return;
 
     if (vendorScope !== ALL && !usersById.has(vendorScope)) return;
     reload(false);
@@ -573,8 +574,7 @@ export default function Inicio() {
   }, [vendorScope]);
 
   const admin = isAdmin(me);
-  const glassCard =
-    "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";
+  const glassCard = "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";
 
   if (loading) {
     return (
@@ -662,10 +662,7 @@ export default function Inicio() {
             <div className="text-3xl font-semibold">{kpi.overdueOppCount}</div>
             <div className="text-slate-600 text-sm mt-1">{fmtBRL(kpi.overdueOppTotal)}</div>
             <div className="mt-3">
-              <Button
-                className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                onClick={() => nav("/oportunidades")}
-              >
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/oportunidades")}>
                 Ver Oportunidades <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>
@@ -681,17 +678,10 @@ export default function Inicio() {
           <CardContent>
             <div className="text-3xl font-semibold">{kpi.todayEventsCount}</div>
             <div className="text-slate-600 text-sm mt-1">
-              {admin && vendorScope !== ALL
-                ? `Filtrado: ${scopedUser?.nome || "—"}`
-                : admin
-                ? "Visão geral"
-                : "Somente seus eventos"}
+              {admin && vendorScope !== ALL ? `Filtrado: ${scopedUser?.nome || "—"}` : admin ? "Visão geral" : "Somente seus eventos"}
             </div>
             <div className="mt-3">
-              <Button
-                className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                onClick={() => nav("/agenda")}
-              >
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/agenda")}>
                 Abrir Agenda <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>
@@ -706,11 +696,7 @@ export default function Inicio() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-4">
-              <Donut
-                pct={kpi.monthSalesPct}
-                centerTop={`${kpi.monthSalesPct.toFixed(1).replace(".", ",")}%`}
-                centerBottom="da meta"
-              />
+              <Donut pct={kpi.monthSalesPct} centerTop={`${kpi.monthSalesPct.toFixed(1).replace(".", ",")}%`} centerBottom="da meta" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-slate-600">Realizado</div>
                 <div className="text-lg font-semibold text-slate-900">{fmtBRL(kpi.monthSalesTotal)}</div>
@@ -719,10 +705,7 @@ export default function Inicio() {
                 <div className="text-base font-semibold text-slate-900">{fmtBRL(kpi.monthSalesMeta)}</div>
 
                 <div className="mt-3">
-                  <Button
-                    className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                    onClick={() => nav("/relatorios")}
-                  >
+                  <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/relatorios")}>
                     Ver Relatórios <ArrowRight className="h-4 w-4 ml-2" />
                   </Button>
                 </div>
@@ -741,10 +724,7 @@ export default function Inicio() {
             <div className="text-2xl font-semibold">{fmtBRL(kpi.carteiraAtivaTotal)}</div>
             <div className="text-slate-600 text-sm mt-1">Somatório (codigo = 00)</div>
             <div className="mt-3">
-              <Button
-                className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                onClick={() => nav("/carteira")}
-              >
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/carteira")}>
                 Abrir Carteira <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>

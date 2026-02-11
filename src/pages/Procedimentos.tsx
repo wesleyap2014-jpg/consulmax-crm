@@ -1,5 +1,5 @@
 // src/pages/Procedimentos.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +27,16 @@ import {
   Paperclip,
   RefreshCcw,
   ShieldCheck,
+  Bold,
+  Italic,
+  Underline,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Highlighter,
+  Type,
+  Image as ImageIcon,
+  BorderAll,
 } from "lucide-react";
 
 type UserRow = {
@@ -45,7 +55,7 @@ type KBProcedure = {
   title: string;
   summary: string;
   trigger: string | null;
-  steps_md: string | null;
+  steps_md: string | null; // vamos armazenar HTML aqui (sem mudar DB)
   tags: string[]; // text[]
   admin_id: string | null;
   area: string | null;
@@ -78,16 +88,6 @@ type KBDoc = {
   format_hint: string | null;
   validity_hint: string | null;
   notes: string | null;
-  sort_order: number;
-};
-
-type KBTicketField = {
-  id: string;
-  procedure_id: string;
-  field_key: string;
-  field_label: string;
-  field_value: string;
-  required: boolean;
   sort_order: number;
 };
 
@@ -139,12 +139,44 @@ function splitTags(raw: string) {
     .slice(0, 30);
 }
 
-// Markdown simples (sem lib): renderiza quebras e numerado básico
-function renderSimpleMd(md?: string | null) {
-  const text = (md || "").trim();
-  if (!text) return <div className="text-sm text-muted-foreground">—</div>;
+/**
+ * Sanitização simples (front-only) para evitar tags/script óbvias.
+ * (Se quiser nível enterprise, depois podemos usar uma lib tipo DOMPurify.)
+ */
+function sanitizeHtmlBasic(html: string) {
+  let out = html || "";
+  // remove scripts
+  out = out.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+  // remove iframes
+  out = out.replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, "");
+  // remove on* handlers
+  out = out.replace(/\son\w+="[^"]*"/gi, "");
+  out = out.replace(/\son\w+='[^']*'/gi, "");
+  return out;
+}
 
-  const lines = text.split("\n");
+function looksLikeHtml(s?: string | null) {
+  const t = (s || "").trim();
+  if (!t) return false;
+  return /<\/?[a-z][\s\S]*>/i.test(t);
+}
+
+function RichView({ htmlOrText }: { htmlOrText?: string | null }) {
+  const t = (htmlOrText || "").trim();
+  if (!t) return <div className="text-sm text-muted-foreground">—</div>;
+
+  if (looksLikeHtml(t)) {
+    const safe = sanitizeHtmlBasic(t);
+    return (
+      <div
+        className="prose prose-sm max-w-none prose-p:my-2 prose-li:my-1"
+        dangerouslySetInnerHTML={{ __html: safe }}
+      />
+    );
+  }
+
+  // fallback: texto simples (mantém quebras)
+  const lines = t.split("\n");
   return (
     <div className="space-y-2 text-sm leading-relaxed">
       {lines.map((ln, idx) => {
@@ -157,6 +189,422 @@ function renderSimpleMd(md?: string | null) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+type RichEditorValue = {
+  html: string;
+  selectedImage?: HTMLImageElement | null;
+};
+
+function allowedAttachment(file: File) {
+  const name = (file.name || "").toLowerCase();
+  const okExt = name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx");
+  const okMime =
+    file.type === "application/pdf" ||
+    file.type === "application/msword" ||
+    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    file.type === "" || // alguns browsers/OS mandam vazio
+    file.type === "application/octet-stream";
+  return okExt && okMime;
+}
+
+function RichEditor({
+  value,
+  onChange,
+  placeholder,
+  minHeight = 220,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: RichEditorValue) => void;
+  placeholder?: string;
+  minHeight?: number;
+  disabled?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [selectedImg, setSelectedImg] = useState<HTMLImageElement | null>(null);
+  const [imgWidth, setImgWidth] = useState<number>(0);
+  const [imgBorder, setImgBorder] = useState(false);
+  const [imgAlign, setImgAlign] = useState<"left" | "center" | "right">("center");
+
+  // manter HTML sincronizado quando value mudar externamente
+  useEffect(() => {
+    if (!ref.current) return;
+    const current = ref.current.innerHTML || "";
+    if (current !== (value || "")) ref.current.innerHTML = value || "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  function exec(cmd: string, arg?: string) {
+    if (disabled) return;
+    try {
+      document.execCommand(cmd, false, arg);
+      emit();
+    } catch {
+      // noop
+    }
+  }
+
+  function emit() {
+    const html = ref.current?.innerHTML || "";
+    onChange({ html, selectedImage: selectedImg });
+  }
+
+  function insertHtml(html: string) {
+    if (disabled) return;
+    exec("insertHTML", html);
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    if (disabled) return;
+    const items = e.clipboardData?.items;
+    if (!items || !items.length) return;
+
+    for (const it of Array.from(items)) {
+      if (it.type?.startsWith("image/")) {
+        e.preventDefault();
+        const file = it.getAsFile();
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const src = String(reader.result || "");
+          // imagem padrão com estilo ajustável
+          insertHtml(
+            `<div style="text-align:center;"><img src="${src}" style="max-width:100%;height:auto;border-radius:12px;display:inline-block;" /></div><p><br/></p>`
+          );
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
+  }
+
+  function handleClick(e: React.MouseEvent) {
+    const target = e.target as any;
+    if (target && target.tagName === "IMG") {
+      const img = target as HTMLImageElement;
+      setSelectedImg(img);
+
+      // width atual (em px ou %)
+      const wStyle = img.style.width || "";
+      let px = 0;
+      if (wStyle.endsWith("px")) px = parseInt(wStyle, 10) || 0;
+      else px = img.getBoundingClientRect().width || 0;
+      setImgWidth(Math.round(px));
+
+      const b = img.style.border && img.style.border !== "none";
+      setImgBorder(!!b);
+
+      // alinhamento
+      const parent = img.parentElement;
+      const ta = (parent?.style?.textAlign || "").toLowerCase();
+      if (ta === "left" || ta === "right" || ta === "center") setImgAlign(ta as any);
+      else setImgAlign("center");
+
+      return;
+    }
+    setSelectedImg(null);
+  }
+
+  function applyImageWidth(px: number) {
+    if (!selectedImg) return;
+    selectedImg.style.width = `${Math.max(80, Math.min(px, 1200))}px`;
+    selectedImg.style.height = "auto";
+    emit();
+  }
+
+  function toggleImageBorder() {
+    if (!selectedImg) return;
+    const next = !imgBorder;
+    setImgBorder(next);
+    selectedImg.style.border = next ? "2px solid rgba(161,28,39,0.35)" : "none";
+    selectedImg.style.padding = next ? "2px" : "0px";
+    selectedImg.style.borderRadius = "12px";
+    emit();
+  }
+
+  function setImageAlign(align: "left" | "center" | "right") {
+    if (!selectedImg) return;
+    setImgAlign(align);
+    const parent = selectedImg.parentElement;
+    if (parent) parent.style.textAlign = align;
+    emit();
+  }
+
+  function insertImageFromFile(file: File) {
+    if (disabled) return;
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = String(reader.result || "");
+      insertHtml(
+        `<div style="text-align:center;"><img src="${src}" style="max-width:100%;height:auto;border-radius:12px;display:inline-block;" /></div><p><br/></p>`
+      );
+    };
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-1 p-2 border-b bg-slate-50">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 px-2 gap-1"
+          onClick={() => exec("bold")}
+          disabled={disabled}
+          title="Negrito"
+        >
+          <Bold className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 px-2 gap-1"
+          onClick={() => exec("italic")}
+          disabled={disabled}
+          title="Itálico"
+        >
+          <Italic className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 px-2 gap-1"
+          onClick={() => exec("underline")}
+          disabled={disabled}
+          title="Sublinhado"
+        >
+          <Underline className="h-4 w-4" />
+        </Button>
+
+        <div className="w-px h-6 bg-slate-200 mx-1" />
+
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 px-2 gap-1"
+          onClick={() => exec("justifyLeft")}
+          disabled={disabled}
+          title="Alinhar à esquerda"
+        >
+          <AlignLeft className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 px-2 gap-1"
+          onClick={() => exec("justifyCenter")}
+          disabled={disabled}
+          title="Centralizar"
+        >
+          <AlignCenter className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 px-2 gap-1"
+          onClick={() => exec("justifyRight")}
+          disabled={disabled}
+          title="Alinhar à direita"
+        >
+          <AlignRight className="h-4 w-4" />
+        </Button>
+
+        <div className="w-px h-6 bg-slate-200 mx-1" />
+
+        {/* Font size (execCommand usa 1-7; mapeamos para tamanhos comuns) */}
+        <div className="flex items-center gap-1">
+          <Type className="h-4 w-4 text-slate-600" />
+          <select
+            className="h-8 rounded-md border border-slate-200 bg-white px-2 text-sm"
+            disabled={disabled}
+            defaultValue="3"
+            onChange={(e) => exec("fontSize", e.target.value)}
+            title="Tamanho da fonte"
+          >
+            <option value="2">Pequena</option>
+            <option value="3">Normal</option>
+            <option value="4">Média</option>
+            <option value="5">Grande</option>
+            <option value="6">Extra</option>
+          </select>
+        </div>
+
+        <div className="w-px h-6 bg-slate-200 mx-1" />
+
+        {/* Text color */}
+        <label className="flex items-center gap-1 h-8 px-2 rounded-md border border-slate-200 bg-white cursor-pointer">
+          <span className="text-xs text-slate-600">Cor</span>
+          <input
+            type="color"
+            disabled={disabled}
+            onChange={(e) => exec("foreColor", e.target.value)}
+            title="Cor do texto"
+          />
+        </label>
+
+        {/* Highlight */}
+        <label className="flex items-center gap-1 h-8 px-2 rounded-md border border-slate-200 bg-white cursor-pointer">
+          <Highlighter className="h-4 w-4 text-slate-600" />
+          <input
+            type="color"
+            disabled={disabled}
+            onChange={(e) => exec("hiliteColor", e.target.value)}
+            title="Realce"
+          />
+        </label>
+
+        <div className="w-px h-6 bg-slate-200 mx-1" />
+
+        {/* Insert image button */}
+        <label className="inline-flex items-center gap-2 h-8 px-2 rounded-md border border-slate-200 bg-white cursor-pointer">
+          <ImageIcon className="h-4 w-4 text-slate-700" />
+          <span className="text-xs text-slate-700">Inserir imagem</span>
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={disabled}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              insertImageFromFile(f);
+              e.currentTarget.value = "";
+            }}
+          />
+        </label>
+
+        <div className="ml-auto text-[11px] text-muted-foreground">
+          Dica: cole imagem com <b>Ctrl + V</b>
+        </div>
+      </div>
+
+      {/* Selected image controls */}
+      {selectedImg && (
+        <div className="p-2 border-b bg-white">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-xs text-slate-700 font-medium">Imagem selecionada</div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Largura:</span>
+              <Input
+                type="number"
+                className="h-8 w-[110px]"
+                value={imgWidth || 0}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value || "0", 10) || 0;
+                  setImgWidth(v);
+                  applyImageWidth(v);
+                }}
+                min={80}
+                max={1200}
+                disabled={disabled}
+              />
+              <span className="text-xs text-muted-foreground">px</span>
+            </div>
+
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 gap-2"
+              onClick={toggleImageBorder}
+              disabled={disabled}
+              title="Borda"
+            >
+              <BorderAll className="h-4 w-4" />
+              {imgBorder ? "Remover borda" : "Borda"}
+            </Button>
+
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={imgAlign === "left" ? "default" : "outline"}
+                className="h-8 px-2"
+                onClick={() => setImageAlign("left")}
+                disabled={disabled}
+                title="Alinhar esquerda"
+              >
+                <AlignLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={imgAlign === "center" ? "default" : "outline"}
+                className="h-8 px-2"
+                onClick={() => setImageAlign("center")}
+                disabled={disabled}
+                title="Centralizar"
+              >
+                <AlignCenter className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={imgAlign === "right" ? "default" : "outline"}
+                className="h-8 px-2"
+                onClick={() => setImageAlign("right")}
+                disabled={disabled}
+                title="Alinhar direita"
+              >
+                <AlignRight className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8"
+              onClick={() => setSelectedImg(null)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Editable area */}
+      <div
+        ref={ref}
+        contentEditable={!disabled}
+        suppressContentEditableWarning
+        className={[
+          "p-3 outline-none",
+          "text-sm leading-relaxed",
+          "prose prose-sm max-w-none",
+          disabled ? "bg-slate-50 text-muted-foreground" : "bg-white",
+        ].join(" ")}
+        style={{ minHeight }}
+        onInput={() => emit()}
+        onPaste={handlePaste}
+        onClick={handleClick}
+        data-placeholder={placeholder || ""}
+      />
+
+      <style>
+        {`
+          [contenteditable][data-placeholder]:empty:before {
+            content: attr(data-placeholder);
+            color: #94a3b8;
+          }
+          .prose img {
+            max-width: 100%;
+            height: auto;
+          }
+        `}
+      </style>
     </div>
   );
 }
@@ -194,16 +642,29 @@ export default function Procedimentos() {
 
   const [roles, setRoles] = useState<KBRole[]>([]);
   const [docs, setDocs] = useState<KBDoc[]>([]);
-  const [ticketFields, setTicketFields] = useState<KBTicketField[]>([]);
   const [assets, setAssets] = useState<KBAsset[]>([]);
   const [suggestions, setSuggestions] = useState<KBSuggestion[]>([]);
 
   // editor
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Partial<KBProcedure> & { tagsText?: string }>({});
+  const titleRef = useRef<HTMLInputElement | null>(null);
+
+  const [draft, setDraft] = useState<
+    Partial<KBProcedure> & {
+      tagsText?: string;
+      stepsHtml?: string; // editor rico (salvo em steps_md)
+      docsHtml?: string; // editor rico (salvo em flags.docs_html)
+    }
+  >({});
 
   // sugestão
   const [newSuggestion, setNewSuggestion] = useState("");
+
+  // helper para pegar docs html do active.flags
+  const activeDocsHtml = useMemo(() => {
+    const f = (active?.flags || {}) as any;
+    return (f?.docs_html as string) || "";
+  }, [active]);
 
   async function loadMe() {
     const { data: auth } = await supabase.auth.getUser();
@@ -246,7 +707,7 @@ export default function Procedimentos() {
   }
 
   async function loadDetails(procedureId: string) {
-    const [r1, r2, r3, r4, r5] = await Promise.all([
+    const [r1, r2, r4, r5] = await Promise.all([
       supabase
         .from("kb_roles")
         .select("*")
@@ -254,11 +715,6 @@ export default function Procedimentos() {
         .order("sort_order", { ascending: true }),
       supabase
         .from("kb_documents")
-        .select("*")
-        .eq("procedure_id", procedureId)
-        .order("sort_order", { ascending: true }),
-      supabase
-        .from("kb_ticket_fields")
         .select("*")
         .eq("procedure_id", procedureId)
         .order("sort_order", { ascending: true }),
@@ -276,7 +732,6 @@ export default function Procedimentos() {
 
     setRoles((r1.data as any) || []);
     setDocs((r2.data as any) || []);
-    setTicketFields((r3.data as any) || []);
     setAssets((r4.data as any) || []);
     setSuggestions((r5.data as any) || []);
   }
@@ -304,6 +759,12 @@ export default function Procedimentos() {
     loadDetails(activeId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
+
+  useEffect(() => {
+    if (editing) {
+      setTimeout(() => titleRef.current?.focus(), 50);
+    }
+  }, [editing]);
 
   const areas = useMemo(() => {
     const s = new Set<string>();
@@ -350,21 +811,27 @@ export default function Procedimentos() {
         title: "",
         summary: "",
         trigger: "",
-        steps_md: "1) \n2) \n3) ",
+        stepsHtml:
+          "<p><b>1)</b> </p><p><b>2)</b> </p><p><b>3)</b> </p>",
+        docsHtml: "<p>• Documento 1</p><p>• Documento 2</p>",
         tagsText: "procedimento, operações",
         area: "Operações",
         channel: "Ticket",
         sla_text: "",
-        flags: { uses_ticket: true, has_roles: false },
+        flags: { uses_ticket: false, has_roles: false, docs_html: "" },
         status: "draft",
       });
       return;
     }
 
     if (!active) return;
+    const f = (active.flags || {}) as any;
     setDraft({
       ...active,
       tagsText: (active.tags || []).join(", "),
+      stepsHtml: active.steps_md || "",
+      docsHtml: (f?.docs_html as string) || "",
+      flags: active.flags || {},
     });
   }
 
@@ -383,16 +850,26 @@ export default function Procedimentos() {
       return;
     }
 
+    const stepsHtml = (draft.stepsHtml ?? draft.steps_md ?? "").trim();
+    const docsHtml = (draft.docsHtml || "").trim();
+
+    const baseFlags = (draft.flags || {}) as any;
+    const mergedFlags = {
+      ...baseFlags,
+      uses_ticket: false,
+      docs_html: docsHtml || null,
+    };
+
     const payload: Partial<KBProcedure> & { tags: string[] } = {
       title,
       summary,
       trigger: (draft.trigger || "").trim() || null,
-      steps_md: (draft.steps_md || "").trim() || null,
+      steps_md: stepsHtml || null, // HTML
       tags: splitTags(draft.tagsText || ""),
       area: (draft.area || "").trim() || null,
       channel: (draft.channel || "").trim() || null,
       sla_text: (draft.sla_text || "").trim() || null,
-      flags: draft.flags || {},
+      flags: mergedFlags,
       status: ((draft.status as any) || "draft") as any,
       updated_by: (await supabase.auth.getUser()).data.user?.id || null,
     };
@@ -455,6 +932,24 @@ export default function Procedimentos() {
 
       if (error) throw error;
 
+      // cria notificação no CRM (tabelas já criadas)
+      try {
+        await supabase.from("crm_notifications").insert([
+          {
+            kind: "info",
+            type: "procedure_published",
+            title: `Novo procedimento publicado: ${active.title}`,
+            body: active.summary || null,
+            link: `/procedimentos?pid=${active.id}`,
+            meta: { procedure_id: active.id, area: active.area, channel: active.channel },
+            is_active_only: true,
+            created_by: adminUid,
+          },
+        ]);
+      } catch {
+        // não bloqueia publish
+      }
+
       await loadProcedures();
       await loadDetails(active.id);
     } catch (e: any) {
@@ -510,6 +1005,12 @@ export default function Procedimentos() {
   async function uploadAsset(file: File, kind: KBAsset["kind"]) {
     if (!active || !canEdit) return;
 
+    // restrição solicitada: apenas doc/pdf (modelos)
+    if (!allowedAttachment(file)) {
+      alert("Anexos permitidos: .pdf, .doc, .docx");
+      return;
+    }
+
     try {
       const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 120);
       const path = `procedure/${active.id}/${Date.now()}_${safe}`;
@@ -560,8 +1061,10 @@ export default function Procedimentos() {
   }
 
   const statusPill = (st: KBStatus) => {
-    if (st === "active") return <Badge className="bg-emerald-600 hover:bg-emerald-600">Ativo</Badge>;
-    if (st === "review") return <Badge className="bg-amber-600 hover:bg-amber-600">Em revisão</Badge>;
+    if (st === "active")
+      return <Badge className="bg-emerald-600 hover:bg-emerald-600">Ativo</Badge>;
+    if (st === "review")
+      return <Badge className="bg-amber-600 hover:bg-amber-600">Em revisão</Badge>;
     return <Badge variant="secondary">Rascunho</Badge>;
   };
 
@@ -675,7 +1178,9 @@ export default function Procedimentos() {
                     }}
                     className={[
                       "w-full text-left rounded-xl border p-3 transition",
-                      isActive ? "border-[#A11C27] bg-[#A11C27]/5" : "border-slate-200 hover:bg-slate-50",
+                      isActive
+                        ? "border-[#A11C27] bg-[#A11C27]/5"
+                        : "border-slate-200 hover:bg-slate-50",
                     ].join(" ")}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -718,9 +1223,7 @@ export default function Procedimentos() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <CardTitle className="text-lg">{active?.title || "Selecione um procedimento"}</CardTitle>
-                <div className="mt-1 text-sm text-muted-foreground">
-                  {active?.summary || "—"}
-                </div>
+                <div className="mt-1 text-sm text-muted-foreground">{active?.summary || "—"}</div>
               </div>
 
               {active && (
@@ -750,11 +1253,7 @@ export default function Procedimentos() {
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {!active && (
-              <div className="text-sm text-muted-foreground">
-                Selecione um procedimento à esquerda.
-              </div>
-            )}
+            {!active && <div className="text-sm text-muted-foreground">Selecione um procedimento à esquerda.</div>}
 
             {active && editing && (
               <div className="space-y-3 rounded-xl border border-slate-200 p-3">
@@ -777,11 +1276,13 @@ export default function Procedimentos() {
                   <div className="space-y-1">
                     <div className="text-xs text-muted-foreground">Título</div>
                     <Input
+                      ref={titleRef}
                       value={draft.title || ""}
                       onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-                      placeholder="Ex.: Devolução de lance (cota descontemplada)"
+                      placeholder="Ex.: Transferência de cota"
                     />
                   </div>
+
                   <div className="space-y-1">
                     <div className="text-xs text-muted-foreground">Status</div>
                     <Select
@@ -807,7 +1308,7 @@ export default function Procedimentos() {
                     <Textarea
                       value={draft.summary || ""}
                       onChange={(e) => setDraft((d) => ({ ...d, summary: e.target.value }))}
-                      placeholder="Ex.: Abrir ticket → anexar docs → informar dados bancários → aguardar depósito."
+                      placeholder="Ex.: Coletar docs → abrir ticket → anexar tudo → acompanhar validação."
                       rows={3}
                     />
                   </div>
@@ -829,6 +1330,7 @@ export default function Procedimentos() {
                       placeholder="Operações"
                     />
                   </div>
+
                   <div className="space-y-1">
                     <div className="text-xs text-muted-foreground">Canal</div>
                     <Input
@@ -852,17 +1354,39 @@ export default function Procedimentos() {
                     <Input
                       value={draft.tagsText || ""}
                       onChange={(e) => setDraft((d) => ({ ...d, tagsText: e.target.value }))}
-                      placeholder="devolução, lance, reembolso, ticket"
+                      placeholder="transferência, cota, operações"
                     />
                   </div>
 
+                  {/* PASSO A PASSO - RICO */}
                   <div className="space-y-1 md:col-span-2">
-                    <div className="text-xs text-muted-foreground">Passo a passo (markdown simples)</div>
-                    <Textarea
-                      value={(draft.steps_md as any) || ""}
-                      onChange={(e) => setDraft((d) => ({ ...d, steps_md: e.target.value }))}
-                      rows={10}
+                    <div className="text-xs text-muted-foreground">
+                      Passo a passo (editor rico estilo Word)
+                    </div>
+                    <RichEditor
+                      value={draft.stepsHtml || ""}
+                      onChange={({ html }) => setDraft((d) => ({ ...d, stepsHtml: html }))}
+                      placeholder="Digite aqui o passo a passo. Você pode formatar, colar imagens (Ctrl+V) e ajustar."
+                      minHeight={260}
+                      disabled={loading}
                     />
+                  </div>
+
+                  {/* DOCUMENTOS - RICO (novo, guardado em flags.docs_html) */}
+                  <div className="space-y-1 md:col-span-2">
+                    <div className="text-xs text-muted-foreground">
+                      Documentos (descreva a relação de documentos – estilo Word)
+                    </div>
+                    <RichEditor
+                      value={draft.docsHtml || ""}
+                      onChange={({ html }) => setDraft((d) => ({ ...d, docsHtml: html }))}
+                      placeholder="Liste os documentos usados neste processo. Ex.: RG, CPF, comprovante..."
+                      minHeight={200}
+                      disabled={loading}
+                    />
+                    <div className="text-[11px] text-muted-foreground">
+                      *Esta lista fica salva no procedimento e aparece na aba “Documentos”.
+                    </div>
                   </div>
                 </div>
 
@@ -871,7 +1395,7 @@ export default function Procedimentos() {
                     <div className="text-sm">
                       <div className="font-medium">Publicação</div>
                       <div className="text-xs text-muted-foreground">
-                        Ao aprovar, o procedimento fica <b>Ativo</b> para toda a equipe.
+                        Ao aprovar, o procedimento fica <b>Ativo</b> para toda a equipe e gera notificação no CRM.
                       </div>
                     </div>
                     <Button className="gap-2" onClick={approveProcedure}>
@@ -888,7 +1412,7 @@ export default function Procedimentos() {
                 <TabsList className="w-full justify-start">
                   <TabsTrigger value="passos">Passo a passo</TabsTrigger>
                   <TabsTrigger value="docs">Documentos</TabsTrigger>
-                  <TabsTrigger value="ticket">Ticket</TabsTrigger>
+                  {/* Ticket removido conforme pedido */}
                   <TabsTrigger value="anexos">Anexos</TabsTrigger>
                   <TabsTrigger value="sugestoes">Sugestões</TabsTrigger>
                 </TabsList>
@@ -898,89 +1422,79 @@ export default function Procedimentos() {
                     <div className="text-sm font-medium">Quando usar</div>
                     <div className="text-sm text-slate-700">{active.trigger || "—"}</div>
 
-                    {/* divisor simples (sem Separator) */}
                     <div className="h-px w-full bg-slate-200 my-3" />
 
                     <div className="text-sm font-medium">Como fazer</div>
-                    {renderSimpleMd(active.steps_md)}
+                    <RichView htmlOrText={active.steps_md} />
                   </div>
                 </TabsContent>
 
                 <TabsContent value="docs" className="pt-3">
                   <div className="space-y-3">
-                    {docs.length === 0 ? (
-                      <div className="text-sm text-muted-foreground">Sem documentos cadastrados.</div>
+                    {/* 1) Preferência: documentos livres (flags.docs_html) */}
+                    {activeDocsHtml?.trim() ? (
+                      <div className="rounded-xl border p-3">
+                        <RichView htmlOrText={activeDocsHtml} />
+                      </div>
                     ) : (
                       <>
-                        {Object.entries(
-                          docs.reduce<Record<string, KBDoc[]>>((acc, d) => {
-                            const k = d.role_key || "geral";
-                            acc[k] = acc[k] || [];
-                            acc[k].push(d);
-                            return acc;
-                          }, {})
-                        ).map(([roleKey, items]) => (
-                          <div key={roleKey} className="rounded-xl border p-3">
-                            <div className="text-sm font-medium">
-                              {roleKey === "geral"
-                                ? "Geral"
-                                : roles.find((r) => r.role_key === roleKey)?.role_label || roleKey}
-                            </div>
-                            <div className="mt-2 space-y-2">
-                              {items.map((d) => (
-                                <div
-                                  key={d.id}
-                                  className="flex items-start justify-between gap-3 rounded-lg bg-slate-50 border p-2"
-                                >
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-medium text-slate-900">
-                                      {d.doc_name}{" "}
-                                      {!d.required && (
-                                        <span className="text-xs text-muted-foreground">(opcional)</span>
-                                      )}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">
-                                      {[
-                                        d.format_hint ? `Formato: ${d.format_hint}` : null,
-                                        d.validity_hint ? `Validade: ${d.validity_hint}` : null,
-                                        d.notes ? d.notes : null,
-                                      ]
-                                        .filter(Boolean)
-                                        .join(" • ") || "—"}
-                                    </div>
-                                  </div>
+                        {/* 2) Fallback: estrutura antiga kb_documents (mantém compat) */}
+                        {docs.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">
+                            Sem documentos cadastrados.
+                          </div>
+                        ) : (
+                          <>
+                            {Object.entries(
+                              docs.reduce<Record<string, KBDoc[]>>((acc, d) => {
+                                const k = d.role_key || "geral";
+                                acc[k] = acc[k] || [];
+                                acc[k].push(d);
+                                return acc;
+                              }, {})
+                            ).map(([roleKey, items]) => (
+                              <div key={roleKey} className="rounded-xl border p-3">
+                                <div className="text-sm font-medium">
+                                  {roleKey === "geral"
+                                    ? "Geral"
+                                    : roles.find((r) => r.role_key === roleKey)?.role_label ||
+                                      roleKey}
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="ticket" className="pt-3">
-                  <div className="space-y-3">
-                    {ticketFields.length === 0 ? (
-                      <div className="text-sm text-muted-foreground">
-                        Sem campos de ticket cadastrados para este procedimento.
-                      </div>
-                    ) : (
-                      <div className="rounded-xl border p-3 space-y-2">
-                        {ticketFields.map((f) => (
-                          <div key={f.id} className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium text-slate-900">
-                                {f.field_label}{" "}
-                                {!f.required && (
-                                  <span className="text-xs text-muted-foreground">(opcional)</span>
-                                )}
+                                <div className="mt-2 space-y-2">
+                                  {items.map((d) => (
+                                    <div
+                                      key={d.id}
+                                      className="flex items-start justify-between gap-3 rounded-lg bg-slate-50 border p-2"
+                                    >
+                                      <div className="min-w-0">
+                                        <div className="text-sm font-medium text-slate-900">
+                                          {d.doc_name}{" "}
+                                          {!d.required && (
+                                            <span className="text-xs text-muted-foreground">
+                                              (opcional)
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                          {[
+                                            d.format_hint ? `Formato: ${d.format_hint}` : null,
+                                            d.validity_hint
+                                              ? `Validade: ${d.validity_hint}`
+                                              : null,
+                                            d.notes ? d.notes : null,
+                                          ]
+                                            .filter(Boolean)
+                                            .join(" • ") || "—"}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                              <div className="text-sm text-slate-700">{f.field_value}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                            ))}
+                          </>
+                        )}
+                      </>
                     )}
                   </div>
                 </TabsContent>
@@ -990,7 +1504,7 @@ export default function Procedimentos() {
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-medium flex items-center gap-2">
                         <Paperclip className="h-4 w-4" />
-                        Anexos internos
+                        Anexos (modelos .doc/.pdf)
                       </div>
 
                       {canEdit && (
@@ -998,6 +1512,7 @@ export default function Procedimentos() {
                           <label className="text-xs text-muted-foreground">Upload:</label>
                           <input
                             type="file"
+                            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                             className="text-xs"
                             onChange={(e) => {
                               const file = e.target.files?.[0];

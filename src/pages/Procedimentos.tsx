@@ -36,7 +36,7 @@ import {
   Highlighter,
   Type,
   Image as ImageIcon,
-  Square, // ✅ substitui BorderAll (que não existe em algumas versões do lucide-react)
+  Square, // substitui BorderAll (evita erro de export)
 } from "lucide-react";
 
 type UserRow = {
@@ -55,13 +55,13 @@ type KBProcedure = {
   title: string;
   summary: string;
   trigger: string | null;
-  steps_md: string | null; // vamos armazenar HTML aqui (para não depender de schema novo)
+  steps_md: string | null; // armazenamos HTML aqui
   tags: string[]; // text[]
   admin_id: string | null;
   area: string | null;
   channel: string | null;
   sla_text: string | null;
-  flags: any; // jsonb (vamos guardar docs_html aqui)
+  flags: any; // jsonb (guardamos docs_html aqui)
   status: KBStatus;
 
   approved_by: string | null;
@@ -159,7 +159,6 @@ function renderHtmlOrFallback(value?: string | null) {
     );
   }
 
-  // fallback (texto simples)
   const lines = v.split("\n");
   return (
     <div className="space-y-2 text-sm leading-relaxed">
@@ -197,11 +196,9 @@ function RichEditor({
   const [imgWidth, setImgWidth] = useState<number>(420);
   const [imgBorder, setImgBorder] = useState<boolean>(false);
 
-  // mantém o conteúdo sincronizado quando troca item ativo
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // evita sobrescrever enquanto digitando (mas aqui é simples e estável)
     if (el.innerHTML !== value) el.innerHTML = value || "";
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
@@ -231,11 +228,9 @@ function RichEditor({
     if (!imgItem) return;
 
     e.preventDefault();
-
     const file = imgItem.getAsFile();
     if (!file) return;
 
-    // insere como DataURL (sem depender de storage/SQL extra)
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = String(reader.result || "");
@@ -406,7 +401,7 @@ function RichEditor({
       />
       {!readOnly && (
         <div className="text-[11px] text-muted-foreground">
-          Dica: para colar imagem, copie a imagem e use <b>Ctrl+V</b> aqui. (Ela será salva dentro do texto.)
+          Dica: copie uma imagem e use <b>Ctrl+V</b> aqui. (Ela será salva dentro do texto.)
         </div>
       )}
     </div>
@@ -419,7 +414,6 @@ async function tryInsertNotificationForActiveUsers(payload: {
   link?: string | null;
   created_by?: string | null;
 }) {
-  // Não quebra o fluxo se a tabela não existir/estiver diferente.
   try {
     const { data: users, error: uErr } = await supabase
       .from("users")
@@ -439,7 +433,6 @@ async function tryInsertNotificationForActiveUsers(payload: {
 
     if (!rows.length) return;
 
-    // tenta nomes comuns (sem travar)
     const tries = ["crm_notifications", "notifications"];
     for (const table of tries) {
       const { error } = await supabase.from(table as any).insert(rows as any);
@@ -469,13 +462,11 @@ export default function Procedimentos() {
   const [procedures, setProcedures] = useState<KBProcedure[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
-  // filtros
   const [q, setQ] = useState("");
   const [fArea, setFArea] = useState<string>("__all__");
   const [fChannel, setFChannel] = useState<string>("__all__");
   const [fStatus, setFStatus] = useState<string>("__all__");
 
-  // detalhe
   const active = useMemo(
     () => procedures.find((p) => p.id === activeId) || null,
     [procedures, activeId]
@@ -486,15 +477,12 @@ export default function Procedimentos() {
   const [assets, setAssets] = useState<KBAsset[]>([]);
   const [suggestions, setSuggestions] = useState<KBSuggestion[]>([]);
 
-  // editor
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Partial<KBProcedure> & { tagsText?: string }>({});
 
-  // rich fields
   const [stepsHtml, setStepsHtml] = useState<string>("");
   const [docsHtml, setDocsHtml] = useState<string>("");
 
-  // sugestão
   const [newSuggestion, setNewSuggestion] = useState("");
 
   async function loadMe() {
@@ -689,7 +677,7 @@ export default function Procedimentos() {
       title,
       summary,
       trigger: (draft.trigger || "").trim() || null,
-      steps_md: (stepsHtml || "").trim() || null, // HTML aqui
+      steps_md: (stepsHtml || "").trim() || null,
       tags: splitTags(draft.tagsText || ""),
       area: (draft.area || "").trim() || null,
       channel: (draft.channel || "").trim() || null,
@@ -756,7 +744,6 @@ export default function Procedimentos() {
 
       if (error) throw error;
 
-      // notificação interna (best-effort, não trava se tabela for diferente)
       await tryInsertNotificationForActiveUsers({
         title: "Novo procedimento publicado",
         body: `Procedimento: ${active.title}`,
@@ -819,7 +806,6 @@ export default function Procedimentos() {
   async function uploadAsset(file: File, kind: KBAsset["kind"]) {
     if (!active || !canEdit) return;
 
-    // aceita .doc, .docx e .pdf conforme pedido
     const nameLower = (file.name || "").toLowerCase();
     const okExt = nameLower.endsWith(".pdf") || nameLower.endsWith(".doc") || nameLower.endsWith(".docx");
     if (!okExt) {
@@ -1243,12 +1229,13 @@ export default function Procedimentos() {
                   <div className="space-y-3">
                     <div className="rounded-xl border p-3">
                       <div className="text-sm font-medium mb-2">Documentos (descrição)</div>
-                      {activeDocsHtml ? renderHtmlOrFallback(activeDocsHtml) : (
+                      {activeDocsHtml ? (
+                        renderHtmlOrFallback(activeDocsHtml)
+                      ) : (
                         <div className="text-sm text-muted-foreground">Sem descrição de documentos.</div>
                       )}
                     </div>
 
-                    {/* Mantém o que já existia (lista estruturada), caso você continue usando */}
                     {docs.length > 0 && (
                       <div className="space-y-3">
                         {Object.entries(
@@ -1362,7 +1349,6 @@ export default function Procedimentos() {
                   <div className="space-y-3">
                     <div className="rounded-xl border p-3 space-y-2">
                       <div className="text-sm font-medium flex items-center gap-2">
-
                         <MessageCircle className="h-4 w-4" />
                         Enviar sugestão de melhoria
                       </div>

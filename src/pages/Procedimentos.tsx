@@ -36,7 +36,7 @@ import {
   Highlighter,
   Type,
   Image as ImageIcon,
-  BorderAll,
+  Square, // ✅ substitui BorderAll (que não existe em algumas versões do lucide-react)
 } from "lucide-react";
 
 type UserRow = {
@@ -55,13 +55,13 @@ type KBProcedure = {
   title: string;
   summary: string;
   trigger: string | null;
-  steps_md: string | null; // vamos armazenar HTML aqui (sem mudar DB)
+  steps_md: string | null; // vamos armazenar HTML aqui (para não depender de schema novo)
   tags: string[]; // text[]
   admin_id: string | null;
   area: string | null;
   channel: string | null;
   sla_text: string | null;
-  flags: any; // jsonb
+  flags: any; // jsonb (vamos guardar docs_html aqui)
   status: KBStatus;
 
   approved_by: string | null;
@@ -139,44 +139,28 @@ function splitTags(raw: string) {
     .slice(0, 30);
 }
 
-/**
- * Sanitização simples (front-only) para evitar tags/script óbvias.
- * (Se quiser nível enterprise, depois podemos usar uma lib tipo DOMPurify.)
- */
-function sanitizeHtmlBasic(html: string) {
-  let out = html || "";
-  // remove scripts
-  out = out.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
-  // remove iframes
-  out = out.replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, "");
-  // remove on* handlers
-  out = out.replace(/\son\w+="[^"]*"/gi, "");
-  out = out.replace(/\son\w+='[^']*'/gi, "");
-  return out;
-}
-
 function looksLikeHtml(s?: string | null) {
   const t = (s || "").trim();
   if (!t) return false;
-  return /<\/?[a-z][\s\S]*>/i.test(t);
+  return t.includes("<") && t.includes(">");
 }
 
-function RichView({ htmlOrText }: { htmlOrText?: string | null }) {
-  const t = (htmlOrText || "").trim();
-  if (!t) return <div className="text-sm text-muted-foreground">—</div>;
+function renderHtmlOrFallback(value?: string | null) {
+  const v = (value || "").trim();
+  if (!v) return <div className="text-sm text-muted-foreground">—</div>;
 
-  if (looksLikeHtml(t)) {
-    const safe = sanitizeHtmlBasic(t);
+  if (looksLikeHtml(v)) {
     return (
       <div
-        className="prose prose-sm max-w-none prose-p:my-2 prose-li:my-1"
-        dangerouslySetInnerHTML={{ __html: safe }}
+        className="prose prose-sm max-w-none"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: v }}
       />
     );
   }
 
-  // fallback: texto simples (mantém quebras)
-  const lines = t.split("\n");
+  // fallback (texto simples)
+  const lines = v.split("\n");
   return (
     <div className="space-y-2 text-sm leading-relaxed">
       {lines.map((ln, idx) => {
@@ -193,420 +177,277 @@ function RichView({ htmlOrText }: { htmlOrText?: string | null }) {
   );
 }
 
-type RichEditorValue = {
-  html: string;
-  selectedImage?: HTMLImageElement | null;
+type RichEditorProps = {
+  value: string;
+  onChange: (html: string) => void;
+  readOnly?: boolean;
+  placeholder?: string;
+  minHeight?: number;
 };
-
-function allowedAttachment(file: File) {
-  const name = (file.name || "").toLowerCase();
-  const okExt = name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx");
-  const okMime =
-    file.type === "application/pdf" ||
-    file.type === "application/msword" ||
-    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    file.type === "" || // alguns browsers/OS mandam vazio
-    file.type === "application/octet-stream";
-  return okExt && okMime;
-}
 
 function RichEditor({
   value,
   onChange,
+  readOnly,
   placeholder,
   minHeight = 220,
-  disabled,
-}: {
-  value: string;
-  onChange: (v: RichEditorValue) => void;
-  placeholder?: string;
-  minHeight?: number;
-  disabled?: boolean;
-}) {
+}: RichEditorProps) {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [selectedImg, setSelectedImg] = useState<HTMLImageElement | null>(null);
-  const [imgWidth, setImgWidth] = useState<number>(0);
-  const [imgBorder, setImgBorder] = useState(false);
-  const [imgAlign, setImgAlign] = useState<"left" | "center" | "right">("center");
+  const [imgSelected, setImgSelected] = useState<HTMLImageElement | null>(null);
+  const [imgWidth, setImgWidth] = useState<number>(420);
+  const [imgBorder, setImgBorder] = useState<boolean>(false);
 
-  // manter HTML sincronizado quando value mudar externamente
+  // mantém o conteúdo sincronizado quando troca item ativo
   useEffect(() => {
-    if (!ref.current) return;
-    const current = ref.current.innerHTML || "";
-    if (current !== (value || "")) ref.current.innerHTML = value || "";
+    const el = ref.current;
+    if (!el) return;
+    // evita sobrescrever enquanto digitando (mas aqui é simples e estável)
+    if (el.innerHTML !== value) el.innerHTML = value || "";
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   function exec(cmd: string, arg?: string) {
-    if (disabled) return;
-    try {
-      document.execCommand(cmd, false, arg);
-      emit();
-    } catch {
-      // noop
-    }
+    if (readOnly) return;
+    // @ts-ignore
+    document.execCommand("styleWithCSS", false, true);
+    // @ts-ignore
+    document.execCommand(cmd, false, arg);
+    const el = ref.current;
+    if (el) onChange(el.innerHTML);
   }
 
-  function emit() {
-    const html = ref.current?.innerHTML || "";
-    onChange({ html, selectedImage: selectedImg });
+  function updateFromDom() {
+    const el = ref.current;
+    if (!el) return;
+    onChange(el.innerHTML);
   }
 
-  function insertHtml(html: string) {
-    if (disabled) return;
-    exec("insertHTML", html);
-  }
-
-  function handlePaste(e: React.ClipboardEvent) {
-    if (disabled) return;
+  async function handlePaste(e: React.ClipboardEvent) {
+    if (readOnly) return;
     const items = e.clipboardData?.items;
-    if (!items || !items.length) return;
+    if (!items) return;
 
-    for (const it of Array.from(items)) {
-      if (it.type?.startsWith("image/")) {
-        e.preventDefault();
-        const file = it.getAsFile();
-        if (!file) return;
+    const imgItem = Array.from(items).find((it) => it.type.startsWith("image/"));
+    if (!imgItem) return;
 
-        const reader = new FileReader();
-        reader.onload = () => {
-          const src = String(reader.result || "");
-          // imagem padrão com estilo ajustável
-          insertHtml(
-            `<div style="text-align:center;"><img src="${src}" style="max-width:100%;height:auto;border-radius:12px;display:inline-block;" /></div><p><br/></p>`
-          );
-        };
-        reader.readAsDataURL(file);
-        return;
-      }
-    }
-  }
+    e.preventDefault();
 
-  function handleClick(e: React.MouseEvent) {
-    const target = e.target as any;
-    if (target && target.tagName === "IMG") {
-      const img = target as HTMLImageElement;
-      setSelectedImg(img);
+    const file = imgItem.getAsFile();
+    if (!file) return;
 
-      // width atual (em px ou %)
-      const wStyle = img.style.width || "";
-      let px = 0;
-      if (wStyle.endsWith("px")) px = parseInt(wStyle, 10) || 0;
-      else px = img.getBoundingClientRect().width || 0;
-      setImgWidth(Math.round(px));
-
-      const b = img.style.border && img.style.border !== "none";
-      setImgBorder(!!b);
-
-      // alinhamento
-      const parent = img.parentElement;
-      const ta = (parent?.style?.textAlign || "").toLowerCase();
-      if (ta === "left" || ta === "right" || ta === "center") setImgAlign(ta as any);
-      else setImgAlign("center");
-
-      return;
-    }
-    setSelectedImg(null);
-  }
-
-  function applyImageWidth(px: number) {
-    if (!selectedImg) return;
-    selectedImg.style.width = `${Math.max(80, Math.min(px, 1200))}px`;
-    selectedImg.style.height = "auto";
-    emit();
-  }
-
-  function toggleImageBorder() {
-    if (!selectedImg) return;
-    const next = !imgBorder;
-    setImgBorder(next);
-    selectedImg.style.border = next ? "2px solid rgba(161,28,39,0.35)" : "none";
-    selectedImg.style.padding = next ? "2px" : "0px";
-    selectedImg.style.borderRadius = "12px";
-    emit();
-  }
-
-  function setImageAlign(align: "left" | "center" | "right") {
-    if (!selectedImg) return;
-    setImgAlign(align);
-    const parent = selectedImg.parentElement;
-    if (parent) parent.style.textAlign = align;
-    emit();
-  }
-
-  function insertImageFromFile(file: File) {
-    if (disabled) return;
-    if (!file.type.startsWith("image/")) return;
+    // insere como DataURL (sem depender de storage/SQL extra)
     const reader = new FileReader();
     reader.onload = () => {
-      const src = String(reader.result || "");
-      insertHtml(
-        `<div style="text-align:center;"><img src="${src}" style="max-width:100%;height:auto;border-radius:12px;display:inline-block;" /></div><p><br/></p>`
-      );
+      const dataUrl = String(reader.result || "");
+      if (!dataUrl) return;
+
+      const imgHtml = `<img src="${dataUrl}" style="max-width:100%;height:auto;border-radius:12px;" />`;
+      // @ts-ignore
+      document.execCommand("insertHTML", false, imgHtml);
+
+      const el = ref.current;
+      if (el) onChange(el.innerHTML);
     };
     reader.readAsDataURL(file);
   }
 
+  function onClickEditor(e: React.MouseEvent) {
+    const t = e.target as any;
+    if (t && t.tagName === "IMG") {
+      const img = t as HTMLImageElement;
+      setImgSelected(img);
+      const w = parseInt(img.style.width || "", 10);
+      setImgWidth(Number.isFinite(w) && w > 0 ? w : Math.min(600, img.clientWidth || 420));
+      setImgBorder((img.style.border || "").includes("solid"));
+      return;
+    }
+    setImgSelected(null);
+  }
+
+  function applyImg() {
+    if (!imgSelected) return;
+    imgSelected.style.width = `${imgWidth}px`;
+    imgSelected.style.maxWidth = "100%";
+    imgSelected.style.height = "auto";
+    imgSelected.style.borderRadius = "12px";
+    imgSelected.style.border = imgBorder ? "2px solid rgba(30,41,63,0.25)" : "none";
+    updateFromDom();
+  }
+
+  useEffect(() => {
+    applyImg();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgWidth, imgBorder]);
+
   return (
-    <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-1 p-2 border-b bg-slate-50">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 px-2 gap-1"
-          onClick={() => exec("bold")}
-          disabled={disabled}
-          title="Negrito"
-        >
-          <Bold className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 px-2 gap-1"
-          onClick={() => exec("italic")}
-          disabled={disabled}
-          title="Itálico"
-        >
-          <Italic className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 px-2 gap-1"
-          onClick={() => exec("underline")}
-          disabled={disabled}
-          title="Sublinhado"
-        >
-          <Underline className="h-4 w-4" />
-        </Button>
+    <div className="space-y-2">
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-2">
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("bold")}>
+            <Bold className="h-4 w-4" /> Negrito
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("italic")}>
+            <Italic className="h-4 w-4" /> Itálico
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("underline")}>
+            <Underline className="h-4 w-4" /> Sublinhado
+          </Button>
 
-        <div className="w-px h-6 bg-slate-200 mx-1" />
+          <div className="h-6 w-px bg-slate-200 mx-1" />
 
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 px-2 gap-1"
-          onClick={() => exec("justifyLeft")}
-          disabled={disabled}
-          title="Alinhar à esquerda"
-        >
-          <AlignLeft className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 px-2 gap-1"
-          onClick={() => exec("justifyCenter")}
-          disabled={disabled}
-          title="Centralizar"
-        >
-          <AlignCenter className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 px-2 gap-1"
-          onClick={() => exec("justifyRight")}
-          disabled={disabled}
-          title="Alinhar à direita"
-        >
-          <AlignRight className="h-4 w-4" />
-        </Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("justifyLeft")}>
+            <AlignLeft className="h-4 w-4" /> Esquerda
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("justifyCenter")}>
+            <AlignCenter className="h-4 w-4" /> Centro
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("justifyRight")}>
+            <AlignRight className="h-4 w-4" /> Direita
+          </Button>
 
-        <div className="w-px h-6 bg-slate-200 mx-1" />
+          <div className="h-6 w-px bg-slate-200 mx-1" />
 
-        {/* Font size (execCommand usa 1-7; mapeamos para tamanhos comuns) */}
-        <div className="flex items-center gap-1">
-          <Type className="h-4 w-4 text-slate-600" />
-          <select
-            className="h-8 rounded-md border border-slate-200 bg-white px-2 text-sm"
-            disabled={disabled}
-            defaultValue="3"
-            onChange={(e) => exec("fontSize", e.target.value)}
-            title="Tamanho da fonte"
-          >
-            <option value="2">Pequena</option>
-            <option value="3">Normal</option>
-            <option value="4">Média</option>
-            <option value="5">Grande</option>
-            <option value="6">Extra</option>
-          </select>
-        </div>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("fontSize", "2")}>
+            <Type className="h-4 w-4" /> Pequena
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("fontSize", "3")}>
+            <Type className="h-4 w-4" /> Normal
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => exec("fontSize", "5")}>
+            <Type className="h-4 w-4" /> Grande
+          </Button>
 
-        <div className="w-px h-6 bg-slate-200 mx-1" />
+          <div className="h-6 w-px bg-slate-200 mx-1" />
 
-        {/* Text color */}
-        <label className="flex items-center gap-1 h-8 px-2 rounded-md border border-slate-200 bg-white cursor-pointer">
-          <span className="text-xs text-slate-600">Cor</span>
-          <input
-            type="color"
-            disabled={disabled}
-            onChange={(e) => exec("foreColor", e.target.value)}
-            title="Cor do texto"
-          />
-        </label>
-
-        {/* Highlight */}
-        <label className="flex items-center gap-1 h-8 px-2 rounded-md border border-slate-200 bg-white cursor-pointer">
-          <Highlighter className="h-4 w-4 text-slate-600" />
-          <input
-            type="color"
-            disabled={disabled}
-            onChange={(e) => exec("hiliteColor", e.target.value)}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => exec("hiliteColor", "#FFE08A")}
             title="Realce"
-          />
-        </label>
+          >
+            <Highlighter className="h-4 w-4" /> Realçar
+          </Button>
 
-        <div className="w-px h-6 bg-slate-200 mx-1" />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => exec("removeFormat")}
+            title="Limpar formatação"
+          >
+            <X className="h-4 w-4" /> Limpar
+          </Button>
 
-        {/* Insert image button */}
-        <label className="inline-flex items-center gap-2 h-8 px-2 rounded-md border border-slate-200 bg-white cursor-pointer">
-          <ImageIcon className="h-4 w-4 text-slate-700" />
-          <span className="text-xs text-slate-700">Inserir imagem</span>
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            disabled={disabled}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              insertImageFromFile(f);
-              e.currentTarget.value = "";
-            }}
-          />
-        </label>
-
-        <div className="ml-auto text-[11px] text-muted-foreground">
-          Dica: cole imagem com <b>Ctrl + V</b>
+          <div className="text-xs text-muted-foreground ml-auto flex items-center gap-2">
+            <ImageIcon className="h-4 w-4" />
+            Cole imagens com <b>Ctrl+V</b>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Selected image controls */}
-      {selectedImg && (
-        <div className="p-2 border-b bg-white">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-xs text-slate-700 font-medium">Imagem selecionada</div>
+      {imgSelected && !readOnly && (
+        <div className="rounded-xl border bg-slate-50 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-sm font-medium flex items-center gap-2">
+              <Square className="h-4 w-4" />
+              Imagem selecionada
+            </div>
+
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">Largura:</span>
-              <Input
-                type="number"
-                className="h-8 w-[110px]"
-                value={imgWidth || 0}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value || "0", 10) || 0;
-                  setImgWidth(v);
-                  applyImageWidth(v);
-                }}
-                min={80}
-                max={1200}
-                disabled={disabled}
+              <input
+                type="range"
+                min={120}
+                max={900}
+                value={imgWidth}
+                onChange={(e) => setImgWidth(parseInt(e.target.value, 10))}
               />
-              <span className="text-xs text-muted-foreground">px</span>
+              <span className="text-xs tabular-nums w-12 text-right">{imgWidth}px</span>
             </div>
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={imgBorder}
+                onChange={(e) => setImgBorder(e.target.checked)}
+              />
+              Borda
+            </label>
 
             <Button
               type="button"
-              size="sm"
               variant="outline"
-              className="h-8 gap-2"
-              onClick={toggleImageBorder}
-              disabled={disabled}
-              title="Borda"
-            >
-              <BorderAll className="h-4 w-4" />
-              {imgBorder ? "Remover borda" : "Borda"}
-            </Button>
-
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                size="sm"
-                variant={imgAlign === "left" ? "default" : "outline"}
-                className="h-8 px-2"
-                onClick={() => setImageAlign("left")}
-                disabled={disabled}
-                title="Alinhar esquerda"
-              >
-                <AlignLeft className="h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={imgAlign === "center" ? "default" : "outline"}
-                className="h-8 px-2"
-                onClick={() => setImageAlign("center")}
-                disabled={disabled}
-                title="Centralizar"
-              >
-                <AlignCenter className="h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={imgAlign === "right" ? "default" : "outline"}
-                className="h-8 px-2"
-                onClick={() => setImageAlign("right")}
-                disabled={disabled}
-                title="Alinhar direita"
-              >
-                <AlignRight className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <Button
-              type="button"
               size="sm"
-              variant="ghost"
-              className="h-8"
-              onClick={() => setSelectedImg(null)}
+              className="ml-auto"
+              onClick={() => setImgSelected(null)}
             >
-              <X className="h-4 w-4" />
+              Fechar
             </Button>
           </div>
         </div>
       )}
 
-      {/* Editable area */}
       <div
         ref={ref}
-        contentEditable={!disabled}
-        suppressContentEditableWarning
         className={[
-          "p-3 outline-none",
-          "text-sm leading-relaxed",
-          "prose prose-sm max-w-none",
-          disabled ? "bg-slate-50 text-muted-foreground" : "bg-white",
+          "rounded-xl border border-slate-200 bg-white p-3 text-sm leading-relaxed",
+          readOnly ? "opacity-95" : "focus:outline-none focus:ring-2 focus:ring-[#A11C27]/30",
         ].join(" ")}
         style={{ minHeight }}
-        onInput={() => emit()}
+        contentEditable={!readOnly}
+        suppressContentEditableWarning
+        onInput={updateFromDom}
         onPaste={handlePaste}
-        onClick={handleClick}
+        onClick={onClickEditor}
         data-placeholder={placeholder || ""}
       />
-
-      <style>
-        {`
-          [contenteditable][data-placeholder]:empty:before {
-            content: attr(data-placeholder);
-            color: #94a3b8;
-          }
-          .prose img {
-            max-width: 100%;
-            height: auto;
-          }
-        `}
-      </style>
+      {!readOnly && (
+        <div className="text-[11px] text-muted-foreground">
+          Dica: para colar imagem, copie a imagem e use <b>Ctrl+V</b> aqui. (Ela será salva dentro do texto.)
+        </div>
+      )}
     </div>
   );
+}
+
+async function tryInsertNotificationForActiveUsers(payload: {
+  title: string;
+  body: string;
+  link?: string | null;
+  created_by?: string | null;
+}) {
+  // Não quebra o fluxo se a tabela não existir/estiver diferente.
+  try {
+    const { data: users, error: uErr } = await supabase
+      .from("users")
+      .select("id")
+      .eq("is_active", true)
+      .limit(2000);
+
+    if (uErr) throw uErr;
+
+    const rows = (users || []).map((u: any) => ({
+      user_id: u.id,
+      title: payload.title,
+      body: payload.body,
+      link: payload.link || null,
+      created_by: payload.created_by || null,
+    }));
+
+    if (!rows.length) return;
+
+    // tenta nomes comuns (sem travar)
+    const tries = ["crm_notifications", "notifications"];
+    for (const table of tries) {
+      const { error } = await supabase.from(table as any).insert(rows as any);
+      if (!error) return;
+    }
+  } catch {
+    // silent
+  }
 }
 
 export default function Procedimentos() {
@@ -647,24 +488,14 @@ export default function Procedimentos() {
 
   // editor
   const [editing, setEditing] = useState(false);
-  const titleRef = useRef<HTMLInputElement | null>(null);
+  const [draft, setDraft] = useState<Partial<KBProcedure> & { tagsText?: string }>({});
 
-  const [draft, setDraft] = useState<
-    Partial<KBProcedure> & {
-      tagsText?: string;
-      stepsHtml?: string; // editor rico (salvo em steps_md)
-      docsHtml?: string; // editor rico (salvo em flags.docs_html)
-    }
-  >({});
+  // rich fields
+  const [stepsHtml, setStepsHtml] = useState<string>("");
+  const [docsHtml, setDocsHtml] = useState<string>("");
 
   // sugestão
   const [newSuggestion, setNewSuggestion] = useState("");
-
-  // helper para pegar docs html do active.flags
-  const activeDocsHtml = useMemo(() => {
-    const f = (active?.flags || {}) as any;
-    return (f?.docs_html as string) || "";
-  }, [active]);
 
   async function loadMe() {
     const { data: auth } = await supabase.auth.getUser();
@@ -697,9 +528,7 @@ export default function Procedimentos() {
       const rows = (data || []) as KBProcedure[];
       setProcedures(rows);
 
-      // seleciona o primeiro se ainda não tiver
       if (!activeId && rows.length) setActiveId(rows[0].id);
-      // se o ativo sumiu, troca
       if (activeId && !rows.some((r) => r.id === activeId)) setActiveId(rows[0]?.id || null);
     } finally {
       setLoading(false);
@@ -760,12 +589,6 @@ export default function Procedimentos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
-  useEffect(() => {
-    if (editing) {
-      setTimeout(() => titleRef.current?.focus(), 50);
-    }
-  }, [editing]);
-
   const areas = useMemo(() => {
     const s = new Set<string>();
     procedures.forEach((p) => p.area && s.add(p.area));
@@ -807,37 +630,42 @@ export default function Procedimentos() {
     setEditing(true);
 
     if (mode === "new") {
+      const f = { uses_ticket: false, has_roles: false, docs_html: "" };
       setDraft({
         title: "",
         summary: "",
         trigger: "",
-        stepsHtml:
-          "<p><b>1)</b> </p><p><b>2)</b> </p><p><b>3)</b> </p>",
-        docsHtml: "<p>• Documento 1</p><p>• Documento 2</p>",
         tagsText: "procedimento, operações",
         area: "Operações",
         channel: "Ticket",
         sla_text: "",
-        flags: { uses_ticket: false, has_roles: false, docs_html: "" },
+        flags: f,
         status: "draft",
       });
+      setStepsHtml("");
+      setDocsHtml("");
       return;
     }
 
     if (!active) return;
-    const f = (active.flags || {}) as any;
+
     setDraft({
       ...active,
       tagsText: (active.tags || []).join(", "),
-      stepsHtml: active.steps_md || "",
-      docsHtml: (f?.docs_html as string) || "",
-      flags: active.flags || {},
     });
+
+    const currentSteps = (active.steps_md || "") as string;
+    setStepsHtml(looksLikeHtml(currentSteps) ? currentSteps : (currentSteps ? `<div>${currentSteps}</div>` : ""));
+
+    const dHtml = (active.flags?.docs_html as any) || "";
+    setDocsHtml(typeof dHtml === "string" ? dHtml : "");
   }
 
   function cancelEdit() {
     setEditing(false);
     setDraft({});
+    setStepsHtml("");
+    setDocsHtml("");
   }
 
   async function saveProcedure() {
@@ -850,28 +678,25 @@ export default function Procedimentos() {
       return;
     }
 
-    const stepsHtml = (draft.stepsHtml ?? draft.steps_md ?? "").trim();
-    const docsHtml = (draft.docsHtml || "").trim();
+    const authNow = await supabase.auth.getUser();
+    const uid = authNow.data.user?.id || null;
 
-    const baseFlags = (draft.flags || {}) as any;
-    const mergedFlags = {
-      ...baseFlags,
-      uses_ticket: false,
-      docs_html: docsHtml || null,
-    };
+    const mergedFlags = { ...(draft.flags || {}) };
+    mergedFlags.docs_html = docsHtml || "";
+    mergedFlags.uses_ticket = false;
 
     const payload: Partial<KBProcedure> & { tags: string[] } = {
       title,
       summary,
       trigger: (draft.trigger || "").trim() || null,
-      steps_md: stepsHtml || null, // HTML
+      steps_md: (stepsHtml || "").trim() || null, // HTML aqui
       tags: splitTags(draft.tagsText || ""),
       area: (draft.area || "").trim() || null,
       channel: (draft.channel || "").trim() || null,
       sla_text: (draft.sla_text || "").trim() || null,
       flags: mergedFlags,
       status: ((draft.status as any) || "draft") as any,
-      updated_by: (await supabase.auth.getUser()).data.user?.id || null,
+      updated_by: uid as any,
     };
 
     setLoading(true);
@@ -890,8 +715,7 @@ export default function Procedimentos() {
         return;
       }
 
-      const auth = await supabase.auth.getUser();
-      const created_by = auth.data.user?.id || null;
+      const created_by = uid;
 
       const { data, error } = await supabase
         .from("kb_procedures")
@@ -932,23 +756,13 @@ export default function Procedimentos() {
 
       if (error) throw error;
 
-      // cria notificação no CRM (tabelas já criadas)
-      try {
-        await supabase.from("crm_notifications").insert([
-          {
-            kind: "info",
-            type: "procedure_published",
-            title: `Novo procedimento publicado: ${active.title}`,
-            body: active.summary || null,
-            link: `/procedimentos?pid=${active.id}`,
-            meta: { procedure_id: active.id, area: active.area, channel: active.channel },
-            is_active_only: true,
-            created_by: adminUid,
-          },
-        ]);
-      } catch {
-        // não bloqueia publish
-      }
+      // notificação interna (best-effort, não trava se tabela for diferente)
+      await tryInsertNotificationForActiveUsers({
+        title: "Novo procedimento publicado",
+        body: `Procedimento: ${active.title}`,
+        link: "/procedimentos",
+        created_by: adminUid,
+      });
 
       await loadProcedures();
       await loadDetails(active.id);
@@ -1005,9 +819,11 @@ export default function Procedimentos() {
   async function uploadAsset(file: File, kind: KBAsset["kind"]) {
     if (!active || !canEdit) return;
 
-    // restrição solicitada: apenas doc/pdf (modelos)
-    if (!allowedAttachment(file)) {
-      alert("Anexos permitidos: .pdf, .doc, .docx");
+    // aceita .doc, .docx e .pdf conforme pedido
+    const nameLower = (file.name || "").toLowerCase();
+    const okExt = nameLower.endsWith(".pdf") || nameLower.endsWith(".doc") || nameLower.endsWith(".docx");
+    if (!okExt) {
+      alert("Envie apenas arquivos .pdf, .doc ou .docx para os anexos do procedimento.");
       return;
     }
 
@@ -1061,12 +877,15 @@ export default function Procedimentos() {
   }
 
   const statusPill = (st: KBStatus) => {
-    if (st === "active")
-      return <Badge className="bg-emerald-600 hover:bg-emerald-600">Ativo</Badge>;
-    if (st === "review")
-      return <Badge className="bg-amber-600 hover:bg-amber-600">Em revisão</Badge>;
+    if (st === "active") return <Badge className="bg-emerald-600 hover:bg-emerald-600">Ativo</Badge>;
+    if (st === "review") return <Badge className="bg-amber-600 hover:bg-amber-600">Em revisão</Badge>;
     return <Badge variant="secondary">Rascunho</Badge>;
   };
+
+  const activeDocsHtml = useMemo(() => {
+    const v = (active?.flags?.docs_html as any) || "";
+    return typeof v === "string" ? v : "";
+  }, [active]);
 
   return (
     <div className="p-4 space-y-4">
@@ -1174,13 +993,13 @@ export default function Procedimentos() {
                     onClick={() => {
                       setEditing(false);
                       setDraft({});
+                      setStepsHtml("");
+                      setDocsHtml("");
                       setActiveId(p.id);
                     }}
                     className={[
                       "w-full text-left rounded-xl border p-3 transition",
-                      isActive
-                        ? "border-[#A11C27] bg-[#A11C27]/5"
-                        : "border-slate-200 hover:bg-slate-50",
+                      isActive ? "border-[#A11C27] bg-[#A11C27]/5" : "border-slate-200 hover:bg-slate-50",
                     ].join(" ")}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -1223,7 +1042,9 @@ export default function Procedimentos() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <CardTitle className="text-lg">{active?.title || "Selecione um procedimento"}</CardTitle>
-                <div className="mt-1 text-sm text-muted-foreground">{active?.summary || "—"}</div>
+                <div className="mt-1 text-sm text-muted-foreground">
+                  {active?.summary || "—"}
+                </div>
               </div>
 
               {active && (
@@ -1253,7 +1074,11 @@ export default function Procedimentos() {
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {!active && <div className="text-sm text-muted-foreground">Selecione um procedimento à esquerda.</div>}
+            {!active && (
+              <div className="text-sm text-muted-foreground">
+                Selecione um procedimento à esquerda.
+              </div>
+            )}
 
             {active && editing && (
               <div className="space-y-3 rounded-xl border border-slate-200 p-3">
@@ -1276,13 +1101,11 @@ export default function Procedimentos() {
                   <div className="space-y-1">
                     <div className="text-xs text-muted-foreground">Título</div>
                     <Input
-                      ref={titleRef}
                       value={draft.title || ""}
                       onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-                      placeholder="Ex.: Transferência de cota"
+                      placeholder="Ex.: Devolução de lance (cota descontemplada)"
                     />
                   </div>
-
                   <div className="space-y-1">
                     <div className="text-xs text-muted-foreground">Status</div>
                     <Select
@@ -1308,7 +1131,7 @@ export default function Procedimentos() {
                     <Textarea
                       value={draft.summary || ""}
                       onChange={(e) => setDraft((d) => ({ ...d, summary: e.target.value }))}
-                      placeholder="Ex.: Coletar docs → abrir ticket → anexar tudo → acompanhar validação."
+                      placeholder="Ex.: Abrir ticket → anexar docs → informar dados bancários → aguardar depósito."
                       rows={3}
                     />
                   </div>
@@ -1330,7 +1153,6 @@ export default function Procedimentos() {
                       placeholder="Operações"
                     />
                   </div>
-
                   <div className="space-y-1">
                     <div className="text-xs text-muted-foreground">Canal</div>
                     <Input
@@ -1354,39 +1176,28 @@ export default function Procedimentos() {
                     <Input
                       value={draft.tagsText || ""}
                       onChange={(e) => setDraft((d) => ({ ...d, tagsText: e.target.value }))}
-                      placeholder="transferência, cota, operações"
+                      placeholder="devolução, lance, reembolso, ticket"
                     />
                   </div>
 
-                  {/* PASSO A PASSO - RICO */}
                   <div className="space-y-1 md:col-span-2">
-                    <div className="text-xs text-muted-foreground">
-                      Passo a passo (editor rico estilo Word)
-                    </div>
+                    <div className="text-xs text-muted-foreground">Passo a Passo (estilo Word)</div>
                     <RichEditor
-                      value={draft.stepsHtml || ""}
-                      onChange={({ html }) => setDraft((d) => ({ ...d, stepsHtml: html }))}
-                      placeholder="Digite aqui o passo a passo. Você pode formatar, colar imagens (Ctrl+V) e ajustar."
+                      value={stepsHtml}
+                      onChange={setStepsHtml}
+                      placeholder="Digite o passo a passo aqui…"
                       minHeight={260}
-                      disabled={loading}
                     />
                   </div>
 
-                  {/* DOCUMENTOS - RICO (novo, guardado em flags.docs_html) */}
                   <div className="space-y-1 md:col-span-2">
-                    <div className="text-xs text-muted-foreground">
-                      Documentos (descreva a relação de documentos – estilo Word)
-                    </div>
+                    <div className="text-xs text-muted-foreground">Documentos (estilo Word)</div>
                     <RichEditor
-                      value={draft.docsHtml || ""}
-                      onChange={({ html }) => setDraft((d) => ({ ...d, docsHtml: html }))}
-                      placeholder="Liste os documentos usados neste processo. Ex.: RG, CPF, comprovante..."
-                      minHeight={200}
-                      disabled={loading}
+                      value={docsHtml}
+                      onChange={setDocsHtml}
+                      placeholder="Liste/Descreva os documentos necessários…"
+                      minHeight={220}
                     />
-                    <div className="text-[11px] text-muted-foreground">
-                      *Esta lista fica salva no procedimento e aparece na aba “Documentos”.
-                    </div>
                   </div>
                 </div>
 
@@ -1395,7 +1206,7 @@ export default function Procedimentos() {
                     <div className="text-sm">
                       <div className="font-medium">Publicação</div>
                       <div className="text-xs text-muted-foreground">
-                        Ao aprovar, o procedimento fica <b>Ativo</b> para toda a equipe e gera notificação no CRM.
+                        Ao aprovar, o procedimento fica <b>Ativo</b> para toda a equipe.
                       </div>
                     </div>
                     <Button className="gap-2" onClick={approveProcedure}>
@@ -1412,7 +1223,6 @@ export default function Procedimentos() {
                 <TabsList className="w-full justify-start">
                   <TabsTrigger value="passos">Passo a passo</TabsTrigger>
                   <TabsTrigger value="docs">Documentos</TabsTrigger>
-                  {/* Ticket removido conforme pedido */}
                   <TabsTrigger value="anexos">Anexos</TabsTrigger>
                   <TabsTrigger value="sugestoes">Sugestões</TabsTrigger>
                 </TabsList>
@@ -1425,76 +1235,69 @@ export default function Procedimentos() {
                     <div className="h-px w-full bg-slate-200 my-3" />
 
                     <div className="text-sm font-medium">Como fazer</div>
-                    <RichView htmlOrText={active.steps_md} />
+                    {renderHtmlOrFallback(active.steps_md)}
                   </div>
                 </TabsContent>
 
                 <TabsContent value="docs" className="pt-3">
                   <div className="space-y-3">
-                    {/* 1) Preferência: documentos livres (flags.docs_html) */}
-                    {activeDocsHtml?.trim() ? (
-                      <div className="rounded-xl border p-3">
-                        <RichView htmlOrText={activeDocsHtml} />
-                      </div>
-                    ) : (
-                      <>
-                        {/* 2) Fallback: estrutura antiga kb_documents (mantém compat) */}
-                        {docs.length === 0 ? (
-                          <div className="text-sm text-muted-foreground">
-                            Sem documentos cadastrados.
-                          </div>
-                        ) : (
-                          <>
-                            {Object.entries(
-                              docs.reduce<Record<string, KBDoc[]>>((acc, d) => {
-                                const k = d.role_key || "geral";
-                                acc[k] = acc[k] || [];
-                                acc[k].push(d);
-                                return acc;
-                              }, {})
-                            ).map(([roleKey, items]) => (
-                              <div key={roleKey} className="rounded-xl border p-3">
-                                <div className="text-sm font-medium">
-                                  {roleKey === "geral"
-                                    ? "Geral"
-                                    : roles.find((r) => r.role_key === roleKey)?.role_label ||
-                                      roleKey}
-                                </div>
-                                <div className="mt-2 space-y-2">
-                                  {items.map((d) => (
-                                    <div
-                                      key={d.id}
-                                      className="flex items-start justify-between gap-3 rounded-lg bg-slate-50 border p-2"
-                                    >
-                                      <div className="min-w-0">
-                                        <div className="text-sm font-medium text-slate-900">
-                                          {d.doc_name}{" "}
-                                          {!d.required && (
-                                            <span className="text-xs text-muted-foreground">
-                                              (opcional)
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="text-xs text-muted-foreground">
-                                          {[
-                                            d.format_hint ? `Formato: ${d.format_hint}` : null,
-                                            d.validity_hint
-                                              ? `Validade: ${d.validity_hint}`
-                                              : null,
-                                            d.notes ? d.notes : null,
-                                          ]
-                                            .filter(Boolean)
-                                            .join(" • ") || "—"}
-                                        </div>
-                                      </div>
+                    <div className="rounded-xl border p-3">
+                      <div className="text-sm font-medium mb-2">Documentos (descrição)</div>
+                      {activeDocsHtml ? renderHtmlOrFallback(activeDocsHtml) : (
+                        <div className="text-sm text-muted-foreground">Sem descrição de documentos.</div>
+                      )}
+                    </div>
+
+                    {/* Mantém o que já existia (lista estruturada), caso você continue usando */}
+                    {docs.length > 0 && (
+                      <div className="space-y-3">
+                        {Object.entries(
+                          docs.reduce<Record<string, KBDoc[]>>((acc, d) => {
+                            const k = d.role_key || "geral";
+                            acc[k] = acc[k] || [];
+                            acc[k].push(d);
+                            return acc;
+                          }, {})
+                        ).map(([roleKey, items]) => (
+                          <div key={roleKey} className="rounded-xl border p-3">
+                            <div className="text-sm font-medium">
+                              {roleKey === "geral"
+                                ? "Geral"
+                                : roles.find((r) => r.role_key === roleKey)?.role_label || roleKey}
+                            </div>
+                            <div className="mt-2 space-y-2">
+                              {items.map((d) => (
+                                <div
+                                  key={d.id}
+                                  className="flex items-start justify-between gap-3 rounded-lg bg-slate-50 border p-2"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-medium text-slate-900">
+                                      {d.doc_name}{" "}
+                                      {!d.required && (
+                                        <span className="text-xs text-muted-foreground">(opcional)</span>
+                                      )}
                                     </div>
-                                  ))}
+                                    <div className="text-xs text-muted-foreground">
+                                      {[
+                                        d.format_hint ? `Formato: ${d.format_hint}` : null,
+                                        d.validity_hint ? `Validade: ${d.validity_hint}` : null,
+                                        d.notes ? d.notes : null,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" • ") || "—"}
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
-                          </>
-                        )}
-                      </>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {docs.length === 0 && !activeDocsHtml && (
+                      <div className="text-sm text-muted-foreground">Sem documentos cadastrados.</div>
                     )}
                   </div>
                 </TabsContent>
@@ -1504,7 +1307,7 @@ export default function Procedimentos() {
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-medium flex items-center gap-2">
                         <Paperclip className="h-4 w-4" />
-                        Anexos (modelos .doc/.pdf)
+                        Anexos internos (.pdf / .doc / .docx)
                       </div>
 
                       {canEdit && (
@@ -1512,8 +1315,8 @@ export default function Procedimentos() {
                           <label className="text-xs text-muted-foreground">Upload:</label>
                           <input
                             type="file"
-                            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                             className="text-xs"
+                            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                             onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (!file) return;
@@ -1559,6 +1362,7 @@ export default function Procedimentos() {
                   <div className="space-y-3">
                     <div className="rounded-xl border p-3 space-y-2">
                       <div className="text-sm font-medium flex items-center gap-2">
+>
                         <MessageCircle className="h-4 w-4" />
                         Enviar sugestão de melhoria
                       </div>
@@ -1566,7 +1370,7 @@ export default function Procedimentos() {
                         value={newSuggestion}
                         onChange={(e) => setNewSuggestion(e.target.value)}
                         rows={3}
-                        placeholder="Ex.: 'O ticket mudou, agora o campo Tipo de Pagamento fica em...' "
+                        placeholder="Ex.: 'O fluxo mudou, agora o campo X fica em...' "
                       />
                       <div className="flex justify-end">
                         <Button onClick={submitSuggestion}>Enviar</Button>

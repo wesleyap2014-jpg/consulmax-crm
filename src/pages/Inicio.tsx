@@ -18,8 +18,9 @@ import {
   Rocket,
   MessageCircle,
   ArrowRight,
-  Bell,
+  BookOpen,
   Link as LinkIcon,
+  FileText,
 } from "lucide-react";
 
 /** ===================== Tipos ===================== */
@@ -36,8 +37,8 @@ type AgendaRow = {
   id: string;
   tipo: string;
   titulo: string;
-  inicio_at: string;
-  fim_at: string;
+  inicio_at: string; // timestamptz
+  fim_at: string; // timestamptz
   user_id: string | null; // auth_user_id (na view)
   cliente_nome?: string | null;
   lead_nome?: string | null;
@@ -50,7 +51,7 @@ type OppRow = {
   valor_credito: number | null;
   stage: string | null;
   estagio: string | null;
-  expected_close_at: string | null; // date (YMD)
+  expected_close_at: string | null; // date
   vendedor_id: string; // auth_user_id
   lead_id: string;
 };
@@ -61,57 +62,51 @@ type LeadRow = {
   telefone?: string | null;
 };
 
-type StockReqRow = {
-  id: string;
-  cota_id: string;
-  vendor_id: string; // users.id
-  vendor_pct: number;
-  status: string;
-  created_at: string;
-};
-
-type VendaSemComissaoRow = {
-  id: string;
-  data_venda: string | null;
-  vendedor_id: string | null; // auth_user_id
-  vendedor_nome: string | null;
-  segmento: string | null;
-  tabela: string | null;
-  administradora: string | null;
-  numero_proposta: string | null;
-  credito: number | null;
-};
-
 type CommissionRow = {
   id: string;
   vendedor_id: string; // users.id
   valor_total: number | null;
-  status: string | null;
-  created_at?: string | null;
+  status: string | null; // commission_status
+  data_pagamento: string | null; // date (usaremos como "agendada" quando existir)
+  tabela?: string | null;
+  administradora?: string | null;
 };
-
-type GiroDueRow = { owner_auth_id: string; due_count: number };
 
 type GroupRow = {
   id: string;
-  codigo?: string | null;
-  administradora?: string | null;
+  administradora: string;
+  segmento: string;
+  codigo: string;
+  prox_vencimento: string | null; // date
+  prox_sorteio: string | null; // date
+  prox_assembleia: string | null; // date
+};
+
+type VendaRow = {
+  id: string;
+  data_venda: string; // date
+  vendedor_id: string; // auth_user_id
+  produto?: string | null;
   segmento?: string | null;
-  prox_vencimento?: string | null; // date
-  prox_sorteio?: string | null; // date
-  prox_assembleia?: string | null; // date
+  tabela?: string | null;
+  administradora?: string | null;
+  numero_proposta?: string | null;
+  valor_venda?: number | null;
 };
 
 type ClienteRow = {
   id: string;
   nome: string;
+  data_nascimento: string | null; // date
   telefone?: string | null;
-  data_nascimento?: string | null; // date
 };
 
-type ProcedureRow = {
+type GiroDueRow = { owner_auth_id: string; due_count: number };
+
+type KBProcRow = {
   id: string;
   title?: string | null;
+  titulo?: string | null;
   status?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -120,62 +115,93 @@ type ProcedureRow = {
 const ALL = "__all__";
 
 /** ===================== Helpers ===================== */
-function todayYMD(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+
+// Fixamos o "dia" do CRM no fuso de Porto Velho (UTC-4) para evitar drift.
+// Isso resolve: navegador com fuso diferente / horário de verão / ISO em UTC etc.
+const PV_OFFSET_MIN = -4 * 60; // UTC-4
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+function ymdFromDateInOffset(d: Date, offsetMin: number) {
+  // Converte "agora" para "agora no offset" sem depender do timezone do navegador:
+  // utcMillis + offset => "local" naquele offset
+  const utc = d.getTime();
+  const local = new Date(utc + offsetMin * 60 * 1000);
+  const y = local.getUTCFullYear();
+  const m = pad2(local.getUTCMonth() + 1);
+  const day = pad2(local.getUTCDate());
   return `${y}-${m}-${day}`;
 }
+function rangeISOForDayInOffset(ymd: string, offsetMin: number) {
+  // Cria intervalo [00:00:00, 23:59:59.999] no offset e converte para UTC ISO
+  const [Y, M, D] = (ymd || "").split("-").map((x) => Number(x));
+  const startLocalUtc = Date.UTC(Y, M - 1, D, 0, 0, 0, 0);
+  const endLocalUtc = Date.UTC(Y, M - 1, D, 23, 59, 59, 999);
 
+  // Para transformar "local offset" -> UTC, subtrai o offset
+  const startUtc = new Date(startLocalUtc - offsetMin * 60 * 1000);
+  const endUtc = new Date(endLocalUtc - offsetMin * 60 * 1000);
+
+  return { startISO: startUtc.toISOString(), endISO: endUtc.toISOString() };
+}
+function addDaysYMD(ymd: string, days: number) {
+  const [Y, M, D] = (ymd || "").split("-").map((x) => Number(x));
+  const t = Date.UTC(Y, M - 1, D, 12, 0, 0); // meio-dia pra não ter “quebra” por offset
+  const dt = new Date(t + days * 24 * 60 * 60 * 1000);
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
 function fmtDateBRFromYMD(ymd: string) {
   const [y, m, d] = (ymd || "").split("-");
   if (!y || !m || !d) return ymd;
   return `${d}/${m}/${y}`;
 }
+function monthRangeYMDFromOffset(now: Date, offsetMin: number) {
+  // Pega "agora no offset"
+  const utc = now.getTime();
+  const local = new Date(utc + offsetMin * 60 * 1000);
+  const y = local.getUTCFullYear();
+  const m = local.getUTCMonth(); // 0..11
 
-function monthRangeYMD(d = new Date()) {
-  const y = d.getFullYear();
-  const m = d.getMonth();
-  const start = new Date(y, m, 1);
-  const end = new Date(y, m + 1, 1);
-  const f = (dt: Date) => {
-    const yy = dt.getFullYear();
-    const mm = String(dt.getMonth() + 1).padStart(2, "0");
-    const dd = String(dt.getDate()).padStart(2, "0");
-    return `${yy}-${mm}-${dd}`;
-  };
+  const start = new Date(Date.UTC(y, m, 1, 12, 0, 0));
+  const end = new Date(Date.UTC(y, m + 1, 1, 12, 0, 0));
+
+  const f = (dt: Date) => `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
   return { startYMD: f(start), endYMD: f(end), year: y, month: m + 1 };
 }
-
 function fmtBRL(v: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 }
-
-function fmtDT(iso: string) {
+function fmtDTForOffset(iso: string, offsetMin: number) {
+  // Renderiza um timestamptz como data/hora "no offset" (Porto Velho)
   const d = new Date(iso);
-  return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const local = new Date(d.getTime() + offsetMin * 60 * 1000);
+  const dd = pad2(local.getUTCDate());
+  const mm = pad2(local.getUTCMonth() + 1);
+  const hh = pad2(local.getUTCHours());
+  const mi = pad2(local.getUTCMinutes());
+  return `${dd}/${mm} ${hh}:${mi}`;
 }
-
 function isAdmin(u?: UserRow | null) {
   const r = (u?.role || u?.user_role || "").toLowerCase();
   return r === "admin";
 }
-
 function stageIsClosed(stage?: string | null, estagio?: string | null) {
   const st = (stage || "").trim().toLowerCase();
   const es = (estagio || "").trim().toLowerCase();
+
   if (st === "fechado_ganho" || st === "fechado_perdido") return true;
-  if (es === "fechado (ganho)" || es === "fechado (perdido)") return true;
+  if (es === "fechado (ganho)".toLowerCase() || es === "fechado (perdido)".toLowerCase()) return true;
+
   if (st.startsWith("fechado")) return true;
   if (es.startsWith("fechado")) return true;
+
   return false;
 }
-
 function metaFieldForMonth(month: number) {
-  const mm = String(month).padStart(2, "0");
+  const mm = String(month).padStart(2, "0"); // 01..12
   return `m${mm}` as any;
 }
-
 function humanErr(e: any) {
   if (!e) return "Erro desconhecido.";
   if (typeof e === "string") return e;
@@ -186,36 +212,6 @@ function humanErr(e: any) {
   } catch {
     return String(e);
   }
-}
-
-// Para evitar “deslize” quando a view/campo é timestamp SEM timezone:
-function dayStartLocalNoZ(ymd: string) {
-  return `${ymd}T00:00:00`;
-}
-function dayEndLocalNoZ(ymd: string) {
-  return `${ymd}T23:59:59.999`;
-}
-
-// diferença em dias (considerando datas YMD)
-function diffDays(ymdA: string, ymdB: string) {
-  const a = new Date(`${ymdA}T00:00:00`);
-  const b = new Date(`${ymdB}T00:00:00`);
-  const ms = b.getTime() - a.getTime();
-  return Math.round(ms / (24 * 60 * 60 * 1000));
-}
-
-function ymdFromDate(dt: Date) {
-  return todayYMD(dt);
-}
-
-function addDaysYMD(baseYMD: string, days: number) {
-  const d = new Date(`${baseYMD}T00:00:00`);
-  d.setDate(d.getDate() + days);
-  return ymdFromDate(d);
-}
-
-function safeTitle(s?: string | null) {
-  return (s || "").trim() || "—";
 }
 
 /** ===================== Donut via SVG ===================== */
@@ -263,43 +259,30 @@ function Donut({
 }
 
 /** ===================== Próximos Eventos ===================== */
-type NextEventKind =
-  | "grupo_vencimento"
-  | "grupo_sorteio"
-  | "grupo_assembleia"
-  | "agenda"
-  | "giro"
-  | "aniversario"
-  | "procedimento";
+type NextEventFlag = "Atrasado" | "Hoje" | "Em breve";
 
-type NextEvent = {
-  key: string;
-  kind: NextEventKind;
-  dateYMD: string; // referência de ordenação
+type NextEventItem = {
+  id: string;
+  whenSort: number; // timestamp usado pra ordenar
+  whenLabel: string; // ex: "Hoje • 13/02 09:00" ou "Atrasado • 10/02"
+  flag: NextEventFlag;
   title: string;
-  desc?: string;
-  action?: { label: string; onClick: () => void };
+  desc?: string | null;
+  action?: { label: string; to?: string; href?: string };
 };
 
-function flagForEvent(today: string, dateYMD: string) {
-  const d = diffDays(dateYMD, today); // date - today
-  if (d < 0) return { label: "Atrasado", className: "bg-red-100 border border-red-200 text-red-800" };
-  if (d === 0) return { label: "Hoje", className: "bg-emerald-100 border border-emerald-200 text-emerald-800" };
-  if (d <= 7) return { label: "Em breve", className: "bg-amber-100 border border-amber-200 text-amber-900" };
-  return { label: "Futuro", className: "bg-slate-100 border border-slate-200 text-slate-800" };
+function flagFromYMD(baseToday: string, ymd: string): NextEventFlag {
+  if (!ymd) return "Em breve";
+  if (ymd < baseToday) return "Atrasado";
+  if (ymd === baseToday) return "Hoje";
+  return "Em breve";
 }
 
-/** ===================== Maximize-se (dica diária) ===================== */
-type DailyTip = { dateYMD: string; text: string; source?: string };
-
-const TIP_CACHE_KEY = "@consulmax:inicio:daily_tip_v1";
-
-const FALLBACK_TIPS: string[] = [
-  "Hoje, faça follow-up com data: ‘posso te retornar hoje às 16h ou amanhã às 10h?’ — isso mata o ‘vou ver e te aviso’.",
-  "Vendas é prioridade: antes de abrir qualquer tarefa, faça 5 contatos de alto valor. O resto vem depois.",
-  "Quando o cliente pedir ‘só um orçamento’, responda com pergunta: ‘pra eu te mandar certo, você quer mais economia na parcela ou mais velocidade pra contemplar?’",
-  "Fechamento melhora quando você resume: ‘então seu objetivo é X, prazo Y, e você tem Z pra lance… posso te mostrar o caminho mais inteligente?’",
-];
+function flagBadgeClass(flag: NextEventFlag) {
+  if (flag === "Atrasado") return "bg-red-50 border border-red-200 text-red-700";
+  if (flag === "Hoje") return "bg-amber-50 border border-amber-200 text-amber-800";
+  return "bg-slate-50 border border-slate-200 text-slate-700";
+}
 
 /** ===================== Página ===================== */
 export default function Inicio() {
@@ -317,19 +300,16 @@ export default function Inicio() {
   const [vendorScope, setVendorScope] = useState<string>(ALL);
   const scopedUser = useMemo(() => (vendorScope === ALL ? null : usersById.get(vendorScope) || null), [vendorScope, usersById]);
 
+  // "Hoje" e mês no offset de Porto Velho
   const rangeToday = useMemo(() => {
-    const ymd = todayYMD();
-    return {
-      ymd,
-      br: fmtDateBRFromYMD(ymd),
-      startNoZ: dayStartLocalNoZ(ymd),
-      endNoZ: dayEndLocalNoZ(ymd),
-    };
+    const now = new Date();
+    const ymd = ymdFromDateInOffset(now, PV_OFFSET_MIN);
+    const { startISO, endISO } = rangeISOForDayInOffset(ymd, PV_OFFSET_MIN);
+    return { ymd, br: fmtDateBRFromYMD(ymd), startISO, endISO };
   }, []);
+  const rangeMonth = useMemo(() => monthRangeYMDFromOffset(new Date(), PV_OFFSET_MIN), []);
 
-  const rangeMonth = useMemo(() => monthRangeYMD(new Date()), []);
-
-  // KPIs
+  // ======= KPIs =======
   const [kpi, setKpi] = useState({
     overdueOppCount: 0,
     overdueOppTotal: 0,
@@ -351,139 +331,14 @@ export default function Inicio() {
 
     giroDueCount: 0,
 
-    proceduresNewCount: 0,
+    // 🔔 Procedimentos novos
+    newProceduresCount: 0,
   });
 
-  const [todayAgendaEvents, setTodayAgendaEvents] = useState<AgendaRow[]>([]);
   const [overdueOpps, setOverdueOpps] = useState<(OppRow & { lead_nome?: string; lead_tel?: string | null })[]>([]);
-  const [stockReqs, setStockReqs] = useState<StockReqRow[]>([]);
-  const [vendasSemComissao, setVendasSemComissao] = useState<VendaSemComissaoRow[]>([]);
+  const [agendaItems, setAgendaItems] = useState<AgendaRow[]>([]);
+  const [nextEvents, setNextEvents] = useState<NextEventItem[]>([]);
 
-  const [nextEvents, setNextEvents] = useState<NextEvent[]>([]);
-  const [dailyTip, setDailyTip] = useState<DailyTip | null>(null);
-
-  const admin = isAdmin(me);
-  const glassCard = "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";
-
-  /** ===================== Escopo ===================== */
-  function resolveScope(meRow: UserRow, usersMap: Map<string, UserRow>, scopeValue: string) {
-    const admin = isAdmin(meRow);
-
-    if (!admin) {
-      return { admin, scopeUserId: meRow.id, scopeAuthId: meRow.auth_user_id, label: meRow.nome };
-    }
-    if (scopeValue === ALL) {
-      return { admin, scopeUserId: ALL, scopeAuthId: ALL, label: "Todos (Admin)" };
-    }
-    const u = usersMap.get(scopeValue);
-    if (!u) return { admin, scopeUserId: scopeValue, scopeAuthId: ALL, label: "Vendedor" };
-    return { admin, scopeUserId: u.id, scopeAuthId: u.auth_user_id, label: u.nome };
-  }
-
-  /** ===================== Procedimentos: notificação ===================== */
-  function proceduresSeenKey(authId: string) {
-    return `@consulmax:procedimentos:last_seen:${authId}`;
-  }
-
-  async function loadProceduresNewCount(scopeAuthId: string) {
-    // notificação é por usuário logado (auth id), não por vendedor filtrado
-    const { data: auth } = await supabase.auth.getUser();
-    const authId = auth.user?.id;
-    if (!authId) return 0;
-
-    const lastSeen = localStorage.getItem(proceduresSeenKey(authId));
-    // se nunca viu, considera “a partir de 7 dias atrás” pra não explodir número
-    const baseline = lastSeen || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-    // tenta status (se existir) mas não depende
-    let q = supabase
-      .from("kb_procedures")
-      .select("id,created_at,updated_at,status,title")
-      .or("status.eq.active,status.eq.review,status.is.null")
-      .gt("created_at", baseline)
-      .order("created_at", { ascending: false })
-      .limit(50);
-
-    // (opcional) se você quiser no futuro filtrar por área/canal etc, faz aqui
-
-    const { data, error } = await q;
-    if (error) {
-      // se a tabela/campos não existirem por algum motivo, não derruba a home
-      console.warn("[Inicio] kb_procedures notify error:", error);
-      return 0;
-    }
-    return (data || []).length;
-  }
-
-  async function markProceduresAsSeen() {
-    const { data: auth } = await supabase.auth.getUser();
-    const authId = auth.user?.id;
-    if (!authId) return;
-    localStorage.setItem(proceduresSeenKey(authId), new Date().toISOString());
-    setKpi((p) => ({ ...p, proceduresNewCount: 0 }));
-  }
-
-  /** ===================== Dica diária ===================== */
-  async function loadDailyTip() {
-    const today = rangeToday.ymd;
-
-    // cache
-    try {
-      const raw = localStorage.getItem(TIP_CACHE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as DailyTip;
-        if (parsed?.dateYMD === today && parsed?.text) {
-          setDailyTip(parsed);
-          return;
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    // 1) Ideal: seu backend buscar “na internet” e devolver pronto
-    try {
-      const r = await fetch("/api/daily-sales-insight", { method: "GET" });
-      if (r.ok) {
-        const j = (await r.json()) as { text?: string; source?: string };
-        const text = (j?.text || "").trim();
-        if (text) {
-          const tip: DailyTip = { dateYMD: today, text, source: j?.source || "internet" };
-          setDailyTip(tip);
-          localStorage.setItem(TIP_CACHE_KEY, JSON.stringify(tip));
-          return;
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    // 2) Fallback: API pública (pode falhar por CORS / rate-limit)
-    try {
-      const r = await fetch("https://zenquotes.io/api/today", { method: "GET" });
-      if (r.ok) {
-        const arr = (await r.json()) as any[];
-        const q = arr?.[0]?.q ? String(arr[0].q) : "";
-        if (q) {
-          const text = `Insight de vendas do dia: ${q}`;
-          const tip: DailyTip = { dateYMD: today, text, source: "zenquotes" };
-          setDailyTip(tip);
-          localStorage.setItem(TIP_CACHE_KEY, JSON.stringify(tip));
-          return;
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    // 3) Fallback final: local (nunca quebra)
-    const idx = Math.abs(today.split("-").join("").split("").reduce((a, c) => a + (c.charCodeAt(0) || 0), 0)) % FALLBACK_TIPS.length;
-    const tip: DailyTip = { dateYMD: today, text: FALLBACK_TIPS[idx], source: "local" };
-    setDailyTip(tip);
-    localStorage.setItem(TIP_CACHE_KEY, JSON.stringify(tip));
-  }
-
-  /** ===================== Loader principal ===================== */
   async function loadMeAndUsers() {
     const { data: auth } = await supabase.auth.getUser();
     const authId = auth.user?.id;
@@ -504,14 +359,27 @@ export default function Inicio() {
       .order("nome", { ascending: true });
     if (usersErr) throw usersErr;
 
-    return { meRow: meRow as UserRow, usersRows: (usersRows || []) as UserRow[] };
+    const admin = isAdmin(meRow);
+    const initialScope = admin ? ALL : meRow.id;
+
+    return { meRow, usersRows: usersRows || [], admin, initialScope };
   }
 
+  /**
+   * scopeUserId  = users.id (usado por metas/comissões)
+   * scopeAuthId  = users.auth_user_id (usado por oportunidades/vendas/agenda/carteira/giro)
+   */
   async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
     const today = rangeToday.ymd;
     const { startYMD, endYMD, year, month } = rangeMonth;
 
-    // ===== Oportunidades atrasadas (auth_user_id) =====
+    // Janela de "Próximos Eventos"
+    const windowStart = addDaysYMD(today, -7);
+    const windowEnd = addDaysYMD(today, 14); // até 14 dias pra frente
+    const windowStartISO = rangeISOForDayInOffset(windowStart, PV_OFFSET_MIN).startISO;
+    const windowEndISO = rangeISOForDayInOffset(windowEnd, PV_OFFSET_MIN).endISO;
+
+    // ===== Oportunidades atrasadas =====
     let oppQ = supabase
       .from("opportunities")
       .select("id,valor_credito,stage,estagio,expected_close_at,vendedor_id,lead_id")
@@ -529,7 +397,7 @@ export default function Inicio() {
     const overdueOppCount = oppRows.length;
     const overdueOppTotal = oppRows.reduce((acc: number, r: any) => acc + (Number(r.valor_credito || 0) || 0), 0);
 
-    // Enriquecer leads
+    // Enriquecer opp com lead (nome/telefone)
     const leadIds = Array.from(new Set(oppRows.map((o: any) => o.lead_id).filter(Boolean)));
     let leadsMap = new Map<string, LeadRow>();
     if (leadIds.length) {
@@ -542,12 +410,12 @@ export default function Inicio() {
       return { ...o, lead_nome: ld?.nome, lead_tel: ld?.telefone || null };
     });
 
-    // ===== Agenda “do dia” (sem deslize de data) =====
+    // ===== Agenda (janela) — corrigida pra não deslizar =====
     let agQ = supabase
       .from("v_agenda_eventos_enriquecida")
       .select("id,tipo,titulo,inicio_at,fim_at,user_id,cliente_nome,lead_nome,telefone,videocall_url")
-      .gte("inicio_at", rangeToday.startNoZ)
-      .lte("inicio_at", rangeToday.endNoZ)
+      .gte("inicio_at", windowStartISO)
+      .lte("inicio_at", windowEndISO)
       .order("inicio_at", { ascending: true })
       .limit(50);
 
@@ -557,14 +425,33 @@ export default function Inicio() {
     const { data: agRows, error: agErr } = await agQ;
     if (agErr) throw agErr;
 
-    // ===== Eventos de grupos HOJE (pra KPI) =====
-    const orExpr = `prox_vencimento.eq.${today},prox_sorteio.eq.${today},prox_assembleia.eq.${today}`;
-    const { data: gTodayRows, error: gErr } = await supabase.from("groups").select("id").or(orExpr).limit(200);
-    if (gErr) throw gErr;
+    // Contagem "Agenda de hoje" (derivada do mesmo set pra não divergir)
+    const todayStartISO = rangeToday.startISO;
+    const todayEndISO = rangeToday.endISO;
+    const todayEventsCount = (agRows || []).filter((e: any) => {
+      const t = new Date(e.inicio_at).toISOString();
+      return t >= todayStartISO && t <= todayEndISO;
+    }).length;
+
+    // ===== Eventos de grupos hoje (KPI) =====
+    const orExprToday = `prox_vencimento.eq.${today},prox_sorteio.eq.${today},prox_assembleia.eq.${today}`;
+    const { data: gTodayRows, error: gTodayErr } = await supabase.from("groups").select("id").or(orExprToday).limit(200);
+    if (gTodayErr) throw gTodayErr;
     const todayGroupsCount = (gTodayRows || []).length;
 
-    // ===== Vendas do mês (auth_user_id) =====
+    // ===== Eventos de grupos (janela) para Próximos Eventos =====
+    // Como é date, não tem drift. Puxamos onde qualquer prox_* está entre windowStart..windowEnd
+    const orExprWindow = `prox_vencimento.gte.${windowStart},prox_vencimento.lte.${windowEnd},prox_sorteio.gte.${windowStart},prox_sorteio.lte.${windowEnd},prox_assembleia.gte.${windowStart},prox_assembleia.lte.${windowEnd}`;
+    const { data: gRows, error: gErr } = await supabase
+      .from("groups")
+      .select("id,administradora,segmento,codigo,prox_vencimento,prox_sorteio,prox_assembleia")
+      .or(orExprWindow)
+      .limit(300);
+    if (gErr) throw gErr;
+
+    // ===== Vendas do mês =====
     let salesQ = supabase.from("vendas").select("valor_venda,vendedor_id,data_venda").gte("data_venda", startYMD).lt("data_venda", endYMD);
+
     if (!admin) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
 
@@ -572,9 +459,10 @@ export default function Inicio() {
     if (salesErr) throw salesErr;
     const monthSalesTotal = (salesRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Meta do mês (users.id) =====
+    // ===== Meta do mês (metas_vendedores) =====
     const field = metaFieldForMonth(month);
     let metaQ = supabase.from("metas_vendedores").select(`vendedor_id,ano,${field}`).eq("ano", year);
+
     if (!admin) metaQ = metaQ.eq("vendedor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) metaQ = metaQ.eq("vendedor_id", scopeUserId);
 
@@ -584,7 +472,7 @@ export default function Inicio() {
     const monthSalesMeta = (metaRows || []).reduce((acc: number, r: any) => acc + (Number(r?.[field] || 0) || 0), 0);
     const monthSalesPct = monthSalesMeta > 0 ? Math.min(100, Math.max(0, (monthSalesTotal / monthSalesMeta) * 100)) : 0;
 
-    // ===== Carteira ativa (codigo = 00) =====
+    // ===== Carteira ativa (codigo=00) =====
     let cartQ = supabase.from("vendas").select("valor_venda,vendedor_id,codigo").eq("codigo", "00");
     if (!admin) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
@@ -593,14 +481,9 @@ export default function Inicio() {
     if (cartErr) throw cartErr;
     const carteiraAtivaTotal = (cartRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Reservas abertas (users.id) =====
-    let reqQ = supabase
-      .from("stock_reservation_requests")
-      .select("id,cota_id,vendor_id,vendor_pct,status,created_at")
-      .eq("status", "aberta")
-      .order("created_at", { ascending: false })
-      .limit(10);
-
+    // ===== Reservas abertas / vendas sem comissão =====
+    // Mantemos como estavam (KPI), mas não forçamos “Próximos eventos” com isso agora.
+    let reqQ = supabase.from("stock_reservation_requests").select("id").eq("status", "aberta").limit(1000);
     if (!admin) reqQ = reqQ.eq("vendor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) reqQ = reqQ.eq("vendor_id", scopeUserId);
 
@@ -608,13 +491,7 @@ export default function Inicio() {
     if (reqErr) throw reqErr;
     const openStockReqCount = (reqRows || []).length;
 
-    // ===== Vendas sem comissão (auth_user_id) =====
-    let vscQ = supabase
-      .from("v_vendas_sem_comissao")
-      .select("id,data_venda,vendedor_id,vendedor_nome,segmento,tabela,administradora,numero_proposta,credito")
-      .order("data_venda", { ascending: false })
-      .limit(10);
-
+    let vscQ = supabase.from("v_vendas_sem_comissao").select("id,vendedor_id").limit(3000);
     if (!admin) vscQ = vscQ.eq("vendedor_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) vscQ = vscQ.eq("vendedor_id", scopeAuthId);
 
@@ -622,12 +499,12 @@ export default function Inicio() {
     if (vscErr) throw vscErr;
     const vendasSemComissaoCount = (vscRows || []).length;
 
-    // ===== Comissões pendentes (users.id) =====
+    // ===== Comissões pendentes (KPI) + Comissões agendadas (Próximos Eventos) =====
     let comQ = supabase
       .from("commissions")
-      .select("id,vendedor_id,valor_total,status,created_at")
+      .select("id,vendedor_id,valor_total,status,data_pagamento,tabela,administradora,created_at")
       .order("created_at", { ascending: false })
-      .limit(300);
+      .limit(500);
 
     if (!admin) comQ = comQ.eq("vendedor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) comQ = comQ.eq("vendedor_id", scopeUserId);
@@ -642,13 +519,29 @@ export default function Inicio() {
     const commissionsPendingCount = pend.length;
     const commissionsPendingTotal = pend.reduce((acc: number, r: any) => acc + (Number(r.valor_total || 0) || 0), 0);
 
-    // ===== Giro pendente (count) =====
+    // Comissões com data_pagamento dentro da janela (tratamos como “agendada”)
+    const commissionsScheduled = (comRows || []).filter((c: CommissionRow) => {
+      if (!c.data_pagamento) return false;
+      return c.data_pagamento >= windowStart && c.data_pagamento <= windowEnd;
+    });
+
+    // ===== Giro pendente (contagem) =====
     let giroDueCount = 0;
 
-    if (admin && scopeAuthId === ALL) {
-      const { data: giroAll, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
-      if (giroAllErr) throw giroAllErr;
-      giroDueCount = (giroAll || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
+    if (admin) {
+      if (scopeAuthId === ALL) {
+        const { data: giroAll, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
+        if (giroAllErr) throw giroAllErr;
+        giroDueCount = (giroAll || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
+      } else {
+        const { data: giroRow, error: giroErr } = await supabase
+          .from("v_giro_due_count")
+          .select("owner_auth_id,due_count")
+          .eq("owner_auth_id", scopeAuthId)
+          .maybeSingle();
+        if (giroErr) throw giroErr;
+        giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
+      }
     } else {
       const { data: giroRow, error: giroErr } = await supabase
         .from("v_giro_due_count")
@@ -659,230 +552,176 @@ export default function Inicio() {
       giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
     }
 
-    // ===== Procedimentos novos =====
-    const proceduresNewCount = await loadProceduresNewCount(scopeAuthId);
+    // ===== Vendas do dia (Próximos Eventos) =====
+    let daySalesQ = supabase
+      .from("vendas")
+      .select("id,data_venda,vendedor_id,produto,segmento,tabela,administradora,numero_proposta,valor_venda")
+      .eq("data_venda", today)
+      .order("created_at", { ascending: false })
+      .limit(20);
 
-    // ===== Próximos Eventos (agregado) =====
-    const nextDays = 14;
-    const endNext = addDaysYMD(today, nextDays);
+    if (!admin) daySalesQ = daySalesQ.eq("vendedor_id", scopeAuthId);
+    if (admin && scopeAuthId !== ALL) daySalesQ = daySalesQ.eq("vendedor_id", scopeAuthId);
 
-    // (A) Groups: eventos entre ontem..+14
-    const groupsOr = [
-      `prox_vencimento.gte.${addDaysYMD(today, -1)}`,
-      `prox_vencimento.lte.${endNext}`,
-      `prox_sorteio.gte.${addDaysYMD(today, -1)}`,
-      `prox_sorteio.lte.${endNext}`,
-      `prox_assembleia.gte.${addDaysYMD(today, -1)}`,
-      `prox_assembleia.lte.${endNext}`,
-    ].join(",");
+    const { data: daySalesRows, error: daySalesErr } = await daySalesQ;
+    if (daySalesErr) throw daySalesErr;
 
-    const { data: groupRowsRaw, error: grpErr } = await supabase
-      .from("groups")
-      .select("id,codigo,administradora,segmento,prox_vencimento,prox_sorteio,prox_assembleia")
-      .or(groupsOr)
-      .limit(400);
+    // ===== Aniversários do dia (clientes.data_nascimento) =====
+    // Sem view específica, filtramos client-side. Se volume ficar grande depois, criamos uma view.
+    const { data: allBirth, error: birthErr } = await supabase
+      .from("clientes")
+      .select("id,nome,data_nascimento,telefone")
+      .not("data_nascimento", "is", null)
+      .limit(2000);
+    if (birthErr) throw birthErr;
 
-    if (grpErr) {
-      console.warn("[Inicio] groups next-events error:", grpErr);
-    }
+    const todayMMDD = today.slice(5); // "MM-DD"
+    const birthdayToday = (allBirth || []).filter((c: ClienteRow) => (c.data_nascimento || "").slice(5) === todayMMDD).slice(0, 20);
 
-    const groupRows = (groupRowsRaw || []) as GroupRow[];
-
-    // (B) Agenda próximos dias (sem deslize)
-    let agNextQ = supabase
-      .from("v_agenda_eventos_enriquecida")
-      .select("id,tipo,titulo,inicio_at,fim_at,user_id,cliente_nome,lead_nome,telefone,videocall_url")
-      .gte("inicio_at", dayStartLocalNoZ(addDaysYMD(today, -1)))
-      .lte("inicio_at", dayEndLocalNoZ(endNext))
-      .order("inicio_at", { ascending: true })
-      .limit(120);
-
-    if (!admin) agNextQ = agNextQ.eq("user_id", scopeAuthId);
-    if (admin && scopeAuthId !== ALL) agNextQ = agNextQ.eq("user_id", scopeAuthId);
-
-    const { data: agNextRows, error: agNextErr } = await agNextQ;
-    if (agNextErr) {
-      console.warn("[Inicio] agenda next-events error:", agNextErr);
-    }
-
-    // (C) Giro lista (tentativa): se você tiver uma view listando os clientes
-    // Se não existir, só mostramos “Giro pendente: X”
-    let giroList: Array<{ id: string; nome: string; telefone?: string | null; due_date?: string | null }> = [];
+    // ===== Procedimentos novos (notificação) =====
+    // Não temos schema confirmado aqui; então tenta kb_procedures sem quebrar deploy.
+    let newProceduresCount = 0;
     try {
-      let giroListQ = supabase
-        .from("v_giro_due_list" as any)
-        .select("id,nome,telefone,due_date,owner_auth_id")
-        .limit(20);
+      const sevenDaysAgo = addDaysYMD(today, -7);
+      const { data: kbRows, error: kbErr } = await supabase
+        .from("kb_procedures")
+        .select("id,title,titulo,status,created_at,updated_at")
+        .order("created_at", { ascending: false })
+        .limit(200);
 
-      if (!admin) giroListQ = giroListQ.eq("owner_auth_id", scopeAuthId);
-      if (admin && scopeAuthId !== ALL) giroListQ = giroListQ.eq("owner_auth_id", scopeAuthId);
-
-      const { data: giroListRows, error: giroListErr } = await giroListQ;
-      if (giroListErr) throw giroListErr;
-
-      giroList = (giroListRows || []) as any;
-    } catch (e) {
-      // ok: não quebra
+      if (!kbErr && kbRows) {
+        const active = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active");
+        // “novo” = criado nos últimos 7 dias (date compare via slice)
+        newProceduresCount = active.filter((p) => (p.created_at || "").slice(0, 10) >= sevenDaysAgo).length;
+      }
+    } catch {
+      // ignora
+      newProceduresCount = 0;
     }
 
-    // (D) Aniversários (próximos 14 dias) — busca “muitos” e filtra no front (mantém simples e estável)
-    let birthdayCandidates: ClienteRow[] = [];
-    try {
-      const { data: clRows, error: clErr } = await supabase
-        .from("clientes")
-        .select("id,nome,telefone,data_nascimento")
-        .not("data_nascimento", "is", null)
-        .limit(2000);
-      if (clErr) throw clErr;
-      birthdayCandidates = (clRows || []) as ClienteRow[];
-    } catch (e) {
-      // ignore
+    /** ===================== Monta Próximos Eventos ===================== */
+    const items: NextEventItem[] = [];
+
+    // Agenda (timestamptz) — label no offset
+    for (const e of (agRows || []) as AgendaRow[]) {
+      const startISO = e.inicio_at;
+      const startUtcMs = new Date(startISO).getTime();
+      const ymd = ymdFromDateInOffset(new Date(startUtcMs), PV_OFFSET_MIN);
+      const flag = flagFromYMD(today, ymd);
+      items.push({
+        id: `ag:${e.id}`,
+        whenSort: startUtcMs,
+        whenLabel: `${flag} • ${fmtDTForOffset(startISO, PV_OFFSET_MIN)}`,
+        flag,
+        title: e.titulo || "Evento",
+        desc: `${e.tipo || "Agenda"} • ${(e.cliente_nome || e.lead_nome || "—") as any}`,
+        action: { label: "Abrir Agenda", to: "/agenda" },
+      });
     }
 
-    const todayMMDD = today.slice(5);
-    const mmddInRange = (mmdd: string) => {
-      // checa próximos 14 dias pelo calendário real
-      for (let i = 0; i <= nextDays; i++) {
-        const ymd = addDaysYMD(today, i);
-        if (ymd.slice(5) === mmdd) return ymd;
-      }
-      // e “atrasados” de ontem
-      const ymdPrev = addDaysYMD(today, -1);
-      if (ymdPrev.slice(5) === mmdd) return ymdPrev;
-      return null;
-    };
-
-    const birthdayEvents: NextEvent[] = birthdayCandidates
-      .map((c) => {
-        const dn = (c.data_nascimento || "").slice(0, 10);
-        if (!dn) return null;
-        const mmdd = dn.slice(5);
-        const dateYMD = mmddInRange(mmdd);
-        if (!dateYMD) return null;
-        return {
-          key: `bday:${c.id}:${dateYMD}`,
-          kind: "aniversario",
-          dateYMD,
-          title: `Aniversário: ${safeTitle(c.nome)}`,
-          desc: c.telefone ? `Telefone: ${c.telefone}` : "Sem telefone",
-          action: { label: "Abrir Clientes", onClick: () => nav("/clientes") },
-        } as NextEvent;
-      })
-      .filter(Boolean) as NextEvent[];
-
-    const groupEvents: NextEvent[] = [];
-    for (const g of groupRows) {
-      const base = `${g.administradora || "Admin"} • Grupo ${g.codigo || g.id.slice(0, 6)}`;
-      if (g.prox_vencimento) {
-        groupEvents.push({
-          key: `g:${g.id}:venc:${g.prox_vencimento}`,
-          kind: "grupo_vencimento",
-          dateYMD: g.prox_vencimento,
-          title: `Vencimento • ${base}`,
-          desc: `Próx. vencimento do grupo`,
-          action: { label: "Abrir Gestão", onClick: () => nav("/gestao-de-grupos") },
+    // Grupos (date)
+    for (const g of (gRows || []) as GroupRow[]) {
+      const base = `${g.administradora} • ${g.segmento} • Grupo ${g.codigo}`;
+      const pushGroup = (kind: "Vencimento" | "Sorteio" | "Assembleia", dateYMD: string | null) => {
+        if (!dateYMD) return;
+        const flag = flagFromYMD(today, dateYMD);
+        items.push({
+          id: `grp:${g.id}:${kind}:${dateYMD}`,
+          whenSort: Date.UTC(Number(dateYMD.slice(0, 4)), Number(dateYMD.slice(5, 7)) - 1, Number(dateYMD.slice(8, 10)), 12, 0, 0),
+          whenLabel: `${flag} • ${fmtDateBRFromYMD(dateYMD)}`,
+          flag,
+          title: `Grupo • ${kind}`,
+          desc: base,
+          action: { label: "Ver Grupos", to: "/gestao-de-grupos" },
         });
-      }
-      if (g.prox_sorteio) {
-        groupEvents.push({
-          key: `g:${g.id}:sort:${g.prox_sorteio}`,
-          kind: "grupo_sorteio",
-          dateYMD: g.prox_sorteio,
-          title: `Sorteio • ${base}`,
-          desc: `Próx. sorteio do grupo`,
-          action: { label: "Abrir Gestão", onClick: () => nav("/gestao-de-grupos") },
-        });
-      }
-      if (g.prox_assembleia) {
-        groupEvents.push({
-          key: `g:${g.id}:ass:${g.prox_assembleia}`,
-          kind: "grupo_assembleia",
-          dateYMD: g.prox_assembleia,
-          title: `Assembleia • ${base}`,
-          desc: `Próx. assembleia do grupo`,
-          action: { label: "Abrir Gestão", onClick: () => nav("/gestao-de-grupos") },
-        });
-      }
-    }
-
-    const agendaEvents: NextEvent[] = (agNextRows || []).map((e: any) => {
-      const ymd = String(e.inicio_at || "").slice(0, 10) || today;
-      const who = e.cliente_nome || e.lead_nome || "—";
-      return {
-        key: `ag:${e.id}`,
-        kind: "agenda",
-        dateYMD: ymd,
-        title: `Agenda • ${safeTitle(e.titulo)}`,
-        desc: `${who} • ${fmtDT(e.inicio_at)}`,
-        action: { label: "Abrir Agenda", onClick: () => nav("/agenda") },
       };
-    });
+      pushGroup("Vencimento", g.prox_vencimento);
+      pushGroup("Sorteio", g.prox_sorteio);
+      pushGroup("Assembleia", g.prox_assembleia);
+    }
 
-    const giroEvents: NextEvent[] =
-      giroList.length > 0
-        ? giroList.map((g) => ({
-            key: `giro:${g.id}:${g.due_date || today}`,
-            kind: "giro",
-            dateYMD: (g.due_date || today).slice(0, 10),
-            title: `Giro de Carteira • ${safeTitle(g.nome)}`,
-            desc: g.telefone ? `Telefone: ${g.telefone}` : "Cliente sem telefone",
-            action: { label: "Abrir Giro", onClick: () => nav("/giro-de-carteira") },
-          }))
-        : giroDueCount > 0
-        ? [
-            {
-              key: `giro:count:${today}`,
-              kind: "giro",
-              dateYMD: today,
-              title: `Giro de Carteira pendente: ${giroDueCount}`,
-              desc: "Clientes com giro a ser realizado",
-              action: { label: "Abrir Giro", onClick: () => nav("/giro-de-carteira") },
-            },
-          ]
-        : [];
+    // Comissões agendadas (commissions.data_pagamento)
+    for (const c of commissionsScheduled as CommissionRow[]) {
+      const d = c.data_pagamento!;
+      const flag = flagFromYMD(today, d);
+      items.push({
+        id: `com:${c.id}:${d}`,
+        whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 13, 0, 0),
+        whenLabel: `${flag} • ${fmtDateBRFromYMD(d)}`,
+        flag,
+        title: "Comissão • Pagamento agendado",
+        desc: `${c.administradora || "—"} • ${c.tabela || "—"} • ${fmtBRL(Number(c.valor_total || 0) || 0)}`,
+        action: { label: "Abrir Comissões", to: "/comissoes" },
+      });
+    }
 
-    const proceduresEvents: NextEvent[] =
-      proceduresNewCount > 0
-        ? [
-            {
-              key: `proc:new:${today}`,
-              kind: "procedimento",
-              dateYMD: today,
-              title: `Procedimentos novos: ${proceduresNewCount}`,
-              desc: "Atualizações no módulo de Procedimentos",
-              action: {
-                label: "Ver Procedimentos",
-                onClick: async () => {
-                  await markProceduresAsSeen();
-                  nav("/procedimentos");
-                },
-              },
-            },
-          ]
-        : [];
+    // Vendas do dia
+    for (const v of (daySalesRows || []) as VendaRow[]) {
+      items.push({
+        id: `sale:${v.id}`,
+        whenSort: Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)), 10, 0, 0),
+        whenLabel: `Hoje • ${fmtDateBRFromYMD(today)}`,
+        flag: "Hoje",
+        title: "Venda do dia",
+        desc: `${v.administradora || "—"} • ${v.tabela || v.produto || "—"} • ${v.numero_proposta || "—"} • ${fmtBRL(Number(v.valor_venda || 0) || 0)}`,
+        action: { label: "Abrir Relatórios", to: "/relatorios" },
+      });
+    }
 
-    const merged = [...groupEvents, ...agendaEvents, ...giroEvents, ...birthdayEvents, ...proceduresEvents]
-      .filter((ev) => !!ev?.dateYMD)
-      .sort((a, b) => {
-        // ordena por data e depois por título
-        if (a.dateYMD !== b.dateYMD) return a.dateYMD.localeCompare(b.dateYMD);
-        return a.title.localeCompare(b.title);
-      })
-      .slice(0, 30);
+    // Oportunidades atrasadas (também entram como "evento" pra ficar visível no bloco)
+    for (const o of overdueOppsEnriched) {
+      const d = o.expected_close_at || today;
+      const flag: NextEventFlag = d < today ? "Atrasado" : d === today ? "Hoje" : "Em breve";
+      items.push({
+        id: `opp:${o.id}`,
+        whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 9, 0, 0),
+        whenLabel: `${flag} • ${fmtDateBRFromYMD(d)}`,
+        flag,
+        title: "Oportunidade • Fechamento",
+        desc: `${o.lead_nome || "Lead"} • ${(o.estagio || o.stage || "—") as any} • ${fmtBRL(Number(o.valor_credito || 0) || 0)}`,
+        action: { label: "Ver Oportunidades", to: "/oportunidades" },
+      });
+    }
 
-    // ===== Set states =====
+    // Giro pendente (agregado)
+    if (giroDueCount > 0) {
+      items.push({
+        id: `giro:agg`,
+        whenSort: Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)), 15, 0, 0),
+        whenLabel: `Hoje • ${fmtDateBRFromYMD(today)}`,
+        flag: "Hoje",
+        title: "Giro de carteira pendente",
+        desc: `Você tem ${giroDueCount} giro(s) pendente(s) para realizar.`,
+        action: { label: "Abrir Giro", to: "/giro-de-carteira" },
+      });
+    }
+
+    // Aniversários do dia
+    for (const c of birthdayToday) {
+      items.push({
+        id: `bday:${c.id}`,
+        whenSort: Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)), 8, 0, 0),
+        whenLabel: `Hoje • ${fmtDateBRFromYMD(today)}`,
+        flag: "Hoje",
+        title: "Aniversário",
+        desc: `${c.nome}${c.telefone ? ` • ${c.telefone}` : ""}`,
+        action: { label: "Ver Clientes", to: "/clientes" },
+      });
+    }
+
+    // Ordena e limita
+    items.sort((a, b) => a.whenSort - b.whenSort);
+
+    // ✅ Atualiza estados
     setOverdueOpps(overdueOppsEnriched);
-    setTodayAgendaEvents((agRows || []) as any);
-    setStockReqs(reqRows || []);
-    setVendasSemComissao((vscRows || []) as any);
-
-    setNextEvents(merged);
+    setAgendaItems((agRows || []) as any);
+    setNextEvents(items.slice(0, 30));
 
     setKpi({
       overdueOppCount,
       overdueOppTotal,
 
-      todayEventsCount: (agRows || []).length,
+      todayEventsCount,
       todayGroupsCount,
 
       monthSalesTotal,
@@ -899,22 +738,37 @@ export default function Inicio() {
 
       giroDueCount,
 
-      proceduresNewCount,
+      newProceduresCount,
     });
+  }
 
-    // dica do dia (não bloqueia o painel)
-    loadDailyTip().catch(() => null);
+  function getScopes() {
+    if (!me) return null;
+    const admin = isAdmin(me);
+
+    if (!admin) {
+      return { admin, scopeUserId: me.id, scopeAuthId: me.auth_user_id };
+    }
+
+    if (vendorScope === ALL) {
+      return { admin, scopeUserId: ALL, scopeAuthId: ALL };
+    }
+
+    const u = usersById.get(vendorScope);
+    if (!u) return { admin, scopeUserId: vendorScope, scopeAuthId: ALL };
+
+    return { admin, scopeUserId: u.id, scopeAuthId: u.auth_user_id };
   }
 
   async function reload(hard = false) {
-    if (!me) return;
+    const scopes = getScopes();
+    if (!scopes) return;
 
-    const scope = resolveScope(me, usersById, vendorScope);
     if (hard) setRefreshing(true);
     setErrMsg(null);
 
     try {
-      await loadDashboard(scope.scopeUserId, scope.scopeAuthId, scope.admin);
+      await loadDashboard(scopes.scopeUserId, scopes.scopeAuthId, scopes.admin);
     } catch (e) {
       console.error("[Inicio] loadDashboard error:", e);
       setErrMsg(humanErr(e));
@@ -931,20 +785,20 @@ export default function Inicio() {
       setErrMsg(null);
 
       try {
-        const { meRow, usersRows } = await loadMeAndUsers();
+        const { meRow, usersRows, admin, initialScope } = await loadMeAndUsers();
         if (!alive) return;
-
-        const admin = isAdmin(meRow);
-        const initialScope = admin ? ALL : meRow.id;
 
         setMe(meRow);
         setUsers(usersRows);
         setVendorScope(initialScope);
 
-        const usersMap = new Map(usersRows.map((u) => [u.id, u]));
-        const scope = resolveScope(meRow, usersMap, initialScope);
+        const initScopes = admin
+          ? initialScope === ALL
+            ? { su: ALL, sa: ALL }
+            : { su: meRow.id, sa: meRow.auth_user_id }
+          : { su: meRow.id, sa: meRow.auth_user_id };
 
-        await loadDashboard(scope.scopeUserId, scope.scopeAuthId, admin);
+        await loadDashboard(initScopes.su, initScopes.sa, admin);
       } catch (e) {
         console.error("[Inicio] init error:", e);
         if (!alive) return;
@@ -964,11 +818,16 @@ export default function Inicio() {
   // Quando muda filtro do admin, recarrega
   useEffect(() => {
     if (!me) return;
-    if (!isAdmin(me)) return;
+    const admin = isAdmin(me);
+    if (!admin) return;
+
     if (vendorScope !== ALL && !usersById.has(vendorScope)) return;
     reload(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vendorScope]);
+
+  const admin = isAdmin(me);
+  const glassCard = "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";
 
   if (loading) {
     return (
@@ -1036,9 +895,7 @@ export default function Inicio() {
             </CardHeader>
             <CardContent className="text-sm text-slate-700">
               <div className="mb-2">Copia essa mensagem e me manda:</div>
-              <pre className="whitespace-pre-wrap break-words rounded-md bg-white border border-slate-200 p-3 text-xs text-slate-800">
-                {errMsg}
-              </pre>
+              <pre className="whitespace-pre-wrap break-words rounded-md bg-white border border-slate-200 p-3 text-xs text-slate-800">{errMsg}</pre>
             </CardContent>
           </Card>
         </div>
@@ -1066,7 +923,7 @@ export default function Inicio() {
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
-              <Calendar className="h-4 w-4" /> Agenda de Hoje
+              <Calendar className="h-4 w-4" /> Agenda de hoje
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -1155,14 +1012,20 @@ export default function Inicio() {
                 Contempladas <ArrowRight className="h-4 w-4" />
               </Button>
 
-              {/* ✅ renomeado */}
+              {/* Alterado: Playbook de Vendas */}
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/planejamento")}>
-                Playbook de Vendas <ArrowRight className="h-4 w-4" />
+                <span className="inline-flex items-center gap-2">
+                  <BookOpen className="h-4 w-4" /> Playbook de Vendas
+                </span>
+                <ArrowRight className="h-4 w-4" />
               </Button>
 
-              {/* ✅ novo */}
+              {/* Novo: Links Úteis */}
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/links")}>
-                Links Úteis <LinkIcon className="h-4 w-4" />
+                <span className="inline-flex items-center gap-2">
+                  <LinkIcon className="h-4 w-4" /> Links Úteis
+                </span>
+                <ArrowRight className="h-4 w-4" />
               </Button>
 
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/relatorios")}>
@@ -1179,6 +1042,15 @@ export default function Inicio() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {/* 🔔 Procedimentos novos */}
+            <div className="flex items-center justify-between">
+              <div className="text-slate-700 inline-flex items-center gap-2">
+                <FileText className="h-4 w-4 text-slate-500" />
+                Procedimentos novos
+              </div>
+              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.newProceduresCount}</Badge>
+            </div>
+
             <div className="flex items-center justify-between">
               <div className="text-slate-700">Grupos com evento hoje</div>
               <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.todayGroupsCount}</Badge>
@@ -1208,34 +1080,13 @@ export default function Inicio() {
               <div className="text-slate-700">Solicitações de reserva</div>
               <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.openStockReqCount}</Badge>
             </div>
-
-            {/* ✅ Procedimentos novos */}
-            <div className="flex items-center justify-between">
-              <div className="text-slate-700 flex items-center gap-2">
-                <Bell className="h-4 w-4" />
-                Procedimentos novos
-              </div>
-              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.proceduresNewCount}</Badge>
-            </div>
-
-            <div className="pt-1">
-              <Button
-                size="sm"
-                className="w-full bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                onClick={async () => {
-                  await markProceduresAsSeen();
-                  nav("/procedimentos");
-                }}
-              >
-                Ver Procedimentos <ArrowRight className="h-4 w-4 ml-2" />
-              </Button>
-            </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Listas */}
       <div className="mt-6 grid grid-cols-1 xl:grid-cols-3 gap-4">
+        {/* Atrasadas (top 12) */}
         <Card className={`${glassCard} xl:col-span-2`}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -1253,7 +1104,7 @@ export default function Inicio() {
                       {o.lead_nome || "Lead"} <span className="text-slate-500">• {(o.estagio || o.stage || "—") as any}</span>
                     </div>
                     <div className="text-xs text-slate-500 truncate">
-                      Fecha em: {o.expected_close_at || "—"} • {o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}
+                      Fecha em: {o.expected_close_at ? fmtDateBRFromYMD(o.expected_close_at) : "—"} • {o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}
                     </div>
                   </div>
                   <div className="text-sm font-semibold">{fmtBRL(Number(o.valor_credito || 0) || 0)}</div>
@@ -1263,53 +1114,52 @@ export default function Inicio() {
           </CardContent>
         </Card>
 
-        {/* ✅ Renomeado e refeito: Próximos Eventos */}
+        {/* Próximos Eventos (unificado) */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
               <Calendar className="h-4 w-4" /> Próximos Eventos
             </CardTitle>
           </CardHeader>
+
           <CardContent className="space-y-2">
             {nextEvents.length === 0 ? (
-              <div className="text-slate-500 text-sm">Sem eventos próximos.</div>
+              <div className="text-slate-500 text-sm">Sem eventos na janela configurada.</div>
             ) : (
-              nextEvents.map((e) => {
-                const flag = flagForEvent(rangeToday.ymd, e.dateYMD);
-                return (
-                  <div key={e.key} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">{e.title}</div>
-                        <div className="text-xs text-slate-500 truncate">
-                          {fmtDateBRFromYMD(e.dateYMD)} • {e.desc || "—"}
-                        </div>
+              nextEvents.map((e) => (
+                <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge className={flagBadgeClass(e.flag)}>{e.flag}</Badge>
+                        <div className="text-xs text-slate-500">{e.whenLabel}</div>
                       </div>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${flag.className}`}>
-                        {flag.label}
-                      </span>
+
+                      <div className="text-sm font-medium truncate mt-1">{e.title}</div>
+                      {e.desc ? <div className="text-xs text-slate-500 truncate">{e.desc}</div> : null}
                     </div>
 
                     {e.action ? (
-                      <div className="mt-2">
-                        <Button
-                          size="sm"
-                          className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                          onClick={e.action.onClick}
-                        >
-                          {e.action.label} <ArrowRight className="h-4 w-4 ml-1" />
-                        </Button>
-                      </div>
+                      <Button
+                        size="sm"
+                        className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
+                        onClick={() => {
+                          if (e.action?.to) nav(e.action.to);
+                          else if (e.action?.href) window.open(e.action.href, "_blank");
+                        }}
+                      >
+                        {e.action.label} <ArrowRight className="h-4 w-4 ml-1" />
+                      </Button>
                     ) : null}
                   </div>
-                );
-              })
+                </div>
+              ))
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Maximize-se */}
+      {/* Maximize-se (mantido por enquanto, sem internet automática ainda) */}
       <div className="mt-6">
         <Card className={glassCard}>
           <CardHeader className="pb-2">
@@ -1319,41 +1169,14 @@ export default function Inicio() {
           </CardHeader>
           <CardContent className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div className="text-slate-700">
-              {dailyTip?.text ? (
-                <>
-                  <span className="font-semibold">Dica do dia:</span> {dailyTip.text}
-                  {dailyTip.source ? <span className="text-xs text-slate-500"> • fonte: {dailyTip.source}</span> : null}
-                </>
-              ) : (
-                <>
-                  Hoje, foca em 1 coisa: <span className="font-semibold">follow-up com data</span>. Quem deixa “aberto” vira “vou ver e te aviso”.
-                </>
-              )}
+              Hoje, foca em 1 coisa: <span className="font-semibold">follow-up com data</span>. Quem deixa “aberto” vira “vou ver e te aviso”.
             </div>
-
-            <div className="flex gap-2">
-              <Button
-                className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                onClick={() => {
-                  // força atualizar dica
-                  localStorage.removeItem(TIP_CACHE_KEY);
-                  loadDailyTip().catch(() => null);
-                }}
-              >
-                Atualizar dica <RefreshCcw className="h-4 w-4 ml-2" />
-              </Button>
-
-              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/planejamento")}>
-                Abrir Playbook <ArrowRight className="h-4 w-4 ml-2" />
-              </Button>
-            </div>
+            <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/planejamento")}>
+              Abrir Playbook <ArrowRight className="h-4 w-4 ml-2" />
+            </Button>
           </CardContent>
         </Card>
       </div>
-
-      {/* mantidos (dados carregados) */}
-      {/* stockReqs: {stockReqs.length} | vendasSemComissao: {vendasSemComissao.length} */}
-      {/* todayAgendaEvents: {todayAgendaEvents.length} */}
     </div>
   );
 }

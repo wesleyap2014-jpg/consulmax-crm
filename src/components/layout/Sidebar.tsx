@@ -251,9 +251,10 @@ function groupForPath(pathname: string): GroupKey {
   )
     return "vendas";
 
-  if (isAnyPathActive(pathname, ["/carteira", "/giro-de-carteira", "/gestao-de-grupos", "/clientes"])) return "pos";
+  // ✅ Clientes saiu de Pós-venda e foi para Administrativo
+  if (isAnyPathActive(pathname, ["/carteira", "/giro-de-carteira", "/gestao-de-grupos"])) return "pos";
 
-  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros"])) return "admin";
+  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes"])) return "admin";
 
   if (isAnyPathActive(pathname, ["/links", "/procedimentos"])) return "max";
 
@@ -324,7 +325,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   }, [mobileOpen, isSmall]);
 
   const handleNav = () => {
-    // fecha drawer e chama callback
     if (isSmall) setMobileOpen(false);
     onNavigate?.();
   };
@@ -476,16 +476,16 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
       { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
 
-      // Pós-venda
+      // Pós-venda (✅ Clientes removido daqui)
       { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
       { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
       { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
-      { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
 
-      // Administrativo
+      // Administrativo (✅ Clientes veio pra cá)
       { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
       { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
       { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
+      { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
 
       // Financeiro
       { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
@@ -855,18 +855,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     {navAlerts.gestaoGrupos && <AlertDot />}
                   </span>
                 </NavLink>
-
-                <NavLink
-                  to="/clientes"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Clientes"
-                  end
-                >
-                  <UserCog className="h-4 w-4" />
-                  Clientes
-                </NavLink>
               </div>
             )}
 
@@ -908,6 +896,19 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 >
                   <SlidersHorizontal className="h-4 w-4" />
                   Parâmetros
+                </NavLink>
+
+                {/* ✅ Clientes agora aqui */}
+                <NavLink
+                  to="/clientes"
+                  className={({ isActive }) => pillClass(isActive)}
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={handleNav}
+                  title="Clientes"
+                  end
+                >
+                  <UserCog className="h-4 w-4" />
+                  Clientes
                 </NavLink>
               </div>
             )}
@@ -1003,11 +1004,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         <>
           {/* Backdrop clicável */}
           {mobileOpen && (
-            <div
-              className="fixed inset-0 z-[50] bg-black/40"
-              onClick={() => setMobileOpen(false)}
-              aria-hidden
-            />
+            <div className="fixed inset-0 z-[50] bg-black/40" onClick={() => setMobileOpen(false)} aria-hidden />
           )}
 
           {/* Drawer */}
@@ -1020,7 +1017,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           </div>
         </>
       ) : (
-        // Desktop: sidebar normal
         AsideContent
       )}
     </>

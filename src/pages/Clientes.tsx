@@ -3,108 +3,87 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Pencil, CalendarPlus, Eye, Send, Check, Loader2, X, Plus } from "lucide-react";
 
-type ClienteRow = {
-  id: string; // clientes.id
-  lead_id: string | null;
-  created_by: string;
-
-  // básicos
-  nome: string;
-  data_nascimento: string | null;
-  cpf: string | null;
-  telefone: string | null;
-  email: string | null;
-
-  // endereço
-  endereco_cep: string | null;
-  logradouro: string | null;
-  numero: string | null;
-  bairro: string | null;
-  cidade: string | null;
-  uf: string | null;
-
-  // observações
-  observacoes: string | null;
-
-  // NOVOS CAMPOS (SQL que você rodou)
-  vendedor_auth_user_id?: string | null;
-  tipo?: string | null; // PF | PJ
-  segmento_pf?: string | null;
-  segmento_pj?: string | null;
-  perfil_cliente?: string | null; // PF Geral | PF Agro | PJ
-  como_chamar?: string | null;
-
-  contato_emerg_nome?: string | null;
-  contato_emerg_telefone?: string | null;
-
-  renda_faturamento?: number | null;
-  foto_url?: string | null;
-
-  pai_mae_vivos?: boolean | null;
-  pai_nome?: string | null;
-  pai_nascimento?: string | null;
-  mae_nome?: string | null;
-  mae_nascimento?: string | null;
-
-  autoriza_postar_contemplacao?: boolean | null;
-  autoriza_homenagens?: boolean | null;
-
-  feedback?: string | null;
-  obs_internas?: string | null;
-
-  conteudos_preferidos?: string[] | null;
-  prefere_educativo?: boolean | null;
-  como_conheceu?: string | null;
-
-  created_at?: string;
-  updated_at?: string;
-};
-
-type Lead = { id: string; nome: string; telefone?: string | null; email?: string | null; origem?: string | null; owner_id?: string | null };
-type UserLite = { auth_user_id: string; nome: string; role?: string | null; is_active?: boolean | null };
-type VendaLite = {
-  id: string;
-  lead_id: string | null;
-  created_at: string | null;
-  nascimento: string | null;
-  descricao: string | null;
-  cpf: string | null;
-  cpf_cnpj: any | null;
-  email: string | null;
-  telefone: string | null;
-  vendedor_id: string | null; // FK users.auth_user_id
-};
-
-type ClienteUI = {
+type ClienteBase = {
+  id: string; // lead_id (chave visual da linha)
   lead_id: string;
+
+  // do lead / venda
   nome: string;
   telefone?: string | null;
   email?: string | null;
+  cpf_dig?: string | null; // vendas.cpf (digits)
+  data_nascimento?: string | null; // vendas.nascimento YYYY-MM-DD
+  observacoes?: string | null; // vendas.descricao (legado)
+  vendas_ids?: string[]; // ids das vendas do lead (mais recente primeiro)
 
-  // da venda mais recente
-  cpf_dig?: string | null;
-  data_nascimento?: string | null; // vendas.nascimento
-  observacoes?: string | null; // vendas.descricao
-  vendas_ids?: string[];
-
-  // vendedor
+  // vendedor (da venda mais recente)
   vendedor_auth_user_id?: string | null;
   vendedor_nome?: string | null;
 
-  // se confirmado
-  cliente_row?: ClienteRow | null;
+  // do cliente já confirmado
+  cliente_row_id?: string | null; // clientes.id
 };
 
-type FilhoRow = {
-  id: string;
-  cliente_id: string;
-  nome: string;
-  data_nascimento: string | null;
-  sexo: string | null; // F | M
-  created_at?: string;
+type TipoPessoa = "PF" | "PJ";
+type PerfilCliente = "PF Geral" | "PF Agro" | "PJ";
+type SegmentoPF =
+  | "Assalariado"
+  | "Autônomo"
+  | "Aposentado"
+  | "Empresário"
+  | "Funcionário Público"
+  | "Motorista"
+  | "Produtor Rural"
+  | "Profissional Liberal"
+  | "Locador ou Proprietário";
+
+type ConteudoPref = "dicas rápidas" | "explicações completas" | "promoções" | "novidades";
+type ComoConheceu = "Instagram" | "Google" | "Indicação" | "Anúncio" | "Relacionamento com o Vendedor" | "Outro";
+
+type Filho = { nome: string; nascimento: string; sexo: "F" | "M" | "" };
+
+type CadastroExtra = {
+  tipo: TipoPessoa;
+  segmento_pf: SegmentoPF | "";
+  segmento_pj: string; // texto livre (PJ)
+  perfil: PerfilCliente;
+
+  chamado_como: string;
+
+  endereco_cep: string;
+  logradouro: string;
+  numero: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
+
+  emergencia_nome: string;
+  emergencia_telefone: string;
+
+  renda_faturamento: string; // humano (R$)
+  foto_url: string;
+
+  pais_vivos: "sim" | "nao" | ""; // flag
+  pai_nome: string;
+  pai_nasc: string;
+  mae_nome: string;
+  mae_nasc: string;
+
+  possui_filhos: "sim" | "nao" | "";
+  filhos: Filho[];
+
+  autoriza_publicar: "sim" | "nao" | "";
+  autoriza_homenagem: "sim" | "nao" | "";
+
+  feedback: string;
+  obs_internas: string;
+
+  conteudos: ConteudoPref[]; // multi
+  prefere_educativo: "educativo" | "ofertas" | ""; // educativo vs pontuais
+  como_conheceu: ComoConheceu | "";
 };
 
-const PF_SEGMENTOS = [
+const SEGMENTOS_PF: SegmentoPF[] = [
   "Assalariado",
   "Autônomo",
   "Aposentado",
@@ -113,16 +92,21 @@ const PF_SEGMENTOS = [
   "Motorista",
   "Produtor Rural",
   "Profissional Liberal",
-  "Locador ou Proprietário",
-] as const;
+  "Locador ou Proprietárioand Proprietário".includes("And") ? "Locador ou Proprietário" : "Locador ou Proprietário",
+];
 
-const PERFIS = ["PF Geral", "PF Agro", "PJ"] as const;
-
-const CONTENT_PREFS = ["dicas rápidas", "explicações completas", "promoções", "novidades"] as const;
-
-const COMO_CONHECEU = ["Instagram", "Google", "Indicação", "Anúncio", "Relacionamento com o Vendedor", "Outro"] as const;
+const CONTEUDOS: ConteudoPref[] = ["dicas rápidas", "explicações completas", "promoções", "novidades"];
+const COMO_CONHECEU: ComoConheceu[] = [
+  "Instagram",
+  "Google",
+  "Indicação",
+  "Anúncio",
+  "Relacionamento com o Vendedor",
+  "Outro",
+];
 
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
+const clamp = (s: string, n: number) => (s || "").slice(0, n);
 
 const maskPhone = (v: string) => {
   const d = onlyDigits(v).slice(0, 11);
@@ -148,61 +132,184 @@ const formatBRDate = (iso?: string | null) => {
   return `${dd}/${mm}/${yyyy}`;
 };
 
-const moneyBR = (n?: number | null) => {
-  if (n == null || Number.isNaN(Number(n))) return "";
-  return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-};
+const emptyExtra = (): CadastroExtra => ({
+  tipo: "PF",
+  segmento_pf: "",
+  segmento_pj: "",
+  perfil: "PF Geral",
 
-const parseMoneyBR = (s: string) => {
-  const raw = (s || "").replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
-  const v = Number(raw);
-  return Number.isFinite(v) ? v : null;
-};
+  chamado_como: "",
 
-async function fetchViaCEP(cepDigits: string) {
-  const cep = onlyDigits(cepDigits).slice(0, 8);
-  if (cep.length !== 8) return null;
-  const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-  if (!res.ok) return null;
-  const j = await res.json();
-  if (j?.erro) return null;
-  return j as { logradouro?: string; bairro?: string; localidade?: string; uf?: string };
+  endereco_cep: "",
+  logradouro: "",
+  numero: "",
+  bairro: "",
+  cidade: "",
+  uf: "",
+
+  emergencia_nome: "",
+  emergencia_telefone: "",
+
+  renda_faturamento: "",
+  foto_url: "",
+
+  pais_vivos: "",
+  pai_nome: "",
+  pai_nasc: "",
+  mae_nome: "",
+  mae_nasc: "",
+
+  possui_filhos: "",
+  filhos: [{ nome: "", nascimento: "", sexo: "" }],
+
+  autoriza_publicar: "",
+  autoriza_homenagem: "",
+
+  feedback: "",
+  obs_internas: "",
+
+  conteudos: [],
+  prefere_educativo: "",
+  como_conheceu: "",
+});
+
+function safeParseExtraFromObservacoes(observacoes?: string | null): { extra: CadastroExtra | null; legacyText: string } {
+  const raw = (observacoes || "").trim();
+  if (!raw) return { extra: null, legacyText: "" };
+
+  // formato: "CMX_JSON:{...}"
+  if (raw.startsWith("CMX_JSON:")) {
+    const jsonStr = raw.slice("CMX_JSON:".length).trim();
+    try {
+      const parsed = JSON.parse(jsonStr);
+      // fallback em campos faltantes
+      return { extra: { ...emptyExtra(), ...(parsed || {}) }, legacyText: "" };
+    } catch {
+      return { extra: null, legacyText: raw };
+    }
+  }
+
+  // pode já ser JSON puro
+  if (raw.startsWith("{") && raw.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(raw);
+      return { extra: { ...emptyExtra(), ...(parsed || {}) }, legacyText: "" };
+    } catch {
+      return { extra: null, legacyText: raw };
+    }
+  }
+
+  // legado (texto livre)
+  return { extra: null, legacyText: raw };
 }
 
-async function fetchCNPJBrasilAPI(cnpjDigits: string) {
-  const cnpj = onlyDigits(cnpjDigits).slice(0, 14);
-  if (cnpj.length !== 14) return null;
-  const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);
-  if (!res.ok) return null;
+function serializeExtraToObservacoes(extra: CadastroExtra, legacyObsInterna?: string) {
+  const payload = { ...(extra || emptyExtra()) };
+  if (legacyObsInterna && !payload.obs_internas) payload.obs_internas = legacyObsInterna;
+  return `CMX_JSON:${JSON.stringify(payload)}`;
+}
+
+async function fetchCep(cepDigits: string) {
+  const cep = onlyDigits(cepDigits).slice(0, 8);
+  if (cep.length !== 8) throw new Error("CEP inválido.");
+  const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+  if (!res.ok) throw new Error("Falha ao buscar CEP.");
   const j = await res.json();
-  return j as any;
+  if (j?.erro) throw new Error("CEP não encontrado.");
+  return {
+    logradouro: j.logradouro || "",
+    bairro: j.bairro || "",
+    cidade: j.localidade || "",
+    uf: j.uf || "",
+  };
 }
 
 function Overlay({
-  open,
   title,
   onClose,
   children,
 }: {
-  open: boolean;
   title: string;
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  if (!open) return null;
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
-      <div className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(980px,92vw)] max-h-[88vh] overflow-auto bg-white rounded-2xl shadow-xl p-4">
-        <div className="flex items-center justify-between gap-3 mb-3">
+      <div
+        className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(1400px,96vw)] bg-white rounded-2xl shadow-xl"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="sticky top-0 z-10 bg-white border-b p-5 flex items-center justify-between gap-3 rounded-t-2xl">
           <h3 className="font-semibold m-0">{title}</h3>
           <button className="icon-btn" onClick={onClose} title="Fechar">
             <X className="h-4 w-4" />
           </button>
         </div>
-        {children}
+
+        <div className="p-5 max-h-[90vh] overflow-auto">{children}</div>
       </div>
     </>
+  );
+}
+
+function PillToggle({
+  value,
+  onChange,
+  disabled,
+  leftLabel = "Sim",
+  rightLabel = "Não",
+}: {
+  value: "sim" | "nao" | "";
+  onChange: (v: "sim" | "nao") => void;
+  disabled?: boolean;
+  leftLabel?: string;
+  rightLabel?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        className={`pill ${value === "sim" ? "pill-on" : ""}`}
+        onClick={() => onChange("sim")}
+        disabled={disabled}
+      >
+        {leftLabel}
+      </button>
+      <button
+        type="button"
+        className={`pill ${value === "nao" ? "pill-on" : ""}`}
+        onClick={() => onChange("nao")}
+        disabled={disabled}
+      >
+        {rightLabel}
+      </button>
+    </div>
+  );
+}
+
+function MoneyInput({
+  value,
+  onChange,
+  disabled,
+  placeholder = "R$ 0,00",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  // mantém simples (humano). Salva como string.
+  return (
+    <input
+      className="input"
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      inputMode="numeric"
+    />
   );
 }
 
@@ -211,56 +318,43 @@ export default function ClientesPage() {
 
   const [loading, setLoading] = useState(false);
 
-  // listas
-  const [clientes, setClientes] = useState<ClienteUI[]>([]); // confirmados (paginados)
-  const [novos, setNovos] = useState<ClienteUI[]>([]); // pendentes (lista simples)
+  const [clientes, setClientes] = useState<ClienteBase[]>([]); // confirmados
+  const [novos, setNovos] = useState<ClienteBase[]>([]); // sem linha em clientes
+
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
-  // busca
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
 
-  // bases
-  const [usersByAuth, setUsersByAuth] = useState<Map<string, UserLite>>(new Map());
-
-  // overlay cadastro/edição/visualização
-  type Mode = "create" | "edit" | "view";
+  // overlay cadastro / editar / visualizar
   const [overlayOpen, setOverlayOpen] = useState(false);
-  const [overlayMode, setOverlayMode] = useState<Mode>("create");
-  const [active, setActive] = useState<ClienteUI | null>(null);
+  const [overlayMode, setOverlayMode] = useState<"novo" | "edit" | "view">("novo");
+  const [active, setActive] = useState<ClienteBase | null>(null);
 
-  // auth user (created_by)
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  // dados editáveis do cadastro (campos base + extra)
+  const [nome, setNome] = useState("");
+  const [chamadoComo, setChamadoComo] = useState("");
+  const [cpf, setCpf] = useState("");
+  const [birth, setBirth] = useState<string>(""); // YYYY-MM-DD
+  const [telefone, setTelefone] = useState("");
+  const [email, setEmail] = useState("");
 
-  // state do formulário (usado em create/edit/view)
-  const [form, setForm] = useState<Partial<ClienteRow>>({});
-  const [filhos, setFilhos] = useState<Array<Partial<FilhoRow & { _tmpId?: string }>>>([]);
-  const [hasFilhos, setHasFilhos] = useState<boolean>(false);
-  const [paisVivos, setPaisVivos] = useState<boolean | null>(null);
+  // extra
+  const [extra, setExtra] = useState<CadastroExtra>(emptyExtra());
 
-  const [saving, setSaving] = useState(false);
-  const [cepBusy, setCepBusy] = useState(false);
-  const [cnpjBusy, setCnpjBusy] = useState(false);
+  // para preservar observação “legado” se existir (e também para jogar em obs internas caso não use JSON)
+  const [legacyObs, setLegacyObs] = useState("");
 
   // upload foto
   const [fotoFile, setFotoFile] = useState<File | null>(null);
-  const [fotoUploading, setFotoUploading] = useState(false);
-
-  // renda input (formatado)
-  const [rendaInput, setRendaInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [cepLoading, setCepLoading] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 350);
     return () => clearTimeout(t);
   }, [search]);
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      setAuthUserId(data?.user?.id ?? null);
-    })();
-  }, []);
 
   useEffect(() => {
     load(1, debounced);
@@ -270,21 +364,14 @@ export default function ClientesPage() {
   async function load(target = 1, term = "") {
     setLoading(true);
     try {
-      // 0) users (pra nome do vendedor)
-      const { data: users, error: eUsers } = await supabase
-        .from("users")
-        .select("auth_user_id,nome,role,is_active")
-        .eq("is_active", true);
-      if (eUsers) throw eUsers;
-      const um = new Map<string, UserLite>();
-      (users || []).forEach((u: any) => {
-        if (u?.auth_user_id) um.set(String(u.auth_user_id), { auth_user_id: String(u.auth_user_id), nome: u.nome, role: u.role, is_active: u.is_active });
-      });
-      setUsersByAuth(um);
+      // 1) Leads
+      let leadsQ = supabase
+        .from("leads")
+        .select("id,nome,telefone,email")
+        .order("nome", { ascending: true });
 
-      // 1) Leads (filtro por nome)
-      let leadsQ = supabase.from("leads").select("id,nome,telefone,email,origem,descricao,owner_id").order("nome", { ascending: true });
       if (term) leadsQ = leadsQ.ilike("nome", `%${term}%`);
+
       const { data: leads, error: eLeads } = await leadsQ.range(0, 5000);
       if (eLeads) throw eLeads;
 
@@ -294,95 +381,127 @@ export default function ClientesPage() {
         setNovos([]);
         setTotal(0);
         setPage(1);
-        setLoading(false);
         return;
       }
 
-      // 2) Vendas dos leads
+      // 2) Vendas dos leads (mais recente primeiro)
       const { data: vendas, error: eVend } = await supabase
         .from("vendas")
-        .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,email,telefone,created_at,vendedor_id")
+        .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at,vendedor_id,email,telefone")
         .in("lead_id", leadIds)
         .order("created_at", { ascending: false })
         .range(0, 20000);
       if (eVend) throw eVend;
 
+      type VendaLite = {
+        id: string;
+        created_at: string | null;
+        nasc?: string | null;
+        obs?: string | null;
+        cpf?: string | null;
+        hasCpfCnpj?: boolean;
+        vendedor_id?: string | null;
+        email?: string | null;
+        telefone?: string | null;
+      };
+
       const vendasByLead = new Map<string, VendaLite[]>();
+      const vendorAuthIds = new Set<string>();
+
       (vendas || []).forEach((v: any) => {
         const lid = v.lead_id ? String(v.lead_id) : "";
         if (!lid) return;
+
         if (!vendasByLead.has(lid)) vendasByLead.set(lid, []);
+        const vendedorId = v.vendedor_id ? String(v.vendedor_id) : null;
+        if (vendedorId) vendorAuthIds.add(vendedorId);
+
         vendasByLead.get(lid)!.push({
           id: String(v.id),
-          lead_id: v.lead_id ? String(v.lead_id) : null,
           created_at: v.created_at ?? null,
-          nascimento: v.nascimento ?? null,
-          descricao: v.descricao ?? null,
+          nasc: v.nascimento ?? null,
+          obs: v.descricao ?? null,
           cpf: v.cpf ? onlyDigits(String(v.cpf)) : null,
-          cpf_cnpj: v.cpf_cnpj ?? null,
+          hasCpfCnpj: v.cpf_cnpj != null,
+          vendedor_id: vendedorId,
           email: v.email ?? null,
           telefone: v.telefone ?? null,
-          vendedor_id: v.vendedor_id ? String(v.vendedor_id) : null,
         });
       });
 
-      // 3) Clientes confirmados (agora pegamos todas as colunas novas)
-      const { data: cliRows, error: eCli } = await supabase
-        .from("clientes")
-        .select(
-          [
-            "id,lead_id,created_by,nome,data_nascimento,cpf,telefone,email,endereco_cep,logradouro,numero,bairro,cidade,uf,observacoes",
-            "vendedor_auth_user_id,tipo,segmento_pf,segmento_pj,perfil_cliente,como_chamar,contato_emerg_nome,contato_emerg_telefone",
-            "renda_faturamento,foto_url,pai_mae_vivos,pai_nome,pai_nascimento,mae_nome,mae_nascimento,autoriza_postar_contemplacao,autoriza_homenagens",
-            "feedback,obs_internas,conteudos_preferidos,prefere_educativo,como_conheceu,created_at,updated_at",
-          ].join(",")
-        );
+      // 3) Users (para resolver vendedor)
+      const vendorList = Array.from(vendorAuthIds);
+      const usersByAuth = new Map<string, { nome: string }>();
+      if (vendorList.length) {
+        const { data: uRows, error: eU } = await supabase
+          .from("users")
+          .select("auth_user_id,nome")
+          .in("auth_user_id", vendorList);
+        if (eU) throw eU;
+        (uRows || []).forEach((u: any) => usersByAuth.set(String(u.auth_user_id), { nome: u.nome || "—" }));
+      }
+
+      // 4) Clientes confirmados (linha em public.clientes)
+      const { data: cliRows, error: eCli } = await supabase.from("clientes").select("id,lead_id");
       if (eCli) throw eCli;
 
-      const clienteByLead = new Map<string, ClienteRow>();
+      const confirmedByLead = new Map<string, string>();
       (cliRows || []).forEach((c: any) => {
-        const lid = c?.lead_id ? String(c.lead_id) : "";
-        if (lid) clienteByLead.set(lid, c as ClienteRow);
+        const lid = c.lead_id ? String(c.lead_id) : "";
+        if (!lid) return;
+        confirmedByLead.set(lid, String(c.id));
       });
 
-      // 4) Monta 1 linha por lead (apenas se tem cpf/cpf_cnpj em alguma venda)
-      const base: ClienteUI[] = [];
+      // 5) Base 1 linha por lead (só se tem cpf/cpf_cnpj)
+      const base: ClienteBase[] = [];
       for (const l of leads || []) {
         const lid = String(l.id);
-        const arr = (vendasByLead.get(lid) || []).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-        const hasCpfAny = arr.some((x) => (x.cpf && x.cpf.length > 0) || x.cpf_cnpj != null);
+        const arr = (vendasByLead.get(lid) || []).sort((a, b) =>
+          (b.created_at || "").localeCompare(a.created_at || "")
+        );
+
+        const hasCpfAny = arr.some((x) => (x.cpf && x.cpf.length > 0) || x.hasCpfCnpj);
         if (!hasCpfAny) continue;
 
         const latest = arr[0];
-        const vendAuth = latest?.vendedor_id || l.owner_id || null;
-        const vendNome = vendAuth ? (um.get(String(vendAuth))?.nome ?? null) : null;
+        const vendedorAuth = latest?.vendedor_id || null;
+        const vendedorNome = vendedorAuth ? usersByAuth.get(vendedorAuth)?.nome || "—" : "—";
 
         base.push({
+          id: lid,
           lead_id: lid,
+
           nome: l.nome || "(Sem nome)",
           telefone: l.telefone || latest?.telefone || null,
           email: l.email || latest?.email || null,
-          data_nascimento: latest?.nascimento || null,
-          observacoes: latest?.descricao || null,
+
+          data_nascimento: latest?.nasc || null,
+          observacoes: latest?.obs || null,
           cpf_dig: latest?.cpf || null,
           vendas_ids: arr.map((x) => x.id),
-          vendedor_auth_user_id: vendAuth,
-          vendedor_nome: vendNome,
-          cliente_row: clienteByLead.get(lid) ?? null,
+
+          vendedor_auth_user_id: vendedorAuth,
+          vendedor_nome: vendedorNome,
+
+          cliente_row_id: confirmedByLead.get(lid) || null,
         });
       }
 
-      const confirmed = base.filter((x) => !!x.cliente_row);
-      const pending = base.filter((x) => !x.cliente_row);
+      const confirmed = base.filter((x) => !!x.cliente_row_id);
+      const pending = base.filter((x) => !x.cliente_row_id);
 
+      // Ordena
       confirmed.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
+      pending.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
+
+      // Pagina confirmados
       const from = (target - 1) * PAGE;
       const to = from + PAGE;
+
       setClientes(confirmed.slice(from, to));
       setTotal(confirmed.length);
       setPage(target);
 
-      pending.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
       setNovos(pending);
     } catch (e: any) {
       alert(e.message || "Erro ao listar clientes.");
@@ -391,378 +510,247 @@ export default function ClientesPage() {
     }
   }
 
-  // ===== filhos =====
-  async function loadFilhos(clienteId: string) {
-    const { data, error } = await supabase.from("clientes_filhos").select("id,cliente_id,nome,data_nascimento,sexo,created_at").eq("cliente_id", clienteId);
-    if (error) throw error;
-    const rows = (data || []) as FilhoRow[];
-    rows.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
-    setFilhos(rows);
-    setHasFilhos(rows.length > 0);
-  }
-
   function resetForm() {
-    setForm({});
-    setFilhos([]);
-    setHasFilhos(false);
-    setPaisVivos(null);
-    setRendaInput("");
+    setNome("");
+    setChamadoComo("");
+    setCpf("");
+    setBirth("");
+    setTelefone("");
+    setEmail("");
+    setExtra(emptyExtra());
+    setLegacyObs("");
     setFotoFile(null);
   }
 
-  function openCadastro(c: ClienteUI, mode: Mode) {
-    setActive(c);
+  async function openOverlay(mode: "novo" | "edit" | "view", c: ClienteBase) {
     setOverlayMode(mode);
+    setActive(c);
     resetForm();
 
-    const readOnly = mode === "view";
-    const existing = c.cliente_row || null;
+    // base capturado da venda / lead
+    setNome(c.nome || "");
+    setCpf(c.cpf_dig || "");
+    setBirth(c.data_nascimento || "");
+    setTelefone(c.telefone ? maskPhone(c.telefone) : "");
+    setEmail(c.email || "");
 
-    // prefill (sempre com base nos dados da venda/lead)
-    const pre: Partial<ClienteRow> = {
-      // id só existe se confirmado
-      id: existing?.id,
-      lead_id: c.lead_id,
+    // se já é confirmado, carregamos observacoes (pra pegar o JSON do cadastro extra)
+    if (mode !== "novo") {
+      try {
+        setLoading(true);
+        const { data: row, error } = await supabase
+          .from("clientes")
+          .select("id,lead_id,nome,cpf,telefone,email,data_nascimento,observacoes,endereco_cep,logradouro,numero,bairro,cidade,uf")
+          .eq("lead_id", c.lead_id)
+          .maybeSingle();
 
-      // vendedor vem da venda mais recente (ou owner_id do lead fallback)
-      vendedor_auth_user_id: c.vendedor_auth_user_id || existing?.vendedor_auth_user_id || null,
+        if (error) throw error;
 
-      nome: c.nome || existing?.nome || "",
-      cpf: (existing?.cpf || c.cpf_dig || "") || null,
-      data_nascimento: existing?.data_nascimento || c.data_nascimento || null,
-      telefone: existing?.telefone || c.telefone || null,
-      email: existing?.email || c.email || null,
+        // normaliza dados base (prioriza clientes)
+        if (row) {
+          setNome(row.nome || c.nome || "");
+          setCpf(row.cpf || c.cpf_dig || "");
+          setBirth(row.data_nascimento || c.data_nascimento || "");
+          setTelefone(row.telefone ? maskPhone(row.telefone) : c.telefone ? maskPhone(c.telefone) : "");
+          setEmail(row.email || c.email || "");
 
-      observacoes: existing?.observacoes || c.observacoes || null,
+          // tenta parse do JSON do cadastro
+          const { extra: parsedExtra, legacyText } = safeParseExtraFromObservacoes(row.observacoes);
+          setLegacyObs(legacyText || "");
 
-      // extras já salvos
-      tipo: existing?.tipo || null,
-      segmento_pf: existing?.segmento_pf || null,
-      segmento_pj: existing?.segmento_pj || null,
-      perfil_cliente: existing?.perfil_cliente || null,
-      como_chamar: existing?.como_chamar || null,
+          const baseExtra = emptyExtra();
+          const merged = parsedExtra ? { ...baseExtra, ...parsedExtra } : baseExtra;
 
-      endereco_cep: existing?.endereco_cep || null,
-      logradouro: existing?.logradouro || null,
-      numero: existing?.numero || null,
-      bairro: existing?.bairro || null,
-      cidade: existing?.cidade || null,
-      uf: existing?.uf || null,
+          // preenche endereço se houver colunas nativas (mesmo que extra esteja vazio)
+          merged.endereco_cep = row.endereco_cep || merged.endereco_cep;
+          merged.logradouro = row.logradouro || merged.logradouro;
+          merged.numero = row.numero || merged.numero;
+          merged.bairro = row.bairro || merged.bairro;
+          merged.cidade = row.cidade || merged.cidade;
+          merged.uf = row.uf || merged.uf;
 
-      contato_emerg_nome: existing?.contato_emerg_nome || null,
-      contato_emerg_telefone: existing?.contato_emerg_telefone || null,
+          setExtra(merged);
 
-      renda_faturamento: existing?.renda_faturamento ?? null,
-      foto_url: existing?.foto_url ?? null,
-
-      pai_mae_vivos: existing?.pai_mae_vivos ?? null,
-      pai_nome: existing?.pai_nome ?? null,
-      pai_nascimento: existing?.pai_nascimento ?? null,
-      mae_nome: existing?.mae_nome ?? null,
-      mae_nascimento: existing?.mae_nascimento ?? null,
-
-      autoriza_postar_contemplacao: existing?.autoriza_postar_contemplacao ?? null,
-      autoriza_homenagens: existing?.autoriza_homenagens ?? null,
-
-      feedback: existing?.feedback ?? null,
-      obs_internas: existing?.obs_internas ?? null,
-
-      conteudos_preferidos: (existing?.conteudos_preferidos ?? []) as any,
-      prefere_educativo: existing?.prefere_educativo ?? null,
-      como_conheceu: existing?.como_conheceu ?? null,
-    };
-
-    setForm(pre);
-    setPaisVivos(pre.pai_mae_vivos ?? null);
-    setRendaInput(pre.renda_faturamento != null ? moneyBR(pre.renda_faturamento) : "");
-
-    setOverlayOpen(true);
-
-    // carrega filhos se já confirmado
-    if (existing?.id) {
-      loadFilhos(existing.id).catch((e) => alert("Erro ao carregar filhos: " + (e?.message || e)));
-    } else {
-      setFilhos([]);
-      setHasFilhos(false);
+          // se não tiver “como gostaria de ser chamado”, mantém vazio
+          setChamadoComo(merged.chamado_como || "");
+        }
+      } catch (e: any) {
+        alert(e?.message || "Não foi possível carregar o cadastro do cliente.");
+      } finally {
+        setLoading(false);
+      }
     }
 
-    // se view, nada extra
-    void readOnly;
+    setOverlayOpen(true);
   }
 
   function closeOverlay() {
     setOverlayOpen(false);
     setActive(null);
     setSaving(false);
-    setFotoUploading(false);
-    setCepBusy(false);
-    setCnpjBusy(false);
+    setCepLoading(false);
   }
 
-  const isReadOnly = overlayMode === "view";
+  const readOnly = overlayMode === "view";
 
-  function setField<K extends keyof ClienteRow>(k: K, v: ClienteRow[K]) {
-    setForm((s) => ({ ...s, [k]: v }));
-  }
-
-  // CEP -> ViaCEP
-  async function onBuscarCEP() {
+  async function buscarCep() {
     try {
-      const cep = String(form.endereco_cep || "");
-      const dig = onlyDigits(cep);
-      if (dig.length !== 8) return alert("Digite um CEP válido (8 dígitos).");
-      setCepBusy(true);
-      const j = await fetchViaCEP(dig);
-      if (!j) return alert("Não encontrei o CEP. Confira e tente novamente.");
-      setField("logradouro", (j.logradouro || "") as any);
-      setField("bairro", (j.bairro || "") as any);
-      setField("cidade", (j.localidade || "") as any);
-      setField("uf", (j.uf || "") as any);
+      const cep = onlyDigits(extra.endereco_cep);
+      if (cep.length !== 8) return alert("Digite um CEP válido (8 dígitos).");
+      setCepLoading(true);
+      const addr = await fetchCep(cep);
+      setExtra((s) => ({
+        ...s,
+        logradouro: addr.logradouro,
+        bairro: addr.bairro,
+        cidade: addr.cidade,
+        uf: addr.uf,
+      }));
     } catch (e: any) {
-      alert("Erro ao buscar CEP: " + (e?.message || e));
+      alert(e?.message || "Não foi possível buscar o CEP.");
     } finally {
-      setCepBusy(false);
+      setCepLoading(false);
     }
   }
 
-  // PJ -> tentar CNAE (BrasilAPI) se CPF tiver 14 dígitos (CNPJ)
-  async function onBuscarCNAE() {
+  async function uploadFotoIfAny(): Promise<string> {
+    if (!fotoFile) return extra.foto_url || "";
     try {
-      const doc = onlyDigits(String(form.cpf || ""));
-      if (doc.length !== 14) return alert("Para buscar CNAE automaticamente, informe um CNPJ (14 dígitos) no campo CPF/CNPJ.");
-      setCnpjBusy(true);
-      const j = await fetchCNPJBrasilAPI(doc);
-      if (!j) return alert("Não consegui buscar o CNPJ agora.");
-      const atv = j?.atividade_principal?.[0]?.text || j?.cnae_fiscal_descricao || "";
-      if (atv) setField("segmento_pj", atv);
-      else alert("CNPJ encontrado, mas não consegui extrair a atividade principal.");
-    } catch (e: any) {
-      alert("Erro ao buscar CNAE: " + (e?.message || e));
-    } finally {
-      setCnpjBusy(false);
-    }
-  }
-
-  function toggleConteudoPref(label: (typeof CONTENT_PREFS)[number]) {
-    const cur = (form.conteudos_preferidos || []) as string[];
-    const has = cur.includes(label);
-    const next = has ? cur.filter((x) => x !== label) : [...cur, label];
-    setField("conteudos_preferidos", next as any);
-  }
-
-  function addFilhoRow() {
-    setHasFilhos(true);
-    setFilhos((s) => [
-      ...s,
-      { _tmpId: `tmp_${Math.random().toString(16).slice(2)}`, nome: "", data_nascimento: null, sexo: null },
-    ]);
-  }
-
-  function updateFilho(idx: number, patch: Partial<FilhoRow>) {
-    setFilhos((s) => s.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
-  }
-
-  function removeFilho(idx: number) {
-    setFilhos((s) => s.filter((_, i) => i !== idx));
-  }
-
-  async function uploadFotoIfNeeded(): Promise<string | null> {
-    if (!fotoFile) return (form.foto_url as any) || null;
-
-    // você pode criar um bucket depois; pra testar agora, tentamos e se falhar mantemos URL manual
-    const bucket = "client_photos";
-
-    try {
-      setFotoUploading(true);
+      // tentativa de upload em bucket (se existir). Se não existir, cai no fallback.
+      const bucket = "clientes_photos";
       const ext = (fotoFile.name.split(".").pop() || "jpg").toLowerCase();
-      const safeName = `${onlyDigits(String(form.cpf || active?.cpf_dig || "")) || "sem_doc"}_${Date.now()}.${ext}`;
-      const path = `clientes/${safeName}`;
+      const path = `clientes/${Date.now()}_${Math.random().toString(16).slice(2)}.${ext}`;
 
       const { error: upErr } = await supabase.storage.from(bucket).upload(path, fotoFile, {
         cacheControl: "3600",
-        upsert: true,
+        upsert: false,
       });
+
       if (upErr) throw upErr;
 
-      const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);
-      const url = pub?.publicUrl || null;
-      if (!url) throw new Error("Não consegui obter URL da foto.");
-      return url;
-    } catch (e: any) {
+      const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+      return data?.publicUrl || extra.foto_url || "";
+    } catch {
+      // fallback: mantém URL manual
       alert(
-        "Não consegui subir a foto agora. Se o bucket 'client_photos' ainda não existir, crie no Storage. " +
-          "Você também pode colar uma URL no campo de foto.\n\nDetalhe: " +
-          (e?.message || e)
+        "Não consegui subir a foto no Storage (bucket 'clientes_photos'). Se quiser, cole uma URL no campo 'Foto (URL)'."
       );
-      return (form.foto_url as any) || null;
-    } finally {
-      setFotoUploading(false);
+      return extra.foto_url || "";
     }
   }
 
-  // ===== Confirmar / Salvar =====
-  async function saveCadastro() {
+  function validateBeforeSave() {
+    if (!active) return "Cliente inválido.";
+    if (!onlyDigits(cpf)) return "Informe o CPF/CNPJ.";
+    if (!nome.trim()) return "Nome é obrigatório.";
+    if (!telefone.trim()) return "Telefone é obrigatório.";
+
+    if (!extra.tipo) return "Selecione o tipo (PF/PJ).";
+    if (!extra.perfil) return "Selecione o perfil do cliente.";
+
+    if (extra.tipo === "PF") {
+      if (!extra.segmento_pf) return "Selecione o segmento (PF).";
+    } else {
+      if (!extra.segmento_pj.trim()) return "Informe o segmento de atuação (PJ).";
+    }
+    return "";
+  }
+
+  async function confirmOrSave() {
+    const err = validateBeforeSave();
+    if (err) return alert(err);
+
     if (!active) return;
-    if (isReadOnly) return;
-    if (!authUserId) return alert("Não consegui identificar seu usuário logado (created_by). Recarregue e tente novamente.");
-
-    // validações mínimas
-    const nome = String(form.nome || active.nome || "").trim();
-    const cpf = onlyDigits(String(form.cpf || active.cpf_dig || ""));
-    if (!nome) return alert("Informe o Nome.");
-    if (!cpf) return alert("Informe o CPF/CNPJ.");
-    if (!form.tipo) return alert("Selecione o Tipo (PF/PJ).");
-    if (!form.perfil_cliente) return alert("Selecione o Perfil do Cliente.");
-
-    if (String(form.tipo) === "PF" && !form.segmento_pf) return alert("Selecione o Segmento (PF).");
-    if (String(form.tipo) === "PJ" && !String(form.segmento_pj || "").trim()) return alert("Informe o Segmento de Atuação (PJ).");
-
     try {
       setSaving(true);
 
-      // 0) upload foto se tiver arquivo
-      const fotoUrl = await uploadFotoIfNeeded();
+      const latestVendaId = active.vendas_ids?.[0];
 
-      // 1) Atualiza lead (nome/telefone/email)
+      // upload foto (se houver)
+      const fotoUrl = await uploadFotoIfAny();
+      const extraToSave: CadastroExtra = { ...extra, foto_url: fotoUrl, chamado_como: chamadoComo || "" };
+
+      // 1) Atualiza LEAD
       const { error: eLead } = await supabase
         .from("leads")
         .update({
-          nome: nome,
-          telefone: onlyDigits(String(form.telefone || active.telefone || "")) || null,
-          email: String(form.email || "").trim() || null,
+          nome: nome.trim() || active.nome,
+          telefone: onlyDigits(telefone) || null,
+          email: email.trim() || null,
         })
         .eq("id", active.lead_id);
       if (eLead) throw eLead;
 
-      // 2) Atualiza venda mais recente (nascimento/observações/cpf/email/telefone se existir)
-      const latestVendaId = active.vendas_ids?.[0];
+      // 2) Atualiza VENDA mais recente (nascimento/observações/cpf/email/telefone)
       if (latestVendaId) {
         const { error: eVenda } = await supabase
           .from("vendas")
           .update({
-            nascimento: form.data_nascimento || null,
-            descricao: String(form.observacoes || "").trim() || null,
-            cpf: cpf || null,
-            email: String(form.email || "").trim() || null,
-            telefone: onlyDigits(String(form.telefone || "")) || null,
+            nascimento: birth || null,
+            descricao: legacyObs?.trim() ? legacyObs.trim() : null,
+            cpf: onlyDigits(cpf) || null,
+            email: email.trim() || null,
+            telefone: onlyDigits(telefone) || null,
           })
           .eq("id", latestVendaId);
         if (eVenda) throw eVenda;
       }
 
-      // 3) payload clientes
-      const payload: any = {
-        // vínculo
+      // 3) Upsert CLIENTE (tabela clientes)
+      // Observação: para não depender de schema novo, gravamos o cadastro completo em clientes.observacoes como JSON (CMX_JSON:...)
+      const obsSerialized = serializeExtraToObservacoes(extraToSave, legacyObs?.trim() || "");
+
+      const baseClientePayload: any = {
+        nome: nome.trim() || active.nome,
+        cpf: onlyDigits(cpf) || null,
+        telefone: onlyDigits(telefone) || null,
+        email: email.trim() || null,
+        data_nascimento: birth || null,
         lead_id: active.lead_id,
 
-        // auditoria
-        created_by: authUserId,
+        // endereço (colunas existentes)
+        endereco_cep: onlyDigits(extraToSave.endereco_cep) || null,
+        logradouro: extraToSave.logradouro?.trim() || null,
+        numero: extraToSave.numero?.trim() || null,
+        bairro: extraToSave.bairro?.trim() || null,
+        cidade: extraToSave.cidade?.trim() || null,
+        uf: extraToSave.uf?.trim() || null,
 
-        // básicos
-        nome,
-        cpf: cpf || null,
-        data_nascimento: form.data_nascimento || null,
-        telefone: onlyDigits(String(form.telefone || "")) || null,
-        email: String(form.email || "").trim() || null,
-
-        // endereço
-        endereco_cep: onlyDigits(String(form.endereco_cep || "")) || null,
-        logradouro: String(form.logradouro || "").trim() || null,
-        numero: String(form.numero || "").trim() || null,
-        bairro: String(form.bairro || "").trim() || null,
-        cidade: String(form.cidade || "").trim() || null,
-        uf: String(form.uf || "").trim() || null,
-
-        // observações
-        observacoes: String(form.observacoes || "").trim() || null,
-
-        // novos campos
-        vendedor_auth_user_id: (form.vendedor_auth_user_id as any) || active.vendedor_auth_user_id || null,
-        tipo: String(form.tipo || "").trim() || null,
-        segmento_pf: String(form.segmento_pf || "").trim() || null,
-        segmento_pj: String(form.segmento_pj || "").trim() || null,
-        perfil_cliente: String(form.perfil_cliente || "").trim() || null,
-        como_chamar: String(form.como_chamar || "").trim() || null,
-
-        contato_emerg_nome: String(form.contato_emerg_nome || "").trim() || null,
-        contato_emerg_telefone: onlyDigits(String(form.contato_emerg_telefone || "")) || null,
-
-        renda_faturamento: form.renda_faturamento ?? null,
-        foto_url: fotoUrl || null,
-
-        pai_mae_vivos: form.pai_mae_vivos ?? null,
-        pai_nome: String(form.pai_nome || "").trim() || null,
-        pai_nascimento: form.pai_nascimento || null,
-        mae_nome: String(form.mae_nome || "").trim() || null,
-        mae_nascimento: form.mae_nascimento || null,
-
-        autoriza_postar_contemplacao: form.autoriza_postar_contemplacao ?? null,
-        autoriza_homenagens: form.autoriza_homenagens ?? null,
-
-        feedback: String(form.feedback || "").trim() || null,
-        obs_internas: String(form.obs_internas || "").trim() || null,
-
-        conteudos_preferidos: (form.conteudos_preferidos || []) as any,
-        prefere_educativo: form.prefere_educativo ?? null,
-        como_conheceu: String(form.como_conheceu || "").trim() || null,
+        // JSON com o cadastro completo
+        observacoes: obsSerialized,
       };
 
-      // 4) upsert por lead_id (se já existir) SENÃO insert
-      // (não existe unique em lead_id, então fazemos select primeiro)
-      let clienteId: string | null = null;
-      if (active.cliente_row?.id) {
-        // update
-        clienteId = active.cliente_row.id;
-        const { error: eUpd } = await supabase.from("clientes").update(payload).eq("id", clienteId);
-        if (eUpd) throw eUpd;
+      // se já existe, update; se não, insert
+      const { data: existing, error: eFind } = await supabase
+        .from("clientes")
+        .select("id")
+        .eq("lead_id", active.lead_id)
+        .maybeSingle();
+      if (eFind) throw eFind;
+
+      if (existing?.id) {
+        const { error: eUp } = await supabase.from("clientes").update(baseClientePayload).eq("id", existing.id);
+        if (eUp) throw eUp;
       } else {
-        // tenta achar por lead_id ou cpf (pra evitar duplicar)
-        const { data: foundByLead } = await supabase.from("clientes").select("id").eq("lead_id", active.lead_id).maybeSingle();
-        if (foundByLead?.id) {
-          clienteId = String(foundByLead.id);
-          const { error: eUpd2 } = await supabase.from("clientes").update(payload).eq("id", clienteId);
-          if (eUpd2) throw eUpd2;
-        } else {
-          const { data: foundByCpf } = await supabase.from("clientes").select("id").eq("cpf", cpf).maybeSingle();
-          if (foundByCpf?.id) {
-            clienteId = String(foundByCpf.id);
-            const { error: eUpd3 } = await supabase.from("clientes").update(payload).eq("id", clienteId);
-            if (eUpd3) throw eUpd3;
-          } else {
-            const { data: ins, error: eIns } = await supabase.from("clientes").insert(payload).select("id").single();
-            if (eIns) throw eIns;
-            clienteId = ins?.id ? String(ins.id) : null;
-          }
-        }
+        const { data: auth } = await supabase.auth.getUser();
+        const createdBy = auth?.user?.id || null;
+
+        // created_by é NOT NULL no schema — então precisamos preencher
+        if (!createdBy) throw new Error("Não foi possível identificar o usuário logado (created_by).");
+
+        const { error: eIns } = await supabase.from("clientes").insert({
+          ...baseClientePayload,
+          created_by: createdBy,
+        } as any);
+        if (eIns) throw eIns;
       }
 
-      if (!clienteId) throw new Error("Não consegui determinar o ID do cliente salvo.");
-
-      // 5) filhos (sincroniza simples: deleta e recria — fácil e confiável)
-      // Se preferir, depois a gente evolui pra diff.
-      await supabase.from("clientes_filhos").delete().eq("cliente_id", clienteId);
-
-      if (hasFilhos) {
-        const clean = (filhos || [])
-          .map((f) => ({
-            cliente_id: clienteId,
-            nome: String(f.nome || "").trim(),
-            data_nascimento: (f.data_nascimento as any) || null,
-            sexo: (f.sexo as any) || null,
-          }))
-          .filter((x) => x.nome.length > 0);
-
-        if (clean.length) {
-          const { error: eF } = await supabase.from("clientes_filhos").insert(clean as any);
-          if (eF) throw eF;
-        }
-      }
-
-      alert(overlayMode === "create" ? "Cliente confirmado!" : "Cliente atualizado!");
+      // fecha e recarrega
       closeOverlay();
       await load(page, debounced);
+      alert(overlayMode === "novo" ? "Cliente confirmado!" : "Cliente atualizado!");
     } catch (e: any) {
-      alert("Erro ao salvar: " + (e?.message || e));
+      alert(e?.message || "Não foi possível salvar.");
     } finally {
       setSaving(false);
     }
@@ -770,19 +758,6 @@ export default function ClientesPage() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / PAGE)), [total]);
 
-  function goAgenda(cliente?: ClienteUI | null) {
-    const cr = cliente?.cliente_row;
-    const cid = cr?.id ? String(cr.id) : "";
-    const lid = cliente?.lead_id ? String(cliente.lead_id) : "";
-    const uid = (cr?.vendedor_auth_user_id || cliente?.vendedor_auth_user_id || "") as string;
-    const qp = new URLSearchParams();
-    if (cid) qp.set("cliente_id", cid);
-    if (lid) qp.set("lead_id", lid);
-    if (uid) qp.set("user_id", uid);
-    window.location.href = `/agenda?${qp.toString()}`;
-  }
-
-  // ====== UI ======
   return (
     <div className="space-y-4">
       {/* NOVOS */}
@@ -796,9 +771,9 @@ export default function ClientesPage() {
         {novos.length === 0 ? (
           <div className="text-sm text-slate-500">Nenhum novo cliente no momento.</div>
         ) : (
-          <div className="rounded-xl border overflow-hidden">
+          <div className="rounded-xl border overflow-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
+              <thead className="bg-slate-50 sticky top-0">
                 <tr>
                   <th className="p-2 text-left">Nome</th>
                   <th className="p-2 text-left">Telefone</th>
@@ -807,10 +782,10 @@ export default function ClientesPage() {
                 </tr>
               </thead>
               <tbody>
-                {novos.map((c, i) => {
+                {novos.map((c, idx) => {
                   const phone = c.telefone ? maskPhone(c.telefone) : "—";
                   return (
-                    <tr key={c.lead_id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
+                    <tr key={c.lead_id} className={idx % 2 ? "bg-slate-50/60" : "bg-white"}>
                       <td className="p-2">
                         <div className="font-medium">{c.nome}</div>
                         <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
@@ -818,7 +793,11 @@ export default function ClientesPage() {
                       <td className="p-2">{phone}</td>
                       <td className="p-2">{c.vendedor_nome || "—"}</td>
                       <td className="p-2 text-right">
-                        <button className="btn-primary" onClick={() => openCadastro(c, "create")} disabled={loading}>
+                        <button
+                          className="btn-primary"
+                          onClick={() => openOverlay("novo", c)}
+                          disabled={loading}
+                        >
                           Preencher Cadastro
                         </button>
                       </td>
@@ -831,15 +810,22 @@ export default function ClientesPage() {
         )}
       </div>
 
-      {/* LISTA (confirmados) */}
+      {/* LISTA */}
       <div className="rounded-2xl bg-white p-4 shadow">
-        <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
+        <div className="mb-3 flex items-center justify-between gap-2">
           <h3 className="m-0 font-semibold">Lista de Clientes</h3>
-          <div className="flex items-center gap-2 flex-wrap">
+
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <div className="relative">
-              <input className="input pl-9 w-80 max-w-[78vw]" placeholder="Buscar por nome" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <input
+                className="input pl-9 w-[min(380px,72vw)]"
+                placeholder="Buscar por nome"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
               <span className="absolute left-3 top-2.5 opacity-60">🔎</span>
             </div>
+
             <small className="text-slate-500">
               Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} de {total}
             </small>
@@ -866,6 +852,7 @@ export default function ClientesPage() {
                   </td>
                 </tr>
               )}
+
               {!loading && clientes.length === 0 && (
                 <tr>
                   <td className="p-4 text-slate-500" colSpan={6}>
@@ -875,17 +862,15 @@ export default function ClientesPage() {
               )}
 
               {clientes.map((c, i) => {
-                const cr = c.cliente_row;
-                const phone = (cr?.telefone || c.telefone) ? maskPhone(String(cr?.telefone || c.telefone)) : "";
-                const wa = (cr?.telefone || c.telefone) ? `https://wa.me/55${onlyDigits(String(cr?.telefone || c.telefone))}` : "";
-                const vendName = cr?.vendedor_auth_user_id ? usersByAuth.get(String(cr.vendedor_auth_user_id))?.nome : c.vendedor_nome;
+                const phone = c.telefone ? maskPhone(c.telefone) : "";
+                const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
+                const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""}`;
 
                 return (
-                  <tr key={c.lead_id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
+                  <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
                     <td className="p-2">
-                      <div className="font-medium">{cr?.nome || c.nome}</div>
-                      <div className="text-xs text-slate-500">CPF: {cr?.cpf || c.cpf_dig || "—"}</div>
-                      <div className="text-xs text-slate-500">Perfil: {cr?.perfil_cliente || "—"} • Tipo: {cr?.tipo || "—"}</div>
+                      <div className="font-medium">{c.nome}</div>
+                      <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
                     </td>
                     <td className="p-2">
                       <div className="flex items-center gap-2">
@@ -903,20 +888,32 @@ export default function ClientesPage() {
                         )}
                       </div>
                     </td>
-                    <td className="p-2">{cr?.email || c.email || "—"}</td>
-                    <td className="p-2">{formatBRDate(cr?.data_nascimento || c.data_nascimento)}</td>
-                    <td className="p-2">{vendName || "—"}</td>
+                    <td className="p-2">{c.email || "—"}</td>
+                    <td className="p-2">{formatBRDate(c.data_nascimento)}</td>
+                    <td className="p-2">{c.vendedor_nome || "—"}</td>
                     <td className="p-2">
                       <div className="flex items-center justify-center gap-2">
-                        <button className="icon-btn" title="Editar" onClick={() => openCadastro(c, "edit")}>
+                        <button
+                          className="icon-btn"
+                          title="Editar"
+                          onClick={() => openOverlay("edit", c)}
+                          disabled={loading}
+                        >
                           <Pencil className="h-4 w-4" />
                         </button>
-                        <button className="icon-btn" title="Visualizar" onClick={() => openCadastro(c, "view")}>
+
+                        <button
+                          className="icon-btn"
+                          title="Visualizar"
+                          onClick={() => openOverlay("view", c)}
+                          disabled={loading}
+                        >
                           <Eye className="h-4 w-4" />
                         </button>
-                        <button className="icon-btn" title="+ Evento na Agenda" onClick={() => goAgenda(c)}>
+
+                        <a className="icon-btn" title="+ Evento na Agenda" href={agendaHref}>
                           <CalendarPlus className="h-4 w-4" />
-                        </button>
+                        </a>
                       </div>
                     </td>
                   </tr>
@@ -940,638 +937,591 @@ export default function ClientesPage() {
         </div>
       </div>
 
-      {/* OVERLAY Cadastro / Edit / View */}
-      <Overlay
-        open={overlayOpen}
-        title={
-          overlayMode === "create" ? "Preencher Cadastro (Confirmar Cliente)" : overlayMode === "edit" ? "Editar Cadastro do Cliente" : "Visualizar Cadastro do Cliente"
-        }
-        onClose={closeOverlay}
-      >
-        {!active ? (
-          <div className="text-sm text-slate-500">—</div>
-        ) : (
-          <>
-            {/* Cabeçalho resumo */}
-            <div className="rounded-xl border p-3 mb-3 bg-slate-50">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="font-semibold">{form.nome || active.nome}</div>
+      {/* OVERLAY (novo/edit/view) */}
+      {overlayOpen && active && (
+        <Overlay
+          title={
+            overlayMode === "novo"
+              ? "Preencher Cadastro do Cliente"
+              : overlayMode === "edit"
+              ? "Editar Cadastro do Cliente"
+              : "Visualizar Cadastro do Cliente"
+          }
+          onClose={closeOverlay}
+        >
+          {/* Header resumo */}
+          <div className="rounded-xl border p-4 mb-4 bg-slate-50">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{nome || active.nome}</div>
                   <div className="text-xs text-slate-600">
-                    Vendedor:{" "}
-                    {(() => {
-                      const vendAuth = (form.vendedor_auth_user_id as any) || active.vendedor_auth_user_id;
-                      const vend = vendAuth ? usersByAuth.get(String(vendAuth))?.nome : null;
-                      return vend || active.vendedor_nome || "—";
-                    })()}
-                    {" • "}
-                    Lead: {active.lead_id}
+                    Vendedor: <b>{active.vendedor_nome || "—"}</b>{" "}
+                    <span className="opacity-60">
+                      • Lead: {active.lead_id}
+                      {active.vendas_ids?.[0] ? ` • Venda: ${active.vendas_ids[0]}` : ""}
+                    </span>
                   </div>
                 </div>
+                <div className="text-xs text-slate-600 text-right">
+                  CPF/CNPJ: <b>{onlyDigits(cpf) || "—"}</b>
+                  <div>
+                    Nasc./Const.: <b>{birth ? formatBRDate(birth) : "—"}</b>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
-                <div className="text-xs text-slate-600">
-                  CPF/CNPJ: {onlyDigits(String(form.cpf || "")) || active.cpf_dig || "—"}{" "}
-                  {" • "}
-                  Nasc./Const.: {formatBRDate(String(form.data_nascimento || ""))}
+          {/* GRID HORIZONTAL */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+            {/* 1) Identidade */}
+            <div className="rounded-xl border p-4 xl:col-span-6">
+              <h4 className="font-semibold mb-3">Identidade</h4>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="label">Vendedor (auto)</div>
+                  <input className="input" value={active.vendedor_nome || "—"} disabled />
+                  <div className="text-xs text-slate-500 mt-1">Capturado da venda mais recente (vendas.vendedor_id).</div>
+                </div>
+
+                <div>
+                  <div className="label">Perfil do Cliente</div>
+                  <select
+                    className="input"
+                    value={extra.perfil}
+                    onChange={(e) => setExtra((s) => ({ ...s, perfil: e.target.value as PerfilCliente }))}
+                    disabled={readOnly}
+                  >
+                    <option>PF Geral</option>
+                    <option>PF Agro</option>
+                    <option>PJ</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div className="label">Tipo</div>
+                  <select
+                    className="input"
+                    value={extra.tipo}
+                    onChange={(e) =>
+                      setExtra((s) => ({
+                        ...s,
+                        tipo: e.target.value as TipoPessoa,
+                        segmento_pf: e.target.value === "PF" ? s.segmento_pf : "",
+                        segmento_pj: e.target.value === "PJ" ? s.segmento_pj : "",
+                      }))
+                    }
+                    disabled={readOnly}
+                  >
+                    <option value="PF">PF</option>
+                    <option value="PJ">PJ</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div className="label">Segmento</div>
+                  {extra.tipo === "PF" ? (
+                    <select
+                      className="input"
+                      value={extra.segmento_pf}
+                      onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))}
+                      disabled={readOnly}
+                    >
+                      <option value="">Selecione…</option>
+                      {SEGMENTOS_PF.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="input"
+                      placeholder="Segmento de atuação principal (PJ)"
+                      value={extra.segmento_pj}
+                      onChange={(e) => setExtra((s) => ({ ...s, segmento_pj: e.target.value }))}
+                      disabled={readOnly}
+                    />
+                  )}
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="label">Nome</div>
+                  <input className="input" value={nome} onChange={(e) => setNome(e.target.value)} disabled={readOnly} />
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="label">Como você gostaria de ser chamado?</div>
+                  <input
+                    className="input"
+                    placeholder="Nome, apelido, diminutivo, nome social..."
+                    value={chamadoComo}
+                    onChange={(e) => setChamadoComo(e.target.value)}
+                    disabled={readOnly}
+                  />
+                </div>
+
+                <div>
+                  <div className="label">CPF/CNPJ</div>
+                  <input className="input" value={onlyDigits(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} disabled={readOnly} />
+                </div>
+
+                <div>
+                  <div className="label">Data Nascimento/Constituição</div>
+                  <input className="input" type="date" value={birth} onChange={(e) => setBirth(e.target.value)} disabled={readOnly} />
+                </div>
+
+                <div>
+                  <div className="label">Telefone</div>
+                  <input className="input" value={telefone} onChange={(e) => setTelefone(e.target.value)} disabled={readOnly} />
+                </div>
+
+                <div>
+                  <div className="label">E-mail</div>
+                  <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} disabled={readOnly} />
                 </div>
               </div>
             </div>
 
-            {/* Seções */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {/* 1) Identidade */}
-              <div className="rounded-xl border p-3">
-                <div className="font-semibold mb-2">Identidade</div>
+            {/* 2) Contato & Endereço */}
+            <div className="rounded-xl border p-4 xl:col-span-6">
+              <h4 className="font-semibold mb-3">Contato & Endereço</h4>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div>
-                    <label className="label">Vendedor (auto)</label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-1">
+                  <div className="label">CEP</div>
+                  <div className="flex gap-2">
                     <input
                       className="input"
-                      value={(() => {
-                        const vendAuth = (form.vendedor_auth_user_id as any) || active.vendedor_auth_user_id;
-                        const vend = vendAuth ? usersByAuth.get(String(vendAuth))?.nome : null;
-                        return vend || active.vendedor_nome || "";
-                      })()}
-                      disabled
+                      placeholder="Somente números"
+                      value={extra.endereco_cep}
+                      onChange={(e) => setExtra((s) => ({ ...s, endereco_cep: onlyDigits(e.target.value).slice(0, 8) }))}
+                      disabled={readOnly}
                     />
-                    <div className="text-[11px] text-slate-500 mt-1">Capturado da venda mais recente (vendas.vendedor_id).</div>
+                    <button className="btn" type="button" onClick={buscarCep} disabled={readOnly || cepLoading}>
+                      {cepLoading ? "Buscando..." : "Buscar"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="label">Número</div>
+                  <input
+                    className="input"
+                    value={extra.numero}
+                    onChange={(e) => setExtra((s) => ({ ...s, numero: clamp(e.target.value, 20) }))}
+                    disabled={readOnly}
+                  />
+                </div>
+
+                <div className="md:col-span-3">
+                  <div className="label">Logradouro</div>
+                  <input
+                    className="input"
+                    value={extra.logradouro}
+                    onChange={(e) => setExtra((s) => ({ ...s, logradouro: e.target.value }))}
+                    disabled={readOnly}
+                  />
+                </div>
+
+                <div>
+                  <div className="label">Bairro</div>
+                  <input
+                    className="input"
+                    value={extra.bairro}
+                    onChange={(e) => setExtra((s) => ({ ...s, bairro: e.target.value }))}
+                    disabled={readOnly}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="label">Cidade/UF</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      className="input col-span-2"
+                      value={extra.cidade}
+                      onChange={(e) => setExtra((s) => ({ ...s, cidade: e.target.value }))}
+                      disabled={readOnly}
+                    />
+                    <input
+                      className="input"
+                      value={extra.uf}
+                      onChange={(e) => setExtra((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))}
+                      disabled={readOnly}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="label">Contato de emergência (Nome)</div>
+                  <input
+                    className="input"
+                    value={extra.emergencia_nome}
+                    onChange={(e) => setExtra((s) => ({ ...s, emergencia_nome: e.target.value }))}
+                    disabled={readOnly}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="label">Contato de emergência (Telefone)</div>
+                  <input
+                    className="input"
+                    value={extra.emergencia_telefone}
+                    onChange={(e) => setExtra((s) => ({ ...s, emergencia_telefone: e.target.value }))}
+                    disabled={readOnly}
+                  />
+                </div>
+
+                <div className="md:col-span-1">
+                  <div className="label">Renda/Faturamento</div>
+                  <MoneyInput
+                    value={extra.renda_faturamento}
+                    onChange={(v) => setExtra((s) => ({ ...s, renda_faturamento: v }))}
+                    disabled={readOnly}
+                  />
+                  <div className="text-xs text-slate-500 mt-1">Salva como texto (humano) no cadastro.</div>
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="label">Foto (anexar)</div>
+                  <input
+                    className="input"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setFotoFile(e.target.files?.[0] || null)}
+                    disabled={readOnly}
+                  />
+                  <div className="text-xs text-slate-500 mt-1">
+                    Se não subir agora, cole uma URL abaixo. (Upload tenta bucket <b>clientes_photos</b>)
+                  </div>
+                </div>
+
+                <div className="md:col-span-3">
+                  <div className="label">Foto (URL)</div>
+                  <input
+                    className="input"
+                    placeholder="https://..."
+                    value={extra.foto_url}
+                    onChange={(e) => setExtra((s) => ({ ...s, foto_url: e.target.value }))}
+                    disabled={readOnly}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 3) Família */}
+            <div className="rounded-xl border p-4 xl:col-span-5">
+              <h4 className="font-semibold mb-3">Família</h4>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-semibold text-sm">Possui pai e mãe vivos?</div>
+                  <PillToggle
+                    value={extra.pais_vivos}
+                    onChange={(v) => setExtra((s) => ({ ...s, pais_vivos: v }))}
+                    disabled={readOnly}
+                  />
+                </div>
+
+                {extra.pais_vivos === "sim" && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <div className="label">Pai (Nome)</div>
+                      <input
+                        className="input"
+                        value={extra.pai_nome}
+                        onChange={(e) => setExtra((s) => ({ ...s, pai_nome: e.target.value }))}
+                        disabled={readOnly}
+                      />
+                    </div>
+                    <div>
+                      <div className="label">Pai (Nascimento)</div>
+                      <input
+                        className="input"
+                        type="date"
+                        value={extra.pai_nasc}
+                        onChange={(e) => setExtra((s) => ({ ...s, pai_nasc: e.target.value }))}
+                        disabled={readOnly}
+                      />
+                    </div>
+
+                    <div>
+                      <div className="label">Mãe (Nome)</div>
+                      <input
+                        className="input"
+                        value={extra.mae_nome}
+                        onChange={(e) => setExtra((s) => ({ ...s, mae_nome: e.target.value }))}
+                        disabled={readOnly}
+                      />
+                    </div>
+                    <div>
+                      <div className="label">Mãe (Nascimento)</div>
+                      <input
+                        className="input"
+                        type="date"
+                        value={extra.mae_nasc}
+                        onChange={(e) => setExtra((s) => ({ ...s, mae_nasc: e.target.value }))}
+                        disabled={readOnly}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-semibold text-sm">Possui filhos?</div>
+                  <PillToggle
+                    value={extra.possui_filhos}
+                    onChange={(v) => setExtra((s) => ({ ...s, possui_filhos: v }))}
+                    disabled={readOnly}
+                  />
+                </div>
+
+                {extra.possui_filhos === "sim" && (
+                  <div className="space-y-2">
+                    {extra.filhos.map((f, idx) => (
+                      <div key={idx} className="rounded-xl border p-3">
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                          <div className="md:col-span-6">
+                            <div className="label">Nome</div>
+                            <input
+                              className="input"
+                              value={f.nome}
+                              onChange={(e) =>
+                                setExtra((s) => {
+                                  const filhos = [...s.filhos];
+                                  filhos[idx] = { ...filhos[idx], nome: e.target.value };
+                                  return { ...s, filhos };
+                                })
+                              }
+                              disabled={readOnly}
+                            />
+                          </div>
+                          <div className="md:col-span-4">
+                            <div className="label">Nascimento</div>
+                            <input
+                              className="input"
+                              type="date"
+                              value={f.nascimento}
+                              onChange={(e) =>
+                                setExtra((s) => {
+                                  const filhos = [...s.filhos];
+                                  filhos[idx] = { ...filhos[idx], nascimento: e.target.value };
+                                  return { ...s, filhos };
+                                })
+                              }
+                              disabled={readOnly}
+                            />
+                          </div>
+                          <div className="md:col-span-2">
+                            <div className="label">Sexo</div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                className={`pill ${f.sexo === "F" ? "pill-on" : ""}`}
+                                onClick={() =>
+                                  setExtra((s) => {
+                                    const filhos = [...s.filhos];
+                                    filhos[idx] = { ...filhos[idx], sexo: "F" };
+                                    return { ...s, filhos };
+                                  })
+                                }
+                                disabled={readOnly}
+                              >
+                                F
+                              </button>
+                              <button
+                                type="button"
+                                className={`pill ${f.sexo === "M" ? "pill-on" : ""}`}
+                                onClick={() =>
+                                  setExtra((s) => {
+                                    const filhos = [...s.filhos];
+                                    filhos[idx] = { ...filhos[idx], sexo: "M" };
+                                    return { ...s, filhos };
+                                  })
+                                }
+                                disabled={readOnly}
+                              >
+                                M
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {!readOnly && (
+                      <button
+                        className="btn inline-flex items-center gap-2"
+                        type="button"
+                        onClick={() =>
+                          setExtra((s) => ({
+                            ...s,
+                            filhos: [...(s.filhos || []), { nome: "", nascimento: "", sexo: "" }],
+                          }))
+                        }
+                      >
+                        <Plus className="h-4 w-4" />
+                        Adicionar filho
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 4) Autorizações & Feedback */}
+            <div className="rounded-xl border p-4 xl:col-span-7">
+              <h4 className="font-semibold mb-3">Autorizações & Feedback</h4>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border p-3">
+                  <div className="font-semibold text-sm mb-2">Autorizações</div>
+
+                  <div className="flex items-center justify-between gap-3 py-2">
+                    <div className="text-sm">Autoriza publicar quando contemplar?</div>
+                    <PillToggle
+                      value={extra.autoriza_publicar}
+                      onChange={(v) => setExtra((s) => ({ ...s, autoriza_publicar: v }))}
+                      disabled={readOnly}
+                    />
                   </div>
 
-                  <div>
-                    <label className="label">Perfil do Cliente</label>
+                  <div className="flex items-center justify-between gap-3 py-2">
+                    <div className="text-sm">Autoriza usar nome/foto em homenagens?</div>
+                    <PillToggle
+                      value={extra.autoriza_homenagem}
+                      onChange={(v) => setExtra((s) => ({ ...s, autoriza_homenagem: v }))}
+                      disabled={readOnly}
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-xl border p-3">
+                  <div className="font-semibold text-sm mb-2">Preferências de Conteúdo</div>
+
+                  <div className="text-xs text-slate-600 mb-2">
+                    Que tipo de conteúdo você mais gosta de receber? (marque mais de um)
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {CONTEUDOS.map((k) => {
+                      const on = extra.conteudos.includes(k);
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          className={`pill ${on ? "pill-on" : ""}`}
+                          onClick={() =>
+                            setExtra((s) => ({
+                              ...s,
+                              conteudos: on ? s.conteudos.filter((x) => x !== k) : [...s.conteudos, k],
+                            }))
+                          }
+                          disabled={readOnly}
+                        >
+                          {k}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="text-xs text-slate-600 mb-2">
+                      Quer receber conteúdos educativos ou prefere só ofertas pontuais?
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className={`pill ${extra.prefere_educativo === "educativo" ? "pill-on" : ""}`}
+                        onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "educativo" }))}
+                        disabled={readOnly}
+                      >
+                        Educativos
+                      </button>
+                      <button
+                        type="button"
+                        className={`pill ${extra.prefere_educativo === "ofertas" ? "pill-on" : ""}`}
+                        onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "ofertas" }))}
+                        disabled={readOnly}
+                      >
+                        Ofertas pontuais
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="text-xs text-slate-600 mb-2">Como nos conheceu? (1 opção)</div>
                     <select
                       className="input"
-                      value={String(form.perfil_cliente || "")}
-                      onChange={(e) => setField("perfil_cliente", e.target.value as any)}
-                      disabled={isReadOnly}
+                      value={extra.como_conheceu}
+                      onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))}
+                      disabled={readOnly}
                     >
                       <option value="">Selecione…</option>
-                      {PERFIS.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
+                      {COMO_CONHECEU.map((o) => (
+                        <option key={o} value={o}>
+                          {o}
                         </option>
                       ))}
                     </select>
                   </div>
-
-                  <div>
-                    <label className="label">Tipo</label>
-                    <select
-                      className="input"
-                      value={String(form.tipo || "")}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setField("tipo", v as any);
-                        // limpa segmento oposto
-                        if (v === "PF") setField("segmento_pj", null as any);
-                        if (v === "PJ") setField("segmento_pf", null as any);
-                      }}
-                      disabled={isReadOnly}
-                    >
-                      <option value="">Selecione…</option>
-                      <option value="PF">PF</option>
-                      <option value="PJ">PJ</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="label">Segmento</label>
-
-                    {String(form.tipo || "") === "PJ" ? (
-                      <div className="flex gap-2">
-                        <input
-                          className="input flex-1"
-                          placeholder="Segmento de atuação principal"
-                          value={String(form.segmento_pj || "")}
-                          onChange={(e) => setField("segmento_pj", e.target.value as any)}
-                          disabled={isReadOnly}
-                        />
-                        <button className="btn" onClick={onBuscarCNAE} disabled={isReadOnly || cnpjBusy}>
-                          {cnpjBusy ? "Buscando..." : "Buscar CNAE"}
-                        </button>
-                      </div>
-                    ) : (
-                      <select
-                        className="input"
-                        value={String(form.segmento_pf || "")}
-                        onChange={(e) => setField("segmento_pf", e.target.value as any)}
-                        disabled={isReadOnly}
-                      >
-                        <option value="">Selecione…</option>
-                        {PF_SEGMENTOS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="label">Nome</label>
-                    <input className="input" value={String(form.nome || "")} onChange={(e) => setField("nome", e.target.value as any)} disabled={isReadOnly} />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="label">Como você gostaria de ser chamado?</label>
-                    <input
-                      className="input"
-                      placeholder="Nome, apelido, diminutivo, nome social…"
-                      value={String(form.como_chamar || "")}
-                      onChange={(e) => setField("como_chamar", e.target.value as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">CPF/CNPJ</label>
-                    <input
-                      className="input"
-                      value={String(form.cpf || "")}
-                      onChange={(e) => setField("cpf", onlyDigits(e.target.value) as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">Data Nascimento/Constituição</label>
-                    <input
-                      className="input"
-                      type="date"
-                      value={String(form.data_nascimento || "")}
-                      onChange={(e) => setField("data_nascimento", e.target.value as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">Telefone</label>
-                    <input
-                      className="input"
-                      value={maskPhone(String(form.telefone || ""))}
-                      onChange={(e) => setField("telefone", onlyDigits(e.target.value) as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">E-mail</label>
-                    <input
-                      className="input"
-                      value={String(form.email || "")}
-                      onChange={(e) => setField("email", e.target.value as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
                 </div>
-              </div>
 
-              {/* 2) Endereço + Contato + Renda + Foto */}
-              <div className="rounded-xl border p-3">
-                <div className="font-semibold mb-2">Contato & Endereço</div>
+                <div className="md:col-span-2 rounded-xl border p-3">
+                  <div className="font-semibold text-sm mb-2">Feedback (percepção sobre Consulmax e vendedor)</div>
+                  <textarea
+                    className="input"
+                    rows={4}
+                    value={extra.feedback}
+                    onChange={(e) => setExtra((s) => ({ ...s, feedback: e.target.value }))}
+                    disabled={readOnly}
+                  />
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div>
-                    <label className="label">CEP</label>
-                    <div className="flex gap-2">
-                      <input
-                        className="input flex-1"
-                        placeholder="Somente números"
-                        value={String(form.endereco_cep || "")}
-                        onChange={(e) => setField("endereco_cep", onlyDigits(e.target.value) as any)}
-                        disabled={isReadOnly}
-                      />
-                      <button className="btn" onClick={onBuscarCEP} disabled={isReadOnly || cepBusy}>
-                        {cepBusy ? "Buscando..." : "Buscar"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="label">Número</label>
-                    <input
-                      className="input"
-                      value={String(form.numero || "")}
-                      onChange={(e) => setField("numero", e.target.value as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="label">Logradouro</label>
-                    <input
-                      className="input"
-                      value={String(form.logradouro || "")}
-                      onChange={(e) => setField("logradouro", e.target.value as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">Bairro</label>
-                    <input className="input" value={String(form.bairro || "")} onChange={(e) => setField("bairro", e.target.value as any)} disabled={isReadOnly} />
-                  </div>
-
-                  <div>
-                    <label className="label">Cidade/UF</label>
-                    <div className="flex gap-2">
-                      <input className="input flex-1" value={String(form.cidade || "")} onChange={(e) => setField("cidade", e.target.value as any)} disabled={isReadOnly} />
-                      <input className="input w-20" value={String(form.uf || "")} onChange={(e) => setField("uf", e.target.value as any)} disabled={isReadOnly} />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="label">Contato de emergência (Nome)</label>
-                    <input
-                      className="input"
-                      value={String(form.contato_emerg_nome || "")}
-                      onChange={(e) => setField("contato_emerg_nome", e.target.value as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">Contato de emergência (Telefone)</label>
-                    <input
-                      className="input"
-                      value={maskPhone(String(form.contato_emerg_telefone || ""))}
-                      onChange={(e) => setField("contato_emerg_telefone", onlyDigits(e.target.value) as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">Renda/Faturamento</label>
-                    <input
-                      className="input"
-                      placeholder="R$ 0,00"
-                      value={rendaInput}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setRendaInput(v);
-                        const parsed = parseMoneyBR(v);
-                        setField("renda_faturamento", (parsed ?? null) as any);
-                      }}
-                      disabled={isReadOnly}
-                    />
-                    <div className="text-[11px] text-slate-500 mt-1">Salva como número (numeric) no banco.</div>
-                  </div>
-
-                  <div>
-                    <label className="label">Foto (anexar)</label>
-                    <input
-                      className="input"
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setFotoFile(e.target.files?.[0] || null)}
-                      disabled={isReadOnly || fotoUploading}
-                    />
-                    <div className="text-[11px] text-slate-500 mt-1">Se não subir agora, cole uma URL abaixo.</div>
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="label">Foto (URL)</label>
-                    <input
-                      className="input"
-                      placeholder="https://..."
-                      value={String(form.foto_url || "")}
-                      onChange={(e) => setField("foto_url", e.target.value as any)}
-                      disabled={isReadOnly}
-                    />
-                    {!!form.foto_url && (
-                      <div className="mt-2">
-                        <img src={String(form.foto_url)} alt="Foto do cliente" className="h-24 w-24 object-cover rounded-xl border" />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* 3) Família */}
-              <div className="rounded-xl border p-3">
-                <div className="font-semibold mb-2">Família</div>
-
-                <div className="grid grid-cols-1 gap-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-semibold">Possui pai e mãe vivos?</span>
-                    <button
-                      className={`pill ${paisVivos === true ? "pill-on" : ""}`}
-                      onClick={() => {
-                        if (isReadOnly) return;
-                        setPaisVivos(true);
-                        setField("pai_mae_vivos", true as any);
-                      }}
-                      disabled={isReadOnly}
-                    >
-                      Sim
-                    </button>
-                    <button
-                      className={`pill ${paisVivos === false ? "pill-on" : ""}`}
-                      onClick={() => {
-                        if (isReadOnly) return;
-                        setPaisVivos(false);
-                        setField("pai_mae_vivos", false as any);
-                        setField("pai_nome", null as any);
-                        setField("pai_nascimento", null as any);
-                        setField("mae_nome", null as any);
-                        setField("mae_nascimento", null as any);
-                      }}
-                      disabled={isReadOnly}
-                    >
-                      Não
-                    </button>
-                  </div>
-
-                  {paisVivos === true && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <div>
-                        <label className="label">Pai (Nome)</label>
-                        <input className="input" value={String(form.pai_nome || "")} onChange={(e) => setField("pai_nome", e.target.value as any)} disabled={isReadOnly} />
-                      </div>
-                      <div>
-                        <label className="label">Pai (Nascimento)</label>
-                        <input className="input" type="date" value={String(form.pai_nascimento || "")} onChange={(e) => setField("pai_nascimento", e.target.value as any)} disabled={isReadOnly} />
-                      </div>
-                      <div>
-                        <label className="label">Mãe (Nome)</label>
-                        <input className="input" value={String(form.mae_nome || "")} onChange={(e) => setField("mae_nome", e.target.value as any)} disabled={isReadOnly} />
-                      </div>
-                      <div>
-                        <label className="label">Mãe (Nascimento)</label>
-                        <input className="input" type="date" value={String(form.mae_nascimento || "")} onChange={(e) => setField("mae_nascimento", e.target.value as any)} disabled={isReadOnly} />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2 flex-wrap mt-2">
-                    <span className="text-sm font-semibold">Possui filhos?</span>
-                    <button
-                      className={`pill ${hasFilhos ? "pill-on" : ""}`}
-                      onClick={() => {
-                        if (isReadOnly) return;
-                        if (!hasFilhos) {
-                          setHasFilhos(true);
-                          if (filhos.length === 0) addFilhoRow();
-                        }
-                      }}
-                      disabled={isReadOnly}
-                    >
-                      Sim
-                    </button>
-                    <button
-                      className={`pill ${!hasFilhos ? "pill-on" : ""}`}
-                      onClick={() => {
-                        if (isReadOnly) return;
-                        setHasFilhos(false);
-                        setFilhos([]);
-                      }}
-                      disabled={isReadOnly}
-                    >
-                      Não
-                    </button>
-
-                    {hasFilhos && !isReadOnly && (
-                      <button className="btn inline-flex items-center gap-2 ml-auto" onClick={addFilhoRow}>
-                        <Plus className="h-4 w-4" /> Adicionar filho
-                      </button>
-                    )}
-                  </div>
-
-                  {hasFilhos && (
-                    <div className="grid grid-cols-1 gap-2">
-                      {filhos.map((f, idx) => (
-                        <div key={(f.id as any) || (f._tmpId as any) || idx} className="rounded-xl border p-2">
-                          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
-                            <div className="md:col-span-2">
-                              <label className="label">Nome</label>
-                              <input
-                                className="input"
-                                value={String(f.nome || "")}
-                                onChange={(e) => updateFilho(idx, { nome: e.target.value })}
-                                disabled={isReadOnly}
-                              />
-                            </div>
-                            <div>
-                              <label className="label">Nascimento</label>
-                              <input
-                                className="input"
-                                type="date"
-                                value={String(f.data_nascimento || "")}
-                                onChange={(e) => updateFilho(idx, { data_nascimento: e.target.value })}
-                                disabled={isReadOnly}
-                              />
-                            </div>
-                            <div>
-                              <label className="label">Sexo</label>
-                              <div className="flex gap-2">
-                                <button
-                                  className={`pill ${String(f.sexo || "") === "F" ? "pill-on" : ""}`}
-                                  onClick={() => !isReadOnly && updateFilho(idx, { sexo: "F" })}
-                                  disabled={isReadOnly}
-                                >
-                                  F
-                                </button>
-                                <button
-                                  className={`pill ${String(f.sexo || "") === "M" ? "pill-on" : ""}`}
-                                  onClick={() => !isReadOnly && updateFilho(idx, { sexo: "M" })}
-                                  disabled={isReadOnly}
-                                >
-                                  M
-                                </button>
-                              </div>
-                            </div>
-                            {!isReadOnly && (
-                              <div className="text-right">
-                                <button className="btn" onClick={() => removeFilho(idx)}>
-                                  Remover
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 4) Autorizações + Feedback */}
-              <div className="rounded-xl border p-3">
-                <div className="font-semibold mb-2">Autorizações & Feedback</div>
-
-                <div className="grid grid-cols-1 gap-2">
-                  <div className="rounded-xl border p-2 bg-slate-50">
-                    <div className="text-sm font-semibold mb-2">Autorizações</div>
-
-                    <div className="grid grid-cols-1 gap-2">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-sm">Autoriza publicar quando contemplar?</span>
-                        <div className="flex gap-2">
-                          <button
-                            className={`pill ${form.autoriza_postar_contemplacao === true ? "pill-on" : ""}`}
-                            onClick={() => !isReadOnly && setField("autoriza_postar_contemplacao", true as any)}
-                            disabled={isReadOnly}
-                          >
-                            Sim
-                          </button>
-                          <button
-                            className={`pill ${form.autoriza_postar_contemplacao === false ? "pill-on" : ""}`}
-                            onClick={() => !isReadOnly && setField("autoriza_postar_contemplacao", false as any)}
-                            disabled={isReadOnly}
-                          >
-                            Não
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-sm">Autoriza usar nome/foto em homenagens?</span>
-                        <div className="flex gap-2">
-                          <button
-                            className={`pill ${form.autoriza_homenagens === true ? "pill-on" : ""}`}
-                            onClick={() => !isReadOnly && setField("autoriza_homenagens", true as any)}
-                            disabled={isReadOnly}
-                          >
-                            Sim
-                          </button>
-                          <button
-                            className={`pill ${form.autoriza_homenagens === false ? "pill-on" : ""}`}
-                            onClick={() => !isReadOnly && setField("autoriza_homenagens", false as any)}
-                            disabled={isReadOnly}
-                          >
-                            Não
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="label">Feedback (percepção sobre Consulmax e vendedor)</label>
+                  <div className="mt-3">
+                    <div className="font-semibold text-sm mb-2">Obs. internas</div>
                     <textarea
-                      className="input min-h-[92px]"
-                      value={String(form.feedback || "")}
-                      onChange={(e) => setField("feedback", e.target.value as any)}
-                      disabled={isReadOnly}
+                      className="input"
+                      rows={3}
+                      value={extra.obs_internas || legacyObs}
+                      onChange={(e) => {
+                        setExtra((s) => ({ ...s, obs_internas: e.target.value }));
+                        setLegacyObs(e.target.value);
+                      }}
+                      disabled={readOnly}
                     />
-                  </div>
-
-                  <div>
-                    <label className="label">Obs. internas</label>
-                    <textarea
-                      className="input min-h-[92px]"
-                      value={String(form.obs_internas || "")}
-                      onChange={(e) => setField("obs_internas", e.target.value as any)}
-                      disabled={isReadOnly}
-                    />
-                  </div>
-
-                  <div className="rounded-xl border p-2 bg-slate-50">
-                    <div className="text-sm font-semibold mb-2">Preferências de conteúdo</div>
-
-                    <div className="grid grid-cols-1 gap-2">
-                      <div className="flex flex-wrap gap-2">
-                        {CONTENT_PREFS.map((p) => {
-                          const on = ((form.conteudos_preferidos || []) as string[]).includes(p);
-                          return (
-                            <button
-                              key={p}
-                              className={`pill ${on ? "pill-on" : ""}`}
-                              onClick={() => !isReadOnly && toggleConteudoPref(p)}
-                              disabled={isReadOnly}
-                            >
-                              {p}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-sm">Quer receber conteúdos educativos ou só ofertas pontuais?</span>
-                        <div className="flex gap-2">
-                          <button
-                            className={`pill ${form.prefere_educativo === true ? "pill-on" : ""}`}
-                            onClick={() => !isReadOnly && setField("prefere_educativo", true as any)}
-                            disabled={isReadOnly}
-                          >
-                            Educativo
-                          </button>
-                          <button
-                            className={`pill ${form.prefere_educativo === false ? "pill-on" : ""}`}
-                            onClick={() => !isReadOnly && setField("prefere_educativo", false as any)}
-                            disabled={isReadOnly}
-                          >
-                            Ofertas
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <div>
-                          <label className="label">Como nos conheceu? (1 opção)</label>
-                          <select
-                            className="input"
-                            value={String(form.como_conheceu || "")}
-                            onChange={(e) => setField("como_conheceu", e.target.value as any)}
-                            disabled={isReadOnly}
-                          >
-                            <option value="">Selecione…</option>
-                            {COMO_CONHECEU.map((x) => (
-                              <option key={x} value={x}>
-                                {x}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="label">Observações (da venda/cliente)</label>
-                          <input
-                            className="input"
-                            value={String(form.observacoes || "")}
-                            onChange={(e) => setField("observacoes", e.target.value as any)}
-                            disabled={isReadOnly}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Ações */}
-                  <div className="flex items-center justify-end gap-2 mt-2">
-                    <button className="btn" onClick={closeOverlay}>
-                      {isReadOnly ? "Fechar" : "Cancelar"}
-                    </button>
-
-                    {!isReadOnly && (
-                      <button className="btn-primary inline-flex items-center gap-2" onClick={saveCadastro} disabled={saving || fotoUploading}>
-                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                        {overlayMode === "create" ? "Confirmar" : "Salvar alterações"}
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>
             </div>
+          </div>
 
-            {(saving || fotoUploading) && (
-              <div className="mt-3 text-xs text-slate-500">
-                {saving ? "Salvando dados..." : ""} {fotoUploading ? "Enviando foto..." : ""}
-              </div>
+          {/* Footer actions */}
+          <div className="mt-5 flex items-center justify-end gap-2">
+            <button className="btn" onClick={closeOverlay} disabled={saving}>
+              Fechar
+            </button>
+
+            {!readOnly && (
+              <button className="btn-primary inline-flex items-center gap-2" onClick={confirmOrSave} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                {overlayMode === "novo" ? "Confirmar" : "Salvar alterações"}
+              </button>
             )}
-          </>
-        )}
-      </Overlay>
+          </div>
+        </Overlay>
+      )}
 
       {/* estilos locais */}
       <style>{`
-        .input{padding:10px;border-radius:12px;border:1px solid #e5e7eb;outline:none;width:100%}
-        .btn{padding:8px 12px;border-radius:10px;background:#f1f5f9;border:1px solid #e2e8f0;font-weight:700}
-        .btn-primary{padding:10px 16px;border-radius:12px;background:#A11C27;color:#fff;font-weight:800}
-        .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid #e2e8f0;background:#f8fafc;border-radius:10px}
+        .input{padding:11px 12px;border-radius:14px;border:1px solid #e5e7eb;outline:none;width:100%}
+        .btn{padding:9px 13px;border-radius:12px;background:#f1f5f9;border:1px solid #e2e8f0;font-weight:700}
+        .btn-primary{padding:11px 16px;border-radius:14px;background:#A11C27;color:#fff;font-weight:800}
+        .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid #e2e8f0;background:#f8fafc;border-radius:12px}
         .icon-btn:hover{background:#eef2ff}
-        .label{display:block;font-size:12px;color:#475569;margin-bottom:6px;font-weight:700}
-        .pill{padding:6px 10px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-weight:800;font-size:12px}
+        .label{display:block;font-size:12px;color:#475569;margin-bottom:7px;font-weight:800}
+        .pill{padding:7px 11px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-weight:800;font-size:12px}
         .pill-on{background:#111827;color:#fff;border-color:#111827}
       `}</style>
     </div>

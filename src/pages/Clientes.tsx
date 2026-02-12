@@ -1,26 +1,27 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { Pencil, CalendarPlus, Eye, Send, Check, Loader2, X, Plus } from "lucide-react";
+import { Pencil, CalendarPlus, Eye, Send, Check, Loader2, X, Plus, Search } from "lucide-react";
 
 type ClienteBase = {
-  id: string; // lead_id (chave visual da linha)
+  id: string; // lead_id
   lead_id: string;
 
-  // do lead / venda
   nome: string;
   telefone?: string | null;
   email?: string | null;
-  cpf_dig?: string | null; // vendas.cpf (digits)
-  data_nascimento?: string | null; // vendas.nascimento YYYY-MM-DD
-  observacoes?: string | null; // vendas.descricao (legado)
-  vendas_ids?: string[]; // ids das vendas do lead (mais recente primeiro)
 
-  // vendedor (da venda mais recente)
+  cpf_dig?: string | null; // vendas.cpf digits
+  data_nascimento?: string | null; // vendas.nascimento
+  observacoes?: string | null; // vendas.descricao
+  vendas_ids?: string[];
+
   vendedor_auth_user_id?: string | null;
   vendedor_nome?: string | null;
 
-  // do cliente já confirmado
+  // para busca por grupo (da venda mais recente)
+  grupo?: string | null;
+
   cliente_row_id?: string | null; // clientes.id
 };
 
@@ -45,7 +46,7 @@ type Filho = { nome: string; nascimento: string; sexo: "F" | "M" | "" };
 type CadastroExtra = {
   tipo: TipoPessoa;
   segmento_pf: SegmentoPF | "";
-  segmento_pj: string; // texto livre (PJ)
+  segmento_pj: string;
   perfil: PerfilCliente;
 
   chamado_como: string;
@@ -60,10 +61,10 @@ type CadastroExtra = {
   emergencia_nome: string;
   emergencia_telefone: string;
 
-  renda_faturamento: string; // humano (R$)
+  renda_faturamento: string;
   foto_url: string;
 
-  pais_vivos: "sim" | "nao" | ""; // flag
+  pais_vivos: "sim" | "nao" | "";
   pai_nome: string;
   pai_nasc: string;
   mae_nome: string;
@@ -78,10 +79,12 @@ type CadastroExtra = {
   feedback: string;
   obs_internas: string;
 
-  conteudos: ConteudoPref[]; // multi
-  prefere_educativo: "educativo" | "ofertas" | ""; // educativo vs pontuais
+  conteudos: ConteudoPref[];
+  prefere_educativo: "educativo" | "ofertas" | "";
   como_conheceu: ComoConheceu | "";
 };
+
+const STORAGE_BUCKET_CLIENTES = "clientes_photos";
 
 const SEGMENTOS_PF: SegmentoPF[] = [
   "Assalariado",
@@ -92,7 +95,7 @@ const SEGMENTOS_PF: SegmentoPF[] = [
   "Motorista",
   "Produtor Rural",
   "Profissional Liberal",
-  "Locador ou Proprietárioand Proprietário".includes("And") ? "Locador ou Proprietário" : "Locador ou Proprietário",
+  "Locador ou Proprietário",
 ];
 
 const CONTEUDOS: ConteudoPref[] = ["dicas rápidas", "explicações completas", "promoções", "novidades"];
@@ -177,19 +180,16 @@ function safeParseExtraFromObservacoes(observacoes?: string | null): { extra: Ca
   const raw = (observacoes || "").trim();
   if (!raw) return { extra: null, legacyText: "" };
 
-  // formato: "CMX_JSON:{...}"
   if (raw.startsWith("CMX_JSON:")) {
     const jsonStr = raw.slice("CMX_JSON:".length).trim();
     try {
       const parsed = JSON.parse(jsonStr);
-      // fallback em campos faltantes
       return { extra: { ...emptyExtra(), ...(parsed || {}) }, legacyText: "" };
     } catch {
       return { extra: null, legacyText: raw };
     }
   }
 
-  // pode já ser JSON puro
   if (raw.startsWith("{") && raw.endsWith("}")) {
     try {
       const parsed = JSON.parse(raw);
@@ -199,7 +199,6 @@ function safeParseExtraFromObservacoes(observacoes?: string | null): { extra: Ca
     }
   }
 
-  // legado (texto livre)
   return { extra: null, legacyText: raw };
 }
 
@@ -300,7 +299,6 @@ function MoneyInput({
   disabled?: boolean;
   placeholder?: string;
 }) {
-  // mantém simples (humano). Salva como string.
   return (
     <input
       className="input"
@@ -318,8 +316,8 @@ export default function ClientesPage() {
 
   const [loading, setLoading] = useState(false);
 
-  const [clientes, setClientes] = useState<ClienteBase[]>([]); // confirmados
-  const [novos, setNovos] = useState<ClienteBase[]>([]); // sem linha em clientes
+  const [clientes, setClientes] = useState<ClienteBase[]>([]);
+  const [novos, setNovos] = useState<ClienteBase[]>([]);
 
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -327,26 +325,20 @@ export default function ClientesPage() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
 
-  // overlay cadastro / editar / visualizar
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [overlayMode, setOverlayMode] = useState<"novo" | "edit" | "view">("novo");
   const [active, setActive] = useState<ClienteBase | null>(null);
 
-  // dados editáveis do cadastro (campos base + extra)
   const [nome, setNome] = useState("");
   const [chamadoComo, setChamadoComo] = useState("");
   const [cpf, setCpf] = useState("");
-  const [birth, setBirth] = useState<string>(""); // YYYY-MM-DD
+  const [birth, setBirth] = useState<string>("");
   const [telefone, setTelefone] = useState("");
   const [email, setEmail] = useState("");
 
-  // extra
   const [extra, setExtra] = useState<CadastroExtra>(emptyExtra());
-
-  // para preservar observação “legado” se existir (e também para jogar em obs internas caso não use JSON)
   const [legacyObs, setLegacyObs] = useState("");
 
-  // upload foto
   const [fotoFile, setFotoFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
@@ -361,16 +353,66 @@ export default function ClientesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced]);
 
+  // 🔎 BUSCA: nome OU cpf/cnpj OU grupo
+  async function getLeadIdsBySearch(term: string): Promise<string[] | null> {
+    const t = term.trim();
+    if (!t) return null;
+
+    const ids = new Set<string>();
+    const digits = onlyDigits(t);
+
+    // 1) buscar em leads.nome (ilike)
+    const { data: leadsByName, error: e1 } = await supabase
+      .from("leads")
+      .select("id")
+      .ilike("nome", `%${t}%`)
+      .range(0, 300);
+    if (e1) throw e1;
+    (leadsByName || []).forEach((r: any) => ids.add(String(r.id)));
+
+    // 2) buscar em vendas.grupo (ilike)
+    const { data: vendasByGrupo, error: e2 } = await supabase
+      .from("vendas")
+      .select("lead_id")
+      .ilike("grupo", `%${t}%`)
+      .not("lead_id", "is", null)
+      .range(0, 600);
+    if (e2) throw e2;
+    (vendasByGrupo || []).forEach((r: any) => r.lead_id && ids.add(String(r.lead_id)));
+
+    // 3) buscar em vendas.cpf (ilike) usando só dígitos, se tiver
+    if (digits.length >= 5) {
+      const { data: vendasByCpf, error: e3 } = await supabase
+        .from("vendas")
+        .select("lead_id")
+        .ilike("cpf", `%${digits}%`)
+        .not("lead_id", "is", null)
+        .range(0, 600);
+      if (e3) throw e3;
+      (vendasByCpf || []).forEach((r: any) => r.lead_id && ids.add(String(r.lead_id)));
+    }
+
+    return Array.from(ids);
+  }
+
   async function load(target = 1, term = "") {
     setLoading(true);
     try {
-      // 1) Leads
-      let leadsQ = supabase
-        .from("leads")
-        .select("id,nome,telefone,email")
-        .order("nome", { ascending: true });
+      const leadIdsFilter = await getLeadIdsBySearch(term);
 
-      if (term) leadsQ = leadsQ.ilike("nome", `%${term}%`);
+      // 1) Leads
+      let leadsQ = supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true });
+
+      if (leadIdsFilter && leadIdsFilter.length) {
+        leadsQ = leadsQ.in("id", leadIdsFilter);
+      } else if (term) {
+        // se term existe mas não achou nenhum id, retorna vazio
+        setClientes([]);
+        setNovos([]);
+        setTotal(0);
+        setPage(1);
+        return;
+      }
 
       const { data: leads, error: eLeads } = await leadsQ.range(0, 5000);
       if (eLeads) throw eLeads;
@@ -384,10 +426,10 @@ export default function ClientesPage() {
         return;
       }
 
-      // 2) Vendas dos leads (mais recente primeiro)
+      // 2) Vendas dos leads
       const { data: vendas, error: eVend } = await supabase
         .from("vendas")
-        .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at,vendedor_id,email,telefone")
+        .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at,vendedor_id,email,telefone,grupo")
         .in("lead_id", leadIds)
         .order("created_at", { ascending: false })
         .range(0, 20000);
@@ -403,6 +445,7 @@ export default function ClientesPage() {
         vendedor_id?: string | null;
         email?: string | null;
         telefone?: string | null;
+        grupo?: string | null;
       };
 
       const vendasByLead = new Map<string, VendaLite[]>();
@@ -426,10 +469,11 @@ export default function ClientesPage() {
           vendedor_id: vendedorId,
           email: v.email ?? null,
           telefone: v.telefone ?? null,
+          grupo: v.grupo ?? null,
         });
       });
 
-      // 3) Users (para resolver vendedor)
+      // 3) Users para nome do vendedor
       const vendorList = Array.from(vendorAuthIds);
       const usersByAuth = new Map<string, { nome: string }>();
       if (vendorList.length) {
@@ -441,7 +485,7 @@ export default function ClientesPage() {
         (uRows || []).forEach((u: any) => usersByAuth.set(String(u.auth_user_id), { nome: u.nome || "—" }));
       }
 
-      // 4) Clientes confirmados (linha em public.clientes)
+      // 4) Clientes confirmados
       const { data: cliRows, error: eCli } = await supabase.from("clientes").select("id,lead_id");
       if (eCli) throw eCli;
 
@@ -452,7 +496,7 @@ export default function ClientesPage() {
         confirmedByLead.set(lid, String(c.id));
       });
 
-      // 5) Base 1 linha por lead (só se tem cpf/cpf_cnpj)
+      // 5) Base 1 linha por lead
       const base: ClienteBase[] = [];
       for (const l of leads || []) {
         const lid = String(l.id);
@@ -470,19 +514,16 @@ export default function ClientesPage() {
         base.push({
           id: lid,
           lead_id: lid,
-
           nome: l.nome || "(Sem nome)",
           telefone: l.telefone || latest?.telefone || null,
           email: l.email || latest?.email || null,
-
           data_nascimento: latest?.nasc || null,
           observacoes: latest?.obs || null,
           cpf_dig: latest?.cpf || null,
           vendas_ids: arr.map((x) => x.id),
-
           vendedor_auth_user_id: vendedorAuth,
           vendedor_nome: vendedorNome,
-
+          grupo: latest?.grupo || null,
           cliente_row_id: confirmedByLead.get(lid) || null,
         });
       }
@@ -490,11 +531,9 @@ export default function ClientesPage() {
       const confirmed = base.filter((x) => !!x.cliente_row_id);
       const pending = base.filter((x) => !x.cliente_row_id);
 
-      // Ordena
       confirmed.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
       pending.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
 
-      // Pagina confirmados
       const from = (target - 1) * PAGE;
       const to = from + PAGE;
 
@@ -527,14 +566,12 @@ export default function ClientesPage() {
     setActive(c);
     resetForm();
 
-    // base capturado da venda / lead
     setNome(c.nome || "");
     setCpf(c.cpf_dig || "");
     setBirth(c.data_nascimento || "");
     setTelefone(c.telefone ? maskPhone(c.telefone) : "");
     setEmail(c.email || "");
 
-    // se já é confirmado, carregamos observacoes (pra pegar o JSON do cadastro extra)
     if (mode !== "novo") {
       try {
         setLoading(true);
@@ -546,7 +583,6 @@ export default function ClientesPage() {
 
         if (error) throw error;
 
-        // normaliza dados base (prioriza clientes)
         if (row) {
           setNome(row.nome || c.nome || "");
           setCpf(row.cpf || c.cpf_dig || "");
@@ -554,14 +590,12 @@ export default function ClientesPage() {
           setTelefone(row.telefone ? maskPhone(row.telefone) : c.telefone ? maskPhone(c.telefone) : "");
           setEmail(row.email || c.email || "");
 
-          // tenta parse do JSON do cadastro
           const { extra: parsedExtra, legacyText } = safeParseExtraFromObservacoes(row.observacoes);
           setLegacyObs(legacyText || "");
 
           const baseExtra = emptyExtra();
           const merged = parsedExtra ? { ...baseExtra, ...parsedExtra } : baseExtra;
 
-          // preenche endereço se houver colunas nativas (mesmo que extra esteja vazio)
           merged.endereco_cep = row.endereco_cep || merged.endereco_cep;
           merged.logradouro = row.logradouro || merged.logradouro;
           merged.numero = row.numero || merged.numero;
@@ -570,8 +604,6 @@ export default function ClientesPage() {
           merged.uf = row.uf || merged.uf;
 
           setExtra(merged);
-
-          // se não tiver “como gostaria de ser chamado”, mantém vazio
           setChamadoComo(merged.chamado_como || "");
         }
       } catch (e: any) {
@@ -616,25 +648,24 @@ export default function ClientesPage() {
   async function uploadFotoIfAny(): Promise<string> {
     if (!fotoFile) return extra.foto_url || "";
     try {
-      // tentativa de upload em bucket (se existir). Se não existir, cai no fallback.
-      const bucket = "clientes_photos";
       const ext = (fotoFile.name.split(".").pop() || "jpg").toLowerCase();
       const path = `clientes/${Date.now()}_${Math.random().toString(16).slice(2)}.${ext}`;
 
-      const { error: upErr } = await supabase.storage.from(bucket).upload(path, fotoFile, {
+      const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET_CLIENTES).upload(path, fotoFile, {
         cacheControl: "3600",
         upsert: false,
       });
 
-      if (upErr) throw upErr;
+      if (upErr) {
+        // se bucket/policy ainda não estiver ok, não trava o fluxo:
+        console.error("Upload error:", upErr);
+        return extra.foto_url || "";
+      }
 
-      const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+      const { data } = supabase.storage.from(STORAGE_BUCKET_CLIENTES).getPublicUrl(path);
       return data?.publicUrl || extra.foto_url || "";
-    } catch {
-      // fallback: mantém URL manual
-      alert(
-        "Não consegui subir a foto no Storage (bucket 'clientes_photos'). Se quiser, cole uma URL no campo 'Foto (URL)'."
-      );
+    } catch (e) {
+      console.error("Upload exception:", e);
       return extra.foto_url || "";
     }
   }
@@ -659,18 +690,16 @@ export default function ClientesPage() {
   async function confirmOrSave() {
     const err = validateBeforeSave();
     if (err) return alert(err);
-
     if (!active) return;
+
     try {
       setSaving(true);
 
       const latestVendaId = active.vendas_ids?.[0];
 
-      // upload foto (se houver)
       const fotoUrl = await uploadFotoIfAny();
       const extraToSave: CadastroExtra = { ...extra, foto_url: fotoUrl, chamado_como: chamadoComo || "" };
 
-      // 1) Atualiza LEAD
       const { error: eLead } = await supabase
         .from("leads")
         .update({
@@ -681,7 +710,6 @@ export default function ClientesPage() {
         .eq("id", active.lead_id);
       if (eLead) throw eLead;
 
-      // 2) Atualiza VENDA mais recente (nascimento/observações/cpf/email/telefone)
       if (latestVendaId) {
         const { error: eVenda } = await supabase
           .from("vendas")
@@ -696,11 +724,9 @@ export default function ClientesPage() {
         if (eVenda) throw eVenda;
       }
 
-      // 3) Upsert CLIENTE (tabela clientes)
-      // Observação: para não depender de schema novo, gravamos o cadastro completo em clientes.observacoes como JSON (CMX_JSON:...)
       const obsSerialized = serializeExtraToObservacoes(extraToSave, legacyObs?.trim() || "");
 
-      const baseClientePayload: any = {
+      const payload: any = {
         nome: nome.trim() || active.nome,
         cpf: onlyDigits(cpf) || null,
         telefone: onlyDigits(telefone) || null,
@@ -708,7 +734,6 @@ export default function ClientesPage() {
         data_nascimento: birth || null,
         lead_id: active.lead_id,
 
-        // endereço (colunas existentes)
         endereco_cep: onlyDigits(extraToSave.endereco_cep) || null,
         logradouro: extraToSave.logradouro?.trim() || null,
         numero: extraToSave.numero?.trim() || null,
@@ -716,11 +741,9 @@ export default function ClientesPage() {
         cidade: extraToSave.cidade?.trim() || null,
         uf: extraToSave.uf?.trim() || null,
 
-        // JSON com o cadastro completo
         observacoes: obsSerialized,
       };
 
-      // se já existe, update; se não, insert
       const { data: existing, error: eFind } = await supabase
         .from("clientes")
         .select("id")
@@ -729,23 +752,17 @@ export default function ClientesPage() {
       if (eFind) throw eFind;
 
       if (existing?.id) {
-        const { error: eUp } = await supabase.from("clientes").update(baseClientePayload).eq("id", existing.id);
+        const { error: eUp } = await supabase.from("clientes").update(payload).eq("id", existing.id);
         if (eUp) throw eUp;
       } else {
         const { data: auth } = await supabase.auth.getUser();
         const createdBy = auth?.user?.id || null;
-
-        // created_by é NOT NULL no schema — então precisamos preencher
         if (!createdBy) throw new Error("Não foi possível identificar o usuário logado (created_by).");
 
-        const { error: eIns } = await supabase.from("clientes").insert({
-          ...baseClientePayload,
-          created_by: createdBy,
-        } as any);
+        const { error: eIns } = await supabase.from("clientes").insert({ ...payload, created_by: createdBy } as any);
         if (eIns) throw eIns;
       }
 
-      // fecha e recarrega
       closeOverlay();
       await load(page, debounced);
       alert(overlayMode === "novo" ? "Cliente confirmado!" : "Cliente atualizado!");
@@ -788,16 +805,14 @@ export default function ClientesPage() {
                     <tr key={c.lead_id} className={idx % 2 ? "bg-slate-50/60" : "bg-white"}>
                       <td className="p-2">
                         <div className="font-medium">{c.nome}</div>
-                        <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
+                        <div className="text-xs text-slate-500">
+                          CPF: {c.cpf_dig || "—"} {c.grupo ? `• Grupo: ${c.grupo}` : ""}
+                        </div>
                       </td>
                       <td className="p-2">{phone}</td>
                       <td className="p-2">{c.vendedor_nome || "—"}</td>
                       <td className="p-2 text-right">
-                        <button
-                          className="btn-primary"
-                          onClick={() => openOverlay("novo", c)}
-                          disabled={loading}
-                        >
+                        <button className="btn-primary" onClick={() => openOverlay("novo", c)} disabled={loading}>
                           Preencher Cadastro
                         </button>
                       </td>
@@ -816,14 +831,17 @@ export default function ClientesPage() {
           <h3 className="m-0 font-semibold">Lista de Clientes</h3>
 
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            <div className="relative">
+            {/* ✅ BUSCA MELHORADA (ícone fora do campo) */}
+            <div className="searchWrap">
+              <span className="searchIcon">
+                <Search className="h-4 w-4" />
+              </span>
               <input
-                className="input pl-9 w-[min(380px,72vw)]"
-                placeholder="Buscar por nome"
+                className="searchInput"
+                placeholder="Buscar por nome, CPF/CNPJ ou grupo…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <span className="absolute left-3 top-2.5 opacity-60">🔎</span>
             </div>
 
             <small className="text-slate-500">
@@ -841,13 +859,14 @@ export default function ClientesPage() {
                 <th className="p-2 text-left">E-mail</th>
                 <th className="p-2 text-left">Nascimento</th>
                 <th className="p-2 text-left">Vendedor</th>
+                <th className="p-2 text-left">Grupo</th>
                 <th className="p-2 text-center">Ações</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
                 <tr>
-                  <td className="p-4 text-slate-500" colSpan={6}>
+                  <td className="p-4 text-slate-500" colSpan={7}>
                     Carregando…
                   </td>
                 </tr>
@@ -855,7 +874,7 @@ export default function ClientesPage() {
 
               {!loading && clientes.length === 0 && (
                 <tr>
-                  <td className="p-4 text-slate-500" colSpan={6}>
+                  <td className="p-4 text-slate-500" colSpan={7}>
                     Nenhum cliente encontrado.
                   </td>
                 </tr>
@@ -864,7 +883,9 @@ export default function ClientesPage() {
               {clientes.map((c, i) => {
                 const phone = c.telefone ? maskPhone(c.telefone) : "";
                 const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
-                const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""}`;
+                const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${
+                  c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""
+                }`;
 
                 return (
                   <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
@@ -891,23 +912,14 @@ export default function ClientesPage() {
                     <td className="p-2">{c.email || "—"}</td>
                     <td className="p-2">{formatBRDate(c.data_nascimento)}</td>
                     <td className="p-2">{c.vendedor_nome || "—"}</td>
+                    <td className="p-2">{c.grupo || "—"}</td>
                     <td className="p-2">
                       <div className="flex items-center justify-center gap-2">
-                        <button
-                          className="icon-btn"
-                          title="Editar"
-                          onClick={() => openOverlay("edit", c)}
-                          disabled={loading}
-                        >
+                        <button className="icon-btn" title="Editar" onClick={() => openOverlay("edit", c)} disabled={loading}>
                           <Pencil className="h-4 w-4" />
                         </button>
 
-                        <button
-                          className="icon-btn"
-                          title="Visualizar"
-                          onClick={() => openOverlay("view", c)}
-                          disabled={loading}
-                        >
+                        <button className="icon-btn" title="Visualizar" onClick={() => openOverlay("view", c)} disabled={loading}>
                           <Eye className="h-4 w-4" />
                         </button>
 
@@ -937,7 +949,7 @@ export default function ClientesPage() {
         </div>
       </div>
 
-      {/* OVERLAY (novo/edit/view) */}
+      {/* OVERLAY */}
       {overlayOpen && active && (
         <Overlay
           title={
@@ -949,33 +961,31 @@ export default function ClientesPage() {
           }
           onClose={closeOverlay}
         >
-          {/* Header resumo */}
           <div className="rounded-xl border p-4 mb-4 bg-slate-50">
-            <div className="flex flex-col gap-2">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-semibold truncate">{nome || active.nome}</div>
-                  <div className="text-xs text-slate-600">
-                    Vendedor: <b>{active.vendedor_nome || "—"}</b>{" "}
-                    <span className="opacity-60">
-                      • Lead: {active.lead_id}
-                      {active.vendas_ids?.[0] ? ` • Venda: ${active.vendas_ids[0]}` : ""}
-                    </span>
-                  </div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-semibold truncate">{nome || active.nome}</div>
+                <div className="text-xs text-slate-600">
+                  Vendedor: <b>{active.vendedor_nome || "—"}</b>{" "}
+                  <span className="opacity-60">
+                    • Lead: {active.lead_id}
+                    {active.vendas_ids?.[0] ? ` • Venda: ${active.vendas_ids[0]}` : ""}
+                    {active.grupo ? ` • Grupo: ${active.grupo}` : ""}
+                  </span>
                 </div>
-                <div className="text-xs text-slate-600 text-right">
-                  CPF/CNPJ: <b>{onlyDigits(cpf) || "—"}</b>
-                  <div>
-                    Nasc./Const.: <b>{birth ? formatBRDate(birth) : "—"}</b>
-                  </div>
+              </div>
+              <div className="text-xs text-slate-600 text-right">
+                CPF/CNPJ: <b>{onlyDigits(cpf) || "—"}</b>
+                <div>
+                  Nasc./Const.: <b>{birth ? formatBRDate(birth) : "—"}</b>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* GRID HORIZONTAL */}
+          {/* GRID */}
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-            {/* 1) Identidade */}
+            {/* Identidade */}
             <div className="rounded-xl border p-4 xl:col-span-6">
               <h4 className="font-semibold mb-3">Identidade</h4>
 
@@ -1065,7 +1075,12 @@ export default function ClientesPage() {
 
                 <div>
                   <div className="label">CPF/CNPJ</div>
-                  <input className="input" value={onlyDigits(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} disabled={readOnly} />
+                  <input
+                    className="input"
+                    value={onlyDigits(cpf)}
+                    onChange={(e) => setCpf(onlyDigits(e.target.value))}
+                    disabled={readOnly}
+                  />
                 </div>
 
                 <div>
@@ -1085,7 +1100,7 @@ export default function ClientesPage() {
               </div>
             </div>
 
-            {/* 2) Contato & Endereço */}
+            {/* Contato & Endereço */}
             <div className="rounded-xl border p-4 xl:col-span-6">
               <h4 className="font-semibold mb-3">Contato & Endereço</h4>
 
@@ -1128,154 +1143,83 @@ export default function ClientesPage() {
 
                 <div>
                   <div className="label">Bairro</div>
-                  <input
-                    className="input"
-                    value={extra.bairro}
-                    onChange={(e) => setExtra((s) => ({ ...s, bairro: e.target.value }))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={extra.bairro} onChange={(e) => setExtra((s) => ({ ...s, bairro: e.target.value }))} disabled={readOnly} />
                 </div>
 
                 <div className="md:col-span-2">
                   <div className="label">Cidade/UF</div>
                   <div className="grid grid-cols-3 gap-2">
-                    <input
-                      className="input col-span-2"
-                      value={extra.cidade}
-                      onChange={(e) => setExtra((s) => ({ ...s, cidade: e.target.value }))}
-                      disabled={readOnly}
-                    />
-                    <input
-                      className="input"
-                      value={extra.uf}
-                      onChange={(e) => setExtra((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))}
-                      disabled={readOnly}
-                    />
+                    <input className="input col-span-2" value={extra.cidade} onChange={(e) => setExtra((s) => ({ ...s, cidade: e.target.value }))} disabled={readOnly} />
+                    <input className="input" value={extra.uf} onChange={(e) => setExtra((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))} disabled={readOnly} />
                   </div>
                 </div>
 
                 <div>
                   <div className="label">Contato de emergência (Nome)</div>
-                  <input
-                    className="input"
-                    value={extra.emergencia_nome}
-                    onChange={(e) => setExtra((s) => ({ ...s, emergencia_nome: e.target.value }))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={extra.emergencia_nome} onChange={(e) => setExtra((s) => ({ ...s, emergencia_nome: e.target.value }))} disabled={readOnly} />
                 </div>
 
                 <div className="md:col-span-2">
                   <div className="label">Contato de emergência (Telefone)</div>
-                  <input
-                    className="input"
-                    value={extra.emergencia_telefone}
-                    onChange={(e) => setExtra((s) => ({ ...s, emergencia_telefone: e.target.value }))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={extra.emergencia_telefone} onChange={(e) => setExtra((s) => ({ ...s, emergencia_telefone: e.target.value }))} disabled={readOnly} />
                 </div>
 
                 <div className="md:col-span-1">
                   <div className="label">Renda/Faturamento</div>
-                  <MoneyInput
-                    value={extra.renda_faturamento}
-                    onChange={(v) => setExtra((s) => ({ ...s, renda_faturamento: v }))}
-                    disabled={readOnly}
-                  />
+                  <MoneyInput value={extra.renda_faturamento} onChange={(v) => setExtra((s) => ({ ...s, renda_faturamento: v }))} disabled={readOnly} />
                   <div className="text-xs text-slate-500 mt-1">Salva como texto (humano) no cadastro.</div>
                 </div>
 
                 <div className="md:col-span-2">
                   <div className="label">Foto (anexar)</div>
-                  <input
-                    className="input"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setFotoFile(e.target.files?.[0] || null)}
-                    disabled={readOnly}
-                  />
+                  <input className="input" type="file" accept="image/*" onChange={(e) => setFotoFile(e.target.files?.[0] || null)} disabled={readOnly} />
                   <div className="text-xs text-slate-500 mt-1">
-                    Se não subir agora, cole uma URL abaixo. (Upload tenta bucket <b>clientes_photos</b>)
+                    Upload direto no bucket <b>{STORAGE_BUCKET_CLIENTES}</b>. Se não subir, você pode colar uma URL abaixo.
                   </div>
                 </div>
 
                 <div className="md:col-span-3">
                   <div className="label">Foto (URL)</div>
-                  <input
-                    className="input"
-                    placeholder="https://..."
-                    value={extra.foto_url}
-                    onChange={(e) => setExtra((s) => ({ ...s, foto_url: e.target.value }))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" placeholder="https://..." value={extra.foto_url} onChange={(e) => setExtra((s) => ({ ...s, foto_url: e.target.value }))} disabled={readOnly} />
                 </div>
               </div>
             </div>
 
-            {/* 3) Família */}
+            {/* Família */}
             <div className="rounded-xl border p-4 xl:col-span-5">
               <h4 className="font-semibold mb-3">Família</h4>
 
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-semibold text-sm">Possui pai e mãe vivos?</div>
-                  <PillToggle
-                    value={extra.pais_vivos}
-                    onChange={(v) => setExtra((s) => ({ ...s, pais_vivos: v }))}
-                    disabled={readOnly}
-                  />
+                  <PillToggle value={extra.pais_vivos} onChange={(v) => setExtra((s) => ({ ...s, pais_vivos: v }))} disabled={readOnly} />
                 </div>
 
                 {extra.pais_vivos === "sim" && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <div className="label">Pai (Nome)</div>
-                      <input
-                        className="input"
-                        value={extra.pai_nome}
-                        onChange={(e) => setExtra((s) => ({ ...s, pai_nome: e.target.value }))}
-                        disabled={readOnly}
-                      />
+                      <input className="input" value={extra.pai_nome} onChange={(e) => setExtra((s) => ({ ...s, pai_nome: e.target.value }))} disabled={readOnly} />
                     </div>
                     <div>
                       <div className="label">Pai (Nascimento)</div>
-                      <input
-                        className="input"
-                        type="date"
-                        value={extra.pai_nasc}
-                        onChange={(e) => setExtra((s) => ({ ...s, pai_nasc: e.target.value }))}
-                        disabled={readOnly}
-                      />
+                      <input className="input" type="date" value={extra.pai_nasc} onChange={(e) => setExtra((s) => ({ ...s, pai_nasc: e.target.value }))} disabled={readOnly} />
                     </div>
 
                     <div>
                       <div className="label">Mãe (Nome)</div>
-                      <input
-                        className="input"
-                        value={extra.mae_nome}
-                        onChange={(e) => setExtra((s) => ({ ...s, mae_nome: e.target.value }))}
-                        disabled={readOnly}
-                      />
+                      <input className="input" value={extra.mae_nome} onChange={(e) => setExtra((s) => ({ ...s, mae_nome: e.target.value }))} disabled={readOnly} />
                     </div>
                     <div>
                       <div className="label">Mãe (Nascimento)</div>
-                      <input
-                        className="input"
-                        type="date"
-                        value={extra.mae_nasc}
-                        onChange={(e) => setExtra((s) => ({ ...s, mae_nasc: e.target.value }))}
-                        disabled={readOnly}
-                      />
+                      <input className="input" type="date" value={extra.mae_nasc} onChange={(e) => setExtra((s) => ({ ...s, mae_nasc: e.target.value }))} disabled={readOnly} />
                     </div>
                   </div>
                 )}
 
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-semibold text-sm">Possui filhos?</div>
-                  <PillToggle
-                    value={extra.possui_filhos}
-                    onChange={(v) => setExtra((s) => ({ ...s, possui_filhos: v }))}
-                    disabled={readOnly}
-                  />
+                  <PillToggle value={extra.possui_filhos} onChange={(v) => setExtra((s) => ({ ...s, possui_filhos: v }))} disabled={readOnly} />
                 </div>
 
                 {extra.possui_filhos === "sim" && (
@@ -1371,7 +1315,7 @@ export default function ClientesPage() {
               </div>
             </div>
 
-            {/* 4) Autorizações & Feedback */}
+            {/* Autorizações & Feedback */}
             <div className="rounded-xl border p-4 xl:col-span-7">
               <h4 className="font-semibold mb-3">Autorizações & Feedback</h4>
 
@@ -1381,29 +1325,19 @@ export default function ClientesPage() {
 
                   <div className="flex items-center justify-between gap-3 py-2">
                     <div className="text-sm">Autoriza publicar quando contemplar?</div>
-                    <PillToggle
-                      value={extra.autoriza_publicar}
-                      onChange={(v) => setExtra((s) => ({ ...s, autoriza_publicar: v }))}
-                      disabled={readOnly}
-                    />
+                    <PillToggle value={extra.autoriza_publicar} onChange={(v) => setExtra((s) => ({ ...s, autoriza_publicar: v }))} disabled={readOnly} />
                   </div>
 
                   <div className="flex items-center justify-between gap-3 py-2">
                     <div className="text-sm">Autoriza usar nome/foto em homenagens?</div>
-                    <PillToggle
-                      value={extra.autoriza_homenagem}
-                      onChange={(v) => setExtra((s) => ({ ...s, autoriza_homenagem: v }))}
-                      disabled={readOnly}
-                    />
+                    <PillToggle value={extra.autoriza_homenagem} onChange={(v) => setExtra((s) => ({ ...s, autoriza_homenagem: v }))} disabled={readOnly} />
                   </div>
                 </div>
 
                 <div className="rounded-xl border p-3">
                   <div className="font-semibold text-sm mb-2">Preferências de Conteúdo</div>
 
-                  <div className="text-xs text-slate-600 mb-2">
-                    Que tipo de conteúdo você mais gosta de receber? (marque mais de um)
-                  </div>
+                  <div className="text-xs text-slate-600 mb-2">Que tipo de conteúdo você mais gosta de receber? (marque mais de um)</div>
 
                   <div className="flex flex-wrap gap-2">
                     {CONTEUDOS.map((k) => {
@@ -1428,9 +1362,7 @@ export default function ClientesPage() {
                   </div>
 
                   <div className="mt-3">
-                    <div className="text-xs text-slate-600 mb-2">
-                      Quer receber conteúdos educativos ou prefere só ofertas pontuais?
-                    </div>
+                    <div className="text-xs text-slate-600 mb-2">Quer receber conteúdos educativos ou prefere só ofertas pontuais?</div>
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -1453,12 +1385,7 @@ export default function ClientesPage() {
 
                   <div className="mt-3">
                     <div className="text-xs text-slate-600 mb-2">Como nos conheceu? (1 opção)</div>
-                    <select
-                      className="input"
-                      value={extra.como_conheceu}
-                      onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))}
-                      disabled={readOnly}
-                    >
+                    <select className="input" value={extra.como_conheceu} onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))} disabled={readOnly}>
                       <option value="">Selecione…</option>
                       {COMO_CONHECEU.map((o) => (
                         <option key={o} value={o}>
@@ -1471,13 +1398,7 @@ export default function ClientesPage() {
 
                 <div className="md:col-span-2 rounded-xl border p-3">
                   <div className="font-semibold text-sm mb-2">Feedback (percepção sobre Consulmax e vendedor)</div>
-                  <textarea
-                    className="input"
-                    rows={4}
-                    value={extra.feedback}
-                    onChange={(e) => setExtra((s) => ({ ...s, feedback: e.target.value }))}
-                    disabled={readOnly}
-                  />
+                  <textarea className="input" rows={4} value={extra.feedback} onChange={(e) => setExtra((s) => ({ ...s, feedback: e.target.value }))} disabled={readOnly} />
 
                   <div className="mt-3">
                     <div className="font-semibold text-sm mb-2">Obs. internas</div>
@@ -1497,7 +1418,7 @@ export default function ClientesPage() {
             </div>
           </div>
 
-          {/* Footer actions */}
+          {/* Footer */}
           <div className="mt-5 flex items-center justify-end gap-2">
             <button className="btn" onClick={closeOverlay} disabled={saving}>
               Fechar
@@ -1513,7 +1434,6 @@ export default function ClientesPage() {
         </Overlay>
       )}
 
-      {/* estilos locais */}
       <style>{`
         .input{padding:11px 12px;border-radius:14px;border:1px solid #e5e7eb;outline:none;width:100%}
         .btn{padding:9px 13px;border-radius:12px;background:#f1f5f9;border:1px solid #e2e8f0;font-weight:700}
@@ -1523,6 +1443,28 @@ export default function ClientesPage() {
         .label{display:block;font-size:12px;color:#475569;margin-bottom:7px;font-weight:800}
         .pill{padding:7px 11px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-weight:800;font-size:12px}
         .pill-on{background:#111827;color:#fff;border-color:#111827}
+
+        /* ✅ Busca premium */
+        .searchWrap{
+          display:flex;align-items:center;gap:10px;
+          border:1px solid #e2e8f0;
+          background:#f8fafc;
+          border-radius:999px;
+          padding:10px 14px;
+          width:min(420px,72vw);
+          box-shadow: 0 1px 0 rgba(0,0,0,.02);
+        }
+        .searchIcon{opacity:.65;display:flex;align-items:center;justify-content:center}
+        .searchInput{
+          border:none;outline:none;background:transparent;width:100%;
+          font-weight:600;
+        }
+        .searchInput::placeholder{color:#94a3b8;font-weight:600}
+        .searchWrap:focus-within{
+          border-color: rgba(161,28,39,.35);
+          box-shadow: 0 0 0 4px rgba(161,28,39,.08);
+          background:#fff;
+        }
       `}</style>
     </div>
   );

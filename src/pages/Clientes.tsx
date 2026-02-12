@@ -1,7 +1,20 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { Pencil, CalendarPlus, Eye, Send, Check, Loader2, X, Plus, Search } from "lucide-react";
+import {
+  Pencil,
+  CalendarPlus,
+  Eye,
+  Send,
+  Check,
+  Loader2,
+  X,
+  Plus,
+  Search,
+  Download,
+  Users,
+  UserRound,
+} from "lucide-react";
 
 type ClienteBase = {
   id: string; // lead_id
@@ -19,7 +32,7 @@ type ClienteBase = {
   vendedor_auth_user_id?: string | null;
   vendedor_nome?: string | null;
 
-  // para busca por grupo (da venda mais recente)
+  // usado apenas internamente para busca por grupo (não exibimos)
   grupo?: string | null;
 
   cliente_row_id?: string | null; // clientes.id
@@ -133,6 +146,13 @@ const formatBRDate = (iso?: string | null) => {
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const yyyy = d.getUTCFullYear();
   return `${dd}/${mm}/${yyyy}`;
+};
+
+const initials = (name: string) => {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] || "";
+  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] || "" : "";
+  return (a + b).toUpperCase() || "C";
 };
 
 const emptyExtra = (): CadastroExtra => ({
@@ -311,6 +331,37 @@ function MoneyInput({
   );
 }
 
+function TabsTop({
+  tab,
+  onTab,
+}: {
+  tab: "cadastro" | "demografia";
+  onTab: (t: "cadastro" | "demografia") => void;
+}) {
+  return (
+    <div className="rounded-2xl bg-white p-3 shadow">
+      <div className="flex items-center gap-2">
+        <button
+          className={`tabBtn ${tab === "cadastro" ? "tabOn" : ""}`}
+          onClick={() => onTab("cadastro")}
+          type="button"
+        >
+          <UserRound className="h-4 w-4" />
+          Cadastro
+        </button>
+        <button
+          className={`tabBtn ${tab === "demografia" ? "tabOn" : ""}`}
+          onClick={() => onTab("demografia")}
+          type="button"
+        >
+          <Users className="h-4 w-4" />
+          Demografia
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ClientesPage() {
   const PAGE = 10;
 
@@ -343,6 +394,8 @@ export default function ClientesPage() {
   const [saving, setSaving] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
 
+  const [tab, setTab] = useState<"cadastro" | "demografia">("cadastro");
+
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 350);
     return () => clearTimeout(t);
@@ -353,7 +406,7 @@ export default function ClientesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced]);
 
-  // 🔎 BUSCA: nome OU cpf/cnpj OU grupo
+  // 🔎 BUSCA: nome OU cpf/cnpj OU grupo (grupo não exibimos)
   async function getLeadIdsBySearch(term: string): Promise<string[] | null> {
     const t = term.trim();
     if (!t) return null;
@@ -361,7 +414,7 @@ export default function ClientesPage() {
     const ids = new Set<string>();
     const digits = onlyDigits(t);
 
-    // 1) buscar em leads.nome (ilike)
+    // 1) leads.nome
     const { data: leadsByName, error: e1 } = await supabase
       .from("leads")
       .select("id")
@@ -370,7 +423,7 @@ export default function ClientesPage() {
     if (e1) throw e1;
     (leadsByName || []).forEach((r: any) => ids.add(String(r.id)));
 
-    // 2) buscar em vendas.grupo (ilike)
+    // 2) vendas.grupo
     const { data: vendasByGrupo, error: e2 } = await supabase
       .from("vendas")
       .select("lead_id")
@@ -380,7 +433,7 @@ export default function ClientesPage() {
     if (e2) throw e2;
     (vendasByGrupo || []).forEach((r: any) => r.lead_id && ids.add(String(r.lead_id)));
 
-    // 3) buscar em vendas.cpf (ilike) usando só dígitos, se tiver
+    // 3) vendas.cpf
     if (digits.length >= 5) {
       const { data: vendasByCpf, error: e3 } = await supabase
         .from("vendas")
@@ -400,13 +453,12 @@ export default function ClientesPage() {
     try {
       const leadIdsFilter = await getLeadIdsBySearch(term);
 
-      // 1) Leads
+      // Leads
       let leadsQ = supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true });
 
       if (leadIdsFilter && leadIdsFilter.length) {
         leadsQ = leadsQ.in("id", leadIdsFilter);
       } else if (term) {
-        // se term existe mas não achou nenhum id, retorna vazio
         setClientes([]);
         setNovos([]);
         setTotal(0);
@@ -426,7 +478,7 @@ export default function ClientesPage() {
         return;
       }
 
-      // 2) Vendas dos leads
+      // Vendas
       const { data: vendas, error: eVend } = await supabase
         .from("vendas")
         .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at,vendedor_id,email,telefone,grupo")
@@ -473,19 +525,16 @@ export default function ClientesPage() {
         });
       });
 
-      // 3) Users para nome do vendedor
+      // Users
       const vendorList = Array.from(vendorAuthIds);
       const usersByAuth = new Map<string, { nome: string }>();
       if (vendorList.length) {
-        const { data: uRows, error: eU } = await supabase
-          .from("users")
-          .select("auth_user_id,nome")
-          .in("auth_user_id", vendorList);
+        const { data: uRows, error: eU } = await supabase.from("users").select("auth_user_id,nome").in("auth_user_id", vendorList);
         if (eU) throw eU;
         (uRows || []).forEach((u: any) => usersByAuth.set(String(u.auth_user_id), { nome: u.nome || "—" }));
       }
 
-      // 4) Clientes confirmados
+      // Clientes confirmados
       const { data: cliRows, error: eCli } = await supabase.from("clientes").select("id,lead_id");
       if (eCli) throw eCli;
 
@@ -496,13 +545,11 @@ export default function ClientesPage() {
         confirmedByLead.set(lid, String(c.id));
       });
 
-      // 5) Base 1 linha por lead
+      // Base
       const base: ClienteBase[] = [];
       for (const l of leads || []) {
         const lid = String(l.id);
-        const arr = (vendasByLead.get(lid) || []).sort((a, b) =>
-          (b.created_at || "").localeCompare(a.created_at || "")
-        );
+        const arr = (vendasByLead.get(lid) || []).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
 
         const hasCpfAny = arr.some((x) => (x.cpf && x.cpf.length > 0) || x.hasCpfCnpj);
         if (!hasCpfAny) continue;
@@ -523,7 +570,7 @@ export default function ClientesPage() {
           vendas_ids: arr.map((x) => x.id),
           vendedor_auth_user_id: vendedorAuth,
           vendedor_nome: vendedorNome,
-          grupo: latest?.grupo || null,
+          grupo: latest?.grupo || null, // interno
           cliente_row_id: confirmedByLead.get(lid) || null,
         });
       }
@@ -657,7 +704,6 @@ export default function ClientesPage() {
       });
 
       if (upErr) {
-        // se bucket/policy ainda não estiver ok, não trava o fluxo:
         console.error("Upload error:", upErr);
         return extra.foto_url || "";
       }
@@ -744,11 +790,7 @@ export default function ClientesPage() {
         observacoes: obsSerialized,
       };
 
-      const { data: existing, error: eFind } = await supabase
-        .from("clientes")
-        .select("id")
-        .eq("lead_id", active.lead_id)
-        .maybeSingle();
+      const { data: existing, error: eFind } = await supabase.from("clientes").select("id").eq("lead_id", active.lead_id).maybeSingle();
       if (eFind) throw eFind;
 
       if (existing?.id) {
@@ -775,179 +817,229 @@ export default function ClientesPage() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / PAGE)), [total]);
 
+  function handleDownload(c: ClienteBase) {
+    // Futuro: chamar endpoint que gera PDF do Perfil do Cliente
+    alert("Em breve: Download do Perfil do Cliente (PDF).");
+    console.log("download cliente:", c);
+  }
+
   return (
     <div className="space-y-4">
-      {/* NOVOS */}
-      <div className="rounded-2xl bg-white p-4 shadow">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="m-0 font-semibold">
-            Novos <span className="text-slate-500 text-sm">({novos.length})</span>
-          </h3>
-        </div>
+      {/* ✅ Tabs superiores */}
+      <TabsTop tab={tab} onTab={setTab} />
 
-        {novos.length === 0 ? (
-          <div className="text-sm text-slate-500">Nenhum novo cliente no momento.</div>
-        ) : (
-          <div className="rounded-xl border overflow-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 sticky top-0">
-                <tr>
-                  <th className="p-2 text-left">Nome</th>
-                  <th className="p-2 text-left">Telefone</th>
-                  <th className="p-2 text-left">Vendedor</th>
-                  <th className="p-2 text-right">Ação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {novos.map((c, idx) => {
-                  const phone = c.telefone ? maskPhone(c.telefone) : "—";
-                  return (
-                    <tr key={c.lead_id} className={idx % 2 ? "bg-slate-50/60" : "bg-white"}>
-                      <td className="p-2">
-                        <div className="font-medium">{c.nome}</div>
-                        <div className="text-xs text-slate-500">
-                          CPF: {c.cpf_dig || "—"} {c.grupo ? `• Grupo: ${c.grupo}` : ""}
-                        </div>
-                      </td>
-                      <td className="p-2">{phone}</td>
-                      <td className="p-2">{c.vendedor_nome || "—"}</td>
-                      <td className="p-2 text-right">
-                        <button className="btn-primary" onClick={() => openOverlay("novo", c)} disabled={loading}>
-                          Preencher Cadastro
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+      {tab === "demografia" ? (
+        <div className="rounded-2xl bg-white p-6 shadow">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="m-0 font-semibold">Demografia</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Próxima etapa: aqui vamos trazer os dados demográficos da sua carteira de clientes.
+              </p>
+            </div>
+            <div className="rounded-2xl bg-slate-50 border p-4 text-sm text-slate-600 w-[min(520px,100%)]">
+              <div className="font-semibold mb-1">Ideias para esse painel</div>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Distribuição PF x PJ</li>
+                <li>PF Geral x PF Agro</li>
+                <li>Faixas de idade</li>
+                <li>Mapa por cidade/UF</li>
+                <li>Preferência de conteúdo</li>
+              </ul>
+            </div>
           </div>
-        )}
-      </div>
-
-      {/* LISTA */}
-      <div className="rounded-2xl bg-white p-4 shadow">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h3 className="m-0 font-semibold">Lista de Clientes</h3>
-
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            {/* ✅ BUSCA MELHORADA (ícone fora do campo) */}
-            <div className="searchWrap">
-              <span className="searchIcon">
-                <Search className="h-4 w-4" />
-              </span>
-              <input
-                className="searchInput"
-                placeholder="Buscar por nome, CPF/CNPJ ou grupo…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+        </div>
+      ) : (
+        <>
+          {/* NOVOS */}
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="m-0 font-semibold">
+                Novos <span className="text-slate-500 text-sm">({novos.length})</span>
+              </h3>
             </div>
 
-            <small className="text-slate-500">
-              Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} de {total}
-            </small>
+            {novos.length === 0 ? (
+              <div className="text-sm text-slate-500">Nenhum novo cliente no momento.</div>
+            ) : (
+              <div className="rounded-xl border overflow-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      <th className="p-2 text-left">Nome</th>
+                      <th className="p-2 text-left">Telefone</th>
+                      <th className="p-2 text-left">Vendedor</th>
+                      <th className="p-2 text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {novos.map((c, idx) => {
+                      const phone = c.telefone ? maskPhone(c.telefone) : "—";
+                      return (
+                        <tr key={c.lead_id} className={idx % 2 ? "bg-slate-50/60" : "bg-white"}>
+                          <td className="p-2">
+                            <div className="font-medium">{c.nome}</div>
+                            <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
+                          </td>
+                          <td className="p-2">{phone}</td>
+                          <td className="p-2">{c.vendedor_nome || "—"}</td>
+                          <td className="p-2 text-right">
+                            <button className="btn-primary" onClick={() => openOverlay("novo", c)} disabled={loading}>
+                              Preencher Cadastro
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        </div>
 
-        <div className="rounded-xl border overflow-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 sticky top-0">
-              <tr>
-                <th className="p-2 text-left">Nome</th>
-                <th className="p-2 text-left">Telefone</th>
-                <th className="p-2 text-left">E-mail</th>
-                <th className="p-2 text-left">Nascimento</th>
-                <th className="p-2 text-left">Vendedor</th>
-                <th className="p-2 text-left">Grupo</th>
-                <th className="p-2 text-center">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr>
-                  <td className="p-4 text-slate-500" colSpan={7}>
-                    Carregando…
-                  </td>
-                </tr>
-              )}
+          {/* LISTA */}
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="m-0 font-semibold">Lista de Clientes</h3>
 
-              {!loading && clientes.length === 0 && (
-                <tr>
-                  <td className="p-4 text-slate-500" colSpan={7}>
-                    Nenhum cliente encontrado.
-                  </td>
-                </tr>
-              )}
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <div className="searchWrap">
+                  <span className="searchIcon">
+                    <Search className="h-4 w-4" />
+                  </span>
+                  <input
+                    className="searchInput"
+                    placeholder="Buscar por nome, CPF/CNPJ ou grupo…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
 
-              {clientes.map((c, i) => {
-                const phone = c.telefone ? maskPhone(c.telefone) : "";
-                const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
-                const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${
-                  c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""
-                }`;
+                <small className="text-slate-500">
+                  Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} de {total}
+                </small>
+              </div>
+            </div>
 
-                return (
-                  <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
-                    <td className="p-2">
-                      <div className="font-medium">{c.nome}</div>
-                      <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
-                    </td>
-                    <td className="p-2">
-                      <div className="flex items-center gap-2">
-                        {phone || "—"}
-                        {wa && (
-                          <a
-                            href={wa}
-                            target="_blank"
-                            rel="noreferrer"
-                            title="Abrir WhatsApp"
-                            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs hover:bg-green-50"
-                          >
-                            <Send className="h-3.5 w-3.5" /> WhatsApp
-                          </a>
-                        )}
-                      </div>
-                    </td>
-                    <td className="p-2">{c.email || "—"}</td>
-                    <td className="p-2">{formatBRDate(c.data_nascimento)}</td>
-                    <td className="p-2">{c.vendedor_nome || "—"}</td>
-                    <td className="p-2">{c.grupo || "—"}</td>
-                    <td className="p-2">
-                      <div className="flex items-center justify-center gap-2">
-                        <button className="icon-btn" title="Editar" onClick={() => openOverlay("edit", c)} disabled={loading}>
-                          <Pencil className="h-4 w-4" />
-                        </button>
-
-                        <button className="icon-btn" title="Visualizar" onClick={() => openOverlay("view", c)} disabled={loading}>
-                          <Eye className="h-4 w-4" />
-                        </button>
-
-                        <a className="icon-btn" title="+ Evento na Agenda" href={agendaHref}>
-                          <CalendarPlus className="h-4 w-4" />
-                        </a>
-                      </div>
-                    </td>
+            <div className="rounded-xl border overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left">Nome</th>
+                    <th className="p-2 text-left">Telefone</th>
+                    <th className="p-2 text-left">E-mail</th>
+                    <th className="p-2 text-left">Nascimento</th>
+                    <th className="p-2 text-left">Vendedor</th>
+                    <th className="p-2 text-center">Ações</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {loading && (
+                    <tr>
+                      <td className="p-4 text-slate-500" colSpan={6}>
+                        Carregando…
+                      </td>
+                    </tr>
+                  )}
 
-        {/* paginação */}
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <button className="btn" disabled={page <= 1 || loading} onClick={() => load(page - 1, debounced)}>
-            ‹ Anterior
-          </button>
-          <span className="text-xs text-slate-600">
-            Página {page} de {totalPages}
-          </span>
-          <button className="btn" disabled={page >= totalPages || loading} onClick={() => load(page + 1, debounced)}>
-            Próxima ›
-          </button>
-        </div>
-      </div>
+                  {!loading && clientes.length === 0 && (
+                    <tr>
+                      <td className="p-4 text-slate-500" colSpan={6}>
+                        Nenhum cliente encontrado.
+                      </td>
+                    </tr>
+                  )}
+
+                  {clientes.map((c, i) => {
+                    const phone = c.telefone ? maskPhone(c.telefone) : "";
+                    const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
+                    const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${
+                      c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""
+                    }`;
+
+                    return (
+                      <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
+                        <td className="p-2">
+                          <div className="font-medium">{c.nome}</div>
+                          <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
+                        </td>
+
+                        <td className="p-2">
+                          <div className="flex items-center gap-2">
+                            {phone || "—"}
+                            {wa && (
+                              <a
+                                href={wa}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Abrir WhatsApp"
+                                className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs hover:bg-green-50"
+                              >
+                                <Send className="h-3.5 w-3.5" /> WhatsApp
+                              </a>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="p-2">{c.email || "—"}</td>
+                        <td className="p-2">{formatBRDate(c.data_nascimento)}</td>
+                        <td className="p-2">{c.vendedor_nome || "—"}</td>
+
+                        <td className="p-2">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              className="icon-btn"
+                              title="Editar"
+                              onClick={() => openOverlay("edit", c)}
+                              disabled={loading}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+
+                            <button
+                              className="icon-btn"
+                              title="Visualizar"
+                              onClick={() => openOverlay("view", c)}
+                              disabled={loading}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+
+                            <button
+                              className="icon-btn"
+                              title="Download (Perfil do Cliente)"
+                              onClick={() => handleDownload(c)}
+                              disabled={loading}
+                            >
+                              <Download className="h-4 w-4" />
+                            </button>
+
+                            <a className="icon-btn" title="+ Evento na Agenda" href={agendaHref}>
+                              <CalendarPlus className="h-4 w-4" />
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button className="btn" disabled={page <= 1 || loading} onClick={() => load(page - 1, debounced)}>
+                ‹ Anterior
+              </button>
+              <span className="text-xs text-slate-600">
+                Página {page} de {totalPages}
+              </span>
+              <button className="btn" disabled={page >= totalPages || loading} onClick={() => load(page + 1, debounced)}>
+                Próxima ›
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* OVERLAY */}
       {overlayOpen && active && (
@@ -961,19 +1053,27 @@ export default function ClientesPage() {
           }
           onClose={closeOverlay}
         >
+          {/* ✅ Cabeçalho limpo + FOTO */}
           <div className="rounded-xl border p-4 mb-4 bg-slate-50">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-semibold truncate">{nome || active.nome}</div>
-                <div className="text-xs text-slate-600">
-                  Vendedor: <b>{active.vendedor_nome || "—"}</b>{" "}
-                  <span className="opacity-60">
-                    • Lead: {active.lead_id}
-                    {active.vendas_ids?.[0] ? ` • Venda: ${active.vendas_ids[0]}` : ""}
-                    {active.grupo ? ` • Grupo: ${active.grupo}` : ""}
-                  </span>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="avatar">
+                  {extra.foto_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={extra.foto_url} alt="Foto do cliente" />
+                  ) : (
+                    <span>{initials(nome || active.nome)}</span>
+                  )}
+                </div>
+
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{nome || active.nome}</div>
+                  <div className="text-xs text-slate-600">
+                    Vendedor: <b>{active.vendedor_nome || "—"}</b>
+                  </div>
                 </div>
               </div>
+
               <div className="text-xs text-slate-600 text-right">
                 CPF/CNPJ: <b>{onlyDigits(cpf) || "—"}</b>
                 <div>
@@ -1075,12 +1175,7 @@ export default function ClientesPage() {
 
                 <div>
                   <div className="label">CPF/CNPJ</div>
-                  <input
-                    className="input"
-                    value={onlyDigits(cpf)}
-                    onChange={(e) => setCpf(onlyDigits(e.target.value))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={onlyDigits(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} disabled={readOnly} />
                 </div>
 
                 <div>
@@ -1123,22 +1218,12 @@ export default function ClientesPage() {
 
                 <div className="md:col-span-2">
                   <div className="label">Número</div>
-                  <input
-                    className="input"
-                    value={extra.numero}
-                    onChange={(e) => setExtra((s) => ({ ...s, numero: clamp(e.target.value, 20) }))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={extra.numero} onChange={(e) => setExtra((s) => ({ ...s, numero: clamp(e.target.value, 20) }))} disabled={readOnly} />
                 </div>
 
                 <div className="md:col-span-3">
                   <div className="label">Logradouro</div>
-                  <input
-                    className="input"
-                    value={extra.logradouro}
-                    onChange={(e) => setExtra((s) => ({ ...s, logradouro: e.target.value }))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={extra.logradouro} onChange={(e) => setExtra((s) => ({ ...s, logradouro: e.target.value }))} disabled={readOnly} />
                 </div>
 
                 <div>
@@ -1174,7 +1259,7 @@ export default function ClientesPage() {
                   <div className="label">Foto (anexar)</div>
                   <input className="input" type="file" accept="image/*" onChange={(e) => setFotoFile(e.target.files?.[0] || null)} disabled={readOnly} />
                   <div className="text-xs text-slate-500 mt-1">
-                    Upload direto no bucket <b>{STORAGE_BUCKET_CLIENTES}</b>. Se não subir, você pode colar uma URL abaixo.
+                    Upload no bucket <b>{STORAGE_BUCKET_CLIENTES}</b>. Se não subir, você pode colar uma URL abaixo.
                   </div>
                 </div>
 
@@ -1284,7 +1369,6 @@ export default function ClientesPage() {
                                     filhos[idx] = { ...filhos[idx], sexo: "M" };
                                     return { ...s, filhos };
                                   })
-                                }
                                 disabled={readOnly}
                               >
                                 M
@@ -1464,6 +1548,33 @@ export default function ClientesPage() {
           border-color: rgba(161,28,39,.35);
           box-shadow: 0 0 0 4px rgba(161,28,39,.08);
           background:#fff;
+        }
+
+        /* ✅ Tabs topo */
+        .tabBtn{
+          display:inline-flex;align-items:center;gap:8px;
+          padding:10px 14px;border-radius:999px;
+          border:1px solid #e2e8f0;background:#f8fafc;
+          font-weight:900;color:#334155;
+        }
+        .tabBtn:hover{background:#f1f5f9}
+        .tabOn{
+          background:#111827;color:#fff;border-color:#111827;
+        }
+        .tabOn:hover{background:#111827}
+
+        /* ✅ Avatar */
+        .avatar{
+          width:46px;height:46px;border-radius:999px;
+          border:1px solid #e2e8f0;background:#fff;
+          display:flex;align-items:center;justify-content:center;
+          overflow:hidden;
+          box-shadow: 0 1px 0 rgba(0,0,0,.03);
+          flex:0 0 auto;
+        }
+        .avatar img{width:100%;height:100%;object-fit:cover}
+        .avatar span{
+          font-weight:900;color:#111827;
         }
       `}</style>
     </div>

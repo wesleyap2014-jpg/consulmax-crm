@@ -1,5 +1,5 @@
 // src/pages/Clientes.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Pencil, CalendarPlus, Eye, Send, Check, Loader2, X, Plus, Search, Download } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -102,6 +102,9 @@ type CadastroExtra = {
 };
 
 const STORAGE_BUCKET_CLIENTES = "clientes_photos";
+
+// ✅ caminho do HTML do mapa (public/...)
+const MAPA_BR_SRC = "/maps/br-estados.html";
 
 const SEGMENTOS_PF: SegmentoPF[] = [
   "Assalariado",
@@ -352,91 +355,10 @@ function MoneyInput({
   );
 }
 
-/** ✅ Tile Map Brasil (Nível 1 rápido e lindo) */
-type UF =
-  | "AC" | "AL" | "AP" | "AM" | "BA" | "CE" | "DF" | "ES" | "GO" | "MA" | "MT" | "MS"
-  | "MG" | "PA" | "PB" | "PR" | "PE" | "PI" | "RJ" | "RN" | "RS" | "RO" | "RR" | "SC"
-  | "SP" | "SE" | "TO";
-
-const BR_TILE: Array<{ uf: UF; x: number; y: number }> = [
-  { uf: "RR", x: 3, y: 0 }, { uf: "AP", x: 6, y: 1 },
-  { uf: "AM", x: 2, y: 1 }, { uf: "PA", x: 5, y: 2 }, { uf: "MA", x: 6, y: 3 },
-  { uf: "AC", x: 0, y: 3 }, { uf: "RO", x: 1, y: 3 }, { uf: "TO", x: 5, y: 3 },
-  { uf: "PI", x: 7, y: 4 }, { uf: "CE", x: 8, y: 4 }, { uf: "RN", x: 9, y: 4 }, { uf: "PB", x: 9, y: 5 },
-  { uf: "PE", x: 8, y: 5 }, { uf: "AL", x: 9, y: 6 }, { uf: "SE", x: 8, y: 6 }, { uf: "BA", x: 7, y: 6 },
-  { uf: "MT", x: 3, y: 4 }, { uf: "GO", x: 4, y: 5 }, { uf: "DF", x: 5, y: 5 }, { uf: "MS", x: 3, y: 6 },
-  { uf: "MG", x: 6, y: 7 }, { uf: "ES", x: 7, y: 7 }, { uf: "RJ", x: 7, y: 8 }, { uf: "SP", x: 6, y: 8 },
-  { uf: "PR", x: 6, y: 9 }, { uf: "SC", x: 6, y: 10 }, { uf: "RS", x: 6, y: 11 },
-];
-
-function BrazilTileMap({
-  activeUFs,
-  selectedUF,
-  onSelectUF,
-}: {
-  activeUFs: Set<string>;
-  selectedUF: string;
-  onSelectUF: (uf: string) => void;
-}) {
-  const cols = 11;
-  const rows = 12;
-  const size = 34;
-  const gap = 6;
-  const w = cols * (size + gap) + gap;
-  const h = rows * (size + gap) + gap;
-
-  return (
-    <div className="rounded-2xl border p-4 bg-white">
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="font-semibold">Mapa do Brasil (UF)</div>
-        <div className="text-xs text-slate-600">
-          Ativos em rubi • clique para filtrar {selectedUF ? `• selecionado: ${selectedUF}` : ""}
-        </div>
-      </div>
-
-      <div className="overflow-auto">
-        <svg width={w} height={h} className="block">
-          <rect x={0} y={0} width={w} height={h} rx={16} fill="transparent" />
-          {BR_TILE.map((t) => {
-            const x = gap + t.x * (size + gap);
-            const y = gap + t.y * (size + gap);
-            const isOn = activeUFs.has(t.uf);
-            const isSel = selectedUF === t.uf;
-
-            const fill = isOn ? "#A11C27" : "#F1F5F9";
-            const stroke = isSel ? "#111827" : "#E2E8F0";
-            const text = isOn ? "#FFFFFF" : "#334155";
-
-            return (
-              <g key={t.uf} onClick={() => onSelectUF(t.uf)} style={{ cursor: "pointer" }}>
-                <rect x={x} y={y} width={size} height={size} rx={12} fill={fill} stroke={stroke} strokeWidth={isSel ? 2 : 1} />
-                <text x={x + size / 2} y={y + size / 2 + 5} textAnchor="middle" fontSize="12" fontWeight="800" fill={text}>
-                  {t.uf}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button className="btn" onClick={() => onSelectUF("")}>
-          Limpar UF
-        </button>
-        <div className="text-xs text-slate-600 flex items-center gap-2">
-          <span className="inline-block w-3 h-3 rounded-full" style={{ background: "#A11C27" }} />
-          UF com clientes ativos
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function parseMoneyToNumber(s: string) {
   const raw = (s || "").trim();
   if (!raw) return null;
 
-  // pega primeiro número provável: "R$ 12.000,50", "12000", "12.000", "12,000", "12 mil"
   const mil = /(\d+)\s*mil/i.exec(raw);
   if (mil?.[1]) return Number(mil[1]) * 1000;
 
@@ -444,20 +366,116 @@ function parseMoneyToNumber(s: string) {
   if (!m?.[1]) return null;
 
   const candidate = m[1];
-  // Se tem vírgula e ponto, assume BR: 12.345,67
   if (candidate.includes(",") && candidate.includes(".")) {
     const n = candidate.replace(/\./g, "").replace(",", ".");
     const val = Number(n);
     return isFinite(val) ? val : null;
   }
-  // Se só tem vírgula: 12345,67
   if (candidate.includes(",") && !candidate.includes(".")) {
     const val = Number(candidate.replace(",", "."));
     return isFinite(val) ? val : null;
   }
-  // Só ponto: 12345.67 ou 12.345 (ambíguo) — trata como decimal se tiver 2 casas no fim
   const val = Number(candidate.replace(/\./g, ""));
   return isFinite(val) ? val : null;
+}
+
+/** ✅ Mapa Brasil (imagem real via iframe) + clique UF vira filtro do dashboard */
+function BrazilImageMap({
+  src,
+  activeUFs,
+  selectedUF,
+  onSelectUF,
+}: {
+  src: string;
+  activeUFs: Set<string>;
+  selectedUF: string;
+  onSelectUF: (uf: string) => void;
+}) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  // recebe clique do mapa
+  useEffect(() => {
+    function onMsg(ev: MessageEvent) {
+      const d: any = ev.data;
+
+      // aceita vários formatos (pra não depender de 1 só)
+      // 1) { type: "UF_CLICK", uf: "SP" }
+      if (d && typeof d === "object") {
+        if (String(d.type || "").toUpperCase() === "UF_CLICK" && d.uf) {
+          const uf = String(d.uf).toUpperCase().trim().slice(0, 2);
+          if (uf) onSelectUF(uf);
+          return;
+        }
+        // 2) { uf: "SP" }
+        if (d.uf && typeof d.uf === "string") {
+          const uf = String(d.uf).toUpperCase().trim().slice(0, 2);
+          if (uf) onSelectUF(uf);
+          return;
+        }
+        return;
+      }
+
+      // 3) "UF:SP"
+      if (typeof d === "string") {
+        const s = d.trim();
+        const m = /^UF\:(\w{2})$/i.exec(s);
+        if (m?.[1]) {
+          onSelectUF(m[1].toUpperCase());
+        }
+      }
+    }
+
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, [onSelectUF]);
+
+  // envia estado do dashboard pro mapa (highlight/selected)
+  useEffect(() => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage(
+        {
+          type: "UF_STATE",
+          activeUFs: Array.from(activeUFs || []).map((x) => String(x).toUpperCase().trim()),
+          selectedUF: (selectedUF || "").toUpperCase().trim(),
+        },
+        "*"
+      );
+    } catch {
+      // ignore
+    }
+  }, [activeUFs, selectedUF]);
+
+  return (
+    <div className="rounded-2xl border p-4 bg-white">
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="font-semibold">Mapa do Brasil (UF)</div>
+        <div className="text-xs text-slate-600">
+          Clique no estado para filtrar{selectedUF ? ` • selecionado: ${selectedUF}` : ""}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border overflow-hidden bg-slate-50">
+        <iframe
+          ref={iframeRef}
+          title="Mapa do Brasil"
+          src={src}
+          className="w-full"
+          style={{ height: 520, border: 0, display: "block" }}
+        />
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2 items-center justify-between">
+        <button className="btn" onClick={() => onSelectUF("")}>
+          Limpar UF
+        </button>
+        <div className="text-xs text-slate-500">
+          Se o mapa não aparecer, confirme o arquivo em <b>public</b>: <span className="font-mono">{src}</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function ClientesPage() {
@@ -537,7 +555,6 @@ export default function ClientesPage() {
     const ids = new Set<string>();
     const digits = onlyDigits(t);
 
-    // 1) buscar em leads.nome (ilike)
     const { data: leadsByName, error: e1 } = await supabase
       .from("leads")
       .select("id")
@@ -546,7 +563,6 @@ export default function ClientesPage() {
     if (e1) throw e1;
     (leadsByName || []).forEach((r: any) => ids.add(String(r.id)));
 
-    // 2) buscar em vendas.grupo (ilike)
     const { data: vendasByGrupo, error: e2 } = await supabase
       .from("vendas")
       .select("lead_id")
@@ -556,7 +572,6 @@ export default function ClientesPage() {
     if (e2) throw e2;
     (vendasByGrupo || []).forEach((r: any) => r.lead_id && ids.add(String(r.lead_id)));
 
-    // 3) buscar em vendas.cpf (ilike) usando só dígitos, se tiver
     if (digits.length >= 5) {
       const { data: vendasByCpf, error: e3 } = await supabase
         .from("vendas")
@@ -582,7 +597,6 @@ export default function ClientesPage() {
       if (leadIdsFilter && leadIdsFilter.length) {
         leadsQ = leadsQ.in("id", leadIdsFilter);
       } else if (term) {
-        // se term existe mas não achou nenhum id, retorna vazio
         setClientes([]);
         setNovos([]);
         setTotal(0);
@@ -653,19 +667,13 @@ export default function ClientesPage() {
       const vendorList = Array.from(vendorAuthIds);
       const usersByAuth = new Map<string, { nome: string }>();
       if (vendorList.length) {
-        const { data: uRows, error: eU } = await supabase
-          .from("users")
-          .select("auth_user_id,nome")
-          .in("auth_user_id", vendorList);
+        const { data: uRows, error: eU } = await supabase.from("users").select("auth_user_id,nome").in("auth_user_id", vendorList);
         if (eU) throw eU;
         (uRows || []).forEach((u: any) => usersByAuth.set(String(u.auth_user_id), { nome: u.nome || "—" }));
       }
 
       // 4) Clientes confirmados + observacoes/endereço (para foto/sexo/UF/cidade)
-      const { data: cliRows, error: eCli } = await supabase
-        .from("clientes")
-        .select("id,lead_id,observacoes,uf,cidade")
-        .in("lead_id", leadIds);
+      const { data: cliRows, error: eCli } = await supabase.from("clientes").select("id,lead_id,observacoes,uf,cidade").in("lead_id", leadIds);
       if (eCli) throw eCli;
 
       const confirmedByLead = new Map<string, { id: string; extra: CadastroExtra | null; uf?: string | null; cidade?: string | null }>();
@@ -680,9 +688,7 @@ export default function ClientesPage() {
       const base: ClienteBase[] = [];
       for (const l of leads || []) {
         const lid = String(l.id);
-        const arr = (vendasByLead.get(lid) || []).sort((a, b) =>
-          (b.created_at || "").localeCompare(a.created_at || "")
-        );
+        const arr = (vendasByLead.get(lid) || []).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
 
         const hasCpfAny = arr.some((x) => (x.cpf && x.cpf.length > 0) || x.hasCpfCnpj);
         if (!hasCpfAny) continue;
@@ -850,7 +856,6 @@ export default function ClientesPage() {
       });
 
       if (upErr) {
-        // se bucket/policy ainda não estiver ok, não trava o fluxo:
         console.error("Upload error:", upErr);
         return extra.foto_url || "";
       }
@@ -871,9 +876,6 @@ export default function ClientesPage() {
 
     if (!extra.tipo) return "Selecione o tipo (PF/PJ).";
     if (!extra.perfil) return "Selecione o perfil do cliente.";
-
-    // ✅ sexo é opcional (não trava o fluxo) — se quiser obrigatório depois, eu ajusto.
-    // if (!extra.sexo) return "Selecione o sexo.";
 
     if (extra.tipo === "PF") {
       if (!extra.segmento_pf) return "Selecione o segmento (PF).";
@@ -940,11 +942,7 @@ export default function ClientesPage() {
         observacoes: obsSerialized,
       };
 
-      const { data: existing, error: eFind } = await supabase
-        .from("clientes")
-        .select("id")
-        .eq("lead_id", active.lead_id)
-        .maybeSingle();
+      const { data: existing, error: eFind } = await supabase.from("clientes").select("id").eq("lead_id", active.lead_id).maybeSingle();
       if (eFind) throw eFind;
 
       if (existing?.id) {
@@ -972,7 +970,6 @@ export default function ClientesPage() {
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / PAGE)), [total]);
 
   function handleDownload(c: ClienteBase) {
-    // ✅ futuro: gerar PDF Perfil do Cliente
     alert(`Download do Perfil do Cliente (em breve)\n\nCliente: ${c.nome}\nLead: ${c.lead_id}`);
   }
 
@@ -982,7 +979,6 @@ export default function ClientesPage() {
   async function loadDemografia() {
     setDemoLoading(true);
     try {
-      // 1) lead_ids ativos (vendas.codigo='00')
       const { data: activeVend, error: e1 } = await supabase
         .from("vendas")
         .select("lead_id,produto")
@@ -1017,7 +1013,6 @@ export default function ClientesPage() {
         return;
       }
 
-      // 2) clientes (dados demográficos + observacoes JSON)
       const { data: cli, error: e2 } = await supabase
         .from("clientes")
         .select("lead_id,data_nascimento,uf,cidade,observacoes")
@@ -1086,7 +1081,7 @@ export default function ClientesPage() {
   const demoUFsActive = useMemo(() => {
     const s = new Set<string>();
     if (!demo?.byUF) return s;
-    Object.keys(demo.byUF).forEach((uf) => s.add(uf));
+    Object.keys(demo.byUF).forEach((uf) => s.add(String(uf).toUpperCase().trim()));
     return s;
   }, [demo]);
 
@@ -1121,7 +1116,6 @@ export default function ClientesPage() {
   // ========= RENDER =========
   return (
     <div className="space-y-4">
-      {/* ✅ Tabs topo: Cadastro / Demografia */}
       <div className="rounded-2xl bg-white p-4 shadow">
         <Tabs value={tab} onValueChange={(v: any) => setTab(v)}>
           <TabsList className="rounded-full bg-slate-100 p-1">
@@ -1171,9 +1165,7 @@ export default function ClientesPage() {
                                 </div>
                                 <div className="min-w-0">
                                   <div className="font-medium truncate">{c.nome}</div>
-                                  <div className="text-xs text-slate-500">
-                                    CPF: {c.cpf_dig || "—"}
-                                  </div>
+                                  <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
                                 </div>
                               </div>
                             </td>
@@ -1199,7 +1191,6 @@ export default function ClientesPage() {
                 <h3 className="m-0 font-semibold">Lista de Clientes</h3>
 
                 <div className="flex items-center gap-2 flex-wrap justify-end">
-                  {/* ✅ BUSCA */}
                   <div className="searchWrap">
                     <span className="searchIcon">
                       <Search className="h-4 w-4" />
@@ -1227,7 +1218,6 @@ export default function ClientesPage() {
                       <th className="p-2 text-left">E-mail</th>
                       <th className="p-2 text-left">Nascimento</th>
                       <th className="p-2 text-left">Vendedor</th>
-                      {/* ❌ removido: Grupo */}
                       <th className="p-2 text-center">Ações</th>
                     </tr>
                   </thead>
@@ -1305,7 +1295,6 @@ export default function ClientesPage() {
                                 <CalendarPlus className="h-4 w-4" />
                               </a>
 
-                              {/* ✅ novo botão */}
                               <button className="icon-btn" title="Download" onClick={() => handleDownload(c)} disabled={loading}>
                                 <Download className="h-4 w-4" />
                               </button>
@@ -1318,7 +1307,6 @@ export default function ClientesPage() {
                 </table>
               </div>
 
-              {/* paginação */}
               <div className="mt-3 flex items-center justify-end gap-2">
                 <button className="btn" disabled={page <= 1 || loading} onClick={() => load(page - 1, debounced)}>
                   ‹ Anterior
@@ -1381,7 +1369,6 @@ export default function ClientesPage() {
                       </div>
                     </div>
 
-                    {/* Top listas */}
                     <div className="rounded-2xl border p-4">
                       <div className="font-semibold mb-2">Top cidades {demoUF ? `(${demoUF})` : "(Brasil)"}</div>
                       <div className="space-y-2">
@@ -1403,24 +1390,19 @@ export default function ClientesPage() {
                     <div className="rounded-2xl border p-4">
                       <div className="font-semibold mb-2">Persona (auto)</div>
                       <div className="text-sm text-slate-700 leading-relaxed">
-                        Base ativa com <b>{demo.activeCount}</b> clientes. Predomina <b>{Object.keys(demo.tipoCount).sort((a,b)=>(demo.tipoCount[b]-demo.tipoCount[a]))[0] || "—"}</b>{" "}
-                        e o perfil mais comum é <b>{Object.keys(demo.perfilCount).sort((a,b)=>(demo.perfilCount[b]-demo.perfilCount[a]))[0] || "—"}</b>.{" "}
-                        Idade média <b>{demoStats.idadeMedia ?? "—"}</b> anos. Segmento PF mais comum:{" "}
-                        <b>{Object.keys(demo.segPFCount).sort((a,b)=>(demo.segPFCount[b]-demo.segPFCount[a]))[0] || "—"}</b>.
+                        Base ativa com <b>{demo.activeCount}</b> clientes. Predomina{" "}
+                        <b>{Object.keys(demo.tipoCount).sort((a, b) => demo.tipoCount[b] - demo.tipoCount[a])[0] || "—"}</b> e o perfil mais comum é{" "}
+                        <b>{Object.keys(demo.perfilCount).sort((a, b) => demo.perfilCount[b] - demo.perfilCount[a])[0] || "—"}</b>. Idade média{" "}
+                        <b>{demoStats.idadeMedia ?? "—"}</b> anos. Segmento PF mais comum:{" "}
+                        <b>{Object.keys(demo.segPFCount).sort((a, b) => demo.segPFCount[b] - demo.segPFCount[a])[0] || "—"}</b>.
                       </div>
-                      <div className="text-xs text-slate-500 mt-2">
-                        *Sexo depende do preenchimento no cadastro.
-                      </div>
+                      <div className="text-xs text-slate-500 mt-2">*Sexo depende do preenchimento no cadastro.</div>
                     </div>
                   </div>
 
-                  {/* Mapa */}
+                  {/* MAPA REAL */}
                   <div className="xl:col-span-7 space-y-4">
-                    <BrazilTileMap
-                      activeUFs={demoUFsActive}
-                      selectedUF={demoUF}
-                      onSelectUF={(uf) => setDemoUF(uf)}
-                    />
+                    <BrazilImageMap src={MAPA_BR_SRC} activeUFs={demoUFsActive} selectedUF={demoUF} onSelectUF={(uf) => setDemoUF(uf)} />
 
                     <div className="rounded-2xl border p-4 bg-white">
                       <div className="font-semibold mb-2">Distribuições rápidas</div>
@@ -1499,16 +1481,11 @@ export default function ClientesPage() {
           }
           onClose={closeOverlay}
         >
-          {/* Header: ✅ sem Lead/Venda/Grupo + ✅ avatar */}
           <div className="rounded-xl border p-4 mb-4 bg-slate-50">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="avatar avatar-lg">
-                  {extra.foto_url ? (
-                    <img src={extra.foto_url} alt="Foto do cliente" className="avatar-img" />
-                  ) : (
-                    <span className="avatar-ini">{initials(nome || active.nome)}</span>
-                  )}
+                  {extra.foto_url ? <img src={extra.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(nome || active.nome)}</span>}
                 </div>
 
                 <div className="min-w-0">
@@ -1528,7 +1505,6 @@ export default function ClientesPage() {
             </div>
           </div>
 
-          {/* GRID */}
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
             {/* Identidade */}
             <div className="rounded-xl border p-4 xl:col-span-6">
@@ -1543,12 +1519,7 @@ export default function ClientesPage() {
 
                 <div>
                   <div className="label">Perfil do Cliente</div>
-                  <select
-                    className="input"
-                    value={extra.perfil}
-                    onChange={(e) => setExtra((s) => ({ ...s, perfil: e.target.value as PerfilCliente }))}
-                    disabled={readOnly}
-                  >
+                  <select className="input" value={extra.perfil} onChange={(e) => setExtra((s) => ({ ...s, perfil: e.target.value as PerfilCliente }))} disabled={readOnly}>
                     <option>PF Geral</option>
                     <option>PF Agro</option>
                     <option>PJ</option>
@@ -1578,12 +1549,7 @@ export default function ClientesPage() {
                 <div>
                   <div className="label">Segmento</div>
                   {extra.tipo === "PF" ? (
-                    <select
-                      className="input"
-                      value={extra.segmento_pf}
-                      onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))}
-                      disabled={readOnly}
-                    >
+                    <select className="input" value={extra.segmento_pf} onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))} disabled={readOnly}>
                       <option value="">Selecione…</option>
                       {SEGMENTOS_PF.map((s) => (
                         <option key={s} value={s}>
@@ -1602,32 +1568,16 @@ export default function ClientesPage() {
                   )}
                 </div>
 
-                {/* ✅ novo: Sexo */}
                 <div className="md:col-span-2">
                   <div className="label">Sexo</div>
                   <div className="flex gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "M" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "M" }))}
-                      disabled={readOnly}
-                    >
+                    <button type="button" className={`pill ${extra.sexo === "M" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "M" }))} disabled={readOnly}>
                       Masculino
                     </button>
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "F" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "F" }))}
-                      disabled={readOnly}
-                    >
+                    <button type="button" className={`pill ${extra.sexo === "F" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "F" }))} disabled={readOnly}>
                       Feminino
                     </button>
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "O" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "O" }))}
-                      disabled={readOnly}
-                    >
+                    <button type="button" className={`pill ${extra.sexo === "O" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "O" }))} disabled={readOnly}>
                       Outro
                     </button>
                     {!readOnly && (
@@ -1656,12 +1606,7 @@ export default function ClientesPage() {
 
                 <div>
                   <div className="label">CPF/CNPJ</div>
-                  <input
-                    className="input"
-                    value={onlyDigits(cpf)}
-                    onChange={(e) => setCpf(onlyDigits(e.target.value))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={onlyDigits(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} disabled={readOnly} />
                 </div>
 
                 <div>
@@ -1704,22 +1649,12 @@ export default function ClientesPage() {
 
                 <div className="md:col-span-2">
                   <div className="label">Número</div>
-                  <input
-                    className="input"
-                    value={extra.numero}
-                    onChange={(e) => setExtra((s) => ({ ...s, numero: clamp(e.target.value, 20) }))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={extra.numero} onChange={(e) => setExtra((s) => ({ ...s, numero: clamp(e.target.value, 20) }))} disabled={readOnly} />
                 </div>
 
                 <div className="md:col-span-3">
                   <div className="label">Logradouro</div>
-                  <input
-                    className="input"
-                    value={extra.logradouro}
-                    onChange={(e) => setExtra((s) => ({ ...s, logradouro: e.target.value }))}
-                    disabled={readOnly}
-                  />
+                  <input className="input" value={extra.logradouro} onChange={(e) => setExtra((s) => ({ ...s, logradouro: e.target.value }))} disabled={readOnly} />
                 </div>
 
                 <div>
@@ -1999,7 +1934,6 @@ export default function ClientesPage() {
             </div>
           </div>
 
-          {/* Footer */}
           <div className="mt-5 flex items-center justify-end gap-2">
             <button className="btn" onClick={closeOverlay} disabled={saving}>
               Fechar

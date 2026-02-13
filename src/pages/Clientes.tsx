@@ -457,14 +457,15 @@ function BrazilImageMap({
       </div>
 
       <div className="rounded-2xl border overflow-hidden bg-slate-50">
-        <iframe
-          ref={iframeRef}
-          title="Mapa do Brasil"
-          src={src}
-          className="w-full"
-          style={{ height: 520, border: 0, display: "block" }}
-        />
-      </div>
+  <iframe
+    ref={iframeRef}
+    title="Mapa do Brasil"
+    src={src}
+    className="w-full block h-[280px] md:h-[380px] xl:h-[460px]"
+    style={{ border: 0 }}
+    scrolling="no"
+  />
+</div>
 
       <div className="mt-3 flex flex-wrap gap-2 items-center justify-between">
         <button className="btn" onClick={() => onSelectUF("")}>

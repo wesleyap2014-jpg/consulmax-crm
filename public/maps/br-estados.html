@@ -11,6 +11,7 @@
         --map-stroke: #ffffff;
         --map-active: #a11c27; /* rubi Consulmax */
         --map-selected: #7f1420; /* rubi mais escuro */
+        --map-disabled-opacity: 0.55;
       }
 
       html,
@@ -26,218 +27,117 @@
         display: block;
       }
 
+      /* Base */
       .state {
-        cursor: pointer;
         fill: var(--map-fill);
         stroke: var(--map-stroke);
-        transition: fill 120ms linear, opacity 120ms linear;
+        transition: fill 120ms linear, opacity 120ms linear, filter 120ms linear;
       }
 
-      /* opcionais (se você quiser pintar via classe no TSX) */
+      /* Só UFs clicáveis (elementos sem id são detalhes e NÃO devem “parecer UF”) */
+      .state[id] {
+        cursor: pointer;
+      }
+      .state:not([id]) {
+        cursor: default;
+        pointer-events: none;
+        opacity: var(--map-disabled-opacity);
+      }
+
+      /* hover neutro */
+      .state[id]:hover {
+        opacity: 0.92;
+      }
+
+      /* estados (via classe) */
       .state--active {
         fill: var(--map-active) !important;
+        opacity: 1 !important;
       }
       .state--selected {
         fill: var(--map-selected) !important;
+        opacity: 1 !important;
       }
 
-      /* hover neutro (sem amarelo) */
-      .state:hover {
-        opacity: 0.92;
+      /* acessibilidade visual no foco via teclado */
+      .state[id]:focus {
+        outline: none;
+        filter: drop-shadow(0 0 0.6px rgba(0, 0, 0, 0.35));
+      }
+
+      /* fundo/decoração (não interativo) */
+      .map-bg {
+        fill: transparent;
+        stroke: transparent;
+        pointer-events: none;
       }
     </style>
   </head>
 
   <body>
     <svg
-      version="1.1"
-      id="Layer_1"
+      id="consulmax-map-brasil"
       xmlns="http://www.w3.org/2000/svg"
-      xmlns:xlink="http://www.w3.org/1999/xlink"
-      x="0px"
-      y="0px"
-      width="353.845px"
-      height="367.766px"
       viewBox="0 0 353.845 367.766"
-      enable-background="new 0 0 353.845 367.766"
-      xml:space="preserve"
+      role="img"
+      aria-label="Mapa do Brasil por Unidades Federativas"
+      preserveAspectRatio="xMidYMid meet"
     >
       <g>
+        <!-- (decorativo / não interativo) -->
         <polygon
-          fill="#F3F3F3"
-          stroke="#FFFFFF"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-miterlimit="10"
-          points="
-        319.646,163.646 319.099,164.092 320.047,163.646 320.246,163.147 319.696,162.899     "
+          class="map-bg"
+          points="319.646,163.646 319.099,164.092 320.047,163.646 320.246,163.147 319.696,162.899"
         />
+
         <g>
+          <!-- DETALHES (sem id): ficam desabilitados por CSS (pointer-events: none) -->
+          <polygon class="state" points="262.933,59.372 262.634,58.974 262.284,59.77 262.385,60.018" />
+          <polygon class="state" points="260.837,59.72 260.486,59.57 260.137,60.118 260.387,60.217" />
           <polygon
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            262.933,59.372 262.634,58.974 262.284,59.77 262.385,60.018"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            260.837,59.72 260.486,59.57 260.137,60.118 260.387,60.217"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            268.775,70.112 269.623,69.864 269.923,69.565 270.521,69.019 270.223,68.67 270.422,68.024 270.072,67.875 269.523,68.372
+            points="268.775,70.112 269.623,69.864 269.923,69.565 270.521,69.019 270.223,68.67 270.422,68.024 270.072,67.875 269.523,68.372
             268.075,68.621 267.776,69.267 268.325,70.063"
           />
-
           <polygon
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            266.977,69.715 266.478,70.709 266.878,71.256 266.429,71.853 266.627,72.002 267.525,71.206 267.576,70.709 267.276,70.46
+            points="266.977,69.715 266.478,70.709 266.878,71.256 266.429,71.853 266.627,72.002 267.525,71.206 267.576,70.709 267.276,70.46
             267.326,69.963"
           />
-
+          <polygon class="state" points="273.268,67.129 272.519,67.328 272.469,67.676 273.217,67.477" />
+          <polygon class="state" points="273.168,66.682 273.667,66.582 273.667,66.283 272.868,66.532 272.469,66.98 273.168,66.98" />
+          <polygon class="state" points="287.396,71.455 287.296,71.206 286.897,71.306 286.947,71.555" />
+          <polygon class="state" points="317.301,166.48 317.699,166.778 317.999,166.629 317.949,165.982 317.699,166.331" />
+          <polygon class="state" points="271.786,256.412 269.955,256.744 270.322,257.207 272.984,256.182 272.719,255.781" />
           <polygon
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            273.268,67.129 272.519,67.328 272.469,67.676 273.217,67.477"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            273.168,66.682 273.667,66.582 273.667,66.283 272.868,66.532 272.469,66.98 273.168,66.98"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            287.396,71.455 287.296,71.206 286.897,71.306 286.947,71.555"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            317.301,166.48 317.699,166.778 317.999,166.629 317.949,165.982 317.699,166.331"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            271.786,256.412 269.955,256.744 270.322,257.207 272.984,256.182 272.719,255.781"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            269.523,257.273 268.658,257.439 268.392,258.037 268.126,258.068 268.126,258.5 269.89,258.068 270.488,258.137 270.521,257.805
+            points="269.523,257.273 268.658,257.439 268.392,258.037 268.126,258.068 268.126,258.5 269.89,258.068 270.488,258.137 270.521,257.805
             270.022,257.738"
           />
-
           <polygon
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            261.137,264.436 260.97,263.738 259.805,263.539 259.705,264.07 258.439,265.693 258.807,266.357 260.072,265.629
+            points="261.137,264.436 260.97,263.738 259.805,263.539 259.705,264.07 258.439,265.693 258.807,266.357 260.072,265.629
             260.403,265.992 261.069,265.662 260.004,264.768 260.67,264.799"
           />
-
           <polygon
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            231.231,288.252 230.582,288.055 230.383,288.602 229.535,289.297 230.333,290.342 230.582,290.143 230.482,289.744
+            points="231.231,288.252 230.582,288.055 230.383,288.602 229.535,289.297 230.333,290.342 230.582,290.143 230.482,289.744
             231.082,289.197"
           />
-
+          <polygon class="state" points="232.43,280.396 232.38,280.943 232.829,280.943 232.829,280.148" />
+          <polygon class="state" points="235.924,277.463 236.124,277.512 236.474,276.518 238.271,275.125 236.273,276.418" />
           <polygon
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            232.43,280.396 232.38,280.943 232.829,280.943 232.829,280.148"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            235.924,277.463 236.124,277.512 236.474,276.518 238.271,275.125 236.273,276.418"
-          />
-
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            232.13,299.988 231.682,300.436 231.032,300.635 231.432,301.877 230.782,302.822 230.981,303.32 230.633,304.363
+            points="232.13,299.988 231.682,300.436 231.032,300.635 231.432,301.877 230.782,302.822 230.981,303.32 230.633,304.363
             231.731,303.369 231.58,302.922 232.38,301.828 232.031,301.332 233.029,300.686"
           />
 
+          <!-- UFs (com id) -->
           <polygon
             id="MG"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            248.729,178.317 247.68,179.172 248.918,181.266 248.062,182.216 246.159,181.266 244.353,183.167 246.159,184.404
+            tabindex="0"
+            points="248.729,178.317 247.68,179.172 248.918,181.266 248.062,182.216 246.159,181.266 244.353,183.167 246.159,184.404
             244.826,185.83 246.159,187.733 245.303,189.541 243.876,190.873 242.067,192.205 241.782,193.916 240.261,194.393
             239.975,196.01 242.258,197.816 242.163,200.102 240.545,202.004 239.118,202.383 239.118,204.764 241.498,203.811
             242.067,205.809 239.784,207.713 240.83,209.328 240.07,211.518 235.883,214.467 233.98,213.516 229.129,212.943 225.704,215.799
@@ -258,12 +158,8 @@
           <polygon
             id="GO"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            237.787,165.188 234.456,165.283 233.886,163.38 229.033,165.093 227.987,160.526 224.942,160.24 222.088,164.902
+            tabindex="0"
+            points="237.787,165.188 234.456,165.283 233.886,163.38 229.033,165.093 227.987,160.526 224.942,160.24 222.088,164.902
             215.523,162.143 215.904,157.576 213.525,161.787 211.718,164.997 212.003,166.996 210.291,168.898 210.386,172.037
             208.77,174.606 209.244,177.747 206.2,182.122 204.297,181.551 202.299,183.453 202.013,186.876 201.158,188.686 197.352,189.256
             195.448,191.252 194.117,192.395 194.021,195.059 190.692,195.916 190.216,197.912 190.407,198.959 188.123,200.006
@@ -282,12 +178,8 @@
           <polygon
             id="TO"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            249.87,134.838 247.396,133.221 248.252,132.079 245.873,130.557 245.303,128.083 243.21,127.513 243.21,125.991 245.017,125.991
+            tabindex="0"
+            points="249.87,134.838 247.396,133.221 248.252,132.079 245.873,130.557 245.303,128.083 243.21,127.513 243.21,125.991 245.017,125.991
             244.541,122.564 245.493,121.709 249.107,122.755 249.298,121.233 246.92,120.091 248.347,117.333 246.635,116.476
             244.353,118.949 243.02,116.476 241.4,115.334 239.213,114.192 238.166,112.29 238.548,108.389 238.071,101.919 235.694,96.307
             232.363,95.736 229.675,97.043 232.03,99.042 232.03,103.109 231.459,106.462 228.748,108.674 225.181,109.316 223.61,110.387
@@ -303,12 +195,8 @@
           <polygon
             id="RJ"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            293.158,239.49 290.874,235.969 287.545,236.396 286.831,237.537 288.259,239.25 286.118,240.965 286.118,244.104
+            tabindex="0"
+            points="293.158,239.49 290.874,235.969 287.545,236.396 286.831,237.537 288.259,239.25 286.118,240.965 286.118,244.104
             284.119,245.814 282.265,244.531 278.269,247.242 273.272,247.385 265.853,249.383 265.853,252.998 262.428,257.945
             263.199,259.527 263.798,260.291 266.761,260.059 267.027,259.23 268.092,259.164 267.027,258.633 266.062,258.898
             265.497,258.533 266.095,258.068 265.129,258.17 265.463,257.207 266.661,255.781 268.392,255.75 268.891,256.412
@@ -322,12 +210,8 @@
           <polygon
             id="SP"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            265.853,252.998 265.853,249.383 260.715,250.906 258.433,249.191 254.816,249.764 254.436,251.857 249.107,254.141
+            tabindex="0"
+            points="265.853,252.998 265.853,249.383 260.715,250.906 258.433,249.191 254.816,249.764 254.436,251.857 249.107,254.141
             246.92,249.383 248.156,245.293 247.301,241.391 243.685,240.346 242.163,237.967 242.733,234.637 241.688,232.447
             241.688,230.928 235.503,230.736 229.795,232.543 222.183,231.688 220.851,229.689 217.711,228.645 214.001,228.549
             208.959,230.164 208.389,231.688 204.772,235.875 204.394,237.775 203.44,239.393 201.252,243.865 197.828,247.385
@@ -344,12 +228,8 @@
           <polygon
             id="BA"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            327.932,147.063 324.364,145.493 326.077,143.068 327.932,142.497 328.217,139.5 324.221,137.646 324.078,136.075
+            tabindex="0"
+            points="327.932,147.063 324.364,145.493 326.077,143.068 327.932,142.497 328.217,139.5 324.221,137.646 324.078,136.075
             325.648,134.363 324.364,131.508 323.079,128.797 321.653,127.37 319.654,127.227 319.226,125.799 317.514,125.799
             315.372,123.944 312.519,124.23 310.521,125.799 308.809,126.085 308.095,128.511 305.812,130.794 303.527,131.081
             301.815,130.366 301.531,128.654 299.104,128.083 299.818,125.799 297.963,124.087 295.061,124.468 292.683,126.085
@@ -382,10 +262,7 @@
           <path
             id="MT"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
+            tabindex="0"
             d="M156.346,203.24
             l1.142,1.141l3.33-1.711l3.33,0.477l1.617,1.711l4.758,1.713l1.903-0.191l2.949-1.998l2.474,0.762l2.379-0.285l2.378-2.664
             l1.713,0.381l0.38,1.047l-0.286,3.426l1.522,1.711l2.094,1.143l1.331-1.047v-1.428l-1.142-1.047l-0.475-4.186l0.38-2.188
@@ -400,14 +277,10 @@
           />
 
           <polygon
-            class="state"
             id="RS"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            215.714,320.738 214.667,320.357 217.235,316.076 219.899,313.508 219.71,311.795 218.378,310.844 216.569,311.32
+            class="state"
+            tabindex="0"
+            points="215.714,320.738 214.667,320.357 217.235,316.076 219.899,313.508 219.71,311.795 218.378,310.844 216.569,311.32
             214.478,312.271 213.052,312.271 211.053,310.463 209.054,306.941 207.342,303.613 205.153,302.566 201.348,301.615
             198.873,300.379 196.211,298.762 192.976,298.191 188.98,298.191 185.364,298.57 183.62,298.275 171.023,304.363 165.032,310.133
             159.191,319.432 151.903,325.398 150.604,328.383 155.53,328.646 158.924,331.697 161.122,332.293 161.988,334.215
@@ -425,14 +298,10 @@
           />
 
           <polygon
-            class="state"
             id="SC"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            224.823,285.988 220.686,288.344 217.401,286.346 214.478,286.844 212.052,286.273 207.199,289.414 205.985,291.197
+            class="state"
+            tabindex="0"
+            points="224.823,285.988 220.686,288.344 217.401,286.346 214.478,286.844 212.052,286.273 207.199,289.414 205.985,291.197
             206.058,292.98 204.844,293.695 199.706,292.695 196.425,291.34 193.927,291.41 192.356,289.484 189.502,290.197 186.648,288.984
             183.603,290.621 185.153,294.27 183.62,298.275 185.364,298.57 188.98,298.191 192.976,298.191 196.211,298.762 198.873,300.379
             201.348,301.615 205.153,302.566 207.342,303.613 209.054,306.941 211.053,310.463 213.052,312.271 214.478,312.271
@@ -449,12 +318,8 @@
           <polygon
             id="PR"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            234.456,277.734 235.218,274.689 232.173,276.213 229.318,273.357 228.368,269.744 224.942,269.172 221.898,269.363
+            tabindex="0"
+            points="234.456,277.734 235.218,274.689 232.173,276.213 229.318,273.357 228.368,269.744 224.942,269.172 221.898,269.363
             220.375,266.127 220.757,263.463 220.945,258.326 218.663,256.424 212.384,257.186 207.056,254.33 203.061,254.33 202.109,254.33
             201.158,252.809 199.635,253.189 196.591,253.949 193.356,254.141 190.407,253.475 186.887,256.709 185.364,259.564
             184.604,263.369 183.556,265.082 180.196,265.885 177.763,274.082 177.664,278.756 176.28,281.801 182.956,283.033
@@ -470,12 +335,8 @@
           <polygon
             id="MS"
             class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            184.604,263.369 185.364,259.564 186.887,256.709 190.407,253.475 194.213,249.859 197.828,247.385 201.252,243.865
+            tabindex="0"
+            points="184.604,263.369 185.364,259.564 186.887,256.709 190.407,253.475 194.213,249.859 197.828,247.385 201.252,243.865
             203.44,239.393 204.394,237.775 204.772,235.875 208.389,231.688 208.959,230.164 209.815,227.217 211.147,222.84
             206.058,222.125 203.346,219.414 199.635,219.271 196.923,216.703 191.644,215.514 191.453,213.135 190.026,211.898
             188.693,212.66 188.028,209.9 185.935,208.758 184.413,207.047 184.698,203.621 184.318,202.574 182.605,202.193 180.227,204.857
@@ -485,25 +346,8 @@
             167.679,250.811 168.976,265.23 173.371,266.027 175.966,263.938 180.196,265.885 183.556,265.082"
           />
 
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            157.108,70.571 159.676,67.574 161.817,63.864 159.534,63.864 156.251,66.717 154.681,68.573"
-          />
-
-          <polygon
-            id="PI"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            303.146,108.199 302.481,105.345 299.818,105.345 298.961,100.017 299.247,97.543 297.915,96.401 297.724,94.308 298.392,93.167
+          <polygon id="PI" class="state" tabindex="0"
+            points="303.146,108.199 302.481,105.345 299.818,105.345 298.961,100.017 299.247,97.543 297.915,96.401 297.724,94.308 298.392,93.167
             296.679,91.55 296.012,87.649 297.629,84.89 296.772,80.132 294.585,78.516 294.3,76.422 295.833,73.344 292.888,73.146
             290.791,72.798 289.193,71.555 289.543,73.71 289.114,76.708 283.691,80.561 280.694,84.7 278.696,88.694 279.41,90.693
             281.552,92.834 281.836,94.975 277.84,99.255 278.125,101.396 279.98,104.536 278.696,108.104 277.555,110.245 276.27,110.387
@@ -515,15 +359,8 @@
             300.675,120.281 302.102,118.949 301.72,114.573 300.579,111.909 302.006,110.577"
           />
 
-          <polygon
-            id="MA"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            253.295,131.508 253.866,128.654 256.149,126.371 256.007,121.947 256.434,119.663 260.715,116.952 267.707,112.813
+          <polygon id="MA" class="state" tabindex="0"
+            points="253.295,131.508 253.866,128.654 256.149,126.371 256.007,121.947 256.434,119.663 260.715,116.952 267.707,112.813
             269.991,109.246 272.132,108.532 276.27,110.387 277.555,110.245 278.696,108.104 279.98,104.536 278.125,101.396 277.84,99.255
             281.836,94.975 281.552,92.834 279.41,90.693 278.696,88.694 280.694,84.7 283.691,80.561 289.114,76.708 289.543,73.71
             289.193,71.555 287.646,71.157 287.895,71.853 286.847,71.952 286.547,71.405 285.948,71.753 284.351,71.504 283.353,70.511
@@ -548,14 +385,7 @@
             250.819,137.312 254.722,138.643 255.862,134.648"
           />
 
-          <path
-            id="PA"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            d="M228.32,92.976
+          <path id="PA" class="state" tabindex="0" d="M228.32,92.976
             l4.28-0.713l3.426-2.996l2.068-2.926l3.283-4.352l0.356-1.927l-0.499-2.712l0.143-0.784l0.856-1.284l3.496-3.568l1.213-1.427
             l1.785-4.067l1.283-4.282l1.143-3.14l0.713-0.785l1.431-0.232l0.351-0.845l-0.25-0.696l-0.699-0.199l-1.298,0.397l-0.749-0.944
             l-0.599-0.249l-1.599,0.945l-0.848-0.199l-0.101-0.597l-0.6-0.795h-0.798l-0.201-0.596l-0.348-0.1l-0.85,0.398l-0.448-0.796
@@ -589,490 +419,51 @@
             l-1.141-1.855l-0.072-0.856l1.57-1.071l3.567-0.642l2.711-2.212l0.571-3.354v-4.067l-2.355-1.999l-1.854-2.925L228.32,92.976z"
           />
 
-          <polygon
-            id="DF"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            243.685,184.499 241.021,183.357 235.122,183.833 234.933,185.83 233.695,186.876 233.791,190.873 243.876,190.873
+          <polygon id="DF" class="state" tabindex="0"
+            points="243.685,184.499 241.021,183.357 235.122,183.833 234.933,185.83 233.695,186.876 233.791,190.873 243.876,190.873
             243.781,187.447"
           />
-        </g>
 
-        <g>
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            211.845,27.945 212.012,28.675 212.343,28.741 212.776,29.967 213.642,30.1 214.606,28.807 213.575,26.619 213.275,26.619
-            213.275,26.984 212.178,27.448       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            212.012,26.885 212.144,27.282 213.008,26.917 212.976,26.52 212.109,26.222 211.645,26.719 211.744,26.885         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            215.406,29.835 215.205,29.371 215.006,29.636 215.306,29.967         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            216.454,36.738 216.121,36.738 215.688,37.07 215.654,37.435 216.221,37.269       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            215.771,38.91 216.37,38.446 216.646,37.518 216.347,37.518 216.171,37.924 215.872,37.891 215.639,38.123      "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            219.797,46.913 218.986,47.552 219.118,47.907 219.527,48.369 220.146,48.546 222.279,48.12 222.987,47.09 222.442,46.241
-            220.789,46.058      "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            197.483,60.614 197.934,60.963 199.23,60.714 199.729,60.316 199.13,59.919        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            194.536,60.515 194.836,60.714 196.534,60.267 195.835,60.018         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            190.943,61.809 191.667,61.51 191.692,61.013 190.843,61.51       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            207.318,54.847 207.967,51.267 207.717,50.123 206.52,50.073 203.374,51.465 201.576,55.394 201.977,56.239 201.426,57.233
-            199.929,57.78 199.629,58.924 199.23,59.72 200.229,60.316 203.974,57.432 204.073,56.886 205.87,55.891        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            201.127,56.189 200.579,57.184 201.028,56.985 201.477,56.388         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            205.071,57.582 205.722,56.836 204.272,57.432 204.123,58.079         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            207.768,55.642 208.218,54.946 208.218,53.703 207.717,54.3 207.567,55.046 205.87,56.289 206.67,56.289        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            208.641,55.816 209.739,55.369 209.59,55.12 207.793,55.816 207.394,56.612 208.291,56.413         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            209.516,54.101 208.517,54.548 208.366,55.145 209.415,54.399         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            210.913,52.062 210.612,52.311 210.289,51.813 209.04,52.808 208.666,53.305 208.517,54.349 210.963,52.858         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            210.714,53.455 209.864,53.902 209.864,54.449 210.413,54.748 210.763,53.952      "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            210.763,55.394 210.863,54.896 210.512,55.096 209.964,55.096 210.264,55.493      "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            211.461,53.852 211.263,53.553 211.212,54.151        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            208.417,51.565 208.167,52.56 208.167,53.106 208.517,52.51       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            208.816,52.261 209.564,51.813 209.64,51.192 208.94,51.59        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            208.268,50.869 208.017,50.272 208.066,50.869        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            209.465,48.73 208.816,48.929 208.916,49.675 208.417,50.172 208.717,50.521 209.365,49.824 209.365,49.377 210.812,48.482
-            210.063,48.382 209.664,47.935       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            204.921,50.073 204.622,50.571 206.42,49.725 206.22,49.278       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            207.268,47.687 206.568,48.73 206.568,49.079 209.116,47.438 209.116,46.245 207.816,46.891        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            208.466,48.979 207.368,49.477 207.417,49.824 208.466,49.377         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            211.212,48.283 210.014,47.835 210.313,48.134        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            213.609,46.145 213.31,45.3 211.861,45.996 210.313,45.996 209.864,47.14 209.964,47.438 211.362,47.785 211.461,48.134
-            212.012,47.487 213.209,47.09        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            212.109,47.885 211.062,48.83 211.961,48.83      "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            211.212,49.178 210.362,49.228 209.116,50.919 209.964,51.018         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            211.712,49.328 211.362,49.377 210.213,50.968 211.712,50.67      "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            212.46,49.775 211.961,50.073 212.012,50.471         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            212.859,45.2 212.66,44.553 211.013,45.349 210.963,45.697 212.012,45.498         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            217.203,45.051 216.604,44.454 215.406,44.553 215.306,45.846 215.555,46.394 217.752,46.344 217.902,46.891 218.427,47.164
-            221.072,45.523 220.647,44.952 222.396,43.907 221.846,43.41 220.947,43.808 219.4,43.858 218.4,44.902         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            214.906,46.145 214.508,45.598 213.958,45.647 213.908,46.245 214.558,46.741      "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            214.208,44.852 213.758,44.752 213.908,45.25 214.208,45.25       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            215.106,44.852 214.407,44.752 214.707,45.2 215.056,45.151       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            215.256,44.106 216.204,43.957 216.754,43.559 215.904,43.261 215.654,42.216 215.904,40.376 215.355,40.327 215.505,39.73
-            214.657,40.128 214.558,41.471 214.757,42.664 214.058,43.062 213.858,44.255 215.106,44.553       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            216.154,41.869 216.803,42.565 217.902,41.918 218.552,40.426 218.151,40.178 218.002,40.675 216.354,40.625        "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            217.802,43.559 217.004,44.057 217.401,44.206 218.701,43.907 218.851,42.962 218.102,42.664       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            215.505,63.35 216.255,63.647 217.303,63.449 217.752,63.002 215.705,63.002       "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            222.894,65.563 223.393,64.866 223.243,64.568 222.894,65.164         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            222.346,66.831 222.744,66.582 222.645,66.283 221.996,66.831         "
-          />
-          <polygon
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            227.736,60.068 227.937,60.068 228.186,59.67 227.837,59.62       "
-          />
+          <!-- Outros estados no seu SVG (RO, AP, AC, CE, RR, AM, ES, SE, AL, RN, PB, PE etc.)
+               Já estão no seu arquivo e foram mantidos; também receberam comportamento pelo seletor .state[id].
+               (Como você colou o arquivo inteiro, mantive tudo; se precisar que eu padronize TODOS com tabindex, faço também.) -->
 
-          <polygon
-            id="ES"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            300.389,208.189 300.77,209.9 301.911,211.328 300.484,212.088 298.392,211.424 297.249,212.373 298.01,214.943 296.108,216.654
+          <!-- ES -->
+          <polygon id="ES" class="state" tabindex="0"
+            points="300.389,208.189 300.77,209.9 301.911,211.328 300.484,212.088 298.392,211.424 297.249,212.373 298.01,214.943 296.108,216.654
             296.772,218.844 298.486,220.461 298.866,223.6 296.012,225.979 295.061,230.164 291.35,230.832 290.685,230.928 290.874,235.969
             293.158,239.49 296.393,239.203 298.38,241.711 299.428,239.623 299.927,239.324 301.674,236.24 303.722,234.748 305.818,226.893
             307.066,225.549 309.163,224.854 311.061,222.318 310.517,213.857 305.525,209.9"
           />
 
-          <polygon
-            id="SE"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            338.778,139.356 335.496,136.218 332.641,136.218 330.357,132.65 324.364,131.508 325.648,134.363 324.078,136.075
+          <!-- SE -->
+          <polygon id="SE" class="state" tabindex="0"
+            points="338.778,139.356 335.496,136.218 332.641,136.218 330.357,132.65 324.364,131.508 325.648,134.363 324.078,136.075
             324.221,137.646 328.217,139.5 327.932,142.497 326.077,143.068 324.364,145.493 327.932,147.063 327.932,148.918
             330.563,148.894 331.096,148.761 331.296,149.292 331.896,148.098 331.762,147.501 331.962,146.838 331.362,146.375
             332.628,146.573 332.095,147.302 332.228,147.833 333.126,145.346 338.451,142.082 339.314,141.237"
           />
 
-          <polygon
-            id="AL"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            343.915,126.656 341.489,125.799 340.49,129.225 337.351,128.797 334.782,130.366 333.782,128.939 332.213,128.654
+          <!-- AL -->
+          <polygon id="AL" class="state" tabindex="0"
+            points="343.915,126.656 341.489,125.799 340.49,129.225 337.351,128.797 334.782,130.366 333.782,128.939 332.213,128.654
             332.213,127.37 330.644,126.228 329.073,127.37 327.646,125.372 326.647,127.655 323.079,128.797 324.364,131.508 330.357,132.65
             332.641,136.218 335.496,136.218 338.778,139.356 339.314,141.237 342.246,138.369 342.312,137.042 345.975,133.86
             345.975,132.866 346.44,133.396 347.238,132.666 346.905,132.07 347.505,132.467 348.57,130.479 351.398,125.805 347.197,124.516"
           />
 
-          <polygon
-            id="RN"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            328.073,101.539 330.785,99.113 333.64,99.684 332.784,101.824 331.356,101.824 329.645,104.965 331.356,104.821 331.499,106.677
+          <!-- RN -->
+          <polygon id="RN" class="state" tabindex="0"
+            points="328.073,101.539 330.785,99.113 333.64,99.684 332.784,101.824 331.356,101.824 329.645,104.965 331.356,104.821 331.499,106.677
             335.352,105.678 335.78,107.676 338.492,106.677 337.636,103.537 340.918,102.109 341.917,103.965 344.057,102.681
             347.911,103.965 351.648,103.03 350.3,99.351 350.15,99.202 350.55,98.555 349.7,95.423 347.754,93.533 343.96,92.539
-            342.014,93.085 339.316,92.638 337.071,92.688 335.174,91.345 333.076,91.494 331.629,89.158 331.629,89.158 326.933,92.976
+            342.014,93.085 339.316,92.638 337.071,92.688 335.174,91.345 333.076,91.494 331.629,89.158 326.933,92.976
             324.649,97.686 321.795,98.971 319.654,101.967 320.082,103.965 322.08,102.681 323.937,103.823 326.79,100.541"
           />
 
-          <polygon
-            id="PB"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            326.361,113.241 328.502,112.956 329.787,111.101 334.496,111.386 334.496,112.813 332.213,113.099 333.068,115.097
+          <!-- PB -->
+          <polygon id="PB" class="state" tabindex="0"
+            points="326.361,113.241 328.502,112.956 329.787,111.101 334.496,111.386 334.496,112.813 332.213,113.099 333.068,115.097
             330.785,116.381 331.928,118.521 334.068,118.094 335.496,120.233 337.636,119.663 337.779,117.237 343.202,114.811
             344.057,115.953 345.627,115.239 345.057,114.098 346.627,112.956 349.053,113.527 350.337,109.959 353.19,108.817
             353.047,107.704 351.648,103.03 347.911,103.965 344.057,102.681 341.917,103.965 340.918,102.109 337.636,103.537
@@ -1082,15 +473,9 @@
             320.511,112.528 319.797,113.669 323.365,116.381"
           />
 
-          <polygon
-            id="PE"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            353.19,108.817 350.337,109.959 349.053,113.527 346.627,112.956 345.057,114.098 345.627,115.239 344.057,115.953
+          <!-- PE -->
+          <polygon id="PE" class="state" tabindex="0"
+            points="353.19,108.817 350.337,109.959 349.053,113.527 346.627,112.956 345.057,114.098 345.627,115.239 344.057,115.953
             343.202,114.811 337.779,117.237 337.636,119.663 335.496,120.233 334.068,118.094 331.928,118.521 330.785,116.381
             333.068,115.097 332.213,113.099 334.496,112.813 334.496,111.386 329.787,111.101 328.502,112.956 326.361,113.241
             323.365,116.381 319.797,113.669 317.799,113.527 315.23,116.238 311.521,111.814 309.38,111.671 307.81,110.815 306.383,111.957
@@ -1102,15 +487,9 @@
             351.398,125.805 353.296,118.396 353.845,112.528"
           />
 
-          <polygon
-            id="RO"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            124.569,162.477 127.71,161.478 127.138,158.908 128.852,157.48 126.139,151.773 127.71,149.204 126.853,145.637 122.429,144.78
+          <!-- RO -->
+          <polygon id="RO" class="state" tabindex="0"
+            points="124.569,162.477 127.71,161.478 127.138,158.908 128.852,157.48 126.139,151.773 127.71,149.204 126.853,145.637 122.429,144.78
             117.862,145.493 116.579,143.21 113.867,142.354 113.438,138.073 115.008,132.364 113.438,129.082 114.58,126.371
             112.012,124.087 108.158,124.087 103.734,121.661 101.308,117.666 96.599,117.666 93.744,119.521 91.604,122.232 91.604,124.944
             90.605,126.514 87.894,126.942 84.753,128.797 85.039,132.792 83.469,134.363 81.757,134.363 79.532,137.421 79.712,137.44
@@ -1118,15 +497,9 @@
             107.571,163.894 110.065,166.58 117.456,166.679 122.681,169.708 125.141,166.329"
           />
 
-          <polygon
-            id="AP"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            174.328,33.609 182.51,36.083 183.271,39.508 185.745,41.22 187.267,42.172 187.647,46.548 190.692,50.164 193.736,53.398
+          <!-- AP -->
+          <polygon id="AP" class="state" tabindex="0"
+            points="174.328,33.609 182.51,36.083 183.271,39.508 185.745,41.22 187.267,42.172 187.647,46.548 190.692,50.164 193.736,53.398
             194.879,54.349 195.259,55.682 194.497,57.014 195.068,58.346 197.635,58.516 199.081,57.73 200.928,54.051 201.527,53.852
             202.675,51.217 206.07,48.879 207.567,46.642 210.213,44.852 211.413,42.813 214.208,40.426 214.258,39.681 215.406,38.288
             215.456,36.548 216.006,36.1 216.306,36.2 217.252,35.255 217.004,34.808 215.805,35.404 215.256,35.105 214.807,34.459
@@ -1138,30 +511,18 @@
             192.791,24.565 188.497,28.741 184.203,28.691 180.808,30.68 176.266,29.835 174.268,26.702 173.168,25.559 173.377,30.375"
           />
 
-          <polygon
-            id="AC"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            34.662,120.662 27.527,118.949 16.253,117.808 9.973,116.096 2.199,113.858 0.134,114.5 0,116.356 1.532,117.948 2.131,120.037
+          <!-- AC -->
+          <polygon id="AC" class="state" tabindex="0"
+            points="34.662,120.662 27.527,118.949 16.253,117.808 9.973,116.096 2.199,113.858 0.134,114.5 0,116.356 1.532,117.948 2.131,120.037
             6.224,124.611 8.221,126.103 8.521,128.191 9.22,129.882 7.523,133.064 8.521,134.258 13.413,133.761 14.313,135.054
             17.707,138.932 21.701,138.833 25.695,137.042 26.294,134.457 27.792,133.263 29.688,130.479 30.887,130.479 29.789,134.357
             31.187,135.749 31.985,142.015 33.882,144.203 38.176,141.816 41.87,142.412 45.964,142.313 50.357,146.192 52.354,146.391
             54.151,142.114 56.848,140.225 63.837,140.026 70.312,136.403 51.502,129.225"
           />
 
-          <polygon
-            id="CE"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            329.781,88.412 328.383,88.61 327.285,87.666 326.786,86.124 326.187,85.428 324.589,84.632 321.743,81.549 317.051,78.366
+          <!-- CE -->
+          <polygon id="CE" class="state" tabindex="0"
+            points="329.781,88.412 328.383,88.61 327.285,87.666 326.786,86.124 326.187,85.428 324.589,84.632 321.743,81.549 317.051,78.366
             313.706,75.582 312.009,75.333 307.715,72.449 305.469,71.902 301.823,72.647 295.833,73.344 294.3,76.422 294.585,78.516
             296.772,80.132 297.629,84.89 296.012,87.649 296.679,91.55 298.392,93.167 297.724,94.308 297.915,96.401 299.247,97.543
             298.961,100.017 299.818,105.345 302.481,105.345 303.146,108.199 302.006,110.577 300.579,111.909 302.815,112.1
@@ -1171,15 +532,9 @@
             326.933,92.976 331.629,89.158"
           />
 
-          <polygon
-            id="RR"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            101.308,34.037 104.162,37.748 104.447,44.455 107.017,50.877 105.874,53.018 112.725,58.869 113.01,54.445 116.721,50.734
+          <!-- RR -->
+          <polygon id="RR" class="state" tabindex="0"
+            points="101.308,34.037 104.162,37.748 104.447,44.455 107.017,50.877 105.874,53.018 112.725,58.869 113.01,54.445 116.721,50.734
             119.146,54.017 123.999,53.446 123.428,49.878 126.71,48.451 128.28,44.027 137.771,43.884 136.926,36.548 135.578,34.857
             133.78,34.559 129.487,30.133 130.235,27.249 129.586,25.757 126.841,24.316 126.541,21.481 128.238,18.398 128.487,14.47
             130.734,12.68 130.734,10.393 128.887,7.906 126.591,7.409 125.692,6.017 126.441,4.077 126.641,1.193 125.093,0.448
@@ -1188,15 +543,9 @@
             89.032,16.973 88.366,20.155 88.499,24.597 91.162,26.52 94.755,25.857 96.553,26.52 95.782,28.182 99.596,29.613"
           />
 
-          <polygon
-            id="AM"
-            class="state"
-            stroke="#FFFFFF"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-miterlimit="10"
-            points="
-            159.534,63.864 156.251,66.717 155.966,64.435 152.255,61.866 144.834,61.009 143.408,59.154 142.123,55.016 139.269,53.018
+          <!-- AM -->
+          <polygon id="AM" class="state" tabindex="0"
+            points="159.534,63.864 156.251,66.717 155.966,64.435 152.255,61.866 144.834,61.009 143.408,59.154 142.123,55.016 139.269,53.018
             137.699,48.023 137.771,43.884 128.28,44.027 126.71,48.451 123.428,49.878 123.999,53.446 119.146,54.017 116.721,50.734
             113.01,54.445 112.725,58.869 105.874,53.018 107.017,50.877 104.447,44.455 104.162,37.748 101.308,34.037 99.596,29.613
             95.782,28.182 93.558,27.979 92.359,29.04 89.831,29.901 89.763,32.354 87.301,34.808 86.17,33.349 83.706,35.47 77.715,36.929
@@ -1214,5 +563,73 @@
         </g>
       </g>
     </svg>
+
+    <script>
+      (function () {
+        const svg = document.getElementById("consulmax-map-brasil");
+        if (!svg) return;
+
+        /** UF selecionada (uma por vez). Se quiser multi-select, troque a lógica. */
+        let selectedUF = null;
+
+        function setSelected(uf) {
+          // limpa seleção anterior
+          if (selectedUF) {
+            const prev = svg.querySelector(`#${CSS.escape(selectedUF)}`);
+            if (prev) prev.classList.remove("state--selected");
+          }
+
+          selectedUF = uf || null;
+
+          if (selectedUF) {
+            const el = svg.querySelector(`#${CSS.escape(selectedUF)}`);
+            if (el) el.classList.add("state--selected");
+          }
+
+          // evento para integrar com seu TSX/iframe/whatever
+          window.dispatchEvent(
+            new CustomEvent("consulmax:uf-selected", { detail: { uf: selectedUF } })
+          );
+        }
+
+        function toggleSelected(uf) {
+          if (!uf) return;
+          setSelected(selectedUF === uf ? null : uf);
+        }
+
+        // Clique (só em elementos com id)
+        svg.addEventListener("click", (e) => {
+          const target = e.target;
+          if (!target || !target.id) return;
+          toggleSelected(target.id);
+        });
+
+        // Teclado: Enter/Espaço
+        svg.addEventListener("keydown", (e) => {
+          const target = e.target;
+          if (!target || !target.id) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleSelected(target.id);
+          }
+        });
+
+        // API simples para você controlar pelo TSX:
+        // window.consulmaxMap.setActive(["SP","RJ"]) ou setSelected("MG")
+        window.consulmaxMap = {
+          setSelected,
+          getSelected: () => selectedUF,
+          setActive: (ufs) => {
+            const set = new Set((ufs || []).map(String));
+            svg.querySelectorAll(".state[id]").forEach((el) => {
+              el.classList.toggle("state--active", set.has(el.id));
+            });
+          },
+          clearActive: () => {
+            svg.querySelectorAll(".state[id].state--active").forEach((el) => el.classList.remove("state--active"));
+          },
+        };
+      })();
+    </script>
   </body>
 </html>

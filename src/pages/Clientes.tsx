@@ -457,14 +457,16 @@ function BrazilImageMap({
       </div>
 
       <div className="rounded-2xl border overflow-hidden bg-slate-50">
-  <iframe
-    ref={iframeRef}
-    title="Mapa do Brasil"
-    src={src}
-    className="w-full block h-[280px] md:h-[380px] xl:h-[460px]"
-    style={{ border: 0 }}
-    scrolling="no"
-  />
+  <div className="relative w-full h-[260px] md:h-[360px] xl:h-[420px]">
+    <iframe
+      ref={iframeRef}
+      title="Mapa do Brasil"
+      src={src}
+      className="absolute inset-0 w-full h-full"
+      style={{ border: 0, display: "block" }}
+      scrolling="no"
+    />
+  </div>
 </div>
 
       <div className="mt-3 flex flex-wrap gap-2 items-center justify-between">

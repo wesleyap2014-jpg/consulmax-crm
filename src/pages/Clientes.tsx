@@ -1,2177 +1,763 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { Pencil, CalendarPlus, Eye, Send, Check, Loader2, X, Plus, Search, Download } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Loader2 } from "lucide-react";
 
-type ClienteBase = {
-  id: string; // lead_id
-  lead_id: string;
+// -------- types (mínimos, focados no que usamos) --------
+type Role = "admin" | "vendedor" | "viewer" | "gestor";
 
+type UserRow = {
+  id: string; // public.users.id
+  auth_user_id: string; // auth.users.id
+  nome: string | null;
+  email: string | null;
+  role: Role;
+  is_active: boolean | null;
+};
+
+type ClienteRow = {
+  id: string;
   nome: string;
-  telefone?: string | null;
-  email?: string | null;
-
-  cpf_dig?: string | null; // vendas.cpf digits
-  data_nascimento?: string | null; // vendas.nascimento
-  observacoes?: string | null; // vendas.descricao
-  vendas_ids?: string[];
-
-  vendedor_auth_user_id?: string | null;
-  vendedor_nome?: string | null;
-
-  // para busca por grupo (da venda mais recente)
-  grupo?: string | null;
-
-  cliente_row_id?: string | null; // clientes.id
-
-  // extra (foto/sexo/etc) vindo do observacoes serializado em clientes.observacoes
-  foto_url?: string | null;
-  sexo?: Sexo | "";
-  tipo?: TipoPessoa | null;
-  perfil?: PerfilCliente | null;
-  segmento_pf?: SegmentoPF | "";
-  segmento_pj?: string | null;
-
-  uf?: string | null;
-  cidade?: string | null;
+  data_nascimento: string | null; // date
+  cpf: string | null;
+  telefone: string | null;
+  email: string | null;
+  cidade: string | null;
+  uf: string | null;
+  observacoes: string | null;
+  lead_id: string | null;
 };
 
-type TipoPessoa = "PF" | "PJ";
-type PerfilCliente = "PF Geral" | "PF Agro" | "PJ";
-type SegmentoPF =
-  | "Assalariado"
-  | "Autônomo"
-  | "Aposentado"
-  | "Empresário"
-  | "Funcionário Público"
-  | "Motorista"
-  | "Produtor Rural"
-  | "Profissional Liberal"
-  | "Locador ou Proprietário";
-
-type ConteudoPref = "dicas rápidas" | "explicações completas" | "promoções" | "novidades";
-type ComoConheceu = "Instagram" | "Google" | "Indicação" | "Anúncio" | "Relacionamento com o Vendedor" | "Outro";
-
-type Sexo = "M" | "F" | "O";
-
-type Filho = { nome: string; nascimento: string; sexo: "F" | "M" | "" };
-
-type CadastroExtra = {
-  tipo: TipoPessoa;
-  segmento_pf: SegmentoPF | "";
-  segmento_pj: string;
-  perfil: PerfilCliente;
-
-  // ✅ novo
-  sexo: Sexo | "";
-
-  chamado_como: string;
-
-  endereco_cep: string;
-  logradouro: string;
-  numero: string;
-  bairro: string;
-  cidade: string;
-  uf: string;
-
-  emergencia_nome: string;
-  emergencia_telefone: string;
-
-  renda_faturamento: string;
-  foto_url: string;
-
-  pais_vivos: "sim" | "nao" | "";
-  pai_nome: string;
-  pai_nasc: string;
-  mae_nome: string;
-  mae_nasc: string;
-
-  possui_filhos: "sim" | "nao" | "";
-  filhos: Filho[];
-
-  autoriza_publicar: "sim" | "nao" | "";
-  autoriza_homenagem: "sim" | "nao" | "";
-
-  feedback: string;
-  obs_internas: string;
-
-  conteudos: ConteudoPref[];
-  prefere_educativo: "educativo" | "ofertas" | "";
-  como_conheceu: ComoConheceu | "";
+type VendaRow = {
+  id: string;
+  lead_id: string | null;
+  vendedor_id: string | null; // auth_user_id (pelo teu schema)
+  codigo: string | null; // "00" = ativa
+  produto: string | null; // Automóvel, Imóvel...
+  nascimento: string | null; // date (pode ajudar se cliente não tiver)
 };
 
-const STORAGE_BUCKET_CLIENTES = "clientes_photos";
-
-// ✅ caminho do HTML do mapa (public/...)
-const MAPA_BR_SRC = "/maps/br-estados.html";
-
-const SEGMENTOS_PF: SegmentoPF[] = [
-  "Assalariado",
-  "Autônomo",
-  "Aposentado",
-  "Empresário",
-  "Funcionário Público",
-  "Motorista",
-  "Produtor Rural",
-  "Profissional Liberal",
-  "Locador ou Proprietário",
-];
-
-const CONTEUDOS: ConteudoPref[] = ["dicas rápidas", "explicações completas", "promoções", "novidades"];
-const COMO_CONHECEU: ComoConheceu[] = [
-  "Instagram",
-  "Google",
-  "Indicação",
-  "Anúncio",
-  "Relacionamento com o Vendedor",
-  "Outro",
-];
-
-const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
-const clamp = (s: string, n: number) => (s || "").slice(0, n);
-
-const maskPhone = (v: string) => {
-  const d = onlyDigits(v).slice(0, 11);
-  const p1 = d.slice(0, 2),
-    p2 = d.slice(2, 3),
-    p3 = d.slice(3, 7),
-    p4 = d.slice(7, 11);
-  let out = "";
-  if (p1) out += `(${p1}) `;
-  if (p2) out += p2 + (p3 ? " " : "");
-  if (p3) out += p3;
-  if (p4) out += "-" + p4;
-  return out.trim();
+type VClientesGeo = {
+  uf: string | null;
+  cidade: string | null;
+  total: number | null;
 };
 
-const formatBRDate = (iso?: string | null) => {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-};
+// -------- helpers --------
+function onlyDigits(s: string) {
+  return (s || "").replace(/\D+/g, "");
+}
 
-function calcAge(iso?: string | null) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return null;
+function normalizeUF(uf?: string | null) {
+  if (!uf) return null;
+  const s = String(uf).trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(s) ? s : null;
+}
+
+function humanMoneyBR(v: number) {
+  // formata como R$ 9.413
+  const n = Math.round(v);
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+}
+
+function calcAgeFromISODate(dateISO: string | null) {
+  if (!dateISO) return null;
+  const d = new Date(dateISO + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return null;
   const now = new Date();
-  let age = now.getUTCFullYear() - d.getUTCFullYear();
-  const m = now.getUTCMonth() - d.getUTCMonth();
-  if (m < 0 || (m === 0 && now.getUTCDate() < d.getUTCDate())) age--;
-  return age >= 0 && age <= 120 ? age : null;
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  if (age < 0 || age > 120) return null;
+  return age;
 }
 
-function initials(name: string) {
-  const parts = (name || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (!parts.length) return "—";
-  const a = parts[0]?.[0] || "";
-  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] || "" : "";
-  return (a + b).toUpperCase();
+/**
+ * "Renda média (estimada)"
+ * Base: campo texto quando parsável.
+ * - procura padrões com R$ e/ou "renda"
+ */
+function parseRendaFromText(text: string | null): number | null {
+  if (!text) return null;
+  const t = text.toLowerCase();
+
+  // tenta achar algo do tipo "renda: 9000", "renda 9.000", "renda R$ 9.000"
+  const rendaBlock = t.match(/renda[^0-9r$]{0,20}(r\$)?\s*([\d\.\,]{3,})/i);
+  const m = rendaBlock?.[2] ? rendaBlock[2] : null;
+
+  // fallback: pega o primeiro "R$ 9.000" que aparecer
+  const rx = m ? m : (text.match(/R\$\s*([\d\.\,]{3,})/i)?.[1] ?? null);
+  if (!rx) return null;
+
+  const normalized = rx.replace(/\./g, "").replace(",", ".");
+  const val = Number(normalized);
+  if (!Number.isFinite(val) || val <= 0) return null;
+
+  // se alguém escreveu 9,5 (sem milhar), evita distorção
+  if (val < 300) return null;
+
+  return val;
 }
 
-const emptyExtra = (): CadastroExtra => ({
-  tipo: "PF",
-  segmento_pf: "",
-  segmento_pj: "",
-  perfil: "PF Geral",
-
-  sexo: "",
-
-  chamado_como: "",
-
-  endereco_cep: "",
-  logradouro: "",
-  numero: "",
-  bairro: "",
-  cidade: "",
-  uf: "",
-
-  emergencia_nome: "",
-  emergencia_telefone: "",
-
-  renda_faturamento: "",
-  foto_url: "",
-
-  pais_vivos: "",
-  pai_nome: "",
-  pai_nasc: "",
-  mae_nome: "",
-  mae_nasc: "",
-
-  possui_filhos: "",
-  filhos: [{ nome: "", nascimento: "", sexo: "" }],
-
-  autoriza_publicar: "",
-  autoriza_homenagem: "",
-
-  feedback: "",
-  obs_internas: "",
-
-  conteudos: [],
-  prefere_educativo: "",
-  como_conheceu: "",
-});
-
-function safeParseExtraFromObservacoes(observacoes?: string | null): { extra: CadastroExtra | null; legacyText: string } {
-  const raw = (observacoes || "").trim();
-  if (!raw) return { extra: null, legacyText: "" };
-
-  if (raw.startsWith("CMX_JSON:")) {
-    const jsonStr = raw.slice("CMX_JSON:".length).trim();
-    try {
-      const parsed = JSON.parse(jsonStr);
-      return { extra: { ...emptyExtra(), ...(parsed || {}) }, legacyText: "" };
-    } catch {
-      return { extra: null, legacyText: raw };
-    }
+function modeString(items: string[]) {
+  const m = new Map<string, number>();
+  for (const it of items) m.set(it, (m.get(it) ?? 0) + 1);
+  let best: { k: string; v: number } | null = null;
+  for (const [k, v] of m) {
+    if (!best || v > best.v) best = { k, v };
   }
-
-  if (raw.startsWith("{") && raw.endsWith("}")) {
-    try {
-      const parsed = JSON.parse(raw);
-      return { extra: { ...emptyExtra(), ...(parsed || {}) }, legacyText: "" };
-    } catch {
-      return { extra: null, legacyText: raw };
-    }
-  }
-
-  return { extra: null, legacyText: raw };
+  return best?.k ?? null;
 }
 
-function serializeExtraToObservacoes(extra: CadastroExtra, legacyObsInterna?: string) {
-  const payload = { ...(extra || emptyExtra()) };
-  if (legacyObsInterna && !payload.obs_internas) payload.obs_internas = legacyObsInterna;
-  return `CMX_JSON:${JSON.stringify(payload)}`;
-}
-
-async function fetchCep(cepDigits: string) {
-  const cep = onlyDigits(cepDigits).slice(0, 8);
-  if (cep.length !== 8) throw new Error("CEP inválido.");
-  const res = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-  if (!res.ok) throw new Error("Falha ao buscar CEP.");
-  const j = await res.json();
-  if (j?.erro) throw new Error("CEP não encontrado.");
-  return {
-    logradouro: j.logradouro || "",
-    bairro: j.bairro || "",
-    cidade: j.localidade || "",
-    uf: j.uf || "",
-  };
-}
-
-function Overlay({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
-      <div
-        className="fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(1400px,96vw)] bg-white rounded-2xl shadow-xl"
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="sticky top-0 z-10 bg-white border-b p-5 flex items-center justify-between gap-3 rounded-t-2xl">
-          <h3 className="font-semibold m-0">{title}</h3>
-          <button className="icon-btn" onClick={onClose} title="Fechar">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="p-5 max-h-[90vh] overflow-auto">{children}</div>
-      </div>
-    </>
-  );
-}
-
-function PillToggle({
-  value,
-  onChange,
-  disabled,
-  leftLabel = "Sim",
-  rightLabel = "Não",
-}: {
-  value: "sim" | "nao" | "";
-  onChange: (v: "sim" | "nao") => void;
-  disabled?: boolean;
-  leftLabel?: string;
-  rightLabel?: string;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        type="button"
-        className={`pill ${value === "sim" ? "pill-on" : ""}`}
-        onClick={() => onChange("sim")}
-        disabled={disabled}
-      >
-        {leftLabel}
-      </button>
-      <button
-        type="button"
-        className={`pill ${value === "nao" ? "pill-on" : ""}`}
-        onClick={() => onChange("nao")}
-        disabled={disabled}
-      >
-        {rightLabel}
-      </button>
-    </div>
-  );
-}
-
-function MoneyInput({
-  value,
-  onChange,
-  disabled,
-  placeholder = "R$ 0,00",
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  disabled?: boolean;
-  placeholder?: string;
-}) {
-  return (
-    <input
-      className="input"
-      placeholder={placeholder}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      inputMode="numeric"
-    />
-  );
-}
-
-function parseMoneyToNumber(s: string) {
-  const raw = (s || "").trim();
-  if (!raw) return null;
-
-  const mil = /(\d+)\s*mil/i.exec(raw);
-  if (mil?.[1]) return Number(mil[1]) * 1000;
-
-  const m = raw.match(/(\d[\d\.\,]*)/);
-  if (!m?.[1]) return null;
-
-  const candidate = m[1];
-  if (candidate.includes(",") && candidate.includes(".")) {
-    const n = candidate.replace(/\./g, "").replace(",", ".");
-    const val = Number(n);
-    return isFinite(val) ? val : null;
-  }
-  if (candidate.includes(",") && !candidate.includes(".")) {
-    const val = Number(candidate.replace(",", "."));
-    return isFinite(val) ? val : null;
-  }
-  const val = Number(candidate.replace(/\./g, ""));
-  return isFinite(val) ? val : null;
-}
-
-// ==========================
-// DEMOGRAFIA (tipos)
-// ==========================
-type DemoStats = {
-  activeCount: number;
-  ageList: number[];
-  rendaList: number[];
-  sexoCount: Record<string, number>;
-  tipoCount: Record<string, number>;
-  perfilCount: Record<string, number>;
-  segPFCount: Record<string, number>;
-  segPJCount: Record<string, number>;
-  origemCount: Record<string, number>;
-  produtoCount: Record<string, number>; // apenas vendas ativas cruzadas por UF
-  byCity: Record<string, number>; // para Top cidades (sem UF:: prefixado aqui)
+// -------- map iframe API typing (do br-estados.html) --------
+type ConsulmaxMapAPI = {
+  setSelected: (uf: string | null) => void;
+  getSelected: () => string | null;
+  setActive: (ufs: string[]) => void;
+  getActive: () => string[];
+  clearActive: () => void;
 };
 
-type DemoData = {
-  statsBrasil: DemoStats;
-  statsPorUF: Record<string, DemoStats>;
-  activeUFs: string[]; // UFs que têm vendas ativas (vendas.codigo="00") e clientes.uf preenchido
-};
+export default function Clientes() {
+  const [tab, setTab] = useState<"cadastro" | "demografia">("demografia");
 
-// helpers de contagem
-function inc(map: Record<string, number>, key: string, by = 1) {
-  if (!key) return;
-  map[key] = (map[key] || 0) + by;
-}
+  // auth/profile
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [me, setMe] = useState<UserRow | null>(null);
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [selectedSeller, setSelectedSeller] = useState<string>("__me__"); // users.id (para admin)
+  const [loadingUser, setLoadingUser] = useState(true);
 
-function normalizeUF(v: any): string {
-  return String(v || "").toUpperCase().trim().slice(0, 2);
-}
+  // data
+  const [loadingData, setLoadingData] = useState(true);
+  const [clientes, setClientes] = useState<ClienteRow[]>([]);
+  const [vendasAtivas, setVendasAtivas] = useState<VendaRow[]>([]);
+  const [geoRows, setGeoRows] = useState<VClientesGeo[]>([]);
+  const [selectedUF, setSelectedUF] = useState<string | null>(null);
 
-function createEmptyStats(): DemoStats {
-  return {
-    activeCount: 0,
-    ageList: [],
-    rendaList: [],
-    sexoCount: {},
-    tipoCount: {},
-    perfilCount: {},
-    segPFCount: {},
-    segPJCount: {},
-    origemCount: {},
-    produtoCount: {},
-    byCity: {},
-  };
-}
-
-function cloneStatsBase(): DemoStats {
-  // novo objeto (não compartilhar refs)
-  return createEmptyStats();
-}
-
-function avg(arr: number[]) {
-  return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
-}
-function median(arr: number[]) {
-  if (!arr.length) return null;
-  const a = [...arr].sort((x, y) => x - y);
-  const mid = Math.floor(a.length / 2);
-  return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
-}
-
-function topKey(counts: Record<string, number>) {
-  const entries = Object.entries(counts || {});
-  if (!entries.length) return "—";
-  entries.sort((a, b) => b[1] - a[1]);
-  return entries[0]?.[0] || "—";
-}
-
-/** ✅ Mapa Brasil (imagem real via iframe) + clique UF vira filtro do dashboard */
-function BrazilImageMap({
-  src,
-  activeUFs,
-  selectedUF,
-  onSelectUF,
-}: {
-  src: string;
-  activeUFs: Set<string>;
-  selectedUF: string;
-  onSelectUF: (uf: string) => void;
-}) {
+  // map iframe control
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [mapReady, setMapReady] = useState(false);
 
-  // recebe clique do mapa
+  const isAdmin = me?.role === "admin";
+  const effectiveAuthSellerId = useMemo(() => {
+    if (!me) return null;
+    if (!isAdmin) return me.auth_user_id;
+    if (selectedSeller === "__me__") return me.auth_user_id;
+    const u = users.find((x) => x.id === selectedSeller);
+    return u?.auth_user_id ?? me.auth_user_id;
+  }, [me, isAdmin, selectedSeller, users]);
+
+  // -------- load auth/profile/users --------
   useEffect(() => {
-    function onMsg(ev: MessageEvent) {
-      const d: any = ev.data;
-
-      // aceita vários formatos (pra não depender de 1 só)
-      // 1) { type: "UF_CLICK", uf: "SP" }
-      if (d && typeof d === "object") {
-        const t = String(d.type || "").toUpperCase().trim();
-        if (t === "UF_CLICK" && d.uf) {
-          const uf = normalizeUF(d.uf);
-          if (uf) onSelectUF(uf);
-          return;
-        }
-        // 2) { uf: "SP" }
-        if (d.uf && typeof d.uf === "string") {
-          const uf = normalizeUF(d.uf);
-          if (uf) onSelectUF(uf);
-          return;
-        }
-        return;
-      }
-
-      // 3) "UF:SP"
-      if (typeof d === "string") {
-        const s = d.trim();
-        const m = /^UF\:(\w{2})$/i.exec(s);
-        if (m?.[1]) {
-          onSelectUF(normalizeUF(m[1]));
-        }
-      }
-    }
-
-    window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
-  }, [onSelectUF]);
-
-  // envia estado do dashboard pro mapa (highlight/selected)
-  useEffect(() => {
-    const win = iframeRef.current?.contentWindow;
-    if (!win) return;
-    try {
-      win.postMessage(
-        {
-          type: "UF_STATE",
-          activeUFs: Array.from(activeUFs || []).map((x) => normalizeUF(x)).filter(Boolean),
-          selectedUF: normalizeUF(selectedUF || ""),
-        },
-        "*"
-      );
-    } catch {
-      // ignore
-    }
-  }, [activeUFs, selectedUF]);
-
-  return (
-    <div className="rounded-2xl border p-4 bg-white">
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="font-semibold">Mapa do Brasil (UF)</div>
-        <div className="text-xs text-slate-600">
-          Clique no estado para filtrar{selectedUF ? ` • selecionado: ${normalizeUF(selectedUF)}` : ""}
-        </div>
-      </div>
-
-      <div className="rounded-2xl border overflow-hidden bg-slate-50">
-        <div className="relative w-full h-[260px] md:h-[360px] xl:h-[420px]">
-          <iframe
-            ref={iframeRef}
-            title="Mapa do Brasil"
-            src={src}
-            className="absolute inset-0 w-full h-full"
-            style={{ border: 0, display: "block" }}
-            scrolling="no"
-          />
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2 items-center justify-between">
-        <button className="btn" onClick={() => onSelectUF("")}>
-          Limpar UF
-        </button>
-        <div className="text-xs text-slate-500">
-          Se o mapa não aparecer, confirme o arquivo em <b>public</b>: <span className="font-mono">{src}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export default function ClientesPage() {
-  const PAGE = 10;
-
-  const [tab, setTab] = useState<"cadastro" | "demografia">("cadastro");
-
-  const [loading, setLoading] = useState(false);
-
-  const [clientes, setClientes] = useState<ClienteBase[]>([]);
-  const [novos, setNovos] = useState<ClienteBase[]>([]);
-
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-
-  const [search, setSearch] = useState("");
-  const [debounced, setDebounced] = useState("");
-
-  const [overlayOpen, setOverlayOpen] = useState(false);
-  const [overlayMode, setOverlayMode] = useState<"novo" | "edit" | "view">("novo");
-  const [active, setActive] = useState<ClienteBase | null>(null);
-
-  const [nome, setNome] = useState("");
-  const [chamadoComo, setChamadoComo] = useState("");
-  const [cpf, setCpf] = useState("");
-  const [birth, setBirth] = useState<string>("");
-  const [telefone, setTelefone] = useState("");
-  const [email, setEmail] = useState("");
-
-  const [extra, setExtra] = useState<CadastroExtra>(emptyExtra());
-  const [legacyObs, setLegacyObs] = useState("");
-
-  const [fotoFile, setFotoFile] = useState<File | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [cepLoading, setCepLoading] = useState(false);
-
-  // Demografia
-  const [demoLoading, setDemoLoading] = useState(false);
-  const [demoUF, setDemoUF] = useState<string>("");
-  const [demo, setDemo] = useState<DemoData | null>(null);
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 350);
-    return () => clearTimeout(t);
-  }, [search]);
-
-  useEffect(() => {
-    if (tab !== "cadastro") return;
-    load(1, debounced);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debounced, tab]);
-
-  useEffect(() => {
-    if (tab !== "demografia") return;
-    loadDemografia();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
-
-  // 🔎 BUSCA: nome OU cpf/cnpj OU grupo
-  async function getLeadIdsBySearch(term: string): Promise<string[] | null> {
-    const t = term.trim();
-    if (!t) return null;
-
-    const ids = new Set<string>();
-    const digits = onlyDigits(t);
-
-    const { data: leadsByName, error: e1 } = await supabase
-      .from("leads")
-      .select("id")
-      .ilike("nome", `%${t}%`)
-      .range(0, 300);
-    if (e1) throw e1;
-    (leadsByName || []).forEach((r: any) => ids.add(String(r.id)));
-
-    const { data: vendasByGrupo, error: e2 } = await supabase
-      .from("vendas")
-      .select("lead_id")
-      .ilike("grupo", `%${t}%`)
-      .not("lead_id", "is", null)
-      .range(0, 600);
-    if (e2) throw e2;
-    (vendasByGrupo || []).forEach((r: any) => r.lead_id && ids.add(String(r.lead_id)));
-
-    if (digits.length >= 5) {
-      const { data: vendasByCpf, error: e3 } = await supabase
-        .from("vendas")
-        .select("lead_id")
-        .ilike("cpf", `%${digits}%`)
-        .not("lead_id", "is", null)
-        .range(0, 600);
-      if (e3) throw e3;
-      (vendasByCpf || []).forEach((r: any) => r.lead_id && ids.add(String(r.lead_id)));
-    }
-
-    return Array.from(ids);
-  }
-
-  async function load(target = 1, term = "") {
-    setLoading(true);
-    try {
-      const leadIdsFilter = await getLeadIdsBySearch(term);
-
-      // 1) Leads
-      let leadsQ = supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true });
-
-      if (leadIdsFilter && leadIdsFilter.length) {
-        leadsQ = leadsQ.in("id", leadIdsFilter);
-      } else if (term) {
-        setClientes([]);
-        setNovos([]);
-        setTotal(0);
-        setPage(1);
-        return;
-      }
-
-      const { data: leads, error: eLeads } = await leadsQ.range(0, 5000);
-      if (eLeads) throw eLeads;
-
-      const leadIds = (leads || []).map((l: any) => String(l.id));
-      if (leadIds.length === 0) {
-        setClientes([]);
-        setNovos([]);
-        setTotal(0);
-        setPage(1);
-        return;
-      }
-
-      // 2) Vendas dos leads
-      const { data: vendas, error: eVend } = await supabase
-        .from("vendas")
-        .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at,vendedor_id,email,telefone,grupo")
-        .in("lead_id", leadIds)
-        .order("created_at", { ascending: false })
-        .range(0, 20000);
-      if (eVend) throw eVend;
-
-      type VendaLite = {
-        id: string;
-        created_at: string | null;
-        nasc?: string | null;
-        obs?: string | null;
-        cpf?: string | null;
-        hasCpfCnpj?: boolean;
-        vendedor_id?: string | null;
-        email?: string | null;
-        telefone?: string | null;
-        grupo?: string | null;
-      };
-
-      const vendasByLead = new Map<string, VendaLite[]>();
-      const vendorAuthIds = new Set<string>();
-
-      (vendas || []).forEach((v: any) => {
-        const lid = v.lead_id ? String(v.lead_id) : "";
-        if (!lid) return;
-
-        if (!vendasByLead.has(lid)) vendasByLead.set(lid, []);
-        const vendedorId = v.vendedor_id ? String(v.vendedor_id) : null;
-        if (vendedorId) vendorAuthIds.add(vendedorId);
-
-        vendasByLead.get(lid)!.push({
-          id: String(v.id),
-          created_at: v.created_at ?? null,
-          nasc: v.nascimento ?? null,
-          obs: v.descricao ?? null,
-          cpf: v.cpf ? onlyDigits(String(v.cpf)) : null,
-          hasCpfCnpj: v.cpf_cnpj != null,
-          vendedor_id: vendedorId,
-          email: v.email ?? null,
-          telefone: v.telefone ?? null,
-          grupo: v.grupo ?? null,
-        });
-      });
-
-      // 3) Users para nome do vendedor
-      const vendorList = Array.from(vendorAuthIds);
-      const usersByAuth = new Map<string, { nome: string }>();
-      if (vendorList.length) {
-        const { data: uRows, error: eU } = await supabase
-          .from("users")
-          .select("auth_user_id,nome")
-          .in("auth_user_id", vendorList);
-        if (eU) throw eU;
-        (uRows || []).forEach((u: any) => usersByAuth.set(String(u.auth_user_id), { nome: u.nome || "—" }));
-      }
-
-      // 4) Clientes confirmados + observacoes/endereço (para foto/sexo/UF/cidade)
-      const { data: cliRows, error: eCli } = await supabase
-        .from("clientes")
-        .select("id,lead_id,observacoes,uf,cidade")
-        .in("lead_id", leadIds);
-      if (eCli) throw eCli;
-
-      const confirmedByLead = new Map<
-        string,
-        { id: string; extra: CadastroExtra | null; uf?: string | null; cidade?: string | null }
-      >();
-      (cliRows || []).forEach((c: any) => {
-        const lid = c.lead_id ? String(c.lead_id) : "";
-        if (!lid) return;
-        const { extra } = safeParseExtraFromObservacoes(c.observacoes);
-        confirmedByLead.set(lid, { id: String(c.id), extra: extra || null, uf: c.uf ?? null, cidade: c.cidade ?? null });
-      });
-
-      // 5) Base 1 linha por lead
-      const base: ClienteBase[] = [];
-      for (const l of leads || []) {
-        const lid = String(l.id);
-        const arr = (vendasByLead.get(lid) || []).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-
-        const hasCpfAny = arr.some((x) => (x.cpf && x.cpf.length > 0) || x.hasCpfCnpj);
-        if (!hasCpfAny) continue;
-
-        const latest = arr[0];
-        const vendedorAuth = latest?.vendedor_id || null;
-        const vendedorNome = vendedorAuth ? usersByAuth.get(vendedorAuth)?.nome || "—" : "—";
-
-        const confirmed = confirmedByLead.get(lid) || null;
-        const extraFromClient = confirmed?.extra || null;
-
-        base.push({
-          id: lid,
-          lead_id: lid,
-          nome: l.nome || "(Sem nome)",
-          telefone: l.telefone || latest?.telefone || null,
-          email: l.email || latest?.email || null,
-          data_nascimento: latest?.nasc || null,
-          observacoes: latest?.obs || null,
-          cpf_dig: latest?.cpf || null,
-          vendas_ids: arr.map((x) => x.id),
-          vendedor_auth_user_id: vendedorAuth,
-          vendedor_nome: vendedorNome,
-          grupo: latest?.grupo || null,
-          cliente_row_id: confirmed?.id || null,
-
-          foto_url: extraFromClient?.foto_url || null,
-          sexo: (extraFromClient?.sexo as any) || "",
-          tipo: (extraFromClient?.tipo as any) || null,
-          perfil: (extraFromClient?.perfil as any) || null,
-          segmento_pf: (extraFromClient?.segmento_pf as any) || "",
-          segmento_pj: extraFromClient?.segmento_pj || null,
-
-          uf: confirmed?.uf ?? null,
-          cidade: confirmed?.cidade ?? null,
-        });
-      }
-
-      const confirmedList = base.filter((x) => !!x.cliente_row_id);
-      const pending = base.filter((x) => !x.cliente_row_id);
-
-      confirmedList.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
-      pending.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
-
-      const from = (target - 1) * PAGE;
-      const to = from + PAGE;
-
-      setClientes(confirmedList.slice(from, to));
-      setTotal(confirmedList.length);
-      setPage(target);
-
-      setNovos(pending);
-    } catch (e: any) {
-      alert(e.message || "Erro ao listar clientes.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function resetForm() {
-    setNome("");
-    setChamadoComo("");
-    setCpf("");
-    setBirth("");
-    setTelefone("");
-    setEmail("");
-    setExtra(emptyExtra());
-    setLegacyObs("");
-    setFotoFile(null);
-  }
-
-  async function openOverlay(mode: "novo" | "edit" | "view", c: ClienteBase) {
-    setOverlayMode(mode);
-    setActive(c);
-    resetForm();
-
-    setNome(c.nome || "");
-    setCpf(c.cpf_dig || "");
-    setBirth(c.data_nascimento || "");
-    setTelefone(c.telefone ? maskPhone(c.telefone) : "");
-    setEmail(c.email || "");
-
-    if (mode !== "novo") {
+    (async () => {
+      setLoadingUser(true);
       try {
-        setLoading(true);
-        const { data: row, error } = await supabase
-          .from("clientes")
-          .select("id,lead_id,nome,cpf,telefone,email,data_nascimento,observacoes,endereco_cep,logradouro,numero,bairro,cidade,uf")
-          .eq("lead_id", c.lead_id)
+        const { data: auth } = await supabase.auth.getUser();
+        const uid = auth?.user?.id ?? null;
+        setAuthUserId(uid);
+
+        if (!uid) {
+          setMe(null);
+          setUsers([]);
+          return;
+        }
+
+        const { data: meRow, error: meErr } = await supabase
+          .from("users")
+          .select("id, auth_user_id, nome, email, role, is_active")
+          .eq("auth_user_id", uid)
           .maybeSingle();
 
-        if (error) throw error;
+        if (meErr) throw meErr;
+        setMe((meRow as UserRow) ?? null);
 
-        if (row) {
-          setNome(row.nome || c.nome || "");
-          setCpf(row.cpf || c.cpf_dig || "");
-          setBirth(row.data_nascimento || c.data_nascimento || "");
-          setTelefone(row.telefone ? maskPhone(row.telefone) : c.telefone ? maskPhone(c.telefone) : "");
-          setEmail(row.email || c.email || "");
+        // lista de usuários só para admin (ou para selects)
+        const role = (meRow as any)?.role as Role | undefined;
+        if (role === "admin") {
+          const { data: allUsers, error: uErr } = await supabase
+            .from("users")
+            .select("id, auth_user_id, nome, email, role, is_active")
+            .eq("is_active", true)
+            .order("nome", { ascending: true });
 
-          const { extra: parsedExtra, legacyText } = safeParseExtraFromObservacoes(row.observacoes);
-          setLegacyObs(legacyText || "");
-
-          const baseExtra = emptyExtra();
-          const merged = parsedExtra ? { ...baseExtra, ...parsedExtra } : baseExtra;
-
-          merged.endereco_cep = row.endereco_cep || merged.endereco_cep;
-          merged.logradouro = row.logradouro || merged.logradouro;
-          merged.numero = row.numero || merged.numero;
-          merged.bairro = row.bairro || merged.bairro;
-          merged.cidade = row.cidade || merged.cidade;
-          merged.uf = row.uf || merged.uf;
-
-          setExtra(merged);
-          setChamadoComo(merged.chamado_como || "");
+          if (uErr) throw uErr;
+          setUsers((allUsers as UserRow[]) ?? []);
+        } else {
+          setUsers([]);
         }
-      } catch (e: any) {
-        alert(e?.message || "Não foi possível carregar o cadastro do cliente.");
+      } catch (e) {
+        console.error("Clientes: load user error", e);
       } finally {
-        setLoading(false);
+        setLoadingUser(false);
       }
-    }
+    })();
+  }, []);
 
-    setOverlayOpen(true);
-  }
-
-  function closeOverlay() {
-    setOverlayOpen(false);
-    setActive(null);
-    setSaving(false);
-    setCepLoading(false);
-  }
-
-  const readOnly = overlayMode === "view";
-
-  async function buscarCep() {
-    try {
-      const cep = onlyDigits(extra.endereco_cep);
-      if (cep.length !== 8) return alert("Digite um CEP válido (8 dígitos).");
-      setCepLoading(true);
-      const addr = await fetchCep(cep);
-      setExtra((s) => ({
-        ...s,
-        logradouro: addr.logradouro,
-        bairro: addr.bairro,
-        cidade: addr.cidade,
-        uf: addr.uf,
-      }));
-    } catch (e: any) {
-      alert(e?.message || "Não foi possível buscar o CEP.");
-    } finally {
-      setCepLoading(false);
-    }
-  }
-
-  async function uploadFotoIfAny(): Promise<string> {
-    if (!fotoFile) return extra.foto_url || "";
-    try {
-      const ext = (fotoFile.name.split(".").pop() || "jpg").toLowerCase();
-      const path = `clientes/${Date.now()}_${Math.random().toString(16).slice(2)}.${ext}`;
-
-      const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET_CLIENTES).upload(path, fotoFile, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-
-      if (upErr) {
-        console.error("Upload error:", upErr);
-        return extra.foto_url || "";
-      }
-
-      const { data } = supabase.storage.from(STORAGE_BUCKET_CLIENTES).getPublicUrl(path);
-      return data?.publicUrl || extra.foto_url || "";
-    } catch (e) {
-      console.error("Upload exception:", e);
-      return extra.foto_url || "";
-    }
-  }
-
-  function validateBeforeSave() {
-    if (!active) return "Cliente inválido.";
-    if (!onlyDigits(cpf)) return "Informe o CPF/CNPJ.";
-    if (!nome.trim()) return "Nome é obrigatório.";
-    if (!telefone.trim()) return "Telefone é obrigatório.";
-
-    if (!extra.tipo) return "Selecione o tipo (PF/PJ).";
-    if (!extra.perfil) return "Selecione o perfil do cliente.";
-
-    if (extra.tipo === "PF") {
-      if (!extra.segmento_pf) return "Selecione o segmento (PF).";
-    } else {
-      if (!extra.segmento_pj.trim()) return "Informe o segmento de atuação (PJ).";
-    }
-    return "";
-  }
-
-  async function confirmOrSave() {
-    const err = validateBeforeSave();
-    if (err) return alert(err);
-    if (!active) return;
-
-    try {
-      setSaving(true);
-
-      const latestVendaId = active.vendas_ids?.[0];
-
-      const fotoUrl = await uploadFotoIfAny();
-      const extraToSave: CadastroExtra = { ...extra, foto_url: fotoUrl, chamado_como: chamadoComo || "" };
-
-      const { error: eLead } = await supabase
-        .from("leads")
-        .update({
-          nome: nome.trim() || active.nome,
-          telefone: onlyDigits(telefone) || null,
-          email: email.trim() || null,
-        })
-        .eq("id", active.lead_id);
-      if (eLead) throw eLead;
-
-      if (latestVendaId) {
-        const { error: eVenda } = await supabase
-          .from("vendas")
-          .update({
-            nascimento: birth || null,
-            descricao: legacyObs?.trim() ? legacyObs.trim() : null,
-            cpf: onlyDigits(cpf) || null,
-            email: email.trim() || null,
-            telefone: onlyDigits(telefone) || null,
-          })
-          .eq("id", latestVendaId);
-        if (eVenda) throw eVenda;
-      }
-
-      const obsSerialized = serializeExtraToObservacoes(extraToSave, legacyObs?.trim() || "");
-
-      const payload: any = {
-        nome: nome.trim() || active.nome,
-        cpf: onlyDigits(cpf) || null,
-        telefone: onlyDigits(telefone) || null,
-        email: email.trim() || null,
-        data_nascimento: birth || null,
-        lead_id: active.lead_id,
-
-        endereco_cep: onlyDigits(extraToSave.endereco_cep) || null,
-        logradouro: extraToSave.logradouro?.trim() || null,
-        numero: extraToSave.numero?.trim() || null,
-        bairro: extraToSave.bairro?.trim() || null,
-        cidade: extraToSave.cidade?.trim() || null,
-        uf: extraToSave.uf?.trim() || null,
-
-        observacoes: obsSerialized,
-      };
-
-      const { data: existing, error: eFind } = await supabase.from("clientes").select("id").eq("lead_id", active.lead_id).maybeSingle();
-      if (eFind) throw eFind;
-
-      if (existing?.id) {
-        const { error: eUp } = await supabase.from("clientes").update(payload).eq("id", existing.id);
-        if (eUp) throw eUp;
-      } else {
-        const { data: auth } = await supabase.auth.getUser();
-        const createdBy = auth?.user?.id || null;
-        if (!createdBy) throw new Error("Não foi possível identificar o usuário logado (created_by).");
-
-        const { error: eIns } = await supabase.from("clientes").insert({ ...payload, created_by: createdBy } as any);
-        if (eIns) throw eIns;
-      }
-
-      closeOverlay();
-
-      await load(page, debounced);
-
-      // ✅ se estiver em demografia, atualiza (para novas UFs/ativos refletirem automaticamente)
-      if (tab === "demografia") {
-        await loadDemografia();
-      }
-
-      alert(overlayMode === "novo" ? "Cliente confirmado!" : "Cliente atualizado!");
-    } catch (e: any) {
-      alert(e?.message || "Não foi possível salvar.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / PAGE)), [total]);
-
-  function handleDownload(c: ClienteBase) {
-    alert(`Download do Perfil do Cliente (em breve)\n\nCliente: ${c.nome}\nLead: ${c.lead_id}`);
-  }
-
-  // ==========================
-  // DEMOGRAFIA (SSOT: vendas ativas -> lead_id -> clientes.uf)
-  // ==========================
+  // -------- load demografia base (ativas) + geo view --------
   async function loadDemografia() {
-    setDemoLoading(true);
+    if (!effectiveAuthSellerId) return;
+    setLoadingData(true);
+
     try {
-      // 1) Vendas ativas (SSOT)
-      // - venda ativa = codigo === "00"
-      const { data: activeVend, error: e1 } = await supabase
+      // 1) vendas ativas (codigo = '00') com RBAC
+      // vendedor_id no teu schema = auth_user_id do vendedor
+      let q = supabase
         .from("vendas")
-        .select("lead_id,produto")
-        .eq("codigo", "00")
-        .not("lead_id", "is", null)
-        .range(0, 20000);
-      if (e1) throw e1;
+        .select("id, lead_id, vendedor_id, codigo, produto, nascimento")
+        .eq("codigo", "00");
 
-      const vendasAtivas = (activeVend || []).filter((r: any) => r?.lead_id);
-      const activeLeadIds = Array.from(new Set(vendasAtivas.map((r: any) => String(r.lead_id)).filter(Boolean)));
+      // RBAC
+      if (!isAdmin) {
+        q = q.eq("vendedor_id", effectiveAuthSellerId);
+      } else {
+        // admin: se filtrou vendedor, aplica
+        if (effectiveAuthSellerId) q = q.eq("vendedor_id", effectiveAuthSellerId);
+      }
 
-      // base vazia
-      if (!activeLeadIds.length) {
-        const empty = createEmptyStats();
-        setDemo({ statsBrasil: empty, statsPorUF: {}, activeUFs: [] });
+      const { data: vAtivas, error: vErr } = await q.limit(2000);
+      if (vErr) throw vErr;
+
+      const vendas = (vAtivas as VendaRow[]) ?? [];
+      setVendasAtivas(vendas);
+
+      // 2) clientes vinculados (por lead_id) para pegar uf/cidade/nascimento/observacoes
+      const leadIds = Array.from(
+        new Set(vendas.map((v) => v.lead_id).filter((x): x is string => !!x))
+      );
+
+      if (leadIds.length === 0) {
+        setClientes([]);
+        setGeoRows([]);
+        setSelectedUF(null);
         return;
       }
 
-      // 2) Clientes (para UF + dados demográficos)
-      const { data: cli, error: e2 } = await supabase
+      const { data: cRows, error: cErr } = await supabase
         .from("clientes")
-        .select("lead_id,data_nascimento,uf,cidade,observacoes")
-        .in("lead_id", activeLeadIds)
-        .range(0, 20000);
-      if (e2) throw e2;
+        .select("id, nome, data_nascimento, cpf, telefone, email, cidade, uf, observacoes, lead_id")
+        .in("lead_id", leadIds)
+        .limit(5000);
 
-      // Mapa lead_id -> clienteRow
-      // (1 registro por lead; se vier duplicado, pega o primeiro)
-      const clienteByLead = new Map<
-        string,
-        { lead_id: string; uf: string; cidade: string; data_nascimento?: string | null; observacoes?: string | null }
-      >();
+      if (cErr) throw cErr;
+      setClientes((cRows as ClienteRow[]) ?? []);
 
-      (cli || []).forEach((r: any) => {
-        const lid = r?.lead_id ? String(r.lead_id) : "";
-        if (!lid) return;
-        if (clienteByLead.has(lid)) return; // mantém o primeiro
-        clienteByLead.set(lid, {
-          lead_id: lid,
-          uf: normalizeUF(r.uf),
-          cidade: String(r.cidade || "").trim(),
-          data_nascimento: r.data_nascimento ?? null,
-          observacoes: r.observacoes ?? null,
-        });
-      });
+      // 3) view geo (top cidades) — já vem pronta no teu banco
+      // OBS: se a view não estiver filtrando por vendedor, ela será "Brasil total".
+      // Aqui vamos usar só como “Top cidades Brasil”, como está no teu print.
+      const { data: geo, error: gErr } = await supabase
+        .from("v_clientes_geo")
+        .select("uf, cidade, total")
+        .order("total", { ascending: false })
+        .limit(30);
 
-      // 3) Inicializa stats
-      const statsBrasil = cloneStatsBase();
-      const statsPorUF: Record<string, DemoStats> = {};
-
-      // 4) Conta "Clientes ativos" por UF = leads únicos com venda ativa e uf preenchido
-      // e também agrega: idade/renda/sexo/tipo/perfil/seg/origem com base no cliente
-      const activeUFsSet = new Set<string>();
-
-      for (const lid of activeLeadIds) {
-        const c = clienteByLead.get(lid);
-        const uf = c?.uf ? normalizeUF(c.uf) : "";
-        const cidade = c?.cidade ? String(c.cidade).trim() : "";
-
-        // stat alvo: UF (se houver) e Brasil
-        let ufStats: DemoStats | null = null;
-        if (uf) {
-          if (!statsPorUF[uf]) statsPorUF[uf] = cloneStatsBase();
-          ufStats = statsPorUF[uf];
-          activeUFsSet.add(uf);
-        }
-
-        // activeCount é por lead único
-        statsBrasil.activeCount += 1;
-        if (ufStats) ufStats.activeCount += 1;
-
-        // idade
-        const age = calcAge(c?.data_nascimento ?? null);
-        if (age != null) {
-          statsBrasil.ageList.push(age);
-          if (ufStats) ufStats.ageList.push(age);
-        }
-
-        // cidade (top cidades)
-        if (cidade) {
-          inc(statsBrasil.byCity, uf ? `${cidade} • ${uf}` : cidade, 1); // Brasil: mostra cidade + UF quando tiver
-          if (ufStats) inc(ufStats.byCity, cidade, 1);
-        }
-
-        // extra do cadastro
-        const { extra } = safeParseExtraFromObservacoes(c?.observacoes ?? null);
-        if (extra) {
-          if (extra.sexo) {
-            inc(statsBrasil.sexoCount, extra.sexo, 1);
-            if (ufStats) inc(ufStats.sexoCount, extra.sexo, 1);
-          }
-          if (extra.tipo) {
-            inc(statsBrasil.tipoCount, extra.tipo, 1);
-            if (ufStats) inc(ufStats.tipoCount, extra.tipo, 1);
-          }
-          if (extra.perfil) {
-            inc(statsBrasil.perfilCount, extra.perfil, 1);
-            if (ufStats) inc(ufStats.perfilCount, extra.perfil, 1);
-          }
-
-          if (extra.tipo === "PF" && extra.segmento_pf) {
-            inc(statsBrasil.segPFCount, extra.segmento_pf, 1);
-            if (ufStats) inc(ufStats.segPFCount, extra.segmento_pf, 1);
-          }
-          if (extra.tipo === "PJ" && extra.segmento_pj) {
-            inc(statsBrasil.segPJCount, extra.segmento_pj, 1);
-            if (ufStats) inc(ufStats.segPJCount, extra.segmento_pj, 1);
-          }
-
-          if (extra.como_conheceu) {
-            inc(statsBrasil.origemCount, extra.como_conheceu, 1);
-            if (ufStats) inc(ufStats.origemCount, extra.como_conheceu, 1);
-          }
-
-          const renda = parseMoneyToNumber(extra.renda_faturamento);
-          if (renda != null) {
-            statsBrasil.rendaList.push(renda);
-            if (ufStats) ufStats.rendaList.push(renda);
-          }
-        }
+      if (gErr) {
+        console.warn("v_clientes_geo não disponível / erro:", gErr);
+        setGeoRows([]);
+      } else {
+        setGeoRows((geo as VClientesGeo[]) ?? []);
       }
 
-      // 5) produtoCount (apenas vendas ativas) cruzado com clientes.uf
-      // Aqui é por VENDA (não por lead), então reflete “divisão por segmento/produto” das vendas ativas na UF.
-      (vendasAtivas || []).forEach((v: any) => {
-        const lid = v?.lead_id ? String(v.lead_id) : "";
-        if (!lid) return;
-        const uf = normalizeUF(clienteByLead.get(lid)?.uf || "");
-        const produto = String(v?.produto || "—").trim() || "—";
-
-        // Brasil
-        inc(statsBrasil.produtoCount, produto, 1);
-
-        // UF (somente se tiver UF)
-        if (uf) {
-          if (!statsPorUF[uf]) statsPorUF[uf] = cloneStatsBase();
-          inc(statsPorUF[uf].produtoCount, produto, 1);
-        }
+      // Se UF selecionada não existir mais no novo filtro, limpa
+      setSelectedUF((prev) => {
+        if (!prev) return prev;
+        const stillHas = (cRows as ClienteRow[]).some((c) => normalizeUF(c.uf) === prev);
+        return stillHas ? prev : null;
       });
-
-      // 6) Final
-      const activeUFs = Array.from(activeUFsSet).sort((a, b) => a.localeCompare(b));
-      setDemo({ statsBrasil, statsPorUF, activeUFs });
-    } catch (e: any) {
-      alert(e?.message || "Não foi possível carregar a demografia.");
+    } catch (e) {
+      console.error("Clientes: load demografia error", e);
     } finally {
-      setDemoLoading(false);
+      setLoadingData(false);
     }
   }
 
-  // UFs tingidas (SSOT)
-  const demoUFsActive = useMemo(() => {
-    const s = new Set<string>();
-    (demo?.activeUFs || []).forEach((uf) => {
-      const x = normalizeUF(uf);
-      if (x) s.add(x);
-    });
-    return s;
-  }, [demo]);
+  useEffect(() => {
+    if (!me) return;
+    loadDemografia();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, selectedSeller]);
 
-  // stats selecionado (UF ou Brasil)
-  const currentStats = useMemo((): DemoStats => {
-    if (!demo) return createEmptyStats();
-    const uf = normalizeUF(demoUF);
-    if (uf && demo.statsPorUF?.[uf]) return demo.statsPorUF[uf];
-    return demo.statsBrasil;
-  }, [demo, demoUF]);
+  // -------- derived: index clientes por lead_id (pra casar com venda) --------
+  const clienteByLeadId = useMemo(() => {
+    const m = new Map<string, ClienteRow>();
+    for (const c of clientes) {
+      if (!c.lead_id) continue;
+      // se houver duplicado, mantém o primeiro (ou você pode trocar por regra "mais completo")
+      if (!m.has(c.lead_id)) m.set(c.lead_id, c);
+    }
+    return m;
+  }, [clientes]);
 
-  const demoStats = useMemo(() => {
-    const idadeMedia = currentStats.ageList.length ? Math.round(avg(currentStats.ageList) || 0) || null : null;
-    const idadeMediana = currentStats.ageList.length ? Math.round(median(currentStats.ageList) || 0) || null : null;
-    const rendaMedia = currentStats.rendaList.length ? avg(currentStats.rendaList) : null;
+  // -------- active UF set based on vendas ativas + clientes.uf --------
+  const activeUFs = useMemo(() => {
+    const set = new Set<string>();
+    for (const v of vendasAtivas) {
+      const lid = v.lead_id;
+      if (!lid) continue;
+      const c = clienteByLeadId.get(lid);
+      const uf = normalizeUF(c?.uf);
+      if (uf) set.add(uf);
+    }
+    return Array.from(set).sort();
+  }, [vendasAtivas, clienteByLeadId]);
+
+  // -------- stats builder (Brasil ou UF selecionada) --------
+  const demo = useMemo(() => {
+    // filtra vendas por UF (quando selecionado)
+    const filteredVendas = selectedUF
+      ? vendasAtivas.filter((v) => {
+          const c = v.lead_id ? clienteByLeadId.get(v.lead_id) : null;
+          return normalizeUF(c?.uf) === selectedUF;
+        })
+      : vendasAtivas;
+
+    // clientes únicos (por lead_id)
+    const uniqueLeadIds = Array.from(
+      new Set(filteredVendas.map((v) => v.lead_id).filter((x): x is string => !!x))
+    );
+
+    // idade média
+    const ages: number[] = [];
+    // renda estimada
+    const rendas: number[] = [];
+    // produtos
+    const produtos: string[] = [];
+    // cidades
+    const cidades: string[] = [];
+
+    for (const lid of uniqueLeadIds) {
+      const c = clienteByLeadId.get(lid);
+      const age =
+        calcAgeFromISODate(c?.data_nascimento ?? null) ??
+        // fallback: se cliente não tiver, tenta achar alguma venda com nascimento
+        (() => {
+          const vv = filteredVendas.find((x) => x.lead_id === lid);
+          return calcAgeFromISODate(vv?.nascimento ?? null);
+        })();
+
+      if (typeof age === "number") ages.push(age);
+
+      const r = parseRendaFromText(c?.observacoes ?? null);
+      if (typeof r === "number") rendas.push(r);
+
+      if (c?.cidade) cidades.push(c.cidade);
+    }
+
+    for (const v of filteredVendas) {
+      if (v.produto) produtos.push(v.produto);
+    }
+
+    const idadeMedia = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : null;
+    const rendaMedia = rendas.length ? Math.round(rendas.reduce((a, b) => a + b, 0) / rendas.length) : null;
+
+    // divisão por produto (vendas)
+    const prodCount = new Map<string, number>();
+    for (const p of produtos.map((x) => x.trim()).filter(Boolean)) {
+      prodCount.set(p, (prodCount.get(p) ?? 0) + 1);
+    }
+    const produtosSorted = Array.from(prodCount.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => ({ produto: k, total: v }));
+
+    // Top cidades (pelos clientes ativos filtrados)
+    const cityCount = new Map<string, number>();
+    for (const c of cidades.map((x) => x.trim()).filter(Boolean)) {
+      cityCount.set(c, (cityCount.get(c) ?? 0) + 1);
+    }
+    const topCidadesUF = Array.from(cityCount.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([cidade, total]) => ({ cidade, total }));
+
+    // Persona simples (auto) — sem inventar demais
+    const produtoTop = produtosSorted[0]?.produto ?? null;
+    const persona = `Base ativa com ${uniqueLeadIds.length} clientes${selectedUF ? ` em ${selectedUF}` : ""}. ${
+      produtoTop ? `Produto mais comum: ${produtoTop}.` : ""
+    } Idade média ${idadeMedia ?? "—"} anos.`;
 
     return {
+      totalClientes: uniqueLeadIds.length,
       idadeMedia,
-      idadeMediana,
       rendaMedia,
+      persona,
+      produtosSorted,
+      topCidadesUF,
+      rendaBaseSize: rendas.length,
     };
-  }, [currentStats]);
+  }, [selectedUF, vendasAtivas, clienteByLeadId]);
 
-  const topCities = useMemo(() => {
-    const entries = Object.entries(currentStats.byCity || {});
-    entries.sort((a, b) => b[1] - a[1]);
-    return entries.slice(0, 12).map(([cidade, count]) => ({ cidade, count }));
-  }, [currentStats]);
+  // -------- map integration: attach to iframe window --------
+  function getMapWindow() {
+    return iframeRef.current?.contentWindow ?? null;
+  }
+  function getMapAPI(): ConsulmaxMapAPI | null {
+    const w = getMapWindow() as any;
+    return (w?.consulmaxMap as ConsulmaxMapAPI) ?? null;
+  }
 
-  // ========= RENDER =========
+  // on iframe load: mark ready + attach listener
+  function handleMapLoad() {
+    const w = getMapWindow();
+    if (!w) return;
+
+    // escuta seleção do mapa (dentro do iframe)
+    const onSelected = (ev: any) => {
+      const uf = normalizeUF(ev?.detail?.uf ?? null);
+      setSelectedUF(uf);
+    };
+
+    try {
+      w.addEventListener("consulmax:uf-selected", onSelected as any);
+      setMapReady(true);
+    } catch (e) {
+      console.warn("Map iframe listener error", e);
+    }
+
+    // cleanup quando trocar iframe (raro)
+    return () => {
+      try {
+        w.removeEventListener("consulmax:uf-selected", onSelected as any);
+      } catch {}
+    };
+  }
+
+  // push active UFs to map whenever data changes
+  useEffect(() => {
+    if (!mapReady) return;
+    const api = getMapAPI();
+    if (!api) return;
+    try {
+      api.setActive(activeUFs);
+    } catch (e) {
+      console.warn("consulmaxMap.setActive error", e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapReady, activeUFs.join("|")]);
+
+  // keep selected UF synced both ways
+  useEffect(() => {
+    if (!mapReady) return;
+    const api = getMapAPI();
+    if (!api) return;
+    try {
+      api.setSelected(selectedUF);
+    } catch (e) {
+      console.warn("consulmaxMap.setSelected error", e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapReady, selectedUF]);
+
+  // -------- UI lists (Top cidades Brasil via view) --------
+  const topCidadesBrasil = useMemo(() => {
+    // No print da sua view: uf, cidade, total
+    // Vamos mostrar top 6 no card Brasil
+    const rows = geoRows
+      .map((r) => ({
+        uf: normalizeUF(r.uf),
+        cidade: r.cidade?.trim() ?? null,
+        total: typeof r.total === "number" ? r.total : 0,
+      }))
+      .filter((r) => r.uf && r.cidade && r.total > 0)
+      .slice(0, 6);
+
+    return rows as { uf: string; cidade: string; total: number }[];
+  }, [geoRows]);
+
+  const scopeLabel = selectedUF ? selectedUF : "Brasil";
+
+  // -------- render --------
+  const loading = loadingUser || loadingData;
+
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl bg-white p-4 shadow">
-        <Tabs value={tab} onValueChange={(v: any) => setTab(v)}>
-          <TabsList className="rounded-full bg-slate-100 p-1">
-            <TabsTrigger value="cadastro" className="rounded-full data-[state=active]:bg-white data-[state=active]:shadow">
-              Cadastro
-            </TabsTrigger>
-            <TabsTrigger value="demografia" className="rounded-full data-[state=active]:bg-white data-[state=active]:shadow">
-              Demografia
-            </TabsTrigger>
-          </TabsList>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
+        <TabsList>
+          <TabsTrigger value="cadastro">Cadastro</TabsTrigger>
+          <TabsTrigger value="demografia">Demografia</TabsTrigger>
+        </TabsList>
 
-          <TabsContent value="cadastro" className="mt-4 space-y-4">
-            {/* NOVOS */}
-            <div className="rounded-2xl bg-white p-4 border shadow-sm">
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="m-0 font-semibold">
-                  Novos <span className="text-slate-500 text-sm">({novos.length})</span>
-                </h3>
+        {/* CADASTRO (mantém a aba — aqui você pode plugar seu conteúdo existente) */}
+        <TabsContent value="cadastro">
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle>Clientes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm text-muted-foreground">
+                Aba de cadastro não foi alterada aqui. (Só focamos na Demografia/Mapa)
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-              {novos.length === 0 ? (
-                <div className="text-sm text-slate-500">Nenhum novo cliente no momento.</div>
-              ) : (
-                <div className="rounded-xl border overflow-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50 sticky top-0">
-                      <tr>
-                        <th className="p-2 text-left">Nome</th>
-                        <th className="p-2 text-left">Telefone</th>
-                        <th className="p-2 text-left">Vendedor</th>
-                        <th className="p-2 text-right">Ação</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {novos.map((c, idx) => {
-                        const phone = c.telefone ? maskPhone(c.telefone) : "—";
-                        return (
-                          <tr key={c.lead_id} className={idx % 2 ? "bg-slate-50/60" : "bg-white"}>
-                            <td className="p-2">
-                              <div className="flex items-center gap-3">
-                                <div className="avatar">
-                                  {c.foto_url ? (
-                                    <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" />
-                                  ) : (
-                                    <span className="avatar-ini">{initials(c.nome)}</span>
-                                  )}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="font-medium truncate">{c.nome}</div>
-                                  <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="p-2">{phone}</td>
-                            <td className="p-2">{c.vendedor_nome || "—"}</td>
-                            <td className="p-2 text-right">
-                              <button className="btn-primary" onClick={() => openOverlay("novo", c)} disabled={loading}>
-                                Preencher Cadastro
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+        {/* DEMOGRAFIA */}
+        <TabsContent value="demografia">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="text-sm text-muted-foreground">Demografia (Clientes Ativos)</div>
+              <div className="text-lg font-semibold">Resumo e mapa por UF</div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <div className="min-w-[220px]">
+                  <Select value={selectedSeller} onValueChange={setSelectedSeller}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Vendedor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__me__">Meu painel</SelectItem>
+                      {users
+                        .filter((u) => u.role !== "viewer")
+                        .map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.nome ?? u.email ?? u.id}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
+
+              <Button onClick={loadDemografia} disabled={loading}>
+                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Atualizar
+              </Button>
+            </div>
+          </div>
+
+          {/* GRID PRINCIPAL */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[420px_1fr]">
+            {/* COLUNA ESQUERDA */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                <Card className="glass-card">
+                  <CardContent className="pt-6">
+                    <div className="text-xs text-muted-foreground">Clientes ativos ({scopeLabel})</div>
+                    <div className="mt-1 text-2xl font-semibold">{demo.totalClientes}</div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Base: vendas com código <b>00</b> cruzadas com clientes.uf
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-card">
+                  <CardContent className="pt-6">
+                    <div className="text-xs text-muted-foreground">Idade média</div>
+                    <div className="mt-1 text-2xl font-semibold">{demo.idadeMedia ?? "—"}</div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {demo.idadeMedia ? `Média calculada por data de nascimento` : "Sem base suficiente"}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-card">
+                  <CardContent className="pt-6">
+                    <div className="text-xs text-muted-foreground">Renda média (estimada)</div>
+                    <div className="mt-1 text-2xl font-semibold">
+                      {typeof demo.rendaMedia === "number" ? humanMoneyBR(demo.rendaMedia) : "—"}
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Base: campo texto quando parsável ({demo.rendaBaseSize})
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-card">
+                  <CardContent className="pt-6">
+                    <div className="text-xs text-muted-foreground">Filtro UF</div>
+                    <div className="mt-1 text-base font-semibold">{selectedUF ?? "—"}</div>
+                    <div className="mt-2 text-xs text-muted-foreground">Clique no mapa para selecionar.</div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* TOP CIDADES */}
+              <Card className="glass-card">
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Top cidades ({selectedUF ? selectedUF : "Brasil"})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {(selectedUF ? demo.topCidadesUF : topCidadesBrasil).length === 0 ? (
+                    <div className="text-sm text-muted-foreground">Sem dados suficientes.</div>
+                  ) : (
+                    (selectedUF ? demo.topCidadesUF : topCidadesBrasil).map((r: any) => (
+                      <div key={`${r.cidade}-${r.uf ?? ""}`} className="flex items-center justify-between rounded-md border px-3 py-2">
+                        <div className="text-sm">
+                          {r.cidade}{" "}
+                          <span className="text-xs text-muted-foreground">
+                            • {selectedUF ? selectedUF : r.uf}
+                          </span>
+                        </div>
+                        <div className="text-sm font-semibold">{r.total}</div>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* PERSONA */}
+              <Card className="glass-card">
+                <CardHeader>
+                  <CardTitle className="text-base">Persona (auto) • {scopeLabel}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-sm text-muted-foreground">{demo.persona}</div>
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    *A qualidade depende do preenchimento de cadastro (idade/renda/observações).
+                  </div>
+                </CardContent>
+              </Card>
             </div>
 
-            {/* LISTA */}
-            <div className="rounded-2xl bg-white p-4 border shadow-sm">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h3 className="m-0 font-semibold">Lista de Clientes</h3>
-
-                <div className="flex items-center gap-2 flex-wrap justify-end">
-                  <div className="searchWrap">
-                    <span className="searchIcon">
-                      <Search className="h-4 w-4" />
-                    </span>
-                    <input
-                      className="searchInput"
-                      placeholder="Buscar por nome, CPF/CNPJ ou grupo…"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                    />
+            {/* COLUNA DIREITA: MAPA + PAINEL LATERAL */}
+            <div className="space-y-4">
+              <Card className="glass-card">
+                <CardHeader className="flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">Mapa do Brasil (UF)</CardTitle>
+                    <div className="text-xs text-muted-foreground">Clique no estado para filtrar</div>
                   </div>
 
-                  <small className="text-slate-500">
-                    Mostrando {clientes.length ? (page - 1) * PAGE + 1 : 0}-{Math.min(page * PAGE, total)} de {total}
-                  </small>
-                </div>
-              </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() => setSelectedUF(null)}
+                      disabled={!selectedUF}
+                    >
+                      Limpar UF
+                    </Button>
+                  </div>
+                </CardHeader>
 
-              <div className="rounded-xl border overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 sticky top-0">
-                    <tr>
-                      <th className="p-2 text-left">Nome</th>
-                      <th className="p-2 text-left">Telefone</th>
-                      <th className="p-2 text-left">E-mail</th>
-                      <th className="p-2 text-left">Nascimento</th>
-                      <th className="p-2 text-left">Vendedor</th>
-                      <th className="p-2 text-center">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {loading && (
-                      <tr>
-                        <td className="p-4 text-slate-500" colSpan={6}>
-                          Carregando…
-                        </td>
-                      </tr>
-                    )}
-
-                    {!loading && clientes.length === 0 && (
-                      <tr>
-                        <td className="p-4 text-slate-500" colSpan={6}>
-                          Nenhum cliente encontrado.
-                        </td>
-                      </tr>
-                    )}
-
-                    {clientes.map((c, i) => {
-                      const phone = c.telefone ? maskPhone(c.telefone) : "";
-                      const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
-                      const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${
-                        c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""
-                      }`;
-
-                      return (
-                        <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
-                          <td className="p-2">
-                            <div className="flex items-center gap-3">
-                              <div className="avatar">
-                                {c.foto_url ? (
-                                  <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" />
-                                ) : (
-                                  <span className="avatar-ini">{initials(c.nome)}</span>
-                                )}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-medium truncate">{c.nome}</div>
-                                <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="p-2">
-                            <div className="flex items-center gap-2">
-                              {phone || "—"}
-                              {wa && (
-                                <a
-                                  href={wa}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title="Abrir WhatsApp"
-                                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs hover:bg-green-50"
-                                >
-                                  <Send className="h-3.5 w-3.5" /> WhatsApp
-                                </a>
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-2">{c.email || "—"}</td>
-                          <td className="p-2">{formatBRDate(c.data_nascimento)}</td>
-                          <td className="p-2">{c.vendedor_nome || "—"}</td>
-                          <td className="p-2">
-                            <div className="flex items-center justify-center gap-2">
-                              <button className="icon-btn" title="Editar" onClick={() => openOverlay("edit", c)} disabled={loading}>
-                                <Pencil className="h-4 w-4" />
-                              </button>
-
-                              <button className="icon-btn" title="Visualizar" onClick={() => openOverlay("view", c)} disabled={loading}>
-                                <Eye className="h-4 w-4" />
-                              </button>
-
-                              <a className="icon-btn" title="+ Evento na Agenda" href={agendaHref}>
-                                <CalendarPlus className="h-4 w-4" />
-                              </a>
-
-                              <button className="icon-btn" title="Download" onClick={() => handleDownload(c)} disabled={loading}>
-                                <Download className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button className="btn" disabled={page <= 1 || loading} onClick={() => load(page - 1, debounced)}>
-                  ‹ Anterior
-                </button>
-                <span className="text-xs text-slate-600">
-                  Página {page} de {totalPages}
-                </span>
-                <button className="btn" disabled={page >= totalPages || loading} onClick={() => load(page + 1, debounced)}>
-                  Próxima ›
-                </button>
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* ================= DEMOGRAFIA ================= */}
-          <TabsContent value="demografia" className="mt-4 space-y-4">
-            <div className="rounded-2xl bg-white p-4 border shadow-sm">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-sm text-slate-600">Demografia (Clientes Ativos)</div>
-                  <div className="font-semibold">Resumo e mapa por UF</div>
-                </div>
-                <button className="btn" onClick={loadDemografia} disabled={demoLoading}>
-                  {demoLoading ? "Atualizando..." : "Atualizar"}
-                </button>
-              </div>
-
-              {demoLoading ? (
-                <div className="mt-4 text-sm text-slate-600 flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Carregando demografia…
-                </div>
-              ) : !demo ? (
-                <div className="mt-4 text-sm text-slate-600">Sem dados.</div>
-              ) : (
-                <div className="mt-4 grid grid-cols-1 xl:grid-cols-12 gap-4">
-                  {/* KPIs */}
-                  <div className="xl:col-span-5 space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-2xl border p-4">
-                        <div className="text-xs text-slate-600">Clientes ativos {demoUF ? `(${normalizeUF(demoUF)})` : "(Brasil)"}</div>
-                        <div className="text-2xl font-extrabold">{currentStats.activeCount}</div>
-                        <div className="text-xs text-slate-500 mt-1">Base: vendas com código 00 cruzadas com clientes.uf.</div>
+                <CardContent>
+                  {/* grid: mapa + painel (lado a lado em desktop, empilha no mobile) */}
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
+                    {/* MAPA */}
+                    <div className="rounded-xl border bg-white/50 overflow-hidden">
+                      <div className="h-[280px] sm:h-[320px] w-full">
+                        <iframe
+                          ref={iframeRef}
+                          title="Mapa por UF • Consulmax"
+                          src="/maps/br-estados.html"
+                          className="h-full w-full"
+                          onLoad={handleMapLoad as any}
+                        />
                       </div>
-                      <div className="rounded-2xl border p-4">
-                        <div className="text-xs text-slate-600">Idade média</div>
-                        <div className="text-2xl font-extrabold">{demoStats.idadeMedia ?? "—"}</div>
-                        <div className="text-xs text-slate-500 mt-1">Mediana: {demoStats.idadeMediana ?? "—"}</div>
-                      </div>
-                      <div className="rounded-2xl border p-4">
-                        <div className="text-xs text-slate-600">Renda média (estimada)</div>
-                        <div className="text-2xl font-extrabold">
-                          {demoStats.rendaMedia != null
-                            ? `R$ ${demoStats.rendaMedia.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`
-                            : "—"}
-                        </div>
-                        <div className="text-xs text-slate-500 mt-1">Base: campo texto quando parseável.</div>
-                      </div>
-                      <div className="rounded-2xl border p-4">
-                        <div className="text-xs text-slate-600">Filtro UF</div>
-                        <div className="text-2xl font-extrabold">{normalizeUF(demoUF) || "—"}</div>
-                        <div className="text-xs text-slate-500 mt-1">Clique no mapa para selecionar.</div>
+                      <div className="px-3 py-2 text-xs text-muted-foreground">
+                        Se o mapa não aparecer, confirme o arquivo em <code>public/maps/br-estados.html</code>
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border p-4">
-                      <div className="font-semibold mb-2">Top cidades {demoUF ? `(${normalizeUF(demoUF)})` : "(Brasil)"}</div>
-                      <div className="space-y-2">
-                        {topCities.length === 0 ? (
-                          <div className="text-sm text-slate-600">Sem dados de cidade/UF preenchidos.</div>
+                    {/* PAINEL UF */}
+                    <div className="rounded-xl border bg-white/50">
+                      <div className="px-4 py-3 border-b">
+                        <div className="text-xs text-muted-foreground">Demografia do estado</div>
+                        <div className="text-base font-semibold">{selectedUF ? selectedUF : "Selecione uma UF"}</div>
+                      </div>
+
+                      <div className="p-4 space-y-3">
+                        {!selectedUF ? (
+                          <div className="text-sm text-muted-foreground">
+                            Clique em um estado no mapa para ver os dados ao lado.
+                          </div>
                         ) : (
-                          topCities.map((c) => (
-                            <div key={`${c.cidade}`} className="flex items-center justify-between rounded-xl bg-slate-50 p-2">
-                              <div className="text-sm">
-                                <span className="font-semibold">{c.cidade}</span>
+                          <>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="rounded-lg border px-3 py-2">
+                                <div className="text-xs text-muted-foreground">Clientes ativos</div>
+                                <div className="text-lg font-semibold">{demo.totalClientes}</div>
                               </div>
-                              <div className="text-sm font-extrabold">{c.count}</div>
+                              <div className="rounded-lg border px-3 py-2">
+                                <div className="text-xs text-muted-foreground">Idade média</div>
+                                <div className="text-lg font-semibold">{demo.idadeMedia ?? "—"}</div>
+                              </div>
+                              <div className="rounded-lg border px-3 py-2 col-span-2">
+                                <div className="text-xs text-muted-foreground">Renda média (estimada)</div>
+                                <div className="text-lg font-semibold">
+                                  {typeof demo.rendaMedia === "number" ? humanMoneyBR(demo.rendaMedia) : "—"}
+                                </div>
+                                <div className="text-[11px] text-muted-foreground mt-1">
+                                  Base parsável: {demo.rendaBaseSize}
+                                </div>
+                              </div>
                             </div>
-                          ))
+
+                            <div className="rounded-lg border px-3 py-2">
+                              <div className="text-xs text-muted-foreground">Persona</div>
+                              <div className="text-sm text-muted-foreground mt-1">{demo.persona}</div>
+                            </div>
+
+                            <div className="rounded-lg border px-3 py-2">
+                              <div className="text-xs text-muted-foreground">Divisão por produto (vendas ativas)</div>
+                              <div className="mt-2 space-y-2">
+                                {demo.produtosSorted.length === 0 ? (
+                                  <div className="text-sm text-muted-foreground">Sem vendas com produto identificado.</div>
+                                ) : (
+                                  demo.produtosSorted.slice(0, 8).map((p) => (
+                                    <div key={p.produto} className="flex items-center justify-between">
+                                      <div className="text-sm">{p.produto}</div>
+                                      <div className="text-sm font-semibold">{p.total}</div>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </>
                         )}
                       </div>
                     </div>
+                  </div>
+                </CardContent>
+              </Card>
 
-                    <div className="rounded-2xl border p-4">
-                      <div className="font-semibold mb-2">Persona (auto) {demoUF ? `• ${normalizeUF(demoUF)}` : "• Brasil"}</div>
-                      <div className="text-sm text-slate-700 leading-relaxed">
-                        Base ativa com <b>{currentStats.activeCount}</b> clientes. Predomina{" "}
-                        <b>{topKey(currentStats.tipoCount)}</b> e o perfil mais comum é{" "}
-                        <b>{topKey(currentStats.perfilCount)}</b>. Idade média{" "}
-                        <b>{demoStats.idadeMedia ?? "—"}</b> anos. Segmento PF mais comum:{" "}
-                        <b>{topKey(currentStats.segPFCount)}</b>.
-                      </div>
-                      <div className="text-xs text-slate-500 mt-2">*Sexo depende do preenchimento no cadastro.</div>
+              {/* DISTRIBUIÇÕES RÁPIDAS (mantive a ideia do teu print, mas com produto) */}
+              <Card className="glass-card">
+                <CardHeader>
+                  <CardTitle className="text-base">Distribuições rápidas • {scopeLabel}</CardTitle>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="rounded-xl border p-4">
+                    <div className="text-xs text-muted-foreground mb-2">Produtos (vendas ativas)</div>
+                    <div className="space-y-2">
+                      {demo.produtosSorted.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">Sem dados.</div>
+                      ) : (
+                        demo.produtosSorted.slice(0, 10).map((p) => (
+                          <div key={p.produto} className="flex items-center justify-between">
+                            <div className="text-sm">{p.produto}</div>
+                            <div className="text-sm font-semibold">{p.total}</div>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
 
-                  {/* MAPA REAL */}
-                  <div className="xl:col-span-7 space-y-4">
-                    <BrazilImageMap
-                      src={MAPA_BR_SRC}
-                      activeUFs={demoUFsActive}
-                      selectedUF={normalizeUF(demoUF)}
-                      onSelectUF={(uf) => setDemoUF(normalizeUF(uf))}
-                    />
-
-                    <div className="rounded-2xl border p-4 bg-white">
-                      <div className="font-semibold mb-2">Distribuições rápidas {demoUF ? `• ${normalizeUF(demoUF)}` : "• Brasil"}</div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="rounded-2xl border p-3 bg-slate-50">
-                          <div className="text-xs text-slate-600 mb-2">Sexo (contagem)</div>
-                          {Object.keys(currentStats.sexoCount).length === 0 ? (
-                            <div className="text-sm text-slate-600">Sem preenchimento.</div>
-                          ) : (
-                            Object.entries(currentStats.sexoCount)
-                              .sort((a, b) => b[1] - a[1])
-                              .map(([k, v]) => (
-                                <div key={k} className="flex items-center justify-between text-sm py-1">
-                                  <span>{k === "M" ? "Masculino" : k === "F" ? "Feminino" : "Outro"}</span>
-                                  <b>{v}</b>
-                                </div>
-                              ))
-                          )}
-                        </div>
-
-                        <div className="rounded-2xl border p-3 bg-slate-50">
-                          <div className="text-xs text-slate-600 mb-2">Produtos (vendas ativas)</div>
-                          {Object.keys(currentStats.produtoCount).length === 0 ? (
-                            <div className="text-sm text-slate-600">Sem dados.</div>
-                          ) : (
-                            Object.entries(currentStats.produtoCount)
-                              .sort((a, b) => b[1] - a[1])
-                              .slice(0, 8)
-                              .map(([k, v]) => (
-                                <div key={k} className="flex items-center justify-between text-sm py-1">
-                                  <span className="truncate">{k}</span>
-                                  <b>{v}</b>
-                                </div>
-                              ))
-                          )}
-                        </div>
-
-                        <div className="rounded-2xl border p-3 bg-slate-50 md:col-span-2">
-                          <div className="text-xs text-slate-600 mb-2">Como conheceu (Top)</div>
-                          {Object.keys(currentStats.origemCount).length === 0 ? (
-                            <div className="text-sm text-slate-600">Sem preenchimento.</div>
-                          ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              {Object.entries(currentStats.origemCount)
-                                .sort((a, b) => b[1] - a[1])
-                                .slice(0, 8)
-                                .map(([k, v]) => (
-                                  <div key={k} className="flex items-center justify-between rounded-xl bg-white border p-2 text-sm">
-                                    <span className="truncate">{k}</span>
-                                    <b>{v}</b>
-                                  </div>
-                                ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* dica visual (sem mudar layout): mostra legenda rápida */}
-                    <div className="text-xs text-slate-500 px-1">
-                      Dica: estados tingidos = UFs com pelo menos 1 venda ativa (código 00) e <b>cliente.uf</b> preenchido.
+                  <div className="rounded-xl border p-4">
+                    <div className="text-xs text-muted-foreground mb-2">UFs ativas (tingidas no mapa)</div>
+                    <div className="text-sm text-muted-foreground">
+                      {activeUFs.length ? activeUFs.join(", ") : "Nenhuma UF identificada nas vendas ativas."}
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
-      </div>
-
-      {/* OVERLAY */}
-      {overlayOpen && active && (
-        <Overlay
-          title={
-            overlayMode === "novo"
-              ? "Preencher Cadastro do Cliente"
-              : overlayMode === "edit"
-              ? "Editar Cadastro do Cliente"
-              : "Visualizar Cadastro do Cliente"
-          }
-          onClose={closeOverlay}
-        >
-          <div className="rounded-xl border p-4 mb-4 bg-slate-50">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="avatar avatar-lg">
-                  {extra.foto_url ? (
-                    <img src={extra.foto_url} alt="Foto do cliente" className="avatar-img" />
-                  ) : (
-                    <span className="avatar-ini">{initials(nome || active.nome)}</span>
-                  )}
-                </div>
-
-                <div className="min-w-0">
-                  <div className="font-semibold truncate">{nome || active.nome}</div>
-                  <div className="text-xs text-slate-600">
-                    Vendedor: <b>{active.vendedor_nome || "—"}</b>
-                  </div>
-                </div>
-              </div>
-
-              <div className="text-xs text-slate-600 text-right">
-                CPF/CNPJ: <b>{onlyDigits(cpf) || "—"}</b>
-                <div>
-                  Nasc./Const.: <b>{birth ? formatBRDate(birth) : "—"}</b>
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-            {/* Identidade */}
-            <div className="rounded-xl border p-4 xl:col-span-6">
-              <h4 className="font-semibold mb-3">Identidade</h4>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <div className="label">Vendedor (auto)</div>
-                  <input className="input" value={active.vendedor_nome || "—"} disabled />
-                  <div className="text-xs text-slate-500 mt-1">Capturado da venda mais recente (vendas.vendedor_id).</div>
-                </div>
-
-                <div>
-                  <div className="label">Perfil do Cliente</div>
-                  <select
-                    className="input"
-                    value={extra.perfil}
-                    onChange={(e) => setExtra((s) => ({ ...s, perfil: e.target.value as PerfilCliente }))}
-                    disabled={readOnly}
-                  >
-                    <option>PF Geral</option>
-                    <option>PF Agro</option>
-                    <option>PJ</option>
-                  </select>
-                </div>
-
-                <div>
-                  <div className="label">Tipo</div>
-                  <select
-                    className="input"
-                    value={extra.tipo}
-                    onChange={(e) =>
-                      setExtra((s) => ({
-                        ...s,
-                        tipo: e.target.value as TipoPessoa,
-                        segmento_pf: e.target.value === "PF" ? s.segmento_pf : "",
-                        segmento_pj: e.target.value === "PJ" ? s.segmento_pj : "",
-                      }))
-                    }
-                    disabled={readOnly}
-                  >
-                    <option value="PF">PF</option>
-                    <option value="PJ">PJ</option>
-                  </select>
-                </div>
-
-                <div>
-                  <div className="label">Segmento</div>
-                  {extra.tipo === "PF" ? (
-                    <select
-                      className="input"
-                      value={extra.segmento_pf}
-                      onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))}
-                      disabled={readOnly}
-                    >
-                      <option value="">Selecione…</option>
-                      {SEGMENTOS_PF.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      className="input"
-                      placeholder="Segmento de atuação principal (PJ)"
-                      value={extra.segmento_pj}
-                      onChange={(e) => setExtra((s) => ({ ...s, segmento_pj: e.target.value }))}
-                      disabled={readOnly}
-                    />
-                  )}
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="label">Sexo</div>
-                  <div className="flex gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "M" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "M" }))}
-                      disabled={readOnly}
-                    >
-                      Masculino
-                    </button>
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "F" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "F" }))}
-                      disabled={readOnly}
-                    >
-                      Feminino
-                    </button>
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "O" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "O" }))}
-                      disabled={readOnly}
-                    >
-                      Outro
-                    </button>
-                    {!readOnly && (
-                      <button type="button" className="pill" onClick={() => setExtra((s) => ({ ...s, sexo: "" }))}>
-                        Limpar
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="label">Nome</div>
-                  <input className="input" value={nome} onChange={(e) => setNome(e.target.value)} disabled={readOnly} />
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="label">Como você gostaria de ser chamado?</div>
-                  <input
-                    className="input"
-                    placeholder="Nome, apelido, diminutivo, nome social..."
-                    value={chamadoComo}
-                    onChange={(e) => setChamadoComo(e.target.value)}
-                    disabled={readOnly}
-                  />
-                </div>
-
-                <div>
-                  <div className="label">CPF/CNPJ</div>
-                  <input className="input" value={onlyDigits(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} disabled={readOnly} />
-                </div>
-
-                <div>
-                  <div className="label">Data Nascimento/Constituição</div>
-                  <input className="input" type="date" value={birth} onChange={(e) => setBirth(e.target.value)} disabled={readOnly} />
-                </div>
-
-                <div>
-                  <div className="label">Telefone</div>
-                  <input className="input" value={telefone} onChange={(e) => setTelefone(e.target.value)} disabled={readOnly} />
-                </div>
-
-                <div>
-                  <div className="label">E-mail</div>
-                  <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} disabled={readOnly} />
-                </div>
-              </div>
-            </div>
-
-            {/* Contato & Endereço */}
-            <div className="rounded-xl border p-4 xl:col-span-6">
-              <h4 className="font-semibold mb-3">Contato & Endereço</h4>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="md:col-span-1">
-                  <div className="label">CEP</div>
-                  <div className="flex gap-2">
-                    <input
-                      className="input"
-                      placeholder="Somente números"
-                      value={extra.endereco_cep}
-                      onChange={(e) => setExtra((s) => ({ ...s, endereco_cep: onlyDigits(e.target.value).slice(0, 8) }))}
-                      disabled={readOnly}
-                    />
-                    <button className="btn" type="button" onClick={buscarCep} disabled={readOnly || cepLoading}>
-                      {cepLoading ? "Buscando..." : "Buscar"}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="label">Número</div>
-                  <input className="input" value={extra.numero} onChange={(e) => setExtra((s) => ({ ...s, numero: clamp(e.target.value, 20) }))} disabled={readOnly} />
-                </div>
-
-                <div className="md:col-span-3">
-                  <div className="label">Logradouro</div>
-                  <input className="input" value={extra.logradouro} onChange={(e) => setExtra((s) => ({ ...s, logradouro: e.target.value }))} disabled={readOnly} />
-                </div>
-
-                <div>
-                  <div className="label">Bairro</div>
-                  <input className="input" value={extra.bairro} onChange={(e) => setExtra((s) => ({ ...s, bairro: e.target.value }))} disabled={readOnly} />
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="label">Cidade/UF</div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <input className="input col-span-2" value={extra.cidade} onChange={(e) => setExtra((s) => ({ ...s, cidade: e.target.value }))} disabled={readOnly} />
-                    <input className="input" value={extra.uf} onChange={(e) => setExtra((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))} disabled={readOnly} />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="label">Contato de emergência (Nome)</div>
-                  <input className="input" value={extra.emergencia_nome} onChange={(e) => setExtra((s) => ({ ...s, emergencia_nome: e.target.value }))} disabled={readOnly} />
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="label">Contato de emergência (Telefone)</div>
-                  <input className="input" value={extra.emergencia_telefone} onChange={(e) => setExtra((s) => ({ ...s, emergencia_telefone: e.target.value }))} disabled={readOnly} />
-                </div>
-
-                <div className="md:col-span-1">
-                  <div className="label">Renda/Faturamento</div>
-                  <MoneyInput value={extra.renda_faturamento} onChange={(v) => setExtra((s) => ({ ...s, renda_faturamento: v }))} disabled={readOnly} />
-                  <div className="text-xs text-slate-500 mt-1">Salva como texto (humano) no cadastro.</div>
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="label">Foto (anexar)</div>
-                  <input className="input" type="file" accept="image/*" onChange={(e) => setFotoFile(e.target.files?.[0] || null)} disabled={readOnly} />
-                  <div className="text-xs text-slate-500 mt-1">
-                    Upload direto no bucket <b>{STORAGE_BUCKET_CLIENTES}</b>. Se não subir, você pode colar uma URL abaixo.
-                  </div>
-                </div>
-
-                <div className="md:col-span-3">
-                  <div className="label">Foto (URL)</div>
-                  <input className="input" placeholder="https://..." value={extra.foto_url} onChange={(e) => setExtra((s) => ({ ...s, foto_url: e.target.value }))} disabled={readOnly} />
-                </div>
-              </div>
-            </div>
-
-            {/* Família */}
-            <div className="rounded-xl border p-4 xl:col-span-5">
-              <h4 className="font-semibold mb-3">Família</h4>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-semibold text-sm">Possui pai e mãe vivos?</div>
-                  <PillToggle value={extra.pais_vivos} onChange={(v) => setExtra((s) => ({ ...s, pais_vivos: v }))} disabled={readOnly} />
-                </div>
-
-                {extra.pais_vivos === "sim" && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <div className="label">Pai (Nome)</div>
-                      <input className="input" value={extra.pai_nome} onChange={(e) => setExtra((s) => ({ ...s, pai_nome: e.target.value }))} disabled={readOnly} />
-                    </div>
-                    <div>
-                      <div className="label">Pai (Nascimento)</div>
-                      <input className="input" type="date" value={extra.pai_nasc} onChange={(e) => setExtra((s) => ({ ...s, pai_nasc: e.target.value }))} disabled={readOnly} />
-                    </div>
-
-                    <div>
-                      <div className="label">Mãe (Nome)</div>
-                      <input className="input" value={extra.mae_nome} onChange={(e) => setExtra((s) => ({ ...s, mae_nome: e.target.value }))} disabled={readOnly} />
-                    </div>
-                    <div>
-                      <div className="label">Mãe (Nascimento)</div>
-                      <input className="input" type="date" value={extra.mae_nasc} onChange={(e) => setExtra((s) => ({ ...s, mae_nasc: e.target.value }))} disabled={readOnly} />
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-semibold text-sm">Possui filhos?</div>
-                  <PillToggle value={extra.possui_filhos} onChange={(v) => setExtra((s) => ({ ...s, possui_filhos: v }))} disabled={readOnly} />
-                </div>
-
-                {extra.possui_filhos === "sim" && (
-                  <div className="space-y-2">
-                    {extra.filhos.map((f, idx) => (
-                      <div key={idx} className="rounded-xl border p-3">
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
-                          <div className="md:col-span-6">
-                            <div className="label">Nome</div>
-                            <input
-                              className="input"
-                              value={f.nome}
-                              onChange={(e) =>
-                                setExtra((s) => {
-                                  const filhos = [...s.filhos];
-                                  filhos[idx] = { ...filhos[idx], nome: e.target.value };
-                                  return { ...s, filhos };
-                                })
-                              }
-                              disabled={readOnly}
-                            />
-                          </div>
-                          <div className="md:col-span-4">
-                            <div className="label">Nascimento</div>
-                            <input
-                              className="input"
-                              type="date"
-                              value={f.nascimento}
-                              onChange={(e) =>
-                                setExtra((s) => {
-                                  const filhos = [...s.filhos];
-                                  filhos[idx] = { ...filhos[idx], nascimento: e.target.value };
-                                  return { ...s, filhos };
-                                })
-                              }
-                              disabled={readOnly}
-                            />
-                          </div>
-                          <div className="md:col-span-2">
-                            <div className="label">Sexo</div>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                className={`pill ${f.sexo === "F" ? "pill-on" : ""}`}
-                                onClick={() =>
-                                  setExtra((s) => {
-                                    const filhos = [...s.filhos];
-                                    filhos[idx] = { ...filhos[idx], sexo: "F" };
-                                    return { ...s, filhos };
-                                  })
-                                }
-                                disabled={readOnly}
-                              >
-                                F
-                              </button>
-                              <button
-                                type="button"
-                                className={`pill ${f.sexo === "M" ? "pill-on" : ""}`}
-                                onClick={() =>
-                                  setExtra((s) => {
-                                    const filhos = [...s.filhos];
-                                    filhos[idx] = { ...filhos[idx], sexo: "M" };
-                                    return { ...s, filhos };
-                                  })
-                                }
-                                disabled={readOnly}
-                              >
-                                M
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-
-                    {!readOnly && (
-                      <button
-                        className="btn inline-flex items-center gap-2"
-                        type="button"
-                        onClick={() =>
-                          setExtra((s) => ({
-                            ...s,
-                            filhos: [...(s.filhos || []), { nome: "", nascimento: "", sexo: "" }],
-                          }))
-                        }
-                      >
-                        <Plus className="h-4 w-4" />
-                        Adicionar filho
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Autorizações & Feedback */}
-            <div className="rounded-xl border p-4 xl:col-span-7">
-              <h4 className="font-semibold mb-3">Autorizações & Feedback</h4>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="rounded-xl border p-3">
-                  <div className="font-semibold text-sm mb-2">Autorizações</div>
-
-                  <div className="flex items-center justify-between gap-3 py-2">
-                    <div className="text-sm">Autoriza publicar quando contemplar?</div>
-                    <PillToggle value={extra.autoriza_publicar} onChange={(v) => setExtra((s) => ({ ...s, autoriza_publicar: v }))} disabled={readOnly} />
-                  </div>
-
-                  <div className="flex items-center justify-between gap-3 py-2">
-                    <div className="text-sm">Autoriza usar nome/foto em homenagens?</div>
-                    <PillToggle value={extra.autoriza_homenagem} onChange={(v) => setExtra((s) => ({ ...s, autoriza_homenagem: v }))} disabled={readOnly} />
-                  </div>
-                </div>
-
-                <div className="rounded-xl border p-3">
-                  <div className="font-semibold text-sm mb-2">Preferências de Conteúdo</div>
-
-                  <div className="text-xs text-slate-600 mb-2">Que tipo de conteúdo você mais gosta de receber? (marque mais de um)</div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {CONTEUDOS.map((k) => {
-                      const on = extra.conteudos.includes(k);
-                      return (
-                        <button
-                          key={k}
-                          type="button"
-                          className={`pill ${on ? "pill-on" : ""}`}
-                          onClick={() =>
-                            setExtra((s) => ({
-                              ...s,
-                              conteudos: on ? s.conteudos.filter((x) => x !== k) : [...s.conteudos, k],
-                            }))
-                          }
-                          disabled={readOnly}
-                        >
-                          {k}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="mt-3">
-                    <div className="text-xs text-slate-600 mb-2">Quer receber conteúdos educativos ou prefere só ofertas pontuais?</div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className={`pill ${extra.prefere_educativo === "educativo" ? "pill-on" : ""}`}
-                        onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "educativo" }))}
-                        disabled={readOnly}
-                      >
-                        Educativos
-                      </button>
-                      <button
-                        type="button"
-                        className={`pill ${extra.prefere_educativo === "ofertas" ? "pill-on" : ""}`}
-                        onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "ofertas" }))}
-                        disabled={readOnly}
-                      >
-                        Ofertas pontuais
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-3">
-                    <div className="text-xs text-slate-600 mb-2">Como nos conheceu? (1 opção)</div>
-                    <select
-                      className="input"
-                      value={extra.como_conheceu}
-                      onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))}
-                      disabled={readOnly}
-                    >
-                      <option value="">Selecione…</option>
-                      {COMO_CONHECEU.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="md:col-span-2 rounded-xl border p-3">
-                  <div className="font-semibold text-sm mb-2">Feedback (percepção sobre Consulmax e vendedor)</div>
-                  <textarea className="input" rows={4} value={extra.feedback} onChange={(e) => setExtra((s) => ({ ...s, feedback: e.target.value }))} disabled={readOnly} />
-
-                  <div className="mt-3">
-                    <div className="font-semibold text-sm mb-2">Obs. internas</div>
-                    <textarea
-                      className="input"
-                      rows={3}
-                      value={extra.obs_internas || legacyObs}
-                      onChange={(e) => {
-                        setExtra((s) => ({ ...s, obs_internas: e.target.value }));
-                        setLegacyObs(e.target.value);
-                      }}
-                      disabled={readOnly}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
+          {/* rodapé leve */}
+          <div className="text-xs text-muted-foreground">
+            Dica: se alguma UF não pintar, é porque o cliente ativo não tem <code>clientes.uf</code> preenchido.
           </div>
-
-          <div className="mt-5 flex items-center justify-end gap-2">
-            <button className="btn" onClick={closeOverlay} disabled={saving}>
-              Fechar
-            </button>
-
-            {!readOnly && (
-              <button className="btn-primary inline-flex items-center gap-2" onClick={confirmOrSave} disabled={saving}>
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                {overlayMode === "novo" ? "Confirmar" : "Salvar alterações"}
-              </button>
-            )}
-          </div>
-        </Overlay>
-      )}
-
-      <style>{`
-        .input{padding:11px 12px;border-radius:14px;border:1px solid #e5e7eb;outline:none;width:100%}
-        .btn{padding:9px 13px;border-radius:12px;background:#f1f5f9;border:1px solid #e2e8f0;font-weight:700}
-        .btn-primary{padding:11px 16px;border-radius:14px;background:#A11C27;color:#fff;font-weight:800}
-        .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid #e2e8f0;background:#f8fafc;border-radius:12px}
-        .icon-btn:hover{background:#eef2ff}
-        .label{display:block;font-size:12px;color:#475569;margin-bottom:7px;font-weight:800}
-        .pill{padding:7px 11px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-weight:800;font-size:12px}
-        .pill-on{background:#111827;color:#fff;border-color:#111827}
-
-        /* ✅ Busca premium */
-        .searchWrap{
-          display:flex;align-items:center;gap:10px;
-          border:1px solid #e2e8f0;
-          background:#f8fafc;
-          border-radius:999px;
-          padding:10px 14px;
-          width:min(420px,72vw);
-          box-shadow: 0 1px 0 rgba(0,0,0,.02);
-        }
-        .searchIcon{opacity:.65;display:flex;align-items:center;justify-content:center}
-        .searchInput{
-          border:none;outline:none;background:transparent;width:100%;
-          font-weight:600;
-        }
-        .searchInput::placeholder{color:#94a3b8;font-weight:600}
-        .searchWrap:focus-within{
-          border-color: rgba(161,28,39,.35);
-          box-shadow: 0 0 0 4px rgba(161,28,39,.08);
-          background:#fff;
-        }
-
-        /* ✅ Avatar */
-        .avatar{
-          width:38px;height:38px;border-radius:999px;
-          border:2px solid rgba(161,28,39,.15);
-          background:#fff;
-          display:flex;align-items:center;justify-content:center;
-          overflow:hidden;
-          flex:0 0 auto;
-        }
-        .avatar-lg{width:52px;height:52px;border-width:3px}
-        .avatar-img{width:100%;height:100%;object-fit:cover}
-        .avatar-ini{font-weight:900;color:#111827;font-size:12px}
-      `}</style>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

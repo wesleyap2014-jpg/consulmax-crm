@@ -379,6 +379,77 @@ function parseMoneyToNumber(s: string) {
   return isFinite(val) ? val : null;
 }
 
+// ==========================
+// DEMOGRAFIA (tipos)
+// ==========================
+type DemoStats = {
+  activeCount: number;
+  ageList: number[];
+  rendaList: number[];
+  sexoCount: Record<string, number>;
+  tipoCount: Record<string, number>;
+  perfilCount: Record<string, number>;
+  segPFCount: Record<string, number>;
+  segPJCount: Record<string, number>;
+  origemCount: Record<string, number>;
+  produtoCount: Record<string, number>; // apenas vendas ativas cruzadas por UF
+  byCity: Record<string, number>; // para Top cidades (sem UF:: prefixado aqui)
+};
+
+type DemoData = {
+  statsBrasil: DemoStats;
+  statsPorUF: Record<string, DemoStats>;
+  activeUFs: string[]; // UFs que têm vendas ativas (vendas.codigo="00") e clientes.uf preenchido
+};
+
+// helpers de contagem
+function inc(map: Record<string, number>, key: string, by = 1) {
+  if (!key) return;
+  map[key] = (map[key] || 0) + by;
+}
+
+function normalizeUF(v: any): string {
+  return String(v || "").toUpperCase().trim().slice(0, 2);
+}
+
+function createEmptyStats(): DemoStats {
+  return {
+    activeCount: 0,
+    ageList: [],
+    rendaList: [],
+    sexoCount: {},
+    tipoCount: {},
+    perfilCount: {},
+    segPFCount: {},
+    segPJCount: {},
+    origemCount: {},
+    produtoCount: {},
+    byCity: {},
+  };
+}
+
+function cloneStatsBase(): DemoStats {
+  // novo objeto (não compartilhar refs)
+  return createEmptyStats();
+}
+
+function avg(arr: number[]) {
+  return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+}
+function median(arr: number[]) {
+  if (!arr.length) return null;
+  const a = [...arr].sort((x, y) => x - y);
+  const mid = Math.floor(a.length / 2);
+  return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+}
+
+function topKey(counts: Record<string, number>) {
+  const entries = Object.entries(counts || {});
+  if (!entries.length) return "—";
+  entries.sort((a, b) => b[1] - a[1]);
+  return entries[0]?.[0] || "—";
+}
+
 /** ✅ Mapa Brasil (imagem real via iframe) + clique UF vira filtro do dashboard */
 function BrazilImageMap({
   src,
@@ -401,14 +472,15 @@ function BrazilImageMap({
       // aceita vários formatos (pra não depender de 1 só)
       // 1) { type: "UF_CLICK", uf: "SP" }
       if (d && typeof d === "object") {
-        if (String(d.type || "").toUpperCase() === "UF_CLICK" && d.uf) {
-          const uf = String(d.uf).toUpperCase().trim().slice(0, 2);
+        const t = String(d.type || "").toUpperCase().trim();
+        if (t === "UF_CLICK" && d.uf) {
+          const uf = normalizeUF(d.uf);
           if (uf) onSelectUF(uf);
           return;
         }
         // 2) { uf: "SP" }
         if (d.uf && typeof d.uf === "string") {
-          const uf = String(d.uf).toUpperCase().trim().slice(0, 2);
+          const uf = normalizeUF(d.uf);
           if (uf) onSelectUF(uf);
           return;
         }
@@ -420,7 +492,7 @@ function BrazilImageMap({
         const s = d.trim();
         const m = /^UF\:(\w{2})$/i.exec(s);
         if (m?.[1]) {
-          onSelectUF(m[1].toUpperCase());
+          onSelectUF(normalizeUF(m[1]));
         }
       }
     }
@@ -437,8 +509,8 @@ function BrazilImageMap({
       win.postMessage(
         {
           type: "UF_STATE",
-          activeUFs: Array.from(activeUFs || []).map((x) => String(x).toUpperCase().trim()),
-          selectedUF: (selectedUF || "").toUpperCase().trim(),
+          activeUFs: Array.from(activeUFs || []).map((x) => normalizeUF(x)).filter(Boolean),
+          selectedUF: normalizeUF(selectedUF || ""),
         },
         "*"
       );
@@ -452,22 +524,22 @@ function BrazilImageMap({
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="font-semibold">Mapa do Brasil (UF)</div>
         <div className="text-xs text-slate-600">
-          Clique no estado para filtrar{selectedUF ? ` • selecionado: ${selectedUF}` : ""}
+          Clique no estado para filtrar{selectedUF ? ` • selecionado: ${normalizeUF(selectedUF)}` : ""}
         </div>
       </div>
 
       <div className="rounded-2xl border overflow-hidden bg-slate-50">
-  <div className="relative w-full h-[260px] md:h-[360px] xl:h-[420px]">
-    <iframe
-      ref={iframeRef}
-      title="Mapa do Brasil"
-      src={src}
-      className="absolute inset-0 w-full h-full"
-      style={{ border: 0, display: "block" }}
-      scrolling="no"
-    />
-  </div>
-</div>
+        <div className="relative w-full h-[260px] md:h-[360px] xl:h-[420px]">
+          <iframe
+            ref={iframeRef}
+            title="Mapa do Brasil"
+            src={src}
+            className="absolute inset-0 w-full h-full"
+            style={{ border: 0, display: "block" }}
+            scrolling="no"
+          />
+        </div>
+      </div>
 
       <div className="mt-3 flex flex-wrap gap-2 items-center justify-between">
         <button className="btn" onClick={() => onSelectUF("")}>
@@ -518,20 +590,7 @@ export default function ClientesPage() {
   // Demografia
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoUF, setDemoUF] = useState<string>("");
-  const [demo, setDemo] = useState<{
-    activeCount: number;
-    byUF: Record<string, number>;
-    byCity: Record<string, number>;
-    ageList: number[];
-    sexoCount: Record<string, number>;
-    tipoCount: Record<string, number>;
-    perfilCount: Record<string, number>;
-    segPFCount: Record<string, number>;
-    segPJCount: Record<string, number>;
-    rendaList: number[];
-    origemCount: Record<string, number>;
-    produtoCount: Record<string, number>;
-  } | null>(null);
+  const [demo, setDemo] = useState<DemoData | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search.trim()), 350);
@@ -670,16 +729,25 @@ export default function ClientesPage() {
       const vendorList = Array.from(vendorAuthIds);
       const usersByAuth = new Map<string, { nome: string }>();
       if (vendorList.length) {
-        const { data: uRows, error: eU } = await supabase.from("users").select("auth_user_id,nome").in("auth_user_id", vendorList);
+        const { data: uRows, error: eU } = await supabase
+          .from("users")
+          .select("auth_user_id,nome")
+          .in("auth_user_id", vendorList);
         if (eU) throw eU;
         (uRows || []).forEach((u: any) => usersByAuth.set(String(u.auth_user_id), { nome: u.nome || "—" }));
       }
 
       // 4) Clientes confirmados + observacoes/endereço (para foto/sexo/UF/cidade)
-      const { data: cliRows, error: eCli } = await supabase.from("clientes").select("id,lead_id,observacoes,uf,cidade").in("lead_id", leadIds);
+      const { data: cliRows, error: eCli } = await supabase
+        .from("clientes")
+        .select("id,lead_id,observacoes,uf,cidade")
+        .in("lead_id", leadIds);
       if (eCli) throw eCli;
 
-      const confirmedByLead = new Map<string, { id: string; extra: CadastroExtra | null; uf?: string | null; cidade?: string | null }>();
+      const confirmedByLead = new Map<
+        string,
+        { id: string; extra: CadastroExtra | null; uf?: string | null; cidade?: string | null }
+      >();
       (cliRows || []).forEach((c: any) => {
         const lid = c.lead_id ? String(c.lead_id) : "";
         if (!lid) return;
@@ -961,7 +1029,14 @@ export default function ClientesPage() {
       }
 
       closeOverlay();
+
       await load(page, debounced);
+
+      // ✅ se estiver em demografia, atualiza (para novas UFs/ativos refletirem automaticamente)
+      if (tab === "demografia") {
+        await loadDemografia();
+      }
+
       alert(overlayMode === "novo" ? "Cliente confirmado!" : "Cliente atualizado!");
     } catch (e: any) {
       alert(e?.message || "Não foi possível salvar.");
@@ -977,11 +1052,13 @@ export default function ClientesPage() {
   }
 
   // ==========================
-  // DEMOGRAFIA
+  // DEMOGRAFIA (SSOT: vendas ativas -> lead_id -> clientes.uf)
   // ==========================
   async function loadDemografia() {
     setDemoLoading(true);
     try {
+      // 1) Vendas ativas (SSOT)
+      // - venda ativa = codigo === "00"
       const { data: activeVend, error: e1 } = await supabase
         .from("vendas")
         .select("lead_id,produto")
@@ -990,32 +1067,17 @@ export default function ClientesPage() {
         .range(0, 20000);
       if (e1) throw e1;
 
-      const activeLeadIds = Array.from(new Set((activeVend || []).map((r: any) => String(r.lead_id)).filter(Boolean)));
-      const produtoCount: Record<string, number> = {};
-      (activeVend || []).forEach((r: any) => {
-        const p = (r?.produto || "—") as string;
-        produtoCount[p] = (produtoCount[p] || 0) + 1;
-      });
+      const vendasAtivas = (activeVend || []).filter((r: any) => r?.lead_id);
+      const activeLeadIds = Array.from(new Set(vendasAtivas.map((r: any) => String(r.lead_id)).filter(Boolean)));
 
+      // base vazia
       if (!activeLeadIds.length) {
-        setDemo({
-          activeCount: 0,
-          byUF: {},
-          byCity: {},
-          ageList: [],
-          sexoCount: {},
-          tipoCount: {},
-          perfilCount: {},
-          segPFCount: {},
-          segPJCount: {},
-          rendaList: [],
-          origemCount: {},
-          produtoCount: produtoCount,
-        });
-        setDemoLoading(false);
+        const empty = createEmptyStats();
+        setDemo({ statsBrasil: empty, statsPorUF: {}, activeUFs: [] });
         return;
       }
 
+      // 2) Clientes (para UF + dados demográficos)
       const { data: cli, error: e2 } = await supabase
         .from("clientes")
         .select("lead_id,data_nascimento,uf,cidade,observacoes")
@@ -1023,57 +1085,123 @@ export default function ClientesPage() {
         .range(0, 20000);
       if (e2) throw e2;
 
-      const byUF: Record<string, number> = {};
-      const byCity: Record<string, number> = {};
-      const ageList: number[] = [];
-      const rendaList: number[] = [];
-      const sexoCount: Record<string, number> = {};
-      const tipoCount: Record<string, number> = {};
-      const perfilCount: Record<string, number> = {};
-      const segPFCount: Record<string, number> = {};
-      const segPJCount: Record<string, number> = {};
-      const origemCount: Record<string, number> = {};
+      // Mapa lead_id -> clienteRow
+      // (1 registro por lead; se vier duplicado, pega o primeiro)
+      const clienteByLead = new Map<
+        string,
+        { lead_id: string; uf: string; cidade: string; data_nascimento?: string | null; observacoes?: string | null }
+      >();
 
       (cli || []).forEach((r: any) => {
-        const uf = String(r.uf || "").toUpperCase().trim();
-        const cidade = String(r.cidade || "").trim();
+        const lid = r?.lead_id ? String(r.lead_id) : "";
+        if (!lid) return;
+        if (clienteByLead.has(lid)) return; // mantém o primeiro
+        clienteByLead.set(lid, {
+          lead_id: lid,
+          uf: normalizeUF(r.uf),
+          cidade: String(r.cidade || "").trim(),
+          data_nascimento: r.data_nascimento ?? null,
+          observacoes: r.observacoes ?? null,
+        });
+      });
 
-        if (uf) byUF[uf] = (byUF[uf] || 0) + 1;
-        if (uf && cidade) byCity[`${uf}::${cidade}`] = (byCity[`${uf}::${cidade}`] || 0) + 1;
+      // 3) Inicializa stats
+      const statsBrasil = cloneStatsBase();
+      const statsPorUF: Record<string, DemoStats> = {};
 
-        const age = calcAge(r.data_nascimento);
-        if (age != null) ageList.push(age);
+      // 4) Conta "Clientes ativos" por UF = leads únicos com venda ativa e uf preenchido
+      // e também agrega: idade/renda/sexo/tipo/perfil/seg/origem com base no cliente
+      const activeUFsSet = new Set<string>();
 
-        const { extra } = safeParseExtraFromObservacoes(r.observacoes);
+      for (const lid of activeLeadIds) {
+        const c = clienteByLead.get(lid);
+        const uf = c?.uf ? normalizeUF(c.uf) : "";
+        const cidade = c?.cidade ? String(c.cidade).trim() : "";
+
+        // stat alvo: UF (se houver) e Brasil
+        let ufStats: DemoStats | null = null;
+        if (uf) {
+          if (!statsPorUF[uf]) statsPorUF[uf] = cloneStatsBase();
+          ufStats = statsPorUF[uf];
+          activeUFsSet.add(uf);
+        }
+
+        // activeCount é por lead único
+        statsBrasil.activeCount += 1;
+        if (ufStats) ufStats.activeCount += 1;
+
+        // idade
+        const age = calcAge(c?.data_nascimento ?? null);
+        if (age != null) {
+          statsBrasil.ageList.push(age);
+          if (ufStats) ufStats.ageList.push(age);
+        }
+
+        // cidade (top cidades)
+        if (cidade) {
+          inc(statsBrasil.byCity, uf ? `${cidade} • ${uf}` : cidade, 1); // Brasil: mostra cidade + UF quando tiver
+          if (ufStats) inc(ufStats.byCity, cidade, 1);
+        }
+
+        // extra do cadastro
+        const { extra } = safeParseExtraFromObservacoes(c?.observacoes ?? null);
         if (extra) {
-          if (extra.sexo) sexoCount[extra.sexo] = (sexoCount[extra.sexo] || 0) + 1;
-          if (extra.tipo) tipoCount[extra.tipo] = (tipoCount[extra.tipo] || 0) + 1;
-          if (extra.perfil) perfilCount[extra.perfil] = (perfilCount[extra.perfil] || 0) + 1;
+          if (extra.sexo) {
+            inc(statsBrasil.sexoCount, extra.sexo, 1);
+            if (ufStats) inc(ufStats.sexoCount, extra.sexo, 1);
+          }
+          if (extra.tipo) {
+            inc(statsBrasil.tipoCount, extra.tipo, 1);
+            if (ufStats) inc(ufStats.tipoCount, extra.tipo, 1);
+          }
+          if (extra.perfil) {
+            inc(statsBrasil.perfilCount, extra.perfil, 1);
+            if (ufStats) inc(ufStats.perfilCount, extra.perfil, 1);
+          }
 
-          if (extra.tipo === "PF" && extra.segmento_pf) segPFCount[extra.segmento_pf] = (segPFCount[extra.segmento_pf] || 0) + 1;
-          if (extra.tipo === "PJ" && extra.segmento_pj) segPJCount[extra.segmento_pj] = (segPJCount[extra.segmento_pj] || 0) + 1;
+          if (extra.tipo === "PF" && extra.segmento_pf) {
+            inc(statsBrasil.segPFCount, extra.segmento_pf, 1);
+            if (ufStats) inc(ufStats.segPFCount, extra.segmento_pf, 1);
+          }
+          if (extra.tipo === "PJ" && extra.segmento_pj) {
+            inc(statsBrasil.segPJCount, extra.segmento_pj, 1);
+            if (ufStats) inc(ufStats.segPJCount, extra.segmento_pj, 1);
+          }
 
-          if (extra.como_conheceu) origemCount[extra.como_conheceu] = (origemCount[extra.como_conheceu] || 0) + 1;
+          if (extra.como_conheceu) {
+            inc(statsBrasil.origemCount, extra.como_conheceu, 1);
+            if (ufStats) inc(ufStats.origemCount, extra.como_conheceu, 1);
+          }
 
           const renda = parseMoneyToNumber(extra.renda_faturamento);
-          if (renda != null) rendaList.push(renda);
+          if (renda != null) {
+            statsBrasil.rendaList.push(renda);
+            if (ufStats) ufStats.rendaList.push(renda);
+          }
+        }
+      }
+
+      // 5) produtoCount (apenas vendas ativas) cruzado com clientes.uf
+      // Aqui é por VENDA (não por lead), então reflete “divisão por segmento/produto” das vendas ativas na UF.
+      (vendasAtivas || []).forEach((v: any) => {
+        const lid = v?.lead_id ? String(v.lead_id) : "";
+        if (!lid) return;
+        const uf = normalizeUF(clienteByLead.get(lid)?.uf || "");
+        const produto = String(v?.produto || "—").trim() || "—";
+
+        // Brasil
+        inc(statsBrasil.produtoCount, produto, 1);
+
+        // UF (somente se tiver UF)
+        if (uf) {
+          if (!statsPorUF[uf]) statsPorUF[uf] = cloneStatsBase();
+          inc(statsPorUF[uf].produtoCount, produto, 1);
         }
       });
 
-      setDemo({
-        activeCount: activeLeadIds.length,
-        byUF,
-        byCity,
-        ageList,
-        sexoCount,
-        tipoCount,
-        perfilCount,
-        segPFCount,
-        segPJCount,
-        rendaList,
-        origemCount,
-        produtoCount,
-      });
+      // 6) Final
+      const activeUFs = Array.from(activeUFsSet).sort((a, b) => a.localeCompare(b));
+      setDemo({ statsBrasil, statsPorUF, activeUFs });
     } catch (e: any) {
       alert(e?.message || "Não foi possível carregar a demografia.");
     } finally {
@@ -1081,40 +1209,41 @@ export default function ClientesPage() {
     }
   }
 
+  // UFs tingidas (SSOT)
   const demoUFsActive = useMemo(() => {
     const s = new Set<string>();
-    if (!demo?.byUF) return s;
-    Object.keys(demo.byUF).forEach((uf) => s.add(String(uf).toUpperCase().trim()));
+    (demo?.activeUFs || []).forEach((uf) => {
+      const x = normalizeUF(uf);
+      if (x) s.add(x);
+    });
     return s;
   }, [demo]);
 
+  // stats selecionado (UF ou Brasil)
+  const currentStats = useMemo((): DemoStats => {
+    if (!demo) return createEmptyStats();
+    const uf = normalizeUF(demoUF);
+    if (uf && demo.statsPorUF?.[uf]) return demo.statsPorUF[uf];
+    return demo.statsBrasil;
+  }, [demo, demoUF]);
+
   const demoStats = useMemo(() => {
-    const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
-    const median = (arr: number[]) => {
-      if (!arr.length) return null;
-      const a = [...arr].sort((x, y) => x - y);
-      const mid = Math.floor(a.length / 2);
-      return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
-    };
-    const ageAvg = demo?.ageList ? avg(demo.ageList) : null;
-    const rendaAvg = demo?.rendaList ? avg(demo.rendaList) : null;
+    const idadeMedia = currentStats.ageList.length ? Math.round(avg(currentStats.ageList) || 0) || null : null;
+    const idadeMediana = currentStats.ageList.length ? Math.round(median(currentStats.ageList) || 0) || null : null;
+    const rendaMedia = currentStats.rendaList.length ? avg(currentStats.rendaList) : null;
 
     return {
-      idadeMedia: ageAvg != null ? Math.round(ageAvg) : null,
-      idadeMediana: demo?.ageList ? Math.round((median(demo.ageList) || 0)) || null : null,
-      rendaMedia: rendaAvg != null ? rendaAvg : null,
+      idadeMedia,
+      idadeMediana,
+      rendaMedia,
     };
-  }, [demo]);
+  }, [currentStats]);
 
   const topCities = useMemo(() => {
-    const entries = Object.entries(demo?.byCity || {});
+    const entries = Object.entries(currentStats.byCity || {});
     entries.sort((a, b) => b[1] - a[1]);
-    const filtered = demoUF ? entries.filter(([k]) => k.startsWith(`${demoUF}::`)) : entries;
-    return filtered.slice(0, 12).map(([k, v]) => {
-      const [uf, cidade] = k.split("::");
-      return { uf, cidade, count: v };
-    });
-  }, [demo, demoUF]);
+    return entries.slice(0, 12).map(([cidade, count]) => ({ cidade, count }));
+  }, [currentStats]);
 
   // ========= RENDER =========
   return (
@@ -1349,9 +1478,9 @@ export default function ClientesPage() {
                   <div className="xl:col-span-5 space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-2xl border p-4">
-                        <div className="text-xs text-slate-600">Clientes ativos</div>
-                        <div className="text-2xl font-extrabold">{demo.activeCount}</div>
-                        <div className="text-xs text-slate-500 mt-1">Base: vendas com código 00.</div>
+                        <div className="text-xs text-slate-600">Clientes ativos {demoUF ? `(${normalizeUF(demoUF)})` : "(Brasil)"}</div>
+                        <div className="text-2xl font-extrabold">{currentStats.activeCount}</div>
+                        <div className="text-xs text-slate-500 mt-1">Base: vendas com código 00 cruzadas com clientes.uf.</div>
                       </div>
                       <div className="rounded-2xl border p-4">
                         <div className="text-xs text-slate-600">Idade média</div>
@@ -1361,27 +1490,29 @@ export default function ClientesPage() {
                       <div className="rounded-2xl border p-4">
                         <div className="text-xs text-slate-600">Renda média (estimada)</div>
                         <div className="text-2xl font-extrabold">
-                          {demoStats.rendaMedia != null ? `R$ ${demoStats.rendaMedia.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}` : "—"}
+                          {demoStats.rendaMedia != null
+                            ? `R$ ${demoStats.rendaMedia.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`
+                            : "—"}
                         </div>
                         <div className="text-xs text-slate-500 mt-1">Base: campo texto quando parseável.</div>
                       </div>
                       <div className="rounded-2xl border p-4">
                         <div className="text-xs text-slate-600">Filtro UF</div>
-                        <div className="text-2xl font-extrabold">{demoUF || "—"}</div>
+                        <div className="text-2xl font-extrabold">{normalizeUF(demoUF) || "—"}</div>
                         <div className="text-xs text-slate-500 mt-1">Clique no mapa para selecionar.</div>
                       </div>
                     </div>
 
                     <div className="rounded-2xl border p-4">
-                      <div className="font-semibold mb-2">Top cidades {demoUF ? `(${demoUF})` : "(Brasil)"}</div>
+                      <div className="font-semibold mb-2">Top cidades {demoUF ? `(${normalizeUF(demoUF)})` : "(Brasil)"}</div>
                       <div className="space-y-2">
                         {topCities.length === 0 ? (
                           <div className="text-sm text-slate-600">Sem dados de cidade/UF preenchidos.</div>
                         ) : (
                           topCities.map((c) => (
-                            <div key={`${c.uf}-${c.cidade}`} className="flex items-center justify-between rounded-xl bg-slate-50 p-2">
+                            <div key={`${c.cidade}`} className="flex items-center justify-between rounded-xl bg-slate-50 p-2">
                               <div className="text-sm">
-                                <span className="font-semibold">{c.cidade}</span> <span className="text-slate-500">• {c.uf}</span>
+                                <span className="font-semibold">{c.cidade}</span>
                               </div>
                               <div className="text-sm font-extrabold">{c.count}</div>
                             </div>
@@ -1391,13 +1522,13 @@ export default function ClientesPage() {
                     </div>
 
                     <div className="rounded-2xl border p-4">
-                      <div className="font-semibold mb-2">Persona (auto)</div>
+                      <div className="font-semibold mb-2">Persona (auto) {demoUF ? `• ${normalizeUF(demoUF)}` : "• Brasil"}</div>
                       <div className="text-sm text-slate-700 leading-relaxed">
-                        Base ativa com <b>{demo.activeCount}</b> clientes. Predomina{" "}
-                        <b>{Object.keys(demo.tipoCount).sort((a, b) => demo.tipoCount[b] - demo.tipoCount[a])[0] || "—"}</b> e o perfil mais comum é{" "}
-                        <b>{Object.keys(demo.perfilCount).sort((a, b) => demo.perfilCount[b] - demo.perfilCount[a])[0] || "—"}</b>. Idade média{" "}
+                        Base ativa com <b>{currentStats.activeCount}</b> clientes. Predomina{" "}
+                        <b>{topKey(currentStats.tipoCount)}</b> e o perfil mais comum é{" "}
+                        <b>{topKey(currentStats.perfilCount)}</b>. Idade média{" "}
                         <b>{demoStats.idadeMedia ?? "—"}</b> anos. Segmento PF mais comum:{" "}
-                        <b>{Object.keys(demo.segPFCount).sort((a, b) => demo.segPFCount[b] - demo.segPFCount[a])[0] || "—"}</b>.
+                        <b>{topKey(currentStats.segPFCount)}</b>.
                       </div>
                       <div className="text-xs text-slate-500 mt-2">*Sexo depende do preenchimento no cadastro.</div>
                     </div>
@@ -1405,18 +1536,23 @@ export default function ClientesPage() {
 
                   {/* MAPA REAL */}
                   <div className="xl:col-span-7 space-y-4">
-                    <BrazilImageMap src={MAPA_BR_SRC} activeUFs={demoUFsActive} selectedUF={demoUF} onSelectUF={(uf) => setDemoUF(uf)} />
+                    <BrazilImageMap
+                      src={MAPA_BR_SRC}
+                      activeUFs={demoUFsActive}
+                      selectedUF={normalizeUF(demoUF)}
+                      onSelectUF={(uf) => setDemoUF(normalizeUF(uf))}
+                    />
 
                     <div className="rounded-2xl border p-4 bg-white">
-                      <div className="font-semibold mb-2">Distribuições rápidas</div>
+                      <div className="font-semibold mb-2">Distribuições rápidas {demoUF ? `• ${normalizeUF(demoUF)}` : "• Brasil"}</div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div className="rounded-2xl border p-3 bg-slate-50">
                           <div className="text-xs text-slate-600 mb-2">Sexo (contagem)</div>
-                          {Object.keys(demo.sexoCount).length === 0 ? (
+                          {Object.keys(currentStats.sexoCount).length === 0 ? (
                             <div className="text-sm text-slate-600">Sem preenchimento.</div>
                           ) : (
-                            Object.entries(demo.sexoCount)
+                            Object.entries(currentStats.sexoCount)
                               .sort((a, b) => b[1] - a[1])
                               .map(([k, v]) => (
                                 <div key={k} className="flex items-center justify-between text-sm py-1">
@@ -1429,12 +1565,12 @@ export default function ClientesPage() {
 
                         <div className="rounded-2xl border p-3 bg-slate-50">
                           <div className="text-xs text-slate-600 mb-2">Produtos (vendas ativas)</div>
-                          {Object.keys(demo.produtoCount).length === 0 ? (
+                          {Object.keys(currentStats.produtoCount).length === 0 ? (
                             <div className="text-sm text-slate-600">Sem dados.</div>
                           ) : (
-                            Object.entries(demo.produtoCount)
+                            Object.entries(currentStats.produtoCount)
                               .sort((a, b) => b[1] - a[1])
-                              .slice(0, 6)
+                              .slice(0, 8)
                               .map(([k, v]) => (
                                 <div key={k} className="flex items-center justify-between text-sm py-1">
                                   <span className="truncate">{k}</span>
@@ -1446,11 +1582,11 @@ export default function ClientesPage() {
 
                         <div className="rounded-2xl border p-3 bg-slate-50 md:col-span-2">
                           <div className="text-xs text-slate-600 mb-2">Como conheceu (Top)</div>
-                          {Object.keys(demo.origemCount).length === 0 ? (
+                          {Object.keys(currentStats.origemCount).length === 0 ? (
                             <div className="text-sm text-slate-600">Sem preenchimento.</div>
                           ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              {Object.entries(demo.origemCount)
+                              {Object.entries(currentStats.origemCount)
                                 .sort((a, b) => b[1] - a[1])
                                 .slice(0, 8)
                                 .map(([k, v]) => (
@@ -1463,6 +1599,11 @@ export default function ClientesPage() {
                           )}
                         </div>
                       </div>
+                    </div>
+
+                    {/* dica visual (sem mudar layout): mostra legenda rápida */}
+                    <div className="text-xs text-slate-500 px-1">
+                      Dica: estados tingidos = UFs com pelo menos 1 venda ativa (código 00) e <b>cliente.uf</b> preenchido.
                     </div>
                   </div>
                 </div>
@@ -1488,7 +1629,11 @@ export default function ClientesPage() {
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="avatar avatar-lg">
-                  {extra.foto_url ? <img src={extra.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(nome || active.nome)}</span>}
+                  {extra.foto_url ? (
+                    <img src={extra.foto_url} alt="Foto do cliente" className="avatar-img" />
+                  ) : (
+                    <span className="avatar-ini">{initials(nome || active.nome)}</span>
+                  )}
                 </div>
 
                 <div className="min-w-0">
@@ -1522,7 +1667,12 @@ export default function ClientesPage() {
 
                 <div>
                   <div className="label">Perfil do Cliente</div>
-                  <select className="input" value={extra.perfil} onChange={(e) => setExtra((s) => ({ ...s, perfil: e.target.value as PerfilCliente }))} disabled={readOnly}>
+                  <select
+                    className="input"
+                    value={extra.perfil}
+                    onChange={(e) => setExtra((s) => ({ ...s, perfil: e.target.value as PerfilCliente }))}
+                    disabled={readOnly}
+                  >
                     <option>PF Geral</option>
                     <option>PF Agro</option>
                     <option>PJ</option>
@@ -1552,7 +1702,12 @@ export default function ClientesPage() {
                 <div>
                   <div className="label">Segmento</div>
                   {extra.tipo === "PF" ? (
-                    <select className="input" value={extra.segmento_pf} onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))} disabled={readOnly}>
+                    <select
+                      className="input"
+                      value={extra.segmento_pf}
+                      onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))}
+                      disabled={readOnly}
+                    >
                       <option value="">Selecione…</option>
                       {SEGMENTOS_PF.map((s) => (
                         <option key={s} value={s}>
@@ -1574,13 +1729,28 @@ export default function ClientesPage() {
                 <div className="md:col-span-2">
                   <div className="label">Sexo</div>
                   <div className="flex gap-2 flex-wrap">
-                    <button type="button" className={`pill ${extra.sexo === "M" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "M" }))} disabled={readOnly}>
+                    <button
+                      type="button"
+                      className={`pill ${extra.sexo === "M" ? "pill-on" : ""}`}
+                      onClick={() => setExtra((s) => ({ ...s, sexo: "M" }))}
+                      disabled={readOnly}
+                    >
                       Masculino
                     </button>
-                    <button type="button" className={`pill ${extra.sexo === "F" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "F" }))} disabled={readOnly}>
+                    <button
+                      type="button"
+                      className={`pill ${extra.sexo === "F" ? "pill-on" : ""}`}
+                      onClick={() => setExtra((s) => ({ ...s, sexo: "F" }))}
+                      disabled={readOnly}
+                    >
                       Feminino
                     </button>
-                    <button type="button" className={`pill ${extra.sexo === "O" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "O" }))} disabled={readOnly}>
+                    <button
+                      type="button"
+                      className={`pill ${extra.sexo === "O" ? "pill-on" : ""}`}
+                      onClick={() => setExtra((s) => ({ ...s, sexo: "O" }))}
+                      disabled={readOnly}
+                    >
                       Outro
                     </button>
                     {!readOnly && (
@@ -1904,7 +2074,12 @@ export default function ClientesPage() {
 
                   <div className="mt-3">
                     <div className="text-xs text-slate-600 mb-2">Como nos conheceu? (1 opção)</div>
-                    <select className="input" value={extra.como_conheceu} onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))} disabled={readOnly}>
+                    <select
+                      className="input"
+                      value={extra.como_conheceu}
+                      onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))}
+                      disabled={readOnly}
+                    >
                       <option value="">Selecione…</option>
                       {COMO_CONHECEU.map((o) => (
                         <option key={o} value={o}>

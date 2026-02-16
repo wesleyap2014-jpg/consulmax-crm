@@ -1,15 +1,18 @@
 // src/pages/Clientes.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
 
-// -------- types (mínimos, focados no que usamos) --------
+import { Loader2, Phone, CalendarDays, Pencil, RefreshCw, MapPin } from "lucide-react";
+
+/** ===== Tipos ===== **/
 type Role = "admin" | "vendedor" | "viewer" | "gestor";
 
 type UserRow = {
@@ -21,49 +24,91 @@ type UserRow = {
   is_active: boolean | null;
 };
 
-type ClienteRow = {
+type LeadRow = {
   id: string;
-  nome: string;
-  data_nascimento: string | null; // date
-  cpf: string | null;
+  nome: string | null;
   telefone: string | null;
   email: string | null;
-  cidade: string | null;
-  uf: string | null;
-  observacoes: string | null;
-  lead_id: string | null;
+  descricao: string | null;
+  owner_id: string | null; // auth_user_id do vendedor
+  created_at?: string | null;
 };
 
 type VendaRow = {
   id: string;
   lead_id: string | null;
-  vendedor_id: string | null; // auth_user_id (pelo teu schema)
-  codigo: string | null; // "00" = ativa
-  produto: string | null; // Automóvel, Imóvel...
-  nascimento: string | null; // date (pode ajudar se cliente não tiver)
+  cpf: string | null;
+  cpf_cnpj: any | null; // bytea/hex no supabase client (depende)
+  nascimento: string | null; // date
+  descricao: string | null;
+  telefone: string | null;
+  email: string | null;
+
+  codigo: string | null; // "00" ativa, diferente de "00" cancelada
+  vendedor_id: string | null; // auth_user_id (no teu schema)
+  produto: string | null;
+  created_at?: string | null;
 };
 
-type VClientesGeo = {
+type ClienteRow = {
+  id: string;
+  nome: string;
+  data_nascimento: string | null;
+  cpf: string | null;
+  telefone: string | null;
+  email: string | null;
+  endereco_cep?: string | null;
+  logradouro?: string | null;
+  numero?: string | null;
+  bairro?: string | null;
+  cidade: string | null;
+  uf: string | null;
+  observacoes: string | null;
+  lead_id: string | null;
+  created_at?: string | null;
+};
+
+type VClientesGeoRow = {
   uf: string | null;
   cidade: string | null;
   total: number | null;
 };
 
-// -------- helpers --------
+/** ===== Helpers ===== **/
+const NONE = "__none__";
+const ME = "__me__";
+
 function onlyDigits(s: string) {
   return (s || "").replace(/\D+/g, "");
+}
+
+function maskPhone(v: string) {
+  const d = onlyDigits(v);
+  if (d.length <= 10) {
+    // (##) ####-####
+    return d
+      .replace(/^(\d{2})(\d)/, "($1) $2")
+      .replace(/(\d{4})(\d)/, "$1-$2")
+      .slice(0, 14);
+  }
+  // (##) #####-####
+  return d
+    .replace(/^(\d{2})(\d)/, "($1) $2")
+    .replace(/(\d{5})(\d)/, "$1-$2")
+    .slice(0, 15);
+}
+
+function formatBRDate(iso: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("pt-BR");
 }
 
 function normalizeUF(uf?: string | null) {
   if (!uf) return null;
   const s = String(uf).trim().toUpperCase();
   return /^[A-Z]{2}$/.test(s) ? s : null;
-}
-
-function humanMoneyBR(v: number) {
-  // formata como R$ 9.413
-  const n = Math.round(v);
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 }
 
 function calcAgeFromISODate(dateISO: string | null) {
@@ -78,44 +123,36 @@ function calcAgeFromISODate(dateISO: string | null) {
   return age;
 }
 
-/**
- * "Renda média (estimada)"
- * Base: campo texto quando parsável.
- * - procura padrões com R$ e/ou "renda"
- */
+// Estima renda puxando um número do texto (observações/descrição) quando existe
 function parseRendaFromText(text: string | null): number | null {
   if (!text) return null;
   const t = text.toLowerCase();
 
-  // tenta achar algo do tipo "renda: 9000", "renda 9.000", "renda R$ 9.000"
   const rendaBlock = t.match(/renda[^0-9r$]{0,20}(r\$)?\s*([\d\.\,]{3,})/i);
   const m = rendaBlock?.[2] ? rendaBlock[2] : null;
 
-  // fallback: pega o primeiro "R$ 9.000" que aparecer
   const rx = m ? m : (text.match(/R\$\s*([\d\.\,]{3,})/i)?.[1] ?? null);
   if (!rx) return null;
 
   const normalized = rx.replace(/\./g, "").replace(",", ".");
   const val = Number(normalized);
   if (!Number.isFinite(val) || val <= 0) return null;
-
-  // se alguém escreveu 9,5 (sem milhar), evita distorção
   if (val < 300) return null;
-
-  return val;
+  return Math.round(val);
 }
 
-function modeString(items: string[]) {
-  const m = new Map<string, number>();
-  for (const it of items) m.set(it, (m.get(it) ?? 0) + 1);
-  let best: { k: string; v: number } | null = null;
-  for (const [k, v] of m) {
-    if (!best || v > best.v) best = { k, v };
-  }
-  return best?.k ?? null;
+function humanMoneyBR(v: number) {
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 }
 
-// -------- map iframe API typing (do br-estados.html) --------
+function buildWhatsAppLink(phone: string | null | undefined, text?: string) {
+  const d = onlyDigits(phone || "");
+  const num = d.length ? (d.startsWith("55") ? d : "55" + d) : "";
+  const msg = text ? `&text=${encodeURIComponent(text)}` : "";
+  return num ? `https://wa.me/${num}?${msg.replace(/^&/, "")}` : `https://wa.me/?${msg.replace(/^&/, "")}`;
+}
+
+/** ===== Integração Mapa (iframe) ===== **/
 type ConsulmaxMapAPI = {
   setSelected: (uf: string | null) => void;
   getSelected: () => string | null;
@@ -124,45 +161,78 @@ type ConsulmaxMapAPI = {
   clearActive: () => void;
 };
 
-export default function Clientes() {
-  const [tab, setTab] = useState<"cadastro" | "demografia">("demografia");
+function getMapAPI(iframe: HTMLIFrameElement | null): ConsulmaxMapAPI | null {
+  const w = iframe?.contentWindow as any;
+  return (w?.consulmaxMap as ConsulmaxMapAPI) ?? null;
+}
 
-  // auth/profile
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
+/** =================================================================== **/
+export default function Clientes() {
+  /** ===== Auth / RBAC ===== **/
+  const [loadingUser, setLoadingUser] = useState(true);
   const [me, setMe] = useState<UserRow | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
-  const [selectedSeller, setSelectedSeller] = useState<string>("__me__"); // users.id (para admin)
-  const [loadingUser, setLoadingUser] = useState(true);
-
-  // data
-  const [loadingData, setLoadingData] = useState(true);
-  const [clientes, setClientes] = useState<ClienteRow[]>([]);
-  const [vendasAtivas, setVendasAtivas] = useState<VendaRow[]>([]);
-  const [geoRows, setGeoRows] = useState<VClientesGeo[]>([]);
-  const [selectedUF, setSelectedUF] = useState<string | null>(null);
-
-  // map iframe control
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [mapReady, setMapReady] = useState(false);
-
   const isAdmin = me?.role === "admin";
+
+  // Admin escolhe vendedor (users.id). Vendedor fica travado nele.
+  const [selectedSeller, setSelectedSeller] = useState<string>(ME);
+
   const effectiveAuthSellerId = useMemo(() => {
     if (!me) return null;
     if (!isAdmin) return me.auth_user_id;
-    if (selectedSeller === "__me__") return me.auth_user_id;
+    if (selectedSeller === ME) return me.auth_user_id;
     const u = users.find((x) => x.id === selectedSeller);
     return u?.auth_user_id ?? me.auth_user_id;
   }, [me, isAdmin, selectedSeller, users]);
 
-  // -------- load auth/profile/users --------
+  /** ===== Tabs ===== **/
+  const [tab, setTab] = useState<"cadastro" | "demografia">("cadastro");
+
+  /** ===== Cadastro (baseline) ===== **/
+  const [loadingCad, setLoadingCad] = useState(false);
+  const [leadQuery, setLeadQuery] = useState("");
+  const [confirmQuery, setConfirmQuery] = useState("");
+
+  const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [vendasByLead, setVendasByLead] = useState<Map<string, VendaRow[]>>(new Map());
+
+  const [clientesConfirmados, setClientesConfirmados] = useState<ClienteRow[]>([]);
+  const [confirmPage, setConfirmPage] = useState(1);
+  const CONFIRM_PAGE_SIZE = 10;
+
+  // Novo Cliente manual
+  const [manualNome, setManualNome] = useState("");
+  const [manualCpf, setManualCpf] = useState("");
+  const [manualTelefone, setManualTelefone] = useState("");
+  const [manualEmail, setManualEmail] = useState("");
+  const [manualNasc, setManualNasc] = useState<string>(""); // yyyy-mm-dd
+  const [manualCidade, setManualCidade] = useState("");
+  const [manualUF, setManualUF] = useState("");
+
+  // Edit modal
+  const [editOpen, setEditOpen] = useState(false);
+  const [editCliente, setEditCliente] = useState<ClienteRow | null>(null);
+
+  /** ===== Demografia ===== **/
+  const [loadingDemo, setLoadingDemo] = useState(false);
+  const [selectedUF, setSelectedUF] = useState<string | null>(null);
+
+  const [vendasAtivas, setVendasAtivas] = useState<VendaRow[]>([]);
+  const [geoRows, setGeoRows] = useState<VClientesGeoRow[]>([]);
+
+  // Map iframe
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+
+  /** =========================
+   *  LOAD USER
+   *  ========================= */
   useEffect(() => {
     (async () => {
       setLoadingUser(true);
       try {
         const { data: auth } = await supabase.auth.getUser();
         const uid = auth?.user?.id ?? null;
-        setAuthUserId(uid);
-
         if (!uid) {
           setMe(null);
           setUsers([]);
@@ -178,7 +248,6 @@ export default function Clientes() {
         if (meErr) throw meErr;
         setMe((meRow as UserRow) ?? null);
 
-        // lista de usuários só para admin (ou para selects)
         const role = (meRow as any)?.role as Role | undefined;
         if (role === "admin") {
           const { data: allUsers, error: uErr } = await supabase
@@ -200,57 +269,307 @@ export default function Clientes() {
     })();
   }, []);
 
-  // -------- load demografia base (ativas) + geo view --------
-  async function loadDemografia() {
+  /** =========================
+   *  CADASTRO: carregar leads + vendas + clientes
+   *  ========================= */
+  async function loadCadastro() {
     if (!effectiveAuthSellerId) return;
-    setLoadingData(true);
+    setLoadingCad(true);
 
     try {
-      // 1) vendas ativas (codigo = '00') com RBAC
-      // vendedor_id no teu schema = auth_user_id do vendedor
+      // 1) Leads (filtra por nome)
+      // RBAC: vendedor -> owner_id = auth_user_id; admin -> pode filtrar por vendedor selecionado
       let q = supabase
-        .from("vendas")
-        .select("id, lead_id, vendedor_id, codigo, produto, nascimento")
-        .eq("codigo", "00");
+        .from("leads")
+        .select("id, nome, telefone, email, descricao, owner_id, created_at")
+        .order("created_at", { ascending: false })
+        .limit(250);
 
-      // RBAC
-      if (!isAdmin) {
-        q = q.eq("vendedor_id", effectiveAuthSellerId);
-      } else {
-        // admin: se filtrou vendedor, aplica
-        if (effectiveAuthSellerId) q = q.eq("vendedor_id", effectiveAuthSellerId);
+      if (!isAdmin) q = q.eq("owner_id", effectiveAuthSellerId);
+      else if (effectiveAuthSellerId) q = q.eq("owner_id", effectiveAuthSellerId);
+
+      if (leadQuery.trim()) q = q.ilike("nome", `%${leadQuery.trim()}%`);
+
+      const { data: leadsData, error: lErr } = await q;
+      if (lErr) throw lErr;
+
+      const ls = (leadsData as LeadRow[]) ?? [];
+      setLeads(ls);
+
+      const leadIds = ls.map((l) => l.id);
+
+      // 2) Vendas desses leads (para puxar cpf/nascimento/descrição)
+      if (leadIds.length === 0) {
+        setVendasByLead(new Map());
+        setClientesConfirmados([]);
+        return;
       }
 
-      const { data: vAtivas, error: vErr } = await q.limit(2000);
+      const { data: vendasData, error: vErr } = await supabase
+        .from("vendas")
+        .select("id, lead_id, cpf, cpf_cnpj, nascimento, descricao, telefone, email, codigo, vendedor_id, produto, created_at")
+        .in("lead_id", leadIds)
+        .order("created_at", { ascending: false })
+        .limit(2000);
+
+      if (vErr) throw vErr;
+
+      const vb = new Map<string, VendaRow[]>();
+      for (const v of (vendasData as VendaRow[]) ?? []) {
+        const lid = v.lead_id;
+        if (!lid) continue;
+        if (!vb.has(lid)) vb.set(lid, []);
+        vb.get(lid)!.push(v);
+      }
+      setVendasByLead(vb);
+
+      // 3) Clientes confirmados (para particionar)
+      const { data: clientesData, error: cErr } = await supabase
+        .from("clientes")
+        .select("id, nome, data_nascimento, cpf, telefone, email, cidade, uf, observacoes, lead_id, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5000);
+
+      if (cErr) throw cErr;
+
+      setClientesConfirmados((clientesData as ClienteRow[]) ?? []);
+    } catch (e) {
+      console.error("Clientes: loadCadastro error", e);
+    } finally {
+      setLoadingCad(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!me) return;
+    loadCadastro();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, selectedSeller]);
+
+  // Particiona: “novos” = leads com venda (cpf/cpf_cnpj) mas ainda não têm registro em clientes
+  const confirmedByLeadId = useMemo(() => {
+    const m = new Map<string, ClienteRow>();
+    for (const c of clientesConfirmados) {
+      if (c.lead_id) m.set(c.lead_id, c);
+    }
+    return m;
+  }, [clientesConfirmados]);
+
+  const leadsWithCpfVenda = useMemo(() => {
+    // baseline: considera apenas leads com pelo menos 1 venda com cpf text ou cpf_cnpj bytea
+    const arr: {
+      lead: LeadRow;
+      vendaMaisRecente: VendaRow | null;
+      cpfDig: string | null;
+      nascISO: string | null;
+      obs: string | null;
+      vendasIds: string[];
+    }[] = [];
+
+    for (const l of leads) {
+      const vs = vendasByLead.get(l.id) ?? [];
+      const vv = vs[0] ?? null; // já vem desc por created_at
+      const cpfText = vv?.cpf ? onlyDigits(vv.cpf) : null;
+
+      // cpf_cnpj (bytea/hex) não dá pra parsear com segurança aqui sem regra fixa;
+      // então seguimos: se cpf texto existir, ok.
+      const hasCpf = !!(cpfText && cpfText.length >= 11);
+
+      if (!hasCpf) continue;
+
+      arr.push({
+        lead: l,
+        vendaMaisRecente: vv,
+        cpfDig: cpfText,
+        nascISO: vv?.nascimento ?? null,
+        obs: vv?.descricao ?? l.descricao ?? null,
+        vendasIds: vs.map((x) => x.id),
+      });
+    }
+    return arr;
+  }, [leads, vendasByLead]);
+
+  const novos = useMemo(() => {
+    return leadsWithCpfVenda.filter((x) => !confirmedByLeadId.has(x.lead.id));
+  }, [leadsWithCpfVenda, confirmedByLeadId]);
+
+  const confirmadosFiltrados = useMemo(() => {
+    const q = confirmQuery.trim().toLowerCase();
+    const list = clientesConfirmados.filter((c) => {
+      if (!q) return true;
+      const hay = `${c.nome ?? ""} ${c.telefone ?? ""} ${c.cpf ?? ""} ${c.email ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+    const start = (confirmPage - 1) * CONFIRM_PAGE_SIZE;
+    const end = start + CONFIRM_PAGE_SIZE;
+    return { total: list.length, pageItems: list.slice(start, end) };
+  }, [clientesConfirmados, confirmQuery, confirmPage]);
+
+  /** ===== Cadastro: ações ===== **/
+  async function confirmClientFromLead(leadId: string) {
+    const item = leadsWithCpfVenda.find((x) => x.lead.id === leadId);
+    if (!item || !me) return;
+
+    const nome = item.lead.nome?.trim() || "Cliente";
+    const telefone = item.lead.telefone || item.vendaMaisRecente?.telefone || null;
+    const email = item.lead.email || item.vendaMaisRecente?.email || null;
+    const nascimento = item.nascISO ?? null;
+    const observacoes = item.obs ?? null;
+
+    // UF/cidade só se já existirem no cadastro manual anterior; como aqui é "confirmar", deixamos nulo.
+    // (Você pode evoluir depois pra puxar do lead se tiver endereço)
+    try {
+      setLoadingCad(true);
+
+      // 1) atualiza lead (se você quiser marcar algo; aqui só garante campos)
+      await supabase
+        .from("leads")
+        .update({
+          telefone: telefone,
+          email: email,
+          descricao: item.lead.descricao ?? observacoes,
+        })
+        .eq("id", leadId);
+
+      // 2) atualiza venda mais recente com nascimento/descricao (baseline)
+      if (item.vendaMaisRecente?.id) {
+        await supabase
+          .from("vendas")
+          .update({
+            nascimento: nascimento,
+            descricao: observacoes,
+          })
+          .eq("id", item.vendaMaisRecente.id);
+      }
+
+      // 3) insere em clientes
+      const { error: insErr } = await supabase.from("clientes").insert({
+        nome,
+        data_nascimento: nascimento,
+        cpf: item.cpfDig,
+        telefone,
+        email,
+        cidade: null,
+        uf: null,
+        observacoes,
+        lead_id: leadId,
+        created_by: me.auth_user_id,
+      });
+
+      if (insErr) throw insErr;
+
+      await loadCadastro();
+    } catch (e) {
+      console.error("confirmClient error", e);
+    } finally {
+      setLoadingCad(false);
+    }
+  }
+
+  async function createManualClient() {
+    if (!me) return;
+    const nome = manualNome.trim();
+    const cpf = onlyDigits(manualCpf);
+    const tel = manualTelefone ? onlyDigits(manualTelefone) : "";
+    const uf = normalizeUF(manualUF);
+
+    if (!nome) return;
+
+    try {
+      setLoadingCad(true);
+
+      const { error: insErr } = await supabase.from("clientes").insert({
+        nome,
+        cpf: cpf || null,
+        telefone: tel ? maskPhone(tel) : null,
+        email: manualEmail.trim() || null,
+        data_nascimento: manualNasc || null,
+        cidade: manualCidade.trim() || null,
+        uf: uf,
+        observacoes: null,
+        lead_id: null,
+        created_by: me.auth_user_id,
+      });
+
+      if (insErr) throw insErr;
+
+      setManualNome("");
+      setManualCpf("");
+      setManualTelefone("");
+      setManualEmail("");
+      setManualNasc("");
+      setManualCidade("");
+      setManualUF("");
+
+      await loadCadastro();
+    } catch (e) {
+      console.error("createManualClient error", e);
+    } finally {
+      setLoadingCad(false);
+    }
+  }
+
+  async function saveEditCliente() {
+    if (!editCliente) return;
+
+    try {
+      setLoadingCad(true);
+
+      const uf = normalizeUF(editCliente.uf);
+
+      const { error } = await supabase
+        .from("clientes")
+        .update({
+          nome: editCliente.nome,
+          cpf: editCliente.cpf ? onlyDigits(editCliente.cpf) : null,
+          telefone: editCliente.telefone,
+          email: editCliente.email,
+          data_nascimento: editCliente.data_nascimento,
+          cidade: editCliente.cidade,
+          uf: uf,
+          observacoes: editCliente.observacoes,
+        })
+        .eq("id", editCliente.id);
+
+      if (error) throw error;
+
+      setEditOpen(false);
+      setEditCliente(null);
+      await loadCadastro();
+    } catch (e) {
+      console.error("saveEditCliente error", e);
+    } finally {
+      setLoadingCad(false);
+    }
+  }
+
+  /** =========================
+   *  DEMOGRAFIA: carregar vendas ativas + clientes + view geo
+   *  ========================= */
+  async function loadDemografia() {
+    if (!effectiveAuthSellerId) return;
+
+    setLoadingDemo(true);
+    try {
+      // 1) vendas ativas (codigo='00') com RBAC
+      let q = supabase
+        .from("vendas")
+        .select("id, lead_id, cpf, cpf_cnpj, nascimento, descricao, telefone, email, codigo, vendedor_id, produto, created_at")
+        .eq("codigo", "00")
+        .order("created_at", { ascending: false })
+        .limit(3000);
+
+      if (!isAdmin) q = q.eq("vendedor_id", effectiveAuthSellerId);
+      else if (effectiveAuthSellerId) q = q.eq("vendedor_id", effectiveAuthSellerId);
+
+      const { data: vAtivas, error: vErr } = await q;
       if (vErr) throw vErr;
 
       const vendas = (vAtivas as VendaRow[]) ?? [];
       setVendasAtivas(vendas);
 
-      // 2) clientes vinculados (por lead_id) para pegar uf/cidade/nascimento/observacoes
-      const leadIds = Array.from(
-        new Set(vendas.map((v) => v.lead_id).filter((x): x is string => !!x))
-      );
-
-      if (leadIds.length === 0) {
-        setClientes([]);
-        setGeoRows([]);
-        setSelectedUF(null);
-        return;
-      }
-
-      const { data: cRows, error: cErr } = await supabase
-        .from("clientes")
-        .select("id, nome, data_nascimento, cpf, telefone, email, cidade, uf, observacoes, lead_id")
-        .in("lead_id", leadIds)
-        .limit(5000);
-
-      if (cErr) throw cErr;
-      setClientes((cRows as ClienteRow[]) ?? []);
-
-      // 3) view geo (top cidades) — já vem pronta no teu banco
-      // OBS: se a view não estiver filtrando por vendedor, ela será "Brasil total".
-      // Aqui vamos usar só como “Top cidades Brasil”, como está no teu print.
+      // 2) geo view (top cidades geral) - se existir
       const { data: geo, error: gErr } = await supabase
         .from("v_clientes_geo")
         .select("uf, cidade, total")
@@ -258,90 +577,70 @@ export default function Clientes() {
         .limit(30);
 
       if (gErr) {
-        console.warn("v_clientes_geo não disponível / erro:", gErr);
         setGeoRows([]);
       } else {
-        setGeoRows((geo as VClientesGeo[]) ?? []);
+        setGeoRows((geo as VClientesGeoRow[]) ?? []);
       }
 
-      // Se UF selecionada não existir mais no novo filtro, limpa
+      // 3) sincroniza seleção UF (se ela não existir mais, limpa)
       setSelectedUF((prev) => {
         if (!prev) return prev;
-        const stillHas = (cRows as ClienteRow[]).some((c) => normalizeUF(c.uf) === prev);
-        return stillHas ? prev : null;
+        const ufStillActive = vendas.some((vv) => {
+          const c = confirmedByLeadId.get(vv.lead_id ?? "");
+          return normalizeUF(c?.uf) === prev;
+        });
+        return ufStillActive ? prev : null;
       });
     } catch (e) {
-      console.error("Clientes: load demografia error", e);
+      console.error("loadDemografia error", e);
     } finally {
-      setLoadingData(false);
+      setLoadingDemo(false);
     }
   }
 
+  // carrega demografia quando entrar na aba ou quando trocar vendedor
   useEffect(() => {
     if (!me) return;
+    if (tab !== "demografia") return;
     loadDemografia();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me, selectedSeller]);
+  }, [me, selectedSeller, tab]);
 
-  // -------- derived: index clientes por lead_id (pra casar com venda) --------
-  const clienteByLeadId = useMemo(() => {
-    const m = new Map<string, ClienteRow>();
-    for (const c of clientes) {
-      if (!c.lead_id) continue;
-      // se houver duplicado, mantém o primeiro (ou você pode trocar por regra "mais completo")
-      if (!m.has(c.lead_id)) m.set(c.lead_id, c);
-    }
-    return m;
-  }, [clientes]);
-
-  // -------- active UF set based on vendas ativas + clientes.uf --------
+  // Active UFs = vendas ativas cruzadas com clientes.uf (quando existir)
   const activeUFs = useMemo(() => {
     const set = new Set<string>();
     for (const v of vendasAtivas) {
       const lid = v.lead_id;
       if (!lid) continue;
-      const c = clienteByLeadId.get(lid);
+      const c = confirmedByLeadId.get(lid);
       const uf = normalizeUF(c?.uf);
       if (uf) set.add(uf);
     }
     return Array.from(set).sort();
-  }, [vendasAtivas, clienteByLeadId]);
+  }, [vendasAtivas, confirmedByLeadId]);
 
-  // -------- stats builder (Brasil ou UF selecionada) --------
-  const demo = useMemo(() => {
-    // filtra vendas por UF (quando selecionado)
-    const filteredVendas = selectedUF
+  // Demografia do estado selecionado
+  const demoUF = useMemo(() => {
+    const ufx = selectedUF;
+
+    const vendasFiltradas = ufx
       ? vendasAtivas.filter((v) => {
-          const c = v.lead_id ? clienteByLeadId.get(v.lead_id) : null;
-          return normalizeUF(c?.uf) === selectedUF;
+          const c = confirmedByLeadId.get(v.lead_id ?? "");
+          return normalizeUF(c?.uf) === ufx;
         })
       : vendasAtivas;
 
-    // clientes únicos (por lead_id)
-    const uniqueLeadIds = Array.from(
-      new Set(filteredVendas.map((v) => v.lead_id).filter((x): x is string => !!x))
-    );
+    const leadIds = Array.from(new Set(vendasFiltradas.map((v) => v.lead_id).filter((x): x is string => !!x)));
 
-    // idade média
     const ages: number[] = [];
-    // renda estimada
     const rendas: number[] = [];
-    // produtos
     const produtos: string[] = [];
-    // cidades
     const cidades: string[] = [];
 
-    for (const lid of uniqueLeadIds) {
-      const c = clienteByLeadId.get(lid);
-      const age =
-        calcAgeFromISODate(c?.data_nascimento ?? null) ??
-        // fallback: se cliente não tiver, tenta achar alguma venda com nascimento
-        (() => {
-          const vv = filteredVendas.find((x) => x.lead_id === lid);
-          return calcAgeFromISODate(vv?.nascimento ?? null);
-        })();
-
-      if (typeof age === "number") ages.push(age);
+    for (const lid of leadIds) {
+      const c = confirmedByLeadId.get(lid);
+      const idade = calcAgeFromISODate(c?.data_nascimento ?? null) ?? calcAgeFromISODate(vendasFiltradas.find((x) => x.lead_id === lid)?.nascimento ?? null);
+      if (typeof idade === "number") ages.push(idade);
 
       const r = parseRendaFromText(c?.observacoes ?? null);
       if (typeof r === "number") rendas.push(r);
@@ -349,64 +648,58 @@ export default function Clientes() {
       if (c?.cidade) cidades.push(c.cidade);
     }
 
-    for (const v of filteredVendas) {
-      if (v.produto) produtos.push(v.produto);
-    }
+    for (const v of vendasFiltradas) if (v.produto) produtos.push(v.produto);
 
     const idadeMedia = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : null;
     const rendaMedia = rendas.length ? Math.round(rendas.reduce((a, b) => a + b, 0) / rendas.length) : null;
 
-    // divisão por produto (vendas)
     const prodCount = new Map<string, number>();
-    for (const p of produtos.map((x) => x.trim()).filter(Boolean)) {
-      prodCount.set(p, (prodCount.get(p) ?? 0) + 1);
-    }
+    for (const p of produtos.map((x) => x.trim()).filter(Boolean)) prodCount.set(p, (prodCount.get(p) ?? 0) + 1);
     const produtosSorted = Array.from(prodCount.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => ({ produto: k, total: v }));
+      .map(([produto, total]) => ({ produto, total }));
 
-    // Top cidades (pelos clientes ativos filtrados)
     const cityCount = new Map<string, number>();
-    for (const c of cidades.map((x) => x.trim()).filter(Boolean)) {
-      cityCount.set(c, (cityCount.get(c) ?? 0) + 1);
-    }
-    const topCidadesUF = Array.from(cityCount.entries())
+    for (const c of cidades.map((x) => x.trim()).filter(Boolean)) cityCount.set(c, (cityCount.get(c) ?? 0) + 1);
+    const topCidades = Array.from(cityCount.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6)
       .map(([cidade, total]) => ({ cidade, total }));
 
-    // Persona simples (auto) — sem inventar demais
     const produtoTop = produtosSorted[0]?.produto ?? null;
-    const persona = `Base ativa com ${uniqueLeadIds.length} clientes${selectedUF ? ` em ${selectedUF}` : ""}. ${
+    const persona = `Base ativa com ${leadIds.length} clientes${ufx ? ` em ${ufx}` : ""}. ${
       produtoTop ? `Produto mais comum: ${produtoTop}.` : ""
     } Idade média ${idadeMedia ?? "—"} anos.`;
 
     return {
-      totalClientes: uniqueLeadIds.length,
+      totalClientes: leadIds.length,
       idadeMedia,
       rendaMedia,
-      persona,
-      produtosSorted,
-      topCidadesUF,
       rendaBaseSize: rendas.length,
+      produtosSorted,
+      topCidades,
+      persona,
     };
-  }, [selectedUF, vendasAtivas, clienteByLeadId]);
+  }, [selectedUF, vendasAtivas, confirmedByLeadId]);
 
-  // -------- map integration: attach to iframe window --------
-  function getMapWindow() {
-    return iframeRef.current?.contentWindow ?? null;
-  }
-  function getMapAPI(): ConsulmaxMapAPI | null {
-    const w = getMapWindow() as any;
-    return (w?.consulmaxMap as ConsulmaxMapAPI) ?? null;
-  }
+  // Top cidades Brasil (view)
+  const topCidadesBrasil = useMemo(() => {
+    return geoRows
+      .map((r) => ({
+        uf: normalizeUF(r.uf),
+        cidade: r.cidade?.trim() ?? null,
+        total: typeof r.total === "number" ? r.total : 0,
+      }))
+      .filter((r) => r.uf && r.cidade && r.total > 0)
+      .slice(0, 6) as { uf: string; cidade: string; total: number }[];
+  }, [geoRows]);
 
-  // on iframe load: mark ready + attach listener
+  /** ===== Map events ===== **/
   function handleMapLoad() {
-    const w = getMapWindow();
+    const iframe = iframeRef.current;
+    const w = iframe?.contentWindow;
     if (!w) return;
 
-    // escuta seleção do mapa (dentro do iframe)
     const onSelected = (ev: any) => {
       const uf = normalizeUF(ev?.detail?.uf ?? null);
       setSelectedUF(uf);
@@ -416,10 +709,9 @@ export default function Clientes() {
       w.addEventListener("consulmax:uf-selected", onSelected as any);
       setMapReady(true);
     } catch (e) {
-      console.warn("Map iframe listener error", e);
+      console.warn("map listener error", e);
     }
 
-    // cleanup quando trocar iframe (raro)
     return () => {
       try {
         w.removeEventListener("consulmax:uf-selected", onSelected as any);
@@ -427,10 +719,10 @@ export default function Clientes() {
     };
   }
 
-  // push active UFs to map whenever data changes
+  // pinta estados ativos
   useEffect(() => {
     if (!mapReady) return;
-    const api = getMapAPI();
+    const api = getMapAPI(iframeRef.current);
     if (!api) return;
     try {
       api.setActive(activeUFs);
@@ -440,324 +732,549 @@ export default function Clientes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapReady, activeUFs.join("|")]);
 
-  // keep selected UF synced both ways
+  // sincroniza seleção (quando limpar UF pelo painel)
   useEffect(() => {
     if (!mapReady) return;
-    const api = getMapAPI();
+    const api = getMapAPI(iframeRef.current);
     if (!api) return;
     try {
       api.setSelected(selectedUF);
-    } catch (e) {
-      console.warn("consulmaxMap.setSelected error", e);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    } catch {}
   }, [mapReady, selectedUF]);
 
-  // -------- UI lists (Top cidades Brasil via view) --------
-  const topCidadesBrasil = useMemo(() => {
-    // No print da sua view: uf, cidade, total
-    // Vamos mostrar top 6 no card Brasil
-    const rows = geoRows
-      .map((r) => ({
-        uf: normalizeUF(r.uf),
-        cidade: r.cidade?.trim() ?? null,
-        total: typeof r.total === "number" ? r.total : 0,
-      }))
-      .filter((r) => r.uf && r.cidade && r.total > 0)
-      .slice(0, 6);
+  /** ===== Loading geral ===== **/
+  const loading = loadingUser || loadingCad || loadingDemo;
 
-    return rows as { uf: string; cidade: string; total: number }[];
-  }, [geoRows]);
-
-  const scopeLabel = selectedUF ? selectedUF : "Brasil";
-
-  // -------- render --------
-  const loading = loadingUser || loadingData;
-
+  /** =================================================================== **/
   return (
     <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-sm text-muted-foreground">Clientes</div>
+          <div className="text-lg font-semibold">Cadastro e Demografia</div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <div className="min-w-[220px]">
+              <Select value={selectedSeller} onValueChange={setSelectedSeller}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Vendedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ME}>Meu painel</SelectItem>
+                  {users
+                    .filter((u) => u.role !== "viewer")
+                    .map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.nome ?? u.email ?? u.id}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <Button
+            onClick={() => {
+              if (tab === "cadastro") loadCadastro();
+              else loadDemografia();
+            }}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Atualizar
+          </Button>
+        </div>
+      </div>
+
+      {/* Tabs */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList>
           <TabsTrigger value="cadastro">Cadastro</TabsTrigger>
           <TabsTrigger value="demografia">Demografia</TabsTrigger>
         </TabsList>
 
-        {/* CADASTRO (mantém a aba — aqui você pode plugar seu conteúdo existente) */}
-        <TabsContent value="cadastro">
+        {/* ===================== CADASTRO (baseline preservado) ===================== */}
+        <TabsContent value="cadastro" className="space-y-4">
+          {/* Novo Cliente manual */}
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle>Clientes</CardTitle>
+              <CardTitle className="text-base">Novo Cliente (manual)</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-sm text-muted-foreground">
-                Aba de cadastro não foi alterada aqui. (Só focamos na Demografia/Mapa)
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <Label>Nome</Label>
+                  <Input value={manualNome} onChange={(e) => setManualNome(e.target.value)} placeholder="Nome do cliente" />
+                </div>
+
+                <div>
+                  <Label>CPF</Label>
+                  <Input value={manualCpf} onChange={(e) => setManualCpf(e.target.value)} placeholder="000.000.000-00" />
+                </div>
+
+                <div>
+                  <Label>Telefone</Label>
+                  <Input
+                    value={manualTelefone}
+                    onChange={(e) => setManualTelefone(maskPhone(e.target.value))}
+                    placeholder="(69) 9xxxx-xxxx"
+                  />
+                </div>
+
+                <div>
+                  <Label>E-mail</Label>
+                  <Input value={manualEmail} onChange={(e) => setManualEmail(e.target.value)} placeholder="email@..." />
+                </div>
+
+                <div>
+                  <Label>Nascimento</Label>
+                  <Input type="date" value={manualNasc} onChange={(e) => setManualNasc(e.target.value)} />
+                </div>
+
+                <div className="grid grid-cols-[1fr_90px] gap-2">
+                  <div>
+                    <Label>Cidade</Label>
+                    <Input value={manualCidade} onChange={(e) => setManualCidade(e.target.value)} placeholder="Cidade" />
+                  </div>
+                  <div>
+                    <Label>UF</Label>
+                    <Input value={manualUF} onChange={(e) => setManualUF(e.target.value)} placeholder="RO" />
+                  </div>
+                </div>
               </div>
+
+              <div className="mt-4 flex items-center gap-2">
+                <Button onClick={createManualClient} disabled={loadingCad || !manualNome.trim()}>
+                  {loadingCad ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Cadastrar
+                </Button>
+                <div className="text-xs text-muted-foreground">
+                  Dica: se preencher UF, isso já ajuda a Demografia/Mapa.
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Leads com vendas -> Novos */}
+          <Card className="glass-card">
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle className="text-base">Novos (prontos para confirmar)</CardTitle>
+              <div className="w-[260px]">
+                <Input
+                  value={leadQuery}
+                  onChange={(e) => setLeadQuery(e.target.value)}
+                  placeholder="Buscar lead por nome..."
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") loadCadastro();
+                  }}
+                />
+              </div>
+            </CardHeader>
+            <CardContent>
+              {novos.length === 0 ? (
+                <div className="text-sm text-muted-foreground">Nenhum novo cliente para confirmar.</div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  {novos.slice(0, 20).map((n) => {
+                    const l = n.lead;
+                    const vv = n.vendaMaisRecente;
+                    return (
+                      <div key={l.id} className="rounded-xl border bg-white/50 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate">{l.nome ?? "—"}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {l.telefone ? maskPhone(l.telefone) : "—"} {l.email ? `• ${l.email}` : ""}
+                            </div>
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              CPF: <span className="font-medium">{n.cpfDig ?? "—"}</span>
+                              {vv?.nascimento ? (
+                                <>
+                                  {" "}
+                                  • Nasc: <span className="font-medium">{formatBRDate(vv.nascimento)}</span>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <Button
+                            onClick={() => confirmClientFromLead(l.id)}
+                            disabled={loadingCad}
+                          >
+                            {loadingCad ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Confirmar
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="mt-3 text-xs text-muted-foreground">
+                Regra: aparece aqui quando existe pelo menos 1 venda com CPF e o cliente ainda não está cadastrado em <code>clientes</code>.
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Confirmados */}
+          <Card className="glass-card">
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle className="text-base">Clientes confirmados</CardTitle>
+              <div className="w-[260px]">
+                <Input
+                  value={confirmQuery}
+                  onChange={(e) => {
+                    setConfirmQuery(e.target.value);
+                    setConfirmPage(1);
+                  }}
+                  placeholder="Buscar por nome/telefone/cpf/email..."
+                />
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              {confirmadosFiltrados.total === 0 ? (
+                <div className="text-sm text-muted-foreground">Nenhum cliente confirmado encontrado.</div>
+              ) : (
+                <div className="space-y-2">
+                  {confirmadosFiltrados.pageItems.map((c) => (
+                    <div key={c.id} className="rounded-xl border bg-white/50 p-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="font-semibold truncate">{c.nome}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {c.telefone ? c.telefone : "—"} {c.email ? `• ${c.email}` : ""}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground flex flex-wrap items-center gap-2">
+                            <span>CPF: <span className="font-medium">{c.cpf ?? "—"}</span></span>
+                            <span>•</span>
+                            <span>Nasc: <span className="font-medium">{formatBRDate(c.data_nascimento)}</span></span>
+                            <span>•</span>
+                            <span className="inline-flex items-center gap-1">
+                              <MapPin className="h-3.5 w-3.5" />
+                              <span className="font-medium">
+                                {(c.cidade || "—")}{c.uf ? `/${normalizeUF(c.uf)}` : ""}
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              const link = buildWhatsAppLink(c.telefone, `Olá ${c.nome}! Wesley da Consulmax por aqui.`);
+                              window.open(link, "_blank");
+                            }}
+                            disabled={!c.telefone}
+                          >
+                            <Phone className="mr-2 h-4 w-4" />
+                            WhatsApp
+                          </Button>
+
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              // atalho simples: você pode trocar para a rota exata do seu CRM
+                              // Ex.: /agenda?leadId=... ou /agenda?clienteId=...
+                              const url = c.lead_id ? `/agenda?leadId=${c.lead_id}` : `/agenda?clienteId=${c.id}`;
+                              window.location.href = url;
+                            }}
+                          >
+                            <CalendarDays className="mr-2 h-4 w-4" />
+                            Agenda
+                          </Button>
+
+                          <Button
+                            onClick={() => {
+                              setEditCliente({
+                                ...c,
+                                uf: normalizeUF(c.uf),
+                                telefone: c.telefone ?? null,
+                              });
+                              setEditOpen(true);
+                            }}
+                          >
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Editar
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Paginação */}
+                  <div className="flex items-center justify-between pt-2">
+                    <div className="text-xs text-muted-foreground">
+                      {confirmadosFiltrados.total} clientes • página {confirmPage} de{" "}
+                      {Math.max(1, Math.ceil(confirmadosFiltrados.total / CONFIRM_PAGE_SIZE))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() => setConfirmPage((p) => Math.max(1, p - 1))}
+                        disabled={confirmPage <= 1}
+                      >
+                        Anterior
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          setConfirmPage((p) =>
+                            Math.min(Math.ceil(confirmadosFiltrados.total / CONFIRM_PAGE_SIZE), p + 1)
+                          )
+                        }
+                        disabled={confirmPage >= Math.ceil(confirmadosFiltrados.total / CONFIRM_PAGE_SIZE)}
+                      >
+                        Próxima
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* DEMOGRAFIA */}
-        <TabsContent value="demografia">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="text-sm text-muted-foreground">Demografia (Clientes Ativos)</div>
-              <div className="text-lg font-semibold">Resumo e mapa por UF</div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {isAdmin && (
-                <div className="min-w-[220px]">
-                  <Select value={selectedSeller} onValueChange={setSelectedSeller}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Vendedor" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__me__">Meu painel</SelectItem>
-                      {users
-                        .filter((u) => u.role !== "viewer")
-                        .map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.nome ?? u.email ?? u.id}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+        {/* ===================== DEMOGRAFIA (bonita e discreta) ===================== */}
+        <TabsContent value="demografia" className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
+            {/* MAPA */}
+            <Card className="glass-card">
+              <CardHeader className="flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Mapa por UF</CardTitle>
+                  <div className="text-xs text-muted-foreground">Estados com vendas ativas (código 00) ficam tingidos</div>
                 </div>
-              )}
 
-              <Button onClick={loadDemografia} disabled={loading}>
-                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Atualizar
-              </Button>
-            </div>
-          </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" onClick={() => setSelectedUF(null)} disabled={!selectedUF}>
+                    Limpar UF
+                  </Button>
+                </div>
+              </CardHeader>
 
-          {/* GRID PRINCIPAL */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[420px_1fr]">
-            {/* COLUNA ESQUERDA */}
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
-                <Card className="glass-card">
-                  <CardContent className="pt-6">
-                    <div className="text-xs text-muted-foreground">Clientes ativos ({scopeLabel})</div>
-                    <div className="mt-1 text-2xl font-semibold">{demo.totalClientes}</div>
-                    <div className="mt-2 text-xs text-muted-foreground">
-                      Base: vendas com código <b>00</b> cruzadas com clientes.uf
-                    </div>
-                  </CardContent>
-                </Card>
+              <CardContent>
+                <div className="rounded-xl border bg-white/50 overflow-hidden">
+                  <div className="h-[300px] sm:h-[340px] w-full">
+                    <iframe
+                      ref={iframeRef}
+                      title="Mapa por UF • Consulmax"
+                      src="/maps/br-estados.html"
+                      className="h-full w-full"
+                      onLoad={handleMapLoad as any}
+                    />
+                  </div>
+                </div>
 
-                <Card className="glass-card">
-                  <CardContent className="pt-6">
-                    <div className="text-xs text-muted-foreground">Idade média</div>
-                    <div className="mt-1 text-2xl font-semibold">{demo.idadeMedia ?? "—"}</div>
-                    <div className="mt-2 text-xs text-muted-foreground">
-                      {demo.idadeMedia ? `Média calculada por data de nascimento` : "Sem base suficiente"}
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>UF selecionada:</span>
+                  <span className="rounded-full border bg-white/60 px-2 py-1 font-medium text-foreground">
+                    {selectedUF ?? "—"}
+                  </span>
+                  <span>•</span>
+                  <span>UFs ativas: {activeUFs.length ? activeUFs.join(", ") : "—"}</span>
+                </div>
+              </CardContent>
+            </Card>
 
-                <Card className="glass-card">
-                  <CardContent className="pt-6">
-                    <div className="text-xs text-muted-foreground">Renda média (estimada)</div>
-                    <div className="mt-1 text-2xl font-semibold">
-                      {typeof demo.rendaMedia === "number" ? humanMoneyBR(demo.rendaMedia) : "—"}
-                    </div>
-                    <div className="mt-2 text-xs text-muted-foreground">
-                      Base: campo texto quando parsável ({demo.rendaBaseSize})
-                    </div>
-                  </CardContent>
-                </Card>
+            {/* PAINEL */}
+            <Card className="glass-card">
+              <CardHeader>
+                <CardTitle className="text-base">Demografia • {selectedUF ?? "Selecione uma UF"}</CardTitle>
+              </CardHeader>
 
-                <Card className="glass-card">
-                  <CardContent className="pt-6">
-                    <div className="text-xs text-muted-foreground">Filtro UF</div>
-                    <div className="mt-1 text-base font-semibold">{selectedUF ?? "—"}</div>
-                    <div className="mt-2 text-xs text-muted-foreground">Clique no mapa para selecionar.</div>
-                  </CardContent>
-                </Card>
-              </div>
+              <CardContent className="space-y-3">
+                {!selectedUF ? (
+                  <div className="text-sm text-muted-foreground">
+                    Clique em um estado no mapa para ver os números desse estado.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-xl border bg-white/50 p-3">
+                        <div className="text-xs text-muted-foreground">Clientes ativos</div>
+                        <div className="mt-1 text-xl font-semibold">{demoUF.totalClientes}</div>
+                      </div>
 
-              {/* TOP CIDADES */}
-              <Card className="glass-card">
-                <CardHeader>
-                  <CardTitle className="text-base">
-                    Top cidades ({selectedUF ? selectedUF : "Brasil"})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {(selectedUF ? demo.topCidadesUF : topCidadesBrasil).length === 0 ? (
-                    <div className="text-sm text-muted-foreground">Sem dados suficientes.</div>
-                  ) : (
-                    (selectedUF ? demo.topCidadesUF : topCidadesBrasil).map((r: any) => (
-                      <div key={`${r.cidade}-${r.uf ?? ""}`} className="flex items-center justify-between rounded-md border px-3 py-2">
-                        <div className="text-sm">
-                          {r.cidade}{" "}
-                          <span className="text-xs text-muted-foreground">
-                            • {selectedUF ? selectedUF : r.uf}
-                          </span>
+                      <div className="rounded-xl border bg-white/50 p-3">
+                        <div className="text-xs text-muted-foreground">Idade média</div>
+                        <div className="mt-1 text-xl font-semibold">{demoUF.idadeMedia ?? "—"}</div>
+                      </div>
+
+                      <div className="rounded-xl border bg-white/50 p-3 col-span-2">
+                        <div className="text-xs text-muted-foreground">Renda média (estimada)</div>
+                        <div className="mt-1 text-xl font-semibold">
+                          {typeof demoUF.rendaMedia === "number" ? humanMoneyBR(demoUF.rendaMedia) : "—"}
                         </div>
-                        <div className="text-sm font-semibold">{r.total}</div>
-                      </div>
-                    ))
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* PERSONA */}
-              <Card className="glass-card">
-                <CardHeader>
-                  <CardTitle className="text-base">Persona (auto) • {scopeLabel}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-sm text-muted-foreground">{demo.persona}</div>
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    *A qualidade depende do preenchimento de cadastro (idade/renda/observações).
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* COLUNA DIREITA: MAPA + PAINEL LATERAL */}
-            <div className="space-y-4">
-              <Card className="glass-card">
-                <CardHeader className="flex-row items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base">Mapa do Brasil (UF)</CardTitle>
-                    <div className="text-xs text-muted-foreground">Clique no estado para filtrar</div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="secondary"
-                      onClick={() => setSelectedUF(null)}
-                      disabled={!selectedUF}
-                    >
-                      Limpar UF
-                    </Button>
-                  </div>
-                </CardHeader>
-
-                <CardContent>
-                  {/* grid: mapa + painel (lado a lado em desktop, empilha no mobile) */}
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
-                    {/* MAPA */}
-                    <div className="rounded-xl border bg-white/50 overflow-hidden">
-                      <div className="h-[280px] sm:h-[320px] w-full">
-                        <iframe
-                          ref={iframeRef}
-                          title="Mapa por UF • Consulmax"
-                          src="/maps/br-estados.html"
-                          className="h-full w-full"
-                          onLoad={handleMapLoad as any}
-                        />
-                      </div>
-                      <div className="px-3 py-2 text-xs text-muted-foreground">
-                        Se o mapa não aparecer, confirme o arquivo em <code>public/maps/br-estados.html</code>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          Base parsável: {demoUF.rendaBaseSize}
+                        </div>
                       </div>
                     </div>
 
-                    {/* PAINEL UF */}
-                    <div className="rounded-xl border bg-white/50">
-                      <div className="px-4 py-3 border-b">
-                        <div className="text-xs text-muted-foreground">Demografia do estado</div>
-                        <div className="text-base font-semibold">{selectedUF ? selectedUF : "Selecione uma UF"}</div>
-                      </div>
+                    <div className="rounded-xl border bg-white/50 p-3">
+                      <div className="text-xs text-muted-foreground">Persona (auto)</div>
+                      <div className="mt-2 text-sm text-muted-foreground">{demoUF.persona}</div>
+                    </div>
 
-                      <div className="p-4 space-y-3">
-                        {!selectedUF ? (
-                          <div className="text-sm text-muted-foreground">
-                            Clique em um estado no mapa para ver os dados ao lado.
-                          </div>
+                    <div className="rounded-xl border bg-white/50 p-3">
+                      <div className="text-xs text-muted-foreground">Divisão por produto</div>
+                      <div className="mt-2 space-y-2">
+                        {demoUF.produtosSorted.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">Sem produto identificado nas vendas ativas.</div>
                         ) : (
-                          <>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="rounded-lg border px-3 py-2">
-                                <div className="text-xs text-muted-foreground">Clientes ativos</div>
-                                <div className="text-lg font-semibold">{demo.totalClientes}</div>
-                              </div>
-                              <div className="rounded-lg border px-3 py-2">
-                                <div className="text-xs text-muted-foreground">Idade média</div>
-                                <div className="text-lg font-semibold">{demo.idadeMedia ?? "—"}</div>
-                              </div>
-                              <div className="rounded-lg border px-3 py-2 col-span-2">
-                                <div className="text-xs text-muted-foreground">Renda média (estimada)</div>
-                                <div className="text-lg font-semibold">
-                                  {typeof demo.rendaMedia === "number" ? humanMoneyBR(demo.rendaMedia) : "—"}
-                                </div>
-                                <div className="text-[11px] text-muted-foreground mt-1">
-                                  Base parsável: {demo.rendaBaseSize}
-                                </div>
-                              </div>
+                          demoUF.produtosSorted.slice(0, 8).map((p) => (
+                            <div key={p.produto} className="flex items-center justify-between">
+                              <div className="text-sm">{p.produto}</div>
+                              <div className="text-sm font-semibold">{p.total}</div>
                             </div>
-
-                            <div className="rounded-lg border px-3 py-2">
-                              <div className="text-xs text-muted-foreground">Persona</div>
-                              <div className="text-sm text-muted-foreground mt-1">{demo.persona}</div>
-                            </div>
-
-                            <div className="rounded-lg border px-3 py-2">
-                              <div className="text-xs text-muted-foreground">Divisão por produto (vendas ativas)</div>
-                              <div className="mt-2 space-y-2">
-                                {demo.produtosSorted.length === 0 ? (
-                                  <div className="text-sm text-muted-foreground">Sem vendas com produto identificado.</div>
-                                ) : (
-                                  demo.produtosSorted.slice(0, 8).map((p) => (
-                                    <div key={p.produto} className="flex items-center justify-between">
-                                      <div className="text-sm">{p.produto}</div>
-                                      <div className="text-sm font-semibold">{p.total}</div>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                          </>
+                          ))
                         )}
                       </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
 
-              {/* DISTRIBUIÇÕES RÁPIDAS (mantive a ideia do teu print, mas com produto) */}
-              <Card className="glass-card">
-                <CardHeader>
-                  <CardTitle className="text-base">Distribuições rápidas • {scopeLabel}</CardTitle>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="rounded-xl border p-4">
-                    <div className="text-xs text-muted-foreground mb-2">Produtos (vendas ativas)</div>
-                    <div className="space-y-2">
-                      {demo.produtosSorted.length === 0 ? (
-                        <div className="text-sm text-muted-foreground">Sem dados.</div>
+                    <div className="rounded-xl border bg-white/50 p-3">
+                      <div className="text-xs text-muted-foreground">Top cidades (pela base ativa)</div>
+                      <div className="mt-2 space-y-2">
+                        {demoUF.topCidades.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">Sem dados suficientes.</div>
+                        ) : (
+                          demoUF.topCidades.map((r) => (
+                            <div key={r.cidade} className="flex items-center justify-between">
+                              <div className="text-sm">{r.cidade}</div>
+                              <div className="text-sm font-semibold">{r.total}</div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Brasil (quando não tem UF selecionada) - pequeno e bonito */}
+                {!selectedUF ? (
+                  <div className="rounded-xl border bg-white/50 p-3">
+                    <div className="text-xs text-muted-foreground">Top cidades (view)</div>
+                    <div className="mt-2 space-y-2">
+                      {topCidadesBrasil.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">Sem dados da view.</div>
                       ) : (
-                        demo.produtosSorted.slice(0, 10).map((p) => (
-                          <div key={p.produto} className="flex items-center justify-between">
-                            <div className="text-sm">{p.produto}</div>
-                            <div className="text-sm font-semibold">{p.total}</div>
+                        topCidadesBrasil.map((r) => (
+                          <div key={`${r.uf}-${r.cidade}`} className="flex items-center justify-between">
+                            <div className="text-sm">
+                              {r.cidade} <span className="text-xs text-muted-foreground">• {r.uf}</span>
+                            </div>
+                            <div className="text-sm font-semibold">{r.total}</div>
                           </div>
                         ))
                       )}
                     </div>
                   </div>
-
-                  <div className="rounded-xl border p-4">
-                    <div className="text-xs text-muted-foreground mb-2">UFs ativas (tingidas no mapa)</div>
-                    <div className="text-sm text-muted-foreground">
-                      {activeUFs.length ? activeUFs.join(", ") : "Nenhuma UF identificada nas vendas ativas."}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                ) : null}
+              </CardContent>
+            </Card>
           </div>
 
-          {/* rodapé leve */}
           <div className="text-xs text-muted-foreground">
-            Dica: se alguma UF não pintar, é porque o cliente ativo não tem <code>clientes.uf</code> preenchido.
+            Se algum estado não pintar: é porque existem vendas ativas, mas o cliente não tem <code>UF</code> preenchida no cadastro.
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* ===================== EDIT MODAL ===================== */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Editar cliente</DialogTitle>
+          </DialogHeader>
+
+          {!editCliente ? null : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <Label>Nome</Label>
+                <Input
+                  value={editCliente.nome}
+                  onChange={(e) => setEditCliente({ ...editCliente, nome: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <Label>CPF</Label>
+                <Input
+                  value={editCliente.cpf ?? ""}
+                  onChange={(e) => setEditCliente({ ...editCliente, cpf: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <Label>Telefone</Label>
+                <Input
+                  value={editCliente.telefone ?? ""}
+                  onChange={(e) => setEditCliente({ ...editCliente, telefone: maskPhone(e.target.value) })}
+                />
+              </div>
+
+              <div>
+                <Label>E-mail</Label>
+                <Input
+                  value={editCliente.email ?? ""}
+                  onChange={(e) => setEditCliente({ ...editCliente, email: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <Label>Nascimento</Label>
+                <Input
+                  type="date"
+                  value={editCliente.data_nascimento ?? ""}
+                  onChange={(e) => setEditCliente({ ...editCliente, data_nascimento: e.target.value || null })}
+                />
+              </div>
+
+              <div>
+                <Label>Cidade</Label>
+                <Input
+                  value={editCliente.cidade ?? ""}
+                  onChange={(e) => setEditCliente({ ...editCliente, cidade: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <Label>UF</Label>
+                <Input
+                  value={editCliente.uf ?? ""}
+                  onChange={(e) => setEditCliente({ ...editCliente, uf: e.target.value })}
+                  placeholder="RO"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <Label>Observações</Label>
+                <Input
+                  value={editCliente.observacoes ?? ""}
+                  onChange={(e) => setEditCliente({ ...editCliente, observacoes: e.target.value })}
+                  placeholder="..."
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="mt-2">
+            <Button variant="secondary" onClick={() => setEditOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={saveEditCliente} disabled={loadingCad || !editCliente}>
+              {loadingCad ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

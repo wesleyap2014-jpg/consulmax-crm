@@ -221,12 +221,37 @@ export default function Oportunidades() {
         .order("created_at", { ascending: false });
       setLeads(l || []);
 
-      // vendedores
+      // ✅ vendedores: SOMENTE ATIVOS (users.is_active = true)
       const rpc = await supabase.rpc("listar_vendedores");
       if (!rpc.error && rpc.data?.length) {
-        setVendedores((rpc.data || []) as Vendedor[]);
+        const rpcVends = (rpc.data || []) as Vendedor[];
+
+        // garante que só ficam os ativos (users.is_active = true)
+        const ids = rpcVends.map((v) => v.auth_user_id).filter(Boolean);
+        const { data: actives, error: eAct } = await supabase
+          .from("users")
+          .select("auth_user_id")
+          .eq("is_active", true)
+          .in("auth_user_id", ids);
+
+        if (!eAct) {
+          const activeSet = new Set((actives || []).map((u) => u.auth_user_id));
+          setVendedores(rpcVends.filter((v) => activeSet.has(v.auth_user_id)));
+        } else {
+          // se falhar a checagem, cai para o fallback direto no users
+          const users = await supabase
+            .from("users")
+            .select("auth_user_id, nome")
+            .eq("is_active", true)
+            .order("nome");
+          setVendedores((users.data || []) as Vendedor[]);
+        }
       } else {
-        const users = await supabase.from("users").select("auth_user_id, nome").order("nome");
+        const users = await supabase
+          .from("users")
+          .select("auth_user_id, nome")
+          .eq("is_active", true)
+          .order("nome");
         setVendedores((users.data || []) as Vendedor[]);
       }
 
@@ -815,7 +840,11 @@ export default function Oportunidades() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           {/* Ligar */}
-          <IconBtn title="Ligar" disabled={!lead?.telefone} href={lead?.telefone ? `tel:${onlyDigits(lead.telefone)}` : undefined}>
+          <IconBtn
+            title="Ligar"
+            disabled={!lead?.telefone}
+            href={lead?.telefone ? `tel:${onlyDigits(lead.telefone)}` : undefined}
+          >
             📞
           </IconBtn>
           {/* WhatsApp */}
@@ -827,7 +856,11 @@ export default function Oportunidades() {
             <WhatsappIcon />
           </IconBtn>
           {/* Email */}
-          <IconBtn title={lead?.email ? "E-mail" : "Sem e-mail"} disabled={!lead?.email} href={lead?.email ? `mailto:${lead.email}` : undefined}>
+          <IconBtn
+            title={lead?.email ? "E-mail" : "Sem e-mail"}
+            disabled={!lead?.email}
+            href={lead?.email ? `mailto:${lead.email}` : undefined}
+          >
             ✉️
           </IconBtn>
           {/* Editar lead */}
@@ -1106,7 +1139,11 @@ export default function Oportunidades() {
               </div>
               <div>
                 <label style={label}>E-mail</label>
-                <input value={nlEmail} onChange={(e) => setNlEmail(e.target.value)} style={{ ...input, ...inputGlass }} />
+                <input
+                  value={nlEmail}
+                  onChange={(e) => setNlEmail(e.target.value)}
+                  style={{ ...input, ...inputGlass }}
+                />
               </div>
               <div>
                 <label style={label}>Origem</label>

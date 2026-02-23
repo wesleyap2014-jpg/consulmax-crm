@@ -81,6 +81,9 @@ type CadastroExtra = {
   renda_faturamento: string;
   foto_url: string;
 
+  // ✅ novo (para auto-segmento PJ)
+  cnae_principal?: string;
+
   pais_vivos: "sim" | "nao" | "";
   pai_nome: string;
   pai_nasc: string;
@@ -99,11 +102,6 @@ type CadastroExtra = {
   conteudos: ConteudoPref[];
   prefere_educativo: "educativo" | "ofertas" | "";
   como_conheceu: ComoConheceu | "";
-
-  // ✅ PJ: auto preencher segmento via CNAE principal
-  // (não exibimos UI nova pra não mexer no visual; fica serializado no JSON)
-  cnae_principal?: string;
-  cnae_descricao?: string;
 };
 
 const STORAGE_BUCKET_CLIENTES = "clientes_photos";
@@ -124,14 +122,7 @@ const SEGMENTOS_PF: SegmentoPF[] = [
 ];
 
 const CONTEUDOS: ConteudoPref[] = ["dicas rápidas", "explicações completas", "promoções", "novidades"];
-const COMO_CONHECEU: ComoConheceu[] = [
-  "Instagram",
-  "Google",
-  "Indicação",
-  "Anúncio",
-  "Relacionamento com o Vendedor",
-  "Outro",
-];
+const COMO_CONHECEU: ComoConheceu[] = ["Instagram", "Google", "Indicação", "Anúncio", "Relacionamento com o Vendedor", "Outro"];
 
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
 const clamp = (s: string, n: number) => (s || "").slice(0, n);
@@ -205,6 +196,8 @@ const emptyExtra = (): CadastroExtra => ({
   renda_faturamento: "",
   foto_url: "",
 
+  cnae_principal: "",
+
   pais_vivos: "",
   pai_nome: "",
   pai_nasc: "",
@@ -272,40 +265,7 @@ async function fetchCep(cepDigits: string) {
   };
 }
 
-// ✅ PJ: buscar CNAE principal (BrasilAPI) e usar como Segmento PJ quando vazio
-async function fetchCNAEPrincipalFromCNPJ(cnpjDigits: string): Promise<{ cnae: string; descricao: string } | null> {
-  const cnpj = onlyDigits(cnpjDigits).slice(0, 14);
-  if (cnpj.length !== 14) return null;
-
-  // BrasilAPI CNPJ (sem chave)
-  // https://brasilapi.com.br/api/cnpj/v1/{cnpj}
-  const url = `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`;
-
-  const res = await fetch(url);
-  if (!res.ok) return null;
-
-  const j: any = await res.json();
-
-  const cnae = String(j?.cnae_fiscal || "").trim();
-  const descricao = String(j?.cnae_fiscal_descricao || "").trim();
-
-  if (!cnae && !descricao) return null;
-
-  return {
-    cnae: cnae || "",
-    descricao: descricao || "",
-  };
-}
-
-function Overlay({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
+function Overlay({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
@@ -342,20 +302,10 @@ function PillToggle({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <button
-        type="button"
-        className={`pill ${value === "sim" ? "pill-on" : ""}`}
-        onClick={() => onChange("sim")}
-        disabled={disabled}
-      >
+      <button type="button" className={`pill ${value === "sim" ? "pill-on" : ""}`} onClick={() => onChange("sim")} disabled={disabled}>
         {leftLabel}
       </button>
-      <button
-        type="button"
-        className={`pill ${value === "nao" ? "pill-on" : ""}`}
-        onClick={() => onChange("nao")}
-        disabled={disabled}
-      >
+      <button type="button" className={`pill ${value === "nao" ? "pill-on" : ""}`} onClick={() => onChange("nao")} disabled={disabled}>
         {rightLabel}
       </button>
     </div>
@@ -373,16 +323,7 @@ function MoneyInput({
   disabled?: boolean;
   placeholder?: string;
 }) {
-  return (
-    <input
-      className="input"
-      placeholder={placeholder}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      inputMode="numeric"
-    />
-  );
+  return <input className="input" placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} inputMode="numeric" />;
 }
 
 function parseMoneyToNumber(s: string) {
@@ -423,13 +364,13 @@ type DemoStats = {
   segPJCount: Record<string, number>;
   origemCount: Record<string, number>;
   produtoCount: Record<string, number>; // apenas vendas ativas cruzadas por UF
-  byCity: Record<string, number>; // para Top cidades (sem UF:: prefixado aqui)
+  byCity: Record<string, number>;
 };
 
 type DemoData = {
   statsBrasil: DemoStats;
   statsPorUF: Record<string, DemoStats>;
-  activeUFs: string[]; // UFs que têm vendas ativas (vendas.codigo="00") e clientes.uf preenchido
+  activeUFs: string[];
 };
 
 // helpers de contagem
@@ -439,7 +380,8 @@ function inc(map: Record<string, number>, key: string, by = 1) {
 }
 
 function normalizeUF(v: any): string {
-  return String(v || "").toUpperCase().trim().slice(0, 2);
+  const s = String(v || "").toUpperCase().trim().slice(0, 2);
+  return /^[A-Z]{2}$/.test(s) ? s : "";
 }
 
 function createEmptyStats(): DemoStats {
@@ -479,7 +421,42 @@ function topKey(counts: Record<string, number>) {
   return entries[0]?.[0] || "—";
 }
 
-/** ✅ Mapa Brasil (iframe) + clique UF vira filtro */
+// ✅ Heurística simples por CNAE (seções)
+function segmentFromCNAE(cnaeRaw: string): string {
+  const d = onlyDigits(cnaeRaw || "").padStart(7, "0"); // ex: "0111301"
+  const first2 = Number(d.slice(0, 2)); // 01..99
+  if (!isFinite(first2) || first2 <= 0) return "";
+
+  // Mapeamento por grandes grupos (bem “macro”, mas resolve o auto preenchimento)
+  if (first2 >= 1 && first2 <= 3) return "Agro / Produção primária";
+  if (first2 >= 5 && first2 <= 9) return "Indústria / Extração";
+  if (first2 >= 10 && first2 <= 33) return "Indústria / Transformação";
+  if (first2 >= 35 && first2 <= 39) return "Energia / Saneamento / Resíduos";
+  if (first2 >= 41 && first2 <= 43) return "Construção";
+  if (first2 >= 45 && first2 <= 47) return "Comércio";
+  if (first2 >= 49 && first2 <= 53) return "Transporte / Logística";
+  if (first2 >= 55 && first2 <= 56) return "Hotelaria / Alimentação";
+  if (first2 >= 58 && first2 <= 63) return "Tecnologia / Mídia / Telecom";
+  if (first2 >= 64 && first2 <= 66) return "Financeiro / Seguros";
+  if (first2 >= 68 && first2 <= 68) return "Imobiliário";
+  if (first2 >= 69 && first2 <= 75) return "Serviços profissionais";
+  if (first2 >= 77 && first2 <= 82) return "Serviços administrativos";
+  if (first2 >= 84 && first2 <= 84) return "Setor público";
+  if (first2 >= 85 && first2 <= 85) return "Educação";
+  if (first2 >= 86 && first2 <= 88) return "Saúde";
+  if (first2 >= 90 && first2 <= 93) return "Cultura / Esporte / Lazer";
+  if (first2 >= 94 && first2 <= 96) return "Outros serviços";
+  if (first2 >= 97 && first2 <= 99) return "Serviços domésticos / Organismos";
+
+  return "Serviços";
+}
+
+/**
+ * ✅ Mapa Brasil (iframe) — fix do “só tinge depois de clicar”
+ * Problema típico: o iframe ainda não está pronto quando o React envia UF_STATE.
+ * Solução: enviar “state” no onLoad + retries curtos, e também tentar chamada direta
+ * (same-origin) via contentWindow.consulmaxMap.setActive/setSelected.
+ */
 function BrazilImageMap({
   src,
   activeUFs,
@@ -492,8 +469,10 @@ function BrazilImageMap({
   onSelectUF: (uf: string) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [iframeReady, setIframeReady] = useState(false);
+  const lastSentRef = useRef<string>("");
 
-  // recebe clique do mapa (robusto: postMessage + eventos do iframe)
+  // recebe clique do mapa
   useEffect(() => {
     function onMsg(ev: MessageEvent) {
       const d: any = ev.data;
@@ -519,7 +498,10 @@ function BrazilImageMap({
       if (typeof d === "string") {
         const s = d.trim();
         const m = /^UF\:(\w{2})$/i.exec(s);
-        if (m?.[1]) onSelectUF(normalizeUF(m[1]));
+        if (m?.[1]) {
+          const uf = normalizeUF(m[1]);
+          if (uf) onSelectUF(uf);
+        }
       }
     }
 
@@ -527,34 +509,8 @@ function BrazilImageMap({
     return () => window.removeEventListener("message", onMsg);
   }, [onSelectUF]);
 
-  // fallback: ouve CustomEvent dentro do iframe (mesma origem)
-  useEffect(() => {
-    const win = iframeRef.current?.contentWindow as any;
-    if (!win) return;
-
-    const handler = (ev: any) => {
-      const uf = normalizeUF(ev?.detail?.uf);
-      if (uf) onSelectUF(uf);
-      else onSelectUF("");
-    };
-
-    try {
-      win.addEventListener("consulmax:uf-selected", handler);
-      return () => {
-        try {
-          win.removeEventListener("consulmax:uf-selected", handler);
-        } catch {
-          // ignore
-        }
-      };
-    } catch {
-      // ignore
-    }
-  }, [onSelectUF]);
-
-  // envia estado do dashboard pro mapa (highlight/selected)
-  useEffect(() => {
-    const win = iframeRef.current?.contentWindow as any;
+  const pushStateToIframe = (attemptTag?: string) => {
+    const win = iframeRef.current?.contentWindow;
     if (!win) return;
 
     const payload = {
@@ -565,22 +521,47 @@ function BrazilImageMap({
       selectedUF: normalizeUF(selectedUF || ""),
     };
 
-    // 1) postMessage (se o html escutar)
+    // evita spam de postMessage quando nada mudou
+    const key = JSON.stringify(payload);
+    if (key === lastSentRef.current && !attemptTag) return;
+    lastSentRef.current = key;
+
+    // 1) tenta chamada direta (same-origin) — funciona melhor e não depende de listener de postMessage
+    try {
+      const api = (win as any)?.consulmaxMap;
+      if (api?.setActive) api.setActive(payload.activeUFs);
+      if (api?.setSelected) api.setSelected(payload.selectedUF || null);
+      // se conseguiu chamar API, ótimo.
+      return;
+    } catch {
+      // cai pro postMessage
+    }
+
+    // 2) fallback: postMessage (caso o mapa escute mensagens no futuro)
     try {
       win.postMessage(payload, "*");
     } catch {
       // ignore
     }
+  };
 
-    // 2) API direta (se o html expor window.consulmaxMap)
-    try {
-      const api = win?.consulmaxMap;
-      if (api?.setActive) api.setActive(payload.activeUFs);
-      if (api?.setSelected) api.setSelected(payload.selectedUF || null);
-    } catch {
-      // ignore
-    }
-  }, [activeUFs, selectedUF]);
+  // envia estado do dashboard pro mapa (highlight/selected)
+  useEffect(() => {
+    // sempre que mudar activeUFs/selectedUF, tenta empurrar
+    pushStateToIframe();
+
+    // retries curtos (resolve o “só tinge depois de clicar” quando iframe demora a inicializar)
+    if (!iframeReady) return;
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      tries++;
+      pushStateToIframe(`retry-${tries}`);
+      if (tries >= 10) window.clearInterval(timer);
+    }, 180);
+
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUFs, selectedUF, iframeReady]);
 
   return (
     <div className="rounded-2xl border p-4 bg-white">
@@ -593,6 +574,15 @@ function BrazilImageMap({
 
       <div className="rounded-2xl border overflow-hidden bg-slate-50">
         <div className="relative w-full h-[260px] md:h-[360px] xl:h-[420px]">
+          {!iframeReady && (
+            <div className="absolute inset-0 grid place-items-center">
+              <div className="flex items-center gap-2 text-sm text-slate-600">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Carregando mapa…
+              </div>
+            </div>
+          )}
+
           <iframe
             ref={iframeRef}
             title="Mapa do Brasil"
@@ -600,6 +590,18 @@ function BrazilImageMap({
             className="absolute inset-0 w-full h-full"
             style={{ border: 0, display: "block" }}
             scrolling="no"
+            onLoad={() => {
+              setIframeReady(true);
+              // no load, empurra o state imediatamente + uma sequência curta de retries
+              pushStateToIframe("onLoad");
+              let tries = 0;
+              const timer = window.setInterval(() => {
+                tries++;
+                pushStateToIframe(`onLoad-retry-${tries}`);
+                if (tries >= 12) window.clearInterval(timer);
+              }, 160);
+              window.setTimeout(() => window.clearInterval(timer), 2200);
+            }}
           />
         </div>
       </div>
@@ -608,8 +610,15 @@ function BrazilImageMap({
         <button className="btn" onClick={() => onSelectUF("")}>
           Limpar UF
         </button>
-        <div className="text-xs text-slate-500">
-          Se o mapa não aparecer, confirme o arquivo em <b>public</b>: <span className="font-mono">{src}</span>
+
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1">
+            <span className="inline-block h-2 w-2 rounded-full" style={{ background: "#A11C27" }} />
+            Ativos: {Array.from(activeUFs || []).length}
+          </span>
+          <span>
+            Arquivo: <b>public</b> <span className="font-mono">{src}</span>
+          </span>
         </div>
       </div>
     </div>
@@ -650,10 +659,6 @@ export default function ClientesPage() {
   const [saving, setSaving] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
 
-  // ✅ PJ: evita chamadas repetidas
-  const cnaeFetchKeyRef = useRef<string>(""); // guarda último CNPJ buscado com sucesso (ou tentativa)
-  const [cnaeLoading, setCnaeLoading] = useState(false);
-
   // Demografia
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoUF, setDemoUF] = useState<string>("");
@@ -684,11 +689,7 @@ export default function ClientesPage() {
     const ids = new Set<string>();
     const digits = onlyDigits(t);
 
-    const { data: leadsByName, error: e1 } = await supabase
-      .from("leads")
-      .select("id")
-      .ilike("nome", `%${t}%`)
-      .range(0, 300);
+    const { data: leadsByName, error: e1 } = await supabase.from("leads").select("id").ilike("nome", `%${t}%`).range(0, 300);
     if (e1) throw e1;
     (leadsByName || []).forEach((r: any) => ids.add(String(r.id)));
 
@@ -887,9 +888,6 @@ export default function ClientesPage() {
     setExtra(emptyExtra());
     setLegacyObs("");
     setFotoFile(null);
-
-    cnaeFetchKeyRef.current = "";
-    setCnaeLoading(false);
   }
 
   async function openOverlay(mode: "novo" | "edit" | "view", c: ClienteBase) {
@@ -952,7 +950,6 @@ export default function ClientesPage() {
     setActive(null);
     setSaving(false);
     setCepLoading(false);
-    setCnaeLoading(false);
   }
 
   const readOnly = overlayMode === "view";
@@ -1001,45 +998,6 @@ export default function ClientesPage() {
     }
   }
 
-  // ✅ PJ: tenta auto preencher Segmento PJ via CNAE principal
-  async function tryAutoFillPJSegmentFromCNAE() {
-    if (readOnly) return;
-    if (extra.tipo !== "PJ") return;
-
-    const cnpj = onlyDigits(cpf);
-    if (cnpj.length !== 14) return;
-
-    // Se já tem segmento preenchido, não sobrescreve
-    if ((extra.segmento_pj || "").trim()) return;
-
-    // evita repetir
-    if (cnaeFetchKeyRef.current === cnpj) return;
-
-    cnaeFetchKeyRef.current = cnpj;
-    setCnaeLoading(true);
-
-    try {
-      const info = await fetchCNAEPrincipalFromCNPJ(cnpj);
-      if (!info) return;
-
-      // Regra: Segmento PJ = descrição do CNAE principal (mais útil e humano).
-      // Você pode refinar depois com um "mapeamento CNAE -> segmento macro".
-      const seg = (info.descricao || info.cnae || "").trim();
-      if (!seg) return;
-
-      setExtra((s) => ({
-        ...s,
-        segmento_pj: seg,
-        cnae_principal: info.cnae || s.cnae_principal,
-        cnae_descricao: info.descricao || s.cnae_descricao,
-      }));
-    } catch {
-      // ignore
-    } finally {
-      setCnaeLoading(false);
-    }
-  }
-
   function validateBeforeSave() {
     if (!active) return "Cliente inválido.";
     if (!onlyDigits(cpf)) return "Informe o CPF/CNPJ.";
@@ -1052,18 +1010,12 @@ export default function ClientesPage() {
     if (extra.tipo === "PF") {
       if (!extra.segmento_pf) return "Selecione o segmento (PF).";
     } else {
-      // PJ: segmento_pj pode ser auto por CNAE, mas tem que existir no final
-      if (!extra.segmento_pj.trim()) return "Informe o segmento de atuação (PJ) (ou informe um CNPJ válido para auto preencher).";
+      if (!extra.segmento_pj.trim()) return "Informe o segmento de atuação (PJ).";
     }
     return "";
   }
 
   async function confirmOrSave() {
-    // ✅ antes de validar, tenta auto preencher PJ se necessário
-    if (!readOnly && extra.tipo === "PJ" && !(extra.segmento_pj || "").trim() && onlyDigits(cpf).length === 14) {
-      await tryAutoFillPJSegmentFromCNAE();
-    }
-
     const err = validateBeforeSave();
     if (err) return alert(err);
     if (!active) return;
@@ -1136,9 +1088,10 @@ export default function ClientesPage() {
       }
 
       closeOverlay();
+
       await load(page, debounced);
 
-      // ✅ se estiver em demografia, atualiza pra refletir novas UFs ativas
+      // ✅ se estiver em demografia, atualiza (para novas UFs/ativos refletirem automaticamente)
       if (tab === "demografia") {
         await loadDemografia();
       }
@@ -1163,7 +1116,7 @@ export default function ClientesPage() {
   async function loadDemografia() {
     setDemoLoading(true);
     try {
-      // 1) Vendas ativas (SSOT)
+      // 1) Vendas ativas (SSOT) — venda ativa = codigo === "00"
       const { data: activeVend, error: e1 } = await supabase
         .from("vendas")
         .select("lead_id,produto")
@@ -1181,12 +1134,8 @@ export default function ClientesPage() {
         return;
       }
 
-      // 2) Clientes (UF + demografia)
-      const { data: cli, error: e2 } = await supabase
-        .from("clientes")
-        .select("lead_id,data_nascimento,uf,cidade,observacoes")
-        .in("lead_id", activeLeadIds)
-        .range(0, 20000);
+      // 2) Clientes (para UF + dados demográficos)
+      const { data: cli, error: e2 } = await supabase.from("clientes").select("lead_id,data_nascimento,uf,cidade,observacoes").in("lead_id", activeLeadIds).range(0, 20000);
       if (e2) throw e2;
 
       const clienteByLead = new Map<
@@ -1209,10 +1158,9 @@ export default function ClientesPage() {
 
       const statsBrasil = cloneStatsBase();
       const statsPorUF: Record<string, DemoStats> = {};
-
       const activeUFsSet = new Set<string>();
 
-      // 4) Contagens por lead (clientes ativos)
+      // 4) Clientes ativos por UF = lead único com venda ativa e uf preenchido
       for (const lid of activeLeadIds) {
         const c = clienteByLead.get(lid);
         const uf = c?.uf ? normalizeUF(c.uf) : "";
@@ -1276,10 +1224,11 @@ export default function ClientesPage() {
         }
       }
 
-      // 5) produtoCount (por venda ativa) cruzado com clientes.uf
+      // 5) produtoCount (apenas vendas ativas) cruzado com clientes.uf (por VENDA)
       (vendasAtivas || []).forEach((v: any) => {
         const lid = v?.lead_id ? String(v.lead_id) : "";
         if (!lid) return;
+
         const uf = normalizeUF(clienteByLead.get(lid)?.uf || "");
         const produto = String(v?.produto || "—").trim() || "—";
 
@@ -1300,7 +1249,6 @@ export default function ClientesPage() {
     }
   }
 
-  // UFs tingidas (SSOT)
   const demoUFsActive = useMemo(() => {
     const s = new Set<string>();
     (demo?.activeUFs || []).forEach((uf) => {
@@ -1310,7 +1258,6 @@ export default function ClientesPage() {
     return s;
   }, [demo]);
 
-  // stats selecionado (UF ou Brasil)
   const currentStats = useMemo((): DemoStats => {
     if (!demo) return createEmptyStats();
     const uf = normalizeUF(demoUF);
@@ -1322,12 +1269,7 @@ export default function ClientesPage() {
     const idadeMedia = currentStats.ageList.length ? Math.round(avg(currentStats.ageList) || 0) || null : null;
     const idadeMediana = currentStats.ageList.length ? Math.round(median(currentStats.ageList) || 0) || null : null;
     const rendaMedia = currentStats.rendaList.length ? avg(currentStats.rendaList) : null;
-
-    return {
-      idadeMedia,
-      idadeMediana,
-      rendaMedia,
-    };
+    return { idadeMedia, idadeMediana, rendaMedia };
   }, [currentStats]);
 
   const topCities = useMemo(() => {
@@ -1380,11 +1322,7 @@ export default function ClientesPage() {
                             <td className="p-2">
                               <div className="flex items-center gap-3">
                                 <div className="avatar">
-                                  {c.foto_url ? (
-                                    <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" />
-                                  ) : (
-                                    <span className="avatar-ini">{initials(c.nome)}</span>
-                                  )}
+                                  {c.foto_url ? <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(c.nome)}</span>}
                                 </div>
                                 <div className="min-w-0">
                                   <div className="font-medium truncate">{c.nome}</div>
@@ -1418,12 +1356,7 @@ export default function ClientesPage() {
                     <span className="searchIcon">
                       <Search className="h-4 w-4" />
                     </span>
-                    <input
-                      className="searchInput"
-                      placeholder="Buscar por nome, CPF/CNPJ ou grupo…"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                    />
+                    <input className="searchInput" placeholder="Buscar por nome, CPF/CNPJ ou grupo…" value={search} onChange={(e) => setSearch(e.target.value)} />
                   </div>
 
                   <small className="text-slate-500">
@@ -1464,20 +1397,14 @@ export default function ClientesPage() {
                     {clientes.map((c, i) => {
                       const phone = c.telefone ? maskPhone(c.telefone) : "";
                       const wa = c.telefone ? `https://wa.me/55${onlyDigits(c.telefone)}` : "";
-                      const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${
-                        c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""
-                      }`;
+                      const agendaHref = `/agenda?lead_id=${encodeURIComponent(c.lead_id)}${c.cliente_row_id ? `&cliente_id=${encodeURIComponent(c.cliente_row_id)}` : ""}`;
 
                       return (
                         <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
                           <td className="p-2">
                             <div className="flex items-center gap-3">
                               <div className="avatar">
-                                {c.foto_url ? (
-                                  <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" />
-                                ) : (
-                                  <span className="avatar-ini">{initials(c.nome)}</span>
-                                )}
+                                {c.foto_url ? <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(c.nome)}</span>}
                               </div>
                               <div className="min-w-0">
                                 <div className="font-medium truncate">{c.nome}</div>
@@ -1581,9 +1508,7 @@ export default function ClientesPage() {
                       <div className="rounded-2xl border p-4">
                         <div className="text-xs text-slate-600">Renda média (estimada)</div>
                         <div className="text-2xl font-extrabold">
-                          {demoStats.rendaMedia != null
-                            ? `R$ ${demoStats.rendaMedia.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`
-                            : "—"}
+                          {demoStats.rendaMedia != null ? `R$ ${demoStats.rendaMedia.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}` : "—"}
                         </div>
                         <div className="text-xs text-slate-500 mt-1">Base: campo texto quando parseável.</div>
                       </div>
@@ -1704,24 +1629,14 @@ export default function ClientesPage() {
       {/* OVERLAY */}
       {overlayOpen && active && (
         <Overlay
-          title={
-            overlayMode === "novo"
-              ? "Preencher Cadastro do Cliente"
-              : overlayMode === "edit"
-              ? "Editar Cadastro do Cliente"
-              : "Visualizar Cadastro do Cliente"
-          }
+          title={overlayMode === "novo" ? "Preencher Cadastro do Cliente" : overlayMode === "edit" ? "Editar Cadastro do Cliente" : "Visualizar Cadastro do Cliente"}
           onClose={closeOverlay}
         >
           <div className="rounded-xl border p-4 mb-4 bg-slate-50">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="avatar avatar-lg">
-                  {extra.foto_url ? (
-                    <img src={extra.foto_url} alt="Foto do cliente" className="avatar-img" />
-                  ) : (
-                    <span className="avatar-ini">{initials(nome || active.nome)}</span>
-                  )}
+                  {extra.foto_url ? <img src={extra.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(nome || active.nome)}</span>}
                 </div>
 
                 <div className="min-w-0">
@@ -1794,17 +1709,49 @@ export default function ClientesPage() {
                       ))}
                     </select>
                   ) : (
-                    <input
-                      className="input"
-                      placeholder={cnaeLoading ? "Buscando CNAE..." : "Segmento de atuação principal (PJ)"}
-                      value={extra.segmento_pj}
-                      onChange={(e) => {
-                        // se usuário digitar manualmente, não forçamos o CNAE depois
-                        cnaeFetchKeyRef.current = "__manual__";
-                        setExtra((s) => ({ ...s, segmento_pj: e.target.value }));
-                      }}
-                      disabled={readOnly}
-                    />
+                    <div className="space-y-2">
+                      {/* ✅ CNAE principal -> auto segmento PJ */}
+                      <div className="grid grid-cols-12 gap-2">
+                        <div className="col-span-5">
+                          <div className="label">CNAE principal</div>
+                          <input
+                            className="input"
+                            placeholder="Ex: 0111-3/01"
+                            value={extra.cnae_principal || ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setExtra((s) => ({ ...s, cnae_principal: v }));
+                            }}
+                            onBlur={() => {
+                              if (readOnly) return;
+                              const suggestion = segmentFromCNAE(extra.cnae_principal || "");
+                              if (!suggestion) return;
+                              setExtra((s) => {
+                                // só auto-preenche se estiver vazio ou se estiver com um valor “padrão” curto
+                                if ((s.segmento_pj || "").trim().length >= 3) return s;
+                                return { ...s, segmento_pj: suggestion };
+                              });
+                            }}
+                            disabled={readOnly}
+                          />
+                        </div>
+
+                        <div className="col-span-7">
+                          <div className="label">Segmento de atuação (PJ)</div>
+                          <input
+                            className="input"
+                            placeholder="Segmento de atuação principal (PJ)"
+                            value={extra.segmento_pj}
+                            onChange={(e) => setExtra((s) => ({ ...s, segmento_pj: e.target.value }))}
+                            disabled={readOnly}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-slate-500">
+                        Dica: ao sair do campo <b>CNAE</b>, o sistema sugere um segmento automaticamente (você pode editar).
+                      </div>
+                    </div>
                   )}
                 </div>
 
@@ -1835,51 +1782,12 @@ export default function ClientesPage() {
 
                 <div className="md:col-span-2">
                   <div className="label">Como você gostaria de ser chamado?</div>
-                  <input
-                    className="input"
-                    placeholder="Nome, apelido, diminutivo, nome social..."
-                    value={chamadoComo}
-                    onChange={(e) => setChamadoComo(e.target.value)}
-                    disabled={readOnly}
-                  />
+                  <input className="input" placeholder="Nome, apelido, diminutivo, nome social..." value={chamadoComo} onChange={(e) => setChamadoComo(e.target.value)} disabled={readOnly} />
                 </div>
 
                 <div>
                   <div className="label">CPF/CNPJ</div>
-                  <input
-                    className="input"
-                    value={onlyDigits(cpf)}
-                    onChange={(e) => {
-                      const v = onlyDigits(e.target.value);
-                      setCpf(v);
-
-                      // ✅ dispara auto CNAE quando PJ e CNPJ completo e segmento vazio
-                      // (sem mexer no layout; é só comportamento)
-                      if (!readOnly && extra.tipo === "PJ" && v.length === 14 && !(extra.segmento_pj || "").trim()) {
-                        // se usuário marcou manual, não auto
-                        if (cnaeFetchKeyRef.current !== "__manual__") {
-                          // seta chave "diferente" para permitir tentativa
-                          cnaeFetchKeyRef.current = "";
-                          // chama async sem travar digitação
-                          Promise.resolve().then(() => tryAutoFillPJSegmentFromCNAE());
-                        }
-                      }
-                    }}
-                    onBlur={() => {
-                      // no blur também tenta (mais “natural”)
-                      if (!readOnly && extra.tipo === "PJ" && onlyDigits(cpf).length === 14 && !(extra.segmento_pj || "").trim()) {
-                        if (cnaeFetchKeyRef.current !== "__manual__") {
-                          Promise.resolve().then(() => tryAutoFillPJSegmentFromCNAE());
-                        }
-                      }
-                    }}
-                    disabled={readOnly}
-                  />
-                  {extra.tipo === "PJ" && !readOnly && (
-                    <div className="text-xs text-slate-500 mt-1">
-                      {cnaeLoading ? "Buscando CNAE principal…" : "Dica: com CNPJ válido, o Segmento pode ser preenchido automaticamente pelo CNAE."}
-                    </div>
-                  )}
+                  <input className="input" value={onlyDigits(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} disabled={readOnly} />
                 </div>
 
                 <div>
@@ -2153,20 +2061,10 @@ export default function ClientesPage() {
                   <div className="mt-3">
                     <div className="text-xs text-slate-600 mb-2">Quer receber conteúdos educativos ou prefere só ofertas pontuais?</div>
                     <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className={`pill ${extra.prefere_educativo === "educativo" ? "pill-on" : ""}`}
-                        onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "educativo" }))}
-                        disabled={readOnly}
-                      >
+                      <button type="button" className={`pill ${extra.prefere_educativo === "educativo" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "educativo" }))} disabled={readOnly}>
                         Educativos
                       </button>
-                      <button
-                        type="button"
-                        className={`pill ${extra.prefere_educativo === "ofertas" ? "pill-on" : ""}`}
-                        onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "ofertas" }))}
-                        disabled={readOnly}
-                      >
+                      <button type="button" className={`pill ${extra.prefere_educativo === "ofertas" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "ofertas" }))} disabled={readOnly}>
                         Ofertas pontuais
                       </button>
                     </div>

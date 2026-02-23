@@ -81,7 +81,7 @@ type CadastroExtra = {
   renda_faturamento: string;
   foto_url: string;
 
-  // ✅ novo (para auto-segmento PJ)
+  // ✅ novo (auto-segmento PJ)
   cnae_principal?: string;
 
   pais_vivos: "sim" | "nao" | "";
@@ -105,8 +105,6 @@ type CadastroExtra = {
 };
 
 const STORAGE_BUCKET_CLIENTES = "clientes_photos";
-
-// ✅ caminho do HTML do mapa (public/...)
 const MAPA_BR_SRC = "/maps/br-estados.html";
 
 const SEGMENTOS_PF: SegmentoPF[] = [
@@ -363,7 +361,7 @@ type DemoStats = {
   segPFCount: Record<string, number>;
   segPJCount: Record<string, number>;
   origemCount: Record<string, number>;
-  produtoCount: Record<string, number>; // apenas vendas ativas cruzadas por UF
+  produtoCount: Record<string, number>;
   byCity: Record<string, number>;
 };
 
@@ -373,7 +371,6 @@ type DemoData = {
   activeUFs: string[];
 };
 
-// helpers de contagem
 function inc(map: Record<string, number>, key: string, by = 1) {
   if (!key) return;
   map[key] = (map[key] || 0) + by;
@@ -423,11 +420,10 @@ function topKey(counts: Record<string, number>) {
 
 // ✅ Heurística simples por CNAE (seções)
 function segmentFromCNAE(cnaeRaw: string): string {
-  const d = onlyDigits(cnaeRaw || "").padStart(7, "0"); // ex: "0111301"
-  const first2 = Number(d.slice(0, 2)); // 01..99
+  const d = onlyDigits(cnaeRaw || "").padStart(7, "0");
+  const first2 = Number(d.slice(0, 2));
   if (!isFinite(first2) || first2 <= 0) return "";
 
-  // Mapeamento por grandes grupos (bem “macro”, mas resolve o auto preenchimento)
   if (first2 >= 1 && first2 <= 3) return "Agro / Produção primária";
   if (first2 >= 5 && first2 <= 9) return "Indústria / Extração";
   if (first2 >= 10 && first2 <= 33) return "Indústria / Transformação";
@@ -438,11 +434,11 @@ function segmentFromCNAE(cnaeRaw: string): string {
   if (first2 >= 55 && first2 <= 56) return "Hotelaria / Alimentação";
   if (first2 >= 58 && first2 <= 63) return "Tecnologia / Mídia / Telecom";
   if (first2 >= 64 && first2 <= 66) return "Financeiro / Seguros";
-  if (first2 >= 68 && first2 <= 68) return "Imobiliário";
+  if (first2 === 68) return "Imobiliário";
   if (first2 >= 69 && first2 <= 75) return "Serviços profissionais";
   if (first2 >= 77 && first2 <= 82) return "Serviços administrativos";
-  if (first2 >= 84 && first2 <= 84) return "Setor público";
-  if (first2 >= 85 && first2 <= 85) return "Educação";
+  if (first2 === 84) return "Setor público";
+  if (first2 === 85) return "Educação";
   if (first2 >= 86 && first2 <= 88) return "Saúde";
   if (first2 >= 90 && first2 <= 93) return "Cultura / Esporte / Lazer";
   if (first2 >= 94 && first2 <= 96) return "Outros serviços";
@@ -452,10 +448,9 @@ function segmentFromCNAE(cnaeRaw: string): string {
 }
 
 /**
- * ✅ Mapa Brasil (iframe) — fix do “só tinge depois de clicar”
- * Problema típico: o iframe ainda não está pronto quando o React envia UF_STATE.
- * Solução: enviar “state” no onLoad + retries curtos, e também tentar chamada direta
- * (same-origin) via contentWindow.consulmaxMap.setActive/setSelected.
+ * ✅ Mapa Brasil (iframe)
+ * - Tingimento automático: chama consulmaxMap.setActive/setSelected no onLoad + retries.
+ * - Clique aplica filtro: escuta CustomEvent do iframe (consulmax:uf-selected).
  */
 function BrazilImageMap({
   src,
@@ -472,39 +467,32 @@ function BrazilImageMap({
   const [iframeReady, setIframeReady] = useState(false);
   const lastSentRef = useRef<string>("");
 
-  // recebe clique do mapa
+  // ✅ fallback: aceita postMessage (caso você evolua o html depois)
   useEffect(() => {
     function onMsg(ev: MessageEvent) {
       const d: any = ev.data;
-
-      // 1) { type: "UF_CLICK", uf: "SP" }
       if (d && typeof d === "object") {
         const t = String(d.type || "").toUpperCase().trim();
         if (t === "UF_CLICK" && d.uf) {
           const uf = normalizeUF(d.uf);
-          if (uf) onSelectUF(uf);
+          onSelectUF(uf);
           return;
         }
-        // 2) { uf: "SP" }
         if (d.uf && typeof d.uf === "string") {
           const uf = normalizeUF(d.uf);
-          if (uf) onSelectUF(uf);
+          onSelectUF(uf);
           return;
         }
         return;
       }
-
-      // 3) "UF:SP"
       if (typeof d === "string") {
         const s = d.trim();
         const m = /^UF\:(\w{2})$/i.exec(s);
         if (m?.[1]) {
-          const uf = normalizeUF(m[1]);
-          if (uf) onSelectUF(uf);
+          onSelectUF(normalizeUF(m[1]));
         }
       }
     }
-
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
   }, [onSelectUF]);
@@ -521,23 +509,20 @@ function BrazilImageMap({
       selectedUF: normalizeUF(selectedUF || ""),
     };
 
-    // evita spam de postMessage quando nada mudou
     const key = JSON.stringify(payload);
     if (key === lastSentRef.current && !attemptTag) return;
     lastSentRef.current = key;
 
-    // 1) tenta chamada direta (same-origin) — funciona melhor e não depende de listener de postMessage
+    // 1) same-origin API (melhor)
     try {
       const api = (win as any)?.consulmaxMap;
       if (api?.setActive) api.setActive(payload.activeUFs);
       if (api?.setSelected) api.setSelected(payload.selectedUF || null);
-      // se conseguiu chamar API, ótimo.
       return;
     } catch {
-      // cai pro postMessage
+      // 2) fallback postMessage
     }
 
-    // 2) fallback: postMessage (caso o mapa escute mensagens no futuro)
     try {
       win.postMessage(payload, "*");
     } catch {
@@ -545,13 +530,55 @@ function BrazilImageMap({
     }
   };
 
-  // envia estado do dashboard pro mapa (highlight/selected)
+  // ✅ NOVO: escuta o CustomEvent disparado no iframe quando clica na UF
   useEffect(() => {
-    // sempre que mudar activeUFs/selectedUF, tenta empurrar
-    pushStateToIframe();
-
-    // retries curtos (resolve o “só tinge depois de clicar” quando iframe demora a inicializar)
     if (!iframeReady) return;
+
+    const win = iframeRef.current?.contentWindow as any;
+    if (!win) return;
+
+    const handler = (ev: any) => {
+      try {
+        const uf = normalizeUF(ev?.detail?.uf || "");
+        // no html: toggleSelected pode mandar null
+        onSelectUF(uf || "");
+      } catch {
+        // ignore
+      }
+    };
+
+    try {
+      win.addEventListener("consulmax:uf-selected", handler);
+    } catch {
+      // ignore
+    }
+
+    // ✅ sincroniza caso já tenha algo selecionado no mapa
+    try {
+      const api = win?.consulmaxMap;
+      const current = normalizeUF(api?.getSelected?.() || "");
+      if (current !== normalizeUF(selectedUF || "")) {
+        // não força, só alinha se tiver diferença e houver seleção
+        if (current) onSelectUF(current);
+      }
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      try {
+        win.removeEventListener("consulmax:uf-selected", handler);
+      } catch {
+        // ignore
+      }
+    };
+  }, [iframeReady, onSelectUF, selectedUF]);
+
+  // sempre que mudar activeUFs/selectedUF, tenta empurrar
+  useEffect(() => {
+    pushStateToIframe();
+    if (!iframeReady) return;
+
     let tries = 0;
     const timer = window.setInterval(() => {
       tries++;
@@ -592,7 +619,6 @@ function BrazilImageMap({
             scrolling="no"
             onLoad={() => {
               setIframeReady(true);
-              // no load, empurra o state imediatamente + uma sequência curta de retries
               pushStateToIframe("onLoad");
               let tries = 0;
               const timer = window.setInterval(() => {
@@ -629,7 +655,6 @@ export default function ClientesPage() {
   const PAGE = 10;
 
   const [tab, setTab] = useState<"cadastro" | "demografia">("cadastro");
-
   const [loading, setLoading] = useState(false);
 
   const [clientes, setClientes] = useState<ClienteBase[]>([]);
@@ -681,7 +706,6 @@ export default function ClientesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  // 🔎 BUSCA: nome OU cpf/cnpj OU grupo
   async function getLeadIdsBySearch(term: string): Promise<string[] | null> {
     const t = term.trim();
     if (!t) return null;
@@ -693,22 +717,12 @@ export default function ClientesPage() {
     if (e1) throw e1;
     (leadsByName || []).forEach((r: any) => ids.add(String(r.id)));
 
-    const { data: vendasByGrupo, error: e2 } = await supabase
-      .from("vendas")
-      .select("lead_id")
-      .ilike("grupo", `%${t}%`)
-      .not("lead_id", "is", null)
-      .range(0, 600);
+    const { data: vendasByGrupo, error: e2 } = await supabase.from("vendas").select("lead_id").ilike("grupo", `%${t}%`).not("lead_id", "is", null).range(0, 600);
     if (e2) throw e2;
     (vendasByGrupo || []).forEach((r: any) => r.lead_id && ids.add(String(r.lead_id)));
 
     if (digits.length >= 5) {
-      const { data: vendasByCpf, error: e3 } = await supabase
-        .from("vendas")
-        .select("lead_id")
-        .ilike("cpf", `%${digits}%`)
-        .not("lead_id", "is", null)
-        .range(0, 600);
+      const { data: vendasByCpf, error: e3 } = await supabase.from("vendas").select("lead_id").ilike("cpf", `%${digits}%`).not("lead_id", "is", null).range(0, 600);
       if (e3) throw e3;
       (vendasByCpf || []).forEach((r: any) => r.lead_id && ids.add(String(r.lead_id)));
     }
@@ -721,7 +735,6 @@ export default function ClientesPage() {
     try {
       const leadIdsFilter = await getLeadIdsBySearch(term);
 
-      // 1) Leads
       let leadsQ = supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true });
 
       if (leadIdsFilter && leadIdsFilter.length) {
@@ -746,7 +759,6 @@ export default function ClientesPage() {
         return;
       }
 
-      // 2) Vendas dos leads
       const { data: vendas, error: eVend } = await supabase
         .from("vendas")
         .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at,vendedor_id,email,telefone,grupo")
@@ -793,7 +805,6 @@ export default function ClientesPage() {
         });
       });
 
-      // 3) Users para nome do vendedor
       const vendorList = Array.from(vendorAuthIds);
       const usersByAuth = new Map<string, { nome: string }>();
       if (vendorList.length) {
@@ -802,7 +813,6 @@ export default function ClientesPage() {
         (uRows || []).forEach((u: any) => usersByAuth.set(String(u.auth_user_id), { nome: u.nome || "—" }));
       }
 
-      // 4) Clientes confirmados + observacoes/endereço (para foto/sexo/UF/cidade)
       const { data: cliRows, error: eCli } = await supabase.from("clientes").select("id,lead_id,observacoes,uf,cidade").in("lead_id", leadIds);
       if (eCli) throw eCli;
 
@@ -814,7 +824,6 @@ export default function ClientesPage() {
         confirmedByLead.set(lid, { id: String(c.id), extra: extra || null, uf: c.uf ?? null, cidade: c.cidade ?? null });
       });
 
-      // 5) Base 1 linha por lead
       const base: ClienteBase[] = [];
       for (const l of leads || []) {
         const lid = String(l.id);
@@ -1091,7 +1100,6 @@ export default function ClientesPage() {
 
       await load(page, debounced);
 
-      // ✅ se estiver em demografia, atualiza (para novas UFs/ativos refletirem automaticamente)
       if (tab === "demografia") {
         await loadDemografia();
       }
@@ -1111,18 +1119,12 @@ export default function ClientesPage() {
   }
 
   // ==========================
-  // DEMOGRAFIA (SSOT: vendas ativas -> lead_id -> clientes.uf)
+  // DEMOGRAFIA (SSOT)
   // ==========================
   async function loadDemografia() {
     setDemoLoading(true);
     try {
-      // 1) Vendas ativas (SSOT) — venda ativa = codigo === "00"
-      const { data: activeVend, error: e1 } = await supabase
-        .from("vendas")
-        .select("lead_id,produto")
-        .eq("codigo", "00")
-        .not("lead_id", "is", null)
-        .range(0, 20000);
+      const { data: activeVend, error: e1 } = await supabase.from("vendas").select("lead_id,produto").eq("codigo", "00").not("lead_id", "is", null).range(0, 20000);
       if (e1) throw e1;
 
       const vendasAtivas = (activeVend || []).filter((r: any) => r?.lead_id);
@@ -1134,15 +1136,10 @@ export default function ClientesPage() {
         return;
       }
 
-      // 2) Clientes (para UF + dados demográficos)
       const { data: cli, error: e2 } = await supabase.from("clientes").select("lead_id,data_nascimento,uf,cidade,observacoes").in("lead_id", activeLeadIds).range(0, 20000);
       if (e2) throw e2;
 
-      const clienteByLead = new Map<
-        string,
-        { lead_id: string; uf: string; cidade: string; data_nascimento?: string | null; observacoes?: string | null }
-      >();
-
+      const clienteByLead = new Map<string, { lead_id: string; uf: string; cidade: string; data_nascimento?: string | null; observacoes?: string | null }>();
       (cli || []).forEach((r: any) => {
         const lid = r?.lead_id ? String(r.lead_id) : "";
         if (!lid) return;
@@ -1160,7 +1157,6 @@ export default function ClientesPage() {
       const statsPorUF: Record<string, DemoStats> = {};
       const activeUFsSet = new Set<string>();
 
-      // 4) Clientes ativos por UF = lead único com venda ativa e uf preenchido
       for (const lid of activeLeadIds) {
         const c = clienteByLead.get(lid);
         const uf = c?.uf ? normalizeUF(c.uf) : "";
@@ -1224,7 +1220,6 @@ export default function ClientesPage() {
         }
       }
 
-      // 5) produtoCount (apenas vendas ativas) cruzado com clientes.uf (por VENDA)
       (vendasAtivas || []).forEach((v: any) => {
         const lid = v?.lead_id ? String(v.lead_id) : "";
         if (!lid) return;
@@ -1233,7 +1228,6 @@ export default function ClientesPage() {
         const produto = String(v?.produto || "—").trim() || "—";
 
         inc(statsBrasil.produtoCount, produto, 1);
-
         if (uf) {
           if (!statsPorUF[uf]) statsPorUF[uf] = cloneStatsBase();
           inc(statsPorUF[uf].produtoCount, produto, 1);
@@ -1321,9 +1315,7 @@ export default function ClientesPage() {
                           <tr key={c.lead_id} className={idx % 2 ? "bg-slate-50/60" : "bg-white"}>
                             <td className="p-2">
                               <div className="flex items-center gap-3">
-                                <div className="avatar">
-                                  {c.foto_url ? <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(c.nome)}</span>}
-                                </div>
+                                <div className="avatar">{c.foto_url ? <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(c.nome)}</span>}</div>
                                 <div className="min-w-0">
                                   <div className="font-medium truncate">{c.nome}</div>
                                   <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
@@ -1403,9 +1395,7 @@ export default function ClientesPage() {
                         <tr key={c.id} className={i % 2 ? "bg-slate-50/60" : "bg-white"}>
                           <td className="p-2">
                             <div className="flex items-center gap-3">
-                              <div className="avatar">
-                                {c.foto_url ? <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(c.nome)}</span>}
-                              </div>
+                              <div className="avatar">{c.foto_url ? <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(c.nome)}</span>}</div>
                               <div className="min-w-0">
                                 <div className="font-medium truncate">{c.nome}</div>
                                 <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
@@ -1416,13 +1406,7 @@ export default function ClientesPage() {
                             <div className="flex items-center gap-2">
                               {phone || "—"}
                               {wa && (
-                                <a
-                                  href={wa}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title="Abrir WhatsApp"
-                                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs hover:bg-green-50"
-                                >
+                                <a href={wa} target="_blank" rel="noreferrer" title="Abrir WhatsApp" className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs hover:bg-green-50">
                                   <Send className="h-3.5 w-3.5" /> WhatsApp
                                 </a>
                               )}
@@ -1492,7 +1476,6 @@ export default function ClientesPage() {
                 <div className="mt-4 text-sm text-slate-600">Sem dados.</div>
               ) : (
                 <div className="mt-4 grid grid-cols-1 xl:grid-cols-12 gap-4">
-                  {/* KPIs */}
                   <div className="xl:col-span-5 space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-2xl border p-4">
@@ -1548,14 +1531,8 @@ export default function ClientesPage() {
                     </div>
                   </div>
 
-                  {/* MAPA REAL */}
                   <div className="xl:col-span-7 space-y-4">
-                    <BrazilImageMap
-                      src={MAPA_BR_SRC}
-                      activeUFs={demoUFsActive}
-                      selectedUF={normalizeUF(demoUF)}
-                      onSelectUF={(uf) => setDemoUF(normalizeUF(uf))}
-                    />
+                    <BrazilImageMap src={MAPA_BR_SRC} activeUFs={demoUFsActive} selectedUF={normalizeUF(demoUF)} onSelectUF={(uf) => setDemoUF(normalizeUF(uf))} />
 
                     <div className="rounded-2xl border p-4 bg-white">
                       <div className="font-semibold mb-2">Distribuições rápidas {demoUF ? `• ${normalizeUF(demoUF)}` : "• Brasil"}</div>
@@ -1628,10 +1605,7 @@ export default function ClientesPage() {
 
       {/* OVERLAY */}
       {overlayOpen && active && (
-        <Overlay
-          title={overlayMode === "novo" ? "Preencher Cadastro do Cliente" : overlayMode === "edit" ? "Editar Cadastro do Cliente" : "Visualizar Cadastro do Cliente"}
-          onClose={closeOverlay}
-        >
+        <Overlay title={overlayMode === "novo" ? "Preencher Cadastro do Cliente" : overlayMode === "edit" ? "Editar Cadastro do Cliente" : "Visualizar Cadastro do Cliente"} onClose={closeOverlay}>
           <div className="rounded-xl border p-4 mb-4 bg-slate-50">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
@@ -1710,7 +1684,6 @@ export default function ClientesPage() {
                     </select>
                   ) : (
                     <div className="space-y-2">
-                      {/* ✅ CNAE principal -> auto segmento PJ */}
                       <div className="grid grid-cols-12 gap-2">
                         <div className="col-span-5">
                           <div className="label">CNAE principal</div>
@@ -1727,7 +1700,6 @@ export default function ClientesPage() {
                               const suggestion = segmentFromCNAE(extra.cnae_principal || "");
                               if (!suggestion) return;
                               setExtra((s) => {
-                                // só auto-preenche se estiver vazio ou se estiver com um valor “padrão” curto
                                 if ((s.segmento_pj || "").trim().length >= 3) return s;
                                 return { ...s, segmento_pj: suggestion };
                               });
@@ -1738,13 +1710,7 @@ export default function ClientesPage() {
 
                         <div className="col-span-7">
                           <div className="label">Segmento de atuação (PJ)</div>
-                          <input
-                            className="input"
-                            placeholder="Segmento de atuação principal (PJ)"
-                            value={extra.segmento_pj}
-                            onChange={(e) => setExtra((s) => ({ ...s, segmento_pj: e.target.value }))}
-                            disabled={readOnly}
-                          />
+                          <input className="input" placeholder="Segmento de atuação principal (PJ)" value={extra.segmento_pj} onChange={(e) => setExtra((s) => ({ ...s, segmento_pj: e.target.value }))} disabled={readOnly} />
                         </div>
                       </div>
 
@@ -1815,13 +1781,7 @@ export default function ClientesPage() {
                 <div className="md:col-span-1">
                   <div className="label">CEP</div>
                   <div className="flex gap-2">
-                    <input
-                      className="input"
-                      placeholder="Somente números"
-                      value={extra.endereco_cep}
-                      onChange={(e) => setExtra((s) => ({ ...s, endereco_cep: onlyDigits(e.target.value).slice(0, 8) }))}
-                      disabled={readOnly}
-                    />
+                    <input className="input" placeholder="Somente números" value={extra.endereco_cep} onChange={(e) => setExtra((s) => ({ ...s, endereco_cep: onlyDigits(e.target.value).slice(0, 8) }))} disabled={readOnly} />
                     <button className="btn" type="button" onClick={buscarCep} disabled={readOnly || cepLoading}>
                       {cepLoading ? "Buscando..." : "Buscar"}
                     </button>

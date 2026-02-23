@@ -99,6 +99,11 @@ type CadastroExtra = {
   conteudos: ConteudoPref[];
   prefere_educativo: "educativo" | "ofertas" | "";
   como_conheceu: ComoConheceu | "";
+
+  // ✅ PJ: auto preencher segmento via CNAE principal
+  // (não exibimos UI nova pra não mexer no visual; fica serializado no JSON)
+  cnae_principal?: string;
+  cnae_descricao?: string;
 };
 
 const STORAGE_BUCKET_CLIENTES = "clientes_photos";
@@ -267,6 +272,31 @@ async function fetchCep(cepDigits: string) {
   };
 }
 
+// ✅ PJ: buscar CNAE principal (BrasilAPI) e usar como Segmento PJ quando vazio
+async function fetchCNAEPrincipalFromCNPJ(cnpjDigits: string): Promise<{ cnae: string; descricao: string } | null> {
+  const cnpj = onlyDigits(cnpjDigits).slice(0, 14);
+  if (cnpj.length !== 14) return null;
+
+  // BrasilAPI CNPJ (sem chave)
+  // https://brasilapi.com.br/api/cnpj/v1/{cnpj}
+  const url = `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`;
+
+  const res = await fetch(url);
+  if (!res.ok) return null;
+
+  const j: any = await res.json();
+
+  const cnae = String(j?.cnae_fiscal || "").trim();
+  const descricao = String(j?.cnae_fiscal_descricao || "").trim();
+
+  if (!cnae && !descricao) return null;
+
+  return {
+    cnae: cnae || "",
+    descricao: descricao || "",
+  };
+}
+
 function Overlay({
   title,
   onClose,
@@ -429,7 +459,6 @@ function createEmptyStats(): DemoStats {
 }
 
 function cloneStatsBase(): DemoStats {
-  // novo objeto (não compartilhar refs)
   return createEmptyStats();
 }
 
@@ -450,7 +479,7 @@ function topKey(counts: Record<string, number>) {
   return entries[0]?.[0] || "—";
 }
 
-/** ✅ Mapa Brasil (imagem real via iframe) + clique UF vira filtro do dashboard */
+/** ✅ Mapa Brasil (iframe) + clique UF vira filtro */
 function BrazilImageMap({
   src,
   activeUFs,
@@ -464,12 +493,11 @@ function BrazilImageMap({
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  // recebe clique do mapa
+  // recebe clique do mapa (robusto: postMessage + eventos do iframe)
   useEffect(() => {
     function onMsg(ev: MessageEvent) {
       const d: any = ev.data;
 
-      // aceita vários formatos (pra não depender de 1 só)
       // 1) { type: "UF_CLICK", uf: "SP" }
       if (d && typeof d === "object") {
         const t = String(d.type || "").toUpperCase().trim();
@@ -491,9 +519,7 @@ function BrazilImageMap({
       if (typeof d === "string") {
         const s = d.trim();
         const m = /^UF\:(\w{2})$/i.exec(s);
-        if (m?.[1]) {
-          onSelectUF(normalizeUF(m[1]));
-        }
+        if (m?.[1]) onSelectUF(normalizeUF(m[1]));
       }
     }
 
@@ -501,19 +527,56 @@ function BrazilImageMap({
     return () => window.removeEventListener("message", onMsg);
   }, [onSelectUF]);
 
+  // fallback: ouve CustomEvent dentro do iframe (mesma origem)
+  useEffect(() => {
+    const win = iframeRef.current?.contentWindow as any;
+    if (!win) return;
+
+    const handler = (ev: any) => {
+      const uf = normalizeUF(ev?.detail?.uf);
+      if (uf) onSelectUF(uf);
+      else onSelectUF("");
+    };
+
+    try {
+      win.addEventListener("consulmax:uf-selected", handler);
+      return () => {
+        try {
+          win.removeEventListener("consulmax:uf-selected", handler);
+        } catch {
+          // ignore
+        }
+      };
+    } catch {
+      // ignore
+    }
+  }, [onSelectUF]);
+
   // envia estado do dashboard pro mapa (highlight/selected)
   useEffect(() => {
-    const win = iframeRef.current?.contentWindow;
+    const win = iframeRef.current?.contentWindow as any;
     if (!win) return;
+
+    const payload = {
+      type: "UF_STATE",
+      activeUFs: Array.from(activeUFs || [])
+        .map((x) => normalizeUF(x))
+        .filter(Boolean),
+      selectedUF: normalizeUF(selectedUF || ""),
+    };
+
+    // 1) postMessage (se o html escutar)
     try {
-      win.postMessage(
-        {
-          type: "UF_STATE",
-          activeUFs: Array.from(activeUFs || []).map((x) => normalizeUF(x)).filter(Boolean),
-          selectedUF: normalizeUF(selectedUF || ""),
-        },
-        "*"
-      );
+      win.postMessage(payload, "*");
+    } catch {
+      // ignore
+    }
+
+    // 2) API direta (se o html expor window.consulmaxMap)
+    try {
+      const api = win?.consulmaxMap;
+      if (api?.setActive) api.setActive(payload.activeUFs);
+      if (api?.setSelected) api.setSelected(payload.selectedUF || null);
     } catch {
       // ignore
     }
@@ -586,6 +649,10 @@ export default function ClientesPage() {
   const [fotoFile, setFotoFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
+
+  // ✅ PJ: evita chamadas repetidas
+  const cnaeFetchKeyRef = useRef<string>(""); // guarda último CNPJ buscado com sucesso (ou tentativa)
+  const [cnaeLoading, setCnaeLoading] = useState(false);
 
   // Demografia
   const [demoLoading, setDemoLoading] = useState(false);
@@ -729,25 +796,16 @@ export default function ClientesPage() {
       const vendorList = Array.from(vendorAuthIds);
       const usersByAuth = new Map<string, { nome: string }>();
       if (vendorList.length) {
-        const { data: uRows, error: eU } = await supabase
-          .from("users")
-          .select("auth_user_id,nome")
-          .in("auth_user_id", vendorList);
+        const { data: uRows, error: eU } = await supabase.from("users").select("auth_user_id,nome").in("auth_user_id", vendorList);
         if (eU) throw eU;
         (uRows || []).forEach((u: any) => usersByAuth.set(String(u.auth_user_id), { nome: u.nome || "—" }));
       }
 
       // 4) Clientes confirmados + observacoes/endereço (para foto/sexo/UF/cidade)
-      const { data: cliRows, error: eCli } = await supabase
-        .from("clientes")
-        .select("id,lead_id,observacoes,uf,cidade")
-        .in("lead_id", leadIds);
+      const { data: cliRows, error: eCli } = await supabase.from("clientes").select("id,lead_id,observacoes,uf,cidade").in("lead_id", leadIds);
       if (eCli) throw eCli;
 
-      const confirmedByLead = new Map<
-        string,
-        { id: string; extra: CadastroExtra | null; uf?: string | null; cidade?: string | null }
-      >();
+      const confirmedByLead = new Map<string, { id: string; extra: CadastroExtra | null; uf?: string | null; cidade?: string | null }>();
       (cliRows || []).forEach((c: any) => {
         const lid = c.lead_id ? String(c.lead_id) : "";
         if (!lid) return;
@@ -829,6 +887,9 @@ export default function ClientesPage() {
     setExtra(emptyExtra());
     setLegacyObs("");
     setFotoFile(null);
+
+    cnaeFetchKeyRef.current = "";
+    setCnaeLoading(false);
   }
 
   async function openOverlay(mode: "novo" | "edit" | "view", c: ClienteBase) {
@@ -891,6 +952,7 @@ export default function ClientesPage() {
     setActive(null);
     setSaving(false);
     setCepLoading(false);
+    setCnaeLoading(false);
   }
 
   const readOnly = overlayMode === "view";
@@ -939,6 +1001,45 @@ export default function ClientesPage() {
     }
   }
 
+  // ✅ PJ: tenta auto preencher Segmento PJ via CNAE principal
+  async function tryAutoFillPJSegmentFromCNAE() {
+    if (readOnly) return;
+    if (extra.tipo !== "PJ") return;
+
+    const cnpj = onlyDigits(cpf);
+    if (cnpj.length !== 14) return;
+
+    // Se já tem segmento preenchido, não sobrescreve
+    if ((extra.segmento_pj || "").trim()) return;
+
+    // evita repetir
+    if (cnaeFetchKeyRef.current === cnpj) return;
+
+    cnaeFetchKeyRef.current = cnpj;
+    setCnaeLoading(true);
+
+    try {
+      const info = await fetchCNAEPrincipalFromCNPJ(cnpj);
+      if (!info) return;
+
+      // Regra: Segmento PJ = descrição do CNAE principal (mais útil e humano).
+      // Você pode refinar depois com um "mapeamento CNAE -> segmento macro".
+      const seg = (info.descricao || info.cnae || "").trim();
+      if (!seg) return;
+
+      setExtra((s) => ({
+        ...s,
+        segmento_pj: seg,
+        cnae_principal: info.cnae || s.cnae_principal,
+        cnae_descricao: info.descricao || s.cnae_descricao,
+      }));
+    } catch {
+      // ignore
+    } finally {
+      setCnaeLoading(false);
+    }
+  }
+
   function validateBeforeSave() {
     if (!active) return "Cliente inválido.";
     if (!onlyDigits(cpf)) return "Informe o CPF/CNPJ.";
@@ -951,12 +1052,18 @@ export default function ClientesPage() {
     if (extra.tipo === "PF") {
       if (!extra.segmento_pf) return "Selecione o segmento (PF).";
     } else {
-      if (!extra.segmento_pj.trim()) return "Informe o segmento de atuação (PJ).";
+      // PJ: segmento_pj pode ser auto por CNAE, mas tem que existir no final
+      if (!extra.segmento_pj.trim()) return "Informe o segmento de atuação (PJ) (ou informe um CNPJ válido para auto preencher).";
     }
     return "";
   }
 
   async function confirmOrSave() {
+    // ✅ antes de validar, tenta auto preencher PJ se necessário
+    if (!readOnly && extra.tipo === "PJ" && !(extra.segmento_pj || "").trim() && onlyDigits(cpf).length === 14) {
+      await tryAutoFillPJSegmentFromCNAE();
+    }
+
     const err = validateBeforeSave();
     if (err) return alert(err);
     if (!active) return;
@@ -1029,10 +1136,9 @@ export default function ClientesPage() {
       }
 
       closeOverlay();
-
       await load(page, debounced);
 
-      // ✅ se estiver em demografia, atualiza (para novas UFs/ativos refletirem automaticamente)
+      // ✅ se estiver em demografia, atualiza pra refletir novas UFs ativas
       if (tab === "demografia") {
         await loadDemografia();
       }
@@ -1058,7 +1164,6 @@ export default function ClientesPage() {
     setDemoLoading(true);
     try {
       // 1) Vendas ativas (SSOT)
-      // - venda ativa = codigo === "00"
       const { data: activeVend, error: e1 } = await supabase
         .from("vendas")
         .select("lead_id,produto")
@@ -1070,14 +1175,13 @@ export default function ClientesPage() {
       const vendasAtivas = (activeVend || []).filter((r: any) => r?.lead_id);
       const activeLeadIds = Array.from(new Set(vendasAtivas.map((r: any) => String(r.lead_id)).filter(Boolean)));
 
-      // base vazia
       if (!activeLeadIds.length) {
         const empty = createEmptyStats();
         setDemo({ statsBrasil: empty, statsPorUF: {}, activeUFs: [] });
         return;
       }
 
-      // 2) Clientes (para UF + dados demográficos)
+      // 2) Clientes (UF + demografia)
       const { data: cli, error: e2 } = await supabase
         .from("clientes")
         .select("lead_id,data_nascimento,uf,cidade,observacoes")
@@ -1085,8 +1189,6 @@ export default function ClientesPage() {
         .range(0, 20000);
       if (e2) throw e2;
 
-      // Mapa lead_id -> clienteRow
-      // (1 registro por lead; se vier duplicado, pega o primeiro)
       const clienteByLead = new Map<
         string,
         { lead_id: string; uf: string; cidade: string; data_nascimento?: string | null; observacoes?: string | null }
@@ -1095,7 +1197,7 @@ export default function ClientesPage() {
       (cli || []).forEach((r: any) => {
         const lid = r?.lead_id ? String(r.lead_id) : "";
         if (!lid) return;
-        if (clienteByLead.has(lid)) return; // mantém o primeiro
+        if (clienteByLead.has(lid)) return;
         clienteByLead.set(lid, {
           lead_id: lid,
           uf: normalizeUF(r.uf),
@@ -1105,20 +1207,17 @@ export default function ClientesPage() {
         });
       });
 
-      // 3) Inicializa stats
       const statsBrasil = cloneStatsBase();
       const statsPorUF: Record<string, DemoStats> = {};
 
-      // 4) Conta "Clientes ativos" por UF = leads únicos com venda ativa e uf preenchido
-      // e também agrega: idade/renda/sexo/tipo/perfil/seg/origem com base no cliente
       const activeUFsSet = new Set<string>();
 
+      // 4) Contagens por lead (clientes ativos)
       for (const lid of activeLeadIds) {
         const c = clienteByLead.get(lid);
         const uf = c?.uf ? normalizeUF(c.uf) : "";
         const cidade = c?.cidade ? String(c.cidade).trim() : "";
 
-        // stat alvo: UF (se houver) e Brasil
         let ufStats: DemoStats | null = null;
         if (uf) {
           if (!statsPorUF[uf]) statsPorUF[uf] = cloneStatsBase();
@@ -1126,24 +1225,20 @@ export default function ClientesPage() {
           activeUFsSet.add(uf);
         }
 
-        // activeCount é por lead único
         statsBrasil.activeCount += 1;
         if (ufStats) ufStats.activeCount += 1;
 
-        // idade
         const age = calcAge(c?.data_nascimento ?? null);
         if (age != null) {
           statsBrasil.ageList.push(age);
           if (ufStats) ufStats.ageList.push(age);
         }
 
-        // cidade (top cidades)
         if (cidade) {
-          inc(statsBrasil.byCity, uf ? `${cidade} • ${uf}` : cidade, 1); // Brasil: mostra cidade + UF quando tiver
+          inc(statsBrasil.byCity, uf ? `${cidade} • ${uf}` : cidade, 1);
           if (ufStats) inc(ufStats.byCity, cidade, 1);
         }
 
-        // extra do cadastro
         const { extra } = safeParseExtraFromObservacoes(c?.observacoes ?? null);
         if (extra) {
           if (extra.sexo) {
@@ -1181,25 +1276,21 @@ export default function ClientesPage() {
         }
       }
 
-      // 5) produtoCount (apenas vendas ativas) cruzado com clientes.uf
-      // Aqui é por VENDA (não por lead), então reflete “divisão por segmento/produto” das vendas ativas na UF.
+      // 5) produtoCount (por venda ativa) cruzado com clientes.uf
       (vendasAtivas || []).forEach((v: any) => {
         const lid = v?.lead_id ? String(v.lead_id) : "";
         if (!lid) return;
         const uf = normalizeUF(clienteByLead.get(lid)?.uf || "");
         const produto = String(v?.produto || "—").trim() || "—";
 
-        // Brasil
         inc(statsBrasil.produtoCount, produto, 1);
 
-        // UF (somente se tiver UF)
         if (uf) {
           if (!statsPorUF[uf]) statsPorUF[uf] = cloneStatsBase();
           inc(statsPorUF[uf].produtoCount, produto, 1);
         }
       });
 
-      // 6) Final
       const activeUFs = Array.from(activeUFsSet).sort((a, b) => a.localeCompare(b));
       setDemo({ statsBrasil, statsPorUF, activeUFs });
     } catch (e: any) {
@@ -1524,10 +1615,8 @@ export default function ClientesPage() {
                     <div className="rounded-2xl border p-4">
                       <div className="font-semibold mb-2">Persona (auto) {demoUF ? `• ${normalizeUF(demoUF)}` : "• Brasil"}</div>
                       <div className="text-sm text-slate-700 leading-relaxed">
-                        Base ativa com <b>{currentStats.activeCount}</b> clientes. Predomina{" "}
-                        <b>{topKey(currentStats.tipoCount)}</b> e o perfil mais comum é{" "}
-                        <b>{topKey(currentStats.perfilCount)}</b>. Idade média{" "}
-                        <b>{demoStats.idadeMedia ?? "—"}</b> anos. Segmento PF mais comum:{" "}
+                        Base ativa com <b>{currentStats.activeCount}</b> clientes. Predomina <b>{topKey(currentStats.tipoCount)}</b> e o perfil mais comum é{" "}
+                        <b>{topKey(currentStats.perfilCount)}</b>. Idade média <b>{demoStats.idadeMedia ?? "—"}</b> anos. Segmento PF mais comum:{" "}
                         <b>{topKey(currentStats.segPFCount)}</b>.
                       </div>
                       <div className="text-xs text-slate-500 mt-2">*Sexo depende do preenchimento no cadastro.</div>
@@ -1601,7 +1690,6 @@ export default function ClientesPage() {
                       </div>
                     </div>
 
-                    {/* dica visual (sem mudar layout): mostra legenda rápida */}
                     <div className="text-xs text-slate-500 px-1">
                       Dica: estados tingidos = UFs com pelo menos 1 venda ativa (código 00) e <b>cliente.uf</b> preenchido.
                     </div>
@@ -1667,12 +1755,7 @@ export default function ClientesPage() {
 
                 <div>
                   <div className="label">Perfil do Cliente</div>
-                  <select
-                    className="input"
-                    value={extra.perfil}
-                    onChange={(e) => setExtra((s) => ({ ...s, perfil: e.target.value as PerfilCliente }))}
-                    disabled={readOnly}
-                  >
+                  <select className="input" value={extra.perfil} onChange={(e) => setExtra((s) => ({ ...s, perfil: e.target.value as PerfilCliente }))} disabled={readOnly}>
                     <option>PF Geral</option>
                     <option>PF Agro</option>
                     <option>PJ</option>
@@ -1702,12 +1785,7 @@ export default function ClientesPage() {
                 <div>
                   <div className="label">Segmento</div>
                   {extra.tipo === "PF" ? (
-                    <select
-                      className="input"
-                      value={extra.segmento_pf}
-                      onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))}
-                      disabled={readOnly}
-                    >
+                    <select className="input" value={extra.segmento_pf} onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))} disabled={readOnly}>
                       <option value="">Selecione…</option>
                       {SEGMENTOS_PF.map((s) => (
                         <option key={s} value={s}>
@@ -1718,9 +1796,13 @@ export default function ClientesPage() {
                   ) : (
                     <input
                       className="input"
-                      placeholder="Segmento de atuação principal (PJ)"
+                      placeholder={cnaeLoading ? "Buscando CNAE..." : "Segmento de atuação principal (PJ)"}
                       value={extra.segmento_pj}
-                      onChange={(e) => setExtra((s) => ({ ...s, segmento_pj: e.target.value }))}
+                      onChange={(e) => {
+                        // se usuário digitar manualmente, não forçamos o CNAE depois
+                        cnaeFetchKeyRef.current = "__manual__";
+                        setExtra((s) => ({ ...s, segmento_pj: e.target.value }));
+                      }}
                       disabled={readOnly}
                     />
                   )}
@@ -1729,28 +1811,13 @@ export default function ClientesPage() {
                 <div className="md:col-span-2">
                   <div className="label">Sexo</div>
                   <div className="flex gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "M" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "M" }))}
-                      disabled={readOnly}
-                    >
+                    <button type="button" className={`pill ${extra.sexo === "M" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "M" }))} disabled={readOnly}>
                       Masculino
                     </button>
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "F" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "F" }))}
-                      disabled={readOnly}
-                    >
+                    <button type="button" className={`pill ${extra.sexo === "F" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "F" }))} disabled={readOnly}>
                       Feminino
                     </button>
-                    <button
-                      type="button"
-                      className={`pill ${extra.sexo === "O" ? "pill-on" : ""}`}
-                      onClick={() => setExtra((s) => ({ ...s, sexo: "O" }))}
-                      disabled={readOnly}
-                    >
+                    <button type="button" className={`pill ${extra.sexo === "O" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "O" }))} disabled={readOnly}>
                       Outro
                     </button>
                     {!readOnly && (
@@ -1779,7 +1846,40 @@ export default function ClientesPage() {
 
                 <div>
                   <div className="label">CPF/CNPJ</div>
-                  <input className="input" value={onlyDigits(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} disabled={readOnly} />
+                  <input
+                    className="input"
+                    value={onlyDigits(cpf)}
+                    onChange={(e) => {
+                      const v = onlyDigits(e.target.value);
+                      setCpf(v);
+
+                      // ✅ dispara auto CNAE quando PJ e CNPJ completo e segmento vazio
+                      // (sem mexer no layout; é só comportamento)
+                      if (!readOnly && extra.tipo === "PJ" && v.length === 14 && !(extra.segmento_pj || "").trim()) {
+                        // se usuário marcou manual, não auto
+                        if (cnaeFetchKeyRef.current !== "__manual__") {
+                          // seta chave "diferente" para permitir tentativa
+                          cnaeFetchKeyRef.current = "";
+                          // chama async sem travar digitação
+                          Promise.resolve().then(() => tryAutoFillPJSegmentFromCNAE());
+                        }
+                      }
+                    }}
+                    onBlur={() => {
+                      // no blur também tenta (mais “natural”)
+                      if (!readOnly && extra.tipo === "PJ" && onlyDigits(cpf).length === 14 && !(extra.segmento_pj || "").trim()) {
+                        if (cnaeFetchKeyRef.current !== "__manual__") {
+                          Promise.resolve().then(() => tryAutoFillPJSegmentFromCNAE());
+                        }
+                      }
+                    }}
+                    disabled={readOnly}
+                  />
+                  {extra.tipo === "PJ" && !readOnly && (
+                    <div className="text-xs text-slate-500 mt-1">
+                      {cnaeLoading ? "Buscando CNAE principal…" : "Dica: com CNPJ válido, o Segmento pode ser preenchido automaticamente pelo CNAE."}
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -2074,12 +2174,7 @@ export default function ClientesPage() {
 
                   <div className="mt-3">
                     <div className="text-xs text-slate-600 mb-2">Como nos conheceu? (1 opção)</div>
-                    <select
-                      className="input"
-                      value={extra.como_conheceu}
-                      onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))}
-                      disabled={readOnly}
-                    >
+                    <select className="input" value={extra.como_conheceu} onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))} disabled={readOnly}>
                       <option value="">Selecione…</option>
                       {COMO_CONHECEU.map((o) => (
                         <option key={o} value={o}>

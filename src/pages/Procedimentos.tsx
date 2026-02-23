@@ -15,6 +15,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+import jsPDF from "jspdf";
 
 import {
   Search,
@@ -37,6 +40,7 @@ import {
   Type,
   Image as ImageIcon,
   Square, // substitui BorderAll (evita erro de export)
+  Download,
 } from "lucide-react";
 
 type UserRow = {
@@ -145,35 +149,40 @@ function looksLikeHtml(s?: string | null) {
   return t.includes("<") && t.includes(">");
 }
 
-function renderHtmlOrFallback(value?: string | null) {
-  const v = (value || "").trim();
-  if (!v) return <div className="text-sm text-muted-foreground">—</div>;
-
-  if (looksLikeHtml(v)) {
-    return (
-      <div
-        className="prose prose-sm max-w-none"
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: v }}
-      />
-    );
+function stripHtmlToText(html: string) {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const text = (doc.body?.textContent || "").replace(/\u00A0/g, " ");
+    return text
+      .split("\n")
+      .map((s) => s.trimEnd())
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  } catch {
+    return (html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   }
+}
 
-  const lines = v.split("\n");
-  return (
-    <div className="space-y-2 text-sm leading-relaxed">
-      {lines.map((ln, idx) => {
-        const line = ln.trim();
-        if (!line) return <div key={idx} className="h-2" />;
-        const isNum = /^\d+\)\s+/.test(line);
-        return (
-          <div key={idx} className={isNum ? "pl-2" : ""}>
-            {line}
-          </div>
-        );
-      })}
-    </div>
-  );
+function extractImagesFromHtml(html: string) {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const imgs = Array.from(doc.querySelectorAll("img"))
+      .map((img) => img.getAttribute("src") || "")
+      .filter(Boolean);
+    return imgs;
+  } catch {
+    return [];
+  }
+}
+
+async function getImageSize(src: string): Promise<{ w: number; h: number } | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
 }
 
 type RichEditorProps = {
@@ -484,6 +493,59 @@ export default function Procedimentos() {
   const [docsHtml, setDocsHtml] = useState<string>("");
 
   const [newSuggestion, setNewSuggestion] = useState("");
+
+  // ====== Viewer de imagem (sem mexer no layout)
+  const [imgViewerOpen, setImgViewerOpen] = useState(false);
+  const [imgViewerSrc, setImgViewerSrc] = useState<string>("");
+  const [imgViewerTitle, setImgViewerTitle] = useState<string>("Imagem");
+
+  function openImageViewer(src: string, title?: string) {
+    if (!src) return;
+    setImgViewerSrc(src);
+    setImgViewerTitle(title || "Imagem");
+    setImgViewerOpen(true);
+  }
+
+  function renderHtmlOrFallback(value?: string | null, opts?: { enableImgViewer?: boolean }) {
+    const v = (value || "").trim();
+    if (!v) return <div className="text-sm text-muted-foreground">—</div>;
+
+    const enableImgViewer = !!opts?.enableImgViewer;
+
+    if (looksLikeHtml(v)) {
+      return (
+        <div
+          className="prose prose-sm max-w-none"
+          onClick={(e) => {
+            if (!enableImgViewer) return;
+            const t = e.target as any;
+            if (t && t.tagName === "IMG") {
+              const src = (t as HTMLImageElement).src || "";
+              if (src) openImageViewer(src, "Imagem do procedimento");
+            }
+          }}
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{ __html: v }}
+        />
+      );
+    }
+
+    const lines = v.split("\n");
+    return (
+      <div className="space-y-2 text-sm leading-relaxed">
+        {lines.map((ln, idx) => {
+          const line = ln.trim();
+          if (!line) return <div key={idx} className="h-2" />;
+          const isNum = /^\d+\)\s+/.test(line);
+          return (
+            <div key={idx} className={isNum ? "pl-2" : ""}>
+              {line}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   async function loadMe() {
     const { data: auth } = await supabase.auth.getUser();
@@ -873,8 +935,229 @@ export default function Procedimentos() {
     return typeof v === "string" ? v : "";
   }, [active]);
 
+  // ====== PDF do procedimento (botão ao lado do Editar)
+  async function downloadProcedurePDF() {
+    if (!active) return;
+
+    try {
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const margin = 44;
+      let y = margin;
+
+      const title = active.title || "Procedimento";
+      const meta = [
+        active.area ? `Área: ${active.area}` : null,
+        active.channel ? `Canal: ${active.channel}` : null,
+        active.sla_text ? `SLA: ${active.sla_text}` : null,
+        `Atualizado: ${humanDate(active.updated_at)}`,
+        `Status: ${active.status}`,
+      ]
+        .filter(Boolean)
+        .join("  •  ");
+
+      const trigger = (active.trigger || "").trim();
+      const stepsHtmlNow = (active.steps_md || "").trim();
+      const docsHtmlNow = (activeDocsHtml || "").trim();
+
+      const stepsText = looksLikeHtml(stepsHtmlNow) ? stripHtmlToText(stepsHtmlNow) : stepsHtmlNow;
+      const docsText = looksLikeHtml(docsHtmlNow) ? stripHtmlToText(docsHtmlNow) : docsHtmlNow;
+
+      const stepImgs = looksLikeHtml(stepsHtmlNow) ? extractImagesFromHtml(stepsHtmlNow) : [];
+      const docImgs = looksLikeHtml(docsHtmlNow) ? extractImagesFromHtml(docsHtmlNow) : [];
+      const images = [...stepImgs, ...docImgs];
+
+      function addPageIfNeeded(extra: number) {
+        if (y + extra > pageH - margin) {
+          doc.addPage();
+          y = margin;
+        }
+      }
+
+      // Header
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      const titleLines = doc.splitTextToSize(title, pageW - margin * 2);
+      addPageIfNeeded(titleLines.length * 22);
+      doc.text(titleLines, margin, y);
+      y += titleLines.length * 22 + 6;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      const metaLines = doc.splitTextToSize(meta, pageW - margin * 2);
+      addPageIfNeeded(metaLines.length * 14);
+      doc.text(metaLines, margin, y);
+      y += metaLines.length * 14 + 16;
+
+      // Summary
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      addPageIfNeeded(18);
+      doc.text("Resumo", margin, y);
+      y += 16;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      const summaryLines = doc.splitTextToSize(active.summary || "—", pageW - margin * 2);
+      addPageIfNeeded(summaryLines.length * 16);
+      doc.text(summaryLines, margin, y);
+      y += summaryLines.length * 16 + 16;
+
+      // Trigger
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      addPageIfNeeded(18);
+      doc.text("Quando usar", margin, y);
+      y += 16;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      const trigLines = doc.splitTextToSize(trigger || "—", pageW - margin * 2);
+      addPageIfNeeded(trigLines.length * 16);
+      doc.text(trigLines, margin, y);
+      y += trigLines.length * 16 + 16;
+
+      // Steps
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      addPageIfNeeded(18);
+      doc.text("Passo a passo", margin, y);
+      y += 16;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      const stepsLines = doc.splitTextToSize(stepsText || "—", pageW - margin * 2);
+      addPageIfNeeded(Math.max(16, Math.min(stepsLines.length, 60)) * 16);
+      doc.text(stepsLines, margin, y);
+      y += stepsLines.length * 16 + 16;
+
+      // Docs
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      addPageIfNeeded(18);
+      doc.text("Documentos", margin, y);
+      y += 16;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      const docsLines = doc.splitTextToSize(docsText || (docs.length ? "—" : "Sem descrição de documentos."), pageW - margin * 2);
+      addPageIfNeeded(Math.max(16, Math.min(docsLines.length, 60)) * 16);
+      doc.text(docsLines, margin, y);
+      y += docsLines.length * 16 + 16;
+
+      // Lista estruturada de docs (quando existir)
+      if (docs.length) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        addPageIfNeeded(18);
+        doc.text("Checklist de documentos (cadastro)", margin, y);
+        y += 16;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(11);
+
+        const grouped = Object.entries(
+          docs.reduce<Record<string, KBDoc[]>>((acc, d) => {
+            const k = d.role_key || "geral";
+            acc[k] = acc[k] || [];
+            acc[k].push(d);
+            return acc;
+          }, {})
+        );
+
+        for (const [roleKey, items] of grouped) {
+          const roleLabel =
+            roleKey === "geral"
+              ? "Geral"
+              : roles.find((r) => r.role_key === roleKey)?.role_label || roleKey;
+
+          doc.setFont("helvetica", "bold");
+          addPageIfNeeded(16);
+          doc.text(roleLabel, margin, y);
+          y += 14;
+
+          doc.setFont("helvetica", "normal");
+          for (const d of items) {
+            const line = `• ${d.doc_name}${d.required ? "" : " (opcional)"}${
+              d.format_hint ? ` — Formato: ${d.format_hint}` : ""
+            }${d.validity_hint ? ` — Validade: ${d.validity_hint}` : ""}${d.notes ? ` — ${d.notes}` : ""}`;
+
+            const lines = doc.splitTextToSize(line, pageW - margin * 2);
+            addPageIfNeeded(lines.length * 16);
+            doc.text(lines, margin, y);
+            y += lines.length * 16;
+          }
+          y += 10;
+        }
+      }
+
+      // Imagens (se houverem dentro do HTML)
+      if (images.length) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        addPageIfNeeded(18);
+        doc.text("Imagens", margin, y);
+        y += 16;
+
+        for (const src of images) {
+          // Evita imagens externas por CORS; as suas são dataURL, então ok.
+          const size = await getImageSize(src);
+          if (!size) continue;
+
+          // Define tipo para jsPDF (dataURL)
+          const isPng = src.startsWith("data:image/png");
+          const kind = isPng ? "PNG" : "JPEG";
+
+          const maxW = pageW - margin * 2;
+          const maxH = pageH - margin * 2;
+
+          let w = size.w;
+          let h = size.h;
+
+          // escala proporcional
+          const scaleW = maxW / w;
+          const scaleH = maxH / h;
+          const scale = Math.min(scaleW, scaleH, 1);
+
+          w = w * scale;
+          h = h * scale;
+
+          addPageIfNeeded(h + 18);
+          doc.addImage(src, kind as any, margin, y, w, h, undefined, "FAST");
+          y += h + 14;
+        }
+      }
+
+      const safeTitle = (active.title || "procedimento").replace(/[^\w\-]+/g, "_").slice(0, 80);
+      doc.save(`Procedimento_${safeTitle}.pdf`);
+    } catch (e: any) {
+      alert(e?.message || "Não foi possível gerar o PDF (verifique dependências).");
+    }
+  }
+
   return (
     <div className="p-4 space-y-4">
+      {/* Viewer de imagem (não altera layout; só abre por cima) */}
+      <Dialog open={imgViewerOpen} onOpenChange={setImgViewerOpen}>
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>{imgViewerTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="w-full">
+            {/* Boa qualidade: exibimos a imagem original (dataURL) em contain */}
+            <img
+              src={imgViewerSrc}
+              alt="Imagem"
+              className="w-full max-h-[78vh] object-contain rounded-lg border bg-white"
+            />
+            <div className="mt-2 text-xs text-muted-foreground">
+              Dica: se quiser salvar a imagem, clique com o botão direito → “Salvar imagem como…”
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="text-2xl font-semibold text-slate-900">Procedimentos</div>
@@ -1036,6 +1319,20 @@ export default function Procedimentos() {
               {active && (
                 <div className="flex items-center gap-2">
                   {statusPill(active.status)}
+
+                  {/* Download PDF (ao lado do Editar) */}
+                  {!editing && (
+                    <Button
+                      variant="outline"
+                      className="gap-2"
+                      onClick={downloadProcedurePDF}
+                      title="Baixar PDF"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download
+                    </Button>
+                  )}
+
                   {canEdit && !editing && (
                     <Button variant="outline" className="gap-2" onClick={() => beginEdit("edit")}>
                       <Pencil className="h-4 w-4" />
@@ -1221,7 +1518,11 @@ export default function Procedimentos() {
                     <div className="h-px w-full bg-slate-200 my-3" />
 
                     <div className="text-sm font-medium">Como fazer</div>
-                    {renderHtmlOrFallback(active.steps_md)}
+                    {/* Clique em imagens abre viewer */}
+                    {renderHtmlOrFallback(active.steps_md, { enableImgViewer: true })}
+                    <div className="text-[11px] text-muted-foreground">
+                      Dica: clique em uma imagem para abrir em tela cheia.
+                    </div>
                   </div>
                 </TabsContent>
 
@@ -1230,7 +1531,12 @@ export default function Procedimentos() {
                     <div className="rounded-xl border p-3">
                       <div className="text-sm font-medium mb-2">Documentos (descrição)</div>
                       {activeDocsHtml ? (
-                        renderHtmlOrFallback(activeDocsHtml)
+                        <>
+                          {renderHtmlOrFallback(activeDocsHtml, { enableImgViewer: true })}
+                          <div className="text-[11px] text-muted-foreground mt-2">
+                            Dica: clique em uma imagem para abrir em tela cheia.
+                          </div>
+                        </>
                       ) : (
                         <div className="text-sm text-muted-foreground">Sem descrição de documentos.</div>
                       )}

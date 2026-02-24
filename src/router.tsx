@@ -31,6 +31,9 @@ const Relatorios = React.lazy(() => import("./pages/Relatorios"));
 const Procedimentos = React.lazy(() => import("./pages/Procedimentos"));
 const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas"));
 
+// ✅ NOVO: Processos
+const Processos = React.lazy(() => import("./pages/Processos"));
+
 // ==== Giro de Carteira SEM lazy (import direto) ====
 import GiroDeCarteira from "./pages/GiroDeCarteira";
 
@@ -113,6 +116,9 @@ export const router = createBrowserRouter([
           { path: "carteira", element: withSuspense(<Carteira />) },
 
           { path: "fluxo-de-caixa", element: withSuspense(<FluxoDeCaixa />) },
+
+          // ✅ NOVO: Processos
+          { path: "processos", element: withSuspense(<Processos />) },
 
           // Giro de Carteira: import direto + ErrorBoundary com reset por rota
           {

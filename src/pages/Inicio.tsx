@@ -1105,7 +1105,6 @@ export default function Inicio() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">{fmtBRL(kpi.carteiraAtivaTotal)}</div>
-            <div className="text-slate-600 text-sm mt-1">Somatório (codigo = 00)</div>
             <div className="mt-3">
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/carteira")}>
                 Abrir Carteira <ArrowRight className="h-4 w-4 ml-2" />

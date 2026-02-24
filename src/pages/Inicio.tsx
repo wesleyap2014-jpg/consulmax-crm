@@ -68,9 +68,9 @@ type GroupRow = {
   administradora: string;
   segmento: string;
   codigo: string;
-  prox_vencimento: string | null; // date
-  prox_sorteio: string | null; // date
-  prox_assembleia: string | null; // date
+  prox_vencimento: string | null; // date OR timestamptz (vamos normalizar)
+  prox_sorteio: string | null; // date OR timestamptz
+  prox_assembleia: string | null; // date OR timestamptz
 };
 
 type ClienteRow = {
@@ -105,9 +105,17 @@ type KBProcRow = {
 };
 
 type CommissionFlowRow = {
-  data_pagamento_vendedor: string | null; // date
+  data_pagamento_vendedor: string | null; // date OR timestamptz
   valor_previsto: number | null;
   valor_pago_vendedor: number | null;
+};
+
+type CommissionRow = {
+  id: string;
+  vendedor_id: string; // users.id
+  valor_total: number | null;
+  status: string | null; // commission_status
+  created_at?: string | null;
 };
 
 const ALL = "__all__";
@@ -120,6 +128,7 @@ const PV_OFFSET_MIN = -4 * 60; // UTC-4
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
+
 function ymdFromDateInOffset(d: Date, offsetMin: number) {
   const utc = d.getTime();
   const local = new Date(utc + offsetMin * 60 * 1000);
@@ -128,6 +137,7 @@ function ymdFromDateInOffset(d: Date, offsetMin: number) {
   const day = pad2(local.getUTCDate());
   return `${y}-${m}-${day}`;
 }
+
 function rangeISOForDayInOffset(ymd: string, offsetMin: number) {
   const [Y, M, D] = (ymd || "").split("-").map((x) => Number(x));
   const startLocalUtc = Date.UTC(Y, M - 1, D, 0, 0, 0, 0);
@@ -138,17 +148,21 @@ function rangeISOForDayInOffset(ymd: string, offsetMin: number) {
 
   return { startISO: startUtc.toISOString(), endISO: endUtc.toISOString() };
 }
+
 function addDaysYMD(ymd: string, days: number) {
   const [Y, M, D] = (ymd || "").split("-").map((x) => Number(x));
   const t = Date.UTC(Y, M - 1, D, 12, 0, 0);
   const dt = new Date(t + days * 24 * 60 * 60 * 1000);
   return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
 }
+
 function fmtDateBRFromYMD(ymd: string) {
-  const [y, m, d] = (ymd || "").split("-");
-  if (!y || !m || !d) return ymd;
+  const d10 = (ymd || "").slice(0, 10);
+  const [y, m, d] = (d10 || "").split("-");
+  if (!y || !m || !d) return d10 || ymd;
   return `${d}/${m}/${y}`;
 }
+
 function monthRangeYMDFromOffset(now: Date, offsetMin: number) {
   const utc = now.getTime();
   const local = new Date(utc + offsetMin * 60 * 1000);
@@ -161,9 +175,11 @@ function monthRangeYMDFromOffset(now: Date, offsetMin: number) {
   const f = (dt: Date) => `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
   return { startYMD: f(start), endYMD: f(end), year: y, month: m + 1 };
 }
+
 function fmtBRL(v: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 }
+
 function fmtDTForOffset(iso: string, offsetMin: number) {
   const d = new Date(iso);
   const local = new Date(d.getTime() + offsetMin * 60 * 1000);
@@ -173,10 +189,12 @@ function fmtDTForOffset(iso: string, offsetMin: number) {
   const mi = pad2(local.getUTCMinutes());
   return `${dd}/${mm} ${hh}:${mi}`;
 }
+
 function isAdmin(u?: UserRow | null) {
   const r = (u?.role || u?.user_role || "").toLowerCase();
   return r === "admin";
 }
+
 function humanErr(e: any) {
   if (!e) return "Erro desconhecido.";
   if (typeof e === "string") return e;
@@ -188,18 +206,24 @@ function humanErr(e: any) {
     return String(e);
   }
 }
+
 function metaFieldForMonth(month: number) {
   const mm = String(month).padStart(2, "0");
   return `m${mm}` as any;
 }
+
 function daysDiffYMD(a: string, b: string) {
-  // a - b, em dias (a e b no formato YYYY-MM-DD)
+  // a - b em dias (a,b = YYYY-MM-DD)
   if (!a || !b) return 0;
-  const [ay, am, ad] = a.split("-").map(Number);
-  const [by, bm, bd] = b.split("-").map(Number);
+  const [ay, am, ad] = a.slice(0, 10).split("-").map(Number);
+  const [by, bm, bd] = b.slice(0, 10).split("-").map(Number);
   const ta = Date.UTC(ay, am - 1, ad, 12, 0, 0);
   const tb = Date.UTC(by, bm - 1, bd, 12, 0, 0);
   return Math.round((ta - tb) / (24 * 60 * 60 * 1000));
+}
+
+function normalizeYMD(v?: string | null) {
+  return (v || "").slice(0, 10); // suporta date e timestamptz
 }
 
 /** ===================== Donut via SVG ===================== */
@@ -252,19 +276,25 @@ type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = {
   id: string;
   whenSort: number;
-  whenLabel: string; // só data/hora (sem duplicar “Esta Semana …”)
-  flag: DateFlag; // tag separada (Hoje/Amanhã/Esta Semana)
+  whenLabel: string; // só data/hora (sem repetir “Esta Semana ...”)
+  flag: DateFlag;
   title: string;
   desc?: string | null;
   action?: { label: string; to?: string; href?: string };
 };
 
-function flagFromYMD3(today: string, ymd: string): DateFlag {
-  if (!ymd) return "Esta Semana";
-  if (ymd === today) return "Hoje";
-  if (ymd === addDaysYMD(today, 1)) return "Amanhã";
-  // depois de amanhã pra frente
+// Regra: Hoje = hoje; Amanhã = hoje+1; Esta Semana = de hoje+2 até hoje+6
+function flagFromYMDWeek(today: string, ymd: string): DateFlag {
+  const d = normalizeYMD(ymd);
+  if (d === today) return "Hoje";
+  if (d === addDaysYMD(today, 1)) return "Amanhã";
   return "Esta Semana";
+}
+
+function isWithinNextWeekWindow(today: string, ymd: string) {
+  const d = normalizeYMD(ymd);
+  const end = addDaysYMD(today, 6);
+  return d >= today && d <= end;
 }
 
 function flagBadgeClass(flag: DateFlag) {
@@ -375,10 +405,10 @@ export default function Inicio() {
 
     giroDueCount: 0,
 
-    // 🔔 Procedimentos novos
     newProceduresCount: 0,
 
-    // ✅ comissão pendente (valor)
+    // ✅ Comissão pendente (igual ao original: tabela commissions)
+    commissionsPendingCount: 0,
     commissionsPendingTotal: 0,
   });
 
@@ -386,17 +416,15 @@ export default function Inicio() {
     []
   );
 
-  const [agendaItems, setAgendaItems] = useState<AgendaRow[]>([]);
-
   // Paginação: Giros Pendentes
   const [giroAll, setGiroAll] = useState<{ id: string; nome: string; carteiraAtiva: number }[]>([]);
   const [giroPage, setGiroPage] = useState(0);
   const GIRO_PAGE_SIZE = 10;
 
-  // Paginação: Próximos Eventos
+  // Paginação: Próximos Eventos (limite 7 por página)
   const [eventsAll, setEventsAll] = useState<NextEventItem[]>([]);
   const [eventsPage, setEventsPage] = useState(0);
-  const EVENTS_PAGE_SIZE = 10;
+  const EVENTS_PAGE_SIZE = 7;
 
   const [thoughtOfDay, setThoughtOfDay] = useState<string>("");
 
@@ -460,18 +488,16 @@ export default function Inicio() {
   }
 
   /**
-   * scopeUserId  = users.id (usado por metas/reservas)
+   * scopeUserId  = users.id (usado por metas/reservas/comissões)
    * scopeAuthId  = users.auth_user_id (usado por oportunidades/vendas/agenda/carteira/giro)
    */
   async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
     const today = rangeToday.ymd;
-    const { startYMD, endYMD, year, month } = rangeMonth;
+    const endWeek = addDaysYMD(today, 6); // ✅ “Esta Semana” = hoje..+6
 
-    // Janela “Próximos Eventos” (somente futuro: hoje -> +14)
-    const windowStart = today;
-    const windowEnd = addDaysYMD(today, 14);
-    const windowStartISO = rangeISOForDayInOffset(windowStart, PV_OFFSET_MIN).startISO;
-    const windowEndISO = rangeISOForDayInOffset(windowEnd, PV_OFFSET_MIN).endISO;
+    // Intervalo de Agenda em ISO (timestamptz)
+    const windowStartISO = rangeISOForDayInOffset(today, PV_OFFSET_MIN).startISO;
+    const windowEndISO = rangeISOForDayInOffset(endWeek, PV_OFFSET_MIN).endISO;
 
     // ===== Oportunidades (KPI) — somente estágios abertos =====
     let openOppQ = supabase
@@ -490,10 +516,10 @@ export default function Inicio() {
     const openOppCount = openOppRows.length;
     const openOppTotal = openOppRows.reduce((acc, r) => acc + (Number(r.valor_credito || 0) || 0), 0);
 
-    // ===== Oportunidades Atrasadas (lista) — top 10 por dias esperando ação =====
+    // ===== Oportunidades Atrasadas (top 10 por dias esperando ação) =====
     const overdueComputed = openOppRows
       .map((o: any) => {
-        const d = (o.expected_close_at || "").slice(0, 10);
+        const d = normalizeYMD(o.expected_close_at);
         const daysWaiting = d ? Math.max(0, daysDiffYMD(today, d)) : 0;
         return { ...o, daysWaiting };
       })
@@ -508,14 +534,14 @@ export default function Inicio() {
       return { ...o, lead_nome: ld?.nome, lead_tel: ld?.telefone || null };
     });
 
-    // ===== Agenda (janela) =====
+    // ===== Agenda (somente futuro até +6) =====
     let agQ = supabase
       .from("v_agenda_eventos_enriquecida")
       .select("id,tipo,titulo,inicio_at,fim_at,user_id,cliente_nome,lead_nome,telefone,videocall_url")
       .gte("inicio_at", windowStartISO)
       .lte("inicio_at", windowEndISO)
       .order("inicio_at", { ascending: true })
-      .limit(50);
+      .limit(200);
 
     if (!admin) agQ = agQ.eq("user_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) agQ = agQ.eq("user_id", scopeAuthId);
@@ -523,7 +549,6 @@ export default function Inicio() {
     const { data: agRows, error: agErr } = await agQ;
     if (agErr) throw agErr;
 
-    // Contagem "Agenda de hoje" (mesmo set)
     const todayStartISO = rangeToday.startISO;
     const todayEndISO = rangeToday.endISO;
     const todayEventsCount = (agRows || []).filter((e: any) => {
@@ -533,20 +558,21 @@ export default function Inicio() {
 
     // ===== Eventos de grupos hoje (KPI) =====
     const orExprToday = `prox_vencimento.eq.${today},prox_sorteio.eq.${today},prox_assembleia.eq.${today}`;
-    const { data: gTodayRows, error: gTodayErr } = await supabase.from("groups").select("id").or(orExprToday).limit(200);
+    const { data: gTodayRows, error: gTodayErr } = await supabase.from("groups").select("id").or(orExprToday).limit(500);
     if (gTodayErr) throw gTodayErr;
     const todayGroupsCount = (gTodayRows || []).length;
 
-    // ===== Eventos de grupos (janela) =====
-    const orExprWindow = `prox_vencimento.gte.${windowStart},prox_vencimento.lte.${windowEnd},prox_sorteio.gte.${windowStart},prox_sorteio.lte.${windowEnd},prox_assembleia.gte.${windowStart},prox_assembleia.lte.${windowEnd}`;
+    // ===== Eventos de grupos (somente futuro até +6) =====
+    const orExprWindow = `prox_vencimento.gte.${today},prox_vencimento.lte.${endWeek},prox_sorteio.gte.${today},prox_sorteio.lte.${endWeek},prox_assembleia.gte.${today},prox_assembleia.lte.${endWeek}`;
     const { data: gRows, error: gErr } = await supabase
       .from("groups")
       .select("id,administradora,segmento,codigo,prox_vencimento,prox_sorteio,prox_assembleia")
       .or(orExprWindow)
-      .limit(300);
+      .limit(1000);
     if (gErr) throw gErr;
 
     // ===== Vendas do mês =====
+    const { startYMD, endYMD, year, month } = rangeMonth;
     let salesQ = supabase.from("vendas").select("valor_venda,vendedor_id,data_venda").gte("data_venda", startYMD).lt("data_venda", endYMD);
 
     if (!admin) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
@@ -559,7 +585,6 @@ export default function Inicio() {
     // ===== Meta do mês =====
     const field = metaFieldForMonth(month);
     let metaQ = supabase.from("metas_vendedores").select(`vendedor_id,ano,${field}`).eq("ano", year);
-
     if (!admin) metaQ = metaQ.eq("vendedor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) metaQ = metaQ.eq("vendedor_id", scopeUserId);
 
@@ -569,7 +594,7 @@ export default function Inicio() {
     const monthSalesMeta = (metaRows || []).reduce((acc: number, r: any) => acc + (Number(r?.[field] || 0) || 0), 0);
     const monthSalesPct = monthSalesMeta > 0 ? Math.min(100, Math.max(0, (monthSalesTotal / monthSalesMeta) * 100)) : 0;
 
-    // ===== Carteira ativa (codigo=00) =====
+    // ===== Carteira ativa =====
     let cartQ = supabase.from("vendas").select("valor_venda,vendedor_id,codigo").eq("codigo", "00");
     if (!admin) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
@@ -595,7 +620,7 @@ export default function Inicio() {
     if (vscErr) throw vscErr;
     const vendasSemComissaoCount = (vscRows || []).length;
 
-    // ===== Giro pendente (contagem + lista top 10 maiores com paginação) =====
+    // ===== Giro pendente (contagem + lista) =====
     let giroDueCount = 0;
 
     if (admin) {
@@ -622,7 +647,7 @@ export default function Inicio() {
       giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
     }
 
-    // Lista de giros pendentes: top 10 maiores, com paginação client-side
+    // Lista de giros pendentes (top por carteira) — view (melhor esforço)
     let giroList: { id: string; nome: string; carteiraAtiva: number }[] = [];
     try {
       let giroItemsQ = supabase
@@ -641,7 +666,6 @@ export default function Inicio() {
           const id = String(r.id || r.cliente_id || r.lead_id || `giro_${idx}`);
           return { id, nome, carteiraAtiva: carteira };
         });
-        // 10 maiores (carteira) primeiro
         giroList.sort((a, b) => (b.carteiraAtiva || 0) - (a.carteiraAtiva || 0));
       }
     } catch {
@@ -657,9 +681,7 @@ export default function Inicio() {
     if (birthErr) throw birthErr;
 
     const todayMMDD = today.slice(5);
-    const birthdayToday = (allBirth || [])
-      .filter((c: ClienteRow) => (c.data_nascimento || "").slice(5) === todayMMDD)
-      .slice(0, 20);
+    const birthdayToday = (allBirth || []).filter((c: ClienteRow) => normalizeYMD(c.data_nascimento).slice(5) === todayMMDD).slice(0, 50);
 
     // ===== Procedimentos novos =====
     let newProceduresCount = 0;
@@ -673,24 +695,36 @@ export default function Inicio() {
 
       if (!kbErr && kbRows) {
         const active = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active");
-        newProceduresCount = active.filter((p) => (p.created_at || "").slice(0, 10) >= sevenDaysAgo).length;
+        newProceduresCount = active.filter((p) => normalizeYMD(p.created_at || "") >= sevenDaysAgo).length;
       }
     } catch {
       newProceduresCount = 0;
     }
 
-    // ===== Fluxo de comissões (Próximos Eventos + Alertas valor pendente) =====
-    // Puxamos janela futura e também calculamos pendente total (não pago) dentro da janela
+    // ===== Comissão pendente (igual ao original: tabela commissions) =====
+    let comQ = supabase.from("commissions").select("id,vendedor_id,valor_total,status,created_at").order("created_at", { ascending: false }).limit(5000);
+    if (!admin) comQ = comQ.eq("vendedor_id", scopeUserId);
+    if (admin && scopeUserId !== ALL) comQ = comQ.eq("vendedor_id", scopeUserId);
+
+    const { data: comRows, error: comErr } = await comQ;
+    if (comErr) throw comErr;
+
+    const pend = (comRows || []).filter((c: CommissionRow) => {
+      const st = String(c.status || "").toLowerCase();
+      return st && st !== "pago" && st !== "estorno";
+    });
+    const commissionsPendingCount = pend.length;
+    const commissionsPendingTotal = pend.reduce((acc, r) => acc + (Number(r.valor_total || 0) || 0), 0);
+
+    // ===== Fluxo de comissões (Próximos Eventos) — esta semana (hoje..+6) =====
     const { data: cfRows, error: cfErr } = await supabase
       .from("commissions_flow")
       .select("data_pagamento_vendedor,valor_previsto,valor_pago_vendedor")
-      .gte("data_pagamento_vendedor", windowStart)
-      .lte("data_pagamento_vendedor", windowEnd)
+      .gte("data_pagamento_vendedor", today)
+      .lte("data_pagamento_vendedor", endWeek)
       .limit(5000);
 
     const commissionsFlow = (!cfErr && cfRows ? (cfRows as any as CommissionFlowRow[]) : []) as CommissionFlowRow[];
-
-    let commissionsPendingTotal = 0;
 
     // agrega por data
     const cfAgg = new Map<
@@ -699,38 +733,37 @@ export default function Inicio() {
         date: string;
         sumPrev: number;
         sumPaid: number;
+        hasPaid: boolean;
       }
     >();
 
     for (const r of commissionsFlow) {
-      const d = (r.data_pagamento_vendedor || "").slice(0, 10);
+      const d = normalizeYMD(r.data_pagamento_vendedor);
       if (!d) continue;
+      if (!isWithinNextWeekWindow(today, d)) continue;
 
       const prev = Number(r.valor_previsto || 0) || 0;
       const paid = Number(r.valor_pago_vendedor || 0) || 0;
 
-      // pendente = previsto onde ainda não tem pago
-      if (paid <= 0) commissionsPendingTotal += prev;
-
-      const cur = cfAgg.get(d) || { date: d, sumPrev: 0, sumPaid: 0 };
+      const cur = cfAgg.get(d) || { date: d, sumPrev: 0, sumPaid: 0, hasPaid: false };
       cur.sumPrev += prev;
       cur.sumPaid += paid;
+      if (paid > 0) cur.hasPaid = true;
       cfAgg.set(d, cur);
     }
 
-    /** ===================== Monta Próximos Eventos (somente futuro) ===================== */
+    /** ===================== Monta Próximos Eventos (somente hoje..+6) ===================== */
     const items: NextEventItem[] = [];
 
-    // Agenda: já está gte(windowStartISO) então não vem passado por data (e não duplicamos flag na label)
+    // Agenda
     for (const e of (agRows || []) as AgendaRow[]) {
       const startISO = e.inicio_at;
       const startUtcMs = new Date(startISO).getTime();
       const ymd = ymdFromDateInOffset(new Date(startUtcMs), PV_OFFSET_MIN);
 
-      // “Próximos”: se por algum motivo cair dia anterior, descarta
-      if (ymd < today) continue;
+      if (!isWithinNextWeekWindow(today, ymd)) continue;
 
-      const flag = flagFromYMD3(today, ymd);
+      const flag = flagFromYMDWeek(today, ymd);
 
       items.push({
         id: `ag:${e.id}`,
@@ -743,20 +776,21 @@ export default function Inicio() {
       });
     }
 
-    // Grupos (date) — título + “Administradora | Segmento”
+    // Grupos (date/timestamptz normalizado) — sem “drift” (não usa Date para exibir a data)
     for (const g of (gRows || []) as GroupRow[]) {
       const base = `${g.administradora} | ${g.segmento}`;
-      const pushGroup = (kind: "Vencimento" | "Sorteio" | "Assembleia", dateYMD: string | null) => {
-        if (!dateYMD) return;
-        // próximos = desconsidera passados
-        if (dateYMD < today) return;
 
-        const flag = flagFromYMD3(today, dateYMD);
+      const pushGroup = (kind: "Vencimento" | "Sorteio" | "Assembleia", dateRaw: string | null) => {
+        const d = normalizeYMD(dateRaw);
+        if (!d) return;
+        if (!isWithinNextWeekWindow(today, d)) return;
+
+        const flag = flagFromYMDWeek(today, d);
 
         items.push({
-          id: `grp:${g.id}:${kind}:${dateYMD}`,
-          whenSort: Date.UTC(Number(dateYMD.slice(0, 4)), Number(dateYMD.slice(5, 7)) - 1, Number(dateYMD.slice(8, 10)), 12, 0, 0),
-          whenLabel: fmtDateBRFromYMD(dateYMD),
+          id: `grp:${g.id}:${kind}:${d}`,
+          whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 12, 0, 0),
+          whenLabel: fmtDateBRFromYMD(d),
           flag,
           title: `${kind} Grupo ${g.codigo}`,
           desc: base,
@@ -769,14 +803,12 @@ export default function Inicio() {
       pushGroup("Sorteio", g.prox_sorteio);
     }
 
-    // Recebimento de Comissão (agrupado por data, somente futuro)
+    // Recebimento de Comissão (esta semana)
     for (const [d, agg] of cfAgg.entries()) {
-      if (d < today) continue;
+      if (!isWithinNextWeekWindow(today, d)) continue;
 
-      const flag = flagFromYMD3(today, d);
-      const received = (agg.sumPaid || 0) > 0;
-
-      const msg = received
+      const flag = flagFromYMDWeek(today, d);
+      const msg = agg.hasPaid
         ? `🎉 Você recebeu comissão no valor de ${fmtBRL(agg.sumPaid)} ✅`
         : `💰 Você receberá ${fmtBRL(agg.sumPrev)} de comissão 💸`;
 
@@ -791,34 +823,30 @@ export default function Inicio() {
       });
     }
 
-    // Aniversários (somente hoje — é “próximo” por definição)
+    // Aniversários (somente hoje)
     for (const c of birthdayToday) {
-      const flag: DateFlag = "Hoje";
       items.push({
         id: `bday:${c.id}`,
         whenSort: Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)), 8, 0, 0),
         whenLabel: fmtDateBRFromYMD(today),
-        flag,
+        flag: "Hoje",
         title: "Aniversário",
         desc: `É aniversário do seu Cliente “${c.nome}”. Parabenize-o! 🎂🎉`,
         action: { label: "Ver Clientes", to: "/clientes" },
       });
     }
 
-    // Ordena
     items.sort((a, b) => a.whenSort - b.whenSort);
 
-    // ✅ Atualiza estados
+    // Estados
     setOverdueOpps(overdueOppsEnriched);
-    setAgendaItems((agRows || []) as any);
 
     setGiroAll(giroList);
-    setGiroPage(0); // reseta paginação ao recarregar
+    setGiroPage(0);
 
     setEventsAll(items);
-    setEventsPage(0); // reseta paginação ao recarregar
+    setEventsPage(0);
 
-    // Pensamento do dia
     const thought = await loadThoughtOfDay(today);
     if (thought) setThoughtOfDay(thought);
 
@@ -842,6 +870,7 @@ export default function Inicio() {
 
       newProceduresCount,
 
+      commissionsPendingCount,
       commissionsPendingTotal,
     });
   }
@@ -919,7 +948,6 @@ export default function Inicio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Quando muda filtro do admin, recarrega
   useEffect(() => {
     if (!me) return;
     const admin = isAdmin(me);
@@ -1007,7 +1035,6 @@ export default function Inicio() {
 
       {/* KPIs */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* Oportunidades */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -1164,7 +1191,12 @@ export default function Inicio() {
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="text-slate-700">Comissão pendente</div>
+              <div className="text-slate-700">Comissões pendentes</div>
+              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.commissionsPendingCount}</Badge>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="text-slate-700">Total pendente</div>
               <div className="text-slate-900 font-medium">{fmtBRL(kpi.commissionsPendingTotal)}</div>
             </div>
 
@@ -1181,7 +1213,7 @@ export default function Inicio() {
         </Card>
       </div>
 
-      {/* Listas: Oportunidades Atrasadas + Giros Pendentes + Próximos Eventos */}
+      {/* Listas */}
       <div className="mt-6 grid grid-cols-1 xl:grid-cols-3 gap-4">
         {/* Oportunidades Atrasadas */}
         <Card className={glassCard}>
@@ -1218,7 +1250,7 @@ export default function Inicio() {
           </CardContent>
         </Card>
 
-        {/* Giros Pendentes (top 10 maiores com paginação) */}
+        {/* Giros Pendentes */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -1227,9 +1259,7 @@ export default function Inicio() {
           </CardHeader>
           <CardContent className="space-y-2">
             {giroAll.length === 0 ? (
-              <div className="text-slate-500 text-sm">
-                {kpi.giroDueCount > 0 ? `Você tem ${kpi.giroDueCount} giro(s) pendente(s).` : "Sem giros pendentes no momento."}
-              </div>
+              <div className="text-slate-500 text-sm">{kpi.giroDueCount > 0 ? `Você tem ${kpi.giroDueCount} giro(s) pendente(s).` : "Sem giros pendentes no momento."}</div>
             ) : (
               <>
                 {giroSlice.map((g) => (
@@ -1244,7 +1274,6 @@ export default function Inicio() {
                   </div>
                 ))}
 
-                {/* Paginação */}
                 <div className="flex items-center justify-between pt-2">
                   <div className="text-xs text-slate-500">
                     Página {giroPage + 1} de {giroPageCount}
@@ -1279,7 +1308,7 @@ export default function Inicio() {
           </CardContent>
         </Card>
 
-        {/* Próximos Eventos (somente futuro, limite 10 com paginação) */}
+        {/* Próximos Eventos (hoje..+6, 7 por página) */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -1289,7 +1318,7 @@ export default function Inicio() {
 
           <CardContent className="space-y-2">
             {eventsAll.length === 0 ? (
-              <div className="text-slate-500 text-sm">Sem eventos futuros na janela configurada.</div>
+              <div className="text-slate-500 text-sm">Sem eventos futuros para esta semana.</div>
             ) : (
               <>
                 {eventsSlice.map((e) => (
@@ -1321,7 +1350,6 @@ export default function Inicio() {
                   </div>
                 ))}
 
-                {/* Paginação */}
                 <div className="flex items-center justify-between pt-2">
                   <div className="text-xs text-slate-500">
                     Página {eventsPage + 1} de {eventsPageCount}
@@ -1361,13 +1389,7 @@ export default function Inicio() {
           </CardHeader>
           <CardContent className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div className="text-slate-700">
-              {thoughtOfDay ? (
-                <span className="font-semibold">“{thoughtOfDay}”</span>
-              ) : (
-                <>
-                  Hoje, foca em 1 coisa: <span className="font-semibold">follow-up com data</span>.
-                </>
-              )}
+              {thoughtOfDay ? <span className="font-semibold">“{thoughtOfDay}”</span> : <span className="font-semibold">“{FALLBACK_THOUGHTS[0]}”</span>}
             </div>
             <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/planejamento")}>
               Abrir Playbook <ArrowRight className="h-4 w-4 ml-2" />

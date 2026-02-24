@@ -26,8 +26,6 @@ import {
   X,
 } from "lucide-react";
 
-import ProcessosLateralCard from "@/components/processos/ProcessosLateralCard";
-
 type SidebarProps = { onNavigate?: () => void };
 
 const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
@@ -255,7 +253,7 @@ function groupForPath(pathname: string): GroupKey {
 
   if (isAnyPathActive(pathname, ["/carteira", "/giro-de-carteira", "/gestao-de-grupos"])) return "pos";
 
-  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes"])) return "admin";
+  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes", "/processos"])) return "admin";
 
   if (isAnyPathActive(pathname, ["/links", "/procedimentos"])) return "max";
 
@@ -443,9 +441,9 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
   const textHidden = collapsed ? "md:opacity-0 md:pointer-events-none md:select-none md:w-0 opacity-100" : "opacity-100";
   const pillPadding = collapsed ? "md:px-2.5 px-3" : "px-3";
 
-  // Accordion: só 1 grupo aberto
+  // Accordion: permite fechar ao clicar de novo
   const currentGroup = useMemo<GroupKey>(() => groupForPath(pathname), [pathname]);
-  const [openGroup, setOpenGroup] = useState<GroupKey>(currentGroup);
+  const [openGroup, setOpenGroup] = useState<GroupKey | null>(currentGroup);
 
   useEffect(() => {
     if (!collapsed) setOpenGroup(currentGroup);
@@ -487,6 +485,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
       { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
       { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
+      { to: "/processos", label: "Processos", icon: ClipboardList, end: true },
 
       // Financeiro
       { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
@@ -523,7 +522,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         type="button"
         onClick={() => {
           if (collapsed) return;
-          setOpenGroup((prev) => (prev === key ? prev : key));
+          setOpenGroup((prev) => (prev === key ? null : key)); // ✅ clique de novo retrai
         }}
         className={`${pillPadding} py-2.5 rounded-2xl transition-colors w-full flex items-center justify-between
                     ${mobileTapFx}
@@ -628,13 +627,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         </div>
       </div>
 
-      {/* ✅ CARD LATERAL: Processos (só quando há espaço) */}
-      {(!collapsed || isSmall) && (
-        <div className="relative z-[1] mt-3">
-          <ProcessosLateralCard />
-        </div>
-      )}
-
       {/* Navegação */}
       <nav className="relative z-[1] grid gap-2 mt-3">
         {/* ===== MODO COLAPSADO (flat) ===== */}
@@ -664,7 +656,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             {/* VENDAS */}
             {renderSectionPill("vendas", "Vendas", Briefcase)}
             {openGroup === "vendas" && (
-              <div className="ml-1 grid gap-2">
+              <div className="ml-4 grid gap-2">
                 <NavLink
                   to="/planejamento"
                   className={({ isActive }) => pillClass(isActive)}
@@ -728,7 +720,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   </button>
 
                   {simGroupOpen && (
-                    <div id={simListId} className="ml-6 grid gap-1 mt-1">
+                    <div id={simListId} className="ml-8 grid gap-1 mt-1">
                       {adminsLoading && <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>}
 
                       {!adminsLoading &&
@@ -824,7 +816,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             {/* PÓS-VENDA */}
             {renderSectionPill("pos", "Pós-venda", Wallet)}
             {openGroup === "pos" && (
-              <div className="ml-1 grid gap-2">
+              <div className="ml-4 grid gap-2">
                 <NavLink
                   to="/carteira"
                   className={({ isActive }) => pillClass(isActive)}
@@ -869,7 +861,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             {/* ADMINISTRATIVO */}
             {renderSectionPill("admin", "Administrativo", SlidersHorizontal)}
             {openGroup === "admin" && (
-              <div className="ml-1 grid gap-2">
+              <div className="ml-4 grid gap-2">
                 <NavLink
                   to="/relatorios"
                   className={({ isActive }) => pillClass(isActive)}
@@ -917,13 +909,26 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   <UserCog className="h-4 w-4" />
                   Clientes
                 </NavLink>
+
+                {/* ✅ NOVO: Administrativo > Processos */}
+                <NavLink
+                  to="/processos"
+                  className={({ isActive }) => pillClass(isActive)}
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={handleNav}
+                  title="Processos"
+                  end
+                >
+                  <ClipboardList className="h-4 w-4" />
+                  Processos
+                </NavLink>
               </div>
             )}
 
             {/* FINANCEIRO */}
             {renderSectionPill("fin", "Financeiro", LineChart)}
             {openGroup === "fin" && (
-              <div className="ml-1 grid gap-2">
+              <div className="ml-4 grid gap-2">
                 <NavLink
                   to="/comissoes"
                   className={({ isActive }) => pillClass(isActive)}
@@ -958,7 +963,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             {/* MAXIMIZE-SE */}
             {renderSectionPill("max", "Maximize-se", Trophy)}
             {openGroup === "max" && (
-              <div className="ml-1 grid gap-2">
+              <div className="ml-4 grid gap-2">
                 <NavLink
                   to="/procedimentos"
                   className={({ isActive }) => pillClass(isActive)}

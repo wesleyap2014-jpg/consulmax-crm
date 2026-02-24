@@ -192,10 +192,6 @@ function metaFieldForMonth(month: number) {
   const mm = String(month).padStart(2, "0");
   return `m${mm}` as any;
 }
-function toInt(n: any, fallback = 0) {
-  const x = Number(n);
-  return Number.isFinite(x) ? Math.trunc(x) : fallback;
-}
 function daysDiffYMD(a: string, b: string) {
   // a - b, em dias (a e b no formato YYYY-MM-DD)
   if (!a || !b) return 0;
@@ -256,8 +252,8 @@ type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = {
   id: string;
   whenSort: number;
-  whenLabel: string;
-  flag: DateFlag;
+  whenLabel: string; // só data/hora (sem duplicar “Esta Semana …”)
+  flag: DateFlag; // tag separada (Hoje/Amanhã/Esta Semana)
   title: string;
   desc?: string | null;
   action?: { label: string; to?: string; href?: string };
@@ -267,12 +263,7 @@ function flagFromYMD3(today: string, ymd: string): DateFlag {
   if (!ymd) return "Esta Semana";
   if (ymd === today) return "Hoje";
   if (ymd === addDaysYMD(today, 1)) return "Amanhã";
-
-  // Dentro dos próximos 7 dias (ou já passou, mas “entra” como semana)
-  const diff = daysDiffYMD(ymd, today); // ymd - today
-  if (diff >= 2 && diff <= 7) return "Esta Semana";
-  if (diff < 0) return "Esta Semana";
-
+  // depois de amanhã pra frente
   return "Esta Semana";
 }
 
@@ -286,7 +277,6 @@ function flagBadgeClass(flag: DateFlag) {
 const THOUGHT_URL = "https://meetime.com.br/blog/vendas/as-47-melhores-frases-motivacionais-para-vendas/";
 
 function hashYMD(ymd: string) {
-  // hash simples determinístico (pra escolher 1 frase por dia)
   let h = 2166136261;
   for (let i = 0; i < ymd.length; i++) {
     h ^= ymd.charCodeAt(i);
@@ -301,7 +291,6 @@ function pickDeterministic(arr: string[], ymd: string) {
   return arr[idx];
 }
 
-// fallback “original” (caso CORS bloqueie e/ou não exista tabela)
 const FALLBACK_THOUGHTS: string[] = [
   "Consistência vence talento quando talento não é consistente.",
   "Quem faz follow-up com data, fecha com mais calma e mais previsibilidade.",
@@ -316,7 +305,6 @@ async function loadThoughtOfDay(todayYMD: string): Promise<string | null> {
     const res = await fetch(THOUGHT_URL, { method: "GET" });
     if (res.ok) {
       const html = await res.text();
-      // extrai linhas numeradas do tipo: 1. “...” — Autor
       const matches = Array.from(html.matchAll(/>\s*\d+\.\s*“([^”]{8,220})”/g));
       const phrases = matches.map((m) => (m?.[1] || "").trim()).filter(Boolean);
       const picked = pickDeterministic(phrases, todayYMD);
@@ -326,8 +314,7 @@ async function loadThoughtOfDay(todayYMD: string): Promise<string | null> {
     // ignora
   }
 
-  // 2) tenta buscar de um schema de frases (caso você crie)
-  // tabela sugerida: public.sales_quotes { id uuid, text text, is_active bool }
+  // 2) tenta buscar de um schema de frases (caso exista)
   try {
     const { data, error } = await supabase.from("sales_quotes").select("text,is_active").eq("is_active", true).limit(500);
     if (!error && data && data.length) {
@@ -339,7 +326,6 @@ async function loadThoughtOfDay(todayYMD: string): Promise<string | null> {
     // ignora
   }
 
-  // 3) fallback
   return pickDeterministic(FALLBACK_THOUGHTS, todayYMD) || FALLBACK_THOUGHTS[0];
 }
 
@@ -372,7 +358,6 @@ export default function Inicio() {
 
   // ======= KPIs =======
   const [kpi, setKpi] = useState({
-    // O que era “Oportunidades Atrasadas” virou “Oportunidades”
     openOppCount: 0,
     openOppTotal: 0,
 
@@ -392,15 +377,40 @@ export default function Inicio() {
 
     // 🔔 Procedimentos novos
     newProceduresCount: 0,
+
+    // ✅ comissão pendente (valor)
+    commissionsPendingTotal: 0,
   });
 
-  const [overdueOpps, setOverdueOpps] = useState<
-    (OppRow & { lead_nome?: string; lead_tel?: string | null; daysWaiting?: number })[]
-  >([]);
+  const [overdueOpps, setOverdueOpps] = useState<(OppRow & { lead_nome?: string; lead_tel?: string | null; daysWaiting?: number })[]>(
+    []
+  );
+
   const [agendaItems, setAgendaItems] = useState<AgendaRow[]>([]);
-  const [nextEvents, setNextEvents] = useState<NextEventItem[]>([]);
-  const [giroPendentes, setGiroPendentes] = useState<{ id: string; nome: string; carteiraAtiva: number }[]>([]);
+
+  // Paginação: Giros Pendentes
+  const [giroAll, setGiroAll] = useState<{ id: string; nome: string; carteiraAtiva: number }[]>([]);
+  const [giroPage, setGiroPage] = useState(0);
+  const GIRO_PAGE_SIZE = 10;
+
+  // Paginação: Próximos Eventos
+  const [eventsAll, setEventsAll] = useState<NextEventItem[]>([]);
+  const [eventsPage, setEventsPage] = useState(0);
+  const EVENTS_PAGE_SIZE = 10;
+
   const [thoughtOfDay, setThoughtOfDay] = useState<string>("");
+
+  const giroPageCount = useMemo(() => Math.max(1, Math.ceil(giroAll.length / GIRO_PAGE_SIZE)), [giroAll.length]);
+  const giroSlice = useMemo(
+    () => giroAll.slice(giroPage * GIRO_PAGE_SIZE, giroPage * GIRO_PAGE_SIZE + GIRO_PAGE_SIZE),
+    [giroAll, giroPage]
+  );
+
+  const eventsPageCount = useMemo(() => Math.max(1, Math.ceil(eventsAll.length / EVENTS_PAGE_SIZE)), [eventsAll.length]);
+  const eventsSlice = useMemo(
+    () => eventsAll.slice(eventsPage * EVENTS_PAGE_SIZE, eventsPage * EVENTS_PAGE_SIZE + EVENTS_PAGE_SIZE),
+    [eventsAll, eventsPage]
+  );
 
   async function loadMeAndUsers() {
     const { data: auth } = await supabase.auth.getUser();
@@ -432,15 +442,13 @@ export default function Inicio() {
     const uniq = Array.from(new Set(ids.filter(Boolean)));
     if (!uniq.length) return new Map<string, LeadRow>();
 
-    // tenta "leads" (padrão atual do CRM)
     try {
       const { data, error } = await supabase.from("leads").select("id,nome,telefone").in("id", uniq);
       if (!error && data) return new Map((data as any[]).map((l) => [l.id, l as LeadRow]));
     } catch {
-      // ignora e tenta "lead" (caso você tenha renomeado)
+      // ignora
     }
 
-    // tenta "lead" (como você citou no schema)
     try {
       const { data, error } = await supabase.from("lead").select("id,nome,telefone").in("id", uniq);
       if (!error && data) return new Map((data as any[]).map((l) => [l.id, l as LeadRow]));
@@ -459,7 +467,7 @@ export default function Inicio() {
     const today = rangeToday.ymd;
     const { startYMD, endYMD, year, month } = rangeMonth;
 
-    // Janela de "Próximos Eventos"
+    // Janela “Próximos Eventos” (somente futuro: hoje -> +14)
     const windowStart = today;
     const windowEnd = addDaysYMD(today, 14);
     const windowStartISO = rangeISOForDayInOffset(windowStart, PV_OFFSET_MIN).startISO;
@@ -483,18 +491,15 @@ export default function Inicio() {
     const openOppTotal = openOppRows.reduce((acc, r) => acc + (Number(r.valor_credito || 0) || 0), 0);
 
     // ===== Oportunidades Atrasadas (lista) — top 10 por dias esperando ação =====
-    // Definição operacional (com os campos disponíveis): “dias esperando” = dias desde expected_close_at até hoje (se vazio, 0).
-    // Ordena desc e pega 10, mantendo os estágios abertos.
     const overdueComputed = openOppRows
       .map((o: any) => {
         const d = (o.expected_close_at || "").slice(0, 10);
-        const daysWaiting = d ? Math.max(0, daysDiffYMD(today, d)) : 0; // hoje - expected_close_at
+        const daysWaiting = d ? Math.max(0, daysDiffYMD(today, d)) : 0;
         return { ...o, daysWaiting };
       })
       .sort((a: any, b: any) => (b.daysWaiting || 0) - (a.daysWaiting || 0))
       .slice(0, 10);
 
-    // Enriquecer opp com lead (nome/telefone)
     const leadIds = Array.from(new Set(overdueComputed.map((o: any) => o.lead_id).filter(Boolean)));
     const leadsMap = await tryLoadLeadsMap(leadIds);
 
@@ -518,7 +523,7 @@ export default function Inicio() {
     const { data: agRows, error: agErr } = await agQ;
     if (agErr) throw agErr;
 
-    // Contagem "Agenda de hoje"
+    // Contagem "Agenda de hoje" (mesmo set)
     const todayStartISO = rangeToday.startISO;
     const todayEndISO = rangeToday.endISO;
     const todayEventsCount = (agRows || []).filter((e: any) => {
@@ -532,7 +537,7 @@ export default function Inicio() {
     if (gTodayErr) throw gTodayErr;
     const todayGroupsCount = (gTodayRows || []).length;
 
-    // ===== Eventos de grupos (janela) para Próximos Eventos =====
+    // ===== Eventos de grupos (janela) =====
     const orExprWindow = `prox_vencimento.gte.${windowStart},prox_vencimento.lte.${windowEnd},prox_sorteio.gte.${windowStart},prox_sorteio.lte.${windowEnd},prox_assembleia.gte.${windowStart},prox_assembleia.lte.${windowEnd}`;
     const { data: gRows, error: gErr } = await supabase
       .from("groups")
@@ -573,7 +578,7 @@ export default function Inicio() {
     if (cartErr) throw cartErr;
     const carteiraAtivaTotal = (cartRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Reservas abertas / vendas sem comissão (mantidos como KPI) =====
+    // ===== Reservas abertas / vendas sem comissão (KPI) =====
     let reqQ = supabase.from("stock_reservation_requests").select("id").eq("status", "aberta").limit(1000);
     if (!admin) reqQ = reqQ.eq("vendor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) reqQ = reqQ.eq("vendor_id", scopeUserId);
@@ -590,14 +595,14 @@ export default function Inicio() {
     if (vscErr) throw vscErr;
     const vendasSemComissaoCount = (vscRows || []).length;
 
-    // ===== Giro pendente (contagem + lista) =====
+    // ===== Giro pendente (contagem + lista top 10 maiores com paginação) =====
     let giroDueCount = 0;
 
     if (admin) {
       if (scopeAuthId === ALL) {
-        const { data: giroAll, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
+        const { data: giroAllC, error: giroAllErr } = await supabase.from("v_giro_due_count").select("owner_auth_id,due_count");
         if (giroAllErr) throw giroAllErr;
-        giroDueCount = (giroAll || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
+        giroDueCount = (giroAllC || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
       } else {
         const { data: giroRow, error: giroErr } = await supabase
           .from("v_giro_due_count")
@@ -617,13 +622,13 @@ export default function Inicio() {
       giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
     }
 
-    // Lista de giros pendentes (melhor esforço: view específica)
+    // Lista de giros pendentes: top 10 maiores, com paginação client-side
     let giroList: { id: string; nome: string; carteiraAtiva: number }[] = [];
     try {
       let giroItemsQ = supabase
         .from("v_giro_due_items")
         .select("id,lead_id,cliente_id,cliente_nome,lead_nome,nome,telefone,carteira_ativa_total,valor_carteira_ativa,owner_auth_id")
-        .limit(20);
+        .limit(5000);
 
       if (!admin) giroItemsQ = giroItemsQ.eq("owner_auth_id", scopeAuthId);
       if (admin && scopeAuthId !== ALL) giroItemsQ = giroItemsQ.eq("owner_auth_id", scopeAuthId);
@@ -631,18 +636,19 @@ export default function Inicio() {
       const { data: giroItems, error: giroItemsErr } = await giroItemsQ;
       if (!giroItemsErr && giroItems) {
         giroList = (giroItems as any as GiroItemRow[]).map((r, idx) => {
-          const nome = (r.cliente_nome || r.lead_nome || r.nome || "Cliente").trim();
+          const nome = String((r.cliente_nome || r.lead_nome || r.nome || "Cliente") ?? "Cliente").trim();
           const carteira = Number(r.valor_carteira_ativa ?? r.carteira_ativa_total ?? 0) || 0;
           const id = String(r.id || r.cliente_id || r.lead_id || `giro_${idx}`);
           return { id, nome, carteiraAtiva: carteira };
         });
+        // 10 maiores (carteira) primeiro
+        giroList.sort((a, b) => (b.carteiraAtiva || 0) - (a.carteiraAtiva || 0));
       }
     } catch {
-      // fallback: se não existir view, mostra pelo menos contagem e carteira ativa geral no card
       giroList = [];
     }
 
-    // ===== Aniversários do dia (clientes.data_nascimento) =====
+    // ===== Aniversários do dia =====
     const { data: allBirth, error: birthErr } = await supabase
       .from("clientes")
       .select("id,nome,data_nascimento,telefone")
@@ -655,7 +661,7 @@ export default function Inicio() {
       .filter((c: ClienteRow) => (c.data_nascimento || "").slice(5) === todayMMDD)
       .slice(0, 20);
 
-    // ===== Procedimentos novos (notificação) =====
+    // ===== Procedimentos novos =====
     let newProceduresCount = 0;
     try {
       const sevenDaysAgo = addDaysYMD(today, -7);
@@ -673,8 +679,8 @@ export default function Inicio() {
       newProceduresCount = 0;
     }
 
-    // ===== Fluxo de comissões (Próximos Eventos) — agrupa por data_pagamento_vendedor =====
-    // public.commissions_flow: data_pagamento_vendedor; valor_previsto; valor_pago_vendedor
+    // ===== Fluxo de comissões (Próximos Eventos + Alertas valor pendente) =====
+    // Puxamos janela futura e também calculamos pendente total (não pago) dentro da janela
     const { data: cfRows, error: cfErr } = await supabase
       .from("commissions_flow")
       .select("data_pagamento_vendedor,valor_previsto,valor_pago_vendedor")
@@ -682,9 +688,11 @@ export default function Inicio() {
       .lte("data_pagamento_vendedor", windowEnd)
       .limit(5000);
 
-    // Se a tabela ainda não existir, não quebra o painel
     const commissionsFlow = (!cfErr && cfRows ? (cfRows as any as CommissionFlowRow[]) : []) as CommissionFlowRow[];
 
+    let commissionsPendingTotal = 0;
+
+    // agrega por data
     const cfAgg = new Map<
       string,
       {
@@ -697,28 +705,37 @@ export default function Inicio() {
     for (const r of commissionsFlow) {
       const d = (r.data_pagamento_vendedor || "").slice(0, 10);
       if (!d) continue;
+
       const prev = Number(r.valor_previsto || 0) || 0;
       const paid = Number(r.valor_pago_vendedor || 0) || 0;
+
+      // pendente = previsto onde ainda não tem pago
+      if (paid <= 0) commissionsPendingTotal += prev;
+
       const cur = cfAgg.get(d) || { date: d, sumPrev: 0, sumPaid: 0 };
       cur.sumPrev += prev;
       cur.sumPaid += paid;
       cfAgg.set(d, cur);
     }
 
-    /** ===================== Monta Próximos Eventos ===================== */
+    /** ===================== Monta Próximos Eventos (somente futuro) ===================== */
     const items: NextEventItem[] = [];
 
-    // Agenda (timestamptz) — flag por data (Hoje/Amanhã/Esta Semana)
+    // Agenda: já está gte(windowStartISO) então não vem passado por data (e não duplicamos flag na label)
     for (const e of (agRows || []) as AgendaRow[]) {
       const startISO = e.inicio_at;
       const startUtcMs = new Date(startISO).getTime();
       const ymd = ymdFromDateInOffset(new Date(startUtcMs), PV_OFFSET_MIN);
+
+      // “Próximos”: se por algum motivo cair dia anterior, descarta
+      if (ymd < today) continue;
+
       const flag = flagFromYMD3(today, ymd);
 
       items.push({
         id: `ag:${e.id}`,
         whenSort: startUtcMs,
-        whenLabel: `${flag} • ${fmtDTForOffset(startISO, PV_OFFSET_MIN)}`,
+        whenLabel: fmtDTForOffset(startISO, PV_OFFSET_MIN),
         flag,
         title: e.titulo || "Evento",
         desc: `${e.tipo || "Agenda"} • ${(e.cliente_nome || e.lead_nome || "—") as any}`,
@@ -731,12 +748,15 @@ export default function Inicio() {
       const base = `${g.administradora} | ${g.segmento}`;
       const pushGroup = (kind: "Vencimento" | "Sorteio" | "Assembleia", dateYMD: string | null) => {
         if (!dateYMD) return;
+        // próximos = desconsidera passados
+        if (dateYMD < today) return;
+
         const flag = flagFromYMD3(today, dateYMD);
 
         items.push({
           id: `grp:${g.id}:${kind}:${dateYMD}`,
           whenSort: Date.UTC(Number(dateYMD.slice(0, 4)), Number(dateYMD.slice(5, 7)) - 1, Number(dateYMD.slice(8, 10)), 12, 0, 0),
-          whenLabel: `${flag} • ${fmtDateBRFromYMD(dateYMD)}`,
+          whenLabel: fmtDateBRFromYMD(dateYMD),
           flag,
           title: `${kind} Grupo ${g.codigo}`,
           desc: base,
@@ -749,8 +769,10 @@ export default function Inicio() {
       pushGroup("Sorteio", g.prox_sorteio);
     }
 
-    // Recebimento de Comissão (agrupado por data)
+    // Recebimento de Comissão (agrupado por data, somente futuro)
     for (const [d, agg] of cfAgg.entries()) {
+      if (d < today) continue;
+
       const flag = flagFromYMD3(today, d);
       const received = (agg.sumPaid || 0) > 0;
 
@@ -761,7 +783,7 @@ export default function Inicio() {
       items.push({
         id: `cf:${d}`,
         whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 13, 0, 0),
-        whenLabel: `${flag} • ${fmtDateBRFromYMD(d)}`,
+        whenLabel: fmtDateBRFromYMD(d),
         flag,
         title: "Recebimento de Comissão",
         desc: msg,
@@ -769,13 +791,13 @@ export default function Inicio() {
       });
     }
 
-    // Aniversários do dia
+    // Aniversários (somente hoje — é “próximo” por definição)
     for (const c of birthdayToday) {
       const flag: DateFlag = "Hoje";
       items.push({
         id: `bday:${c.id}`,
         whenSort: Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)), 8, 0, 0),
-        whenLabel: `${flag} • ${fmtDateBRFromYMD(today)}`,
+        whenLabel: fmtDateBRFromYMD(today),
         flag,
         title: "Aniversário",
         desc: `É aniversário do seu Cliente “${c.nome}”. Parabenize-o! 🎂🎉`,
@@ -783,14 +805,18 @@ export default function Inicio() {
       });
     }
 
-    // Ordena e limita
+    // Ordena
     items.sort((a, b) => a.whenSort - b.whenSort);
 
     // ✅ Atualiza estados
     setOverdueOpps(overdueOppsEnriched);
     setAgendaItems((agRows || []) as any);
-    setNextEvents(items.slice(0, 30));
-    setGiroPendentes(giroList);
+
+    setGiroAll(giroList);
+    setGiroPage(0); // reseta paginação ao recarregar
+
+    setEventsAll(items);
+    setEventsPage(0); // reseta paginação ao recarregar
 
     // Pensamento do dia
     const thought = await loadThoughtOfDay(today);
@@ -815,6 +841,8 @@ export default function Inicio() {
       giroDueCount,
 
       newProceduresCount,
+
+      commissionsPendingTotal,
     });
   }
 
@@ -979,7 +1007,7 @@ export default function Inicio() {
 
       {/* KPIs */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* Oportunidades (antes: Oportunidades atrasadas) */}
+        {/* Oportunidades */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -1096,7 +1124,6 @@ export default function Inicio() {
                 <ArrowRight className="h-4 w-4" />
               </Button>
 
-              {/* Chip / Ação para Links Úteis */}
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/links")}>
                 <span className="inline-flex items-center gap-2">
                   <LinkIcon className="h-4 w-4" /> Links Úteis
@@ -1137,6 +1164,11 @@ export default function Inicio() {
             </div>
 
             <div className="flex items-center justify-between">
+              <div className="text-slate-700">Comissão pendente</div>
+              <div className="text-slate-900 font-medium">{fmtBRL(kpi.commissionsPendingTotal)}</div>
+            </div>
+
+            <div className="flex items-center justify-between">
               <div className="text-slate-700">Giro pendente</div>
               <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.giroDueCount}</Badge>
             </div>
@@ -1151,7 +1183,7 @@ export default function Inicio() {
 
       {/* Listas: Oportunidades Atrasadas + Giros Pendentes + Próximos Eventos */}
       <div className="mt-6 grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {/* Oportunidades Atrasadas (top 10 por dias esperando ação) */}
+        {/* Oportunidades Atrasadas */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -1186,7 +1218,7 @@ export default function Inicio() {
           </CardContent>
         </Card>
 
-        {/* Giros Pendentes */}
+        {/* Giros Pendentes (top 10 maiores com paginação) */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -1194,27 +1226,49 @@ export default function Inicio() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {giroPendentes.length === 0 ? (
+            {giroAll.length === 0 ? (
               <div className="text-slate-500 text-sm">
                 {kpi.giroDueCount > 0 ? `Você tem ${kpi.giroDueCount} giro(s) pendente(s).` : "Sem giros pendentes no momento."}
-                <div className="mt-2 text-xs text-slate-500">Carteira ativa (referência): {fmtBRL(kpi.carteiraAtivaTotal)}</div>
               </div>
             ) : (
-              giroPendentes.slice(0, 10).map((g) => (
-                <div key={g.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate">{g.nome}</div>
-                    <div className="text-xs text-slate-500 truncate">Carteira ativa: {fmtBRL(Number(g.carteiraAtiva || 0) || 0)}</div>
+              <>
+                {giroSlice.map((g) => (
+                  <div key={g.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{g.nome}</div>
+                      <div className="text-xs text-slate-500 truncate">Carteira ativa: {fmtBRL(Number(g.carteiraAtiva || 0) || 0)}</div>
+                    </div>
+                    <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/giro-de-carteira")}>
+                      Abrir <ArrowRight className="h-4 w-4 ml-1" />
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                    onClick={() => nav("/giro-de-carteira")}
-                  >
-                    Abrir <ArrowRight className="h-4 w-4 ml-1" />
-                  </Button>
+                ))}
+
+                {/* Paginação */}
+                <div className="flex items-center justify-between pt-2">
+                  <div className="text-xs text-slate-500">
+                    Página {giroPage + 1} de {giroPageCount}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
+                      onClick={() => setGiroPage((p) => Math.max(0, p - 1))}
+                      disabled={giroPage <= 0}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
+                      onClick={() => setGiroPage((p) => Math.min(giroPageCount - 1, p + 1))}
+                      disabled={giroPage >= giroPageCount - 1}
+                    >
+                      Próxima
+                    </Button>
+                  </div>
                 </div>
-              ))
+              </>
             )}
 
             <div className="pt-2">
@@ -1225,7 +1279,7 @@ export default function Inicio() {
           </CardContent>
         </Card>
 
-        {/* Próximos Eventos (unificado) */}
+        {/* Próximos Eventos (somente futuro, limite 10 com paginação) */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
@@ -1234,43 +1288,70 @@ export default function Inicio() {
           </CardHeader>
 
           <CardContent className="space-y-2">
-            {nextEvents.length === 0 ? (
-              <div className="text-slate-500 text-sm">Sem eventos na janela configurada.</div>
+            {eventsAll.length === 0 ? (
+              <div className="text-slate-500 text-sm">Sem eventos futuros na janela configurada.</div>
             ) : (
-              nextEvents.map((e) => (
-                <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Badge className={flagBadgeClass(e.flag)}>{e.flag}</Badge>
-                        <div className="text-xs text-slate-500">{e.whenLabel}</div>
+              <>
+                {eventsSlice.map((e) => (
+                  <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Badge className={flagBadgeClass(e.flag)}>{e.flag}</Badge>
+                          <div className="text-xs text-slate-500">{e.whenLabel}</div>
+                        </div>
+
+                        <div className="text-sm font-medium truncate mt-1">{e.title}</div>
+                        {e.desc ? <div className="text-xs text-slate-500 truncate">{e.desc}</div> : null}
                       </div>
 
-                      <div className="text-sm font-medium truncate mt-1">{e.title}</div>
-                      {e.desc ? <div className="text-xs text-slate-500 truncate">{e.desc}</div> : null}
+                      {e.action ? (
+                        <Button
+                          size="sm"
+                          className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
+                          onClick={() => {
+                            if (e.action?.to) nav(e.action.to);
+                            else if (e.action?.href) window.open(e.action.href, "_blank");
+                          }}
+                        >
+                          {e.action.label} <ArrowRight className="h-4 w-4 ml-1" />
+                        </Button>
+                      ) : null}
                     </div>
+                  </div>
+                ))}
 
-                    {e.action ? (
-                      <Button
-                        size="sm"
-                        className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                        onClick={() => {
-                          if (e.action?.to) nav(e.action.to);
-                          else if (e.action?.href) window.open(e.action.href, "_blank");
-                        }}
-                      >
-                        {e.action.label} <ArrowRight className="h-4 w-4 ml-1" />
-                      </Button>
-                    ) : null}
+                {/* Paginação */}
+                <div className="flex items-center justify-between pt-2">
+                  <div className="text-xs text-slate-500">
+                    Página {eventsPage + 1} de {eventsPageCount}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
+                      onClick={() => setEventsPage((p) => Math.max(0, p - 1))}
+                      disabled={eventsPage <= 0}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
+                      onClick={() => setEventsPage((p) => Math.min(eventsPageCount - 1, p + 1))}
+                      disabled={eventsPage >= eventsPageCount - 1}
+                    >
+                      Próxima
+                    </Button>
                   </div>
                 </div>
-              ))
+              </>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Pensamento do Dia (antes: Maximize-se) */}
+      {/* Pensamento do Dia */}
       <div className="mt-6">
         <Card className={glassCard}>
           <CardHeader className="pb-2">
@@ -1281,9 +1362,7 @@ export default function Inicio() {
           <CardContent className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div className="text-slate-700">
               {thoughtOfDay ? (
-                <>
-                  <span className="font-semibold">“{thoughtOfDay}”</span>
-                </>
+                <span className="font-semibold">“{thoughtOfDay}”</span>
               ) : (
                 <>
                   Hoje, foca em 1 coisa: <span className="font-semibold">follow-up com data</span>.

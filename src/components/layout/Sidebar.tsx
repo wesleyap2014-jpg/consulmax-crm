@@ -26,6 +26,8 @@ import {
   X,
 } from "lucide-react";
 
+import ProcessosLateralCard from "@/components/processos/ProcessosLateralCard";
+
 type SidebarProps = { onNavigate?: () => void };
 
 const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
@@ -251,7 +253,6 @@ function groupForPath(pathname: string): GroupKey {
   )
     return "vendas";
 
-  // ✅ Clientes saiu de Pós-venda e foi para Administrativo
   if (isAnyPathActive(pathname, ["/carteira", "/giro-de-carteira", "/gestao-de-grupos"])) return "pos";
 
   if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes"])) return "admin";
@@ -284,7 +285,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     };
   }, []);
 
-  // ✅ Drawer mobile: aberto/fechado (não interfere no colapsado desktop)
+  // Drawer mobile
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Colapsar com persistência (apenas desktop)
@@ -307,14 +308,14 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
     } catch {}
   }, [collapsed]);
 
-  // ✅ Fecha o drawer no mobile sempre que navegar
+  // Fecha drawer no mobile sempre que navegar
   useEffect(() => {
     if (isSmall) setMobileOpen(false);
     onNavigate?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
-  // ✅ Trava scroll do body quando drawer estiver aberto (mobile)
+  // Trava scroll do body quando drawer estiver aberto (mobile)
   useEffect(() => {
     if (!isSmall) return;
     const prev = document.body.style.overflow;
@@ -476,12 +477,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
       { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
 
-      // Pós-venda (✅ Clientes removido daqui)
+      // Pós-venda
       { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
       { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
       { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
 
-      // Administrativo (✅ Clientes veio pra cá)
+      // Administrativo
       { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
       { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
       { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
@@ -627,8 +628,15 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         </div>
       </div>
 
+      {/* ✅ CARD LATERAL: Processos (só quando há espaço) */}
+      {(!collapsed || isSmall) && (
+        <div className="relative z-[1] mt-3">
+          <ProcessosLateralCard />
+        </div>
+      )}
+
       {/* Navegação */}
-      <nav className="relative z-[1] grid gap-2">
+      <nav className="relative z-[1] grid gap-2 mt-3">
         {/* ===== MODO COLAPSADO (flat) ===== */}
         {collapsed && !isSmall && (
           <>
@@ -898,7 +906,6 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   Parâmetros
                 </NavLink>
 
-                {/* ✅ Clientes agora aqui */}
                 <NavLink
                   to="/clientes"
                   className={({ isActive }) => pillClass(isActive)}
@@ -985,8 +992,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
   return (
     <>
-      {/* ✅ Mobile: botão para abrir menu (caso o header não tenha) */}
-      {/* Se você já tem um botão "Menu" no Header, pode remover este bloco sem problema */}
+      {/* Mobile: botão para abrir menu (se você já tem no Header, pode remover) */}
       {isSmall && (
         <button
           type="button"
@@ -999,15 +1005,13 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         </button>
       )}
 
-      {/* ✅ Drawer overlay no mobile */}
+      {/* Drawer overlay no mobile */}
       {isSmall ? (
         <>
-          {/* Backdrop clicável */}
           {mobileOpen && (
             <div className="fixed inset-0 z-[50] bg-black/40" onClick={() => setMobileOpen(false)} aria-hidden />
           )}
 
-          {/* Drawer */}
           <div
             className={`fixed left-0 top-0 z-[55] h-dvh transform transition-transform duration-200 ${
               mobileOpen ? "translate-x-0" : "-translate-x-full"

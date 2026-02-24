@@ -8,7 +8,20 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-import { RefreshCcw, AlertTriangle, Calendar, Briefcase, Wallet, Target, Rocket, MessageCircle, ArrowRight } from "lucide-react";
+import {
+  RefreshCcw,
+  AlertTriangle,
+  Calendar,
+  Briefcase,
+  Wallet,
+  Target,
+  Rocket,
+  MessageCircle,
+  ArrowRight,
+  BookOpen,
+  Link as LinkIcon,
+  FileText,
+} from "lucide-react";
 
 /** ===================== Tipos ===================== */
 type UserRow = {
@@ -24,8 +37,8 @@ type AgendaRow = {
   id: string;
   tipo: string;
   titulo: string;
-  inicio_at: string;
-  fim_at: string;
+  inicio_at: string; // timestamptz
+  fim_at: string; // timestamptz
   user_id: string | null; // auth_user_id (na view)
   cliente_nome?: string | null;
   lead_nome?: string | null;
@@ -35,10 +48,11 @@ type AgendaRow = {
 
 type OppRow = {
   id: string;
+  segmento: string | null;
   valor_credito: number | null;
-  stage: string | null;
-  estagio: string | null;
-  expected_close_at: string | null;
+  estagio: string | null; // Novo | Qualificando | Proposta | Negociação | ...
+  score: number | null;
+  expected_close_at: string | null; // date
   vendedor_id: string; // auth_user_id
   lead_id: string;
 };
@@ -49,100 +63,119 @@ type LeadRow = {
   telefone?: string | null;
 };
 
-type StockReqRow = {
+type GroupRow = {
   id: string;
-  cota_id: string;
-  vendor_id: string; // users.id
-  vendor_pct: number;
-  status: string;
-  created_at: string;
+  administradora: string;
+  segmento: string;
+  codigo: string;
+  prox_vencimento: string | null; // date
+  prox_sorteio: string | null; // date
+  prox_assembleia: string | null; // date
 };
 
-type VendaSemComissaoRow = {
+type ClienteRow = {
   id: string;
-  data_venda: string | null;
-  vendedor_id: string | null; // geralmente auth_user_id (vindo de vendas)
-  vendedor_nome: string | null;
-  segmento: string | null;
-  tabela: string | null;
-  administradora: string | null;
-  numero_proposta: string | null;
-  credito: number | null;
-};
-
-type CommissionRow = {
-  id: string;
-  vendedor_id: string; // users.id
-  valor_total: number | null;
-  status: string | null; // commission_status
+  nome: string;
+  data_nascimento: string | null; // date
+  telefone?: string | null;
 };
 
 type GiroDueRow = { owner_auth_id: string; due_count: number };
 
+type GiroItemRow = {
+  id?: string | null;
+  lead_id?: string | null;
+  cliente_id?: string | null;
+  cliente_nome?: string | null;
+  lead_nome?: string | null;
+  nome?: string | null;
+  telefone?: string | null;
+  carteira_ativa_total?: number | null;
+  valor_carteira_ativa?: number | null;
+  owner_auth_id?: string | null;
+};
+
+type KBProcRow = {
+  id: string;
+  title?: string | null;
+  titulo?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+type CommissionFlowRow = {
+  data_pagamento_vendedor: string | null; // date
+  valor_previsto: number | null;
+  valor_pago_vendedor: number | null;
+};
+
 const ALL = "__all__";
 
 /** ===================== Helpers ===================== */
-function todayYMD() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+
+// Fixamos o "dia" do CRM no fuso de Porto Velho (UTC-4) para evitar drift.
+const PV_OFFSET_MIN = -4 * 60; // UTC-4
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+function ymdFromDateInOffset(d: Date, offsetMin: number) {
+  const utc = d.getTime();
+  const local = new Date(utc + offsetMin * 60 * 1000);
+  const y = local.getUTCFullYear();
+  const m = pad2(local.getUTCMonth() + 1);
+  const day = pad2(local.getUTCDate());
   return `${y}-${m}-${day}`;
+}
+function rangeISOForDayInOffset(ymd: string, offsetMin: number) {
+  const [Y, M, D] = (ymd || "").split("-").map((x) => Number(x));
+  const startLocalUtc = Date.UTC(Y, M - 1, D, 0, 0, 0, 0);
+  const endLocalUtc = Date.UTC(Y, M - 1, D, 23, 59, 59, 999);
+
+  const startUtc = new Date(startLocalUtc - offsetMin * 60 * 1000);
+  const endUtc = new Date(endLocalUtc - offsetMin * 60 * 1000);
+
+  return { startISO: startUtc.toISOString(), endISO: endUtc.toISOString() };
+}
+function addDaysYMD(ymd: string, days: number) {
+  const [Y, M, D] = (ymd || "").split("-").map((x) => Number(x));
+  const t = Date.UTC(Y, M - 1, D, 12, 0, 0);
+  const dt = new Date(t + days * 24 * 60 * 60 * 1000);
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
 }
 function fmtDateBRFromYMD(ymd: string) {
   const [y, m, d] = (ymd || "").split("-");
   if (!y || !m || !d) return ymd;
   return `${d}/${m}/${y}`;
 }
-function startOfDayISO(d = new Date()) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x.toISOString();
-}
-function endOfDayISO(d = new Date()) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x.toISOString();
-}
-function monthRangeYMD(d = new Date()) {
-  const y = d.getFullYear();
-  const m = d.getMonth();
-  const start = new Date(y, m, 1);
-  const end = new Date(y, m + 1, 1);
-  const f = (dt: Date) => {
-    const yy = dt.getFullYear();
-    const mm = String(dt.getMonth() + 1).padStart(2, "0");
-    const dd = String(dt.getDate()).padStart(2, "0");
-    return `${yy}-${mm}-${dd}`;
-  };
+function monthRangeYMDFromOffset(now: Date, offsetMin: number) {
+  const utc = now.getTime();
+  const local = new Date(utc + offsetMin * 60 * 1000);
+  const y = local.getUTCFullYear();
+  const m = local.getUTCMonth();
+
+  const start = new Date(Date.UTC(y, m, 1, 12, 0, 0));
+  const end = new Date(Date.UTC(y, m + 1, 1, 12, 0, 0));
+
+  const f = (dt: Date) => `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
   return { startYMD: f(start), endYMD: f(end), year: y, month: m + 1 };
 }
 function fmtBRL(v: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 }
-function fmtDT(iso: string) {
+function fmtDTForOffset(iso: string, offsetMin: number) {
   const d = new Date(iso);
-  return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const local = new Date(d.getTime() + offsetMin * 60 * 1000);
+  const dd = pad2(local.getUTCDate());
+  const mm = pad2(local.getUTCMonth() + 1);
+  const hh = pad2(local.getUTCHours());
+  const mi = pad2(local.getUTCMinutes());
+  return `${dd}/${mm} ${hh}:${mi}`;
 }
 function isAdmin(u?: UserRow | null) {
   const r = (u?.role || u?.user_role || "").toLowerCase();
   return r === "admin";
-}
-function stageIsClosed(stage?: string | null, estagio?: string | null) {
-  const st = (stage || "").trim().toLowerCase();
-  const es = (estagio || "").trim().toLowerCase();
-
-  if (st === "fechado_ganho" || st === "fechado_perdido") return true;
-  if (es === "fechado (ganho)".toLowerCase() || es === "fechado (perdido)".toLowerCase()) return true;
-
-  if (st.startsWith("fechado")) return true;
-  if (es.startsWith("fechado")) return true;
-
-  return false;
-}
-function metaFieldForMonth(month: number) {
-  const mm = String(month).padStart(2, "0"); // 01..12
-  return `m${mm}` as any;
 }
 function humanErr(e: any) {
   if (!e) return "Erro desconhecido.";
@@ -154,6 +187,23 @@ function humanErr(e: any) {
   } catch {
     return String(e);
   }
+}
+function metaFieldForMonth(month: number) {
+  const mm = String(month).padStart(2, "0");
+  return `m${mm}` as any;
+}
+function toInt(n: any, fallback = 0) {
+  const x = Number(n);
+  return Number.isFinite(x) ? Math.trunc(x) : fallback;
+}
+function daysDiffYMD(a: string, b: string) {
+  // a - b, em dias (a e b no formato YYYY-MM-DD)
+  if (!a || !b) return 0;
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const ta = Date.UTC(ay, am - 1, ad, 12, 0, 0);
+  const tb = Date.UTC(by, bm - 1, bd, 12, 0, 0);
+  return Math.round((ta - tb) / (24 * 60 * 60 * 1000));
 }
 
 /** ===================== Donut via SVG ===================== */
@@ -200,6 +250,99 @@ function Donut({
   );
 }
 
+/** ===================== Próximos Eventos ===================== */
+type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
+
+type NextEventItem = {
+  id: string;
+  whenSort: number;
+  whenLabel: string;
+  flag: DateFlag;
+  title: string;
+  desc?: string | null;
+  action?: { label: string; to?: string; href?: string };
+};
+
+function flagFromYMD3(today: string, ymd: string): DateFlag {
+  if (!ymd) return "Esta Semana";
+  if (ymd === today) return "Hoje";
+  if (ymd === addDaysYMD(today, 1)) return "Amanhã";
+
+  // Dentro dos próximos 7 dias (ou já passou, mas “entra” como semana)
+  const diff = daysDiffYMD(ymd, today); // ymd - today
+  if (diff >= 2 && diff <= 7) return "Esta Semana";
+  if (diff < 0) return "Esta Semana";
+
+  return "Esta Semana";
+}
+
+function flagBadgeClass(flag: DateFlag) {
+  if (flag === "Hoje") return "bg-amber-50 border border-amber-200 text-amber-800";
+  if (flag === "Amanhã") return "bg-slate-50 border border-slate-200 text-slate-700";
+  return "bg-slate-50 border border-slate-200 text-slate-700";
+}
+
+/** ===================== Pensamento do dia ===================== */
+const THOUGHT_URL = "https://meetime.com.br/blog/vendas/as-47-melhores-frases-motivacionais-para-vendas/";
+
+function hashYMD(ymd: string) {
+  // hash simples determinístico (pra escolher 1 frase por dia)
+  let h = 2166136261;
+  for (let i = 0; i < ymd.length; i++) {
+    h ^= ymd.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
+}
+
+function pickDeterministic(arr: string[], ymd: string) {
+  if (!arr.length) return null;
+  const idx = hashYMD(ymd) % arr.length;
+  return arr[idx];
+}
+
+// fallback “original” (caso CORS bloqueie e/ou não exista tabela)
+const FALLBACK_THOUGHTS: string[] = [
+  "Consistência vence talento quando talento não é consistente.",
+  "Quem faz follow-up com data, fecha com mais calma e mais previsibilidade.",
+  "Venda consultiva: menos pressa, mais clareza — e mais fechamento.",
+  "Hoje é dia de simplificar: uma boa pergunta vale mais que dez argumentos.",
+  "Você não precisa convencer todo mundo. Só precisa conduzir a pessoa certa até a decisão certa.",
+];
+
+async function loadThoughtOfDay(todayYMD: string): Promise<string | null> {
+  // 1) tenta buscar do site (pode falhar por CORS)
+  try {
+    const res = await fetch(THOUGHT_URL, { method: "GET" });
+    if (res.ok) {
+      const html = await res.text();
+      // extrai linhas numeradas do tipo: 1. “...” — Autor
+      const matches = Array.from(html.matchAll(/>\s*\d+\.\s*“([^”]{8,220})”/g));
+      const phrases = matches.map((m) => (m?.[1] || "").trim()).filter(Boolean);
+      const picked = pickDeterministic(phrases, todayYMD);
+      if (picked) return picked;
+    }
+  } catch {
+    // ignora
+  }
+
+  // 2) tenta buscar de um schema de frases (caso você crie)
+  // tabela sugerida: public.sales_quotes { id uuid, text text, is_active bool }
+  try {
+    const { data, error } = await supabase.from("sales_quotes").select("text,is_active").eq("is_active", true).limit(500);
+    if (!error && data && data.length) {
+      const arr = (data as any[]).map((r) => String(r.text || "").trim()).filter(Boolean);
+      const picked = pickDeterministic(arr, todayYMD);
+      if (picked) return picked;
+    }
+  } catch {
+    // ignora
+  }
+
+  // 3) fallback
+  return pickDeterministic(FALLBACK_THOUGHTS, todayYMD) || FALLBACK_THOUGHTS[0];
+}
+
 /** ===================== Página ===================== */
 export default function Inicio() {
   const nav = useNavigate();
@@ -212,21 +355,26 @@ export default function Inicio() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
-  // 🔥 filtro admin (value = users.id)
+  // filtro admin (value = users.id)
   const [vendorScope, setVendorScope] = useState<string>(ALL);
   const scopedUser = useMemo(() => (vendorScope === ALL ? null : usersById.get(vendorScope) || null), [vendorScope, usersById]);
 
+  // "Hoje" e mês no offset de Porto Velho
   const rangeToday = useMemo(() => {
     const now = new Date();
-    const ymd = todayYMD();
-    return { ymd, br: fmtDateBRFromYMD(ymd), startISO: startOfDayISO(now), endISO: endOfDayISO(now) };
+    const ymd = ymdFromDateInOffset(now, PV_OFFSET_MIN);
+    const { startISO, endISO } = rangeISOForDayInOffset(ymd, PV_OFFSET_MIN);
+    return { ymd, br: fmtDateBRFromYMD(ymd), startISO, endISO };
   }, []);
-  const rangeMonth = useMemo(() => monthRangeYMD(new Date()), []);
+  const rangeMonth = useMemo(() => monthRangeYMDFromOffset(new Date(), PV_OFFSET_MIN), []);
+
+  const OPEN_STAGES = useMemo(() => ["Novo", "Qualificando", "Proposta", "Negociação"], []);
 
   // ======= KPIs =======
   const [kpi, setKpi] = useState({
-    overdueOppCount: 0,
-    overdueOppTotal: 0,
+    // O que era “Oportunidades Atrasadas” virou “Oportunidades”
+    openOppCount: 0,
+    openOppTotal: 0,
 
     todayEventsCount: 0,
     todayGroupsCount: 0,
@@ -240,16 +388,19 @@ export default function Inicio() {
     openStockReqCount: 0,
     vendasSemComissaoCount: 0,
 
-    commissionsPendingCount: 0,
-    commissionsPendingTotal: 0,
-
     giroDueCount: 0,
+
+    // 🔔 Procedimentos novos
+    newProceduresCount: 0,
   });
 
-  const [todayEvents, setTodayEvents] = useState<AgendaRow[]>([]);
-  const [overdueOpps, setOverdueOpps] = useState<(OppRow & { lead_nome?: string; lead_tel?: string | null })[]>([]);
-  const [stockReqs, setStockReqs] = useState<StockReqRow[]>([]);
-  const [vendasSemComissao, setVendasSemComissao] = useState<VendaSemComissaoRow[]>([]);
+  const [overdueOpps, setOverdueOpps] = useState<
+    (OppRow & { lead_nome?: string; lead_tel?: string | null; daysWaiting?: number })[]
+  >([]);
+  const [agendaItems, setAgendaItems] = useState<AgendaRow[]>([]);
+  const [nextEvents, setNextEvents] = useState<NextEventItem[]>([]);
+  const [giroPendentes, setGiroPendentes] = useState<{ id: string; nome: string; carteiraAtiva: number }[]>([]);
+  const [thoughtOfDay, setThoughtOfDay] = useState<string>("");
 
   async function loadMeAndUsers() {
     const { data: auth } = await supabase.auth.getUser();
@@ -277,75 +428,121 @@ export default function Inicio() {
     return { meRow, usersRows: usersRows || [], admin, initialScope };
   }
 
+  async function tryLoadLeadsMap(ids: string[]) {
+    const uniq = Array.from(new Set(ids.filter(Boolean)));
+    if (!uniq.length) return new Map<string, LeadRow>();
+
+    // tenta "leads" (padrão atual do CRM)
+    try {
+      const { data, error } = await supabase.from("leads").select("id,nome,telefone").in("id", uniq);
+      if (!error && data) return new Map((data as any[]).map((l) => [l.id, l as LeadRow]));
+    } catch {
+      // ignora e tenta "lead" (caso você tenha renomeado)
+    }
+
+    // tenta "lead" (como você citou no schema)
+    try {
+      const { data, error } = await supabase.from("lead").select("id,nome,telefone").in("id", uniq);
+      if (!error && data) return new Map((data as any[]).map((l) => [l.id, l as LeadRow]));
+    } catch {
+      // ignora
+    }
+
+    return new Map<string, LeadRow>();
+  }
+
   /**
-   * scopeUserId  = users.id (usado por metas/comissões/reservas)
+   * scopeUserId  = users.id (usado por metas/reservas)
    * scopeAuthId  = users.auth_user_id (usado por oportunidades/vendas/agenda/carteira/giro)
    */
   async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
     const today = rangeToday.ymd;
     const { startYMD, endYMD, year, month } = rangeMonth;
 
-    // ===== Oportunidades atrasadas (filtra por auth_user_id) =====
-    let oppQ = supabase
+    // Janela de "Próximos Eventos"
+    const windowStart = today;
+    const windowEnd = addDaysYMD(today, 14);
+    const windowStartISO = rangeISOForDayInOffset(windowStart, PV_OFFSET_MIN).startISO;
+    const windowEndISO = rangeISOForDayInOffset(windowEnd, PV_OFFSET_MIN).endISO;
+
+    // ===== Oportunidades (KPI) — somente estágios abertos =====
+    let openOppQ = supabase
       .from("opportunities")
-      .select("id,valor_credito,stage,estagio,expected_close_at,vendedor_id,lead_id")
-      .lt("expected_close_at", today)
-      .not("stage", "in", '("fechado_ganho","fechado_perdido")')
-      .not("estagio", "in", '("Fechado (Ganho)","Fechado (Perdido)")')
-      .order("expected_close_at", { ascending: true })
-      .limit(12);
+      .select("id,segmento,valor_credito,estagio,score,expected_close_at,vendedor_id,lead_id")
+      .in("estagio", OPEN_STAGES)
+      .limit(5000);
 
-    if (!admin) oppQ = oppQ.eq("vendedor_id", scopeAuthId);
-    if (admin && scopeAuthId !== ALL) oppQ = oppQ.eq("vendedor_id", scopeAuthId);
+    if (!admin) openOppQ = openOppQ.eq("vendedor_id", scopeAuthId);
+    if (admin && scopeAuthId !== ALL) openOppQ = openOppQ.eq("vendedor_id", scopeAuthId);
 
-    const { data: oppRowsRaw, error: oppErr } = await oppQ;
-    if (oppErr) throw oppErr;
+    const { data: openOppRowsRaw, error: openOppErr } = await openOppQ;
+    if (openOppErr) throw openOppErr;
 
-    const oppRows = (oppRowsRaw || []).filter((o: any) => !stageIsClosed(o?.stage, o?.estagio));
-    const overdueOppCount = oppRows.length;
-    const overdueOppTotal = oppRows.reduce((acc: number, r: any) => acc + (Number(r.valor_credito || 0) || 0), 0);
+    const openOppRows = (openOppRowsRaw || []) as any as OppRow[];
+    const openOppCount = openOppRows.length;
+    const openOppTotal = openOppRows.reduce((acc, r) => acc + (Number(r.valor_credito || 0) || 0), 0);
 
-    // Enriquecer com lead (nome/telefone)
-    const leadIds = Array.from(new Set(oppRows.map((o: any) => o.lead_id).filter(Boolean)));
-    let leadsMap = new Map<string, LeadRow>();
-    if (leadIds.length) {
-      const { data: lds, error: lErr } = await supabase.from("leads").select("id,nome,telefone").in("id", leadIds);
-      if (lErr) throw lErr;
-      leadsMap = new Map((lds || []).map((l) => [l.id, l]));
-    }
-    const overdueOppsEnriched = oppRows.map((o: any) => {
+    // ===== Oportunidades Atrasadas (lista) — top 10 por dias esperando ação =====
+    // Definição operacional (com os campos disponíveis): “dias esperando” = dias desde expected_close_at até hoje (se vazio, 0).
+    // Ordena desc e pega 10, mantendo os estágios abertos.
+    const overdueComputed = openOppRows
+      .map((o: any) => {
+        const d = (o.expected_close_at || "").slice(0, 10);
+        const daysWaiting = d ? Math.max(0, daysDiffYMD(today, d)) : 0; // hoje - expected_close_at
+        return { ...o, daysWaiting };
+      })
+      .sort((a: any, b: any) => (b.daysWaiting || 0) - (a.daysWaiting || 0))
+      .slice(0, 10);
+
+    // Enriquecer opp com lead (nome/telefone)
+    const leadIds = Array.from(new Set(overdueComputed.map((o: any) => o.lead_id).filter(Boolean)));
+    const leadsMap = await tryLoadLeadsMap(leadIds);
+
+    const overdueOppsEnriched = overdueComputed.map((o: any) => {
       const ld = leadsMap.get(o.lead_id);
       return { ...o, lead_nome: ld?.nome, lead_tel: ld?.telefone || null };
     });
 
-    // ===== Agenda de hoje (filtra por auth_user_id) =====
+    // ===== Agenda (janela) =====
     let agQ = supabase
       .from("v_agenda_eventos_enriquecida")
       .select("id,tipo,titulo,inicio_at,fim_at,user_id,cliente_nome,lead_nome,telefone,videocall_url")
-      .gte("inicio_at", rangeToday.startISO)
-      .lte("inicio_at", rangeToday.endISO)
+      .gte("inicio_at", windowStartISO)
+      .lte("inicio_at", windowEndISO)
       .order("inicio_at", { ascending: true })
-      .limit(10);
+      .limit(50);
 
     if (!admin) agQ = agQ.eq("user_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) agQ = agQ.eq("user_id", scopeAuthId);
 
     const { data: agRows, error: agErr } = await agQ;
     if (agErr) throw agErr;
-    const todayEventsCount = (agRows || []).length;
 
-    // ===== Eventos de grupos hoje (global) =====
-    const orExpr = `prox_vencimento.eq.${today},prox_sorteio.eq.${today},prox_assembleia.eq.${today}`;
-    const { data: gRows, error: gErr } = await supabase.from("groups").select("id").or(orExpr).limit(200);
+    // Contagem "Agenda de hoje"
+    const todayStartISO = rangeToday.startISO;
+    const todayEndISO = rangeToday.endISO;
+    const todayEventsCount = (agRows || []).filter((e: any) => {
+      const t = new Date(e.inicio_at).toISOString();
+      return t >= todayStartISO && t <= todayEndISO;
+    }).length;
+
+    // ===== Eventos de grupos hoje (KPI) =====
+    const orExprToday = `prox_vencimento.eq.${today},prox_sorteio.eq.${today},prox_assembleia.eq.${today}`;
+    const { data: gTodayRows, error: gTodayErr } = await supabase.from("groups").select("id").or(orExprToday).limit(200);
+    if (gTodayErr) throw gTodayErr;
+    const todayGroupsCount = (gTodayRows || []).length;
+
+    // ===== Eventos de grupos (janela) para Próximos Eventos =====
+    const orExprWindow = `prox_vencimento.gte.${windowStart},prox_vencimento.lte.${windowEnd},prox_sorteio.gte.${windowStart},prox_sorteio.lte.${windowEnd},prox_assembleia.gte.${windowStart},prox_assembleia.lte.${windowEnd}`;
+    const { data: gRows, error: gErr } = await supabase
+      .from("groups")
+      .select("id,administradora,segmento,codigo,prox_vencimento,prox_sorteio,prox_assembleia")
+      .or(orExprWindow)
+      .limit(300);
     if (gErr) throw gErr;
-    const todayGroupsCount = (gRows || []).length;
 
-    // ===== Vendas do mês (filtra por auth_user_id) =====
-    let salesQ = supabase
-      .from("vendas")
-      .select("valor_venda,vendedor_id,data_venda")
-      .gte("data_venda", startYMD)
-      .lt("data_venda", endYMD);
+    // ===== Vendas do mês =====
+    let salesQ = supabase.from("vendas").select("valor_venda,vendedor_id,data_venda").gte("data_venda", startYMD).lt("data_venda", endYMD);
 
     if (!admin) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) salesQ = salesQ.eq("vendedor_id", scopeAuthId);
@@ -354,7 +551,7 @@ export default function Inicio() {
     if (salesErr) throw salesErr;
     const monthSalesTotal = (salesRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Meta do mês (filtra por users.id) =====
+    // ===== Meta do mês =====
     const field = metaFieldForMonth(month);
     let metaQ = supabase.from("metas_vendedores").select(`vendedor_id,ano,${field}`).eq("ano", year);
 
@@ -367,7 +564,7 @@ export default function Inicio() {
     const monthSalesMeta = (metaRows || []).reduce((acc: number, r: any) => acc + (Number(r?.[field] || 0) || 0), 0);
     const monthSalesPct = monthSalesMeta > 0 ? Math.min(100, Math.max(0, (monthSalesTotal / monthSalesMeta) * 100)) : 0;
 
-    // ===== Carteira ativa (filtra por auth_user_id) =====
+    // ===== Carteira ativa (codigo=00) =====
     let cartQ = supabase.from("vendas").select("valor_venda,vendedor_id,codigo").eq("codigo", "00");
     if (!admin) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) cartQ = cartQ.eq("vendedor_id", scopeAuthId);
@@ -376,14 +573,8 @@ export default function Inicio() {
     if (cartErr) throw cartErr;
     const carteiraAtivaTotal = (cartRows || []).reduce((acc: number, r: any) => acc + (Number(r.valor_venda || 0) || 0), 0);
 
-    // ===== Reservas abertas (filtra por users.id) =====
-    let reqQ = supabase
-      .from("stock_reservation_requests")
-      .select("id,cota_id,vendor_id,vendor_pct,status,created_at")
-      .eq("status", "aberta")
-      .order("created_at", { ascending: false })
-      .limit(10);
-
+    // ===== Reservas abertas / vendas sem comissão (mantidos como KPI) =====
+    let reqQ = supabase.from("stock_reservation_requests").select("id").eq("status", "aberta").limit(1000);
     if (!admin) reqQ = reqQ.eq("vendor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) reqQ = reqQ.eq("vendor_id", scopeUserId);
 
@@ -391,13 +582,7 @@ export default function Inicio() {
     if (reqErr) throw reqErr;
     const openStockReqCount = (reqRows || []).length;
 
-    // ===== Vendas sem comissão (view vindo de vendas → filtra por auth_user_id) =====
-    let vscQ = supabase
-      .from("v_vendas_sem_comissao")
-      .select("id,data_venda,vendedor_id,vendedor_nome,segmento,tabela,administradora,numero_proposta,credito")
-      .order("data_venda", { ascending: false })
-      .limit(10);
-
+    let vscQ = supabase.from("v_vendas_sem_comissao").select("id,vendedor_id").limit(3000);
     if (!admin) vscQ = vscQ.eq("vendedor_id", scopeAuthId);
     if (admin && scopeAuthId !== ALL) vscQ = vscQ.eq("vendedor_id", scopeAuthId);
 
@@ -405,23 +590,7 @@ export default function Inicio() {
     if (vscErr) throw vscErr;
     const vendasSemComissaoCount = (vscRows || []).length;
 
-    // ===== Comissões pendentes (filtra por users.id) =====
-    let comQ = supabase.from("commissions").select("id,vendedor_id,valor_total,status,created_at").order("created_at", { ascending: false }).limit(300);
-
-    if (!admin) comQ = comQ.eq("vendedor_id", scopeUserId);
-    if (admin && scopeUserId !== ALL) comQ = comQ.eq("vendedor_id", scopeUserId);
-
-    const { data: comRows, error: comErr } = await comQ;
-    if (comErr) throw comErr;
-
-    const pend = (comRows || []).filter((c: CommissionRow) => {
-      const st = (c.status || "").toLowerCase();
-      return st && st !== "pago" && st !== "estorno";
-    });
-    const commissionsPendingCount = pend.length;
-    const commissionsPendingTotal = pend.reduce((acc: number, r: any) => acc + (Number(r.valor_total || 0) || 0), 0);
-
-    // ===== Giro pendente (view por auth_user_id) =====
+    // ===== Giro pendente (contagem + lista) =====
     let giroDueCount = 0;
 
     if (admin) {
@@ -448,15 +617,188 @@ export default function Inicio() {
       giroDueCount = (giroRow as GiroDueRow | null)?.due_count || 0;
     }
 
-    // ✅ Atualiza tudo junto (se deu erro, cai no catch e não “zera”)
+    // Lista de giros pendentes (melhor esforço: view específica)
+    let giroList: { id: string; nome: string; carteiraAtiva: number }[] = [];
+    try {
+      let giroItemsQ = supabase
+        .from("v_giro_due_items")
+        .select("id,lead_id,cliente_id,cliente_nome,lead_nome,nome,telefone,carteira_ativa_total,valor_carteira_ativa,owner_auth_id")
+        .limit(20);
+
+      if (!admin) giroItemsQ = giroItemsQ.eq("owner_auth_id", scopeAuthId);
+      if (admin && scopeAuthId !== ALL) giroItemsQ = giroItemsQ.eq("owner_auth_id", scopeAuthId);
+
+      const { data: giroItems, error: giroItemsErr } = await giroItemsQ;
+      if (!giroItemsErr && giroItems) {
+        giroList = (giroItems as any as GiroItemRow[]).map((r, idx) => {
+          const nome = (r.cliente_nome || r.lead_nome || r.nome || "Cliente").trim();
+          const carteira = Number(r.valor_carteira_ativa ?? r.carteira_ativa_total ?? 0) || 0;
+          const id = String(r.id || r.cliente_id || r.lead_id || `giro_${idx}`);
+          return { id, nome, carteiraAtiva: carteira };
+        });
+      }
+    } catch {
+      // fallback: se não existir view, mostra pelo menos contagem e carteira ativa geral no card
+      giroList = [];
+    }
+
+    // ===== Aniversários do dia (clientes.data_nascimento) =====
+    const { data: allBirth, error: birthErr } = await supabase
+      .from("clientes")
+      .select("id,nome,data_nascimento,telefone")
+      .not("data_nascimento", "is", null)
+      .limit(2000);
+    if (birthErr) throw birthErr;
+
+    const todayMMDD = today.slice(5);
+    const birthdayToday = (allBirth || [])
+      .filter((c: ClienteRow) => (c.data_nascimento || "").slice(5) === todayMMDD)
+      .slice(0, 20);
+
+    // ===== Procedimentos novos (notificação) =====
+    let newProceduresCount = 0;
+    try {
+      const sevenDaysAgo = addDaysYMD(today, -7);
+      const { data: kbRows, error: kbErr } = await supabase
+        .from("kb_procedures")
+        .select("id,title,titulo,status,created_at,updated_at")
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      if (!kbErr && kbRows) {
+        const active = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active");
+        newProceduresCount = active.filter((p) => (p.created_at || "").slice(0, 10) >= sevenDaysAgo).length;
+      }
+    } catch {
+      newProceduresCount = 0;
+    }
+
+    // ===== Fluxo de comissões (Próximos Eventos) — agrupa por data_pagamento_vendedor =====
+    // public.commissions_flow: data_pagamento_vendedor; valor_previsto; valor_pago_vendedor
+    const { data: cfRows, error: cfErr } = await supabase
+      .from("commissions_flow")
+      .select("data_pagamento_vendedor,valor_previsto,valor_pago_vendedor")
+      .gte("data_pagamento_vendedor", windowStart)
+      .lte("data_pagamento_vendedor", windowEnd)
+      .limit(5000);
+
+    // Se a tabela ainda não existir, não quebra o painel
+    const commissionsFlow = (!cfErr && cfRows ? (cfRows as any as CommissionFlowRow[]) : []) as CommissionFlowRow[];
+
+    const cfAgg = new Map<
+      string,
+      {
+        date: string;
+        sumPrev: number;
+        sumPaid: number;
+      }
+    >();
+
+    for (const r of commissionsFlow) {
+      const d = (r.data_pagamento_vendedor || "").slice(0, 10);
+      if (!d) continue;
+      const prev = Number(r.valor_previsto || 0) || 0;
+      const paid = Number(r.valor_pago_vendedor || 0) || 0;
+      const cur = cfAgg.get(d) || { date: d, sumPrev: 0, sumPaid: 0 };
+      cur.sumPrev += prev;
+      cur.sumPaid += paid;
+      cfAgg.set(d, cur);
+    }
+
+    /** ===================== Monta Próximos Eventos ===================== */
+    const items: NextEventItem[] = [];
+
+    // Agenda (timestamptz) — flag por data (Hoje/Amanhã/Esta Semana)
+    for (const e of (agRows || []) as AgendaRow[]) {
+      const startISO = e.inicio_at;
+      const startUtcMs = new Date(startISO).getTime();
+      const ymd = ymdFromDateInOffset(new Date(startUtcMs), PV_OFFSET_MIN);
+      const flag = flagFromYMD3(today, ymd);
+
+      items.push({
+        id: `ag:${e.id}`,
+        whenSort: startUtcMs,
+        whenLabel: `${flag} • ${fmtDTForOffset(startISO, PV_OFFSET_MIN)}`,
+        flag,
+        title: e.titulo || "Evento",
+        desc: `${e.tipo || "Agenda"} • ${(e.cliente_nome || e.lead_nome || "—") as any}`,
+        action: { label: "Abrir Agenda", to: "/agenda" },
+      });
+    }
+
+    // Grupos (date) — título + “Administradora | Segmento”
+    for (const g of (gRows || []) as GroupRow[]) {
+      const base = `${g.administradora} | ${g.segmento}`;
+      const pushGroup = (kind: "Vencimento" | "Sorteio" | "Assembleia", dateYMD: string | null) => {
+        if (!dateYMD) return;
+        const flag = flagFromYMD3(today, dateYMD);
+
+        items.push({
+          id: `grp:${g.id}:${kind}:${dateYMD}`,
+          whenSort: Date.UTC(Number(dateYMD.slice(0, 4)), Number(dateYMD.slice(5, 7)) - 1, Number(dateYMD.slice(8, 10)), 12, 0, 0),
+          whenLabel: `${flag} • ${fmtDateBRFromYMD(dateYMD)}`,
+          flag,
+          title: `${kind} Grupo ${g.codigo}`,
+          desc: base,
+          action: { label: "Ver Grupos", to: "/gestao-de-grupos" },
+        });
+      };
+
+      pushGroup("Assembleia", g.prox_assembleia);
+      pushGroup("Vencimento", g.prox_vencimento);
+      pushGroup("Sorteio", g.prox_sorteio);
+    }
+
+    // Recebimento de Comissão (agrupado por data)
+    for (const [d, agg] of cfAgg.entries()) {
+      const flag = flagFromYMD3(today, d);
+      const received = (agg.sumPaid || 0) > 0;
+
+      const msg = received
+        ? `🎉 Você recebeu comissão no valor de ${fmtBRL(agg.sumPaid)} ✅`
+        : `💰 Você receberá ${fmtBRL(agg.sumPrev)} de comissão 💸`;
+
+      items.push({
+        id: `cf:${d}`,
+        whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 13, 0, 0),
+        whenLabel: `${flag} • ${fmtDateBRFromYMD(d)}`,
+        flag,
+        title: "Recebimento de Comissão",
+        desc: msg,
+        action: { label: "Abrir Comissões", to: "/comissoes" },
+      });
+    }
+
+    // Aniversários do dia
+    for (const c of birthdayToday) {
+      const flag: DateFlag = "Hoje";
+      items.push({
+        id: `bday:${c.id}`,
+        whenSort: Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)), 8, 0, 0),
+        whenLabel: `${flag} • ${fmtDateBRFromYMD(today)}`,
+        flag,
+        title: "Aniversário",
+        desc: `É aniversário do seu Cliente “${c.nome}”. Parabenize-o! 🎂🎉`,
+        action: { label: "Ver Clientes", to: "/clientes" },
+      });
+    }
+
+    // Ordena e limita
+    items.sort((a, b) => a.whenSort - b.whenSort);
+
+    // ✅ Atualiza estados
     setOverdueOpps(overdueOppsEnriched);
-    setTodayEvents((agRows || []) as any);
-    setStockReqs(reqRows || []);
-    setVendasSemComissao((vscRows || []) as any);
+    setAgendaItems((agRows || []) as any);
+    setNextEvents(items.slice(0, 30));
+    setGiroPendentes(giroList);
+
+    // Pensamento do dia
+    const thought = await loadThoughtOfDay(today);
+    if (thought) setThoughtOfDay(thought);
 
     setKpi({
-      overdueOppCount,
-      overdueOppTotal,
+      openOppCount,
+      openOppTotal,
 
       todayEventsCount,
       todayGroupsCount,
@@ -470,10 +812,9 @@ export default function Inicio() {
       openStockReqCount,
       vendasSemComissaoCount,
 
-      commissionsPendingCount,
-      commissionsPendingTotal,
-
       giroDueCount,
+
+      newProceduresCount,
     });
   }
 
@@ -481,12 +822,10 @@ export default function Inicio() {
     if (!me) return null;
     const admin = isAdmin(me);
 
-    // Vendedor logado: travado no próprio
     if (!admin) {
       return { admin, scopeUserId: me.id, scopeAuthId: me.auth_user_id };
     }
 
-    // Admin:
     if (vendorScope === ALL) {
       return { admin, scopeUserId: ALL, scopeAuthId: ALL };
     }
@@ -529,16 +868,6 @@ export default function Inicio() {
         setUsers(usersRows);
         setVendorScope(initialScope);
 
-        // ✅ carrega imediatamente
-        const scopeUserId = admin ? (initialScope === ALL ? ALL : meRow.id) : meRow.id;
-        const scopeAuthId =
-          admin
-            ? initialScope === ALL
-              ? ALL
-              : meRow.auth_user_id
-            : meRow.auth_user_id;
-
-        // OBS: no init, para admin com ALL -> ALL/ALL (visão geral)
         const initScopes = admin
           ? initialScope === ALL
             ? { su: ALL, sa: ALL }
@@ -642,9 +971,7 @@ export default function Inicio() {
             </CardHeader>
             <CardContent className="text-sm text-slate-700">
               <div className="mb-2">Copia essa mensagem e me manda:</div>
-              <pre className="whitespace-pre-wrap break-words rounded-md bg-white border border-slate-200 p-3 text-xs text-slate-800">
-                {errMsg}
-              </pre>
+              <pre className="whitespace-pre-wrap break-words rounded-md bg-white border border-slate-200 p-3 text-xs text-slate-800">{errMsg}</pre>
             </CardContent>
           </Card>
         </div>
@@ -652,15 +979,16 @@ export default function Inicio() {
 
       {/* KPIs */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {/* Oportunidades (antes: Oportunidades atrasadas) */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" /> Oportunidades atrasadas
+              <AlertTriangle className="h-4 w-4" /> Oportunidades
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-semibold">{kpi.overdueOppCount}</div>
-            <div className="text-slate-600 text-sm mt-1">{fmtBRL(kpi.overdueOppTotal)}</div>
+            <div className="text-3xl font-semibold">{kpi.openOppCount}</div>
+            <div className="text-slate-600 text-sm mt-1">{fmtBRL(kpi.openOppTotal)}</div>
             <div className="mt-3">
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/oportunidades")}>
                 Ver Oportunidades <ArrowRight className="h-4 w-4 ml-2" />
@@ -760,9 +1088,22 @@ export default function Inicio() {
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/estoque-contempladas")}>
                 Contempladas <ArrowRight className="h-4 w-4" />
               </Button>
+
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/planejamento")}>
-                Maximize-se (Playbook) <ArrowRight className="h-4 w-4" />
+                <span className="inline-flex items-center gap-2">
+                  <BookOpen className="h-4 w-4" /> Playbook de Vendas
+                </span>
+                <ArrowRight className="h-4 w-4" />
               </Button>
+
+              {/* Chip / Ação para Links Úteis */}
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/links")}>
+                <span className="inline-flex items-center gap-2">
+                  <LinkIcon className="h-4 w-4" /> Links Úteis
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+
               <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/relatorios")}>
                 Extrair Relatório <ArrowRight className="h-4 w-4" />
               </Button>
@@ -778,6 +1119,14 @@ export default function Inicio() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
+              <div className="text-slate-700 inline-flex items-center gap-2">
+                <FileText className="h-4 w-4 text-slate-500" />
+                Procedimentos novos
+              </div>
+              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.newProceduresCount}</Badge>
+            </div>
+
+            <div className="flex items-center justify-between">
               <div className="text-slate-700">Grupos com evento hoje</div>
               <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.todayGroupsCount}</Badge>
             </div>
@@ -785,16 +1134,6 @@ export default function Inicio() {
             <div className="flex items-center justify-between">
               <div className="text-slate-700">Vendas sem comissão</div>
               <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.vendasSemComissaoCount}</Badge>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="text-slate-700">Comissões pendentes</div>
-              <Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.commissionsPendingCount}</Badge>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="text-slate-700">Total pendente</div>
-              <div className="text-slate-900 font-medium">{fmtBRL(kpi.commissionsPendingTotal)}</div>
             </div>
 
             <div className="flex items-center justify-between">
@@ -810,12 +1149,13 @@ export default function Inicio() {
         </Card>
       </div>
 
-      {/* Listas */}
+      {/* Listas: Oportunidades Atrasadas + Giros Pendentes + Próximos Eventos */}
       <div className="mt-6 grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <Card className={`${glassCard} xl:col-span-2`}>
+        {/* Oportunidades Atrasadas (top 10 por dias esperando ação) */}
+        <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" /> Atrasadas (top 12)
+              <AlertTriangle className="h-4 w-4" /> Oportunidades Atrasadas
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -826,47 +1166,100 @@ export default function Inicio() {
                 <div key={o.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">
-                      {o.lead_nome || "Lead"} <span className="text-slate-500">• {(o.estagio || o.stage || "—") as any}</span>
+                      {o.lead_nome || "Lead"} <span className="text-slate-500">• {(o.estagio || "—") as any}</span>
                     </div>
                     <div className="text-xs text-slate-500 truncate">
-                      Fecha em: {o.expected_close_at || "—"} • {o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}
+                      {typeof o.daysWaiting === "number" ? `${o.daysWaiting} dia(s) aguardando` : "—"} •{" "}
+                      {o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}
                     </div>
                   </div>
                   <div className="text-sm font-semibold">{fmtBRL(Number(o.valor_credito || 0) || 0)}</div>
                 </div>
               ))
             )}
+
+            <div className="pt-2">
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 w-full" onClick={() => nav("/oportunidades")}>
+                Ver Oportunidades <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
+        {/* Giros Pendentes */}
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
-              <Calendar className="h-4 w-4" /> Próximos eventos (hoje)
+              <Wallet className="h-4 w-4" /> Giros Pendentes
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {todayEvents.length === 0 ? (
-              <div className="text-slate-500 text-sm">Sem eventos marcados hoje.</div>
+            {giroPendentes.length === 0 ? (
+              <div className="text-slate-500 text-sm">
+                {kpi.giroDueCount > 0 ? `Você tem ${kpi.giroDueCount} giro(s) pendente(s).` : "Sem giros pendentes no momento."}
+                <div className="mt-2 text-xs text-slate-500">Carteira ativa (referência): {fmtBRL(kpi.carteiraAtivaTotal)}</div>
+              </div>
             ) : (
-              todayEvents.map((e) => (
-                <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                  <div className="text-sm font-medium truncate">{e.titulo}</div>
-                  <div className="text-xs text-slate-500 truncate">
-                    {fmtDT(e.inicio_at)} • {e.cliente_nome || e.lead_nome || "—"}
+              giroPendentes.slice(0, 10).map((g) => (
+                <div key={g.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{g.nome}</div>
+                    <div className="text-xs text-slate-500 truncate">Carteira ativa: {fmtBRL(Number(g.carteiraAtiva || 0) || 0)}</div>
                   </div>
-                  <div className="mt-2 flex gap-2">
-                    <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/agenda")}>
-                      Abrir <ArrowRight className="h-4 w-4 ml-1" />
-                    </Button>
-                    {e.videocall_url ? (
+                  <Button
+                    size="sm"
+                    className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
+                    onClick={() => nav("/giro-de-carteira")}
+                  >
+                    Abrir <ArrowRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              ))
+            )}
+
+            <div className="pt-2">
+              <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 w-full" onClick={() => nav("/giro-de-carteira")}>
+                Abrir Giro <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Próximos Eventos (unificado) */}
+        <Card className={glassCard}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
+              <Calendar className="h-4 w-4" /> Próximos Eventos
+            </CardTitle>
+          </CardHeader>
+
+          <CardContent className="space-y-2">
+            {nextEvents.length === 0 ? (
+              <div className="text-slate-500 text-sm">Sem eventos na janela configurada.</div>
+            ) : (
+              nextEvents.map((e) => (
+                <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge className={flagBadgeClass(e.flag)}>{e.flag}</Badge>
+                        <div className="text-xs text-slate-500">{e.whenLabel}</div>
+                      </div>
+
+                      <div className="text-sm font-medium truncate mt-1">{e.title}</div>
+                      {e.desc ? <div className="text-xs text-slate-500 truncate">{e.desc}</div> : null}
+                    </div>
+
+                    {e.action ? (
                       <Button
                         size="sm"
-                        variant="secondary"
                         className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-                        onClick={() => window.open(e.videocall_url!, "_blank")}
+                        onClick={() => {
+                          if (e.action?.to) nav(e.action.to);
+                          else if (e.action?.href) window.open(e.action.href, "_blank");
+                        }}
                       >
-                        Vídeo <ArrowRight className="h-4 w-4 ml-1" />
+                        {e.action.label} <ArrowRight className="h-4 w-4 ml-1" />
                       </Button>
                     ) : null}
                   </div>
@@ -877,17 +1270,25 @@ export default function Inicio() {
         </Card>
       </div>
 
-      {/* Maximize-se */}
+      {/* Pensamento do Dia (antes: Maximize-se) */}
       <div className="mt-6">
         <Card className={glassCard}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700 flex items-center gap-2">
-              <MessageCircle className="h-4 w-4" /> Maximize-se
+              <MessageCircle className="h-4 w-4" /> Pensamento do Dia
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div className="text-slate-700">
-              Hoje, foca em 1 coisa: <span className="font-semibold">follow-up com data</span>. Quem deixa “aberto” vira “vou ver e te aviso”.
+              {thoughtOfDay ? (
+                <>
+                  <span className="font-semibold">“{thoughtOfDay}”</span>
+                </>
+              ) : (
+                <>
+                  Hoje, foca em 1 coisa: <span className="font-semibold">follow-up com data</span>.
+                </>
+              )}
             </div>
             <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/planejamento")}>
               Abrir Playbook <ArrowRight className="h-4 w-4 ml-2" />
@@ -895,9 +1296,6 @@ export default function Inicio() {
           </CardContent>
         </Card>
       </div>
-
-      {/* (mantidos caso você queira renderizar depois) */}
-      {/* stockReqs: {stockReqs.length} | vendasSemComissao: {vendasSemComissao.length} */}
     </div>
   );
 }

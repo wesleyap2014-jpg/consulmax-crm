@@ -80,10 +80,6 @@ type ProcessRow = {
 /** =========================
  * Helpers
  * ========================= */
-function onlyDigits(s: string) {
-  return (s || "").replace(/\D+/g, "");
-}
-
 function formatBRDateFromISO(isoDate: string | null | undefined) {
   if (!isoDate) return "—";
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
@@ -92,7 +88,6 @@ function formatBRDateFromISO(isoDate: string | null | undefined) {
 }
 
 function parseBRDateToISO(br: string) {
-  // dd/mm/aaaa -> yyyy-mm-dd (retorna null se inválido)
   const t = (br || "").trim();
   const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
   if (!m) return null;
@@ -102,13 +97,43 @@ function parseBRDateToISO(br: string) {
   if (yyyy < 1900 || yyyy > 2200) return null;
   if (mm < 1 || mm > 12) return null;
   if (dd < 1 || dd > 31) return null;
-  const iso = `${String(yyyy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
-  return iso;
+  return `${String(yyyy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
 }
 
-function formatMoneyBR(v: number | null | undefined) {
-  if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
-  return Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function endOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
+
+function addSLA(phase: Phase | null, phaseStartedAtISO: string) {
+  if (!phase) return null;
+  const base = new Date(phaseStartedAtISO);
+
+  if (phase.sla_kind === "days") {
+    const days = Number(phase.sla_days ?? 0);
+    return new Date(base.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+  }
+  const minutes = Number(phase.sla_minutes ?? 0);
+  return new Date(base.getTime() + minutes * 60 * 1000).toISOString();
+}
+
+function calcSlaStatus(deadlineISO: string | null, now = new Date()) {
+  if (!deadlineISO) return "Em dia" as const;
+  const deadline = new Date(deadlineISO);
+
+  const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
+
+  if (now.getTime() > deadline.getTime()) return "Atrasado" as const;
+  if (deadline.getTime() >= todayStart.getTime() && deadline.getTime() <= todayEnd.getTime()) return "No dia" as const;
+  return "Em dia" as const;
 }
 
 function slaChip(s: ProcessRow["sla_status"]) {
@@ -117,31 +142,27 @@ function slaChip(s: ProcessRow["sla_status"]) {
   return { label: "Em dia", icon: CheckCircle2 };
 }
 
-async function getBearer() {
-  const { data } = await supabase.auth.getSession();
-  const token = data?.session?.access_token;
-  return token ? `Bearer ${token}` : null;
+function toMinutesFromHHMM(hhmm: string) {
+  const m = /^(\d{2}):(\d{2})$/.exec((hhmm || "").trim());
+  const hh = m ? Number(m[1]) : 8;
+  const mm = m ? Number(m[2]) : 0;
+  return Math.max(0, hh * 60 + mm);
 }
 
-async function apiFetch<T>(url: string, opts?: RequestInit): Promise<T> {
-  const bearer = await getBearer();
-  const headers: any = {
-    "Content-Type": "application/json",
-    ...(opts?.headers || {}),
-  };
-  if (bearer) headers.Authorization = bearer;
+function msToHuman(ms: number) {
+  const totalMinutes = Math.floor(ms / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes - days * 60 * 24) / 60);
+  const minutes = totalMinutes - days * 60 * 24 - hours * 60;
+  return { days, hours, minutes, totalMinutes };
+}
 
-  const res = await fetch(url, { ...opts, headers });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) {
-    const msg = json?.message || `Erro HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-  return json as T;
+function diffMs(a: Date, b: Date) {
+  return Math.max(0, b.getTime() - a.getTime());
 }
 
 /** =========================
- * UI
+ * Page
  * ========================= */
 export default function Processos() {
   const [tab, setTab] = useState<ProcessType>("faturamento");
@@ -149,6 +170,7 @@ export default function Processos() {
   // phases
   const [phases, setPhases] = useState<Phase[]>([]);
   const phasesById = useMemo(() => Object.fromEntries(phases.map((p) => [p.id, p])), [phases]);
+  const activePhases = useMemo(() => phases.filter((p) => p.is_active), [phases]);
 
   // list
   const [rows, setRows] = useState<ProcessRow[]>([]);
@@ -213,10 +235,7 @@ export default function Processos() {
   const [pmFinal, setPmFinal] = useState(false);
   const [pmSaving, setPmSaving] = useState(false);
 
-  /** -------- Load phases (direct from DB via supabase client) --------
-   * (A etapa 2 não criou endpoints de fases; aqui vamos direto no Supabase,
-   * mantendo simples e rápido. Se você preferir, depois criamos endpoints.)
-   */
+  /** -------- Load phases -------- */
   async function loadPhasesFor(type: ProcessType) {
     const { data, error } = await supabase
       .from("process_phases")
@@ -229,20 +248,45 @@ export default function Processos() {
     setPhases((data || []) as any);
   }
 
-  /** -------- Load list -------- */
+  /** -------- Load list (SUPABASE DIRETO) -------- */
   async function loadList(type: ProcessType, p: number, silent = false) {
     if (!silent) setLoading(true);
     try {
-      const resp = await apiFetch<{
-        ok: true;
-        page: number;
-        pageSize: number;
-        total: number;
-        rows: ProcessRow[];
-      }>(`/api/processes?type=${type}&status=open&page=${p}&pageSize=${pageSize}`);
+      const from = (p - 1) * pageSize;
+      const to = from + pageSize - 1;
 
-      setRows(resp.rows || []);
-      setTotal(resp.total || 0);
+      const q = supabase
+        .from("processes")
+        .select(
+          `id, type, status, start_date, administradora, proposta, grupo, cota, segmento,
+           cliente_nome, credito_disponivel,
+           current_phase_id, current_phase_started_at, current_owner_kind`,
+          { count: "exact" }
+        )
+        .eq("type", type)
+        .eq("status", "open")
+        .order("start_date", { ascending: true })
+        .range(from, to);
+
+      const { data, error, count } = await q;
+      if (error) throw new Error(error.message);
+
+      const now = new Date();
+      const out = ((data || []) as any as ProcessRow[]).map((r) => {
+        const phase = r.current_phase_id ? (phasesById[r.current_phase_id] as Phase | undefined) : undefined;
+        const deadline = phase ? addSLA(phase, r.current_phase_started_at) : null;
+        const sla_status = calcSlaStatus(deadline, now);
+
+        return {
+          ...r,
+          phase_name: phase?.name ?? null,
+          deadline,
+          sla_status,
+        };
+      });
+
+      setRows(out);
+      setTotal(count ?? out.length);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -251,14 +295,14 @@ export default function Processos() {
   async function refreshAll() {
     setRefreshing(true);
     try {
-      await Promise.all([loadPhasesFor(tab), loadList(tab, page, true)]);
+      await loadPhasesFor(tab);
+      await loadList(tab, page, true);
     } finally {
       setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    // ao trocar a aba, volta pra pg 1 e carrega tudo
     setPage(1);
     setRows([]);
     setTotal(0);
@@ -269,8 +313,6 @@ export default function Processos() {
       try {
         await loadPhasesFor(tab);
         await loadList(tab, 1, true);
-      } catch {
-        // sem toast aqui (você já tem um padrão no projeto; se quiser eu adapto)
       } finally {
         setLoading(false);
       }
@@ -279,43 +321,57 @@ export default function Processos() {
   }, [tab]);
 
   useEffect(() => {
-    // ao mudar página
     (async () => {
       await loadList(tab, page, false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, phasesById]);
 
-  /** -------- New process: lookup proposta -------- */
+  /** -------- Lookup proposta (SUPABASE DIRETO) -------- */
   async function lookupPropostaIfNeeded(propostaRaw: string) {
     const proposta = (propostaRaw || "").trim();
     if (!proposta) return;
-
     if (propostaBusyRef.current) return;
     propostaBusyRef.current = true;
 
     try {
-      const resp = await apiFetch<any>("/api/processes/lookup-proposta", {
-        method: "POST",
-        body: JSON.stringify({ proposta }),
-      });
+      const { data: venda, error } = await supabase
+        .from("vendas")
+        .select("lead_id, numero_proposta, grupo, cota, segmento, administradora, created_at")
+        .eq("numero_proposta", proposta)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (resp?.found && resp?.data) {
-        const d = resp.data;
-        if (d.administradora && (nfAdmin === "__none__" || !nfAdmin)) setNfAdmin(String(d.administradora));
-        if (d.grupo) setNfGrupo(String(d.grupo));
-        if (d.cota) setNfCota(String(d.cota));
-        if (d.cliente_nome) setNfCliente(String(d.cliente_nome));
-        if (d.segmento) setNfSegmento(String(d.segmento));
+      if (error || !venda) return;
+
+      if (venda.administradora && (nfAdmin === "__none__" || !nfAdmin)) setNfAdmin(String(venda.administradora));
+      if (venda.grupo) setNfGrupo(String(venda.grupo));
+      if (venda.cota) setNfCota(String(venda.cota));
+      if (venda.segmento) setNfSegmento(String(venda.segmento));
+
+      if (venda.lead_id) {
+        const { data: cli } = await supabase
+          .from("clientes")
+          .select("id, nome")
+          .eq("lead_id", venda.lead_id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (cli?.nome) {
+          setNfCliente(String(cli.nome));
+        } else {
+          const { data: ld } = await supabase.from("leads").select("id, nome").eq("id", venda.lead_id).maybeSingle();
+          if (ld?.nome) setNfCliente(String(ld.nome));
+        }
       }
-    } catch {
-      // silencioso (você pediu sem ficar testando/enchendo)
     } finally {
       propostaBusyRef.current = false;
     }
   }
 
-  /** -------- New process: submit -------- */
+  /** -------- Create process (SUPABASE DIRETO) -------- */
   async function submitNew() {
     const startISO = parseBRDateToISO(nfStartBR);
     if (!startISO) return;
@@ -324,26 +380,56 @@ export default function Processos() {
 
     setNfSaving(true);
     try {
-      await apiFetch<any>("/api/processes", {
-        method: "POST",
-        body: JSON.stringify({
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const authUserId = user?.id;
+      if (!authUserId) return;
+
+      // fase inicial (automática se não escolher)
+      let currentPhaseId = nfPhaseId !== "__none__" ? nfPhaseId : null;
+      if (!currentPhaseId) {
+        const first = activePhases[0];
+        currentPhaseId = first?.id ?? null;
+      }
+
+      const nowISO = new Date().toISOString();
+
+      const { data: proc, error } = await supabase
+        .from("processes")
+        .insert({
           type: tab,
+          status: "open",
           start_date: startISO,
           administradora: nfAdmin === "__none__" ? null : nfAdmin,
           proposta: nfProposta || null,
           grupo: nfGrupo || null,
           cota: nfCota || null,
-          cliente_nome: nfCliente || null,
           segmento: nfSegmento || null,
+          cliente_nome: nfCliente || null,
           credito_disponivel: credito,
-          phase_id: nfPhaseId === "__none__" ? null : nfPhaseId,
-          owner_kind: nfOwner,
-          note: "Processo criado",
-        }),
+          current_phase_id: currentPhaseId,
+          current_phase_started_at: nowISO,
+          current_owner_kind: nfOwner,
+          created_by: authUserId,
+          updated_by: authUserId,
+        })
+        .select("*")
+        .single();
+
+      if (error) throw new Error(error.message);
+
+      await supabase.from("process_events").insert({
+        process_id: proc.id,
+        at: nowISO,
+        from_phase_id: null,
+        to_phase_id: currentPhaseId,
+        owner_kind: nfOwner,
+        note: "Processo criado",
+        created_by: authUserId,
       });
 
       setOpenNew(false);
-      // reset básico
       setNfProposta("");
       setNfGrupo("");
       setNfCota("");
@@ -353,16 +439,14 @@ export default function Processos() {
       setNfPhaseId("__none__");
       setNfOwner("corretora");
 
-      await loadList(tab, 1, true);
       setPage(1);
-    } catch {
-      // sem toast aqui
+      await loadList(tab, 1, true);
     } finally {
       setNfSaving(false);
     }
   }
 
-  /** -------- Treat: open -------- */
+  /** -------- Treat -------- */
   function openTreatDialog(row: ProcessRow) {
     setTreating(row);
     setTfPhaseId(row.current_phase_id || "__none__");
@@ -371,14 +455,13 @@ export default function Processos() {
     setOpenTreat(true);
   }
 
-  /** -------- Treat: submit -------- */
   async function submitTreat() {
     if (!treating) return;
 
     const phaseId = tfPhaseId === "__none__" ? null : tfPhaseId;
     const selectedPhase = phaseId ? phasesById[phaseId] : null;
 
-    // se escolheu fase final -> abre finalização ao invés de patch simples
+    // se fase final, abre finalização
     if (selectedPhase?.is_final) {
       setOpenTreat(false);
       setFinalizing(treating);
@@ -389,70 +472,151 @@ export default function Processos() {
 
     setTfSaving(true);
     try {
-      await apiFetch<any>(`/api/processes/${treating.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          phase_id: phaseId,
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const authUserId = user?.id;
+      if (!authUserId) return;
+
+      const nowISO = new Date().toISOString();
+
+      const phaseChanged = !!(phaseId && phaseId !== treating.current_phase_id);
+
+      const { error } = await supabase
+        .from("processes")
+        .update({
+          current_phase_id: phaseId ?? treating.current_phase_id,
+          current_owner_kind: tfOwner,
+          ...(phaseChanged ? { current_phase_started_at: nowISO } : {}),
+          updated_by: authUserId,
+        })
+        .eq("id", treating.id);
+
+      if (error) throw new Error(error.message);
+
+      if (phaseChanged || tfNote.trim() || tfOwner !== treating.current_owner_kind) {
+        await supabase.from("process_events").insert({
+          process_id: treating.id,
+          at: nowISO,
+          from_phase_id: treating.current_phase_id,
+          to_phase_id: phaseId ?? treating.current_phase_id,
           owner_kind: tfOwner,
-          note: tfNote || null,
-        }),
-      });
+          note: tfNote.trim() || null,
+          created_by: authUserId,
+        });
+      }
 
       setOpenTreat(false);
       setTreating(null);
       await loadList(tab, page, true);
-    } catch {
-      // sem toast
     } finally {
       setTfSaving(false);
     }
   }
 
-  /** -------- Finalize: submit -------- */
+  /** -------- Finalize -------- */
   async function submitFinalize() {
     if (!finalizing) return;
 
     setFfSaving(true);
     try {
-      const resp = await apiFetch<any>(`/api/processes/${finalizing.id}/finalize`, {
-        method: "POST",
-        body: JSON.stringify({
-          user_satisfaction: ffUserSat,
-          client_satisfaction: ffClientSat,
-          improvement_text: ffImprove || null,
-        }),
-      });
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const authUserId = user?.id;
+      if (!authUserId) return;
 
-      // feedback visual simples (texto)
-      if (resp?.stats?.total) {
-        const t = resp.stats.total;
-        const a = resp.stats.by_owner?.administradora;
-        const c = resp.stats.by_owner?.corretora;
-        const l = resp.stats.by_owner?.cliente;
+      // achar fase final
+      const finalPhase = activePhases.find((p) => p.is_final) || null;
+      if (!finalPhase) return;
 
-        const totalDays = t.days ?? 0;
-        setFinalStatsText(
-          `Esse processo levou aproximadamente ${totalDays} dia(s). ` +
-            `Administradora: ${a?.days ?? 0} dia(s) | Corretora: ${c?.days ?? 0} dia(s) | Cliente: ${l?.days ?? 0} dia(s).`
-        );
-      } else {
-        setFinalStatsText("Processo finalizado com sucesso.");
+      const nowISO = new Date().toISOString();
+
+      // pegar timeline (events)
+      const { data: evs } = await supabase
+        .from("process_events")
+        .select("at, owner_kind")
+        .eq("process_id", finalizing.id)
+        .order("at", { ascending: true });
+
+      const start = new Date(finalizing.current_phase_started_at || nowISO); // fallback seguro
+      const end = new Date(nowISO);
+
+      const totals: Record<OwnerKind, number> = { administradora: 0, corretora: 0, cliente: 0 };
+
+      const list = (evs || []).map((e: any) => ({
+        at: new Date(e.at),
+        owner_kind: e.owner_kind as OwnerKind,
+      }));
+
+      if (list.length === 0) {
+        list.push({ at: start, owner_kind: finalizing.current_owner_kind });
       }
 
-      // remove da lista (está closed)
+      for (let i = 0; i < list.length; i++) {
+        const segStart = i === 0 ? start : list[i].at;
+        const segEnd = i + 1 < list.length ? list[i + 1].at : end;
+        totals[list[i].owner_kind] += diffMs(segStart, segEnd);
+      }
+
+      const totalMs = diffMs(start, end);
+
+      // fechar processo
+      const { error: upErr } = await supabase
+        .from("processes")
+        .update({
+          status: "closed",
+          closed_at: nowISO,
+          current_phase_id: finalPhase.id,
+          current_phase_started_at: nowISO,
+          updated_by: authUserId,
+        })
+        .eq("id", finalizing.id);
+
+      if (upErr) throw new Error(upErr.message);
+
+      // evento final
+      await supabase.from("process_events").insert({
+        process_id: finalizing.id,
+        at: nowISO,
+        from_phase_id: finalizing.current_phase_id,
+        to_phase_id: finalPhase.id,
+        owner_kind: finalizing.current_owner_kind,
+        note: "Processo finalizado",
+        created_by: authUserId,
+      });
+
+      // feedback
+      await supabase.from("process_feedback").insert({
+        process_id: finalizing.id,
+        user_satisfaction: ffUserSat,
+        client_satisfaction: ffClientSat,
+        improvement_text: ffImprove.trim() || null,
+        created_by: authUserId,
+      });
+
+      const t = msToHuman(totalMs);
+      const a = msToHuman(totals.administradora);
+      const c = msToHuman(totals.corretora);
+      const l = msToHuman(totals.cliente);
+
+      setFinalStatsText(
+        `Esse processo levou o total de ${t.days} dia(s). ` +
+          `Administradora: ${a.days} dia(s) | Corretora: ${c.days} dia(s) | Cliente: ${l.days} dia(s).`
+      );
+
+      // remove da lista
       setRows((prev) => prev.filter((r) => r.id !== finalizing.id));
       setTotal((prev) => Math.max(0, prev - 1));
       setOpenFinalize(false);
       setFinalizing(null);
       setFfImprove("");
-    } catch {
-      // sem toast
     } finally {
       setFfSaving(false);
     }
   }
 
-  /** -------- Phase mgmt: open -------- */
+  /** -------- Phase mgmt -------- */
   function openNewPhase() {
     setPmEditing(null);
     setPmName("");
@@ -489,10 +653,7 @@ export default function Processos() {
       sla_days = Math.max(0, Number(pmDays || 0) || 0);
       sla_minutes = null;
     } else {
-      const m = /^(\d{2}):(\d{2})$/.exec(pmHoursHHMM.trim());
-      const hh = m ? Number(m[1]) : 8;
-      const mm = m ? Number(m[2]) : 0;
-      sla_minutes = Math.max(0, hh * 60 + mm);
+      sla_minutes = toMinutesFromHHMM(pmHoursHHMM);
       sla_days = null;
     }
 
@@ -527,35 +688,33 @@ export default function Processos() {
 
       await loadPhasesFor(tab);
       openNewPhase();
-    } catch {
-      // sem toast
     } finally {
       setPmSaving(false);
     }
   }
 
   async function disablePhase(id: string) {
-    try {
-      const { error } = await supabase.from("process_phases").update({ is_active: false }).eq("id", id);
-      if (error) throw new Error(error.message);
-      await loadPhasesFor(tab);
-    } catch {
-      // sem toast
-    }
+    const { error } = await supabase.from("process_phases").update({ is_active: false }).eq("id", id);
+    if (!error) await loadPhasesFor(tab);
   }
 
-  /** -------- Render -------- */
+  /** -------- Init -------- */
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        await loadPhasesFor(tab);
+        await loadList(tab, 1, true);
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
 
-  // administradoras (por enquanto texto livre + presets)
-  const adminOptions = useMemo(() => {
-    const set = new Set<string>();
-    ["EMBRACON", "MAGGI", "HS CONSÓRCIOS"].forEach((s) => set.add(s));
-    phases.forEach(() => null);
-    return Array.from(set);
-  }, [phases]);
-
-  const activePhases = useMemo(() => phases.filter((p) => p.is_active), [phases]);
+  const adminOptions = useMemo(() => ["EMBRACON", "MAGGI", "HS CONSÓRCIOS"], []);
 
   return (
     <div className="space-y-4">
@@ -563,18 +722,11 @@ export default function Processos() {
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
             <CardTitle className="text-slate-900">Processos</CardTitle>
-            <div className="text-slate-600 text-sm mt-1">
-              Acompanhe prazos, SLAs e tratativas em andamento.
-            </div>
+            <div className="text-slate-600 text-sm mt-1">Acompanhe prazos, SLAs e tratativas em andamento.</div>
           </div>
 
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={() => setOpenPhases(true)}
-              title="Gestão de Fases"
-            >
+            <Button variant="outline" className="gap-2" onClick={() => setOpenPhases(true)} title="Gestão de Fases">
               <Settings2 className="h-4 w-4" />
               Gestão de Fases
             </Button>
@@ -667,16 +819,12 @@ export default function Processos() {
                 }}
                 placeholder="0009535214"
               />
-              <div className="text-xs text-slate-500 mt-1">Ao sair do campo (ou TAB), tenta preencher grupo/cota/cliente/segmento.</div>
+              <div className="text-xs text-slate-500 mt-1">Ao sair do campo (ou TAB), preenche grupo/cota/cliente/segmento.</div>
             </div>
 
             <div>
               <Label>Crédito disponível (R$)</Label>
-              <Input
-                value={nfCredito}
-                onChange={(e) => setNfCredito(e.target.value)}
-                placeholder="60000"
-              />
+              <Input value={nfCredito} onChange={(e) => setNfCredito(e.target.value)} placeholder="60000" />
             </div>
 
             <div>
@@ -791,17 +939,6 @@ export default function Processos() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <div className="text-xs text-slate-500 mt-1">
-                    {tfPhaseId !== "__none__" && phasesById[tfPhaseId]
-                      ? `SLA: ${
-                          phasesById[tfPhaseId].sla_kind === "days"
-                            ? `${phasesById[tfPhaseId].sla_days ?? 0} dia(s)`
-                            : `${String(Math.floor((phasesById[tfPhaseId].sla_minutes ?? 0) / 60)).padStart(2, "0")}:${String(
-                                (phasesById[tfPhaseId].sla_minutes ?? 0) % 60
-                              ).padStart(2, "0")} h`
-                        }`
-                      : "—"}
-                  </div>
                 </div>
 
                 <div>
@@ -902,7 +1039,6 @@ export default function Processos() {
           </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Lista */}
             <div className="border border-slate-200 rounded-md p-3">
               <div className="flex items-center justify-between">
                 <div className="font-medium text-slate-900">Fases ativas</div>
@@ -939,7 +1075,6 @@ export default function Processos() {
               </div>
             </div>
 
-            {/* Editor */}
             <div className="border border-slate-200 rounded-md p-3">
               <div className="font-medium text-slate-900">{pmEditing ? "Editar fase" : "Nova fase"}</div>
 
@@ -982,25 +1117,14 @@ export default function Processos() {
                 )}
 
                 <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4"
-                    checked={pmFinal}
-                    onChange={(e) => setPmFinal(e.target.checked)}
-                  />
+                  <input type="checkbox" className="h-4 w-4" checked={pmFinal} onChange={(e) => setPmFinal(e.target.checked)} />
                   <div className="text-sm text-slate-700">Marcar como “Processo Finalizado”</div>
                 </div>
 
                 <div className="flex items-center justify-between gap-2 pt-1">
                   <div className="flex gap-2">
                     {pmEditing ? (
-                      <Button
-                        variant="outline"
-                        onClick={() => disablePhase(pmEditing.id)}
-                        disabled={pmSaving}
-                        className="gap-2"
-                        title="Desativar fase (não apaga)"
-                      >
+                      <Button variant="outline" onClick={() => disablePhase(pmEditing.id)} disabled={pmSaving} title="Desativar fase (não apaga)">
                         Desativar
                       </Button>
                     ) : null}
@@ -1012,9 +1136,7 @@ export default function Processos() {
                   </Button>
                 </div>
 
-                <div className="text-xs text-slate-500">
-                  Dica: só deve existir **uma** fase final por tipo. Se marcar outra como final, depois a gente ajusta a regra.
-                </div>
+                <div className="text-xs text-slate-500">Dica: só deve existir uma fase final por tipo.</div>
               </div>
             </div>
           </div>
@@ -1080,9 +1202,7 @@ function ProcessTable(props: {
                     <td className="p-3 whitespace-nowrap">{r.cota || "—"}</td>
                     <td className="p-3">
                       <div className="font-medium text-slate-900">{r.cliente_nome || "—"}</div>
-                      <div className="text-xs text-slate-500">
-                        {r.proposta ? `Proposta ${r.proposta}` : "—"}
-                      </div>
+                      <div className="text-xs text-slate-500">{r.proposta ? `Proposta ${r.proposta}` : "—"}</div>
                     </td>
                     <td className="p-3 whitespace-nowrap">{r.segmento || "—"}</td>
                     <td className="p-3 whitespace-nowrap">
@@ -1114,7 +1234,6 @@ function ProcessTable(props: {
         </table>
       </div>
 
-      {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-slate-600">
           Página <span className="font-medium text-slate-900">{page}</span> de{" "}

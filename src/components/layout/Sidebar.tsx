@@ -1,1033 +1,1298 @@
-// src/components/layout/Sidebar.tsx
-import { NavLink, Link, useLocation } from "react-router-dom";
-import { useMemo, useState, useEffect, useId, type CSSProperties, type FC } from "react";
+// src/pages/Processos.tsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import type { LucideIcon } from "lucide-react";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
-  Briefcase,
-  Calculator,
-  FileText,
-  Wallet,
-  Layers,
-  UserCog,
-  SlidersHorizontal,
-  BarChart3,
-  ChevronsLeft,
-  ChevronsRight,
-  Trophy,
-  CalendarClock,
-  LineChart,
-  ClipboardList,
-  BadgeCheck,
-  Calendar,
-  Link as LinkIcon,
-  ChevronDown,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+
+import {
+  Loader2,
+  Plus,
+  Settings2,
+  RefreshCw,
+  ChevronLeft,
   ChevronRight,
-  X,
+  CheckCircle2,
+  AlertTriangle,
+  Clock,
+  Wrench,
 } from "lucide-react";
 
-type SidebarProps = { onNavigate?: () => void };
+/** =========================
+ * Types
+ * ========================= */
+type ProcessType = "faturamento" | "transferencia_cota";
+type OwnerKind = "administradora" | "corretora" | "cliente";
 
-const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
-
-const LOGO_URL = "/logo-consulmax.png?v=3";
-const FALLBACK_URL = "/favicon.ico?v=3";
-
-type AdminRow = { id: string; name: string; slug: string | null };
-
-type NavAlerts = {
-  oportunidades: boolean;
-  fluxoCaixa: boolean;
-  gestaoGrupos: boolean;
-  agenda: boolean;
+type Phase = {
+  id: string;
+  process_type: ProcessType;
+  name: string;
+  sla_kind: "days" | "hours";
+  sla_days: number | null;
+  sla_minutes: number | null;
+  sort_order: number;
+  is_active: boolean;
+  is_final: boolean;
 };
 
-/** ====== Liquid Glass ====== */
-const glassSidebarBase: CSSProperties = {
-  position: "relative",
-  background: "rgba(255,255,255,.55)",
-  borderRight: "1px solid rgba(255,255,255,.35)",
-  backdropFilter: "saturate(160%) blur(10px)",
-  WebkitBackdropFilter: "saturate(160%) blur(10px)",
-  boxShadow: "inset -8px 0 30px rgba(181,165,115,.10)",
+type ProcessRow = {
+  id: string;
+  type: ProcessType;
+  status: "open" | "closed";
+  start_date: string; // YYYY-MM-DD
+  administradora: string | null;
+  proposta: string | null;
+
+  grupo: string | null;
+  cota: string | null;
+  segmento: string | null;
+
+  cliente_nome: string | null;
+  credito_disponivel: number | null;
+
+  current_phase_id: string | null;
+  current_phase_started_at: string;
+  current_owner_kind: OwnerKind;
+
+  phase_name?: string | null;
+  deadline?: string | null;
+  sla_status?: "Atrasado" | "No dia" | "Em dia";
 };
 
-const activePillStyle: CSSProperties = {
-  background: "linear-gradient(180deg, rgba(161,28,39,1) 0%, rgba(161,28,39,.96) 100%)",
-  border: "1px solid rgba(255,255,255,.18)",
-  boxShadow: "0 6px 18px rgba(161,28,39,.25), inset 0 -8px 20px rgba(255,255,255,.12)",
-};
-
-const glassHoverPill: CSSProperties = {
-  background: "rgba(255,255,255,.58)",
-  border: "1px solid rgba(255,255,255,.35)",
-  boxShadow: "inset 0 1px 2px rgba(0,0,0,.04)",
-  backdropFilter: "blur(6px)",
-  WebkitBackdropFilter: "blur(6px)",
-};
-
-const SidebarLiquidBG: FC = () => (
-  <div style={sbLiquidCanvas} aria-hidden>
-    <style>{sbLiquidKeyframes}</style>
-    <span style={{ ...sbBlob, ...sbBlob1 }} />
-    <span style={{ ...sbBlob, ...sbBlob2 }} />
-    <span style={{ ...sbGoldGlow }} />
-  </div>
-);
-
-const sbLiquidCanvas: CSSProperties = {
-  position: "absolute",
-  inset: 0,
-  zIndex: 0,
-  overflow: "hidden",
-  pointerEvents: "none",
-};
-
-const sbBlob: CSSProperties = {
-  position: "absolute",
-  width: 280,
-  height: 280,
-  borderRadius: "50%",
-  filter: "blur(40px)",
-  opacity: 0.55,
-};
-const sbBlob1: CSSProperties = {
-  left: -80,
-  top: -60,
-  background: "radial-gradient(closest-side, #A11C27, rgba(161,28,39,0))",
-  animation: "sbFloat1 26s ease-in-out infinite",
-};
-const sbBlob2: CSSProperties = {
-  right: -90,
-  bottom: -60,
-  background: "radial-gradient(closest-side, #1E293F, rgba(30,41,63,0))",
-  animation: "sbFloat2 30s ease-in-out infinite",
-};
-const sbGoldGlow: CSSProperties = {
-  position: "absolute",
-  right: -60,
-  top: "45%",
-  width: 180,
-  height: 180,
-  borderRadius: "50%",
-  background: "radial-gradient(closest-side, rgba(181,165,115,.35), rgba(181,165,115,0))",
-  filter: "blur(30px)",
-  opacity: 0.6,
-};
-const sbLiquidKeyframes = `
-@keyframes sbFloat1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(18px,14px) scale(1.06)} 100%{transform:translate(0,0) scale(1)} }
-@keyframes sbFloat2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-16px,-10px) scale(1.05)} 100%{transform:translate(0,0) scale(1)} }
-`;
-
-/** ====== Helpers de data / alertas ====== */
-function todayDateStr() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+/** =========================
+ * Helpers
+ * ========================= */
+function formatBRDateFromISO(isoDate: string | null | undefined) {
+  if (!isoDate) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!m) return isoDate;
+  return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
-function dayRangeISO(dateStr: string) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const start = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
-  const end = new Date(y, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999);
-  return { startIso: start.toISOString(), endIso: end.toISOString() };
+function parseBRDateToISO(br: string) {
+  const t = (br || "").trim();
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
+  if (!m) return null;
+  const dd = Number(m[1]);
+  const mm = Number(m[2]);
+  const yyyy = Number(m[3]);
+  if (yyyy < 1900 || yyyy > 2200) return null;
+  if (mm < 1 || mm > 12) return null;
+  if (dd < 1 || dd > 31) return null;
+  return `${String(yyyy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
 }
 
-async function checkOpportunitiesAlert(todayStr: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase
-      .from("opportunities")
-      .select("id, expected_close_at, estagio")
-      .lt("expected_close_at", todayStr)
-      .not("estagio", "in", '("Fechado (Ganho)","Fechado (Perdido)")')
-      .limit(1);
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
 
-    if (error) {
-      console.error("Erro ao verificar oportunidades atrasadas:", error.message);
-      return false;
-    }
-    return !!(data && data.length > 0);
-  } catch (e) {
-    console.error("Erro inesperado em checkOpportunitiesAlert:", e);
-    return false;
+function endOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
+
+function addSLA(phase: Phase | null, phaseStartedAtISO: string) {
+  if (!phase) return null;
+  const base = new Date(phaseStartedAtISO);
+
+  if (phase.sla_kind === "days") {
+    const days = Number(phase.sla_days ?? 0);
+    return new Date(base.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
   }
+  const minutes = Number(phase.sla_minutes ?? 0);
+  return new Date(base.getTime() + minutes * 60 * 1000).toISOString();
 }
 
-async function checkCashFlowAlert(todayStr: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase
-      .from("cash_flows")
-      .select("id")
-      .eq("data", todayStr)
-      .in("tipo", ["entrada", "saida"])
-      .eq("created_by", WESLEY_ID)
-      .limit(1);
+function calcSlaStatus(deadlineISO: string | null, now = new Date()) {
+  if (!deadlineISO) return "Em dia" as const;
+  const deadline = new Date(deadlineISO);
 
-    if (error) {
-      console.error("Erro ao verificar fluxo de caixa do dia:", error.message);
-      return false;
-    }
-    return !!(data && data.length > 0);
-  } catch (e) {
-    console.error("Erro inesperado em checkCashFlowAlert:", e);
-    return false;
-  }
+  const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
+
+  if (now.getTime() > deadline.getTime()) return "Atrasado" as const;
+  if (deadline.getTime() >= todayStart.getTime() && deadline.getTime() <= todayEnd.getTime()) return "No dia" as const;
+  return "Em dia" as const;
 }
 
-async function checkGroupsAlert(todayStr: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase
-      .from("groups")
-      .select("id")
-      .or(`prox_vencimento.eq.${todayStr},prox_sorteio.eq.${todayStr},prox_assembleia.eq.${todayStr}`)
-      .limit(1);
-
-    if (error) {
-      console.error("Erro ao verificar eventos de grupos hoje:", error.message);
-      return false;
-    }
-    return !!(data && data.length > 0);
-  } catch (e) {
-    console.error("Erro inesperado em checkGroupsAlert:", e);
-    return false;
-  }
+function slaChip(s: ProcessRow["sla_status"]) {
+  if (s === "Atrasado") return { label: "Atrasado", icon: AlertTriangle };
+  if (s === "No dia") return { label: "No dia", icon: Clock };
+  return { label: "Em dia", icon: CheckCircle2 };
 }
 
-async function checkAgendaAlert(startIso: string, endIso: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase
-      .from("agenda_eventos")
-      .select("id")
-      .gte("inicio_at", startIso)
-      .lte("inicio_at", endIso)
-      .limit(1);
-
-    if (error) {
-      console.error("Erro ao verificar eventos de agenda hoje:", error.message);
-      return false;
-    }
-    return !!(data && data.length > 0);
-  } catch (e) {
-    console.error("Erro inesperado em checkAgendaAlert:", e);
-    return false;
-  }
+function toMinutesFromHHMM(hhmm: string) {
+  const m = /^(\d{2}):(\d{2})$/.exec((hhmm || "").trim());
+  const hh = m ? Number(m[1]) : 8;
+  const mm = m ? Number(m[2]) : 0;
+  return Math.max(0, hh * 60 + mm);
 }
 
-const AlertDot: FC = () => (
-  <span
-    className="ml-2 h-2.5 w-2.5 rounded-full bg-[#A11C27] animate-pulse shadow-[0_0_0_4px_rgba(161,28,39,0.25)]"
-    aria-label="Há pendências para hoje"
-  />
-);
-
-type FlatItem = {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-  onlyForWesley?: boolean;
-  showDot?: boolean;
-  end?: boolean;
-};
-
-type GroupKey = "vendas" | "pos" | "admin" | "fin" | "max";
-
-function isAnyPathActive(pathname: string, prefixes: string[]) {
-  return prefixes.some((p) => pathname === p || pathname.startsWith(p));
+function msToHuman(ms: number) {
+  const totalMinutes = Math.floor(ms / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes - days * 60 * 24) / 60);
+  const minutes = totalMinutes - days * 60 * 24 - hours * 60;
+  return { days, hours, minutes, totalMinutes };
 }
 
-function groupForPath(pathname: string): GroupKey {
-  if (
-    isAnyPathActive(pathname, [
-      "/planejamento",
-      "/oportunidades",
-      "/agenda",
-      "/simuladores",
-      "/propostas",
-      "/ranking",
-      "/estoque-contempladas",
-    ])
-  )
-    return "vendas";
-
-  if (isAnyPathActive(pathname, ["/carteira", "/giro-de-carteira", "/gestao-de-grupos"])) return "pos";
-
-  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes", "/processos"])) return "admin";
-
-  if (isAnyPathActive(pathname, ["/links", "/procedimentos"])) return "max";
-
-  return "fin";
+function diffMs(a: Date, b: Date) {
+  return Math.max(0, b.getTime() - a.getTime());
 }
 
-/** ====== Componente ====== */
-export default function Sidebar({ onNavigate }: SidebarProps) {
-  const location = useLocation();
-  const pathname = location.pathname;
+/** =========================
+ * Page
+ * ========================= */
+export default function Processos() {
+  const [tab, setTab] = useState<ProcessType>("faturamento");
 
-  // Detecta mobile/tablet
-  const [isSmall, setIsSmall] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(max-width: 767px)").matches;
+  // phases
+  const [phases, setPhases] = useState<Phase[]>([]);
+  const phasesById = useMemo(() => Object.fromEntries(phases.map((p) => [p.id, p])), [phases]);
+  const activePhases = useMemo(() => phases.filter((p) => p.is_active), [phases]);
+
+  // list
+  const [rows, setRows] = useState<ProcessRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // pagination
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [total, setTotal] = useState(0);
+
+  // dialogs
+  const [openNew, setOpenNew] = useState(false);
+  const [openPhases, setOpenPhases] = useState(false);
+
+  const [treating, setTreating] = useState<ProcessRow | null>(null);
+  const [openTreat, setOpenTreat] = useState(false);
+
+  const [finalizing, setFinalizing] = useState<ProcessRow | null>(null);
+  const [openFinalize, setOpenFinalize] = useState(false);
+
+  // New form
+  const [nfStartBR, setNfStartBR] = useState(() => {
+    const d = new Date();
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = String(d.getFullYear());
+    return `${dd}/${mm}/${yyyy}`;
   });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mq = window.matchMedia("(max-width: 767px)");
-    const handler = () => setIsSmall(mq.matches);
-    handler();
-    if ("addEventListener" in mq) mq.addEventListener("change", handler);
-    else mq.addListener(handler);
-    return () => {
-      if ("removeEventListener" in mq) mq.removeEventListener("change", handler);
-      else mq.removeListener(handler);
-    };
-  }, []);
+  const [nfAdmin, setNfAdmin] = useState<string>("__none__");
+  const [nfProposta, setNfProposta] = useState("");
+  const [nfGrupo, setNfGrupo] = useState("");
+  const [nfCota, setNfCota] = useState("");
+  const [nfCliente, setNfCliente] = useState("");
+  const [nfSegmento, setNfSegmento] = useState("");
+  const [nfCredito, setNfCredito] = useState<string>("");
+  const [nfPhaseId, setNfPhaseId] = useState<string>("__none__");
+  const [nfOwner, setNfOwner] = useState<OwnerKind>("corretora");
+  const [nfSaving, setNfSaving] = useState(false);
+  const propostaBusyRef = useRef(false);
 
-  // Drawer mobile
-  const [mobileOpen, setMobileOpen] = useState(false);
+  // Treat form
+  const [tfPhaseId, setTfPhaseId] = useState<string>("__none__");
+  const [tfOwner, setTfOwner] = useState<OwnerKind>("corretora");
+  const [tfNote, setTfNote] = useState("");
+  const [tfSaving, setTfSaving] = useState(false);
 
-  // Colapsar com persistência (apenas desktop)
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
+  // Finalize form
+  const [ffUserSat, setFfUserSat] = useState(80);
+  const [ffClientSat, setFfClientSat] = useState(70);
+  const [ffImprove, setFfImprove] = useState("");
+  const [ffSaving, setFfSaving] = useState(false);
+  const [finalStatsText, setFinalStatsText] = useState<string | null>(null);
+
+  // Phase management form
+  const [pmEditing, setPmEditing] = useState<Phase | null>(null);
+  const [pmName, setPmName] = useState("");
+  const [pmSlaKind, setPmSlaKind] = useState<"days" | "hours">("days");
+  const [pmDays, setPmDays] = useState("1");
+  const [pmHoursHHMM, setPmHoursHHMM] = useState("08:00");
+  const [pmOrder, setPmOrder] = useState("100");
+  const [pmFinal, setPmFinal] = useState(false);
+  const [pmSaving, setPmSaving] = useState(false);
+
+  /** -------- Load phases -------- */
+  async function loadPhasesFor(type: ProcessType) {
+    const { data, error } = await supabase
+      .from("process_phases")
+      .select("id, process_type, name, sla_kind, sla_days, sla_minutes, sort_order, is_active, is_final")
+      .eq("process_type", type)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true });
+
+    if (error) throw new Error(error.message);
+    setPhases((data || []) as any);
+  }
+
+  /** -------- Load list (SUPABASE DIRETO) -------- */
+  async function loadList(type: ProcessType, p: number, silent = false) {
+    if (!silent) setLoading(true);
     try {
-      return localStorage.getItem("@consulmax:sidebar-collapsed") === "1";
-    } catch {
-      return false;
+      const from = (p - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      const q = supabase
+        .from("processes")
+        .select(
+          `id, type, status, start_date, administradora, proposta, grupo, cota, segmento,
+           cliente_nome, credito_disponivel,
+           current_phase_id, current_phase_started_at, current_owner_kind`,
+          { count: "exact" }
+        )
+        .eq("type", type)
+        .eq("status", "open")
+        .order("start_date", { ascending: true })
+        .range(from, to);
+
+      const { data, error, count } = await q;
+      if (error) throw new Error(error.message);
+
+      const now = new Date();
+      const out = ((data || []) as any as ProcessRow[]).map((r) => {
+        const phase = r.current_phase_id ? (phasesById[r.current_phase_id] as Phase | undefined) : undefined;
+        const deadline = phase ? addSLA(phase, r.current_phase_started_at) : null;
+        const sla_status = calcSlaStatus(deadline, now);
+
+        return {
+          ...r,
+          phase_name: phase?.name ?? null,
+          deadline,
+          sla_status,
+        };
+      });
+
+      setRows(out);
+      setTotal(count ?? out.length);
+    } finally {
+      if (!silent) setLoading(false);
     }
-  });
+  }
 
-  useEffect(() => {
-    if (isSmall && collapsed) setCollapsed(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSmall]);
-
-  useEffect(() => {
+  async function refreshAll() {
+    setRefreshing(true);
     try {
-      localStorage.setItem("@consulmax:sidebar-collapsed", collapsed ? "1" : "0");
-    } catch {}
-  }, [collapsed]);
-
-  // Fecha drawer no mobile sempre que navegar
-  useEffect(() => {
-    if (isSmall) setMobileOpen(false);
-    onNavigate?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname]);
-
-  // Trava scroll do body quando drawer estiver aberto (mobile)
-  useEffect(() => {
-    if (!isSmall) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = mobileOpen ? "hidden" : prev || "";
-    return () => {
-      document.body.style.overflow = prev || "";
-    };
-  }, [mobileOpen, isSmall]);
-
-  const handleNav = () => {
-    if (isSmall) setMobileOpen(false);
-    onNavigate?.();
-  };
-
-  // Carregar administradoras (Simuladores)
-  const [admins, setAdmins] = useState<AdminRow[]>([]);
-  const [adminsLoading, setAdminsLoading] = useState(false);
-  const [embraconId, setEmbraconId] = useState<string | null>(null);
+      await loadPhasesFor(tab);
+      await loadList(tab, page, true);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => {
-    let alive = true;
+    setPage(1);
+    setRows([]);
+    setTotal(0);
+    setFinalStatsText(null);
+
     (async () => {
-      setAdminsLoading(true);
+      setLoading(true);
       try {
-        const { data, error } = await supabase.from("sim_admins").select("id, name, slug").order("name", { ascending: true });
-
-        if (!alive) return;
-
-        if (error) {
-          console.error("Erro ao carregar administradoras:", error.message);
-          setAdmins([]);
-          setEmbraconId(null);
-        } else {
-          const list = (data ?? []) as AdminRow[];
-          setAdmins(list);
-          const embr = list.find((a) => a.name?.toLowerCase?.() === "embracon");
-          setEmbraconId(embr?.id ?? null);
-        }
-      } catch (e: any) {
-        if (!alive) return;
-        console.error("Erro inesperado ao carregar administradoras:", e?.message || e);
-        setAdmins([]);
-        setEmbraconId(null);
+        await loadPhasesFor(tab);
+        await loadList(tab, 1, true);
       } finally {
-        if (alive) setAdminsLoading(false);
+        setLoading(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const simuladoresActive = useMemo(() => pathname.startsWith("/simuladores"), [pathname]);
-
-  // Usuário autenticado (para esconder Fluxo de Caixa pros demais)
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
   useEffect(() => {
-    let alive = true;
     (async () => {
+      await loadList(tab, page, false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, phasesById]);
+
+  /** -------- Lookup proposta (SUPABASE DIRETO) -------- */
+  async function lookupPropostaIfNeeded(propostaRaw: string) {
+    const proposta = (propostaRaw || "").trim();
+    if (!proposta) return;
+    if (propostaBusyRef.current) return;
+    propostaBusyRef.current = true;
+
+    try {
+      const { data: venda, error } = await supabase
+        .from("vendas")
+        .select("lead_id, numero_proposta, grupo, cota, segmento, administradora, created_at")
+        .eq("numero_proposta", proposta)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error || !venda) return;
+
+      if (venda.administradora && (nfAdmin === "__none__" || !nfAdmin)) setNfAdmin(String(venda.administradora));
+      if (venda.grupo) setNfGrupo(String(venda.grupo));
+      if (venda.cota) setNfCota(String(venda.cota));
+      if (venda.segmento) setNfSegmento(String(venda.segmento));
+
+      if (venda.lead_id) {
+        const { data: cli } = await supabase
+          .from("clientes")
+          .select("id, nome")
+          .eq("lead_id", venda.lead_id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (cli?.nome) {
+          setNfCliente(String(cli.nome));
+        } else {
+          const { data: ld } = await supabase.from("leads").select("id, nome").eq("id", venda.lead_id).maybeSingle();
+          if (ld?.nome) setNfCliente(String(ld.nome));
+        }
+      }
+    } finally {
+      propostaBusyRef.current = false;
+    }
+  }
+
+  /** -------- Create process (SUPABASE DIRETO) -------- */
+  async function submitNew() {
+    const startISO = parseBRDateToISO(nfStartBR);
+    if (!startISO) return;
+
+    const credito = nfCredito ? Number(String(nfCredito).replace(/\./g, "").replace(",", ".")) : null;
+
+    setNfSaving(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const authUserId = user?.id;
+      if (!authUserId) return;
+
+      // fase inicial (automática se não escolher)
+      let currentPhaseId = nfPhaseId !== "__none__" ? nfPhaseId : null;
+      if (!currentPhaseId) {
+        const first = activePhases[0];
+        currentPhaseId = first?.id ?? null;
+      }
+
+      const nowISO = new Date().toISOString();
+
+      const { data: proc, error } = await supabase
+        .from("processes")
+        .insert({
+          type: tab,
+          status: "open",
+          start_date: startISO,
+          administradora: nfAdmin === "__none__" ? null : nfAdmin,
+          proposta: nfProposta || null,
+          grupo: nfGrupo || null,
+          cota: nfCota || null,
+          segmento: nfSegmento || null,
+          cliente_nome: nfCliente || null,
+          credito_disponivel: credito,
+          current_phase_id: currentPhaseId,
+          current_phase_started_at: nowISO,
+          current_owner_kind: nfOwner,
+          created_by: authUserId,
+          updated_by: authUserId,
+        })
+        .select("*")
+        .single();
+
+      if (error) throw new Error(error.message);
+
+      await supabase.from("process_events").insert({
+        process_id: proc.id,
+        at: nowISO,
+        from_phase_id: null,
+        to_phase_id: currentPhaseId,
+        owner_kind: nfOwner,
+        note: "Processo criado",
+        created_by: authUserId,
+      });
+
+      setOpenNew(false);
+      setNfProposta("");
+      setNfGrupo("");
+      setNfCota("");
+      setNfCliente("");
+      setNfSegmento("");
+      setNfCredito("");
+      setNfPhaseId("__none__");
+      setNfOwner("corretora");
+
+      setPage(1);
+      await loadList(tab, 1, true);
+    } finally {
+      setNfSaving(false);
+    }
+  }
+
+  /** -------- Treat -------- */
+  function openTreatDialog(row: ProcessRow) {
+    setTreating(row);
+    setTfPhaseId(row.current_phase_id || "__none__");
+    setTfOwner(row.current_owner_kind || "corretora");
+    setTfNote("");
+    setOpenTreat(true);
+  }
+
+  async function submitTreat() {
+    if (!treating) return;
+
+    const phaseId = tfPhaseId === "__none__" ? null : tfPhaseId;
+    const selectedPhase = phaseId ? phasesById[phaseId] : null;
+
+    // se fase final, abre finalização
+    if (selectedPhase?.is_final) {
+      setOpenTreat(false);
+      setFinalizing(treating);
+      setFinalStatsText(null);
+      setOpenFinalize(true);
+      return;
+    }
+
+    setTfSaving(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const authUserId = user?.id;
+      if (!authUserId) return;
+
+      const nowISO = new Date().toISOString();
+
+      const phaseChanged = !!(phaseId && phaseId !== treating.current_phase_id);
+
+      const { error } = await supabase
+        .from("processes")
+        .update({
+          current_phase_id: phaseId ?? treating.current_phase_id,
+          current_owner_kind: tfOwner,
+          ...(phaseChanged ? { current_phase_started_at: nowISO } : {}),
+          updated_by: authUserId,
+        })
+        .eq("id", treating.id);
+
+      if (error) throw new Error(error.message);
+
+      if (phaseChanged || tfNote.trim() || tfOwner !== treating.current_owner_kind) {
+        await supabase.from("process_events").insert({
+          process_id: treating.id,
+          at: nowISO,
+          from_phase_id: treating.current_phase_id,
+          to_phase_id: phaseId ?? treating.current_phase_id,
+          owner_kind: tfOwner,
+          note: tfNote.trim() || null,
+          created_by: authUserId,
+        });
+      }
+
+      setOpenTreat(false);
+      setTreating(null);
+      await loadList(tab, page, true);
+    } finally {
+      setTfSaving(false);
+    }
+  }
+
+  /** -------- Finalize -------- */
+  async function submitFinalize() {
+    if (!finalizing) return;
+
+    setFfSaving(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const authUserId = user?.id;
+      if (!authUserId) return;
+
+      // achar fase final
+      const finalPhase = activePhases.find((p) => p.is_final) || null;
+      if (!finalPhase) return;
+
+      const nowISO = new Date().toISOString();
+
+      // pegar timeline (events)
+      const { data: evs } = await supabase
+        .from("process_events")
+        .select("at, owner_kind")
+        .eq("process_id", finalizing.id)
+        .order("at", { ascending: true });
+
+      const start = new Date(finalizing.current_phase_started_at || nowISO); // fallback seguro
+      const end = new Date(nowISO);
+
+      const totals: Record<OwnerKind, number> = { administradora: 0, corretora: 0, cliente: 0 };
+
+      const list = (evs || []).map((e: any) => ({
+        at: new Date(e.at),
+        owner_kind: e.owner_kind as OwnerKind,
+      }));
+
+      if (list.length === 0) {
+        list.push({ at: start, owner_kind: finalizing.current_owner_kind });
+      }
+
+      for (let i = 0; i < list.length; i++) {
+        const segStart = i === 0 ? start : list[i].at;
+        const segEnd = i + 1 < list.length ? list[i + 1].at : end;
+        totals[list[i].owner_kind] += diffMs(segStart, segEnd);
+      }
+
+      const totalMs = diffMs(start, end);
+
+      // fechar processo
+      const { error: upErr } = await supabase
+        .from("processes")
+        .update({
+          status: "closed",
+          closed_at: nowISO,
+          current_phase_id: finalPhase.id,
+          current_phase_started_at: nowISO,
+          updated_by: authUserId,
+        })
+        .eq("id", finalizing.id);
+
+      if (upErr) throw new Error(upErr.message);
+
+      // evento final
+      await supabase.from("process_events").insert({
+        process_id: finalizing.id,
+        at: nowISO,
+        from_phase_id: finalizing.current_phase_id,
+        to_phase_id: finalPhase.id,
+        owner_kind: finalizing.current_owner_kind,
+        note: "Processo finalizado",
+        created_by: authUserId,
+      });
+
+      // feedback
+      await supabase.from("process_feedback").insert({
+        process_id: finalizing.id,
+        user_satisfaction: ffUserSat,
+        client_satisfaction: ffClientSat,
+        improvement_text: ffImprove.trim() || null,
+        created_by: authUserId,
+      });
+
+      const t = msToHuman(totalMs);
+      const a = msToHuman(totals.administradora);
+      const c = msToHuman(totals.corretora);
+      const l = msToHuman(totals.cliente);
+
+      setFinalStatsText(
+        `Esse processo levou o total de ${t.days} dia(s). ` +
+          `Administradora: ${a.days} dia(s) | Corretora: ${c.days} dia(s) | Cliente: ${l.days} dia(s).`
+      );
+
+      // remove da lista
+      setRows((prev) => prev.filter((r) => r.id !== finalizing.id));
+      setTotal((prev) => Math.max(0, prev - 1));
+      setOpenFinalize(false);
+      setFinalizing(null);
+      setFfImprove("");
+    } finally {
+      setFfSaving(false);
+    }
+  }
+
+  /** -------- Phase mgmt -------- */
+  function openNewPhase() {
+    setPmEditing(null);
+    setPmName("");
+    setPmSlaKind("days");
+    setPmDays("1");
+    setPmHoursHHMM("08:00");
+    setPmOrder("100");
+    setPmFinal(false);
+  }
+
+  function openEditPhase(p: Phase) {
+    setPmEditing(p);
+    setPmName(p.name || "");
+    setPmSlaKind(p.sla_kind || "days");
+    setPmDays(String(p.sla_days ?? "1"));
+    const minutes = Number(p.sla_minutes ?? 480);
+    const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
+    const mm = String(minutes % 60).padStart(2, "0");
+    setPmHoursHHMM(`${hh}:${mm}`);
+    setPmOrder(String(p.sort_order ?? 100));
+    setPmFinal(!!p.is_final);
+  }
+
+  async function savePhase() {
+    const name = pmName.trim();
+    if (!name) return;
+
+    const sort_order = Number(pmOrder || 100) || 100;
+
+    let sla_days: number | null = null;
+    let sla_minutes: number | null = null;
+
+    if (pmSlaKind === "days") {
+      sla_days = Math.max(0, Number(pmDays || 0) || 0);
+      sla_minutes = null;
+    } else {
+      sla_minutes = toMinutesFromHHMM(pmHoursHHMM);
+      sla_days = null;
+    }
+
+    setPmSaving(true);
+    try {
+      if (!pmEditing) {
+        const { error } = await supabase.from("process_phases").insert({
+          process_type: tab,
+          name,
+          sla_kind: pmSlaKind,
+          sla_days,
+          sla_minutes,
+          sort_order,
+          is_active: true,
+          is_final: pmFinal,
+        });
+        if (error) throw new Error(error.message);
+      } else {
+        const { error } = await supabase
+          .from("process_phases")
+          .update({
+            name,
+            sla_kind: pmSlaKind,
+            sla_days,
+            sla_minutes,
+            sort_order,
+            is_final: pmFinal,
+          })
+          .eq("id", pmEditing.id);
+        if (error) throw new Error(error.message);
+      }
+
+      await loadPhasesFor(tab);
+      openNewPhase();
+    } finally {
+      setPmSaving(false);
+    }
+  }
+
+  async function disablePhase(id: string) {
+    const { error } = await supabase.from("process_phases").update({ is_active: false }).eq("id", id);
+    if (!error) await loadPhasesFor(tab);
+  }
+
+  /** -------- Init -------- */
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
       try {
-        const { data, error } = await supabase.auth.getUser();
-        if (!alive) return;
-        if (error || !data?.user) setAuthUserId(null);
-        else setAuthUserId(data.user.id);
-      } catch {
-        if (!alive) return;
-        setAuthUserId(null);
+        await loadPhasesFor(tab);
+        await loadList(tab, 1, true);
+      } finally {
+        setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Alerts de hoje
-  const [navAlerts, setNavAlerts] = useState<NavAlerts>({
-    oportunidades: false,
-    fluxoCaixa: false,
-    gestaoGrupos: false,
-    agenda: false,
-  });
+  const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
 
-  useEffect(() => {
-    let alive = true;
-    const todayStr = todayDateStr();
-    const { startIso, endIso } = dayRangeISO(todayStr);
-
-    const loadAlerts = async () => {
-      try {
-        const [hasOpp, hasCash, hasGroups, hasAgenda] = await Promise.all([
-          checkOpportunitiesAlert(todayStr),
-          checkCashFlowAlert(todayStr),
-          checkGroupsAlert(todayStr),
-          checkAgendaAlert(startIso, endIso),
-        ]);
-
-        if (!alive) return;
-        setNavAlerts({
-          oportunidades: hasOpp,
-          fluxoCaixa: hasCash,
-          gestaoGrupos: hasGroups,
-          agenda: hasAgenda,
-        });
-      } catch (e) {
-        if (!alive) return;
-        console.error("Erro ao carregar alertas de navegação:", e);
-      }
-    };
-
-    loadAlerts();
-    const interval = window.setInterval(loadAlerts, 5 * 60 * 1000);
-    return () => {
-      alive = false;
-      window.clearInterval(interval);
-    };
-  }, []);
-
-  // Responsividade
-  const widthClass = useMemo(() => {
-    if (isSmall) return "w-[92vw] max-w-[360px]";
-    return collapsed ? "md:w-20" : "md:w-64";
-  }, [isSmall, collapsed]);
-
-  const textHidden = collapsed ? "md:opacity-0 md:pointer-events-none md:select-none md:w-0 opacity-100" : "opacity-100";
-  const pillPadding = collapsed ? "md:px-2.5 px-3" : "px-3";
-
-  // Accordion: permite fechar ao clicar de novo
-  const currentGroup = useMemo<GroupKey>(() => groupForPath(pathname), [pathname]);
-  const [openGroup, setOpenGroup] = useState<GroupKey | null>(currentGroup);
-
-  useEffect(() => {
-    if (!collapsed) setOpenGroup(currentGroup);
-  }, [currentGroup, collapsed]);
-
-  // subgrupo Simuladores abre quando a rota é /simuladores
-  const simListId = useId();
-  const [simGroupOpen, setSimGroupOpen] = useState(simuladoresActive);
-  useEffect(() => {
-    setSimGroupOpen(simuladoresActive);
-  }, [simuladoresActive]);
-
-  // Href para Simuladores no modo colapsado
-  const simuladoresHref = useMemo(() => {
-    if (embraconId) return `/simuladores/${embraconId}`;
-    if (admins.length > 0) return `/simuladores/${admins[0].id}`;
-    return "/simuladores/add";
-  }, [embraconId, admins]);
-
-  // Itens “flat” (modo colapsado)
-  const flatItems: FlatItem[] = useMemo(
-    () => [
-      // Vendas
-      { to: "/planejamento", label: "Planejamento", icon: ClipboardList, end: true },
-      { to: "/oportunidades", label: "Oportunidades", icon: Briefcase, showDot: navAlerts.oportunidades, end: true },
-      { to: "/agenda", label: "Agenda", icon: Calendar, showDot: navAlerts.agenda, end: true },
-      { to: simuladoresHref, label: "Simuladores", icon: Calculator, end: false },
-      { to: "/propostas", label: "Propostas", icon: FileText, end: true },
-      { to: "/ranking", label: "Ranking", icon: Trophy, end: true },
-      { to: "/estoque-contempladas", label: "Contempladas", icon: BadgeCheck, end: true },
-
-      // Pós-venda
-      { to: "/carteira", label: "Carteira", icon: Wallet, end: true },
-      { to: "/giro-de-carteira", label: "Giro de Carteira", icon: CalendarClock, end: true },
-      { to: "/gestao-de-grupos", label: "Gestão de Grupos", icon: Layers, showDot: navAlerts.gestaoGrupos, end: true },
-
-      // Administrativo
-      { to: "/relatorios", label: "Relatórios", icon: BarChart3, end: true },
-      { to: "/usuarios", label: "Usuários", icon: UserCog, end: true },
-      { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
-      { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
-      { to: "/processos", label: "Processos", icon: ClipboardList, end: true },
-
-      // Financeiro
-      { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
-      {
-        to: "/fluxo-de-caixa",
-        label: "Fluxo de Caixa",
-        icon: LineChart,
-        onlyForWesley: true,
-        showDot: navAlerts.fluxoCaixa,
-        end: true,
-      },
-
-      // Maximize-se
-      { to: "/procedimentos", label: "Procedimentos", icon: ClipboardList, end: true },
-      { to: "/links", label: "Links Úteis", icon: LinkIcon, end: true },
-    ],
-    [navAlerts, simuladoresHref]
-  );
-
-  const mobileTapFx = "active:scale-[0.99] active:opacity-90";
-
-  const pillClass = (isActive: boolean) =>
-    `${pillPadding} py-2.5 rounded-2xl transition-colors flex items-center gap-2
-     ${mobileTapFx}
-     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-     ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`;
-
-  const renderSectionPill = (key: GroupKey, title: string, Icon: LucideIcon) => {
-    const isOpen = openGroup === key;
-    const isActive = currentGroup === key;
-
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          if (collapsed) return;
-          setOpenGroup((prev) => (prev === key ? null : key)); // ✅ clique de novo retrai
-        }}
-        className={`${pillPadding} py-2.5 rounded-2xl transition-colors w-full flex items-center justify-between
-                    ${mobileTapFx}
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
-        style={isActive ? activePillStyle : glassHoverPill}
-        aria-expanded={isOpen}
-        title={title}
-      >
-        <span className="flex items-center gap-2">
-          <Icon className="h-4 w-4" />
-          <span className="font-semibold">{title}</span>
-        </span>
-        <span className="opacity-90" aria-hidden>
-          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </span>
-      </button>
-    );
-  };
-
-  // ===== Wrapper do drawer no mobile =====
-  const AsideContent = (
-    <aside
-      className={`${widthClass} border-r md:shadow md:sticky md:top-14
-                  md:min-h-[calc(100vh-56px)] md:h-auto
-                  h-[calc(100vh-56px)] p-3 overflow-y-auto overflow-x-hidden
-                  pb-[max(env(safe-area-inset-bottom),theme(spacing.6))]`}
-      style={glassSidebarBase}
-      role="navigation"
-      aria-label="Navegação principal"
-    >
-      {!collapsed && <SidebarLiquidBG />}
-
-      {/* HEADER sticky */}
-      <div
-        className="sticky top-0 z-[2] -mx-3 px-3 pt-0 pb-3"
-        style={{
-          background: "rgba(245,245,245,.65)",
-          backdropFilter: "saturate(160%) blur(10px)",
-          WebkitBackdropFilter: "saturate(160%) blur(10px)",
-          borderBottom: "1px solid rgba(255,255,255,.35)",
-        }}
-      >
-        {/* Top bar mobile: botão fechar */}
-        {isSmall && (
-          <div className="flex items-center justify-end mb-2">
-            <button
-              type="button"
-              onClick={() => setMobileOpen(false)}
-              className="inline-flex items-center justify-center rounded-xl border px-2.5 py-2 hover:bg-white/60"
-              style={glassHoverPill}
-              aria-label="Fechar menu"
-              title="Fechar"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-
-        {/* LOGO */}
-        <Link
-          to="/oportunidades"
-          className="relative z-[1] flex items-center gap-3 mb-2"
-          onClick={handleNav}
-          aria-label="Ir para Oportunidades"
-        >
-          <img
-            src={LOGO_URL}
-            alt="Consulmax"
-            title="Consulmax"
-            width={40}
-            height={40}
-            loading="eager"
-            className="h-10 w-10 object-contain rounded-md bg-[#F5F5F5]"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = FALLBACK_URL;
-            }}
-          />
-          <div className={`flex flex-col leading-tight transition-opacity duration-200 ${textHidden}`}>
-            <span className="font-bold text-consulmax-primary text-lg">Consulmax</span>
-            <span className="text-xs text-consulmax-secondary -mt-0.5">Maximize as suas conquistas</span>
-          </div>
-        </Link>
-
-        {/* Botão ocultar/expandir (apenas desktop) */}
-        <div className="relative z-[1]">
-          <button
-            type="button"
-            onClick={() => {
-              if (!collapsed) setSimGroupOpen(false);
-              setCollapsed((v) => !v);
-            }}
-            className={`hidden md:inline-flex items-center justify-center rounded-xl border px-2.5 py-1.5 text-xs hover:bg-white/60
-                        ${mobileTapFx}
-                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40`}
-            title={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
-            aria-label={collapsed ? "Expandir barra lateral" : "Ocultar barra lateral"}
-            style={glassHoverPill}
-          >
-            {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
-            {!collapsed && <span className="ml-1.5">Ocultar</span>}
-          </button>
-        </div>
-      </div>
-
-      {/* Navegação */}
-      <nav className="relative z-[1] grid gap-2 mt-3">
-        {/* ===== MODO COLAPSADO (flat) ===== */}
-        {collapsed && !isSmall && (
-          <>
-            {flatItems
-              .filter((i) => !i.onlyForWesley || authUserId === WESLEY_ID)
-              .map((i) => (
-                <NavLink
-                  key={`${i.to}-${i.label}`}
-                  to={i.to}
-                  className={({ isActive }) => `${pillClass(isActive)} justify-center`}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title={i.label}
-                  end={i.end}
-                >
-                  <i.icon className="h-4 w-4" />
-                </NavLink>
-              ))}
-          </>
-        )}
-
-        {/* ===== MODO EXPANDIDO (accordion) ===== */}
-        {(!collapsed || isSmall) && (
-          <>
-            {/* VENDAS */}
-            {renderSectionPill("vendas", "Vendas", Briefcase)}
-            {openGroup === "vendas" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/planejamento"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Planejamento"
-                  end
-                >
-                  <ClipboardList className="h-4 w-4" />
-                  Planejamento
-                </NavLink>
-
-                <NavLink
-                  to="/oportunidades"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Oportunidades"
-                  end
-                >
-                  <Briefcase className="h-4 w-4" />
-                  <span className="flex items-center justify-between w-full">
-                    <span>Oportunidades</span>
-                    {navAlerts.oportunidades && <AlertDot />}
-                  </span>
-                </NavLink>
-
-                <NavLink
-                  to="/agenda"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Agenda"
-                  end
-                >
-                  <Calendar className="h-4 w-4" />
-                  <span className="flex items-center justify-between w-full">
-                    <span>Agenda</span>
-                    {navAlerts.agenda && <AlertDot />}
-                  </span>
-                </NavLink>
-
-                {/* Simuladores */}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setSimGroupOpen((v) => !v)}
-                    className={pillClass(simuladoresActive) + " w-full justify-between"}
-                    style={simuladoresActive ? activePillStyle : glassHoverPill}
-                    aria-expanded={simGroupOpen}
-                    aria-controls={simListId}
-                    title="Simuladores"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Calculator className="h-4 w-4" />
-                      <span>Simuladores</span>
-                    </span>
-                    <span className="text-xs opacity-80" aria-hidden>
-                      {simGroupOpen ? "▾" : "▸"}
-                    </span>
-                  </button>
-
-                  {simGroupOpen && (
-                    <div id={simListId} className="ml-8 grid gap-1 mt-1">
-                      {adminsLoading && <div className="px-3 py-2 text-xs text-gray-500">Carregando…</div>}
-
-                      {!adminsLoading &&
-                        admins.length > 0 &&
-                        admins.map((ad) => (
-                          <NavLink
-                            key={ad.id}
-                            to={`/simuladores/${ad.id}`}
-                            className={({ isActive }) =>
-                              `${pillPadding} py-2.5 rounded-2xl transition-colors
-                               ${mobileTapFx}
-                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                               ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                            }
-                            style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                            onClick={handleNav}
-                          >
-                            {ad.name}
-                          </NavLink>
-                        ))}
-
-                      {!adminsLoading && admins.length === 0 && embraconId && (
-                        <NavLink
-                          to={`/simuladores/${embraconId}`}
-                          className={({ isActive }) =>
-                            `${pillPadding} py-2.5 rounded-2xl transition-colors
-                             ${mobileTapFx}
-                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                             ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                          }
-                          style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                          onClick={handleNav}
-                        >
-                          Embracon
-                        </NavLink>
-                      )}
-
-                      <NavLink
-                        to="/simuladores/add"
-                        className={({ isActive }) =>
-                          `${pillPadding} py-2.5 rounded-2xl transition-colors
-                           ${mobileTapFx}
-                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-consulmax-primary/40
-                           ${isActive ? "bg-consulmax-primary text-white" : "hover:bg-consulmax-neutral"}`
-                        }
-                        style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                        onClick={handleNav}
-                      >
-                        + Add Administradora
-                      </NavLink>
-                    </div>
-                  )}
-                </div>
-
-                <NavLink
-                  to="/propostas"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Propostas"
-                  end
-                >
-                  <FileText className="h-4 w-4" />
-                  Propostas
-                </NavLink>
-
-                <NavLink
-                  to="/ranking"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Ranking"
-                  end
-                >
-                  <Trophy className="h-4 w-4" />
-                  Ranking
-                </NavLink>
-
-                <NavLink
-                  to="/estoque-contempladas"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Contempladas"
-                  end
-                >
-                  <BadgeCheck className="h-4 w-4" />
-                  Contempladas
-                </NavLink>
-              </div>
-            )}
-
-            {/* PÓS-VENDA */}
-            {renderSectionPill("pos", "Pós-venda", Wallet)}
-            {openGroup === "pos" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/carteira"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Carteira"
-                  end
-                >
-                  <Wallet className="h-4 w-4" />
-                  Carteira
-                </NavLink>
-
-                <NavLink
-                  to="/giro-de-carteira"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Giro de Carteira"
-                  end
-                >
-                  <CalendarClock className="h-4 w-4" />
-                  Giro de Carteira
-                </NavLink>
-
-                <NavLink
-                  to="/gestao-de-grupos"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Gestão de Grupos"
-                  end
-                >
-                  <Layers className="h-4 w-4" />
-                  <span className="flex items-center justify-between w-full">
-                    <span>Gestão de Grupos</span>
-                    {navAlerts.gestaoGrupos && <AlertDot />}
-                  </span>
-                </NavLink>
-              </div>
-            )}
-
-            {/* ADMINISTRATIVO */}
-            {renderSectionPill("admin", "Administrativo", SlidersHorizontal)}
-            {openGroup === "admin" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/relatorios"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Relatórios"
-                  end
-                >
-                  <BarChart3 className="h-4 w-4" />
-                  Relatórios
-                </NavLink>
-
-                <NavLink
-                  to="/usuarios"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Usuários"
-                  end
-                >
-                  <UserCog className="h-4 w-4" />
-                  Usuários
-                </NavLink>
-
-                <NavLink
-                  to="/parametros"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Parâmetros"
-                  end
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-                  Parâmetros
-                </NavLink>
-
-                <NavLink
-                  to="/clientes"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Clientes"
-                  end
-                >
-                  <UserCog className="h-4 w-4" />
-                  Clientes
-                </NavLink>
-
-                {/* ✅ NOVO: Administrativo > Processos */}
-                <NavLink
-                  to="/processos"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Processos"
-                  end
-                >
-                  <ClipboardList className="h-4 w-4" />
-                  Processos
-                </NavLink>
-              </div>
-            )}
-
-            {/* FINANCEIRO */}
-            {renderSectionPill("fin", "Financeiro", LineChart)}
-            {openGroup === "fin" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/comissoes"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Comissões"
-                  end
-                >
-                  <BarChart3 className="h-4 w-4" />
-                  Comissões
-                </NavLink>
-
-                {(!authUserId || authUserId === WESLEY_ID) && (
-                  <NavLink
-                    to="/fluxo-de-caixa"
-                    className={({ isActive }) => pillClass(isActive)}
-                    style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                    onClick={handleNav}
-                    title="Fluxo de Caixa"
-                    end
-                  >
-                    <LineChart className="h-4 w-4" />
-                    <span className="flex items-center justify-between w-full">
-                      <span>Fluxo de Caixa</span>
-                      {navAlerts.fluxoCaixa && <AlertDot />}
-                    </span>
-                  </NavLink>
-                )}
-              </div>
-            )}
-
-            {/* MAXIMIZE-SE */}
-            {renderSectionPill("max", "Maximize-se", Trophy)}
-            {openGroup === "max" && (
-              <div className="ml-4 grid gap-2">
-                <NavLink
-                  to="/procedimentos"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Procedimentos"
-                  end
-                >
-                  <ClipboardList className="h-4 w-4" />
-                  Procedimentos
-                </NavLink>
-
-                <NavLink
-                  to="/links"
-                  className={({ isActive }) => pillClass(isActive)}
-                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
-                  onClick={handleNav}
-                  title="Links Úteis"
-                  end
-                >
-                  <LinkIcon className="h-4 w-4" />
-                  Links Úteis
-                </NavLink>
-              </div>
-            )}
-          </>
-        )}
-      </nav>
-    </aside>
-  );
+  const adminOptions = useMemo(() => ["EMBRACON", "MAGGI", "HS CONSÓRCIOS"], []);
 
   return (
-    <>
-      {/* Mobile: botão para abrir menu (se você já tem no Header, pode remover) */}
-      {isSmall && (
-        <button
-          type="button"
-          onClick={() => setMobileOpen(true)}
-          className="fixed top-16 left-3 z-[60] rounded-2xl border px-3 py-2 text-sm bg-white/70 backdrop-blur hover:bg-white/80"
-          style={{ borderColor: "rgba(255,255,255,.45)" }}
-          aria-label="Abrir menu"
-        >
-          Menu
-        </button>
-      )}
-
-      {/* Drawer overlay no mobile */}
-      {isSmall ? (
-        <>
-          {mobileOpen && (
-            <div className="fixed inset-0 z-[50] bg-black/40" onClick={() => setMobileOpen(false)} aria-hidden />
-          )}
-
-          <div
-            className={`fixed left-0 top-0 z-[55] h-dvh transform transition-transform duration-200 ${
-              mobileOpen ? "translate-x-0" : "-translate-x-full"
-            }`}
-          >
-            {AsideContent}
+    <div className="space-y-4">
+      <Card className="border-slate-200">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-slate-900">Processos</CardTitle>
+            <div className="text-slate-600 text-sm mt-1">Acompanhe prazos, SLAs e tratativas em andamento.</div>
           </div>
-        </>
-      ) : (
-        AsideContent
-      )}
-    </>
+
+          <div className="flex items-center gap-2">
+            <Button variant="outline" className="gap-2" onClick={() => setOpenPhases(true)} title="Gestão de Fases">
+              <Settings2 className="h-4 w-4" />
+              Gestão de Fases
+            </Button>
+
+            <Button className="gap-2" onClick={() => setOpenNew(true)}>
+              <Plus className="h-4 w-4" />
+              Novo
+            </Button>
+
+            <Button variant="outline" className="gap-2" onClick={refreshAll} disabled={refreshing}>
+              {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Atualizar
+            </Button>
+          </div>
+        </CardHeader>
+
+        <CardContent className="pt-0">
+          <Tabs value={tab} onValueChange={(v) => setTab(v as ProcessType)}>
+            <TabsList className="w-full justify-start">
+              <TabsTrigger value="faturamento">Faturamento</TabsTrigger>
+              <TabsTrigger value="transferencia_cota">Transferência de Cota</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="faturamento" className="mt-4">
+              <ProcessTable
+                rows={rows}
+                loading={loading}
+                onTreat={openTreatDialog}
+                page={page}
+                totalPages={totalPages}
+                onPrev={() => setPage((p) => Math.max(1, p - 1))}
+                onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+              />
+            </TabsContent>
+
+            <TabsContent value="transferencia_cota" className="mt-4">
+              <ProcessTable
+                rows={rows}
+                loading={loading}
+                onTreat={openTreatDialog}
+                page={page}
+                totalPages={totalPages}
+                onPrev={() => setPage((p) => Math.max(1, p - 1))}
+                onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+              />
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* ============ DIALOG: NOVO ============ */}
+      <Dialog open={openNew} onOpenChange={setOpenNew}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Novo processo • {tab === "faturamento" ? "Faturamento" : "Transferência de Cota"}</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label>Data de início (dd/mm/aaaa)</Label>
+              <Input value={nfStartBR} onChange={(e) => setNfStartBR(e.target.value)} placeholder="24/02/2026" />
+            </div>
+
+            <div>
+              <Label>Administradora</Label>
+              <Select value={nfAdmin} onValueChange={setNfAdmin}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">—</SelectItem>
+                  {adminOptions.map((a) => (
+                    <SelectItem key={a} value={a}>
+                      {a}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-slate-500 mt-1">Você pode ajustar depois.</div>
+            </div>
+
+            <div>
+              <Label>Proposta</Label>
+              <Input
+                value={nfProposta}
+                onChange={(e) => setNfProposta(e.target.value)}
+                onBlur={() => lookupPropostaIfNeeded(nfProposta)}
+                onKeyDown={(e) => {
+                  if (e.key === "Tab") lookupPropostaIfNeeded(nfProposta);
+                }}
+                placeholder="0009535214"
+              />
+              <div className="text-xs text-slate-500 mt-1">Ao sair do campo (ou TAB), preenche grupo/cota/cliente/segmento.</div>
+            </div>
+
+            <div>
+              <Label>Crédito disponível (R$)</Label>
+              <Input value={nfCredito} onChange={(e) => setNfCredito(e.target.value)} placeholder="60000" />
+            </div>
+
+            <div>
+              <Label>Grupo</Label>
+              <Input value={nfGrupo} onChange={(e) => setNfGrupo(e.target.value)} placeholder="9672" />
+            </div>
+
+            <div>
+              <Label>Cota</Label>
+              <Input value={nfCota} onChange={(e) => setNfCota(e.target.value)} placeholder="113" />
+            </div>
+
+            <div className="md:col-span-2">
+              <Label>Nome (cliente)</Label>
+              <Input value={nfCliente} onChange={(e) => setNfCliente(e.target.value)} placeholder="Nome do cliente" />
+            </div>
+
+            <div>
+              <Label>Segmento</Label>
+              <Input value={nfSegmento} onChange={(e) => setNfSegmento(e.target.value)} placeholder="Automóvel / Imóvel / ..." />
+            </div>
+
+            <div>
+              <Label>Fase</Label>
+              <Select value={nfPhaseId} onValueChange={setNfPhaseId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Automático (primeira fase)</SelectItem>
+                  {activePhases.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="text-xs text-slate-500 mt-1">
+                {nfPhaseId !== "__none__" && phasesById[nfPhaseId]
+                  ? `SLA: ${
+                      phasesById[nfPhaseId].sla_kind === "days"
+                        ? `${phasesById[nfPhaseId].sla_days ?? 0} dia(s)`
+                        : `${String(Math.floor((phasesById[nfPhaseId].sla_minutes ?? 0) / 60)).padStart(2, "0")}:${String(
+                            (phasesById[nfPhaseId].sla_minutes ?? 0) % 60
+                          ).padStart(2, "0")} h`
+                    }`
+                  : "SLA: conforme fase inicial"}
+              </div>
+            </div>
+
+            <div>
+              <Label>Responsável pela fase</Label>
+              <Select value={nfOwner} onValueChange={(v) => setNfOwner(v as OwnerKind)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="administradora">Administradora</SelectItem>
+                  <SelectItem value="corretora">Corretora</SelectItem>
+                  <SelectItem value="cliente">Cliente</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-slate-500 mt-1">Usuário responsável: capturado automaticamente (logado).</div>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setOpenNew(false)} disabled={nfSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={submitNew} disabled={nfSaving || !parseBRDateToISO(nfStartBR)}>
+              {nfSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============ DIALOG: TRATAR ============ */}
+      <Dialog open={openTreat} onOpenChange={setOpenTreat}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wrench className="h-5 w-5" />
+              Tratar processo
+            </DialogTitle>
+          </DialogHeader>
+
+          {treating ? (
+            <div className="space-y-3">
+              <div className="text-sm text-slate-700">
+                <div className="font-medium text-slate-900">{treating.cliente_nome || "—"}</div>
+                <div className="text-slate-600">
+                  Proposta: {treating.proposta || "—"} • Grupo: {treating.grupo || "—"} • Cota: {treating.cota || "—"}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <Label>Fase</Label>
+                  <Select value={tfPhaseId} onValueChange={setTfPhaseId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activePhases.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                          {p.is_final ? " (Final)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label>Responsável pela fase</Label>
+                  <Select value={tfOwner} onValueChange={(v) => setTfOwner(v as OwnerKind)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="administradora">Administradora</SelectItem>
+                      <SelectItem value="corretora">Corretora</SelectItem>
+                      <SelectItem value="cliente">Cliente</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label>Nota / Tratativa</Label>
+                  <Input value={tfNote} onChange={(e) => setTfNote(e.target.value)} placeholder="Ex.: Enviei docs / aguardando retorno..." />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setOpenTreat(false)} disabled={tfSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={submitTreat} disabled={tfSaving || !treating}>
+              {tfSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============ DIALOG: FINALIZAR ============ */}
+      <Dialog open={openFinalize} onOpenChange={setOpenFinalize}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Finalizar processo</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {finalizing ? (
+              <div className="text-sm text-slate-700">
+                <div className="font-medium text-slate-900">{finalizing.cliente_nome || "—"}</div>
+                <div className="text-slate-600">
+                  Proposta: {finalizing.proposta || "—"} • Grupo: {finalizing.grupo || "—"} • Cota: {finalizing.cota || "—"}
+                </div>
+              </div>
+            ) : null}
+
+            {finalStatsText ? (
+              <div className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-md p-3">
+                {finalStatsText}
+              </div>
+            ) : (
+              <>
+                <SatisfactionSlider
+                  label="Pela sua percepção: qual seu nível de satisfação com o processo?"
+                  value={ffUserSat}
+                  onChange={setFfUserSat}
+                />
+                <SatisfactionSlider
+                  label="Como você considera que o cliente se sentiu durante o processo?"
+                  value={ffClientSat}
+                  onChange={setFfClientSat}
+                />
+                <div>
+                  <Label>O que poderia melhorar a experiência do cliente?</Label>
+                  <Input value={ffImprove} onChange={(e) => setFfImprove(e.target.value)} placeholder="Escreva aqui..." />
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setOpenFinalize(false)} disabled={ffSaving}>
+              Fechar
+            </Button>
+
+            {!finalStatsText ? (
+              <Button onClick={submitFinalize} disabled={ffSaving || !finalizing}>
+                {ffSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                Salvar e Finalizar
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============ DIALOG: GESTÃO DE FASES ============ */}
+      <Dialog open={openPhases} onOpenChange={setOpenPhases}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Gestão de Fases • {tab === "faturamento" ? "Faturamento" : "Transferência de Cota"}</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="border border-slate-200 rounded-md p-3">
+              <div className="flex items-center justify-between">
+                <div className="font-medium text-slate-900">Fases ativas</div>
+                <Button variant="outline" size="sm" onClick={openNewPhase} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Nova
+                </Button>
+              </div>
+
+              <div className="mt-3 space-y-2 max-h-[360px] overflow-auto pr-1">
+                {activePhases.map((p) => (
+                  <div
+                    key={p.id}
+                    className="rounded-md border border-slate-200 p-2 hover:bg-slate-50 cursor-pointer"
+                    onClick={() => openEditPhase(p)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-medium text-slate-900">
+                        {p.name} {p.is_final ? <span className="text-xs text-slate-500">(Final)</span> : null}
+                      </div>
+                      <div className="text-xs text-slate-600">
+                        {p.sla_kind === "days"
+                          ? `${p.sla_days ?? 0} dia(s)`
+                          : `${String(Math.floor((p.sla_minutes ?? 0) / 60)).padStart(2, "0")}:${String((p.sla_minutes ?? 0) % 60).padStart(
+                              2,
+                              "0"
+                            )} h`}
+                      </div>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">Ordem: {p.sort_order}</div>
+                  </div>
+                ))}
+                {!activePhases.length ? <div className="text-sm text-slate-600">Nenhuma fase ativa.</div> : null}
+              </div>
+            </div>
+
+            <div className="border border-slate-200 rounded-md p-3">
+              <div className="font-medium text-slate-900">{pmEditing ? "Editar fase" : "Nova fase"}</div>
+
+              <div className="mt-3 space-y-3">
+                <div>
+                  <Label>Nome da fase</Label>
+                  <Input value={pmName} onChange={(e) => setPmName(e.target.value)} placeholder="Ex.: Aguardando Administradora" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Tipo SLA</Label>
+                    <Select value={pmSlaKind} onValueChange={(v) => setPmSlaKind(v as any)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="days">Dias</SelectItem>
+                        <SelectItem value="hours">Horas</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>Ordem</Label>
+                    <Input value={pmOrder} onChange={(e) => setPmOrder(e.target.value)} placeholder="100" />
+                  </div>
+                </div>
+
+                {pmSlaKind === "days" ? (
+                  <div>
+                    <Label>SLA (dias)</Label>
+                    <Input value={pmDays} onChange={(e) => setPmDays(e.target.value)} placeholder="2" />
+                  </div>
+                ) : (
+                  <div>
+                    <Label>SLA (hh:mm)</Label>
+                    <Input value={pmHoursHHMM} onChange={(e) => setPmHoursHHMM(e.target.value)} placeholder="08:00" />
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" className="h-4 w-4" checked={pmFinal} onChange={(e) => setPmFinal(e.target.checked)} />
+                  <div className="text-sm text-slate-700">Marcar como “Processo Finalizado”</div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <div className="flex gap-2">
+                    {pmEditing ? (
+                      <Button variant="outline" onClick={() => disablePhase(pmEditing.id)} disabled={pmSaving} title="Desativar fase (não apaga)">
+                        Desativar
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  <Button onClick={savePhase} disabled={pmSaving || !pmName.trim()}>
+                    {pmSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    Salvar
+                  </Button>
+                </div>
+
+                <div className="text-xs text-slate-500">Dica: só deve existir uma fase final por tipo.</div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setOpenPhases(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/** =========================
+ * Table component
+ * ========================= */
+function ProcessTable(props: {
+  rows: ProcessRow[];
+  loading: boolean;
+  onTreat: (row: ProcessRow) => void;
+  page: number;
+  totalPages: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const { rows, loading, onTreat, page, totalPages, onPrev, onNext } = props;
+
+  return (
+    <div className="space-y-3">
+      <div className="overflow-auto border border-slate-200 rounded-md">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-700">
+            <tr>
+              <th className="text-left p-3 whitespace-nowrap">Início</th>
+              <th className="text-left p-3 whitespace-nowrap">Grupo</th>
+              <th className="text-left p-3 whitespace-nowrap">Cota</th>
+              <th className="text-left p-3 whitespace-nowrap">Nome</th>
+              <th className="text-left p-3 whitespace-nowrap">Segmento</th>
+              <th className="text-left p-3 whitespace-nowrap">Status</th>
+              <th className="text-left p-3 whitespace-nowrap">Tratar</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={7} className="p-6 text-center text-slate-600">
+                  <Loader2 className="h-5 w-5 animate-spin inline-block mr-2" />
+                  Carregando...
+                </td>
+              </tr>
+            ) : rows.length ? (
+              rows.map((r) => {
+                const chip = slaChip(r.sla_status);
+                const Icon = chip.icon;
+
+                return (
+                  <tr key={r.id} className="border-t border-slate-200">
+                    <td className="p-3 whitespace-nowrap">{formatBRDateFromISO(r.start_date)}</td>
+                    <td className="p-3 whitespace-nowrap">{r.grupo || "—"}</td>
+                    <td className="p-3 whitespace-nowrap">{r.cota || "—"}</td>
+                    <td className="p-3">
+                      <div className="font-medium text-slate-900">{r.cliente_nome || "—"}</div>
+                      <div className="text-xs text-slate-500">{r.proposta ? `Proposta ${r.proposta}` : "—"}</div>
+                    </td>
+                    <td className="p-3 whitespace-nowrap">{r.segmento || "—"}</td>
+                    <td className="p-3 whitespace-nowrap">
+                      <span
+                        className="inline-flex items-center gap-2 px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-800"
+                        title={r.deadline ? `Prazo: ${new Date(r.deadline).toLocaleString("pt-BR")}` : ""}
+                      >
+                        <Icon className="h-4 w-4" />
+                        {chip.label}
+                      </span>
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <Button variant="outline" size="sm" className="gap-2" onClick={() => onTreat(r)}>
+                        <Wrench className="h-4 w-4" />
+                        Tratar
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={7} className="p-6 text-center text-slate-600">
+                  Nenhum processo em andamento.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-slate-600">
+          Página <span className="font-medium text-slate-900">{page}</span> de{" "}
+          <span className="font-medium text-slate-900">{totalPages}</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onPrev} disabled={page <= 1} className="gap-2">
+            <ChevronLeft className="h-4 w-4" />
+            Anterior
+          </Button>
+          <Button variant="outline" size="sm" onClick={onNext} disabled={page >= totalPages} className="gap-2">
+            Próxima
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** =========================
+ * Slider with emojis
+ * ========================= */
+function SatisfactionSlider(props: { label: string; value: number; onChange: (v: number) => void }) {
+  const { label, value, onChange } = props;
+
+  const emoji = useMemo(() => {
+    if (value <= 20) return "😠";
+    if (value <= 40) return "😕";
+    if (value <= 60) return "😐";
+    if (value <= 80) return "🙂";
+    return "😄";
+  }, [value]);
+
+  const caption = useMemo(() => {
+    if (value <= 20) return "Muito insatisfeito";
+    if (value <= 40) return "Insatisfeito";
+    if (value <= 60) return "Neutro";
+    if (value <= 80) return "Satisfeito";
+    return "Muito satisfeito";
+  }, [value]);
+
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <div className="flex items-center gap-3">
+        <div className="text-2xl">{emoji}</div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="w-full"
+        />
+        <div className="text-sm text-slate-700 w-[140px] text-right">{caption}</div>
+      </div>
+      <div className="text-xs text-slate-500">Valor: {value}/100</div>
+    </div>
   );
 }

@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-// UI (locais)
+// UI
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,17 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 import {
-  Loader2, RefreshCcw, Phone, MessageCircle, Mail, CheckCircle2,
-  CalendarClock, Users, ArrowRight, Info, Link as LinkIcon,
+  Loader2,
+  RefreshCcw,
+  Phone,
+  MessageCircle,
+  Mail,
+  CheckCircle2,
+  CalendarClock,
+  Users,
+  ArrowRight,
+  Info,
+  Link as LinkIcon,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -19,7 +28,7 @@ import { cn } from "@/lib/utils";
 /** Debug controlável por env: defina VITE_GIRO_DEBUG=1 para mostrar barra de debug */
 const SHOW_DEBUG = String((import.meta as any)?.env?.VITE_GIRO_DEBUG || "") === "1";
 
-/* =============== Pill (substitui Badge) ================= */
+/* ===================== Pill ===================== */
 function Pill({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
     <span
@@ -34,7 +43,7 @@ function Pill({ className, children }: { className?: string; children: React.Rea
   );
 }
 
-/* =============== Tipos ================= */
+/* ===================== Tipos ===================== */
 type GiroTask = {
   id: string;
   cliente_id: string | null;
@@ -57,19 +66,25 @@ type Cliente = {
   observacoes: string | null;
 };
 
-/* =============== Helpers ================= */
+/* ===================== Helpers ===================== */
 function brMoney(n: number | null | undefined) {
   if (n == null || isNaN(Number(n))) return "R$ 0,00";
-  try { return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
-  catch { return `R$ ${Number(n).toFixed(2)}`; }
+  try {
+    return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  } catch {
+    return `R$ ${Number(n).toFixed(2)}`;
+  }
 }
 
 function fmtDateISO(d?: string | null) {
   if (!d) return "-";
   const dt = new Date(d);
   if (isNaN(dt.getTime())) return "-";
-  try { return dt.toLocaleDateString("pt-BR", { timeZone: "America/Porto_Velho" }); }
-  catch { return dt.toLocaleDateString("pt-BR"); }
+  try {
+    return dt.toLocaleDateString("pt-BR", { timeZone: "America/Porto_Velho" });
+  } catch {
+    return dt.toLocaleDateString("pt-BR");
+  }
 }
 
 function onlyDigits(s?: string | null) {
@@ -90,16 +105,24 @@ const canalOptions = [
   { key: "presencial", label: "Presencial", icon: Users },
 ] as const;
 
-/* =============== Error Boundary local ================= */
+/* ===================== Error Boundary ===================== */
 class PageErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error?: Error }
 > {
-  constructor(props: any) { super(props); this.state = { error: undefined }; }
-  static getDerivedStateFromError(error: Error) { return { error }; }
+  constructor(props: any) {
+    super(props);
+    this.state = { error: undefined };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
   componentDidCatch(error: any, info: any) {
     console.error("[GiroDeCarteira] runtime error:", error, info);
   }
+
   render() {
     if (this.state.error) {
       return (
@@ -119,18 +142,26 @@ class PageErrorBoundary extends React.Component<
   }
 }
 
-/* =============== Hook: dialog seguro (lazy + try/catch) ================= */
+/* ===================== Dialog lazy/safe ===================== */
 function useSafeDialog() {
   const [dlg, setDlg] = useState<null | {
-    Dialog: any; DialogContent: any; DialogDescription: any; DialogFooter: any;
-    DialogHeader: any; DialogTitle: any; DialogTrigger: any;
+    Dialog: any;
+    DialogContent: any;
+    DialogDescription: any;
+    DialogFooter: any;
+    DialogHeader: any;
+    DialogTitle: any;
+    DialogTrigger: any;
   }>(null);
+
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         const mod = await import("@/components/ui/dialog");
         if (!alive) return;
+
         setDlg({
           Dialog: mod.Dialog,
           DialogContent: mod.DialogContent,
@@ -144,12 +175,16 @@ function useSafeDialog() {
         console.warn("[GiroDeCarteira] dialog não disponível, seguindo sem modal.", e);
       }
     })();
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+    };
   }, []);
+
   return dlg;
 }
 
-/* =============== Componente ================= */
+/* ===================== Componente ===================== */
 export default function GiroDeCarteira() {
   return (
     <PageErrorBoundary>
@@ -161,6 +196,7 @@ export default function GiroDeCarteira() {
 function InnerGiroDeCarteira() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
   const [tasks, setTasks] = useState<GiroTask[]>([]);
   const [clientes, setClientes] = useState<Record<string, Cliente>>({});
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -178,7 +214,6 @@ function InnerGiroDeCarteira() {
 
   const dlg = useSafeDialog();
 
-  // Loga montagem e segurança contra loading infinito
   useEffect(() => {
     console.log("[GiroDeCarteira] montou");
   }, []);
@@ -188,6 +223,7 @@ function InnerGiroDeCarteira() {
     const watchdog = setTimeout(() => {
       if (loading) {
         console.warn("[GiroDeCarteira] safety timeout: forçando loading=false após 8s");
+        setLastError((prev) => prev || "O carregamento demorou mais do que o esperado.");
         setLoading(false);
       }
     }, 8000);
@@ -201,48 +237,65 @@ function InnerGiroDeCarteira() {
     setPediuIndicacao(true);
   };
 
+  async function loadClientesByIds(list: GiroTask[]) {
+    const ids = Array.from(new Set(list.map((t) => t?.cliente_id).filter(Boolean) as string[]));
+
+    if (!ids.length) {
+      setClientes({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("clientes")
+      .select("id,nome,telefone,email,observacoes")
+      .in("id", ids);
+
+    if (error) throw error;
+
+    const map: Record<string, Cliente> = {};
+    (data || []).forEach((c: any) => {
+      if (c?.id) map[c.id] = c as Cliente;
+    });
+
+    setClientes(map);
+  }
+
   async function fetchAll() {
     setLoading(true);
     setLastError(null);
+
     try {
-      const [adminRes, countRes, batchRes] = await Promise.allSettled([
+      const [adminRes, countRes, batchRes] = await Promise.all([
         supabase.rpc("current_user_is_admin"),
         supabase.rpc("giro_due_count"),
         supabase.rpc("next_giro_batch"),
       ]);
 
-      if (adminRes.status === "fulfilled") setIsAdmin(Boolean(adminRes.value.data));
-      if (countRes.status === "fulfilled") setCount(Number(countRes.value.data || 0));
+      if (adminRes.error) throw adminRes.error;
+      if (countRes.error) throw countRes.error;
+      if (batchRes.error) throw batchRes.error;
 
-      let list: GiroTask[] = [];
-      if (batchRes.status === "fulfilled" && Array.isArray(batchRes.value.data)) {
-        list = batchRes.value.data as GiroTask[];
-      }
+      const nextIsAdmin = Boolean(adminRes.data);
+      const nextCount = Number(countRes.data || 0);
+      const list: GiroTask[] = Array.isArray(batchRes.data) ? (batchRes.data as GiroTask[]) : [];
+
+      setIsAdmin(nextIsAdmin);
+      setCount(nextCount);
       setTasks(list);
 
-      // carregar clientes
-      const ids = Array.from(new Set(list.map(t => t?.cliente_id).filter(Boolean) as string[]));
-      if (ids.length) {
-        const { data: cls, error } = await supabase
-          .from("clientes")
-          .select("id,nome,telefone,email,observacoes")
-          .in("id", ids);
-        if (error) throw error;
-        const map: Record<string, Cliente> = {};
-        (cls || []).forEach((c: any) => { if (c?.id) map[c.id] = c; });
-        setClientes(map);
-      } else {
-        setClientes({});
-      }
+      await loadClientesByIds(list);
 
       console.log("[GiroDeCarteira] fetchAll ok", {
-        isAdmin: adminRes.status === "fulfilled" ? adminRes.value.data : "NA",
-        count: countRes.status === "fulfilled" ? countRes.value.data : "NA",
+        isAdmin: nextIsAdmin,
+        count: nextCount,
         tasks: list.length,
+        rawTasks: batchRes.data,
       });
     } catch (e: any) {
       console.error("[GiroDeCarteira] fetchAll error:", e);
       setLastError(String(e?.message || e));
+      setTasks([]);
+      setClientes({});
     } finally {
       setLoading(false);
     }
@@ -251,36 +304,28 @@ function InnerGiroDeCarteira() {
   async function doRefresh() {
     setRefreshing(true);
     setLastError(null);
+
     try {
-      const [countRes, batchRes] = await Promise.allSettled([
+      const [countRes, batchRes] = await Promise.all([
         supabase.rpc("giro_due_count"),
         supabase.rpc("next_giro_batch"),
       ]);
-      if (countRes.status === "fulfilled") setCount(Number(countRes.value.data || 0));
 
-      let list: GiroTask[] = [];
-      if (batchRes.status === "fulfilled" && Array.isArray(batchRes.value.data)) {
-        list = batchRes.value.data as GiroTask[];
-      }
+      if (countRes.error) throw countRes.error;
+      if (batchRes.error) throw batchRes.error;
+
+      const nextCount = Number(countRes.data || 0);
+      const list: GiroTask[] = Array.isArray(batchRes.data) ? (batchRes.data as GiroTask[]) : [];
+
+      setCount(nextCount);
       setTasks(list);
 
-      const ids = Array.from(new Set(list.map(t => t?.cliente_id).filter(Boolean) as string[]));
-      if (ids.length) {
-        const { data: cls, error } = await supabase
-          .from("clientes")
-          .select("id,nome,telefone,email,observacoes")
-          .in("id", ids);
-        if (error) throw error;
-        const map: Record<string, Cliente> = {};
-        (cls || []).forEach((c: any) => { if (c?.id) map[c.id] = c; });
-        setClientes(map);
-      } else {
-        setClientes({});
-      }
+      await loadClientesByIds(list);
 
       console.log("[GiroDeCarteira] refresh ok", {
-        count: countRes.status === "fulfilled" ? countRes.value.data : "NA",
+        count: nextCount,
         tasks: list.length,
+        rawTasks: batchRes.data,
       });
     } catch (e: any) {
       console.error("[GiroDeCarteira] refresh error:", e);
@@ -290,11 +335,14 @@ function InnerGiroDeCarteira() {
     }
   }
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => {
+    fetchAll();
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return tasks;
+
     return tasks.filter((t) => {
       const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
       const name = (c?.nome || "").toLowerCase();
@@ -306,8 +354,10 @@ function InnerGiroDeCarteira() {
 
   const handleSave = async () => {
     if (!openId) return;
+
     setSaving(true);
     setLastError(null);
+
     try {
       const { error } = await supabase.rpc("mark_giro_done", {
         p_task_id: openId,
@@ -315,7 +365,9 @@ function InnerGiroDeCarteira() {
         p_resumo: resumo || null,
         p_pediu_indicacao: pediuIndicacao,
       });
+
       if (error) throw error;
+
       setOpenId(null);
       await doRefresh();
     } catch (e: any) {
@@ -328,10 +380,10 @@ function InnerGiroDeCarteira() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      {/* Debug bar fixa (controlada por env) */}
       {SHOW_DEBUG && (
         <div className="mb-2 rounded-md bg-[#1E293F] text-white text-xs px-3 py-2">
-          Debug Giro — loading={String(loading)} • refreshing={String(refreshing)} • tasks={tasks.length} • admin={String(isAdmin)} • count={count}
+          Debug Giro — loading={String(loading)} • refreshing={String(refreshing)} •
+          tasks={tasks.length} • admin={String(isAdmin)} • count={count}
         </div>
       )}
 
@@ -343,21 +395,27 @@ function InnerGiroDeCarteira() {
             Recorrência de relacionamento com clientes e pedido de indicação.
           </p>
         </div>
+
         <div className="flex items-center gap-2">
           <Pill className={count > 0 ? "bg-[#A11C27] text-white border-[#8f1822]" : ""}>
             🔔 Pendências de hoje: {count}
           </Pill>
-          <Button variant="outline" onClick={doRefresh}>
-            {refreshing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
+
+          <Button variant="outline" onClick={doRefresh} disabled={refreshing || loading}>
+            {refreshing ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCcw className="w-4 h-4 mr-2" />
+            )}
             Atualizar
           </Button>
         </div>
       </div>
 
-      {/* Aviso de erro leve */}
+      {/* Aviso de erro */}
       {lastError && (
         <Card>
-          <CardContent className="text-sm text-red-700">
+          <CardContent className="py-4 text-sm text-red-700">
             {lastError}
           </CardContent>
         </Card>
@@ -371,6 +429,7 @@ function InnerGiroDeCarteira() {
             Filtro rápido
           </CardTitle>
         </CardHeader>
+
         <CardContent className="flex flex-col md:flex-row gap-3">
           <div className="flex-1">
             <Label htmlFor="q">Buscar por nome/telefone/faixa</Label>
@@ -381,6 +440,7 @@ function InnerGiroDeCarteira() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+
           <div className="min-w-[220px]">
             <Label>Perfil</Label>
             <div className="mt-2">
@@ -407,13 +467,14 @@ function InnerGiroDeCarteira() {
           filtered.map((t, idx) => {
             const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
             const phoneClean = onlyDigits(c?.telefone);
+
             const msg = [
               `Olá, ${c?.nome || "tudo bem"}? Aqui é da Consulmax.`,
               `Estou acompanhando seu grupo e te trazendo um panorama rápido.`,
               `Quando puder, te explico as últimas contemplações e próximos passos 😉`,
             ].join(" ");
-            const wa = waLink(c?.telefone, msg);
 
+            const wa = waLink(c?.telefone, msg);
             const key = t?.id || `task-${idx}`;
 
             return (
@@ -424,19 +485,25 @@ function InnerGiroDeCarteira() {
                       <CardTitle className="flex items-center gap-2 text-lg">
                         {c?.nome || "Cliente sem cadastro"}
                       </CardTitle>
+
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
                         <Pill>Faixa: {t?.faixa || "-"}</Pill>
                         <Pill>Carteira: {brMoney(t?.carteira_total)}</Pill>
                         <Pill>Periodicidade: {t?.periodicidade_meses || 0} meses</Pill>
                       </div>
                     </div>
+
                     <div className="text-right">
                       <div className="text-xs text-gray-500">Data</div>
-                      <div className={cn(
-                        "text-sm font-medium",
-                        t?.due_date && new Date(t.due_date).toDateString() === new Date().toDateString()
-                          ? "text-[#A11C27]" : ""
-                      )}>
+                      <div
+                        className={cn(
+                          "text-sm font-medium",
+                          t?.due_date &&
+                            new Date(t.due_date).toDateString() === new Date().toDateString()
+                            ? "text-[#A11C27]"
+                            : ""
+                        )}
+                      >
                         {fmtDateISO(t?.due_date)}
                       </div>
                     </div>
@@ -462,10 +529,12 @@ function InnerGiroDeCarteira() {
                         <span className="text-gray-500">—</span>
                       )}
                     </div>
+
                     <div className="text-sm">
                       <span className="font-medium">E-mail:</span>{" "}
                       {c?.email || <span className="text-gray-500">—</span>}
                     </div>
+
                     <div className="text-sm line-clamp-2">
                       <span className="font-medium">Observações:</span>{" "}
                       {c?.observacoes || <span className="text-gray-500">—</span>}
@@ -474,7 +543,13 @@ function InnerGiroDeCarteira() {
 
                   <div className="flex flex-wrap gap-2 md:justify-end">
                     {wa && (
-                      <a href={wa} target="_blank" rel="noreferrer" className="inline-flex" title="WhatsApp com template">
+                      <a
+                        href={wa}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex"
+                        title="WhatsApp com template"
+                      >
                         <Button variant="secondary">
                           <MessageCircle className="w-4 h-4 mr-2" />
                           WhatsApp
@@ -483,18 +558,26 @@ function InnerGiroDeCarteira() {
                     )}
 
                     {dlg ? (
-                      <dlg.Dialog open={openId === t.id} onOpenChange={(v: boolean) => setOpenId(v ? (t.id as string) : null)}>
+                      <dlg.Dialog
+                        open={openId === t.id}
+                        onOpenChange={(v: boolean) => setOpenId(v ? String(t.id) : null)}
+                      >
                         <dlg.DialogTrigger asChild>
-                          <Button onClick={() => openFor(String(t.id))} className="bg-[#A11C27] hover:bg-[#8f1822]">
+                          <Button
+                            onClick={() => openFor(String(t.id))}
+                            className="bg-[#A11C27] hover:bg-[#8f1822]"
+                          >
                             <CheckCircle2 className="w-4 h-4 mr-2" />
                             Registrar Giro
                           </Button>
                         </dlg.DialogTrigger>
+
                         <dlg.DialogContent>
                           <dlg.DialogHeader>
                             <dlg.DialogTitle>Registrar Giro</dlg.DialogTitle>
                             <dlg.DialogDescription>
-                              Confirme o contato realizado e agendaremos a próxima data automaticamente.
+                              Confirme o contato realizado e agendaremos a próxima data
+                              automaticamente.
                             </dlg.DialogDescription>
                           </dlg.DialogHeader>
 
@@ -503,9 +586,11 @@ function InnerGiroDeCarteira() {
                               {canalOptions.map((opt) => {
                                 const Icon = opt.icon;
                                 const active = canal === opt.key;
+
                                 return (
                                   <Button
                                     key={opt.key}
+                                    type="button"
                                     variant={active ? "default" : "outline"}
                                     className={cn(active ? "bg-[#1E293F] hover:bg-[#1b2538]" : "")}
                                     onClick={() => setCanal(opt.key)}
@@ -539,19 +624,25 @@ function InnerGiroDeCarteira() {
                           </div>
 
                           <dlg.DialogFooter className="mt-2">
-                            <Button variant="outline" onClick={() => setOpenId(null)}>
+                            <Button type="button" variant="outline" onClick={() => setOpenId(null)}>
                               Cancelar
                             </Button>
-                            <Button onClick={handleSave} disabled={saving}>
-                              {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ArrowRight className="w-4 h-4 mr-2" />}
+                            <Button type="button" onClick={handleSave} disabled={saving}>
+                              {saving ? (
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              ) : (
+                                <ArrowRight className="w-4 h-4 mr-2" />
+                              )}
                               Confirmar
                             </Button>
                           </dlg.DialogFooter>
                         </dlg.DialogContent>
                       </dlg.Dialog>
                     ) : (
-                      // fallback
-                      <Button onClick={() => openFor(String(t.id))} className="bg-[#A11C27] hover:bg-[#8f1822]">
+                      <Button
+                        onClick={() => openFor(String(t.id))}
+                        className="bg-[#A11C27] hover:bg-[#8f1822]"
+                      >
                         <CheckCircle2 className="w-4 h-4 mr-2" />
                         Registrar Giro
                       </Button>
@@ -564,9 +655,7 @@ function InnerGiroDeCarteira() {
                     <CalendarClock className="w-3.5 h-3.5" />
                     Criada em {fmtDateISO(t?.created_at)}
                   </div>
-                  <div>
-                    Último giro: {t?.last_done_at ? fmtDateISO(t.last_done_at) : "—"}
-                  </div>
+                  <div>Último giro: {t?.last_done_at ? fmtDateISO(t.last_done_at) : "—"}</div>
                 </CardFooter>
               </Card>
             );
@@ -574,7 +663,6 @@ function InnerGiroDeCarteira() {
         )}
       </div>
 
-      {/* Debug leve — deixei condicionado pela env para não poluir produção */}
       {SHOW_DEBUG && (
         <div className="text-[11px] text-gray-500">
           debug: tasks={tasks.length} • admin={String(isAdmin)} • count={count}

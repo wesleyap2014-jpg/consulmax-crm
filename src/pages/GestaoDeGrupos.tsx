@@ -180,7 +180,7 @@ function makeStubId(adm?: string | null, grp?: string | number | null) {
 }
 
 /* =========================================================
-   REFERÊNCIA POR BILHETES (inclui regra Maggi)
+   REFERÊNCIA POR BILHETES (corrigido HS + normalização)
    ========================================================= */
 
 function referenciaPorAdministradora(params: {
@@ -191,7 +191,7 @@ function referenciaPorAdministradora(params: {
   const { administradora, participantes, bilhetes } = params;
   if (!participantes || participantes <= 0 || !bilhetes) return null;
 
-  const premios = [bilhetes.primeiro, bilhetes.segundo, bilhetes.terceiro, bilhetes.quarto, bilhetes.quinto];
+  const adm = normalizeAdmin(administradora).toLowerCase();
 
   function reduceByCap(n: number, cap: number): number {
     if (cap <= 0) return 0;
@@ -201,51 +201,64 @@ function referenciaPorAdministradora(params: {
     return v;
   }
 
-  function tryTresUltimosOuInicio(num5: string, cap: number): number | null {
-    const ult3 = parseInt(num5.slice(-3));
+  function tryEmbraconAte1000(num5: string, cap: number): number | null {
+    // Regra informada:
+    // - olha os 3 últimos números
+    // - se for maior que participantes, exclui o último dígito e olha a centena seguinte
+    // Ex.: 15983 -> 983; se > cap -> 598
+    const ult3 = parseInt(num5.slice(-3), 10);
     if (ult3 >= 1 && ult3 <= cap) return ult3;
-    const alt = parseInt(num5.slice(0, 3));
-    if (alt >= 1 && alt <= cap) return alt;
+
+    const centenaSeguinte = parseInt(num5.slice(1, 4), 10);
+    if (centenaSeguinte >= 1 && centenaSeguinte <= cap) return centenaSeguinte;
+
     return null;
   }
 
-  for (const premio of premios) {
-    const p5 = sanitizeBilhete5(premio);
-
-    const adm = administradora.toLowerCase();
-
-    // MAGGI — "último milhar" (4 últimos dígitos) reduzindo por participantes
-    if (adm === "maggi") {
-      const milhar = parseInt(p5.slice(-4));
-      return reduceByCap(milhar, participantes);
-    }
-
-    if (adm === "embracon") {
-      if (participantes <= 1000) {
-        const tentativa = tryTresUltimosOuInicio(p5, participantes);
-        if (tentativa != null) return tentativa;
-        continue;
-      } else if (participantes >= 5000) {
-        const quatro = parseInt(p5.slice(-4));
-        const ajustado = reduceByCap(quatro, 5000);
-        if (ajustado >= 1 && ajustado <= 5000) return ajustado;
-        continue;
-      } else {
-        const quatro = parseInt(p5.slice(-4));
-        return reduceByCap(quatro, participantes);
-      }
-    }
-
-    if (adm === "hs") {
-      const quatro = parseInt(p5.slice(-4));
-      return reduceByCap(quatro, participantes);
-    }
-
-    const tres = parseInt(p5.slice(-3));
-    return reduceByCap(tres, participantes);
+  // MAGGI — sempre 1º prêmio
+  if (adm === "maggi") {
+    const p5 = sanitizeBilhete5(bilhetes.primeiro);
+    const milhar = parseInt(p5.slice(-4), 10);
+    return reduceByCap(milhar, participantes);
   }
 
-  return null;
+  // HS — sempre 1º prêmio
+  if (adm === "hs") {
+    const p5 = sanitizeBilhete5(bilhetes.primeiro);
+    const milhar = parseInt(p5.slice(-4), 10);
+    return reduceByCap(milhar, participantes);
+  }
+
+  // EMBRACON
+  if (adm === "embracon") {
+    // Até 1000 participantes: tenta do 1º ao 5º prêmio
+    if (participantes <= 1000) {
+      const premios = [
+        bilhetes.primeiro,
+        bilhetes.segundo,
+        bilhetes.terceiro,
+        bilhetes.quarto,
+        bilhetes.quinto,
+      ];
+
+      for (const premio of premios) {
+        const p5 = sanitizeBilhete5(premio);
+        const tentativa = tryEmbraconAte1000(p5, participantes);
+        if (tentativa != null) return tentativa;
+      }
+      return null;
+    }
+
+    // Acima de 1000 participantes: sempre 1º prêmio e último milhar reduzindo
+    const p5 = sanitizeBilhete5(bilhetes.primeiro);
+    const milhar = parseInt(p5.slice(-4), 10);
+    return reduceByCap(milhar, participantes);
+  }
+
+  // Regra genérica fallback
+  const p5 = sanitizeBilhete5(bilhetes.primeiro);
+  const tres = parseInt(p5.slice(-3), 10);
+  return reduceByCap(tres, participantes);
 }
 
 /* =========================================================

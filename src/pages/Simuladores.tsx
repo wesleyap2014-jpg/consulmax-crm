@@ -198,10 +198,14 @@ function calcularSimulacao(i: CalcInput) {
   if (forma === "Reduzida 25%") fatorForma = 0.75;
   if (forma === "Reduzida 50%") fatorForma = 0.5;
 
+  const creditoReduzido = C * fatorForma;
+  const fundoReservaReduzido = C * frPct * fatorForma;
+  const taxaAdmLiquida = C * Math.max(0, taxaAdmFull - antecipPct);
+
   const baseMensalPre =
     redutorPreEnabled && redutorBase === "valor_categoria"
       ? (valorCategoria / prazo) * fatorForma
-      : (C * fatorForma + C * Math.max(0, taxaAdmFull - antecipPct) + C * frPct) / prazo;
+      : (creditoReduzido + taxaAdmLiquida + fundoReservaReduzido) / prazo;
 
   const seguroMensal = seguro ? valorCategoria * seguroPrestPct : 0;
 

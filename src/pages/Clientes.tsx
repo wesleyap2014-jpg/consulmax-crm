@@ -30,11 +30,12 @@ type ClienteBase = {
   sexo?: Sexo | "";
   tipo?: TipoPessoa | null;
   perfil?: PerfilCliente | null;
-  segmento_pf?: SegmentoPF | "";
-  segmento_pj?: string | null;
-
+  segmentos?: string[];
   uf?: string | null;
   cidade?: string | null;
+
+  active_cotas_count?: number;
+  active_admins?: string[];
 };
 
 type TipoPessoa = "PF" | "PJ";
@@ -48,23 +49,42 @@ type SegmentoPF =
   | "Motorista"
   | "Produtor Rural"
   | "Profissional Liberal"
-  | "Locador ou Proprietário";
+  | "Locador ou Proprietário"
+  | "Do Lar";
 
 type ConteudoPref = "dicas rápidas" | "explicações completas" | "promoções" | "novidades";
 type ComoConheceu = "Instagram" | "Google" | "Indicação" | "Anúncio" | "Relacionamento com o Vendedor" | "Outro";
 
 type Sexo = "M" | "F" | "O";
+type EstadoCivil = "Solteiro(a)" | "Casado(a)" | "União Estável" | "Divorciado(a)" | "Separado(a)" | "Viúvo(a)";
+type RegimeCasamento =
+  | "Comunhão Parcial de Bens"
+  | "Comunhão Universal de Bens"
+  | "Separação Total de Bens"
+  | "Participação Final nos Aquestos"
+  | "Outro";
 
 type Filho = { nome: string; nascimento: string; sexo: "F" | "M" | "" };
 
 type CadastroExtra = {
   tipo: TipoPessoa;
-  segmento_pf: SegmentoPF | "";
-  segmento_pj: string;
   perfil: PerfilCliente;
 
-  // ✅ novo
+  // novo modelo de segmentos (múltiplo)
+  segmentos: string[];
+
+  // legados mantidos para compatibilidade
+  segmento_pf?: SegmentoPF | "";
+  segmento_pj?: string;
+
   sexo: Sexo | "";
+
+  estado_civil: EstadoCivil | "";
+  regime_casamento: RegimeCasamento | "";
+  conjuge_nome: string;
+  conjuge_cpf: string;
+  conjuge_nasc: string;
+  conjuge_sexo: Sexo | "";
 
   chamado_como: string;
 
@@ -81,7 +101,6 @@ type CadastroExtra = {
   renda_faturamento: string;
   foto_url: string;
 
-  // ✅ novo (auto-segmento PJ)
   cnae_principal?: string;
 
   pais_vivos: "sim" | "nao" | "";
@@ -99,9 +118,12 @@ type CadastroExtra = {
   feedback: string;
   obs_internas: string;
 
+  permite_receber_conteudo: "sim" | "nao" | "";
   conteudos: ConteudoPref[];
-  prefere_educativo: "educativo" | "ofertas" | "";
+  preferencias_envio: Array<"educativo" | "ofertas">;
+  prefere_educativo?: "educativo" | "ofertas" | ""; // legado
   como_conheceu: ComoConheceu | "";
+  como_conheceu_detalhe: string;
 };
 
 const STORAGE_BUCKET_CLIENTES = "clientes_photos";
@@ -117,13 +139,60 @@ const SEGMENTOS_PF: SegmentoPF[] = [
   "Produtor Rural",
   "Profissional Liberal",
   "Locador ou Proprietário",
+  "Do Lar",
 ];
 
 const CONTEUDOS: ConteudoPref[] = ["dicas rápidas", "explicações completas", "promoções", "novidades"];
 const COMO_CONHECEU: ComoConheceu[] = ["Instagram", "Google", "Indicação", "Anúncio", "Relacionamento com o Vendedor", "Outro"];
+const ESTADOS_CIVIS: EstadoCivil[] = ["Solteiro(a)", "Casado(a)", "União Estável", "Divorciado(a)", "Separado(a)", "Viúvo(a)"];
+const REGIMES_CASAMENTO: RegimeCasamento[] = [
+  "Comunhão Parcial de Bens",
+  "Comunhão Universal de Bens",
+  "Separação Total de Bens",
+  "Participação Final nos Aquestos",
+  "Outro",
+];
 
 const onlyDigits = (v: string) => (v || "").replace(/\D+/g, "");
 const clamp = (s: string, n: number) => (s || "").slice(0, n);
+
+const splitSegments = (v: string) =>
+  (v || "")
+    .split(/[,;\n|]/g)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .filter((x, i, arr) => arr.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i);
+
+const normalizeSegmentList = (raw: any): string[] => {
+  const out: string[] = [];
+
+  if (Array.isArray(raw?.segmentos)) {
+    raw.segmentos.forEach((x: any) => {
+      const s = String(x || "").trim();
+      if (s) out.push(s);
+    });
+  }
+
+  if (Array.isArray(raw?.segmento_pf)) {
+    raw.segmento_pf.forEach((x: any) => {
+      const s = String(x || "").trim();
+      if (s) out.push(s);
+    });
+  } else if (typeof raw?.segmento_pf === "string" && raw.segmento_pf.trim()) {
+    out.push(raw.segmento_pf.trim());
+  }
+
+  if (Array.isArray(raw?.segmento_pj)) {
+    raw.segmento_pj.forEach((x: any) => {
+      const s = String(x || "").trim();
+      if (s) out.push(s);
+    });
+  } else if (typeof raw?.segmento_pj === "string" && raw.segmento_pj.trim()) {
+    splitSegments(raw.segmento_pj).forEach((s) => out.push(s));
+  }
+
+  return out.filter((x, i, arr) => arr.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i);
+};
 
 const maskPhone = (v: string) => {
   const d = onlyDigits(v).slice(0, 11);
@@ -173,11 +242,20 @@ function initials(name: string) {
 
 const emptyExtra = (): CadastroExtra => ({
   tipo: "PF",
-  segmento_pf: "",
-  segmento_pj: "",
   perfil: "PF Geral",
 
+  segmentos: [],
+  segmento_pf: "",
+  segmento_pj: "",
+
   sexo: "",
+
+  estado_civil: "",
+  regime_casamento: "",
+  conjuge_nome: "",
+  conjuge_cpf: "",
+  conjuge_nasc: "",
+  conjuge_sexo: "",
 
   chamado_como: "",
 
@@ -211,10 +289,39 @@ const emptyExtra = (): CadastroExtra => ({
   feedback: "",
   obs_internas: "",
 
+  permite_receber_conteudo: "",
   conteudos: [],
+  preferencias_envio: [],
   prefere_educativo: "",
   como_conheceu: "",
+  como_conheceu_detalhe: "",
 });
+
+function normalizeExtra(raw?: any): CadastroExtra {
+  const base = emptyExtra();
+  const merged = { ...base, ...(raw || {}) };
+
+  const segmentos = normalizeSegmentList(raw || {});
+  const preferencias_envio = Array.isArray(raw?.preferencias_envio)
+    ? raw.preferencias_envio.filter((x: any) => x === "educativo" || x === "ofertas")
+    : raw?.prefere_educativo === "educativo" || raw?.prefere_educativo === "ofertas"
+    ? [raw.prefere_educativo]
+    : [];
+
+  return {
+    ...merged,
+    segmentos,
+    preferencias_envio,
+    conteudos: Array.isArray(raw?.conteudos) ? raw.conteudos.filter((x: any) => CONTEUDOS.includes(x)) : [],
+    filhos: Array.isArray(raw?.filhos) && raw.filhos.length ? raw.filhos : [{ nome: "", nascimento: "", sexo: "" }],
+    permite_receber_conteudo:
+      raw?.permite_receber_conteudo === "sim" || raw?.permite_receber_conteudo === "nao" ? raw.permite_receber_conteudo : "",
+    como_conheceu: COMO_CONHECEU.includes(raw?.como_conheceu) ? raw.como_conheceu : "",
+    como_conheceu_detalhe: String(raw?.como_conheceu_detalhe || "").trim(),
+    estado_civil: ESTADOS_CIVIS.includes(raw?.estado_civil) ? raw.estado_civil : "",
+    regime_casamento: REGIMES_CASAMENTO.includes(raw?.regime_casamento) ? raw.regime_casamento : "",
+  };
+}
 
 function safeParseExtraFromObservacoes(observacoes?: string | null): { extra: CadastroExtra | null; legacyText: string } {
   const raw = (observacoes || "").trim();
@@ -224,7 +331,7 @@ function safeParseExtraFromObservacoes(observacoes?: string | null): { extra: Ca
     const jsonStr = raw.slice("CMX_JSON:".length).trim();
     try {
       const parsed = JSON.parse(jsonStr);
-      return { extra: { ...emptyExtra(), ...(parsed || {}) }, legacyText: "" };
+      return { extra: normalizeExtra(parsed), legacyText: "" };
     } catch {
       return { extra: null, legacyText: raw };
     }
@@ -233,7 +340,7 @@ function safeParseExtraFromObservacoes(observacoes?: string | null): { extra: Ca
   if (raw.startsWith("{") && raw.endsWith("}")) {
     try {
       const parsed = JSON.parse(raw);
-      return { extra: { ...emptyExtra(), ...(parsed || {}) }, legacyText: "" };
+      return { extra: normalizeExtra(parsed), legacyText: "" };
     } catch {
       return { extra: null, legacyText: raw };
     }
@@ -447,10 +554,12 @@ function segmentFromCNAE(cnaeRaw: string): string {
   return "Serviços";
 }
 
+function needsConjuge(estadoCivil: EstadoCivil | "") {
+  return estadoCivil === "Casado(a)" || estadoCivil === "União Estável";
+}
+
 /**
  * ✅ Mapa Brasil (iframe)
- * - Tingimento automático: chama consulmaxMap.setActive/setSelected no onLoad + retries.
- * - Clique aplica filtro: escuta CustomEvent do iframe (consulmax:uf-selected).
  */
 function BrazilImageMap({
   src,
@@ -467,7 +576,6 @@ function BrazilImageMap({
   const [iframeReady, setIframeReady] = useState(false);
   const lastSentRef = useRef<string>("");
 
-  // ✅ fallback: aceita postMessage (caso você evolua o html depois)
   useEffect(() => {
     function onMsg(ev: MessageEvent) {
       const d: any = ev.data;
@@ -513,24 +621,18 @@ function BrazilImageMap({
     if (key === lastSentRef.current && !attemptTag) return;
     lastSentRef.current = key;
 
-    // 1) same-origin API (melhor)
     try {
       const api = (win as any)?.consulmaxMap;
       if (api?.setActive) api.setActive(payload.activeUFs);
       if (api?.setSelected) api.setSelected(payload.selectedUF || null);
       return;
-    } catch {
-      // 2) fallback postMessage
-    }
+    } catch {}
 
     try {
       win.postMessage(payload, "*");
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
-  // ✅ NOVO: escuta o CustomEvent disparado no iframe quando clica na UF
   useEffect(() => {
     if (!iframeReady) return;
 
@@ -540,41 +642,29 @@ function BrazilImageMap({
     const handler = (ev: any) => {
       try {
         const uf = normalizeUF(ev?.detail?.uf || "");
-        // no html: toggleSelected pode mandar null
         onSelectUF(uf || "");
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
 
     try {
       win.addEventListener("consulmax:uf-selected", handler);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
-    // ✅ sincroniza caso já tenha algo selecionado no mapa
     try {
       const api = win?.consulmaxMap;
       const current = normalizeUF(api?.getSelected?.() || "");
       if (current !== normalizeUF(selectedUF || "")) {
-        // não força, só alinha se tiver diferença e houver seleção
         if (current) onSelectUF(current);
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     return () => {
       try {
         win.removeEventListener("consulmax:uf-selected", handler);
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
   }, [iframeReady, onSelectUF, selectedUF]);
 
-  // sempre que mudar activeUFs/selectedUF, tenta empurrar
   useEffect(() => {
     pushStateToIframe();
     if (!iframeReady) return;
@@ -761,7 +851,7 @@ export default function ClientesPage() {
 
       const { data: vendas, error: eVend } = await supabase
         .from("vendas")
-        .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at,vendedor_id,email,telefone,grupo")
+        .select("id,lead_id,cpf,cpf_cnpj,nascimento,descricao,created_at,vendedor_id,email,telefone,grupo,administradora,codigo")
         .in("lead_id", leadIds)
         .order("created_at", { ascending: false })
         .range(0, 20000);
@@ -778,6 +868,8 @@ export default function ClientesPage() {
         email?: string | null;
         telefone?: string | null;
         grupo?: string | null;
+        administradora?: string | null;
+        codigo?: string | null;
       };
 
       const vendasByLead = new Map<string, VendaLite[]>();
@@ -802,6 +894,8 @@ export default function ClientesPage() {
           email: v.email ?? null,
           telefone: v.telefone ?? null,
           grupo: v.grupo ?? null,
+          administradora: v.administradora ?? null,
+          codigo: v.codigo ?? null,
         });
       });
 
@@ -826,7 +920,7 @@ export default function ClientesPage() {
 
       const base: ClienteBase[] = [];
       for (const l of leads || []) {
-        const lid = String(l.id);
+        const lid = String((l as any).id);
         const arr = (vendasByLead.get(lid) || []).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
 
         const hasCpfAny = arr.some((x) => (x.cpf && x.cpf.length > 0) || x.hasCpfCnpj);
@@ -839,12 +933,21 @@ export default function ClientesPage() {
         const confirmed = confirmedByLead.get(lid) || null;
         const extraFromClient = confirmed?.extra || null;
 
+        const activeVendas = arr.filter((x) => String(x.codigo || "") === "00");
+        const activeAdmins = Array.from(
+          new Set(
+            activeVendas
+              .map((x) => String(x.administradora || "").trim())
+              .filter(Boolean)
+          )
+        );
+
         base.push({
           id: lid,
           lead_id: lid,
-          nome: l.nome || "(Sem nome)",
-          telefone: l.telefone || latest?.telefone || null,
-          email: l.email || latest?.email || null,
+          nome: (l as any).nome || "(Sem nome)",
+          telefone: (l as any).telefone || latest?.telefone || null,
+          email: (l as any).email || latest?.email || null,
           data_nascimento: latest?.nasc || null,
           observacoes: latest?.obs || null,
           cpf_dig: latest?.cpf || null,
@@ -858,11 +961,12 @@ export default function ClientesPage() {
           sexo: (extraFromClient?.sexo as any) || "",
           tipo: (extraFromClient?.tipo as any) || null,
           perfil: (extraFromClient?.perfil as any) || null,
-          segmento_pf: (extraFromClient?.segmento_pf as any) || "",
-          segmento_pj: extraFromClient?.segmento_pj || null,
-
+          segmentos: extraFromClient?.segmentos || [],
           uf: confirmed?.uf ?? null,
           cidade: confirmed?.cidade ?? null,
+
+          active_cotas_count: activeVendas.length,
+          active_admins: activeAdmins,
         });
       }
 
@@ -931,15 +1035,14 @@ export default function ClientesPage() {
           const { extra: parsedExtra, legacyText } = safeParseExtraFromObservacoes(row.observacoes);
           setLegacyObs(legacyText || "");
 
-          const baseExtra = emptyExtra();
-          const merged = parsedExtra ? { ...baseExtra, ...parsedExtra } : baseExtra;
+          const merged = normalizeExtra(parsedExtra || {});
 
-          merged.endereco_cep = row.endereco_cep || merged.endereco_cep;
-          merged.logradouro = row.logradouro || merged.logradouro;
-          merged.numero = row.numero || merged.numero;
-          merged.bairro = row.bairro || merged.bairro;
-          merged.cidade = row.cidade || merged.cidade;
-          merged.uf = row.uf || merged.uf;
+          merged.endereco_cep = (row as any).endereco_cep || merged.endereco_cep;
+          merged.logradouro = (row as any).logradouro || merged.logradouro;
+          merged.numero = (row as any).numero || merged.numero;
+          merged.bairro = (row as any).bairro || merged.bairro;
+          merged.cidade = (row as any).cidade || merged.cidade;
+          merged.uf = (row as any).uf || merged.uf;
 
           setExtra(merged);
           setChamadoComo(merged.chamado_como || "");
@@ -1015,12 +1118,17 @@ export default function ClientesPage() {
 
     if (!extra.tipo) return "Selecione o tipo (PF/PJ).";
     if (!extra.perfil) return "Selecione o perfil do cliente.";
+    if (!extra.segmentos.length) return "Selecione ao menos um segmento.";
 
-    if (extra.tipo === "PF") {
-      if (!extra.segmento_pf) return "Selecione o segmento (PF).";
-    } else {
-      if (!extra.segmento_pj.trim()) return "Informe o segmento de atuação (PJ).";
+    if ((extra.como_conheceu === "Outro" || extra.como_conheceu === "Indicação") && !extra.como_conheceu_detalhe.trim()) {
+      return "Preencha o detalhe de como nos conheceu.";
     }
+
+    if (needsConjuge(extra.estado_civil)) {
+      if (!extra.regime_casamento) return "Selecione o regime de casamento.";
+      if (!extra.conjuge_nome.trim()) return "Informe o nome do cônjuge.";
+    }
+
     return "";
   }
 
@@ -1035,7 +1143,12 @@ export default function ClientesPage() {
       const latestVendaId = active.vendas_ids?.[0];
 
       const fotoUrl = await uploadFotoIfAny();
-      const extraToSave: CadastroExtra = { ...extra, foto_url: fotoUrl, chamado_como: chamadoComo || "" };
+      const extraToSave: CadastroExtra = {
+        ...extra,
+        foto_url: fotoUrl,
+        chamado_como: chamadoComo || "",
+        conjuge_cpf: onlyDigits(extra.conjuge_cpf || ""),
+      };
 
       const { error: eLead } = await supabase
         .from("leads")
@@ -1198,18 +1311,23 @@ export default function ClientesPage() {
             if (ufStats) inc(ufStats.perfilCount, extra.perfil, 1);
           }
 
-          if (extra.tipo === "PF" && extra.segmento_pf) {
-            inc(statsBrasil.segPFCount, extra.segmento_pf, 1);
-            if (ufStats) inc(ufStats.segPFCount, extra.segmento_pf, 1);
+          if (extra.tipo === "PF" && extra.segmentos?.length) {
+            extra.segmentos.forEach((seg) => {
+              inc(statsBrasil.segPFCount, seg, 1);
+              if (ufStats) inc(ufStats.segPFCount, seg, 1);
+            });
           }
-          if (extra.tipo === "PJ" && extra.segmento_pj) {
-            inc(statsBrasil.segPJCount, extra.segmento_pj, 1);
-            if (ufStats) inc(ufStats.segPJCount, extra.segmento_pj, 1);
+          if (extra.tipo === "PJ" && extra.segmentos?.length) {
+            extra.segmentos.forEach((seg) => {
+              inc(statsBrasil.segPJCount, seg, 1);
+              if (ufStats) inc(ufStats.segPJCount, seg, 1);
+            });
           }
 
           if (extra.como_conheceu) {
-            inc(statsBrasil.origemCount, extra.como_conheceu, 1);
-            if (ufStats) inc(ufStats.origemCount, extra.como_conheceu, 1);
+            const origem = extra.como_conheceu_detalhe?.trim() ? `${extra.como_conheceu}: ${extra.como_conheceu_detalhe.trim()}` : extra.como_conheceu;
+            inc(statsBrasil.origemCount, origem, 1);
+            if (ufStats) inc(ufStats.origemCount, origem, 1);
           }
 
           const renda = parseMoneyToNumber(extra.renda_faturamento);
@@ -1272,7 +1390,6 @@ export default function ClientesPage() {
     return entries.slice(0, 12).map(([cidade, count]) => ({ cidade, count }));
   }, [currentStats]);
 
-  // ========= RENDER =========
   return (
     <div className="space-y-4">
       <div className="rounded-2xl bg-white p-4 shadow">
@@ -1397,7 +1514,14 @@ export default function ClientesPage() {
                             <div className="flex items-center gap-3">
                               <div className="avatar">{c.foto_url ? <img src={c.foto_url} alt="Foto do cliente" className="avatar-img" /> : <span className="avatar-ini">{initials(c.nome)}</span>}</div>
                               <div className="min-w-0">
-                                <div className="font-medium truncate">{c.nome}</div>
+                                <div className="font-medium truncate flex items-center gap-2 flex-wrap">
+                                  <span>{c.nome}</span>
+                                  {!!c.active_cotas_count && (
+                                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
+                                      {c.active_cotas_count} cota{c.active_cotas_count > 1 ? "s" : ""} ativa{c.active_cotas_count > 1 ? "s" : ""}
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="text-xs text-slate-500">CPF: {c.cpf_dig || "—"}</div>
                               </div>
                             </div>
@@ -1455,7 +1579,6 @@ export default function ClientesPage() {
             </div>
           </TabsContent>
 
-          {/* ================= DEMOGRAFIA ================= */}
           <TabsContent value="demografia" className="mt-4 space-y-4">
             <div className="rounded-2xl bg-white p-4 border shadow-sm">
               <div className="flex items-center justify-between gap-2">
@@ -1618,6 +1741,18 @@ export default function ClientesPage() {
                   <div className="text-xs text-slate-600">
                     Vendedor: <b>{active.vendedor_nome || "—"}</b>
                   </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
+                      {active.active_cotas_count || 0} cota{(active.active_cotas_count || 0) !== 1 ? "s" : ""} ativa{(active.active_cotas_count || 0) !== 1 ? "s" : ""}
+                    </span>
+
+                    {(active.active_admins || []).length > 0 &&
+                      active.active_admins!.map((adm) => (
+                        <span key={adm} className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700">
+                          {adm}
+                        </span>
+                      ))}
+                  </div>
                 </div>
               </div>
 
@@ -1632,7 +1767,7 @@ export default function ClientesPage() {
 
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
             {/* Identidade */}
-            <div className="rounded-xl border p-4 xl:col-span-6">
+            <div className="rounded-xl border p-4 xl:col-span-7">
               <h4 className="font-semibold mb-3">Identidade</h4>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1660,8 +1795,8 @@ export default function ClientesPage() {
                       setExtra((s) => ({
                         ...s,
                         tipo: e.target.value as TipoPessoa,
-                        segmento_pf: e.target.value === "PF" ? s.segmento_pf : "",
-                        segmento_pj: e.target.value === "PJ" ? s.segmento_pj : "",
+                        segmentos: [],
+                        cnae_principal: e.target.value === "PJ" ? s.cnae_principal : "",
                       }))
                     }
                     disabled={readOnly}
@@ -1671,17 +1806,31 @@ export default function ClientesPage() {
                   </select>
                 </div>
 
-                <div>
-                  <div className="label">Segmento</div>
+                <div className="md:col-span-2">
+                  <div className="label">Segmento{extra.tipo === "PF" ? " (pode marcar mais de um)" : "s de atuação"}</div>
+
                   {extra.tipo === "PF" ? (
-                    <select className="input" value={extra.segmento_pf} onChange={(e) => setExtra((s) => ({ ...s, segmento_pf: e.target.value as any }))} disabled={readOnly}>
-                      <option value="">Selecione…</option>
-                      {SEGMENTOS_PF.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex flex-wrap gap-2">
+                      {SEGMENTOS_PF.map((seg) => {
+                        const on = extra.segmentos.includes(seg);
+                        return (
+                          <button
+                            key={seg}
+                            type="button"
+                            className={`pill ${on ? "pill-on" : ""}`}
+                            onClick={() =>
+                              setExtra((s) => ({
+                                ...s,
+                                segmentos: on ? s.segmentos.filter((x) => x !== seg) : [...s.segmentos, seg],
+                              }))
+                            }
+                            disabled={readOnly}
+                          >
+                            {seg}
+                          </button>
+                        );
+                      })}
+                    </div>
                   ) : (
                     <div className="space-y-2">
                       <div className="grid grid-cols-12 gap-2">
@@ -1700,8 +1849,8 @@ export default function ClientesPage() {
                               const suggestion = segmentFromCNAE(extra.cnae_principal || "");
                               if (!suggestion) return;
                               setExtra((s) => {
-                                if ((s.segmento_pj || "").trim().length >= 3) return s;
-                                return { ...s, segmento_pj: suggestion };
+                                if (s.segmentos.some((x) => x.toLowerCase() === suggestion.toLowerCase())) return s;
+                                return { ...s, segmentos: [...s.segmentos, suggestion] };
                               });
                             }}
                             disabled={readOnly}
@@ -1709,19 +1858,40 @@ export default function ClientesPage() {
                         </div>
 
                         <div className="col-span-7">
-                          <div className="label">Segmento de atuação (PJ)</div>
-                          <input className="input" placeholder="Segmento de atuação principal (PJ)" value={extra.segmento_pj} onChange={(e) => setExtra((s) => ({ ...s, segmento_pj: e.target.value }))} disabled={readOnly} />
+                          <div className="label">Segmentos de atuação (PJ)</div>
+                          <input
+                            className="input"
+                            placeholder="Ex: Comércio, Transporte, Agro"
+                            value={extra.segmentos.join(", ")}
+                            onChange={(e) =>
+                              setExtra((s) => ({
+                                ...s,
+                                segmentos: splitSegments(e.target.value),
+                              }))
+                            }
+                            disabled={readOnly}
+                          />
                         </div>
                       </div>
 
                       <div className="text-xs text-slate-500">
-                        Dica: ao sair do campo <b>CNAE</b>, o sistema sugere um segmento automaticamente (você pode editar).
+                        Dica: no campo PJ você pode separar vários segmentos por vírgula. Ao sair do campo <b>CNAE</b>, o sistema sugere um segmento automaticamente.
                       </div>
+
+                      {!!extra.segmentos.length && (
+                        <div className="flex flex-wrap gap-2">
+                          {extra.segmentos.map((seg) => (
+                            <span key={seg} className="rounded-full border bg-slate-50 px-2 py-1 text-xs font-semibold">
+                              {seg}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
-                <div className="md:col-span-2">
+                <div>
                   <div className="label">Sexo</div>
                   <div className="flex gap-2 flex-wrap">
                     <button type="button" className={`pill ${extra.sexo === "M" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, sexo: "M" }))} disabled={readOnly}>
@@ -1740,6 +1910,84 @@ export default function ClientesPage() {
                     )}
                   </div>
                 </div>
+
+                <div>
+                  <div className="label">Estado Civil</div>
+                  <select
+                    className="input"
+                    value={extra.estado_civil}
+                    onChange={(e) =>
+                      setExtra((s) => {
+                        const estado = e.target.value as EstadoCivil | "";
+                        return {
+                          ...s,
+                          estado_civil: estado,
+                          regime_casamento: needsConjuge(estado) ? s.regime_casamento : "",
+                          conjuge_nome: needsConjuge(estado) ? s.conjuge_nome : "",
+                          conjuge_cpf: needsConjuge(estado) ? s.conjuge_cpf : "",
+                          conjuge_nasc: needsConjuge(estado) ? s.conjuge_nasc : "",
+                          conjuge_sexo: needsConjuge(estado) ? s.conjuge_sexo : "",
+                        };
+                      })
+                    }
+                    disabled={readOnly}
+                  >
+                    <option value="">Selecione…</option>
+                    {ESTADOS_CIVIS.map((ec) => (
+                      <option key={ec} value={ec}>
+                        {ec}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {needsConjuge(extra.estado_civil) && (
+                  <>
+                    <div>
+                      <div className="label">Regime de casamento</div>
+                      <select className="input" value={extra.regime_casamento} onChange={(e) => setExtra((s) => ({ ...s, regime_casamento: e.target.value as RegimeCasamento }))} disabled={readOnly}>
+                        <option value="">Selecione…</option>
+                        {REGIMES_CASAMENTO.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-2 rounded-xl border p-3 bg-slate-50">
+                      <div className="font-semibold text-sm mb-3">Dados do Cônjuge</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <div className="label">Nome</div>
+                          <input className="input" value={extra.conjuge_nome} onChange={(e) => setExtra((s) => ({ ...s, conjuge_nome: e.target.value }))} disabled={readOnly} />
+                        </div>
+                        <div>
+                          <div className="label">CPF</div>
+                          <input className="input" value={onlyDigits(extra.conjuge_cpf)} onChange={(e) => setExtra((s) => ({ ...s, conjuge_cpf: onlyDigits(e.target.value) }))} disabled={readOnly} />
+                        </div>
+                        <div>
+                          <div className="label">Data de Nascimento</div>
+                          <input className="input" type="date" value={extra.conjuge_nasc} onChange={(e) => setExtra((s) => ({ ...s, conjuge_nasc: e.target.value }))} disabled={readOnly} />
+                        </div>
+                        <div>
+                          <div className="label">Sexo</div>
+                          <div className="flex gap-2 flex-wrap">
+                            <button type="button" className={`pill ${extra.conjuge_sexo === "M" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, conjuge_sexo: "M" }))} disabled={readOnly}>
+                              Masculino
+                            </button>
+                            <button type="button" className={`pill ${extra.conjuge_sexo === "F" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, conjuge_sexo: "F" }))} disabled={readOnly}>
+                              Feminino
+                            </button>
+                            <button type="button" className={`pill ${extra.conjuge_sexo === "O" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, conjuge_sexo: "O" }))} disabled={readOnly}>
+                              Outro
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 <div className="md:col-span-2">
                   <div className="label">Nome</div>
@@ -1774,7 +2022,7 @@ export default function ClientesPage() {
             </div>
 
             {/* Contato & Endereço */}
-            <div className="rounded-xl border p-4 xl:col-span-6">
+            <div className="rounded-xl border p-4 xl:col-span-5">
               <h4 className="font-semibold mb-3">Contato & Endereço</h4>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1994,45 +2242,78 @@ export default function ClientesPage() {
                 <div className="rounded-xl border p-3">
                   <div className="font-semibold text-sm mb-2">Preferências de Conteúdo</div>
 
-                  <div className="text-xs text-slate-600 mb-2">Que tipo de conteúdo você mais gosta de receber? (marque mais de um)</div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {CONTEUDOS.map((k) => {
-                      const on = extra.conteudos.includes(k);
-                      return (
-                        <button
-                          key={k}
-                          type="button"
-                          className={`pill ${on ? "pill-on" : ""}`}
-                          onClick={() =>
-                            setExtra((s) => ({
-                              ...s,
-                              conteudos: on ? s.conteudos.filter((x) => x !== k) : [...s.conteudos, k],
-                            }))
-                          }
-                          disabled={readOnly}
-                        >
-                          {k}
-                        </button>
-                      );
-                    })}
+                  <div className="flex items-center justify-between gap-3 py-2">
+                    <div className="text-sm">Permite receber conteúdo?</div>
+                    <PillToggle value={extra.permite_receber_conteudo} onChange={(v) => setExtra((s) => ({ ...s, permite_receber_conteudo: v }))} disabled={readOnly} />
                   </div>
 
-                  <div className="mt-3">
-                    <div className="text-xs text-slate-600 mb-2">Quer receber conteúdos educativos ou prefere só ofertas pontuais?</div>
-                    <div className="flex gap-2">
-                      <button type="button" className={`pill ${extra.prefere_educativo === "educativo" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "educativo" }))} disabled={readOnly}>
-                        Educativos
-                      </button>
-                      <button type="button" className={`pill ${extra.prefere_educativo === "ofertas" ? "pill-on" : ""}`} onClick={() => setExtra((s) => ({ ...s, prefere_educativo: "ofertas" }))} disabled={readOnly}>
-                        Ofertas pontuais
-                      </button>
-                    </div>
-                  </div>
+                  {extra.permite_receber_conteudo === "sim" && (
+                    <>
+                      <div className="text-xs text-slate-600 mb-2 mt-2">Que tipo de conteúdo você mais gosta de receber? (marque mais de um)</div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {CONTEUDOS.map((k) => {
+                          const on = extra.conteudos.includes(k);
+                          return (
+                            <button
+                              key={k}
+                              type="button"
+                              className={`pill ${on ? "pill-on" : ""}`}
+                              onClick={() =>
+                                setExtra((s) => ({
+                                  ...s,
+                                  conteudos: on ? s.conteudos.filter((x) => x !== k) : [...s.conteudos, k],
+                                }))
+                              }
+                              disabled={readOnly}
+                            >
+                              {k}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="mt-3">
+                        <div className="text-xs text-slate-600 mb-2">Quer receber conteúdos educativos ou prefere só ofertas pontuais?</div>
+                        <div className="flex gap-2 flex-wrap">
+                          {(["educativo", "ofertas"] as const).map((pref) => {
+                            const on = extra.preferencias_envio.includes(pref);
+                            return (
+                              <button
+                                key={pref}
+                                type="button"
+                                className={`pill ${on ? "pill-on" : ""}`}
+                                onClick={() =>
+                                  setExtra((s) => ({
+                                    ...s,
+                                    preferencias_envio: on ? s.preferencias_envio.filter((x) => x !== pref) : [...s.preferencias_envio, pref],
+                                  }))
+                                }
+                                disabled={readOnly}
+                              >
+                                {pref === "educativo" ? "Educativos" : "Ofertas pontuais"}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   <div className="mt-3">
                     <div className="text-xs text-slate-600 mb-2">Como nos conheceu? (1 opção)</div>
-                    <select className="input" value={extra.como_conheceu} onChange={(e) => setExtra((s) => ({ ...s, como_conheceu: e.target.value as any }))} disabled={readOnly}>
+                    <select
+                      className="input"
+                      value={extra.como_conheceu}
+                      onChange={(e) =>
+                        setExtra((s) => ({
+                          ...s,
+                          como_conheceu: e.target.value as any,
+                          como_conheceu_detalhe: e.target.value === "Outro" || e.target.value === "Indicação" ? s.como_conheceu_detalhe : "",
+                        }))
+                      }
+                      disabled={readOnly}
+                    >
                       <option value="">Selecione…</option>
                       {COMO_CONHECEU.map((o) => (
                         <option key={o} value={o}>
@@ -2040,6 +2321,18 @@ export default function ClientesPage() {
                         </option>
                       ))}
                     </select>
+
+                    {(extra.como_conheceu === "Outro" || extra.como_conheceu === "Indicação") && (
+                      <div className="mt-2">
+                        <input
+                          className="input"
+                          placeholder={extra.como_conheceu === "Indicação" ? "Quem indicou?" : "Descreva…"}
+                          value={extra.como_conheceu_detalhe}
+                          onChange={(e) => setExtra((s) => ({ ...s, como_conheceu_detalhe: e.target.value }))}
+                          disabled={readOnly}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2090,7 +2383,6 @@ export default function ClientesPage() {
         .pill{padding:7px 11px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-weight:800;font-size:12px}
         .pill-on{background:#111827;color:#fff;border-color:#111827}
 
-        /* ✅ Busca premium */
         .searchWrap{
           display:flex;align-items:center;gap:10px;
           border:1px solid #e2e8f0;
@@ -2112,7 +2404,6 @@ export default function ClientesPage() {
           background:#fff;
         }
 
-        /* ✅ Avatar */
         .avatar{
           width:38px;height:38px;border-radius:999px;
           border:2px solid rgba(161,28,39,.15);

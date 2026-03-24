@@ -76,8 +76,6 @@ type Venda = {
   numero_proposta?: string | null;
   cliente_lead_id?: string | null;
   lead_id?: string | null;
-
-  // extras
   encarteirada_em?: string | null;
   codigo?: string | null;
   cancelada_em?: string | null;
@@ -102,8 +100,6 @@ type Commission = {
   comprovante_url: string | null;
   cliente_nome?: string | null;
   numero_proposta?: string | null;
-
-  // flags da venda
   venda_cancelada?: boolean;
   venda_codigo?: string | null;
   venda_cancelada_em?: string | null;
@@ -126,13 +122,13 @@ type CommissionFlow = {
 type CommissionRule = {
   vendedor_id: string;
   sim_table_id: string;
-  percent_padrao: number; // fração
+  percent_padrao: number;
   fluxo_meses: number;
-  fluxo_percentuais: number[]; // frações somando 1.00
+  fluxo_percentuais: number[];
   obs: string | null;
 };
 
-/* ========================= Helpers de moeda/data ========================= */
+/* ========================= Helpers ========================= */
 const BRL = (v?: number | null) =>
   (typeof v === "number" ? v : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -163,12 +159,11 @@ function parseBRL(s: string) {
   return parseFloat((s || "").replace(/\./g, "").replace(",", ".")) || 0;
 }
 
-// percent humano (ex.: "6,00%" ou "6,00")
 function parsePctHumanToNumber(s: string) {
   const cleaned = (s || "").replace("%", "").trim();
-  const n = parseFloat(cleaned.replace(",", ".")) || 0;
-  return n;
+  return parseFloat(cleaned.replace(",", ".")) || 0;
 }
+
 function formatPctHuman(n: number) {
   return `${(n || 0).toFixed(2).replace(".", ",")}%`;
 }
@@ -485,7 +480,7 @@ function LineChart({
   );
 }
 
-/* ========================= Projeções (resumo) ========================= */
+/* ========================= Projeções ========================= */
 const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
 function expectedDateForParcel(_saleDateISO: string | null | undefined, flow: CommissionFlow[] | undefined, mes: number): Date | null {
@@ -628,27 +623,23 @@ const LS_IMPOSTO_PCT = "@consulmax:recibo-imposto-pct-v1";
 const APP_SETTING_IMPOSTO_KEY = "commission_tax_pct";
 
 export default function ComissoesPage() {
-  /* ===== Auth & RBAC ===== */
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
-      const aid = data?.user?.id ?? null;
-      setAuthUserId(aid);
+      setAuthUserId(data?.user?.id ?? null);
     })();
   }, []);
 
   const canEdit = isAdmin;
 
-  /* Filtros */
   const [vendedorId, setVendedorId] = useState<string>("all");
   const [status, setStatus] = useState<"all" | "a_pagar" | "pago" | "estorno">("all");
   const [segmento, setSegmento] = useState<string>("all");
   const [tabela, setTabela] = useState<string>("all");
 
-  /* Bases */
   const [users, setUsers] = useState<User[]>([]);
   const [usersSecure, setUsersSecure] = useState<UserSecure[]>([]);
   const [simTables, setSimTables] = useState<SimTable[]>([]);
@@ -666,7 +657,6 @@ export default function ComissoesPage() {
   }, [users]);
 
   const activeUsers = useMemo(() => users.filter((u) => u.is_active === true), [users]);
-
   const secureById = useMemo(() => Object.fromEntries(usersSecure.map((u) => [u.id, u])), [usersSecure]);
   const adminById = useMemo(() => Object.fromEntries(simAdmins.map((a) => [a.id, a.name])), [simAdmins]);
 
@@ -678,13 +668,11 @@ export default function ComissoesPage() {
 
   const canonUserId = (id?: string | null) => (id ? usersById[id]?.id || usersByAuth[id]?.id || null : null);
 
-  /* Dados */
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
   const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
 
-  /* Regras */
   const [openRules, setOpenRules] = useState(false);
   const [ruleVendorId, setRuleVendorId] = useState<string>("");
   const [ruleSimTableId, setRuleSimTableId] = useState<string>("");
@@ -692,7 +680,6 @@ export default function ComissoesPage() {
   const [ruleMeses, setRuleMeses] = useState<number>(1);
   const [ruleFluxoPct, setRuleFluxoPct] = useState<string[]>(["100,00"]);
   const [ruleObs, setRuleObs] = useState<string>("");
-
   const [ruleRows, setRuleRows] = useState<(CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null })[]>([]);
   const [ruleAdminFilter, setRuleAdminFilter] = useState<string>("all");
   const [ruleSegmentFilter, setRuleSegmentFilter] = useState<string>("all");
@@ -700,7 +687,6 @@ export default function ComissoesPage() {
   const [ruleFormSimTable, setRuleFormSimTable] = useState<SimTable | null>(null);
   const [viewRule, setViewRule] = useState<(CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null }) | null>(null);
 
-  /* Pagamento */
   const [openPay, setOpenPay] = useState(false);
   const [payCommissionId, setPayCommissionId] = useState<string>("");
   const [payFlow, setPayFlow] = useState<(CommissionFlow & { _valor_previsto_calc?: number })[]>([]);
@@ -709,15 +695,12 @@ export default function ComissoesPage() {
   const [payValue, setPayValue] = useState<string>("");
   const [payDefaultTab, setPayDefaultTab] = useState<"selecionar" | "arquivos">("selecionar");
 
-  /* Recibo */
   const [reciboDate, setReciboDate] = useState<string>(() => toDateInput(new Date()));
   const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00%");
   const [reciboVendor, setReciboVendor] = useState<string>("all");
-
   const [openImpostoCfg, setOpenImpostoCfg] = useState(false);
   const [impostoDraft, setImpostoDraft] = useState<string>("6,00");
 
-  /* Estorno (global em Comissões Pagas) */
   const [openBulkRefund, setOpenBulkRefund] = useState(false);
   const [bulkRefundProp, setBulkRefundProp] = useState<string>("");
   const [bulkRefundFound, setBulkRefundFound] = useState<{ comm: Commission; flows: CommissionFlow[] } | null>(null);
@@ -725,20 +708,15 @@ export default function ComissoesPage() {
   const [bulkRefundGross, setBulkRefundGross] = useState<string>("");
   const [busyRefund, setBusyRefund] = useState(false);
 
-  /* Expand/Collapse */
   const [showPaid, setShowPaid] = useState(false);
   const [showUnpaid, setShowUnpaid] = useState(true);
   const [showVendasSem, setShowVendasSem] = useState(true);
 
-  /* Busca/Paginação (pagas) */
   const [paidSearch, setPaidSearch] = useState<string>("");
   const [paidPage, setPaidPage] = useState<number>(1);
   const pageSize = 15;
-
-  /* Busca nº proposta (a pagar) */
   const [unpaidPropSearch, setUnpaidPropSearch] = useState<string>("");
 
-  /* Carregamento de bases + RBAC */
   useEffect(() => {
     (async () => {
       const [{ data: u }, { data: st }, { data: us }, { data: admins }] = await Promise.all([
@@ -751,12 +729,13 @@ export default function ComissoesPage() {
         supabase.from("sim_admins").select("id, name").order("name", { ascending: true }),
       ]);
 
-      setUsers((u || []) as User[]);
+      const usersData = (u || []) as User[];
+      setUsers(usersData);
       setSimTables((st || []) as SimTable[]);
       setUsersSecure((us || []) as UserSecure[]);
       setSimAdmins((admins || []) as { id: UUID; name: string }[]);
 
-      const current = (u || []).find((x: any) => x.auth_user_id && x.auth_user_id === (authUserId || "")) as User | undefined;
+      const current = usersData.find((x) => x.auth_user_id && x.auth_user_id === (authUserId || ""));
       const admin = current?.role === "admin";
       setIsAdmin(!!admin);
 
@@ -765,10 +744,8 @@ export default function ComissoesPage() {
         setReciboVendor(current.id);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUserId]);
 
-  // SINCRONIZA recibo com o vendedor selecionado
   useEffect(() => {
     setReciboVendor(vendedorId);
   }, [vendedorId]);
@@ -805,10 +782,8 @@ export default function ComissoesPage() {
   useEffect(() => {
     if (!authUserId) return;
     loadImpostoParam();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUserId]);
 
-  // opções de administradora / segmento para Regras
   const adminOptions = useMemo(() => {
     const ids = Array.from(new Set(simTables.map((t) => t.admin_id).filter(Boolean))) as string[];
     return ids
@@ -823,7 +798,6 @@ export default function ComissoesPage() {
     return segs.sort();
   }, [simTables, ruleAdminFilter]);
 
-  // ✅ DEDUPE por nome_tabela (normalizado) — mostra só uma vez
   const dedupedTables = useMemo(() => {
     const base = simTables
       .filter((t) => ruleAdminFilter === "all" || t.admin_id === ruleAdminFilter)
@@ -841,11 +815,7 @@ export default function ComissoesPage() {
       const sorted = [...all].sort((a, b) => {
         const an = adminById[a.admin_id || ""] || "";
         const bn = adminById[b.admin_id || ""] || "";
-        return (
-          an.localeCompare(bn) ||
-          (a.segmento || "").localeCompare(b.segmento || "") ||
-          a.nome_tabela.localeCompare(b.nome_tabela)
-        );
+        return an.localeCompare(bn) || (a.segmento || "").localeCompare(b.segmento || "") || a.nome_tabela.localeCompare(b.nome_tabela);
       });
       repr.push({ key, rep: sorted[0], all: sorted });
     }
@@ -853,11 +823,7 @@ export default function ComissoesPage() {
     repr.sort((a, b) => {
       const an = adminById[a.rep.admin_id || ""] || "";
       const bn = adminById[b.rep.admin_id || ""] || "";
-      return (
-        an.localeCompare(bn) ||
-        (a.rep.segmento || "").localeCompare(b.rep.segmento || "") ||
-        a.rep.nome_tabela.localeCompare(b.rep.nome_tabela)
-      );
+      return an.localeCompare(bn) || (a.rep.segmento || "").localeCompare(b.rep.segmento || "") || a.rep.nome_tabela.localeCompare(b.rep.nome_tabela);
     });
 
     return repr;
@@ -869,7 +835,6 @@ export default function ComissoesPage() {
     return simTables.filter((t) => normalize(t.nome_tabela) === key);
   };
 
-  /* Fetch principal */
   async function fetchData() {
     setLoading(true);
     try {
@@ -933,10 +898,8 @@ export default function ComissoesPage() {
 
         (vendas || []).forEach((v: any) => {
           const cid = v.lead_id || v.cliente_lead_id || undefined;
-
           const codigo = v.codigo ?? null;
           const cancelada_em = v.cancelada_em ?? null;
-
           const venda_cancelada = isVendaCancelada({ codigo, cancelada_em });
 
           vendasExtras[v.id] = {
@@ -956,7 +919,6 @@ export default function ComissoesPage() {
           flow: flowBy[c.id] || [],
           cliente_nome: vendasExtras[c.venda_id]?.cliente_nome || null,
           numero_proposta: vendasExtras[c.venda_id]?.numero_proposta || null,
-
           venda_cancelada: !!vendasExtras[c.venda_id]?.venda_cancelada,
           venda_codigo: vendasExtras[c.venda_id]?.codigo ?? null,
           venda_cancelada_em: vendasExtras[c.venda_id]?.cancelada_em ?? null,
@@ -996,7 +958,9 @@ export default function ComissoesPage() {
         const map: Record<string, string> = {};
         (cli || []).forEach((c: any) => (map[c.id] = c.nome || ""));
         setClientesMap(map);
-      } else setClientesMap({});
+      } else {
+        setClientesMap({});
+      }
 
       try {
         setRows((prev) => {
@@ -1028,10 +992,8 @@ export default function ComissoesPage() {
 
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vendedorId, status, segmento, tabela, isAdmin, authUserId]);
 
-  /* Totais/KPIs */
   const now = new Date();
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -1042,14 +1004,13 @@ export default function ComissoesPage() {
 
   function paidInRangeLiquid(s: Date, e: Date) {
     const validRows = rows.filter((r) => r.status !== "estorno");
-    const valor = sum(
+    return sum(
       validRows.flatMap((r) =>
         (r.flow || [])
           .filter((f) => f.data_pagamento_vendedor && isBetweenISO(f.data_pagamento_vendedor, s, e) && Number(f.valor_pago_vendedor) > 0)
           .map((f) => (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac))
       )
     );
-    return valor;
   }
 
   function previstoInRange(s: Date, e: Date) {
@@ -1089,10 +1050,7 @@ export default function ComissoesPage() {
   const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
 
   const comissaoProgramada = useMemo(() => {
-    const today = new Date();
-    const todayZero = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-    const futuros: Array<{ dateIso: string; valor: number }> = [];
+    const programadas: Array<{ dateIso: string; bruto: number; liquido: number }> = [];
 
     for (const r of rows) {
       if (r.status === "estorno" || r.venda_cancelada) continue;
@@ -1101,43 +1059,46 @@ export default function ComissoesPage() {
       const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
 
       for (const f of flows) {
-        const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
-        if (isPaid) continue;
+        const dataProgramada = f.data_pagamento_vendedor;
+        const valorJaPago = Number(f.valor_pago_vendedor) || 0;
 
-        const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
-        if (!exp) continue;
+        if (!dataProgramada) continue;
+        if (valorJaPago > 0) continue;
 
-        const expZero = new Date(exp.getFullYear(), exp.getMonth(), exp.getDate());
-        if (expZero < todayZero) continue;
+        const bruto = (f.valor_previsto ?? totalComissao * (Number(f.percentual) || 0)) || 0;
+        const liquido = bruto * (1 - impostoFrac);
 
-        const valor = (f.valor_previsto ?? totalComissao * (f.percentual ?? 0)) ?? 0;
-
-        futuros.push({
-          dateIso: toDateInput(expZero),
-          valor,
+        programadas.push({
+          dateIso: dataProgramada,
+          bruto,
+          liquido,
         });
       }
     }
 
-    if (!futuros.length) return null;
+    if (!programadas.length) return null;
 
-    futuros.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
-    const proxData = futuros[0].dateIso;
-    const totalNaData = futuros.filter((x) => x.dateIso === proxData).reduce((acc, cur) => acc + cur.valor, 0);
+    programadas.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+    const proxData = programadas[0].dateIso;
+
+    const brutoTotal = programadas.filter((x) => x.dateIso === proxData).reduce((acc, cur) => acc + cur.bruto, 0);
+    const liquidoTotal = programadas.filter((x) => x.dateIso === proxData).reduce((acc, cur) => acc + cur.liquido, 0);
 
     return {
-      valor: totalNaData,
       data: proxData,
+      bruto: brutoTotal,
+      liquido: liquidoTotal,
     };
-  }, [rows]);
+  }, [rows, impostoFrac]);
 
-  /* Regras — utilitários */
   function onChangeMeses(n: number) {
     setRuleMeses(n);
     const arr = [...ruleFluxoPct];
     if (n > arr.length) {
       while (arr.length < n) arr.push("0,00");
-    } else arr.length = n;
+    } else {
+      arr.length = n;
+    }
     setRuleFluxoPct(arr);
   }
 
@@ -1179,7 +1140,6 @@ export default function ComissoesPage() {
     if (openRules && ruleVendorId) {
       fetchRulesForVendor(ruleVendorId);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRules, ruleVendorId, simTables, adminById]);
 
   useEffect(() => {
@@ -1201,9 +1161,7 @@ export default function ComissoesPage() {
     const soma100 = Math.abs(somaFluxo - 1.0) < 1e-6;
     const somaIgualPadrao = Math.abs(somaFluxo - pctPadraoPercent) < 1e-6;
     if (!(soma100 || somaIgualPadrao)) {
-      return alert(
-        `Soma do fluxo deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`
-      );
+      return alert(`Soma do fluxo deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
     }
 
     let fluxo_percentuais_frac: number[] = [];
@@ -1218,7 +1176,9 @@ export default function ComissoesPage() {
     const percent_padrao_frac = pctPadraoPercent / 100;
 
     const baseTable = simTables.find((t) => t.id === ruleSimTableId) || ruleFormSimTable;
-    const group = baseTable ? simTables.filter((t) => normalize(t.nome_tabela) === normalize(baseTable.nome_tabela)) : [{ id: ruleSimTableId } as any];
+    const group = baseTable
+      ? simTables.filter((t) => normalize(t.nome_tabela) === normalize(baseTable.nome_tabela))
+      : ([{ id: ruleSimTableId }] as any[]);
 
     const payload = group.map((t) => ({
       vendedor_id: ruleVendorId,
@@ -1243,7 +1203,9 @@ export default function ComissoesPage() {
     if (!confirm("Excluir regra desta tabela (e duplicadas com mesmo nome)?")) return;
 
     const baseTable = simTables.find((t) => t.id === simTableId);
-    const group = baseTable ? simTables.filter((t) => normalize(t.nome_tabela) === normalize(baseTable.nome_tabela)) : [{ id: simTableId } as any];
+    const group = baseTable
+      ? simTables.filter((t) => normalize(t.nome_tabela) === normalize(baseTable.nome_tabela))
+      : ([{ id: simTableId }] as any[]);
     const ids = group.map((t) => t.id);
 
     const { error } = await supabase.from("commission_rules").delete().eq("vendedor_id", vId).in("sim_table_id", ids);
@@ -1290,7 +1252,6 @@ export default function ComissoesPage() {
     setRuleFormOpen(true);
   }
 
-  /* Garantir/abrir pagamento */
   async function ensureFlowForCommission(c: Commission): Promise<CommissionFlow[]> {
     const { data: existing } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
     if (existing && existing.length > 0) return existing as CommissionFlow[];
@@ -1385,8 +1346,8 @@ export default function ComissoesPage() {
   }) {
     if (!canEdit) return alert("Vendedor não pode registrar pagamento.");
 
-    let reciboPath: string | null = null,
-      compPath: string | null = null;
+    let reciboPath: string | null = null;
+    let compPath: string | null = null;
     if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
     if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
 
@@ -1442,7 +1403,6 @@ export default function ComissoesPage() {
     fetchData();
   }
 
-  /* ====== ESTORNO (GLOBAL) ====== */
   async function searchRefundByProposal() {
     const prop = (bulkRefundProp || "").trim();
     if (!prop) {
@@ -1537,7 +1497,6 @@ export default function ComissoesPage() {
     }
   }
 
-  /* ====== Gerar / Retornar / Recibo ====== */
   async function gerarComissaoDeVenda(venda: Venda) {
     if (!canEdit) return alert("Vendedor não pode gerar comissão.");
     try {
@@ -1755,7 +1714,10 @@ export default function ComissoesPage() {
     doc.text(`Data: ${formatISODateBR(dataRecibo)}`, 40, 74);
 
     let y = 92;
-    ["Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA. CNPJ: 57.942.043/0001-03", "Endereço: Av. Menezes Filho, 3171, Casa Preta, Ji-Paraná/RO. CEP: 76907-532"].forEach((l) => {
+    [
+      "Nome do Pagador: Consulmax Serviços de Planejamento Estruturado e Proteção LTDA. CNPJ: 57.942.043/0001-03",
+      "Endereço: Av. Menezes Filho, 3171, Casa Preta, Ji-Paraná/RO. CEP: 76907-532",
+    ].forEach((l) => {
       doc.text(l, 40, y);
       y += 14;
     });
@@ -1804,14 +1766,23 @@ export default function ComissoesPage() {
 
     try {
       const { data: refunds } = await supabase.from("commission_refunds").select("id, commission_id, flow_id, numero_proposta, data_estorno, valor_bruto, valor_liquido");
-      const refundsOnDate = (refunds || []).filter((r: any) => r.data_estorno === dataRecibo && (!vendedorSel || rows.find((x) => x.id === r.commission_id)?.vendedor_id === vendedorSel));
+      const refundsOnDate = (refunds || []).filter(
+        (r: any) => r.data_estorno === dataRecibo && (!vendedorSel || rows.find((x) => x.id === r.commission_id)?.vendedor_id === vendedorSel)
+      );
       for (const rf of refundsOnDate) {
         body.push(["—", rf.numero_proposta || "—", "ESTORNO", "—", BRL(-(rf.valor_bruto || 0)), BRL((rf.valor_bruto || 0) * impostoPct), BRL(-(rf.valor_liquido || 0))]);
         totalLiquido -= rf.valor_liquido || 0;
       }
     } catch {}
 
-    autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30, 41, 63] } });
+    autoTable(doc, {
+      startY: y,
+      head,
+      body,
+      styles: { font: "helvetica", fontSize: 10 },
+      headStyles: { fillColor: [30, 41, 63] },
+    });
+
     const endY = (doc as any).lastAutoTable.finalY + 12;
     doc.setFont("helvetica", "bold");
     doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
@@ -1826,11 +1797,7 @@ export default function ComissoesPage() {
     doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado || "")}.pdf`);
   }
 
-  /* Listas auxiliares */
-  const rowsAPagarBase = useMemo(
-    () => rows.filter((r) => r.status === "a_pagar" && !r.venda_cancelada),
-    [rows]
-  );
+  const rowsAPagarBase = useMemo(() => rows.filter((r) => r.status === "a_pagar" && !r.venda_cancelada), [rows]);
 
   const rowsAPagar = useMemo(() => {
     const q = normalize(unpaidPropSearch);
@@ -1864,7 +1831,6 @@ export default function ComissoesPage() {
   const pageStart = (Math.min(Math.max(paidPage, 1), totalPages) - 1) * pageSize;
   const pagosPage = pagosFiltered.slice(pageStart, pageStart + pageSize);
 
-  /* ========================= Render ========================= */
   return (
     <div className="relative p-4 space-y-8 isolate">
       <div className="liquid-bg">
@@ -1874,7 +1840,6 @@ export default function ComissoesPage() {
       </div>
 
       <div className="relative z-[1] space-y-8">
-        {/* Filtros topo */}
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex items-center gap-2">
@@ -1966,7 +1931,6 @@ export default function ComissoesPage() {
           </CardContent>
         </Card>
 
-        {/* ===== Dashboards ===== */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
           <Card>
             <CardHeader className="pb-3">
@@ -2041,7 +2005,6 @@ export default function ComissoesPage() {
           </Card>
         </div>
 
-        {/* Resumo */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-6">
           <Card>
             <CardHeader className="pb-3">
@@ -2080,19 +2043,17 @@ export default function ComissoesPage() {
             <CardContent>
               {comissaoProgramada ? (
                 <div className="space-y-1">
-                  <div className="text-2xl font-bold">{BRL(comissaoProgramada.valor)}</div>
-                  <div className="text-sm text-gray-600">
-                    Data do pagamento: {formatISODateBR(comissaoProgramada.data)}
-                  </div>
+                  <div className="text-lg font-bold">Bruta: {BRL(comissaoProgramada.bruto)}</div>
+                  <div className="text-lg font-bold text-emerald-700">Líquida: {BRL(comissaoProgramada.liquido)}</div>
+                  <div className="text-sm text-gray-600">Data do pagamento: {formatISODateBR(comissaoProgramada.data)}</div>
                 </div>
               ) : (
-                <div className="text-sm text-gray-500">Sem pagamentos programados.</div>
+                <div className="text-sm text-gray-500">Sem comissão programada.</div>
               )}
             </CardContent>
           </Card>
         </div>
 
-        {/* Vendas sem comissão */}
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex items-center justify-between">
@@ -2135,7 +2096,7 @@ export default function ComissoesPage() {
                       <tr key={v.id} className="border-b">
                         <td className="p-2">{formatISODateBR(v.data_venda)}</td>
                         <td className="p-2">{userLabel(v.vendedor_id)}</td>
-                        <td className="p-2">{(clienteId && (clientesMap[clienteId]?.trim() as any)) || "—"}</td>
+                        <td className="p-2">{(clienteId && clientesMap[clienteId]?.trim()) || "—"}</td>
                         <td className="p-2 hidden md:table-cell">{v.numero_proposta || "—"}</td>
                         <td className="p-2 hidden md:table-cell">{v.administradora || "—"}</td>
                         <td className="p-2">{v.segmento || "—"}</td>
@@ -2155,7 +2116,6 @@ export default function ComissoesPage() {
           )}
         </Card>
 
-        {/* Detalhamento — a pagar */}
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -2196,9 +2156,7 @@ export default function ComissoesPage() {
                       )}
                     </div>
                     <div className="text-xs text-gray-500">
-                      {isAdmin
-                        ? "Esse percentual será usado em todos os recibos."
-                        : "Percentual definido pela administração."}
+                      {isAdmin ? "Esse percentual será usado em todos os recibos." : "Percentual definido pela administração."}
                     </div>
                   </div>
 
@@ -2276,15 +2234,12 @@ export default function ComissoesPage() {
                           <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
                           <td className="p-2 text-right hidden md:table-cell">{pct100(r.percent_aplicado)}</td>
                           <td className="p-2 text-right">{BRL(r.valor_total)}</td>
-
                           <td className="p-2">
                             <span className="font-medium tabular-nums">{total ? `${paid}/${total}` : "—"}</span>
                           </td>
-
                           <td className="p-2">
                             <span className="font-medium tabular-nums">{`${pct.toFixed(0)}%`}</span>
                           </td>
-
                           <td className="p-2">
                             <div className="flex flex-col gap-2 sm:flex-row">
                               <Button
@@ -2325,7 +2280,6 @@ export default function ComissoesPage() {
           )}
         </Card>
 
-        {/* Comissões pagas */}
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -2440,7 +2394,6 @@ export default function ComissoesPage() {
           )}
         </Card>
 
-        {/* Regras (overlay principal) */}
         <Dialog open={openRules} onOpenChange={(v) => setOpenRules(v)}>
           <DialogContent className="max-w-6xl">
             <DialogHeader>
@@ -2574,7 +2527,6 @@ export default function ComissoesPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Editor de regra (overlay secundário) */}
         <Dialog
           open={ruleFormOpen}
           onOpenChange={(open) => {
@@ -2665,7 +2617,6 @@ export default function ComissoesPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Visualização da regra */}
         <Dialog
           open={!!viewRule}
           onOpenChange={(open) => {
@@ -2716,7 +2667,6 @@ export default function ComissoesPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Pagamento (overlay) */}
         <Dialog
           open={openPay}
           onOpenChange={(v) => {
@@ -2824,16 +2774,13 @@ export default function ComissoesPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Configurar imposto (parâmetro fixo) */}
         <Dialog open={openImpostoCfg} onOpenChange={setOpenImpostoCfg}>
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>Configurar imposto (fixo)</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="text-sm text-gray-600">
-                Esse valor será usado em todos os recibos.
-              </div>
+              <div className="text-sm text-gray-600">Esse valor será usado em todos os recibos.</div>
               <div className="flex flex-col gap-2">
                 <Label>Imposto (%)</Label>
                 <Input value={impostoDraft} onChange={(e) => setImpostoDraft(e.target.value)} placeholder="Ex.: 6,00" disabled={!canEdit} />
@@ -2850,7 +2797,6 @@ export default function ComissoesPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Overlay de ESTORNO (global) */}
         <Dialog open={openBulkRefund} onOpenChange={(v) => (canEdit ? setOpenBulkRefund(v) : undefined)}>
           <DialogContent className="max-w-3xl">
             <DialogHeader>

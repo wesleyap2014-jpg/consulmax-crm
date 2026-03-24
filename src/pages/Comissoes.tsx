@@ -46,6 +46,7 @@ type User = {
   scopes?: string[] | null;
   avatar_url?: string | null;
   pix_kind?: string | null;
+  is_active?: boolean | null;
 };
 
 type UserSecure = {
@@ -249,10 +250,6 @@ function pctPagoFromCommission(r: Commission & { flow?: CommissionFlow[] }) {
 }
 
 function isVendaCancelada(venda: { codigo?: string | null; cancelada_em?: string | null }) {
-  // robusto:
-  // - se cancelada_em preenchido -> cancelada
-  // - se codigo != "00" -> cancelada (regra clássica)
-  // - caso seu banco use ao contrário, o cancelada_em ainda cobre a maioria dos casos reais
   const codigo = venda.codigo ?? null;
   const canceladaEm = venda.cancelada_em ?? null;
   if (canceladaEm) return true;
@@ -628,6 +625,7 @@ function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
 
 /* ========================= Página ========================= */
 const LS_IMPOSTO_PCT = "@consulmax:recibo-imposto-pct-v1";
+const APP_SETTING_IMPOSTO_KEY = "commission_tax_pct";
 
 export default function ComissoesPage() {
   /* ===== Auth & RBAC ===== */
@@ -666,6 +664,8 @@ export default function ComissoesPage() {
     });
     return m;
   }, [users]);
+
+  const activeUsers = useMemo(() => users.filter((u) => u.is_active === true), [users]);
 
   const secureById = useMemo(() => Object.fromEntries(usersSecure.map((u) => [u.id, u])), [usersSecure]);
   const adminById = useMemo(() => Object.fromEntries(simAdmins.map((a) => [a.id, a.name])), [simAdmins]);
@@ -711,19 +711,11 @@ export default function ComissoesPage() {
 
   /* Recibo */
   const [reciboDate, setReciboDate] = useState<string>(() => toDateInput(new Date()));
-  const [reciboImpostoPct, setReciboImpostoPct] = useState<string>(() => {
-    const saved = (typeof window !== "undefined" && window.localStorage.getItem(LS_IMPOSTO_PCT)) || "";
-    const n = parsePctHumanToNumber(saved || "6,00");
-    return formatPctHuman(n);
-  });
+  const [reciboImpostoPct, setReciboImpostoPct] = useState<string>("6,00%");
   const [reciboVendor, setReciboVendor] = useState<string>("all");
 
   const [openImpostoCfg, setOpenImpostoCfg] = useState(false);
-  const [impostoDraft, setImpostoDraft] = useState<string>(() => {
-    const saved = (typeof window !== "undefined" && window.localStorage.getItem(LS_IMPOSTO_PCT)) || "";
-    const n = parsePctHumanToNumber(saved || "6,00");
-    return (n || 0).toFixed(2).replace(".", ",");
-  });
+  const [impostoDraft, setImpostoDraft] = useState<string>("6,00");
 
   /* Estorno (global em Comissões Pagas) */
   const [openBulkRefund, setOpenBulkRefund] = useState(false);
@@ -752,7 +744,7 @@ export default function ComissoesPage() {
       const [{ data: u }, { data: st }, { data: us }, { data: admins }] = await Promise.all([
         supabase
           .from("users")
-          .select("id, auth_user_id, nome, email, phone, cep, logradouro, numero, bairro, cidade, uf, pix_key, pix_type, login, role, scopes, avatar_url, pix_kind")
+          .select("id, auth_user_id, nome, email, phone, cep, logradouro, numero, bairro, cidade, uf, pix_key, pix_type, login, role, scopes, avatar_url, pix_kind, is_active")
           .order("nome", { ascending: true }),
         supabase.from("sim_tables").select("id, segmento, nome_tabela, admin_id").order("segmento", { ascending: true }),
         supabase.from("users_secure").select("id, nome, email, logradouro, numero, bairro, cidade, uf, pix_key, cpf, cpf_mascarado"),
@@ -764,12 +756,10 @@ export default function ComissoesPage() {
       setUsersSecure((us || []) as UserSecure[]);
       setSimAdmins((admins || []) as { id: UUID; name: string }[]);
 
-      // define ADMIN/SCOPES
       const current = (u || []).find((x: any) => x.auth_user_id && x.auth_user_id === (authUserId || "")) as User | undefined;
       const admin = current?.role === "admin";
       setIsAdmin(!!admin);
 
-      // se não for admin, trava o vendedor no próprio id
       if (!admin && current?.id) {
         setVendedorId(current.id);
         setReciboVendor(current.id);
@@ -782,6 +772,41 @@ export default function ComissoesPage() {
   useEffect(() => {
     setReciboVendor(vendedorId);
   }, [vendedorId]);
+
+  async function loadImpostoParam() {
+    try {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", APP_SETTING_IMPOSTO_KEY)
+        .maybeSingle();
+
+      if (!error && data?.value) {
+        const n = parsePctHumanToNumber(data.value);
+        const fmt = formatPctHuman(n);
+        setReciboImpostoPct(fmt);
+        setImpostoDraft((n || 0).toFixed(2).replace(".", ","));
+        return;
+      }
+    } catch {}
+
+    try {
+      const saved = (typeof window !== "undefined" && window.localStorage.getItem(LS_IMPOSTO_PCT)) || "6,00%";
+      const n = parsePctHumanToNumber(saved);
+      const fmt = formatPctHuman(n);
+      setReciboImpostoPct(fmt);
+      setImpostoDraft((n || 0).toFixed(2).replace(".", ","));
+    } catch {
+      setReciboImpostoPct("6,00%");
+      setImpostoDraft("6,00");
+    }
+  }
+
+  useEffect(() => {
+    if (!authUserId) return;
+    loadImpostoParam();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUserId]);
 
   // opções de administradora / segmento para Regras
   const adminOptions = useMemo(() => {
@@ -811,7 +836,6 @@ export default function ComissoesPage() {
       groups.get(key)!.push(t);
     }
 
-    // escolhe um “representante” por grupo, mas preserva lista interna via map separado
     const repr: Array<{ key: string; rep: SimTable; all: SimTable[] }> = [];
     for (const [key, all] of groups.entries()) {
       const sorted = [...all].sort((a, b) => {
@@ -826,7 +850,6 @@ export default function ComissoesPage() {
       repr.push({ key, rep: sorted[0], all: sorted });
     }
 
-    // ordena por admin/segmento/nome
     repr.sort((a, b) => {
       const an = adminById[a.rep.admin_id || ""] || "";
       const bn = adminById[b.rep.admin_id || ""] || "";
@@ -850,11 +873,9 @@ export default function ComissoesPage() {
   async function fetchData() {
     setLoading(true);
     try {
-      // commissions
       let qb = supabase.from("commissions").select("*");
       if (status !== "all") qb = qb.eq("status", status);
 
-      // RBAC
       if (!isAdmin) qb = qb.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
       else if (vendedorId !== "all") qb = qb.eq("vendedor_id", vendedorId);
 
@@ -876,7 +897,6 @@ export default function ComissoesPage() {
         if (!flowBy[f.commission_id].some((x) => x.mes === f.mes)) flowBy[f.commission_id].push(f as CommissionFlow);
       });
 
-      // clientes extras + status cancelamento da venda
       let vendasExtras: Record<
         string,
         {
@@ -944,7 +964,6 @@ export default function ComissoesPage() {
 
       setRows(mappedRows);
 
-      // vendas sem comissão (RBAC) — ✅ SOMENTE ENCARTEIRADAS
       let qbV = supabase
         .from("vendas")
         .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id, encarteirada_em, codigo, cancelada_em")
@@ -956,7 +975,6 @@ export default function ComissoesPage() {
       if (segmento !== "all") qbV = qbV.eq("segmento", segmento);
       if (tabela !== "all") qbV = qbV.eq("tabela", tabela);
 
-      // apenas encarteiradas (e ativas por segurança)
       qbV = qbV.not("encarteirada_em", "is", null);
 
       const { data: vendasPeriodo } = await qbV;
@@ -966,7 +984,6 @@ export default function ComissoesPage() {
 
       const vendasFiltered = (vendasPeriodo || [])
         .filter((v: any) => !hasComm.has(v.id))
-        // evita canceladas aqui também
         .filter((v: any) => !isVendaCancelada({ codigo: v.codigo ?? null, cancelada_em: v.cancelada_em ?? null }));
 
       setVendasSemCom(vendasFiltered as Venda[]);
@@ -981,7 +998,6 @@ export default function ComissoesPage() {
         setClientesMap(map);
       } else setClientesMap({});
 
-      // reconcile status
       try {
         setRows((prev) => {
           const withFix = prev.map((r) => {
@@ -1068,10 +1084,52 @@ export default function ComissoesPage() {
     return { vendasTotal, comBruta, comLiquida, comPaga: pagoLiquido, comPendente };
   }, [rows, impostoFrac]);
 
-  // Projeções
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
   const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
   const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
+
+  const comissaoProgramada = useMemo(() => {
+    const today = new Date();
+    const todayZero = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+    const futuros: Array<{ dateIso: string; valor: number }> = [];
+
+    for (const r of rows) {
+      if (r.status === "estorno" || r.venda_cancelada) continue;
+
+      const totalComissao = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+      const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+
+      for (const f of flows) {
+        const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+        if (isPaid) continue;
+
+        const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
+        if (!exp) continue;
+
+        const expZero = new Date(exp.getFullYear(), exp.getMonth(), exp.getDate());
+        if (expZero < todayZero) continue;
+
+        const valor = (f.valor_previsto ?? totalComissao * (f.percentual ?? 0)) ?? 0;
+
+        futuros.push({
+          dateIso: toDateInput(expZero),
+          valor,
+        });
+      }
+    }
+
+    if (!futuros.length) return null;
+
+    futuros.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+    const proxData = futuros[0].dateIso;
+    const totalNaData = futuros.filter((x) => x.dateIso === proxData).reduce((acc, cur) => acc + cur.valor, 0);
+
+    return {
+      valor: totalNaData,
+      data: proxData,
+    };
+  }, [rows]);
 
   /* Regras — utilitários */
   function onChangeMeses(n: number) {
@@ -1131,7 +1189,6 @@ export default function ComissoesPage() {
     }
   }, [openRules]);
 
-  // ✅ salvar regra aplicando para TODAS as sim_tables com mesmo nome_tabela
   async function saveRule() {
     if (!canEdit) return alert("Vendedor não pode alterar regras.");
     if (!ruleVendorId) return alert("Selecione o vendedor.");
@@ -1180,7 +1237,6 @@ export default function ComissoesPage() {
     alert(`Regra salva e aplicada em ${payload.length} tabela(s) com o mesmo nome.`);
   }
 
-  // ✅ delete “limpar” aplicando para TODAS as sim_tables com mesmo nome_tabela
   async function deleteRuleGroup(vId: string, simTableId: string) {
     if (!canEdit) return alert("Vendedor não pode alterar regras.");
     if (!vId || !simTableId) return;
@@ -1216,7 +1272,6 @@ export default function ComissoesPage() {
       return;
     }
 
-    // pega a “regra existente” do grupo (se existir) para carregar no formulário
     const group = getSimTableGroupByRep(rep);
     const groupIds = new Set(group.map((t) => t.id));
     const existing = ruleRows.find((r) => r.vendedor_id === ruleVendorId && groupIds.has(r.sim_table_id));
@@ -1586,24 +1641,40 @@ export default function ComissoesPage() {
     }
   }
 
-  // ✅ imposto fixo: salva como parâmetro local
-  function saveImpostoParam() {
-    if (!canEdit) return alert("Vendedor não pode alterar o imposto.");
+  async function saveImpostoParam() {
+    if (!canEdit) return alert("Somente admin pode alterar o imposto.");
+
     const n = parsePctHumanToNumber(impostoDraft);
     const val = formatPctHuman(n);
+
+    const { error } = await supabase
+      .from("app_settings")
+      .upsert(
+        {
+          key: APP_SETTING_IMPOSTO_KEY,
+          value: val,
+          updated_at: new Date().toISOString(),
+        } as any,
+        { onConflict: "key" }
+      );
+
+    if (error) {
+      alert("Falha ao salvar imposto: " + error.message);
+      return;
+    }
+
     try {
       window.localStorage.setItem(LS_IMPOSTO_PCT, val);
     } catch {}
+
     setReciboImpostoPct(val);
     setOpenImpostoCfg(false);
   }
 
-  // Recibo por data (filtra pelo vendedor selecionado)
   async function downloadReceiptPDFPorData() {
     const impostoPct = (parsePctHumanToNumber(reciboImpostoPct) || 0) / 100;
     const dataRecibo = reciboDate;
 
-    // vincula ao vendedor selecionado
     const vendedorSel = reciboVendor !== "all" ? reciboVendor : isAdmin ? null : usersByAuth[authUserId || ""]?.id || null;
 
     const { data: flowsAllOnDate, error: flowsErr } = await supabase.from("commission_flow").select("*, commission_id").eq("data_pagamento_vendedor", dataRecibo);
@@ -1613,7 +1684,6 @@ export default function ComissoesPage() {
     }
 
     if (!flowsAllOnDate || !flowsAllOnDate.length) {
-      // pode ser que só tenha estorno nessa data
       try {
         const { data: onlyRefunds } = await supabase.from("commission_refunds").select("id").eq("data_estorno", dataRecibo).limit(1);
         if (!onlyRefunds?.length) {
@@ -1732,7 +1802,6 @@ export default function ComissoesPage() {
       });
     });
 
-    // Linhas de ESTORNO (negativas)
     try {
       const { data: refunds } = await supabase.from("commission_refunds").select("id, commission_id, flow_id, numero_proposta, data_estorno, valor_bruto, valor_liquido");
       const refundsOnDate = (refunds || []).filter((r: any) => r.data_estorno === dataRecibo && (!vendedorSel || rows.find((x) => x.id === r.commission_id)?.vendedor_id === vendedorSel));
@@ -1740,9 +1809,7 @@ export default function ComissoesPage() {
         body.push(["—", rf.numero_proposta || "—", "ESTORNO", "—", BRL(-(rf.valor_bruto || 0)), BRL((rf.valor_bruto || 0) * impostoPct), BRL(-(rf.valor_liquido || 0))]);
         totalLiquido -= rf.valor_liquido || 0;
       }
-    } catch {
-      // tabela opcional
-    }
+    } catch {}
 
     autoTable(doc, { startY: y, head, body, styles: { font: "helvetica", fontSize: 10 }, headStyles: { fillColor: [30, 41, 63] } });
     const endY = (doc as any).lastAutoTable.finalY + 12;
@@ -1760,7 +1827,6 @@ export default function ComissoesPage() {
   }
 
   /* Listas auxiliares */
-  // ✅ 1) venda cancelada NÃO aparece em comissões a pagar (independente do filtro global)
   const rowsAPagarBase = useMemo(
     () => rows.filter((r) => r.status === "a_pagar" && !r.venda_cancelada),
     [rows]
@@ -1801,7 +1867,6 @@ export default function ComissoesPage() {
   /* ========================= Render ========================= */
   return (
     <div className="relative p-4 space-y-8 isolate">
-      {/* Liquid background */}
       <div className="liquid-bg">
         <span className="blob b1" />
         <span className="blob b2" />
@@ -1825,7 +1890,7 @@ export default function ComissoesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {isAdmin && <SelectItem value="all">Todos</SelectItem>}
-                  {users.map((u) => (
+                  {activeUsers.map((u) => (
                     <SelectItem key={u.id} value={u.id}>
                       {u.nome?.trim() || u.email?.trim() || u.id}
                     </SelectItem>
@@ -1977,7 +2042,7 @@ export default function ComissoesPage() {
         </div>
 
         {/* Resumo */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-6">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>🔥 Vendas</CardTitle>
@@ -2007,6 +2072,23 @@ export default function ComissoesPage() {
               <CardTitle>⏳ Pendente (Liq.)</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>📅 Comissão programada</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {comissaoProgramada ? (
+                <div className="space-y-1">
+                  <div className="text-2xl font-bold">{BRL(comissaoProgramada.valor)}</div>
+                  <div className="text-sm text-gray-600">
+                    Data do pagamento: {formatISODateBR(comissaoProgramada.data)}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">Sem pagamentos programados.</div>
+              )}
+            </CardContent>
           </Card>
         </div>
 
@@ -2080,15 +2162,15 @@ export default function ComissoesPage() {
               <span className="text-base font-semibold">Detalhamento de Comissões (a pagar)</span>
 
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:gap-6">
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2 min-w-[320px]">
                   <Label>Vendedor</Label>
                   <Select value={vendedorId} onValueChange={setVendedorId} disabled={!isAdmin}>
-                    <SelectTrigger className="w-[220px]">
+                    <SelectTrigger className="w-full h-10">
                       <SelectValue placeholder="Todos" />
                     </SelectTrigger>
                     <SelectContent>
                       {isAdmin && <SelectItem value="all">Todos</SelectItem>}
-                      {users.map((u) => (
+                      {activeUsers.map((u) => (
                         <SelectItem key={u.id} value={u.id}>
                           {u.nome?.trim() || u.email?.trim() || u.id}
                         </SelectItem>
@@ -2103,16 +2185,21 @@ export default function ComissoesPage() {
                     <Input type="date" value={reciboDate} onChange={(e) => setReciboDate(e.target.value)} />
                   </div>
 
-                  {/* ✅ imposto fixo (parâmetro) */}
                   <div className="flex flex-col gap-2">
                     <Label>Imposto (parâmetro)</Label>
                     <div className="flex items-center gap-2">
-                      <Input value={reciboImpostoPct} readOnly className="w-28" />
-                      <Button size="sm" variant="outline" onClick={() => setOpenImpostoCfg(true)} disabled={!canEdit} title={!canEdit ? "Vendedor não pode alterar" : ""}>
-                        Configurar
-                      </Button>
+                      <Input value={reciboImpostoPct} readOnly className="w-32" />
+                      {isAdmin && (
+                        <Button size="sm" variant="outline" onClick={() => setOpenImpostoCfg(true)}>
+                          Configurar
+                        </Button>
+                      )}
                     </div>
-                    <div className="text-xs text-gray-500"></div>
+                    <div className="text-xs text-gray-500">
+                      {isAdmin
+                        ? "Esse percentual será usado em todos os recibos."
+                        : "Percentual definido pela administração."}
+                    </div>
                   </div>
 
                   <div className="flex items-end gap-3">
@@ -2146,13 +2233,8 @@ export default function ComissoesPage() {
                     <th className="p-2 text-right">Crédito</th>
                     <th className="p-2 text-right hidden md:table-cell">% Comissão</th>
                     <th className="p-2 text-right">Valor Comissão</th>
-
-                    {/* ✅ 2) Status -> Pgto (parcelas pagas / total) */}
                     <th className="p-2 text-left">Pgto</th>
-
-                    {/* ✅ 3) Pagamento -> % Pago */}
                     <th className="p-2 text-left">% Pago</th>
-
                     <th className="p-2 text-left">Ações</th>
                   </tr>
                 </thead>
@@ -2195,12 +2277,10 @@ export default function ComissoesPage() {
                           <td className="p-2 text-right hidden md:table-cell">{pct100(r.percent_aplicado)}</td>
                           <td className="p-2 text-right">{BRL(r.valor_total)}</td>
 
-                          {/* Pgto: 2/6 */}
                           <td className="p-2">
                             <span className="font-medium tabular-nums">{total ? `${paid}/${total}` : "—"}</span>
                           </td>
 
-                          {/* % Pago */}
                           <td className="p-2">
                             <span className="font-medium tabular-nums">{`${pct.toFixed(0)}%`}</span>
                           </td>
@@ -2230,7 +2310,6 @@ export default function ComissoesPage() {
                               </Button>
                             </div>
 
-                            {/* aviso discreto se veio cancelada (só para debug visual) */}
                             {r.venda_cancelada && (
                               <div className="mt-1 text-[11px] text-gray-500">
                                 (Venda cancelada detectada: código {r.venda_codigo || "—"} / {r.venda_cancelada_em ? `em ${formatISODateBR(r.venda_cancelada_em)}` : "—"})
@@ -2379,7 +2458,7 @@ export default function ComissoesPage() {
                       <SelectValue placeholder="Selecione..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {users.map((u) => (
+                      {activeUsers.map((u) => (
                         <SelectItem key={u.id} value={u.id}>
                           {u.nome?.trim() || u.email?.trim() || u.id}
                         </SelectItem>
@@ -2445,7 +2524,6 @@ export default function ComissoesPage() {
                     )}
 
                     {dedupedTables.map(({ rep, all }) => {
-                      // regra do grupo: pega a primeira regra encontrada
                       const groupIds = new Set(all.map((t) => t.id));
                       const rule = ruleRows.find((r) => r.vendedor_id === ruleVendorId && groupIds.has(r.sim_table_id));
 
@@ -2754,7 +2832,7 @@ export default function ComissoesPage() {
             </DialogHeader>
             <div className="space-y-4">
               <div className="text-sm text-gray-600">
-                Esse valor fica salvo no navegador e será usado em todos os recibos.
+                Esse valor será usado em todos os recibos.
               </div>
               <div className="flex flex-col gap-2">
                 <Label>Imposto (%)</Label>

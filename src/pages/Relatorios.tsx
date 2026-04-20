@@ -155,6 +155,12 @@ function fmtPct100Human(v: number, digits = 2) {
   return `${n.toFixed(digits).replace(".", ",")}%`;
 }
 
+function fmtPctBR4FromFraction(v: number | null | undefined) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  return `${(n * 100).toFixed(4).replace(".", ",")}%`;
+}
+
 function fmtDateBR(isoOrDate: string | null) {
   if (!isoOrDate) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrDate)) {
@@ -246,7 +252,12 @@ function xmlEscape(v: any) {
 }
 
 function excelSerialFromDate(value: string | Date) {
-  const d = value instanceof Date ? value : /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? parseLocalDate(String(value)) : new Date(value);
+  const d =
+    value instanceof Date
+      ? value
+      : /^\d{4}-\d{2}-\d{2}$/.test(String(value))
+      ? parseLocalDate(String(value))
+      : new Date(value);
   if (!Number.isFinite(d.getTime())) return "";
   const utc = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
   const excelEpoch = Date.UTC(1899, 11, 30);
@@ -293,7 +304,9 @@ function downloadExcelXml(filename: string, sheetName: string, columns: ExcelCol
     .map((c) => `<Column ss:AutoFitWidth="1" ss:Width="${c.width ?? 120}"/>`)
     .join("");
 
-  const headerXml = `<Row ss:StyleID="header">${columns.map((c) => `<Cell><Data ss:Type="String">${xmlEscape(c.header)}</Data></Cell>`).join("")}</Row>`;
+  const headerXml = `<Row ss:StyleID="header">${columns
+    .map((c) => `<Cell><Data ss:Type="String">${xmlEscape(c.header)}</Data></Cell>`)
+    .join("")}</Row>`;
 
   const bodyXml = rows
     .map((r) => {
@@ -820,7 +833,7 @@ export default function Relatorios() {
   }, [filtered]);
 
   /* =========================
-     Inadimplência 12-6 (VALOR)
+     Inadimplência 12-6
   ========================= */
   const inad126 = useMemo(() => {
     const now = new Date();
@@ -857,7 +870,7 @@ export default function Relatorios() {
   }, [filtered]);
 
   /* =========================
-     Inadimplência 8-2 (aging por inad_em)
+     Inadimplência 8-2
   ========================= */
   const inad82 = useMemo(() => {
     const buckets = [
@@ -1357,7 +1370,6 @@ export default function Relatorios() {
       }
     }
 
-    // filtros globais baseados em vendas
     if (fVendedor !== "all") q = q.eq("vendedor_id", fVendedor);
     if (fAdmin !== "all") q = q.eq("administradora", fAdmin);
     if (fSeg !== "all") q = q.eq("segmento", fSeg);
@@ -1456,8 +1468,6 @@ export default function Relatorios() {
     }
 
     let q = buildBaseVendasQuery();
-
-    // neste relatório faz mais sentido trabalhar com carteira atual/encarteirada
     q = q.not("grupo", "is", null);
 
     const { data: vendasData, error: vendasErr } = await q;
@@ -1468,18 +1478,23 @@ export default function Relatorios() {
 
     const groupCodes = Array.from(new Set(rows.map((v) => normalizeGroupDigits(v.grupo)).filter(Boolean)));
     if (!groupCodes.length) {
-      downloadExcelXml(`Relatorio_Vencimento_${todayYMD}.xls`, "Vencimento", [
-        { header: "ADMINISTRADORA", type: "string" },
-        { header: "VENDEDOR", type: "string" },
-        { header: "CLIENTE", type: "string" },
-        { header: "PROPOSTA", type: "string" },
-        { header: "SEGMENTO", type: "string" },
-        { header: "GRUPO", type: "string" },
-        { header: "COTA", type: "string" },
-        { header: "VALOR", type: "currency" },
-        { header: "STATUS", type: "string" },
-        { header: "DATA VCTO", type: "date" },
-      ], []);
+      downloadExcelXml(
+        `Relatorio_Vencimento_${todayYMD}.xls`,
+        "Vencimento",
+        [
+          { header: "ADMINISTRADORA", type: "string" },
+          { header: "VENDEDOR", type: "string" },
+          { header: "CLIENTE", type: "string" },
+          { header: "PROPOSTA", type: "string" },
+          { header: "SEGMENTO", type: "string" },
+          { header: "GRUPO", type: "string" },
+          { header: "COTA", type: "string" },
+          { header: "VALOR", type: "currency" },
+          { header: "STATUS", type: "string" },
+          { header: "DATA VCTO", type: "date" },
+        ],
+        []
+      );
       return;
     }
 
@@ -1543,7 +1558,7 @@ export default function Relatorios() {
     }
 
     let q = buildBaseVendasQuery();
-    q = q.not("grupo", "is", null).eq("codigo", "00"); // focar cotas ativas encarteiradas
+    q = q.not("grupo", "is", null).eq("codigo", "00");
 
     const { data: vendasData, error: vendasErr } = await q;
     if (vendasErr) throw vendasErr;
@@ -1553,23 +1568,28 @@ export default function Relatorios() {
 
     const groupCodes = Array.from(new Set(rows.map((v) => normalizeGroupDigits(v.grupo)).filter(Boolean)));
     if (!groupCodes.length) {
-      downloadExcelXml(`Relatorio_Result_Assembleia_${todayYMD}.xls`, "Assembleia", [
-        { header: "ADMINISTRADORA", type: "string" },
-        { header: "VENDEDOR", type: "string" },
-        { header: "CLIENTE", type: "string" },
-        { header: "SEGMENTO", type: "string" },
-        { header: "GRUPO", type: "string" },
-        { header: "COTAS DO CLIENTE", type: "number" },
-        { header: "LANCE FIXO DE 25% (OFERTAS)", type: "number" },
-        { header: "LANCE FIXO DE 25% (ENTREGAS)", type: "number" },
-        { header: "LANCE FIXO DE 50% (OFERTAS)", type: "number" },
-        { header: "LANCE FIXO DE 50% (ENTREGAS)", type: "number" },
-        { header: "LANCE LIVRE (OFERTAS)", type: "number" },
-        { header: "LANCE LIVRE (ENTREGAS)", type: "number" },
-        { header: "LANCE LIVRE MAIOR %", type: "number" },
-        { header: "LANCE LIVRE MENOR %", type: "number" },
-        { header: "LANCE LIVRE MEDIANA %", type: "number" },
-      ], []);
+      downloadExcelXml(
+        `Relatorio_Result_Assembleia_${todayYMD}.xls`,
+        "Assembleia",
+        [
+          { header: "ADMINISTRADORA", type: "string" },
+          { header: "VENDEDOR", type: "string" },
+          { header: "CLIENTE", type: "string" },
+          { header: "SEGMENTO", type: "string" },
+          { header: "GRUPO", type: "string" },
+          { header: "COTAS DO CLIENTE", type: "string" },
+          { header: "LF25% Of", type: "number" },
+          { header: "LF25% Ent", type: "number" },
+          { header: "LF50% Of", type: "number" },
+          { header: "LF50% Ent", type: "number" },
+          { header: "LL Of", type: "number" },
+          { header: "LL Ent", type: "number" },
+          { header: "▲ % LL", type: "string" },
+          { header: "▼ % LL", type: "string" },
+          { header: "◉ % LL", type: "string" },
+        ],
+        []
+      );
       return;
     }
 
@@ -1624,7 +1644,7 @@ export default function Relatorios() {
       cliente: string;
       segmento: string;
       grupo: string;
-      cotasCliente: number;
+      cotasCliente: string[];
       fixed25_offers: number;
       fixed25_deliveries: number;
       fixed50_offers: number;
@@ -1652,6 +1672,7 @@ export default function Relatorios() {
       const administradora = v.administradora || group.administradora || "";
       const segmento = v.segmento || group.segmento || "";
       const grupo = group.codigo || v.grupo || "";
+      const cota = String(v.cota || "").trim();
 
       const key = `${v.lead_id}__${groupId}`;
       if (!grouped[key]) {
@@ -1661,7 +1682,7 @@ export default function Relatorios() {
           cliente,
           segmento,
           grupo,
-          cotasCliente: 0,
+          cotasCliente: [],
           fixed25_offers: safeInt(asm.fixed25_offers),
           fixed25_deliveries: safeInt(asm.fixed25_deliveries),
           fixed50_offers: safeInt(asm.fixed50_offers),
@@ -1673,7 +1694,10 @@ export default function Relatorios() {
           median: safeNum(asm.median),
         };
       }
-      grouped[key].cotasCliente += 1;
+
+      if (cota && !grouped[key].cotasCliente.includes(cota)) {
+        grouped[key].cotasCliente.push(cota);
+      }
     }
 
     const lines = Object.values(grouped).sort((a, b) => {
@@ -1690,16 +1714,16 @@ export default function Relatorios() {
       { header: "CLIENTE", type: "string", width: 180 },
       { header: "SEGMENTO", type: "string", width: 110 },
       { header: "GRUPO", type: "string", width: 80 },
-      { header: "COTAS DO CLIENTE", type: "number", width: 95 },
-      { header: "LANCE FIXO DE 25% (OFERTAS)", type: "number", width: 110 },
-      { header: "LANCE FIXO DE 25% (ENTREGAS)", type: "number", width: 115 },
-      { header: "LANCE FIXO DE 50% (OFERTAS)", type: "number", width: 110 },
-      { header: "LANCE FIXO DE 50% (ENTREGAS)", type: "number", width: 115 },
-      { header: "LANCE LIVRE (OFERTAS)", type: "number", width: 105 },
-      { header: "LANCE LIVRE (ENTREGAS)", type: "number", width: 110 },
-      { header: "LANCE LIVRE MAIOR %", type: "number", width: 100 },
-      { header: "LANCE LIVRE MENOR %", type: "number", width: 100 },
-      { header: "LANCE LIVRE MEDIANA %", type: "number", width: 110 },
+      { header: "COTAS DO CLIENTE", type: "string", width: 130 },
+      { header: "LF25% Of", type: "number", width: 80 },
+      { header: "LF25% Ent", type: "number", width: 80 },
+      { header: "LF50% Of", type: "number", width: 80 },
+      { header: "LF50% Ent", type: "number", width: 80 },
+      { header: "LL Of", type: "number", width: 75 },
+      { header: "LL Ent", type: "number", width: 75 },
+      { header: "▲ % LL", type: "string", width: 85 },
+      { header: "▼ % LL", type: "string", width: 85 },
+      { header: "◉ % LL", type: "string", width: 85 },
     ];
 
     const body = lines.map((r) => [
@@ -1708,16 +1732,19 @@ export default function Relatorios() {
       r.cliente,
       r.segmento,
       r.grupo,
-      r.cotasCliente,
+      r.cotasCliente
+        .slice()
+        .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }))
+        .join("; "),
       r.fixed25_offers,
       r.fixed25_deliveries,
       r.fixed50_offers,
       r.fixed50_deliveries,
       r.ll_offers,
       r.ll_deliveries,
-      r.ll_high,
-      r.ll_low,
-      r.median,
+      fmtPctBR4FromFraction(r.ll_high),
+      fmtPctBR4FromFraction(r.ll_low),
+      fmtPctBR4FromFraction(r.median),
     ]);
 
     downloadExcelXml(`Relatorio_Result_Assembleia_${todayYMD}.xls`, "Assembleia", columns, body);

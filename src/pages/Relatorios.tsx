@@ -52,7 +52,7 @@ type UUID = string;
 
 type VendaRow = {
   id: UUID;
-  vendedor_id: UUID | null; // pode ser users.id OU auth_user_id (vamos suportar os 2)
+  vendedor_id: UUID | null; // pode ser users.id OU auth_user_id
 
   administradora: string | null;
   segmento: string | null;
@@ -61,14 +61,14 @@ type VendaRow = {
   tipo_venda: "Normal" | "Contemplada" | "Bolsão" | string | null;
   contemplada: boolean | null;
 
-  encarteirada_em: string | null; // timestamptz
-  cancelada_em: string | null; // timestamptz
+  encarteirada_em: string | null;
+  cancelada_em: string | null;
   codigo: string | null; // '00' ativa
 
-  data_venda: string | null; // date
-  data_contemplacao: string | null; // date
+  data_venda: string | null;
+  data_contemplacao: string | null;
 
-  contemplacao_tipo: string | null; // "Lance Livre" | "Primeiro Lance Fixo" | "Segundo Lance Fixo"
+  contemplacao_tipo: string | null;
   contemplacao_pct: number | null;
 
   valor_venda: number | null;
@@ -79,8 +79,8 @@ type VendaRow = {
   grupo?: string | null;
   cota?: string | null;
 
-  inad?: boolean | null; // bool
-  inad_em: string | null; // date/timestamptz -> data da parcela mais antiga inadimplida
+  inad?: boolean | null;
+  inad_em: string | null;
 };
 
 type LeadRow = {
@@ -92,8 +92,8 @@ type LeadRow = {
 };
 
 type UserRow = {
-  id: UUID; // users.id
-  auth_user_id: UUID; // auth.users.id
+  id: UUID;
+  auth_user_id: UUID;
   nome: string | null;
   user_role?: string | null;
   role?: string | null;
@@ -102,22 +102,19 @@ type UserRow = {
 
 type GroupRow = {
   id: UUID;
-  codigo: string | null;
   administradora: string | null;
   segmento: string | null;
+  codigo: string | null;
   prox_vencimento: string | null;
 };
 
-type LastAssemblyRow = {
+type GroupLastAssemblyRow = {
   group_id: UUID | null;
   date: string | null;
-
   fixed25_offers: number | null;
   fixed25_deliveries: number | null;
-
   fixed50_offers: number | null;
   fixed50_deliveries: number | null;
-
   ll_offers: number | null;
   ll_deliveries: number | null;
   ll_high: number | null;
@@ -131,6 +128,11 @@ type LastAssemblyRow = {
 function safeNum(n: any): number {
   const v = Number(n);
   return Number.isFinite(v) ? v : 0;
+}
+
+function safeInt(n: any): number {
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.trunc(v) : 0;
 }
 
 function fmtBRL(v: number) {
@@ -150,12 +152,6 @@ function fmtPctHuman(p: number, digits = 1) {
 /** v em percent (0..100) */
 function fmtPct100Human(v: number, digits = 2) {
   const n = Number.isFinite(v) ? v : 0;
-  return `${n.toFixed(digits).replace(".", ",")}%`;
-}
-
-function fmtPctMaybeHuman(v: number | null | undefined, digits = 2) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "";
   return `${n.toFixed(digits).replace(".", ",")}%`;
 }
 
@@ -188,7 +184,7 @@ function parseLocalDate(dateStr: string) {
   return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
 }
 
-/** Diferença em dias usando datas locais (evita “voltar um dia”) */
+/** Diferença em dias usando datas locais */
 function diffDaysLocal(from: string, toYMD: string) {
   const fromDt = /^\d{4}-\d{2}-\d{2}$/.test(from) ? parseLocalDate(from) : new Date(from);
   const toDt = parseLocalDate(toYMD);
@@ -236,34 +232,12 @@ function addMonths(d: Date, months: number) {
   return dt;
 }
 
-function normalizeDigits(v: string | null | undefined) {
+function normalizeGroupDigits(v: string | null | undefined) {
   return String(v || "").replace(/\D+/g, "");
 }
 
-function sameGroupCode(a: string | null | undefined, b: string | null | undefined) {
-  return normalizeDigits(a) === normalizeDigits(b);
-}
-
-function inYmdRange(dateValue: string | null | undefined, startYmd: string, endYmd: string) {
-  if (!dateValue) return false;
-  const ymd = dateValue.slice(0, 10);
-  return ymd >= startYmd && ymd <= endYmd;
-}
-
-/* =========================
-   Excel XML 2003 (sem alerta de extensão)
-   - gera um arquivo .xml compatível com Excel
-   - valores monetários são enviados como Number + estilo moeda
-========================= */
-type ExcelCell = {
-  value: string | number | null | undefined;
-  type?: "String" | "Number";
-  styleId?: "Header" | "Text" | "Number" | "Currency";
-};
-
-function escapeXml(v: any) {
-  const s = String(v ?? "");
-  return s
+function xmlEscape(v: any) {
+  return String(v ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -271,42 +245,59 @@ function escapeXml(v: any) {
     .replaceAll("'", "&apos;");
 }
 
-function buildExcelXml(filenameBase: string, headers: string[], rows: ExcelCell[][]) {
-  const headerRow = `
-    <Row ss:StyleID="Header">
-      ${headers
-        .map(
-          (h) => `
-        <Cell ss:StyleID="Header">
-          <Data ss:Type="String">${escapeXml(h)}</Data>
-        </Cell>`
-        )
-        .join("")}
-    </Row>
-  `;
+function excelSerialFromDate(value: string | Date) {
+  const d = value instanceof Date ? value : /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? parseLocalDate(String(value)) : new Date(value);
+  if (!Number.isFinite(d.getTime())) return "";
+  const utc = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const excelEpoch = Date.UTC(1899, 11, 30);
+  return String((utc - excelEpoch) / 86400000);
+}
 
-  const bodyRows = rows
+type ExcelCellType = "string" | "number" | "currency" | "date";
+type ExcelColumn = {
+  header: string;
+  type?: ExcelCellType;
+  width?: number;
+};
+
+function buildExcelCell(value: any, type: ExcelCellType = "string") {
+  if (value === null || value === undefined || value === "") {
+    return `<Cell><Data ss:Type="String"></Data></Cell>`;
+  }
+
+  if (type === "number") {
+    const n = safeNum(value);
+    return `<Cell ss:StyleID="num"><Data ss:Type="Number">${n}</Data></Cell>`;
+  }
+
+  if (type === "currency") {
+    const n = safeNum(value);
+    return `<Cell ss:StyleID="currency"><Data ss:Type="Number">${n}</Data></Cell>`;
+  }
+
+  if (type === "date") {
+    const serial = excelSerialFromDate(value);
+    if (!serial) return `<Cell><Data ss:Type="String">${xmlEscape(value)}</Data></Cell>`;
+    return `<Cell ss:StyleID="date"><Data ss:Type="Number">${serial}</Data></Cell>`;
+  }
+
+  return `<Cell ss:StyleID="text"><Data ss:Type="String">${xmlEscape(value)}</Data></Cell>`;
+}
+
+/**
+ * Gera um XLS compatível com Excel (SpreadsheetML 2003).
+ * Evita o alerta de extensão/formato incompatível e já envia colunas numéricas/moeda corretamente.
+ */
+function downloadExcelXml(filename: string, sheetName: string, columns: ExcelColumn[], rows: any[][]) {
+  const colXml = columns
+    .map((c) => `<Column ss:AutoFitWidth="1" ss:Width="${c.width ?? 120}"/>`)
+    .join("");
+
+  const headerXml = `<Row ss:StyleID="header">${columns.map((c) => `<Cell><Data ss:Type="String">${xmlEscape(c.header)}</Data></Cell>`).join("")}</Row>`;
+
+  const bodyXml = rows
     .map((r) => {
-      const cells = r
-        .map((c) => {
-          const type = c.type || (typeof c.value === "number" ? "Number" : "String");
-          const styleId =
-            c.styleId ||
-            (type === "Number" ? "Number" : "Text");
-
-          const raw =
-            type === "Number"
-              ? String(Number(c.value ?? 0))
-              : escapeXml(c.value ?? "");
-
-          return `
-            <Cell ss:StyleID="${styleId}">
-              <Data ss:Type="${type}">${raw}</Data>
-            </Cell>
-          `;
-        })
-        .join("");
-
+      const cells = columns.map((c, idx) => buildExcelCell(r[idx], c.type || "string")).join("");
       return `<Row>${cells}</Row>`;
     })
     .join("");
@@ -319,18 +310,6 @@ function buildExcelXml(filenameBase: string, headers: string[], rows: ExcelCell[
   xmlns:x="urn:schemas-microsoft-com:office:excel"
   xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
   xmlns:html="http://www.w3.org/TR/REC-html40">
-  <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office">
-    <Author>ChatGPT</Author>
-    <Company>Consulmax</Company>
-  </DocumentProperties>
-
-  <ExcelWorkbook xmlns="urn:schemas-microsoft-com:office:excel">
-    <WindowHeight>12000</WindowHeight>
-    <WindowWidth>20000</WindowWidth>
-    <ProtectStructure>False</ProtectStructure>
-    <ProtectWindows>False</ProtectWindows>
-  </ExcelWorkbook>
-
   <Styles>
     <Style ss:ID="Default" ss:Name="Normal">
       <Alignment ss:Vertical="Center"/>
@@ -341,76 +320,83 @@ function buildExcelXml(filenameBase: string, headers: string[], rows: ExcelCell[
       <Protection/>
     </Style>
 
-    <Style ss:ID="Header">
+    <Style ss:ID="header">
       <Font ss:FontName="Calibri" ss:Bold="1" ss:Size="11" ss:Color="#FFFFFF"/>
       <Interior ss:Color="#1E293F" ss:Pattern="Solid"/>
-      <Borders>
-        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-      </Borders>
       <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-    </Style>
-
-    <Style ss:ID="Text">
       <Borders>
-        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
       </Borders>
     </Style>
 
-    <Style ss:ID="Number">
+    <Style ss:ID="text">
       <Borders>
-        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
       </Borders>
-      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
-      <NumberFormat ss:Format="0.00"/>
     </Style>
 
-    <Style ss:ID="Currency">
+    <Style ss:ID="num">
       <Borders>
-        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
-        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAEA"/>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
       </Borders>
-      <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
-      <NumberFormat ss:Format="&quot;R$&quot;\\ #,##0.00"/>
+      <NumberFormat ss:Format="0"/>
+    </Style>
+
+    <Style ss:ID="currency">
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+      <NumberFormat ss:Format='R$ #,##0.00'/>
+    </Style>
+
+    <Style ss:ID="date">
+      <Borders>
+        <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+      </Borders>
+      <NumberFormat ss:Format="dd/mm/yyyy"/>
     </Style>
   </Styles>
 
-  <Worksheet ss:Name="Relatorio">
+  <Worksheet ss:Name="${xmlEscape(sheetName).slice(0, 31)}">
     <Table>
-      ${headerRow}
-      ${bodyRows}
+      ${colXml}
+      ${headerXml}
+      ${bodyXml}
     </Table>
     <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
-      <DisplayGridlines/>
       <FreezePanes/>
       <FrozenNoSplit/>
       <SplitHorizontal>1</SplitHorizontal>
       <TopRowBottomPane>1</TopRowBottomPane>
-      <Panes>
-        <Pane>
-          <Number>3</Number>
-          <ActiveRow>1</ActiveRow>
-        </Pane>
-      </Panes>
+      <ActivePane>2</ActivePane>
+      <ProtectObjects>False</ProtectObjects>
+      <ProtectScenarios>False</ProtectScenarios>
     </WorksheetOptions>
   </Worksheet>
 </Workbook>`;
 
-  const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
+  const blob = new Blob([xml], {
+    type: "application/vnd.ms-excel;charset=utf-8;",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = filenameBase.endsWith(".xml") ? filenameBase : `${filenameBase}.xml`;
+  a.download = filename.endsWith(".xls") ? filename : `${filename}.xls`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -479,11 +465,11 @@ function Badge({
    Página
 ========================= */
 export default function Relatorios() {
-  // filtros globais (auto-aplicáveis)
+  // filtros globais
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
 
-  const [fVendedor, setFVendedor] = useState<string>("all"); // pode ser users.id ou auth_user_id (o que vier em vendas.vendedor_id)
+  const [fVendedor, setFVendedor] = useState<string>("all");
   const [fAdmin, setFAdmin] = useState<string>("all");
   const [fSeg, setFSeg] = useState<string>("all");
   const [fTabela, setFTabela] = useState<string>("all");
@@ -492,13 +478,13 @@ export default function Relatorios() {
 
   // dados
   const [loading, setLoading] = useState(false);
-  const [authUserId, setAuthUserId] = useState<string | null>(null); // auth.users.id
-  const [myUserId, setMyUserId] = useState<string | null>(null); // users.id
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [myUserId, setMyUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
   const [vendas, setVendas] = useState<VendaRow[]>([]);
-  const [usersMap, setUsersMap] = useState<Record<string, UserRow>>({}); // key: users.id
-  const [usersByAuth, setUsersByAuth] = useState<Record<string, UserRow>>({}); // key: users.auth_user_id
+  const [usersMap, setUsersMap] = useState<Record<string, UserRow>>({});
+  const [usersByAuth, setUsersByAuth] = useState<Record<string, UserRow>>({});
   const [leadsMap, setLeadsMap] = useState<Record<string, LeadRow>>({});
 
   // dialog concentração
@@ -513,7 +499,7 @@ export default function Relatorios() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportType, setExportType] = useState<
-    "vendas" | "canceladas" | "contempladas" | "inadimplentes" | "vencimentos" | "result_assembleia"
+    "vendas" | "canceladas" | "contempladas" | "inadimplentes" | "vencimento" | "result_assembleia"
   >("vendas");
   const [exportStatusStart, setExportStatusStart] = useState<string>("");
   const [exportStatusEnd, setExportStatusEnd] = useState<string>("");
@@ -776,6 +762,7 @@ export default function Relatorios() {
     if (fSeg !== "all") rows = rows.filter((v) => (v.segmento || "") === fSeg);
     if (fTabela !== "all") rows = rows.filter((v) => (v.tabela || "") === fTabela);
     if (fTipoVenda !== "all") rows = rows.filter((v) => (v.tipo_venda || "") === fTipoVenda);
+
     if (fContemplada !== "all") {
       const want = fContemplada === "sim";
       rows = rows.filter((v) => Boolean(v.contemplada) === want);
@@ -833,7 +820,7 @@ export default function Relatorios() {
   }, [filtered]);
 
   /* =========================
-     Inadimplência 12-6
+     Inadimplência 12-6 (VALOR)
   ========================= */
   const inad126 = useMemo(() => {
     const now = new Date();
@@ -870,7 +857,7 @@ export default function Relatorios() {
   }, [filtered]);
 
   /* =========================
-     Inadimplência 8-2
+     Inadimplência 8-2 (aging por inad_em)
   ========================= */
   const inad82 = useMemo(() => {
     const buckets = [
@@ -903,7 +890,7 @@ export default function Relatorios() {
   }, [filtered, todayYMD]);
 
   /* =========================
-     Prazo + contemplação por tipo
+     Prazo + contemplação
   ========================= */
   const prazo = useMemo(() => {
     const rowsPrazo = filtered.filter((v) => v.encarteirada_em && v.data_contemplacao);
@@ -1007,7 +994,6 @@ export default function Relatorios() {
 
     const baseAll = filtered.filter((v) => !!v.encarteirada_em);
     const totalBase = baseAll.length;
-
     const contemplatedAll = baseAll.filter((v) => Boolean(v.contemplada)).length;
 
     const contemplatedByTipo: Record<string, number> = {};
@@ -1263,51 +1249,73 @@ export default function Relatorios() {
   const concSlice = concRows.slice((concPage - 1) * concPageSize, concPage * concPageSize);
 
   /* =========================
-     Helpers exportação
+     Export helpers
   ========================= */
-  function applySellerSecurity<T extends { vendedor_id: string | null }>(rows: T[]) {
-    if (isAdmin) return rows;
-    return rows.filter((v) => {
-      const sid = v.vendedor_id || "";
-      return sid === myUserId || sid === authUserId;
+  async function ensureUsersForVendorIds(vendorIds: string[]) {
+    const unique = Array.from(new Set(vendorIds.filter(Boolean)));
+    if (!unique.length) return;
+
+    const missing = unique.filter((id) => !usersMap[id] && !usersByAuth[id]);
+    if (!missing.length) return;
+
+    const { data: uData, error } = await supabase
+      .from("users")
+      .select("id, auth_user_id, nome, user_role, role, is_active")
+      .or(`id.in.(${missing.join(",")}),auth_user_id.in.(${missing.join(",")})`);
+
+    if (error) {
+      console.error("Erro ao carregar users faltantes:", error.message);
+      return;
+    }
+
+    const mId = { ...usersMap };
+    const mAuth = { ...usersByAuth };
+    (uData || []).forEach((u: any) => {
+      if (u?.id) mId[u.id] = u;
+      if (u?.auth_user_id) mAuth[u.auth_user_id] = u;
     });
+    setUsersMap(mId);
+    setUsersByAuth(mAuth);
   }
 
-  function applyGlobalFiltersOnVendas(rows: VendaRow[]) {
-    let list = rows.slice();
+  async function ensureLeadsForIds(leadIds: string[]) {
+    const unique = Array.from(new Set(leadIds.filter(Boolean)));
+    const missing = unique.filter((id) => !leadsMap[id]);
+    if (!missing.length) return;
 
-    if (fVendedor !== "all") list = list.filter((v) => (v.vendedor_id || "") === fVendedor);
-    if (fAdmin !== "all") list = list.filter((v) => (v.administradora || "") === fAdmin);
-    if (fSeg !== "all") list = list.filter((v) => (v.segmento || "") === fSeg);
-    if (fTabela !== "all") list = list.filter((v) => (v.tabela || "") === fTabela);
-    if (fTipoVenda !== "all") list = list.filter((v) => (v.tipo_venda || "") === fTipoVenda);
-    if (fContemplada !== "all") {
-      const want = fContemplada === "sim";
-      list = list.filter((v) => Boolean(v.contemplada) === want);
-    }
+    const chunkSize = 200;
+    const m = { ...leadsMap };
 
-    if (dateStart) {
-      const s = new Date(dateStart + "T00:00:00").getTime();
-      list = list.filter((v) => {
-        if (!v.encarteirada_em) return false;
-        const t = new Date(v.encarteirada_em).getTime();
-        return Number.isFinite(t) && t >= s;
+    for (let i = 0; i < missing.length; i += chunkSize) {
+      const chunk = missing.slice(i, i + chunkSize);
+      const { data, error } = await supabase.from("leads").select("id, nome, telefone, email, origem").in("id", chunk);
+
+      if (error) {
+        console.error("Erro ao carregar leads faltantes:", error.message);
+        continue;
+      }
+      (data || []).forEach((l: any) => {
+        if (l?.id) m[l.id] = l;
       });
     }
 
-    if (dateEnd) {
-      const e = new Date(dateEnd + "T23:59:59").getTime();
-      list = list.filter((v) => {
-        if (!v.encarteirada_em) return false;
-        const t = new Date(v.encarteirada_em).getTime();
-        return Number.isFinite(t) && t <= e;
-      });
-    }
-
-    return list;
+    setLeadsMap(m);
   }
 
-  async function fetchAllVendasForExport() {
+  function applyBaseFiltersToRows(list: VendaRow[]) {
+    let rows = list.slice();
+
+    if (fVendedor !== "all") rows = rows.filter((v) => (v.vendedor_id || "") === fVendedor);
+    if (fAdmin !== "all") rows = rows.filter((v) => (v.administradora || "") === fAdmin);
+    if (fSeg !== "all") rows = rows.filter((v) => (v.segmento || "") === fSeg);
+    if (fTabela !== "all") rows = rows.filter((v) => (v.tabela || "") === fTabela);
+    if (fTipoVenda !== "all") rows = rows.filter((v) => (v.tipo_venda || "") === fTipoVenda);
+    if (fContemplada !== "all") rows = rows.filter((v) => Boolean(v.contemplada) === (fContemplada === "sim"));
+
+    return rows;
+  }
+
+  function buildBaseVendasQuery() {
     let q = supabase
       .from("vendas")
       .select(
@@ -1342,99 +1350,1673 @@ export default function Relatorios() {
       if (myUserId) parts.push(`vendedor_id.eq.${myUserId}`);
       if (authUserId) parts.push(`vendedor_id.eq.${authUserId}`);
       if (parts.length === 1) {
-        q = q.eq("vendedor_id", myUserId || authUserId!);
+        const only = myUserId || authUserId!;
+        q = q.eq("vendedor_id", only);
       } else if (parts.length > 1) {
         q = q.or(parts.join(","));
       }
     }
 
+    // filtros globais baseados em vendas
+    if (fVendedor !== "all") q = q.eq("vendedor_id", fVendedor);
+    if (fAdmin !== "all") q = q.eq("administradora", fAdmin);
+    if (fSeg !== "all") q = q.eq("segmento", fSeg);
+    if (fTabela !== "all") q = q.eq("tabela", fTabela);
+    if (fTipoVenda !== "all") q = q.eq("tipo_venda", fTipoVenda);
+    if (fContemplada !== "all") q = q.eq("contemplada", fContemplada === "sim");
+
+    return q;
+  }
+
+  async function exportStandardReports() {
+    let q = buildBaseVendasQuery();
+
+    if (dateStart) q = q.gte("encarteirada_em", new Date(dateStart + "T00:00:00").toISOString());
+    if (dateEnd) q = q.lte("encarteirada_em", new Date(dateEnd + "T23:59:59").toISOString());
+
     const { data, error } = await q;
     if (error) throw error;
 
-    return (data || []) as VendaRow[];
+    const list = (data || []) as VendaRow[];
+
+    await ensureUsersForVendorIds(list.map((v) => v.vendedor_id || "").filter(Boolean));
+    await ensureLeadsForIds(list.map((v) => v.lead_id || "").filter(Boolean));
+
+    let rows = list.slice();
+    if (exportType === "canceladas") rows = rows.filter((v) => getStatus(v) === "Cancelada");
+    if (exportType === "inadimplentes") rows = rows.filter((v) => getStatus(v) === "Inadimplente");
+    if (exportType === "contempladas") rows = rows.filter((v) => getStatus(v) === "Contemplada");
+
+    const sStart = exportStatusStart ? parseLocalDate(exportStatusStart).getTime() : null;
+    const sEnd = exportStatusEnd ? new Date(exportStatusEnd + "T23:59:59").getTime() : null;
+
+    if (sStart || sEnd) {
+      rows = rows.filter((v) => {
+        const sd = getStatusDate(v);
+        if (!sd) return false;
+        const t = new Date(sd).getTime();
+        if (!Number.isFinite(t)) return false;
+        if (sStart && t < sStart) return false;
+        if (sEnd && t > sEnd) return false;
+        return true;
+      });
+    }
+
+    const columns: ExcelColumn[] = [
+      { header: "Vendedor", type: "string", width: 140 },
+      { header: "Cliente", type: "string", width: 180 },
+      { header: "Número da Proposta", type: "string", width: 120 },
+      { header: "Administradora", type: "string", width: 130 },
+      { header: "Segmento", type: "string", width: 110 },
+      { header: "Tabela", type: "string", width: 130 },
+      { header: "Valor", type: "currency", width: 90 },
+      { header: "Data da Venda", type: "date", width: 90 },
+      { header: "Data do Encarteiramento", type: "date", width: 110 },
+      { header: "Status", type: "string", width: 100 },
+      { header: "Data do Status", type: "date", width: 95 },
+      { header: "Dias de Inadimplência", type: "number", width: 90 },
+    ];
+
+    const body = rows.map((v) => {
+      const status = getStatus(v);
+      const statusDate = getStatusDate(v);
+      const cliente = v.lead_id ? leadsMap[v.lead_id]?.nome || v.lead_id : "";
+      const proposta = v.numero_proposta || "";
+
+      return [
+        vendorName(v.vendedor_id),
+        cliente,
+        proposta,
+        v.administradora || "",
+        v.segmento || "",
+        v.tabela || "",
+        safeNum(v.valor_venda),
+        v.data_venda || "",
+        v.encarteirada_em || "",
+        status,
+        statusDate || "",
+        getDiasInad(v) ? safeInt(getDiasInad(v)) : "",
+      ];
+    });
+
+    const nameMap: Record<string, string> = {
+      vendas: "Relatorio_Vendas",
+      canceladas: "Relatorio_Canceladas",
+      contempladas: "Relatorio_Contempladas",
+      inadimplentes: "Relatorio_Inadimplentes",
+    };
+
+    downloadExcelXml(`${nameMap[exportType]}_${todayYMD}.xls`, "Relatorio", columns, body);
   }
 
-  async function ensureUsersAndLeadsMaps(localVendas: VendaRow[]) {
-    const localUsersById: Record<string, UserRow> = { ...usersMap };
-    const localUsersByAuth: Record<string, UserRow> = { ...usersByAuth };
-    const localLeads: Record<string, LeadRow> = { ...leadsMap };
-
-    const vendorIds = Array.from(new Set(localVendas.map((v) => v.vendedor_id).filter(Boolean) as string[]));
-    if (vendorIds.length) {
-      const { data: uData } = await supabase
-        .from("users")
-        .select("id, auth_user_id, nome, user_role, role, is_active")
-        .or(`id.in.(${vendorIds.join(",")}),auth_user_id.in.(${vendorIds.join(",")})`);
-
-      if (uData?.length) {
-        uData.forEach((u: any) => {
-          if (u?.id) localUsersById[u.id] = u;
-          if (u?.auth_user_id) localUsersByAuth[u.auth_user_id] = u;
-        });
-        setUsersMap(localUsersById);
-        setUsersByAuth(localUsersByAuth);
-      }
+  async function exportVencimentoReport() {
+    if (!exportStatusStart || !exportStatusEnd) {
+      alert("Para o relatório de Vencimento, preencha o intervalo de datas.");
+      return;
     }
 
-    const leadIds = Array.from(new Set(localVendas.map((v) => v.lead_id).filter(Boolean) as string[]));
-    if (leadIds.length) {
-      const chunkSize = 200;
-      for (let i = 0; i < leadIds.length; i += chunkSize) {
-        const chunk = leadIds.slice(i, i + chunkSize);
-        const { data: lData } = await supabase
-          .from("leads")
-          .select("id, nome, telefone, email, origem")
-          .in("id", chunk);
+    let q = buildBaseVendasQuery();
 
-        lData?.forEach((l: any) => {
-          localLeads[l.id] = l;
-        });
-      }
-      setLeadsMap(localLeads);
+    // neste relatório faz mais sentido trabalhar com carteira atual/encarteirada
+    q = q.not("grupo", "is", null);
+
+    const { data: vendasData, error: vendasErr } = await q;
+    if (vendasErr) throw vendasErr;
+
+    let rows = (vendasData || []) as VendaRow[];
+    rows = applyBaseFiltersToRows(rows);
+
+    const groupCodes = Array.from(new Set(rows.map((v) => normalizeGroupDigits(v.grupo)).filter(Boolean)));
+    if (!groupCodes.length) {
+      downloadExcelXml(`Relatorio_Vencimento_${todayYMD}.xls`, "Vencimento", [
+        { header: "ADMINISTRADORA", type: "string" },
+        { header: "VENDEDOR", type: "string" },
+        { header: "CLIENTE", type: "string" },
+        { header: "PROPOSTA", type: "string" },
+        { header: "SEGMENTO", type: "string" },
+        { header: "GRUPO", type: "string" },
+        { header: "COTA", type: "string" },
+        { header: "VALOR", type: "currency" },
+        { header: "STATUS", type: "string" },
+        { header: "DATA VCTO", type: "date" },
+      ], []);
+      return;
     }
 
-    const localVendorName = (sellerId: string | null) => {
-      if (!sellerId) return "—";
-      return localUsersById[sellerId]?.nome || localUsersByAuth[sellerId]?.nome || "—";
+    const { data: groupsData, error: groupsErr } = await supabase
+      .from("groups")
+      .select("id, administradora, segmento, codigo, prox_vencimento")
+      .in("codigo", groupCodes)
+      .gte("prox_vencimento", exportStatusStart)
+      .lte("prox_vencimento", exportStatusEnd);
+
+    if (groupsErr) throw groupsErr;
+
+    const groupsByCode: Record<string, GroupRow> = {};
+    (groupsData || []).forEach((g: any) => {
+      const key = normalizeGroupDigits(g?.codigo);
+      if (key) groupsByCode[key] = g as GroupRow;
+    });
+
+    rows = rows.filter((v) => !!groupsByCode[normalizeGroupDigits(v.grupo)]);
+
+    await ensureUsersForVendorIds(rows.map((v) => v.vendedor_id || "").filter(Boolean));
+    await ensureLeadsForIds(rows.map((v) => v.lead_id || "").filter(Boolean));
+
+    const columns: ExcelColumn[] = [
+      { header: "ADMINISTRADORA", type: "string", width: 130 },
+      { header: "VENDEDOR", type: "string", width: 150 },
+      { header: "CLIENTE", type: "string", width: 180 },
+      { header: "PROPOSTA", type: "string", width: 120 },
+      { header: "SEGMENTO", type: "string", width: 110 },
+      { header: "GRUPO", type: "string", width: 80 },
+      { header: "COTA", type: "string", width: 80 },
+      { header: "VALOR", type: "currency", width: 95 },
+      { header: "STATUS", type: "string", width: 110 },
+      { header: "DATA VCTO", type: "date", width: 95 },
+    ];
+
+    const body = rows.map((v) => {
+      const group = groupsByCode[normalizeGroupDigits(v.grupo)];
+      const cliente = v.lead_id ? leadsMap[v.lead_id]?.nome || v.lead_id : "";
+      return [
+        v.administradora || group?.administradora || "",
+        vendorName(v.vendedor_id),
+        cliente,
+        v.numero_proposta || "",
+        v.segmento || group?.segmento || "",
+        v.grupo || group?.codigo || "",
+        v.cota || "",
+        safeNum(v.valor_venda),
+        Boolean(v.contemplada) ? "Contemplada" : "Não contemplada",
+        group?.prox_vencimento || "",
+      ];
+    });
+
+    downloadExcelXml(`Relatorio_Vencimento_${todayYMD}.xls`, "Vencimento", columns, body);
+  }
+
+  async function exportAssemblyResultReport() {
+    if (!exportStatusStart || !exportStatusEnd) {
+      alert("Para o relatório de Result. Assembleia, preencha o intervalo de datas da assembleia.");
+      return;
+    }
+
+    let q = buildBaseVendasQuery();
+    q = q.not("grupo", "is", null).eq("codigo", "00"); // focar cotas ativas encarteiradas
+
+    const { data: vendasData, error: vendasErr } = await q;
+    if (vendasErr) throw vendasErr;
+
+    let rows = (vendasData || []) as VendaRow[];
+    rows = applyBaseFiltersToRows(rows);
+
+    const groupCodes = Array.from(new Set(rows.map((v) => normalizeGroupDigits(v.grupo)).filter(Boolean)));
+    if (!groupCodes.length) {
+      downloadExcelXml(`Relatorio_Result_Assembleia_${todayYMD}.xls`, "Assembleia", [
+        { header: "ADMINISTRADORA", type: "string" },
+        { header: "VENDEDOR", type: "string" },
+        { header: "CLIENTE", type: "string" },
+        { header: "SEGMENTO", type: "string" },
+        { header: "GRUPO", type: "string" },
+        { header: "COTAS DO CLIENTE", type: "number" },
+        { header: "LANCE FIXO DE 25% (OFERTAS)", type: "number" },
+        { header: "LANCE FIXO DE 25% (ENTREGAS)", type: "number" },
+        { header: "LANCE FIXO DE 50% (OFERTAS)", type: "number" },
+        { header: "LANCE FIXO DE 50% (ENTREGAS)", type: "number" },
+        { header: "LANCE LIVRE (OFERTAS)", type: "number" },
+        { header: "LANCE LIVRE (ENTREGAS)", type: "number" },
+        { header: "LANCE LIVRE MAIOR %", type: "number" },
+        { header: "LANCE LIVRE MENOR %", type: "number" },
+        { header: "LANCE LIVRE MEDIANA %", type: "number" },
+      ], []);
+      return;
+    }
+
+    const { data: groupsData, error: groupsErr } = await supabase
+      .from("groups")
+      .select("id, administradora, segmento, codigo, prox_vencimento")
+      .in("codigo", groupCodes);
+
+    if (groupsErr) throw groupsErr;
+
+    const groupsById: Record<string, GroupRow> = {};
+    const groupIdByCode: Record<string, string> = {};
+    (groupsData || []).forEach((g: any) => {
+      if (g?.id) groupsById[g.id] = g as GroupRow;
+      const code = normalizeGroupDigits(g?.codigo);
+      if (code && g?.id) groupIdByCode[code] = g.id;
+    });
+
+    const targetGroupIds = Array.from(new Set(Object.values(groupIdByCode)));
+    if (!targetGroupIds.length) {
+      alert("Não encontrei grupos correspondentes para as cotas filtradas.");
+      return;
+    }
+
+    const { data: assemblyData, error: assemblyErr } = await supabase
+      .from("v_group_last_assembly")
+      .select(
+        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
+      )
+      .in("group_id", targetGroupIds)
+      .gte("date", exportStatusStart)
+      .lte("date", exportStatusEnd);
+
+    if (assemblyErr) throw assemblyErr;
+
+    const assemblyByGroupId: Record<string, GroupLastAssemblyRow> = {};
+    (assemblyData || []).forEach((a: any) => {
+      if (a?.group_id) assemblyByGroupId[a.group_id] = a as GroupLastAssemblyRow;
+    });
+
+    rows = rows.filter((v) => {
+      const gid = groupIdByCode[normalizeGroupDigits(v.grupo)];
+      return !!gid && !!assemblyByGroupId[gid];
+    });
+
+    await ensureUsersForVendorIds(rows.map((v) => v.vendedor_id || "").filter(Boolean));
+    await ensureLeadsForIds(rows.map((v) => v.lead_id || "").filter(Boolean));
+
+    type KeyRow = {
+      administradora: string;
+      vendedor: string;
+      cliente: string;
+      segmento: string;
+      grupo: string;
+      cotasCliente: number;
+      fixed25_offers: number;
+      fixed25_deliveries: number;
+      fixed50_offers: number;
+      fixed50_deliveries: number;
+      ll_offers: number;
+      ll_deliveries: number;
+      ll_high: number;
+      ll_low: number;
+      median: number;
     };
 
-    const localLeadName = (leadId: string | null) => {
-      if (!leadId) return "—";
-      return localLeads[leadId]?.nome || leadId;
-    };
+    const grouped: Record<string, KeyRow> = {};
 
-    return {
-      localUsersById,
-      localUsersByAuth,
-      localLeads,
-      localVendorName,
-      localLeadName,
-    };
+    for (const v of rows) {
+      if (!v.lead_id) continue;
+
+      const groupCode = normalizeGroupDigits(v.grupo);
+      const groupId = groupIdByCode[groupCode];
+      const group = groupId ? groupsById[groupId] : null;
+      const asm = groupId ? assemblyByGroupId[groupId] : null;
+      if (!groupId || !group || !asm) continue;
+
+      const cliente = leadsMap[v.lead_id]?.nome || v.lead_id;
+      const vendedor = vendorName(v.vendedor_id);
+      const administradora = v.administradora || group.administradora || "";
+      const segmento = v.segmento || group.segmento || "";
+      const grupo = group.codigo || v.grupo || "";
+
+      const key = `${v.lead_id}__${groupId}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          administradora,
+          vendedor,
+          cliente,
+          segmento,
+          grupo,
+          cotasCliente: 0,
+          fixed25_offers: safeInt(asm.fixed25_offers),
+          fixed25_deliveries: safeInt(asm.fixed25_deliveries),
+          fixed50_offers: safeInt(asm.fixed50_offers),
+          fixed50_deliveries: safeInt(asm.fixed50_deliveries),
+          ll_offers: safeInt(asm.ll_offers),
+          ll_deliveries: safeInt(asm.ll_deliveries),
+          ll_high: safeNum(asm.ll_high),
+          ll_low: safeNum(asm.ll_low),
+          median: safeNum(asm.median),
+        };
+      }
+      grouped[key].cotasCliente += 1;
+    }
+
+    const lines = Object.values(grouped).sort((a, b) => {
+      const adm = a.administradora.localeCompare(b.administradora);
+      if (adm !== 0) return adm;
+      const grp = normalizeGroupDigits(a.grupo).localeCompare(normalizeGroupDigits(b.grupo));
+      if (grp !== 0) return grp;
+      return a.cliente.localeCompare(b.cliente);
+    });
+
+    const columns: ExcelColumn[] = [
+      { header: "ADMINISTRADORA", type: "string", width: 130 },
+      { header: "VENDEDOR", type: "string", width: 150 },
+      { header: "CLIENTE", type: "string", width: 180 },
+      { header: "SEGMENTO", type: "string", width: 110 },
+      { header: "GRUPO", type: "string", width: 80 },
+      { header: "COTAS DO CLIENTE", type: "number", width: 95 },
+      { header: "LANCE FIXO DE 25% (OFERTAS)", type: "number", width: 110 },
+      { header: "LANCE FIXO DE 25% (ENTREGAS)", type: "number", width: 115 },
+      { header: "LANCE FIXO DE 50% (OFERTAS)", type: "number", width: 110 },
+      { header: "LANCE FIXO DE 50% (ENTREGAS)", type: "number", width: 115 },
+      { header: "LANCE LIVRE (OFERTAS)", type: "number", width: 105 },
+      { header: "LANCE LIVRE (ENTREGAS)", type: "number", width: 110 },
+      { header: "LANCE LIVRE MAIOR %", type: "number", width: 100 },
+      { header: "LANCE LIVRE MENOR %", type: "number", width: 100 },
+      { header: "LANCE LIVRE MEDIANA %", type: "number", width: 110 },
+    ];
+
+    const body = lines.map((r) => [
+      r.administradora,
+      r.vendedor,
+      r.cliente,
+      r.segmento,
+      r.grupo,
+      r.cotasCliente,
+      r.fixed25_offers,
+      r.fixed25_deliveries,
+      r.fixed50_offers,
+      r.fixed50_deliveries,
+      r.ll_offers,
+      r.ll_deliveries,
+      r.ll_high,
+      r.ll_low,
+      r.median,
+    ]);
+
+    downloadExcelXml(`Relatorio_Result_Assembleia_${todayYMD}.xls`, "Assembleia", columns, body);
   }
 
   /* =========================
-     Export (histórico + novos relatórios)
+     Export
   ========================= */
   async function exportReport() {
     if (!myUserId && !authUserId) return;
 
     setExportLoading(true);
     try {
-      if (!exportStatusStart || !exportStatusEnd) {
-        alert("Informe a data inicial e final do intervalo do relatório.");
+      if (exportType === "vencimento") {
+        await exportVencimentoReport();
+        setExportOpen(false);
         return;
       }
 
-      const startYmd = exportStatusStart;
-      const endYmd = exportStatusEnd;
+      if (exportType === "result_assembleia") {
+        await exportAssemblyResultReport();
+        setExportOpen(false);
+        return;
+      }
 
-      // Relatórios baseados na tabela vendas
-      if (["vendas", "canceladas", "contempladas", "inadimplentes"].includes(exportType)) {
-        let rows = await fetchAllVendasForExport();
-        rows = applyGlobalFiltersOnVendas(rows);
+      await exportStandardReports();
+      setExportOpen(false);
+    } catch (e: any) {
+      console.error("Erro ao exportar relatório:", e?.message || e);
+      alert("Não foi possível gerar o relatório. Verifique o console para detalhes.");
+    } finally {
+      setExportLoading(false);
+    }
+  }
 
-        const { localVendorName, localLeadName } = await ensureUsersAndLeadsMaps(rows);
+  const exportDateLabelStart = useMemo(() => {
+    if (exportType === "vencimento") return "Vencimento (início)";
+    if (exportType === "result_assembleia") return "Data da assembleia (início)";
+    return "Data do status (início)";
+  }, [exportType]);
 
-        if (exportType === "canceladas") rows = rows.filter((v) => getStatus(v) === "Cancelada");
-        if (exportType === "inadimplentes") rows = rows.filter((v) => getStatus(v) === "Inadimplente");
-        if
+  const exportDateLabelEnd = useMemo(() => {
+    if (exportType === "vencimento") return "Vencimento (fim)";
+    if (exportType === "result_assembleia") return "Data da assembleia (fim)";
+    return "Data do status (fim)";
+  }, [exportType]);
+
+  const exportHint = useMemo(() => {
+    if (exportType === "vencimento") {
+      return "Esse relatório busca os grupos em public.groups pela coluna prox_vencimento e localiza as cotas relacionadas a esses grupos.";
+    }
+    if (exportType === "result_assembleia") {
+      return "Esse relatório usa o intervalo da última assembleia em public.v_group_last_assembly (coluna date) e consolida uma linha por cliente dentro do mesmo grupo.";
+    }
+    return "Se você não preencher a data do status, o relatório é gerado com todo o histórico (respeitando os filtros globais).";
+  }, [exportType]);
+
+  /* =========================
+     UI
+  ========================= */
+  return (
+    <div className="p-4 space-y-4">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            Relatórios
+          </h1>
+          <p className="text-sm" style={{ color: C.muted }}>
+            Indicadores e análises da Consulmax
+          </p>
+        </div>
+
+        <Button variant="outline" onClick={() => setExportOpen(true)} disabled={!myUserId && !authUserId} className="rounded-xl">
+          <Download className="h-4 w-4 mr-2" />
+          Extrair Relatório
+        </Button>
+      </div>
+
+      {/* Filtros globais */}
+      <GlassCard>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base" style={{ color: C.navy }}>
+            Filtros globais
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Início
+              </div>
+              <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Fim
+              </div>
+              <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Vendedor
+              </div>
+              <Select value={fVendedor} onValueChange={setFVendedor} disabled={vendedorSelectDisabled}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.vends
+                    .filter((id) => {
+                      const u = usersMap[id] || usersByAuth[id];
+                      return u ? u.is_active !== false : true;
+                    })
+                    .map((id) => (
+                      <SelectItem key={id} value={id}>
+                        {vendorName(id)}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Administradora
+              </div>
+              <Select value={fAdmin} onValueChange={setFAdmin}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {distincts.admins.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Segmento
+              </div>
+              <Select value={fSeg} onValueChange={setFSeg}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.segs.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Tabela
+              </div>
+              <Select value={fTabela} onValueChange={setFTabela}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {distincts.tabs.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Tipo de venda
+              </div>
+              <Select value={fTipoVenda} onValueChange={setFTipoVenda}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {distincts.tipos.map((x) => (
+                    <SelectItem key={x} value={x}>
+                      {x}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                Contemplada
+              </div>
+              <Select value={fContemplada} onValueChange={setFContemplada}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="sim">Sim</SelectItem>
+                  <SelectItem value="nao">Não</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="md:col-span-2 flex items-end">
+              <Button
+                variant="outline"
+                className="rounded-xl w-full"
+                onClick={() => {
+                  setDateStart("");
+                  setDateEnd("");
+                  setFAdmin("all");
+                  setFSeg("all");
+                  setFTabela("all");
+                  setFTipoVenda("all");
+                  setFContemplada("all");
+                  if (isAdmin) setFVendedor("all");
+                  else setFVendedor(myVendorFilterId);
+                }}
+              >
+                Limpar filtros
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </GlassCard>
+
+      {/* KPIs gerais */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Carteira ativa
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.ativoValue)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Total vendido (filtro)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.vendido)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Total cancelado (filtro)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtBRL(totalsCarteira.cancelado)}
+          </CardContent>
+        </GlassCard>
+
+        <GlassCard>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm" style={{ color: C.muted }}>
+              Carteira inadimplente
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-2xl font-extrabold" style={{ color: C.navy }}>
+            {fmtPctHuman(totalsCarteira.inadPct, 1)}
+          </CardContent>
+        </GlassCard>
+      </div>
+
+      <Tabs defaultValue="concentracao" className="space-y-3">
+        <TabsList className="rounded-2xl">
+          <TabsTrigger value="inad126">Inadimplência 12-6</TabsTrigger>
+          <TabsTrigger value="inad82">Inadimplência 8-2</TabsTrigger>
+          <TabsTrigger value="prazo">Prazo</TabsTrigger>
+          <TabsTrigger value="clientes">Clientes</TabsTrigger>
+          <TabsTrigger value="carteira">Carteira</TabsTrigger>
+          <TabsTrigger value="segmentos">Segmentos</TabsTrigger>
+          <TabsTrigger value="concentracao">Concentração</TabsTrigger>
+        </TabsList>
+
+        {/* 12-6 */}
+        <TabsContent value="inad126" className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {[
+              {
+                title: `Semestre anterior (${inad126.prevLabel})`,
+                soldValue: inad126.previousWindow.soldValue,
+                cancelValue: inad126.previousWindow.cancelValue,
+                pct: inad126.previousWindow.pct,
+              },
+              {
+                title: `Semestre atual (${inad126.nowLabel})`,
+                soldValue: inad126.currentWindow.soldValue,
+                cancelValue: inad126.currentWindow.cancelValue,
+                pct: inad126.currentWindow.pct,
+              },
+            ].map((x) => {
+              const alarm = x.pct > 0.3;
+              const restante = Math.max(0, x.soldValue - x.cancelValue);
+
+              const pieData = [
+                { name: "Vendido", value: restante },
+                { name: "Cancelado", value: x.cancelValue },
+              ];
+
+              return (
+                <GlassCard key={x.title}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
+                      <span>{x.title}</span>
+                      {alarm ? (
+                        <Badge tone="danger">
+                          <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                          Alarmante
+                        </Badge>
+                      ) : (
+                        <Badge tone="ok">
+                          <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                          OK
+                        </Badge>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+
+                  <CardContent className="space-y-2">
+                    <div className="h-[240px] relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={2}>
+                            <Cell fill={C.navy} />
+                            <Cell fill={C.rubi} />
+                          </Pie>
+                          <RTooltip formatter={(v: any, n: any) => [fmtBRL(safeNum(v)), String(n)]} />
+                          <Legend />
+                          <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.navy, fontWeight: 800, fontSize: 18 }}>
+                            {fmtPctHuman(x.pct, 1)}
+                          </text>
+                          <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" style={{ fill: C.muted, fontWeight: 700, fontSize: 11 }}>
+                            cancelado
+                          </text>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="flex items-center justify-between text-sm" style={{ color: C.navy }}>
+                      <span>
+                        Vendido: <b>{fmtBRL(x.soldValue)}</b>
+                      </span>
+                      <span>
+                        Cancelado: <b>{fmtBRL(x.cancelValue)}</b>
+                      </span>
+                    </div>
+                  </CardContent>
+                </GlassCard>
+              );
+            })}
+          </div>
+        </TabsContent>
+
+        {/* 8-2 */}
+        <TabsContent value="inad82" className="space-y-3">
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Inadimplência 8-2
+              </CardTitle>
+            </CardHeader>
+
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  % carteira inadimplente
+                </div>
+                <div className="text-3xl font-extrabold mt-1" style={{ color: C.navy }}>
+                  {fmtPctHuman(totalsCarteira.inadPct, 1)}
+                </div>
+                <div className="text-xs mt-1" style={{ color: C.muted }}>
+                  {fmtBRL(totalsCarteira.inadValue)} / {fmtBRL(totalsCarteira.ativoValue)}
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-2">
+                  <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                    Cotas recém-inadimplentes
+                  </div>
+                  <div className="space-y-1">
+                    {inad82.recem.length === 0 ? (
+                      <div className="text-xs" style={{ color: C.muted }}>
+                        —
+                      </div>
+                    ) : (
+                      inad82.recem.map(({ v, dias }) => (
+                        <div key={v.id} className="text-xs flex items-center justify-between" style={{ color: C.navy }}>
+                          <span className="truncate max-w-[70%]">
+                            {leadName(v.lead_id)} • {v.grupo || "—"}/{v.cota || "—"}
+                          </span>
+                          <Badge tone="info">{dias}d</Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="text-xs font-semibold mt-2" style={{ color: C.muted }}>
+                    Top cotas em risco
+                  </div>
+                  <div className="space-y-1">
+                    {inad82.topRisco.length === 0 ? (
+                      <div className="text-xs" style={{ color: C.muted }}>
+                        —
+                      </div>
+                    ) : (
+                      inad82.topRisco.map(({ v, dias }) => (
+                        <div key={v.id} className="text-xs flex items-center justify-between" style={{ color: C.navy }}>
+                          <span className="truncate max-w-[70%]">
+                            {leadName(v.lead_id)} • {v.grupo || "—"}/{v.cota || "—"}
+                          </span>
+                          <Badge tone="danger">{dias}d</Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl border" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  Faixas de atraso
+                </div>
+
+                <div className="h-[240px] mt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={inad82.rows}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="faixa" />
+                      <YAxis />
+                      <RTooltip />
+                      <Bar dataKey="qtd" fill={C.rubi} radius={[8, 8, 0, 0]}>
+                        <LabelList dataKey="qtd" position="top" />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </CardContent>
+          </GlassCard>
+        </TabsContent>
+
+        {/* Prazo */}
+        <TabsContent value="prazo" className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Média (dias)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {Math.round(prazo.mean || 0)}
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Mediana P50 (dias)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {Math.round(prazo.p50 || 0)}
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  P75 (dias)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {Math.round(prazo.p75 || 0)}
+              </CardContent>
+            </GlassCard>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Prazo por segmento (média)
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={prazo.segChart}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" hide />
+                    <YAxis />
+                    <RTooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const p: any = payload[0].payload;
+                        return (
+                          <div className="rounded-xl border px-3 py-2 text-xs bg-white/90" style={{ borderColor: C.border, color: C.navy }}>
+                            <div className="font-bold">{p.name}</div>
+                            <div>
+                              Média: <b>{p.media}</b> dias
+                            </div>
+                            <div className="mt-2 font-semibold" style={{ color: C.muted }}>
+                              Amostras (proposta • prazo)
+                            </div>
+                            <div className="mt-1 space-y-0.5">
+                              {(p.sample || []).slice(0, 5).map((s: any, i: number) => (
+                                <div key={i}>
+                                  {s.proposta} • <b>{s.dias} dias</b>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar dataKey="media" fill={C.navy} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="media" position="top" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Prazo por administradora (média)
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={prazo.admChart}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" hide />
+                    <YAxis />
+                    <RTooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const p: any = payload[0].payload;
+                        return (
+                          <div className="rounded-xl border px-3 py-2 text-xs bg-white/90" style={{ borderColor: C.border, color: C.navy }}>
+                            <div className="font-bold">{p.name}</div>
+                            <div>
+                              Média: <b>{p.media}</b> dias
+                            </div>
+                            <div className="mt-2 font-semibold" style={{ color: C.muted }}>
+                              Amostras (proposta • prazo)
+                            </div>
+                            <div className="mt-1 space-y-0.5">
+                              {(p.sample || []).slice(0, 5).map((s: any, i: number) => (
+                                <div key={i}>
+                                  {s.proposta} • <b>{s.dias} dias</b>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar dataKey="media" fill={C.gold} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="media" position="top" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Prazo médio por tipo de lance
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={prazo.tipoChart}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="tipo" />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="media" fill={C.navy} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="media" position="top" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Prazo médio por tipo de lance por administradora
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={prazo.tipoPorAdmChart}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="adm" hide />
+                    <YAxis />
+                    <RTooltip />
+                    <Legend />
+                    <Bar dataKey="Lance Livre" fill={C.navy} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Lance Livre" position="top" />
+                    </Bar>
+                    <Bar dataKey="Primeiro Lance Fixo" fill={C.gold} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Primeiro Lance Fixo" position="top" />
+                    </Bar>
+                    <Bar dataKey="Segundo Lance Fixo" fill={C.rubi} radius={[8, 8, 0, 0]}>
+                      <LabelList dataKey="Segundo Lance Fixo" position="top" />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Taxa de contemplação por tipo de lance
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent>
+                <div className="text-xs mb-2" style={{ color: C.muted }}>
+                  Base: {prazo.totalBase || 0} vendas no filtro • Contempladas: {prazo.contemplatedAll || 0}
+                </div>
+
+                <div className="h-[260px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={prazo.tipoRateChart || []}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="tipo" />
+                      <YAxis domain={[0, 100]} tickFormatter={(v) => fmtPct100Human(Number(v), 2)} />
+                      <RTooltip
+                        formatter={(v: any, n: any) => {
+                          if (String(n) === "taxa100") return [fmtPct100Human(Number(v), 2), "Taxa (do total)"];
+                          if (String(n) === "shareContempladas100") return [fmtPct100Human(Number(v), 2), "Share (nas contempladas)"];
+                          return [v, String(n)];
+                        }}
+                        labelFormatter={(l) => `Tipo: ${l}`}
+                        contentStyle={{ borderRadius: 12 }}
+                      />
+                      <Legend />
+                      <Bar dataKey="taxa100" name="Taxa (do total)" fill={C.navy} radius={[8, 8, 0, 0]}>
+                        <LabelList dataKey="taxa100" position="top" formatter={(v: any) => fmtPct100Human(Number(v), 2)} />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="mt-2 grid grid-cols-1 gap-1 text-xs" style={{ color: C.muted }}>
+                  {(prazo.tipoRateChart || []).map((r: any) => (
+                    <div key={r.tipo} className="flex items-center justify-between">
+                      <span>{r.tipo}</span>
+                      <span style={{ color: C.navy, fontWeight: 800 }}>
+                        {r.qtd} • {fmtPct100Human(Number(r.taxa100), 2)} (share: {fmtPct100Human(Number(r.shareContempladas100), 2)})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Taxa de contemplação por administradora (Top 12)
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={prazo.tipoRatePorAdmChart || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="adm" hide />
+                    <YAxis domain={[0, 100]} tickFormatter={(v) => fmtPct100Human(Number(v), 2)} />
+                    <RTooltip
+                      formatter={(v: any, n: any) => [fmtPct100Human(Number(v), 2), String(n)]}
+                      labelFormatter={(l) => `Administradora: ${l}`}
+                      contentStyle={{ borderRadius: 12 }}
+                    />
+                    <Legend />
+                    <Bar dataKey="Lance Livre" stackId="a" fill={C.navy} />
+                    <Bar dataKey="Primeiro Lance Fixo" stackId="a" fill={C.gold} />
+                    <Bar dataKey="Segundo Lance Fixo" stackId="a" fill={C.rubi} radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+          </div>
+        </TabsContent>
+
+        {/* Clientes */}
+        <TabsContent value="clientes" className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Total de clientes
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.total}
+              </CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Ativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.ativos}
+              </CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Inadimplentes
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.inadimplentes}
+              </CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Inativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {clientes.inativos}
+              </CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  % Ativos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPctHuman(clientes.pctAtivos, 1)}
+              </CardContent>
+            </GlassCard>
+          </div>
+
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Resumo
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ color: C.muted }}>
+                      <th className="text-left py-2">Indicador</th>
+                      <th className="text-right py-2">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody style={{ color: C.navy }}>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">Total de clientes</td>
+                      <td className="py-2 text-right font-bold">{clientes.total}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">Ativos</td>
+                      <td className="py-2 text-right font-bold">{clientes.ativos}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">Inadimplentes</td>
+                      <td className="py-2 text-right font-bold">{clientes.inadimplentes}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">Inativos</td>
+                      <td className="py-2 text-right font-bold">{clientes.inativos}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: C.border }}>
+                      <td className="py-2">% Ativos</td>
+                      <td className="py-2 text-right font-bold">{fmtPctHuman(clientes.pctAtivos, 1)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </GlassCard>
+        </TabsContent>
+
+        {/* Carteira */}
+        <TabsContent value="carteira" className="space-y-3">
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Série mensal (últimos 12 meses)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={carteiraSerie}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="mes" />
+                  <YAxis />
+                  <RTooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
+                  <Legend />
+                  <Bar dataKey="vendido" name="Vendido" fill={C.navy} radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="cancelado" name="Cancelado" fill={C.rubi} radius={[8, 8, 0, 0]} />
+                  <Line dataKey="liquido" name="Líquido" stroke={C.gold} strokeWidth={2.5} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </GlassCard>
+        </TabsContent>
+
+        {/* Segmentos */}
+        <TabsContent value="segmentos" className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Distribuição da carteira ativa por segmento
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={distSegmento.rows} dataKey="value" nameKey="name" innerRadius={65} outerRadius={95} paddingAngle={2}>
+                      {distSegmento.rows.map((_, idx) => (
+                        <Cell key={idx} fill={[C.navy, C.rubi, C.gold, "#2B3A55", "#8E7A3B", "#4D0E16"][idx % 6]} />
+                      ))}
+                    </Pie>
+                    <RTooltip formatter={(v: any) => fmtBRL(safeNum(v))} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Ranking por segmento
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {distSegmento.rows.slice(0, 10).map((r) => (
+                    <div key={r.name} className="flex items-center justify-between gap-3">
+                      <div className="font-semibold truncate" style={{ color: C.navy }}>
+                        {r.name}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge tone="info">{fmtPctHuman(r.pct, 1)}</Badge>
+                        <div className="font-bold" style={{ color: C.navy }}>
+                          {fmtBRL(r.value)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </GlassCard>
+          </div>
+        </TabsContent>
+
+        {/* Concentração */}
+        <TabsContent value="concentracao" className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Corte (alerta)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPctHuman(CONCENTRACAO_ALERTA, 0)}
+              </CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Clientes concentrados
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {concKpis.acimaCount}
+              </CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  % em concentrados
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPctHuman(concKpis.acimaPct, 1)}
+              </CardContent>
+            </GlassCard>
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm" style={{ color: C.muted }}>
+                  Maior concentração
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-3xl font-extrabold" style={{ color: C.navy }}>
+                {fmtPctHuman(concKpis.top1, 1)}
+              </CardContent>
+            </GlassCard>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Curva de Lorenz
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={lorenz.points}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="x" tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} />
+                    <YAxis tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} domain={[0, 1]} />
+                    <RTooltip formatter={(v: any) => fmtPctHuman(safeNum(v), 2)} />
+                    <Area type="monotone" dataKey="y" stroke={C.navy} fill={C.gold} fillOpacity={0.25} />
+                    <Line type="linear" data={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} dataKey="y" stroke={C.rubi} dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </GlassCard>
+
+            <GlassCard>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base" style={{ color: C.navy }}>
+                  Heatmap de distribuição (faixas de concentração)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {heat.map((b) => (
+                    <div
+                      key={b.key}
+                      className="rounded-xl border p-3"
+                      style={{
+                        borderColor: C.border,
+                        background: `rgba(161,28,39,${0.10 + 0.35 * b.intensity})`,
+                      }}
+                    >
+                      <div className="text-xs font-semibold" style={{ color: C.navy }}>
+                        {b.label}
+                      </div>
+                      <div className="text-2xl font-extrabold" style={{ color: C.navy }}>
+                        {b.qtd}
+                      </div>
+                      <div className="text-[11px]" style={{ color: C.muted }}>
+                        clientes
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </GlassCard>
+          </div>
+
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center justify-between" style={{ color: C.navy }}>
+                <span>Concentração - Top 10</span>
+                <div className="flex items-center gap-2">
+                  <Badge tone="info">Top 10: {fmtPctHuman(paretoData.sumTop10, 2)}</Badge>
+                  <Badge tone="muted">Resto: {fmtPctHuman(paretoData.restoPct, 2)}</Badge>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={paretoData.rows}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" interval={0} tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="left" tickFormatter={(v) => fmtPct100Human(Number(v), 2)} domain={[0, 100]} />
+                  <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => fmtPct100Human(Number(v), 2)} domain={[0, 100]} />
+                  <RTooltip formatter={(v: any, n: any) => [fmtPct100Human(Number(v), 2), String(n)]} contentStyle={{ borderRadius: 12 }} />
+                  <Legend />
+                  <Bar yAxisId="left" dataKey="pct100" name="Participação" fill={C.navy} radius={[8, 8, 0, 0]} />
+                  <Line yAxisId="right" dataKey="cum100" name="Acumulado" stroke={C.gold} strokeWidth={3} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </GlassCard>
+
+          <GlassCard>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base" style={{ color: C.navy }}>
+                Concentração por cliente (carteira ativa)
+              </CardTitle>
+            </CardHeader>
+
+            <CardContent>
+              {loading ? (
+                <div className="flex items-center gap-2 text-sm" style={{ color: C.muted }}>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
+                </div>
+              ) : concRows.length === 0 ? (
+                <div className="text-sm" style={{ color: C.muted }}>
+                  Sem dados de carteira ativa para exibir.
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ color: C.muted }}>
+                          <th className="text-left py-2">Cliente</th>
+                          <th className="text-left py-2">Vendedor(es)</th>
+                          <th className="text-right py-2">Valor (ativo)</th>
+                          <th className="text-right py-2">% Concentração</th>
+                          <th className="text-left py-2">Status</th>
+                          <th className="text-right py-2">Ação</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {concSlice.map((row) => {
+                          const lead = leadsMap[row.lead_id];
+                          const nome = lead?.nome || row.lead_id;
+                          const sellers = Array.from(row.sellers)
+                            .map((sid) => vendorName(sid))
+                            .filter(Boolean)
+                            .join(", ");
+
+                          return (
+                            <tr key={row.lead_id} className="border-t" style={{ borderColor: C.border, color: C.navy }}>
+                              <td className="py-2">
+                                <div className="font-bold truncate max-w-[260px]">{nome}</div>
+                                <div className="text-xs truncate max-w-[260px]" style={{ color: C.muted }}>
+                                  {lead?.telefone || "—"} • {lead?.email || "—"} • {lead?.origem || "—"}
+                                </div>
+
+                                <div className="mt-2 h-2 w-full rounded-full bg-white/60 border border-white/40 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${Math.min(100, row.pct * 100)}%`,
+                                      background: row.alerta ? C.rubi : C.navy,
+                                    }}
+                                  />
+                                </div>
+                              </td>
+
+                              <td className="py-2">
+                                <div className="text-sm">{sellers || "—"}</div>
+                              </td>
+                              <td className="py-2 text-right font-extrabold">{fmtBRL(row.value)}</td>
+
+                              <td className="py-2 text-right">
+                                <Badge tone={row.alerta ? "danger" : "info"}>{fmtPctHuman(row.pct, 1)}</Badge>
+                              </td>
+
+                              <td className="py-2">
+                                {row.alerta ? (
+                                  <Badge tone="danger">
+                                    <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                                    Cliente concentrado
+                                  </Badge>
+                                ) : (
+                                  <Badge tone="ok">
+                                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                                    OK
+                                  </Badge>
+                                )}
+                              </td>
+
+                              <td className="py-2 text-right">
+                                <Button
+                                  variant="outline"
+                                  className="rounded-xl"
+                                  onClick={() => {
+                                    setLeadDialogId(row.lead_id);
+                                    setLeadDialogOpen(true);
+                                  }}
+                                >
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  Ver
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <div className="text-xs" style={{ color: C.muted }}>
+                      Página {concPage} / {concTotalPages} • {concRows.length} clientes
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" className="rounded-xl" onClick={() => setConcPage((p) => Math.max(1, p - 1))} disabled={concPage <= 1}>
+                        Anterior
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={() => setConcPage((p) => Math.min(concTotalPages, p + 1))}
+                        disabled={concPage >= concTotalPages}
+                      >
+                        Próxima
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </GlassCard>
+
+          <Dialog open={leadDialogOpen} onOpenChange={setLeadDialogOpen}>
+            <DialogContent className="sm:max-w-[900px] rounded-2xl">
+              <DialogHeader>
+                <DialogTitle style={{ color: C.navy }}>Detalhes do cliente (Concentração)</DialogTitle>
+              </DialogHeader>
+
+              {leadDialogId && (
+                <div className="space-y-3">
+                  <div className="rounded-xl border p-3" style={{ borderColor: C.border, background: "rgba(255,255,255,.45)" }}>
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="text-lg font-extrabold" style={{ color: C.navy }}>
+                          {leadName(leadDialogId)}
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: C.muted }}>
+                          {leadsMap[leadDialogId]?.telefone || "—"} • {leadsMap[leadDialogId]?.email || "—"} • {leadsMap[leadDialogId]?.origem || "—"}
+                        </div>
+
+                        <div className="text-xs mt-2 flex items-center gap-2 flex-wrap" style={{ color: C.muted }}>
+                          <span>Carteira ativa do cliente:</span>
+                          <span className="font-bold" style={{ color: C.navy }}>
+                            {fmtBRL(leadDialogAtivoTotal)}
+                          </span>
+                          <Badge tone={leadDialogPct >= CONCENTRACAO_ALERTA ? "danger" : "info"}>{fmtPctHuman(leadDialogPct, 1)} da carteira</Badge>
+                          {leadDialogPct >= CONCENTRACAO_ALERTA ? <Badge tone="danger">Cliente concentrado (≥ 10%)</Badge> : <Badge tone="ok">OK</Badge>}
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                          Total cotas (filtro)
+                        </div>
+                        <div className="text-2xl font-extrabold" style={{ color: C.navy }}>
+                          {leadDialogVendas.length}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ color: C.muted }}>
+                          <th className="text-left py-2">Grupo/Cota</th>
+                          <th className="text-left py-2">Administradora</th>
+                          <th className="text-left py-2">Segmento</th>
+                          <th className="text-left py-2">Tabela</th>
+                          <th className="text-left py-2">Vendedor</th>
+                          <th className="text-left py-2">Status</th>
+                          <th className="text-right py-2">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody style={{ color: C.navy }}>
+                        {leadDialogVendas.slice(0, 50).map((v) => (
+                          <tr key={v.id} className="border-t" style={{ borderColor: C.border }}>
+                            <td className="py-2">{`${v.grupo || "—"} / ${v.cota || "—"}`}</td>
+                            <td className="py-2">{v.administradora || "—"}</td>
+                            <td className="py-2">{v.segmento || "—"}</td>
+                            <td className="py-2">{v.tabela || "—"}</td>
+                            <td className="py-2">{vendorName(v.vendedor_id)}</td>
+                            <td className="py-2">
+                              <Badge
+                                tone={
+                                  getStatus(v) === "Cancelada"
+                                    ? "danger"
+                                    : getStatus(v) === "Inadimplente"
+                                    ? "danger"
+                                    : getStatus(v) === "Contemplada"
+                                    ? "info"
+                                    : "ok"
+                                }
+                              >
+                                {getStatus(v)}
+                              </Badge>
+                            </td>
+                            <td className="py-2 text-right font-bold">{fmtBRL(safeNum(v.valor_venda))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {leadDialogVendas.length > 50 && (
+                    <div className="text-xs" style={{ color: C.muted }}>
+                      Mostrando 50 de {leadDialogVendas.length} registros.
+                    </div>
+                  )}
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+        </TabsContent>
+      </Tabs>
+
+      {/* Export overlay */}
+      <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+        <DialogContent className="sm:max-w-[760px] rounded-2xl">
+          <DialogHeader>
+            <DialogTitle style={{ color: C.navy }}>Extrair Relatório (XLS)</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  Tipo de relatório
+                </div>
+                <Select value={exportType} onValueChange={(v: any) => setExportType(v)}>
+                  <SelectTrigger className="rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="vendas">Vendas</SelectItem>
+                    <SelectItem value="canceladas">Canceladas</SelectItem>
+                    <SelectItem value="contempladas">Contempladas</SelectItem>
+                    <SelectItem value="inadimplentes">Inadimplentes</SelectItem>
+                    <SelectItem value="vencimento">Vencimento</SelectItem>
+                    <SelectItem value="result_assembleia">Result. Assembleia</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  {exportDateLabelStart}
+                </div>
+                <Input type="date" value={exportStatusStart} onChange={(e) => setExportStatusStart(e.target.value)} />
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-xs font-semibold" style={{ color: C.muted }}>
+                  {exportDateLabelEnd}
+                </div>
+                <Input type="date" value={exportStatusEnd} onChange={(e) => setExportStatusEnd(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="text-xs" style={{ color: C.muted }}>
+              {exportHint}
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="outline" className="rounded-xl" onClick={() => setExportOpen(false)} disabled={exportLoading}>
+                Cancelar
+              </Button>
+              <Button className="rounded-xl" onClick={exportReport} disabled={exportLoading}>
+                {exportLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                Baixar XLS
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

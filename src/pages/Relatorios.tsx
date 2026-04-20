@@ -155,15 +155,10 @@ function fmtPct100Human(v: number, digits = 2) {
   return `${n.toFixed(digits).replace(".", ",")}%`;
 }
 
-/**
- * Para Result. Assembleia os valores de ll_high/ll_low/median
- * já vêm em percentual "humano" (ex.: 34.88), não em fração.
- * Então aqui NÃO multiplicamos por 100.
- */
-function fmtPctBR4FromPercent(v: number | null | undefined) {
+function fmtPctBR4FromFraction(v: number | null | undefined) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "";
-  return `${n.toFixed(4).replace(".", ",")}%`;
+  return `${(n * 100).toFixed(4).replace(".", ",")}%`;
 }
 
 function fmtDateBR(isoOrDate: string | null) {
@@ -305,7 +300,9 @@ function buildExcelCell(value: any, type: ExcelCellType = "string") {
  * Evita o alerta de extensão/formato incompatível e já envia colunas numéricas/moeda corretamente.
  */
 function downloadExcelXml(filename: string, sheetName: string, columns: ExcelColumn[], rows: any[][]) {
-  const colXml = columns.map((c) => `<Column ss:AutoFitWidth="1" ss:Width="${c.width ?? 120}"/>`).join("");
+  const colXml = columns
+    .map((c) => `<Column ss:AutoFitWidth="1" ss:Width="${c.width ?? 120}"/>`)
+    .join("");
 
   const headerXml = `<Row ss:StyleID="header">${columns
     .map((c) => `<Cell><Data ss:Type="String">${xmlEscape(c.header)}</Data></Cell>`)
@@ -481,6 +478,7 @@ function Badge({
    Página
 ========================= */
 export default function Relatorios() {
+  // filtros globais
   const [dateStart, setDateStart] = useState<string>("");
   const [dateEnd, setDateEnd] = useState<string>("");
 
@@ -489,8 +487,9 @@ export default function Relatorios() {
   const [fSeg, setFSeg] = useState<string>("all");
   const [fTabela, setFTabela] = useState<string>("all");
   const [fTipoVenda, setFTipoVenda] = useState<string>("all");
-  const [fContemplada, setFContemplada] = useState<string>("all");
+  const [fContemplada, setFContemplada] = useState<string>("all"); // all|sim|nao
 
+  // dados
   const [loading, setLoading] = useState(false);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [myUserId, setMyUserId] = useState<string | null>(null);
@@ -501,12 +500,15 @@ export default function Relatorios() {
   const [usersByAuth, setUsersByAuth] = useState<Record<string, UserRow>>({});
   const [leadsMap, setLeadsMap] = useState<Record<string, LeadRow>>({});
 
+  // dialog concentração
   const [leadDialogOpen, setLeadDialogOpen] = useState(false);
   const [leadDialogId, setLeadDialogId] = useState<string | null>(null);
 
+  // paginação concentração
   const [concPage, setConcPage] = useState(1);
   const concPageSize = 10;
 
+  // dialog export
   const [exportOpen, setExportOpen] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportType, setExportType] = useState<
@@ -517,6 +519,9 @@ export default function Relatorios() {
 
   const todayYMD = useMemo(() => todayLocalYMD(), []);
 
+  /* =========================
+     Carrega auth + role
+  ========================= */
   useEffect(() => {
     let alive = true;
 
@@ -568,6 +573,9 @@ export default function Relatorios() {
     };
   }, []);
 
+  /* =========================
+     Helpers vendedor
+  ========================= */
   const vendorName = (sellerId: string | null) => {
     if (!sellerId) return "—";
     return usersMap[sellerId]?.nome || usersByAuth[sellerId]?.nome || "—";
@@ -593,6 +601,9 @@ export default function Relatorios() {
     setFVendedor(myVendorFilterId);
   }, [isAdmin, myVendorFilterId]);
 
+  /* =========================
+     Fetch principal (UI)
+  ========================= */
   async function fetchAllUI() {
     if (!myUserId && !authUserId) return;
 
@@ -705,6 +716,9 @@ export default function Relatorios() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUserId, authUserId, isAdmin]);
 
+  /* =========================
+     Status
+  ========================= */
   const isActive = (v: VendaRow) => v.codigo === "00" && !v.cancelada_em;
   const isCanceled = (v: VendaRow) => Boolean(v.cancelada_em) || (v.codigo !== null && v.codigo !== "00");
 
@@ -731,6 +745,9 @@ export default function Relatorios() {
     return String(diffDaysLocal(v.inad_em, todayYMD));
   }
 
+  /* =========================
+     Filtros
+  ========================= */
   const filtered = useMemo(() => {
     let rows = vendas.slice();
 
@@ -769,6 +786,9 @@ export default function Relatorios() {
 
   useEffect(() => setConcPage(1), [dateStart, dateEnd, fVendedor, fAdmin, fSeg, fTabela, fTipoVenda, fContemplada]);
 
+  /* =========================
+     Distintos selects
+  ========================= */
   const distincts = useMemo(() => {
     const admins = new Set<string>();
     const segs = new Set<string>();
@@ -793,6 +813,9 @@ export default function Relatorios() {
     };
   }, [vendas]);
 
+  /* =========================
+     Carteira totais
+  ========================= */
   const totalsCarteira = useMemo(() => {
     const vendido = filtered.reduce((s, v) => s + safeNum(v.valor_venda), 0);
     const cancelado = filtered.filter(isCanceled).reduce((s, v) => s + safeNum(v.valor_venda), 0);
@@ -809,6 +832,9 @@ export default function Relatorios() {
     };
   }, [filtered]);
 
+  /* =========================
+     Inadimplência 12-6
+  ========================= */
   const inad126 = useMemo(() => {
     const now = new Date();
     const semNow = getSemesterRange(now);
@@ -843,6 +869,9 @@ export default function Relatorios() {
     };
   }, [filtered]);
 
+  /* =========================
+     Inadimplência 8-2
+  ========================= */
   const inad82 = useMemo(() => {
     const buckets = [
       { key: "0-7", label: "0–7", from: 0, to: 7 },
@@ -873,6 +902,9 @@ export default function Relatorios() {
     return { rows, topRisco, recem };
   }, [filtered, todayYMD]);
 
+  /* =========================
+     Prazo + contemplação
+  ========================= */
   const prazo = useMemo(() => {
     const rowsPrazo = filtered.filter((v) => v.encarteirada_em && v.data_contemplacao);
 
@@ -1037,6 +1069,9 @@ export default function Relatorios() {
     };
   }, [filtered]);
 
+  /* =========================
+     Clientes
+  ========================= */
   const clientes = useMemo(() => {
     const byLead: Record<string, { hasActive: boolean; hasCanceled: boolean; hasInad: boolean }> = {};
 
@@ -1058,6 +1093,9 @@ export default function Relatorios() {
     return { total, ativos, inadimplentes, inativos, pctAtivos };
   }, [filtered]);
 
+  /* =========================
+     Carteira série mensal
+  ========================= */
   const carteiraSerie = useMemo(() => {
     const now = new Date();
     const keys: string[] = [];
@@ -1086,6 +1124,9 @@ export default function Relatorios() {
     });
   }, [filtered]);
 
+  /* =========================
+     Distribuição por segmento
+  ========================= */
   const distSegmento = useMemo(() => {
     const by: Record<string, number> = {};
     filtered.filter(isActive).forEach((v) => {
@@ -1101,6 +1142,9 @@ export default function Relatorios() {
     return { rows, total };
   }, [filtered]);
 
+  /* =========================
+     Concentração
+  ========================= */
   const concRows = useMemo(() => {
     const byLead: Record<string, { lead_id: string; value: number; count: number; sellers: Set<string> }> = {};
     const ativos = filtered.filter(isActive);
@@ -1190,6 +1234,9 @@ export default function Relatorios() {
     return counts.map((c) => ({ ...c, intensity: c.qtd / max }));
   }, [concRows]);
 
+  /* =========================
+     Dialog concentração
+  ========================= */
   const leadDialogVendas = useMemo(() => {
     if (!leadDialogId) return [];
     return filtered.filter((v) => v.lead_id === leadDialogId);
@@ -1214,6 +1261,9 @@ export default function Relatorios() {
   const concTotalPages = Math.max(1, Math.ceil(concRows.length / concPageSize));
   const concSlice = concRows.slice((concPage - 1) * concPageSize, concPage * concPageSize);
 
+  /* =========================
+     Export helpers
+  ========================= */
   async function ensureUsersForVendorIds(vendorIds: string[]) {
     const unique = Array.from(new Set(vendorIds.filter(Boolean)));
     if (!unique.length) return;
@@ -1692,14 +1742,17 @@ export default function Relatorios() {
       r.fixed50_deliveries,
       r.ll_offers,
       r.ll_deliveries,
-      fmtPctBR4FromPercent(r.ll_high),
-      fmtPctBR4FromPercent(r.ll_low),
-      fmtPctBR4FromPercent(r.median),
+      fmtPctBR4FromFraction(r.ll_high),
+      fmtPctBR4FromFraction(r.ll_low),
+      fmtPctBR4FromFraction(r.median),
     ]);
 
     downloadExcelXml(`Relatorio_Result_Assembleia_${todayYMD}.xls`, "Assembleia", columns, body);
   }
 
+  /* =========================
+     Export
+  ========================= */
   async function exportReport() {
     if (!myUserId && !authUserId) return;
 
@@ -1749,8 +1802,12 @@ export default function Relatorios() {
     return "Se você não preencher a data do status, o relatório é gerado com todo o histórico (respeitando os filtros globais).";
   }, [exportType]);
 
+  /* =========================
+     UI
+  ========================= */
   return (
     <div className="p-4 space-y-4">
+      {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-extrabold" style={{ color: C.navy }}>
@@ -1767,6 +1824,7 @@ export default function Relatorios() {
         </Button>
       </div>
 
+      {/* Filtros globais */}
       <GlassCard>
         <CardHeader className="pb-2">
           <CardTitle className="text-base" style={{ color: C.navy }}>
@@ -1928,6 +1986,7 @@ export default function Relatorios() {
         </CardContent>
       </GlassCard>
 
+      {/* KPIs gerais */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <GlassCard>
           <CardHeader className="pb-2">
@@ -1985,6 +2044,7 @@ export default function Relatorios() {
           <TabsTrigger value="concentracao">Concentração</TabsTrigger>
         </TabsList>
 
+        {/* 12-6 */}
         <TabsContent value="inad126" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
@@ -2063,6 +2123,7 @@ export default function Relatorios() {
           </div>
         </TabsContent>
 
+        {/* 8-2 */}
         <TabsContent value="inad82" className="space-y-3">
           <GlassCard>
             <CardHeader className="pb-2">
@@ -2149,6 +2210,7 @@ export default function Relatorios() {
           </GlassCard>
         </TabsContent>
 
+        {/* Prazo */}
         <TabsContent value="prazo" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <GlassCard>
@@ -2406,6 +2468,7 @@ export default function Relatorios() {
           </div>
         </TabsContent>
 
+        {/* Clientes */}
         <TabsContent value="clientes" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <GlassCard>
@@ -2503,6 +2566,7 @@ export default function Relatorios() {
           </GlassCard>
         </TabsContent>
 
+        {/* Carteira */}
         <TabsContent value="carteira" className="space-y-3">
           <GlassCard>
             <CardHeader className="pb-2">
@@ -2527,6 +2591,7 @@ export default function Relatorios() {
           </GlassCard>
         </TabsContent>
 
+        {/* Segmentos */}
         <TabsContent value="segmentos" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <GlassCard>
@@ -2577,6 +2642,7 @@ export default function Relatorios() {
           </div>
         </TabsContent>
 
+        {/* Concentração */}
         <TabsContent value="concentracao" className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <GlassCard>
@@ -2919,6 +2985,7 @@ export default function Relatorios() {
         </TabsContent>
       </Tabs>
 
+      {/* Export overlay */}
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>
         <DialogContent className="sm:max-w-[760px] rounded-2xl">
           <DialogHeader>

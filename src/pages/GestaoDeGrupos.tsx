@@ -38,7 +38,7 @@ type Grupo = {
   id: string;
   administradora: Administradora;
   segmento: SegmentoUI;
-  codigo: string; // ex.: 1234/5
+  codigo: string;
   participantes: number | null;
   faixa_min: number | null;
   faixa_max: number | null;
@@ -69,6 +69,7 @@ type UltimoResultado = {
   ll_high: number | null;
   ll_low: number | null;
   median: number | null;
+  reference_number?: number | null;
 };
 
 /* =========================================================
@@ -89,12 +90,11 @@ function calcMediana(maior?: number | null, menor?: number | null) {
 function withinLLMedianFilter(mediana: number | null | undefined, alvo: number | null): boolean {
   if (alvo == null) return true;
   if (mediana == null) return false;
-  const min = Math.max(0, alvo * 0.7); // ±30%
+  const min = Math.max(0, alvo * 0.7);
   const max = alvo * 1.3;
   return mediana >= min && mediana <= max;
 }
 
-/** Converte qualquer coisa em 'YYYY-MM-DD'. */
 function toYMD(d: string | Date | null | undefined): string | null {
   if (!d) return null;
   const s = typeof d === "string" ? d.trim() : (d as Date).toISOString();
@@ -140,11 +140,10 @@ function todayYMDLocal(): string {
   return `${y}-${m}-${day}`;
 }
 
-/* ===== normalizações ===== */
-
 function stripAccents(s: string) {
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
+
 function normalizeAdmin(raw?: string | null): string {
   const s = stripAccents(String(raw ?? "")).toLowerCase();
   const cleaned = s
@@ -156,7 +155,7 @@ function normalizeAdmin(raw?: string | null): string {
   if (cleaned.includes("maggi")) return "Maggi";
   return (raw ?? "").toString().trim();
 }
-/** pega somente o número-base do grupo (antes de /, -, espaço) */
+
 function normalizeGroupDigits(g?: string | number | null): string {
   const s = String(g ?? "").trim();
   const first = s.split(/[\/\-\s]/)[0] || s;
@@ -164,23 +163,21 @@ function normalizeGroupDigits(g?: string | number | null): string {
   if (m) return m[0];
   return s.replace(/\D/g, "");
 }
+
 function keyDigits(adm?: string | null, grp?: string | number | null) {
   return `${normalizeAdmin(adm)}::${normalizeGroupDigits(grp)}`;
 }
-function keyRaw(adm?: string | null, grp?: string | number | null) {
-  return `${normalizeAdmin(adm)}::${String(grp ?? "").trim()}`;
-}
 
-/* ===== stubs ===== */
 function isStubId(id: string) {
   return id.startsWith("stub:");
 }
+
 function makeStubId(adm?: string | null, grp?: string | number | null) {
   return `stub:${keyDigits(adm, grp)}`;
 }
 
 /* =========================================================
-   REFERÊNCIA POR BILHETES (corrigido HS + normalização)
+   REFERÊNCIA POR BILHETES
    ========================================================= */
 
 function referenciaPorAdministradora(params: {
@@ -202,10 +199,6 @@ function referenciaPorAdministradora(params: {
   }
 
   function tryEmbraconAte1000(num5: string, cap: number): number | null {
-    // Regra informada:
-    // - olha os 3 últimos números
-    // - se for maior que participantes, exclui o último dígito e olha a centena seguinte
-    // Ex.: 15983 -> 983; se > cap -> 598
     const ult3 = parseInt(num5.slice(-3), 10);
     if (ult3 >= 1 && ult3 <= cap) return ult3;
 
@@ -215,31 +208,21 @@ function referenciaPorAdministradora(params: {
     return null;
   }
 
-  // MAGGI — sempre 1º prêmio
   if (adm === "maggi") {
     const p5 = sanitizeBilhete5(bilhetes.primeiro);
     const milhar = parseInt(p5.slice(-4), 10);
     return reduceByCap(milhar, participantes);
   }
 
-  // HS — sempre 1º prêmio
   if (adm === "hs") {
     const p5 = sanitizeBilhete5(bilhetes.primeiro);
     const milhar = parseInt(p5.slice(-4), 10);
     return reduceByCap(milhar, participantes);
   }
 
-  // EMBRACON
   if (adm === "embracon") {
-    // Até 1000 participantes: tenta do 1º ao 5º prêmio
     if (participantes <= 1000) {
-      const premios = [
-        bilhetes.primeiro,
-        bilhetes.segundo,
-        bilhetes.terceiro,
-        bilhetes.quarto,
-        bilhetes.quinto,
-      ];
+      const premios = [bilhetes.primeiro, bilhetes.segundo, bilhetes.terceiro, bilhetes.quarto, bilhetes.quinto];
 
       for (const premio of premios) {
         const p5 = sanitizeBilhete5(premio);
@@ -249,13 +232,11 @@ function referenciaPorAdministradora(params: {
       return null;
     }
 
-    // Acima de 1000 participantes: sempre 1º prêmio e último milhar reduzindo
     const p5 = sanitizeBilhete5(bilhetes.primeiro);
     const milhar = parseInt(p5.slice(-4), 10);
     return reduceByCap(milhar, participantes);
   }
 
-  // Regra genérica fallback
   const p5 = sanitizeBilhete5(bilhetes.primeiro);
   const tres = parseInt(p5.slice(-3), 10);
   return reduceByCap(tres, participantes);
@@ -417,26 +398,19 @@ function OverlayAssembleias({
 }) {
   const [date, setDate] = useState<string>("");
   const [adminSel, setAdminSel] = useState<string>("");
-
-  // >>>>>>> AQUI: tornam-se obrigatórios
   const [nextDue, setNextDue] = useState<string>("");
   const [nextDraw, setNextDraw] = useState<string>("");
   const [nextAsm, setNextAsm] = useState<string>("");
-
   const [linhas, setLinhas] = useState<LinhaAsm[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // snapshot do prazo atual por grupo (pra validar “reduziu 2 ou mais”)
   const prazoAtualById = useMemo(() => {
     const m = new Map<string, number | null>();
     gruposBase.forEach((g) => m.set(g.id, g.prazo_encerramento_meses ?? null));
     return m;
   }, [gruposBase]);
 
-  const administradoras = useMemo(
-    () => Array.from(new Set(gruposBase.map((g) => g.administradora))).sort(),
-    [gruposBase]
-  );
+  const administradoras = useMemo(() => Array.from(new Set(gruposBase.map((g) => g.administradora))).sort(), [gruposBase]);
 
   useEffect(() => {
     if (!date) {
@@ -466,12 +440,7 @@ function OverlayAssembleias({
     setLinhas((prev) => prev.map((r) => (r.group_id === id ? { ...r, [campo]: val } : r)));
   };
 
-  const podeSalvar =
-    Boolean(date) &&
-    linhas.length > 0 &&
-    Boolean(nextDue) &&
-    Boolean(nextDraw) &&
-    Boolean(nextAsm);
+  const podeSalvar = Boolean(date) && linhas.length > 0 && Boolean(nextDue) && Boolean(nextDraw) && Boolean(nextAsm);
 
   function buildPreSaveWarnings() {
     const issuesLL: { codigo: string; maior: number; menor: number }[] = [];
@@ -479,19 +448,16 @@ function OverlayAssembleias({
     const blanks: { codigo: string; campos: string[] }[] = [];
 
     linhas.forEach((l) => {
-      // LL maior < LL menor
       if (l.ll_maior != null && l.ll_menor != null && l.ll_maior < l.ll_menor) {
         issuesLL.push({ codigo: l.codigo, maior: l.ll_maior, menor: l.ll_menor });
       }
 
-      // prazo reduzido 2 ou mais do que o atual (ex.: 240 -> 238 já alerta)
       const atual = prazoAtualById.get(l.group_id);
       if (atual != null && l.prazo_enc_meses != null) {
         const diff = atual - l.prazo_enc_meses;
         if (diff >= 2) issuesPrazo.push({ codigo: l.codigo, atual, novo: l.prazo_enc_meses });
       }
 
-      // campos em branco (null) que são “digitáveis” no overlay
       const campos: string[] = [];
       if (l.ll_maior == null) campos.push("LL Maior %");
       if (l.ll_menor == null) campos.push("LL Menor %");
@@ -533,15 +499,10 @@ function OverlayAssembleias({
 
     if (parts.length === 0) return null;
 
-    return (
-      `Antes de salvar, encontrei possíveis inconsistências:\n\n` +
-      parts.join("\n\n") +
-      `\n\nDeseja salvar mesmo assim?`
-    );
+    return `Antes de salvar, encontrei possíveis inconsistências:\n\n${parts.join("\n\n")}\n\nDeseja salvar mesmo assim?`;
   }
 
   const handleSave = async () => {
-    // obrigatórios
     if (!date) {
       alert("Informe a data da Assembleia (Ocorrida em).");
       return;
@@ -555,11 +516,10 @@ function OverlayAssembleias({
       return;
     }
 
-    // alertas com confirmação (sem perder o que foi digitado)
     const warn = buildPreSaveWarnings();
     if (warn) {
       const ok = window.confirm(warn);
-      if (!ok) return; // volta pra tela sem perder estado
+      if (!ok) return;
     }
 
     try {
@@ -582,24 +542,70 @@ function OverlayAssembleias({
 
       if (errAsm) throw errAsm;
 
-      const payload = linhas.map((r) => ({
-        assembly_id: assem!.id,
-        group_id: r.group_id,
-        date,
-        fixed25_offers: r.fix25_ofertas ?? 0,
-        fixed25_deliveries: r.fix25_entregas ?? 0,
-        fixed50_offers: r.fix50_ofertas ?? 0,
-        fixed50_deliveries: r.fix50_entregas ?? 0,
-        ll_offers: r.ll_ofertas ?? 0,
-        ll_deliveries: r.ll_entregas ?? 0,
-        ll_high: r.ll_maior,
-        ll_low: r.ll_menor,
-        median: calcMediana(r.ll_maior, r.ll_menor),
-      }));
+      const groupsById = new Map<string, Grupo>();
+      gruposBase.forEach((g) => groupsById.set(g.id, g));
 
-      const { error: errRes } = await supabase
-        .from("assembly_results")
-        .upsert(payload, { onConflict: "assembly_id,group_id" });
+      const sorteioDates = Array.from(
+        new Set(
+          linhas
+            .map((l) => toYMD(groupsById.get(l.group_id)?.prox_sorteio))
+            .filter(Boolean) as string[]
+        )
+      );
+
+      const drawsMap = new Map<string, LoteriaFederal>();
+
+      if (sorteioDates.length > 0) {
+        const { data: draws, error: drawErr } = await supabase
+          .from("lottery_draws")
+          .select("*")
+          .in("draw_date", sorteioDates);
+
+        if (drawErr) throw drawErr;
+
+        (draws || []).forEach((d: any) => {
+          drawsMap.set(d.draw_date, {
+            data_sorteio: d.draw_date,
+            primeiro: d.first,
+            segundo: d.second,
+            terceiro: d.third,
+            quarto: d.fourth,
+            quinto: d.fifth,
+          });
+        });
+      }
+
+      const payload = linhas.map((r) => {
+        const grupo = groupsById.get(r.group_id);
+        const sorteioYMD = toYMD(grupo?.prox_sorteio);
+        const bilhetes = sorteioYMD ? drawsMap.get(sorteioYMD) ?? null : null;
+
+        const referenceNumber = grupo
+          ? referenciaPorAdministradora({
+              administradora: grupo.administradora,
+              participantes: grupo.participantes,
+              bilhetes,
+            })
+          : null;
+
+        return {
+          assembly_id: assem!.id,
+          group_id: r.group_id,
+          date,
+          fixed25_offers: r.fix25_ofertas ?? 0,
+          fixed25_deliveries: r.fix25_entregas ?? 0,
+          fixed50_offers: r.fix50_ofertas ?? 0,
+          fixed50_deliveries: r.fix50_entregas ?? 0,
+          ll_offers: r.ll_ofertas ?? 0,
+          ll_deliveries: r.ll_entregas ?? 0,
+          ll_high: r.ll_maior,
+          ll_low: r.ll_menor,
+          median: calcMediana(r.ll_maior, r.ll_menor),
+          reference_number: referenceNumber,
+        };
+      });
+
+      const { error: errRes } = await supabase.from("assembly_results").upsert(payload, { onConflict: "assembly_id,group_id" });
       if (errRes) throw errRes;
 
       await Promise.all(
@@ -643,7 +649,6 @@ function OverlayAssembleias({
           </Button>
         </div>
 
-        {/* área rolável */}
         <div className="p-5 space-y-5 flex-1 min-h-0 overflow-y-auto">
           <Card>
             <CardHeader className="pb-2">
@@ -735,52 +740,22 @@ function OverlayAssembleias({
                         <tr key={l.group_id} className="odd:bg-muted/30">
                           <td className="p-2 font-medium">{l.codigo}</td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.fix25_entregas}
-                              onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.fix25_entregas} onChange={(e) => upd(l.group_id, "fix25_entregas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.fix25_ofertas}
-                              onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.fix25_ofertas} onChange={(e) => upd(l.group_id, "fix25_ofertas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.fix50_entregas}
-                              onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.fix50_entregas} onChange={(e) => upd(l.group_id, "fix50_entregas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.fix50_ofertas}
-                              onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.fix50_ofertas} onChange={(e) => upd(l.group_id, "fix50_ofertas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.ll_entregas}
-                              onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.ll_entregas} onChange={(e) => upd(l.group_id, "ll_entregas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              value={l.ll_ofertas}
-                              onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))}
-                            />
+                            <Input type="number" min={0} value={l.ll_ofertas} onChange={(e) => upd(l.group_id, "ll_ofertas", Number(e.target.value))} />
                           </td>
                           <td className="p-1 text-center">
                             <Input
@@ -835,7 +810,7 @@ function OverlayAssembleias({
 }
 
 /* =========================================================
-   OVERLAY: OFERTA DE LANCE (por COTA)
+   OVERLAY: OFERTA DE LANCE
    ========================================================= */
 
 type OfertaRow = {
@@ -848,7 +823,7 @@ type OfertaRow = {
   contemplados: number | null;
   cliente: string | null;
   descricao: string | null;
-  contemplada: boolean; // TAG no relatório
+  contemplada: boolean;
 };
 
 function OverlayOfertaLance({
@@ -893,10 +868,6 @@ function OverlayOfertaLance({
 
       type VendasRow = { [key: string]: any };
 
-      // Excluir cotas canceladas do relatório de oferta de lances.
-      // public.vendas:
-      // - Canceladas: codigo != '00'
-      // - Ativas:     codigo = '00'
       const { data: vds, error } = await supabase
         .from("vendas")
         .select("*")
@@ -926,22 +897,12 @@ function OverlayOfertaLance({
 
       let nomesById = new Map<string, string>();
       if (leadKey) {
-        const leadIds = Array.from(
-          new Set(
-            (vds ?? [])
-              .map((v: VendasRow) => v?.[leadKey!])
-              .filter((x: any) => x !== null && x !== undefined)
-          )
-        );
+        const leadIds = Array.from(new Set((vds ?? []).map((v: VendasRow) => v?.[leadKey!]).filter((x: any) => x !== null && x !== undefined)));
 
         if (leadIds.length > 0) {
           const { data: leadsData, error: errLeads } = await supabase.from("leads").select("id, nome").in("id", leadIds);
-
           if (errLeads) throw errLeads;
-
-          (leadsData ?? []).forEach((l: any) => {
-            nomesById.set(String(l.id), l.nome ?? "");
-          });
+          (leadsData ?? []).forEach((l: any) => nomesById.set(String(l.id), l.nome ?? ""));
         }
       }
 
@@ -965,7 +926,7 @@ function OverlayOfertaLance({
         });
 
         const leadVal = leadKey ? v?.[leadKey] : null;
-        const cliente = leadVal != null ? (nomesById.get(String(leadVal)) ?? null) : null;
+        const cliente = leadVal != null ? nomesById.get(String(leadVal)) ?? null : null;
 
         const descVal = descKey ? v?.[descKey] : null;
         const descricao = descVal ?? v?.vendas_descrecao ?? v?.vendas_descricao ?? v?.descricao ?? null;
@@ -1046,20 +1007,15 @@ function OverlayOfertaLance({
         tr { page-break-inside: avoid; }
         .footer { position: fixed; bottom: 6mm; left: 12mm; right: 12mm; font-size: 11px; color: #666; }
       }
-
       body{font-family: Arial, Helvetica, sans-serif; padding: 18px 24px}
       h1{margin: 0 0 6px; font-size: 22px}
       .meta{margin: 0 0 8px; font-size: 12px; color: #555}
       .brand{display:flex; align-items:center; gap:12px; margin-bottom:8px}
       .brand img{height:28px}
-
       table{width:100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed}
       th,td{border:1px solid #e6e6e6; padding: 7px 8px; font-size: 12px; vertical-align: top; word-wrap: break-word}
       th{text-align:left; background:#f6f8fb; border-color:#e1e1e1}
-
-      tbody tr:nth-child(4n+1),
-      tbody tr:nth-child(4n+3) { background:#fbfbfb; }
-
+      tbody tr:nth-child(4n+1), tbody tr:nth-child(4n+3) { background:#fbfbfb; }
       th:nth-child(1), td:nth-child(1) { width: 15%; }
       th:nth-child(2), td:nth-child(2) { width: 10%; }
       th:nth-child(3), td:nth-child(3) { width: 8%;  }
@@ -1068,10 +1024,8 @@ function OverlayOfertaLance({
       th:nth-child(6), td:nth-child(6) { width: 10%; text-align: right; }
       th:nth-child(7), td:nth-child(7) { width: 10%; text-align: right; }
       th:nth-child(8), td:nth-child(8) { width: 10%; text-align: right; }
-
       .descricao-row td { font-size: 11px; color:#444; border-top-color:#f0f0f0; }
       .descricao-label { font-weight:600; color:#111; margin-right:6px; }
-
       .tag-contemplada { display:inline-block; padding:2px 6px; font-size:10px; border-radius:999px; border:1px solid #d4f1d6; background:#f0fbf1; color:#0f6b1b; margin-left:6px }
     </style>`;
 
@@ -1104,9 +1058,7 @@ function OverlayOfertaLance({
           <div class="meta">Data da Assembleia: <b>${dataLegivel}</b> • Total de cotas: <b>${total}</b></div>
           ${tableHTML}
           <div class="footer">Gerado em ${geradoEm}</div>
-
           <script>
-            // escondo linhas "Descrição: —"
             Array.from(document.querySelectorAll("tbody tr.descricao-row td")).forEach(function(td){
               var txt = (td.textContent || "").trim();
               if (/^Descrição:\\s*—\\s*$/.test(txt)) {
@@ -1160,10 +1112,7 @@ function OverlayOfertaLance({
           <div className="text-sm text-muted-foreground">
             {dataAsm ? (
               <>
-                Assembleia em {formatBR(toYMD(dataAsm))} •{" "}
-                <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-foreground">
-                  {total} cotas
-                </span>
+                Assembleia em {formatBR(toYMD(dataAsm))} • <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-foreground">{total} cotas</span>
               </>
             ) : (
               <>
@@ -1250,7 +1199,6 @@ type LinhaUI = {
   participantes: number | null;
   faixa_min: number | null;
   faixa_max: number | null;
-
   total_entregas: number;
   fix25_entregas: number;
   fix25_ofertas: number;
@@ -1261,38 +1209,28 @@ type LinhaUI = {
   ll_maior: number | null;
   ll_menor: number | null;
   mediana: number | null;
-
   apuracao_dia: string | null;
   prazo_encerramento_meses: number | null;
   prox_vencimento: string | null;
   prox_sorteio: string | null;
   prox_assembleia: string | null;
-
   referencia: number | null;
 };
 
-type SortKey =
-  | "mediana"
-  | "prox_assembleia"
-  | "prox_sorteio"
-  | "prox_vencimento"
-  | "prazo_encerramento_meses";
+type SortKey = "mediana" | "prox_assembleia" | "prox_sorteio" | "prox_vencimento" | "prazo_encerramento_meses";
 
 export default function GestaoDeGrupos() {
   const [loading, setLoading] = useState(true);
   const [grupos, setGrupos] = useState<Grupo[]>([]);
   const [rows, setRows] = useState<LinhaUI[]>([]);
   const [loteria, setLoteria] = useState<LoteriaFederal | null>(null);
-
   const [drawsByDate, setDrawsByDate] = useState<Record<string, LoteriaFederal>>({});
   const [lastAsmByGroup, setLastAsmByGroup] = useState<Map<string, UltimoResultado>>(new Map());
-
   const [fAdmin, setFAdmin] = useState("");
   const [fSeg, setFSeg] = useState("");
   const [fGrupo, setFGrupo] = useState("");
   const [fFaixa, setFFaixa] = useState("");
   const [fMedianaAlvo, setFMedianaAlvo] = useState("");
-
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
     participantes: number | null;
@@ -1302,18 +1240,13 @@ export default function GestaoDeGrupos() {
     faixa_min: number | null;
     faixa_max: number | null;
   } | null>(null);
-
   const [asmOpen, setAsmOpen] = useState<boolean>(false);
   const [lfOpen, setLfOpen] = useState<boolean>(false);
   const [ofertaOpen, setOfertaOpen] = useState<boolean>(false);
-
   const [editorOpen, setEditorOpen] = useState<boolean>(false);
   const [editorPrefill, setEditorPrefill] = useState<Partial<Grupo> | null>(null);
-
   const [sortKey, setSortKey] = useState<SortKey>("prox_assembleia");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-
-  // Notificações de hoje + badge discreto
   const notifiedKeys = useRef<Set<string>>(new Set());
   const [todayBadge, setTodayBadge] = useState<string>("");
 
@@ -1325,7 +1258,6 @@ export default function GestaoDeGrupos() {
       const tLL = r?.ll_deliveries || 0;
       const total = t25 + t50 + tLL;
       const med = r?.median ?? calcMediana(r?.ll_high ?? null, r?.ll_low ?? null);
-
       const key = toYMD(g.prox_sorteio) as string | null;
       const bilhetes = key ? drawsByDate[key] ?? null : null;
 
@@ -1337,7 +1269,6 @@ export default function GestaoDeGrupos() {
         participantes: g.participantes,
         faixa_min: g.faixa_min,
         faixa_max: g.faixa_max,
-
         total_entregas: total,
         fix25_entregas: t25,
         fix25_ofertas: r?.fixed25_offers || 0,
@@ -1348,13 +1279,11 @@ export default function GestaoDeGrupos() {
         ll_maior: r?.ll_high ?? null,
         ll_menor: r?.ll_low ?? null,
         mediana: med,
-
         apuracao_dia: r?.date ?? null,
         prazo_encerramento_meses: g.prazo_encerramento_meses,
         prox_vencimento: g.prox_vencimento,
         prox_sorteio: g.prox_sorteio,
         prox_assembleia: g.prox_assembleia,
-
         referencia: referenciaPorAdministradora({
           administradora: g.administradora,
           participantes: g.participantes,
@@ -1366,7 +1295,6 @@ export default function GestaoDeGrupos() {
     setRows(linhas);
   }, [grupos, lastAsmByGroup, drawsByDate]);
 
-  // CARREGAR base
   const carregar = async () => {
     setLoading(true);
 
@@ -1391,9 +1319,7 @@ export default function GestaoDeGrupos() {
       })) || [];
 
     const byKey = new Map<string, Grupo>();
-    for (const gr of groupsAll) {
-      byKey.set(keyDigits(gr.administradora, gr.codigo), gr);
-    }
+    for (const gr of groupsAll) byKey.set(keyDigits(gr.administradora, gr.codigo), gr);
 
     const { data: vend, error: vErr } = await supabase
       .from("vendas")
@@ -1415,9 +1341,8 @@ export default function GestaoDeGrupos() {
     for (const { administradora, segmento, grupo } of distinct.values()) {
       const k = keyDigits(administradora, grupo);
       const hit = byKey.get(k);
-      if (hit) {
-        gruposBase.push(hit);
-      } else {
+      if (hit) gruposBase.push(hit);
+      else {
         gruposBase.push({
           id: makeStubId(administradora, grupo),
           administradora,
@@ -1439,7 +1364,7 @@ export default function GestaoDeGrupos() {
     if (reais.length > 0) {
       const { data: ar, error: arErr } = await supabase
         .from("v_group_last_assembly")
-        .select("group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median")
+        .select("group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median, reference_number")
         .in("group_id", reais);
       if (arErr) console.error(arErr);
       byGroup = new Map<string, UltimoResultado>();
@@ -1453,7 +1378,7 @@ export default function GestaoDeGrupos() {
       if (ymd) dateSet.add(ymd);
     }
     const want = Array.from(dateSet);
-    let newDraws: Record<string, LoteriaFederal> = {};
+    const newDraws: Record<string, LoteriaFederal> = {};
     if (want.length > 0) {
       const { data: ld, error: ldErr } = await supabase.from("lottery_draws").select("*").in("draw_date", want);
       if (ldErr) console.error(ldErr);
@@ -1469,20 +1394,16 @@ export default function GestaoDeGrupos() {
       });
     }
     setDrawsByDate(newDraws);
-
     setGrupos(gruposBase);
     setLoading(false);
   };
 
-  useEffect(() => {
-    rebuildRows();
-  }, [rebuildRows]);
+  useEffect(() => rebuildRows(), [rebuildRows]);
 
   useEffect(() => {
     carregar();
   }, []);
 
-  // ===== Filtros
   const filtered = useMemo(() => {
     const alvo = fMedianaAlvo ? Number(fMedianaAlvo) : null;
     return rows.filter((r) => {
@@ -1499,18 +1420,14 @@ export default function GestaoDeGrupos() {
 
   const totalEntregas = useMemo(() => filtered.reduce((acc, r) => acc + r.total_entregas, 0), [filtered]);
 
-  // ===== Ordenação — regra especial para "próxima assembleia mais perto de hoje"
   function cmpDateNearestToToday(a?: string | null, b?: string | null): number {
     const today = new Date(todayYMDLocal() + "T00:00:00");
     const pa = a ? Date.parse(a) : NaN;
     const pb = b ? Date.parse(b) : NaN;
-
     const isFutureA = !isNaN(pa) && pa >= today.getTime();
     const isFutureB = !isNaN(pb) && pb >= today.getTime();
-
     if (isFutureA && !isFutureB) return -1;
     if (!isFutureA && isFutureB) return 1;
-
     const diffA = isNaN(pa) ? Number.POSITIVE_INFINITY : Math.abs(pa - today.getTime());
     const diffB = isNaN(pb) ? Number.POSITIVE_INFINITY : Math.abs(pb - today.getTime());
     return diffA - diffB;
@@ -1518,41 +1435,22 @@ export default function GestaoDeGrupos() {
 
   const sorted = useMemo(() => {
     const copy = [...filtered];
-
     copy.sort((a, b) => {
-      if (sortKey === "prox_assembleia") {
-        return cmpDateNearestToToday(toYMD(a.prox_assembleia), toYMD(b.prox_assembleia));
-      }
-
+      if (sortKey === "prox_assembleia") return cmpDateNearestToToday(toYMD(a.prox_assembleia), toYMD(b.prox_assembleia));
       const dir = sortDir === "asc" ? 1 : -1;
-
-      if (sortKey === "mediana") {
-        const va = a.mediana ?? -9999;
-        const vb = b.mediana ?? -9999;
-        return (va - vb) * dir;
-      }
-
-      if (sortKey === "prazo_encerramento_meses") {
-        const va = a.prazo_encerramento_meses ?? -9999;
-        const vb = b.prazo_encerramento_meses ?? -9999;
-        return (va - vb) * dir;
-      }
-
+      if (sortKey === "mediana") return ((a.mediana ?? -9999) - (b.mediana ?? -9999)) * dir;
+      if (sortKey === "prazo_encerramento_meses") return ((a.prazo_encerramento_meses ?? -9999) - (b.prazo_encerramento_meses ?? -9999)) * dir;
       const da = toYMD(sortKey === "prox_sorteio" ? a.prox_sorteio : a.prox_vencimento);
       const db = toYMD(sortKey === "prox_sorteio" ? b.prox_sorteio : b.prox_vencimento);
       const na = da ? Date.parse(da) : -1;
       const nb = db ? Date.parse(db) : -1;
       return (na - nb) * dir;
     });
-
     return copy;
   }, [filtered, sortKey, sortDir]);
 
-  // ===== Notificações + Badge “Hoje: …”
   useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
   }, []);
 
   function pushBrowser(title: string, body: string) {
@@ -1580,11 +1478,9 @@ export default function GestaoDeGrupos() {
   useEffect(() => {
     const today = todayYMDLocal();
     const isToday = (d?: string | null) => !!d && toYMD(d) === today;
-
     const venc = sorted.filter((r) => isToday(r.prox_vencimento));
     const sort = sorted.filter((r) => isToday(r.prox_sorteio));
     const asm = sorted.filter((r) => isToday(r.prox_assembleia));
-
     const keyV = `venc-${today}`;
     const keyS = `sorteio-${today}`;
     const keyA = `asm-${today}`;
@@ -1606,16 +1502,12 @@ export default function GestaoDeGrupos() {
     if (sort.length > 0) parts.push(`Sorteio ${codesByAdm(sort)}`);
     if (venc.length > 0) parts.push(`Vencimento ${codesByAdm(venc)}`);
     if (asm.length > 0) parts.push(`Assembleia ${codesByAdm(asm)}`);
-
     setTodayBadge(parts.length > 0 ? `Hoje: ${parts.join(" • ")}` : "");
   }, [sorted]);
 
-  // UI helpers sort
   function headerSort(label: string, key: SortKey) {
     const active = sortKey === key;
-    const dirIcon =
-      active ? (sortDir === "asc" ? <ChevronUp className="h-4 w-4 inline" /> : <ChevronDown className="h-4 w-4 inline" />) : null;
-
+    const dirIcon = active ? sortDir === "asc" ? <ChevronUp className="h-4 w-4 inline" /> : <ChevronDown className="h-4 w-4 inline" /> : null;
     return (
       <button
         type="button"
@@ -1659,7 +1551,6 @@ export default function GestaoDeGrupos() {
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Badge discreto de alertas do dia */}
       {todayBadge && (
         <div className="flex">
           <div className="inline-flex items-center gap-2 text-xs px-3 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700">
@@ -1682,13 +1573,11 @@ export default function GestaoDeGrupos() {
             <div className="col-span-5 text-xs text-muted-foreground">
               {loteria?.data_sorteio ? `Sorteio: ${formatBR(toYMD(loteria.data_sorteio))}` : "Sem resultado selecionado"}
             </div>
-            {([loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[]).map(
-              (v, i) => (
-                <div key={i} className="px-2 py-1 rounded bg-muted text-center font-mono">
-                  {v}
-                </div>
-              )
-            )}
+            {([loteria?.primeiro, loteria?.segundo, loteria?.terceiro, loteria?.quarto, loteria?.quinto].filter(Boolean) as string[]).map((v, i) => (
+              <div key={i} className="px-2 py-1 rounded bg-muted text-center font-mono">
+                {v}
+              </div>
+            ))}
           </CardContent>
         </Card>
 
@@ -1718,7 +1607,6 @@ export default function GestaoDeGrupos() {
         </Card>
       </div>
 
-      {/* Filtros */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="inline-flex items-center gap-2 text-base">
@@ -1750,12 +1638,10 @@ export default function GestaoDeGrupos() {
         </CardContent>
       </Card>
 
-      {/* Relação de Grupos */}
       <div className="flex items-center justify-between">
         <h3 className="text-base font-semibold">Relação de Grupos</h3>
       </div>
 
-      {/* Tabela principal */}
       <div className="rounded-2xl border overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="bg-muted/60 sticky top-0 backdrop-blur">
@@ -1765,19 +1651,16 @@ export default function GestaoDeGrupos() {
               <th className="p-2 text-left">GRUPO</th>
               <th className="p-2 text-right">PARTIC.</th>
               <th className="p-2 text-center">FAIXA DE CRÉDITO</th>
-
               <th className="p-2 text-right">Tot. Entr.</th>
               <th className="p-2 text-right">25% Entregas</th>
               <th className="p-2 text-right">25% Ofertas</th>
               <th className="p-2 text-right">50% Entregas</th>
               <th className="p-2 text-right">50% Ofertas</th>
-
               <th className="p-2 text-right">LL Entregas</th>
               <th className="p-2 text-right">LL Ofertas</th>
               <th className="p-2 text-right">Maior %</th>
               <th className="p-2 text-right">Menor %</th>
               <th className="p-2 text-right">{headerSort("LL Mediana", "mediana")}</th>
-
               <th className="p-2 text-center">Apuração</th>
               <th className="p-2 text-center">{headerSort("Pz Enc", "prazo_encerramento_meses")}</th>
               <th className="p-2 text-center">{headerSort("Vencimento", "prox_vencimento")}</th>
@@ -1808,8 +1691,6 @@ export default function GestaoDeGrupos() {
                     <td className="p-2">{r.administradora}</td>
                     <td className="p-2">{r.segmento}</td>
                     <td className="p-2 font-medium">{r.codigo}</td>
-
-                    {/* PARTICIPANTES */}
                     <td className="p-2 text-right">
                       {isEditing ? (
                         <Input
@@ -1817,16 +1698,12 @@ export default function GestaoDeGrupos() {
                           type="number"
                           min={0}
                           value={editDraft?.participantes ?? ""}
-                          onChange={(e) =>
-                            setEditDraft((d) => ({ ...(d as any), participantes: e.target.value === "" ? null : Number(e.target.value) }))
-                          }
+                          onChange={(e) => setEditDraft((d) => ({ ...(d as any), participantes: e.target.value === "" ? null : Number(e.target.value) }))}
                         />
                       ) : (
                         r.participantes ?? "—"
                       )}
                     </td>
-
-                    {/* FAIXA DE CRÉDITO */}
                     <td className="p-2 text-center">
                       {isEditing ? (
                         <div className="flex items-center gap-2 justify-center">
@@ -1856,7 +1733,6 @@ export default function GestaoDeGrupos() {
                         "—"
                       )}
                     </td>
-
                     <td className="p-2 text-right font-semibold">{r.total_entregas}</td>
                     <td className="p-2 text-right">{r.fix25_entregas}</td>
                     <td className="p-2 text-right">{r.fix25_ofertas}</td>
@@ -1867,16 +1743,12 @@ export default function GestaoDeGrupos() {
                     <td className="p-2 text-right">{r.ll_maior != null ? toPct4(r.ll_maior) : "—"}</td>
                     <td className="p-2 text-right">{r.ll_menor != null ? toPct4(r.ll_menor) : "—"}</td>
                     <td className="p-2 text-right">{r.mediana != null ? toPct4(r.mediana) : "—"}</td>
-
                     <td className="p-2 text-center">{formatBR(toYMD(r.apuracao_dia))}</td>
                     <td className="p-2 text-center">{r.prazo_encerramento_meses ?? "—"}</td>
                     <td className="p-2 text-center">{formatBR(toYMD(r.prox_vencimento))}</td>
                     <td className="p-2 text-center">{formatBR(toYMD(r.prox_sorteio))}</td>
                     <td className="p-2 text-center">{formatBR(toYMD(r.prox_assembleia))}</td>
-
                     <td className="p-2 text-right font-semibold">{r.referencia ?? "—"}</td>
-
-                    {/* AÇÕES */}
                     <td className="p-2 text-center">
                       {isStubId(r.id) ? (
                         <Button
@@ -1953,9 +1825,7 @@ export default function GestaoDeGrupos() {
           }}
         />
       )}
-      {ofertaOpen && (
-        <OverlayOfertaLance onClose={() => setOfertaOpen(false)} gruposBase={grupos} drawsByDate={drawsByDate} lastAsmByGroup={lastAsmByGroup} />
-      )}
+      {ofertaOpen && <OverlayOfertaLance onClose={() => setOfertaOpen(false)} gruposBase={grupos} drawsByDate={drawsByDate} lastAsmByGroup={lastAsmByGroup} />}
 
       {editorOpen && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2058,11 +1928,7 @@ function EditorGrupo(props: EditorGrupoProps) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <Label>Administradora</Label>
-          <Input
-            value={form.administradora ?? ""}
-            onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))}
-            placeholder="Ex.: Embracon"
-          />
+          <Input value={form.administradora ?? ""} onChange={(e) => setForm((f) => ({ ...f, administradora: e.target.value as Administradora }))} placeholder="Ex.: Embracon" />
         </div>
         <div>
           <Label>Segmento</Label>
@@ -2072,7 +1938,6 @@ function EditorGrupo(props: EditorGrupoProps) {
           <Label>Código do Grupo</Label>
           <Input value={form.codigo ?? ""} onChange={(e) => setForm((f) => ({ ...f, codigo: e.target.value }))} placeholder="Ex.: 1234/5" />
         </div>
-
         <div>
           <Label>Participantes</Label>
           <Input type="number" min={1} value={form.participantes ?? ""} onChange={(e) => setForm((f) => ({ ...f, participantes: Number(e.target.value) || null }))} />
@@ -2085,7 +1950,6 @@ function EditorGrupo(props: EditorGrupoProps) {
           <Label>Faixa Máxima</Label>
           <Input type="number" step="0.01" value={form.faixa_max ?? ""} onChange={(e) => setForm((f) => ({ ...f, faixa_max: Number(e.target.value) || null }))} />
         </div>
-
         <div>
           <Label>Próx. Vencimento</Label>
           <Input type="date" value={form.prox_vencimento ?? ""} onChange={(e) => setForm((f) => ({ ...f, prox_vencimento: e.target.value || null }))} />

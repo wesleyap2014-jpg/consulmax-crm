@@ -1364,7 +1364,7 @@ export default function GestaoDeGrupos() {
     if (reais.length > 0) {
       const { data: ar, error: arErr } = await supabase
         .from("v_group_last_assembly")
-        .select("group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median, reference_number")
+        .select("group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median")
         .in("group_id", reais);
       if (arErr) console.error(arErr);
       byGroup = new Map<string, UltimoResultado>();

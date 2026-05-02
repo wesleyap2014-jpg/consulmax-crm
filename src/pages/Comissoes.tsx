@@ -119,6 +119,10 @@ type CommissionFlow = {
   comprovante_pagto_url: string | null;
 };
 
+type CommissionWithFlow = Commission & { flow?: CommissionFlow[] };
+
+type CommissionRule = {
+
 type CommissionRule = {
   vendedor_id: string;
   sim_table_id: string;

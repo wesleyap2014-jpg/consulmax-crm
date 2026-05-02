@@ -7,16 +7,21 @@ const ENABLE_DESKTOP_NOTIF = true;
 
 const BIRTHDAY_MSG = (nome: string) => {
   const primeiro = (nome || "").trim().split(/\s+/)[0] || "Olá";
+
+  const festa = "\u{1F389}"; // 🎉
+  const brilho = "\u{2728}"; // ✨
+  const brinde = "\u{1F942}"; // 🥂
+
   return (
-`${primeiro}, 🎉 *Feliz Aniversário!* 🎉
+`${primeiro}, ${festa} *Feliz Aniversário!* ${festa}
 
 Hoje celebramos mais um capítulo da sua história, cheio de conquistas, aprendizados e sonhos que se renovam.
 Que este novo ciclo seja repleto de *prosperidade, saúde e realizações* — e que cada meta se transforme em vitória.
 
-Na *Consulmax*, acreditamos que planejar é o caminho para conquistar. Que você continue sonhando grande e realizando cada vez mais! ✨
+Na *Consulmax*, acreditamos que planejar é o caminho para conquistar. Que você continue sonhando grande e realizando cada vez mais! ${brilho}
 
 Um brinde ao seu futuro e a todas as conquistas que estão por vir.
-🥂 Parabéns pelo seu dia!`
+${brinde} Parabéns pelo seu dia!`
   );
 };
 

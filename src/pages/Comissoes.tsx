@@ -63,7 +63,12 @@ type UserSecure = {
   cpf_mascarado: string | null;
 };
 
-type SimTable = { id: UUID; segmento: string; nome_tabela: string; admin_id?: UUID | null };
+type SimTable = {
+  id: UUID;
+  segmento: string;
+  nome_tabela: string;
+  admin_id?: UUID | null;
+};
 
 type Venda = {
   id: UUID;
@@ -119,9 +124,9 @@ type CommissionFlow = {
   comprovante_pagto_url: string | null;
 };
 
-type CommissionWithFlow = Commission & { flow?: CommissionFlow[] };
-
-type CommissionRule = {
+type CommissionWithFlow = Commission & {
+  flow?: CommissionFlow[];
+};
 
 type CommissionRule = {
   vendedor_id: string;
@@ -134,7 +139,10 @@ type CommissionRule = {
 
 /* ========================= Helpers ========================= */
 const BRL = (v?: number | null) =>
-  (typeof v === "number" ? v : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  (typeof v === "number" ? v : 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 
 const pct100 = (v?: number | null) =>
   `${(((typeof v === "number" ? v : 0) * 100) as number).toFixed(2).replace(".", ",")}%`;
@@ -200,17 +208,23 @@ function formatPctHuman(n: number) {
 /* ======================== Datas / projeções ======================== */
 const localDateFromISO = (iso?: string | null) => {
   if (!iso) return null;
-  const [y, m, d] = iso.split("-").map((v) => parseInt(v, 10));
+
+  const cleanIso = String(iso).slice(0, 10);
+  const [y, m, d] = cleanIso.split("-").map((v) => parseInt(v, 10));
+
   if (!y || !m || !d) return null;
+
   return new Date(y, m - 1, d);
 };
 
 const isBetweenISO = (iso?: string | null, s?: Date, e?: Date) => {
   const d = localDateFromISO(iso);
   if (!d) return false;
+
   const si = s?.getTime() ?? Number.NEGATIVE_INFINITY;
   const ei = e?.getTime() ?? Number.POSITIVE_INFINITY;
   const t = d.getTime();
+
   return t >= si && t <= ei;
 };
 
@@ -239,6 +253,7 @@ function valorPorExtenso(n: number) {
   ];
   const d = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"];
   const c = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "noventos"];
+
   const ext = (n0: number): string =>
     n0 < 20
       ? u[n0]
@@ -247,15 +262,21 @@ function valorPorExtenso(n: number) {
         : n0 === 100
           ? "cem"
           : c[Math.floor(n0 / 100)] + (n0 % 100 ? " e " + ext(n0 % 100) : "");
+
   const i = Math.floor(n);
   const ct = Math.round((n - i) * 100);
+
   return `${ext(i)} ${i === 1 ? "real" : "reais"}${ct ? ` e ${ext(ct)} ${ct === 1 ? "centavo" : "centavos"}` : ""}`;
 }
 
 function hasRegisteredButUnpaid(flow?: CommissionFlow[]) {
   if (!flow) return false;
+
   return flow.some(
-    (f) => (Number(f.percentual) || 0) > 0 && !!f.data_pagamento_vendedor && (Number(f.valor_pago_vendedor) || 0) === 0
+    (f) =>
+      (Number(f.percentual) || 0) > 0 &&
+      !!f.data_pagamento_vendedor &&
+      (Number(f.valor_pago_vendedor) || 0) === 0
   );
 }
 
@@ -263,21 +284,29 @@ function flowStats(flow?: CommissionFlow[]) {
   const relevant = (flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
   const total = relevant.length;
   const paid = relevant.filter((f) => (Number(f.valor_pago_vendedor) || 0) > 0).length;
+
   return { paid, total };
 }
 
-function pctPagoFromCommission(r: Commission & { flow?: CommissionFlow[] }) {
-  const totalCom = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
-  const paidBruto = sum((r.flow || []).map((f) => f.valor_pago_vendedor ?? 0));
+function pctPagoFromCommission(r: CommissionWithFlow) {
+  const totalCom = totalCommissionGross(r);
+  const paidBruto = paidCommissionGross(r);
   const pct = totalCom > 0 ? (paidBruto / totalCom) * 100 : 0;
-  return { pct: Math.max(0, Math.min(9999, pct)), paidBruto, totalCom };
+
+  return {
+    pct: Math.max(0, Math.min(9999, pct)),
+    paidBruto,
+    totalCom,
+  };
 }
 
 function isVendaCancelada(venda: { codigo?: string | null; cancelada_em?: string | null }) {
   const codigo = venda.codigo ?? null;
   const canceladaEm = venda.cancelada_em ?? null;
+
   if (canceladaEm) return true;
   if (codigo && codigo !== "00") return true;
+
   return false;
 }
 
@@ -288,7 +317,7 @@ function Donut({
   label,
   hoverPaidText,
   hoverPendText,
-  pendingLegend = "A pagar",
+  pendingLegend = "Previsto",
 }: {
   paid: number;
   pending: number;
@@ -297,9 +326,14 @@ function Donut({
   hoverPendText: string;
   pendingLegend?: string;
 }) {
-  const total = Math.max(0, paid + pending);
-  const paidPct = total > 0 ? (paid / total) * 100 : 0;
+  const paidSafe = Math.max(0, Number(paid) || 0);
+  const pendingSafe = Math.max(0, Number(pending) || 0);
+
+  const total = paidSafe + pendingSafe;
+  const paidPct = total > 0 ? (paidSafe / total) * 100 : 0;
+
   const [hover, setHover] = useState<"paid" | "pend" | null>(null);
+
   const navy = "#1E293F";
   const red = "#A11C27";
   const radius = 56;
@@ -312,6 +346,7 @@ function Donut({
       <div className="relative">
         <svg width="160" height="160" className="-rotate-90" role="img" aria-label={label}>
           <circle cx="80" cy="80" r={radius} stroke="#e5e7eb" strokeWidth="22" fill="none" />
+
           <circle
             cx="80"
             cy="80"
@@ -328,6 +363,7 @@ function Donut({
               filter: hover === "paid" ? "drop-shadow(0 2px 4px rgba(0,0,0,.25))" : "none",
             }}
           />
+
           <circle
             cx="80"
             cy="80"
@@ -346,6 +382,7 @@ function Donut({
             }}
           />
         </svg>
+
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <div className="text-xl font-bold">{total === 0 ? "0%" : `${paidPct.toFixed(0)}%`}</div>
@@ -353,17 +390,19 @@ function Donut({
           </div>
         </div>
       </div>
+
       <div className="text-sm">
         <div className="mb-1">
           <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: navy }} />
-          <span className="font-medium">Pago</span>
+          <span className="font-medium">Pago bruto</span>
         </div>
-        <div className="text-gray-600">{hover === "paid" ? hoverPaidText : BRL(paid)}</div>
+        <div className="text-gray-600">{hover === "paid" ? hoverPaidText : BRL(paidSafe)}</div>
+
         <div className="mt-3 mb-1">
           <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ background: red }} />
           <span className="font-medium">{pendingLegend}</span>
         </div>
-        <div className="text-gray-600">{hover === "pend" ? hoverPendText : BRL(pending)}</div>
+        <div className="text-gray-600">{hover === "pend" ? hoverPendText : BRL(pendingSafe)}</div>
       </div>
     </div>
   );
@@ -386,12 +425,21 @@ function LineChart({
   const [hoverX, setHoverX] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
+  const safeSeries = useMemo(
+    () =>
+      series.map((s) => ({
+        ...s,
+        data: (s.data || []).map((v) => Math.max(0, Number(v) || 0)),
+      })),
+    [series]
+  );
+
   const maxY = useMemo(() => {
-    const all = series.flatMap((s) => s.data);
+    const all = safeSeries.flatMap((s) => s.data);
     const m = Math.max(1, ...all);
     const pow = Math.pow(10, String(Math.floor(m)).length - 1);
     return Math.ceil(m / pow) * pow;
-  }, [series]);
+  }, [safeSeries]);
 
   const width = 720;
   const innerW = width - pad.left - pad.right;
@@ -399,25 +447,33 @@ function LineChart({
   const xStep = innerW / Math.max(1, labels.length - 1);
   const yScale = (v: number) => innerH - (v / maxY) * innerH;
 
-  const pointsFor = (arr: number[]) => arr.map((v, i) => [pad.left + i * xStep, pad.top + yScale(v)] as const);
+  const pointsFor = (arr: number[]) =>
+    arr.map((v, i) => [pad.left + i * xStep, pad.top + yScale(v)] as const);
 
   const clientToViewBox = (evt: React.MouseEvent<SVGElement>) => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
+
     const pt = svg.createSVGPoint();
     pt.x = evt.clientX;
     pt.y = evt.clientY;
+
     const ctm = svg.getScreenCTM();
     if (!ctm) return { x: 0, y: 0 };
+
     const inv = ctm.inverse();
     const p2 = pt.matrixTransform(inv);
+
     return { x: p2.x, y: p2.y };
   };
 
   const onMove = (e: React.MouseEvent<SVGRectElement>) => {
+    if (!labels.length) return;
+
     const { x } = clientToViewBox(e);
     const local = x - pad.left;
     const i = Math.round(local / xStep);
+
     setHoverX(Math.min(Math.max(i, 0), labels.length - 1));
   };
 
@@ -425,29 +481,51 @@ function LineChart({
     hoverX != null
       ? {
           label: labels[hoverX],
-          values: series.map((s) => s.data[hoverX] ?? 0),
+          values: safeSeries.map((s) => s.data[hoverX] ?? 0),
         }
       : null;
 
   return (
     <div className="relative rounded-lg border bg-white p-4">
-      <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="block w-full" onMouseLeave={() => setHoverX(null)}>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${width} ${height}`}
+        className="block w-full"
+        onMouseLeave={() => setHoverX(null)}
+      >
         <g>
           {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
             const y = pad.top + innerH * (1 - t);
             const val = maxY * t;
+
             return (
               <g key={i}>
-                <line x1={pad.left} x2={pad.left + innerW} y1={y} y2={y} stroke="#e5e7eb" strokeDasharray="4 4" />
+                <line
+                  x1={pad.left}
+                  x2={pad.left + innerW}
+                  y1={y}
+                  y2={y}
+                  stroke="#e5e7eb"
+                  strokeDasharray="4 4"
+                />
                 <text x={pad.left - 8} y={y + 4} fontSize="11" textAnchor="end" fill="#6b7280">
                   {formatY(val)}
                 </text>
               </g>
             );
           })}
-          <line x1={pad.left} x2={pad.left + innerW} y1={pad.top + innerH} y2={pad.top + innerH} stroke="#e5e7eb" />
+
+          <line
+            x1={pad.left}
+            x2={pad.left + innerW}
+            y1={pad.top + innerH}
+            y2={pad.top + innerH}
+            stroke="#e5e7eb"
+          />
+
           {labels.map((lb, i) => {
             const x = pad.left + i * xStep;
+
             return (
               <text key={i} x={x} y={pad.top + innerH + 18} fontSize="11" textAnchor="middle" fill="#6b7280">
                 {lb}
@@ -456,20 +534,37 @@ function LineChart({
           })}
         </g>
 
-        {series.map((s, si) => {
+        {safeSeries.map((s, si) => {
           const pts = pointsFor(s.data);
           const d = pts.map(([x, y], i) => (i === 0 ? `M ${x},${y}` : `L ${x},${y}`)).join(" ");
+
           return (
             <g key={si}>
               <path d={d} fill="none" stroke={palette[si % palette.length]} strokeWidth={2} />
+
               {pts.map(([x, y], pi) => (
-                <circle key={pi} cx={x} cy={y} r={2.5} fill="#fff" stroke={palette[si % palette.length]} strokeWidth={2} />
+                <circle
+                  key={pi}
+                  cx={x}
+                  cy={y}
+                  r={2.5}
+                  fill="#fff"
+                  stroke={palette[si % palette.length]}
+                  strokeWidth={2}
+                />
               ))}
             </g>
           );
         })}
 
-        <rect x={pad.left} y={pad.top} width={innerW} height={innerH} fill="transparent" onMouseMove={onMove} />
+        <rect
+          x={pad.left}
+          y={pad.top}
+          width={innerW}
+          height={innerH}
+          fill="transparent"
+          onMouseMove={onMove}
+        />
 
         {hoverX != null && (
           <line
@@ -484,21 +579,28 @@ function LineChart({
       </svg>
 
       <div className="mt-4 flex flex-wrap gap-4">
-        {series.map((s, si) => (
+        {safeSeries.map((s, si) => (
           <div className="flex items-center gap-2 text-sm" key={si}>
-            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: ["#1E293F", "#A11C27"][si % 2] }} />
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-sm"
+              style={{ background: palette[si % palette.length] }}
+            />
             <span className="text-gray-700">{s.name}</span>
           </div>
         ))}
       </div>
 
       {hovered && (
-        <div className="pointer-events-none absolute rounded-md border bg-white px-3 py-2 text-xs shadow" style={{ left: 16, top: 16 }}>
+        <div
+          className="pointer-events-none absolute rounded-md border bg-white px-3 py-2 text-xs shadow"
+          style={{ left: 16, top: 16 }}
+        >
           <div className="mb-1 font-semibold text-gray-800">{hovered.label}</div>
+
           <div className="space-y-1">
             {hovered.values.map((v, i) => (
               <div key={i} className="flex items-center justify-between">
-                <span className="text-gray-600">{series[i]?.name ?? `Série ${i + 1}`}</span>
+                <span className="text-gray-600">{safeSeries[i]?.name ?? `Série ${i + 1}`}</span>
                 <span className="tabular-nums ml-8">{formatY(v)}</span>
               </div>
             ))}
@@ -512,31 +614,44 @@ function LineChart({
 /* ========================= Projeções ========================= */
 const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
 
-function expectedDateForParcel(_saleDateISO: string | null | undefined, flow: CommissionFlow[] | undefined, mes: number): Date | null {
+function expectedDateForParcel(
+  _saleDateISO: string | null | undefined,
+  flow: CommissionFlow[] | undefined,
+  mes: number
+): Date | null {
   const safeFlow = Array.isArray(flow) ? flow : [];
+
   const m2 = safeFlow.find((f) => f.mes === 2);
   const m2Date = m2?.data_pagamento_vendedor ? localDateFromISO(m2.data_pagamento_vendedor) : null;
 
   if (mes <= 2) {
     const f = safeFlow.find((x) => x.mes === mes);
     const regDate = f?.data_pagamento_vendedor ? localDateFromISO(f.data_pagamento_vendedor) : null;
+
     return regDate ?? null;
   }
+
   if (!m2Date) return null;
 
   const offset = mes - 2;
   const expected = new Date(m2Date.getFullYear(), m2Date.getMonth(), m2Date.getDate());
+
   expected.setDate(expected.getDate() + offset * 30);
+
   return expected;
 }
 
 function getWeeklyIntervalsFriToThu(year: number, month: number) {
   const first = new Date(year, month, 1);
   const eom = new Date(year, month + 1, 0);
+
   let d = new Date(year, month, 1);
-  while (d.getDay() !== 5) d = new Date(year, month, d.getDate() + 1);
+  while (d.getDay() !== 5) {
+    d = new Date(year, month, d.getDate() + 1);
+  }
 
   const intervals: Array<{ start: Date; end: Date; label: string }> = [];
+
   while (d <= eom) {
     const start = new Date(d);
     const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
@@ -544,7 +659,13 @@ function getWeeklyIntervalsFriToThu(year: number, month: number) {
 
     const s = `${String(start.getDate()).padStart(2, "0")}/${String(start.getMonth() + 1).padStart(2, "0")}`;
     const e = `${String(endClamped.getDate()).padStart(2, "0")}/${String(endClamped.getMonth() + 1).padStart(2, "0")}`;
-    intervals.push({ start, end: endClamped, label: `S${intervals.length + 1} (${s}–${e})` });
+
+    intervals.push({
+      start,
+      end: endClamped,
+      label: `S${intervals.length + 1} (${s}–${e})`,
+    });
+
     d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
   }
 
@@ -552,13 +673,20 @@ function getWeeklyIntervalsFriToThu(year: number, month: number) {
     intervals.push({
       start: first,
       end: eom,
-      label: `S1 (01/${String(month + 1).padStart(2, "0")}–${String(eom.getDate()).padStart(2, "0")}/${String(month + 1).padStart(2, "0")})`,
+      label: `S1 (01/${String(month + 1).padStart(2, "0")}–${String(eom.getDate()).padStart(2, "0")}/${String(
+        month + 1
+      ).padStart(2, "0")})`,
     });
   }
+
   return intervals;
 }
 
-type ProjSeries = { labels: string[]; previstoBruto: number[]; pagoBruto: number[] };
+type ProjSeries = {
+  labels: string[];
+  previstoBruto: number[];
+  pagoBruto: number[];
+};
 
 function projectAnnualFlows(rows: CommissionWithFlow[]): ProjSeries {
   const operationalRows = rows.filter(isOperationalCommission);
@@ -572,17 +700,23 @@ function projectAnnualFlows(rows: CommissionWithFlow[]): ProjSeries {
     const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
 
     for (const f of flows) {
-      if (f.data_pagamento_vendedor) {
-        const pd = localDateFromISO(f.data_pagamento_vendedor);
-        if (pd) {
-          const yi = years.indexOf(pd.getFullYear());
-          if (yi >= 0) pagos[yi] += Number(f.valor_pago_vendedor) || 0;
-        }
+      if (!f.data_pagamento_vendedor) continue;
+
+      const pd = localDateFromISO(f.data_pagamento_vendedor);
+      if (!pd) continue;
+
+      const yi = years.indexOf(pd.getFullYear());
+      if (yi >= 0) {
+        pagos[yi] += Number(f.valor_pago_vendedor) || 0;
       }
     }
   }
 
-  return { labels: years.map(String), previstoBruto: previsto, pagoBruto: pagos };
+  return {
+    labels: years.map(String),
+    previstoBruto: previsto,
+    pagoBruto: pagos,
+  };
 }
 
 function projectMonthlyFlows(rows: CommissionWithFlow[], year: number, includePrevisto: boolean): ProjSeries {
@@ -599,6 +733,7 @@ function projectMonthlyFlows(rows: CommissionWithFlow[], year: number, includePr
     for (const f of flows) {
       if (f.data_pagamento_vendedor) {
         const pd = localDateFromISO(f.data_pagamento_vendedor);
+
         if (pd && pd.getFullYear() === year) {
           pagos[pd.getMonth()] += Number(f.valor_pago_vendedor) || 0;
         }
@@ -607,20 +742,24 @@ function projectMonthlyFlows(rows: CommissionWithFlow[], year: number, includePr
       if (!includePrevisto) continue;
 
       const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
-      if (exp && exp.getFullYear() === year) {
-        const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
-        if (!isPaid) {
-          const expVal = Number(f.valor_previsto ?? total * (f.percentual ?? 0)) || 0;
-          previsto[exp.getMonth()] += expVal;
-        }
-      }
+      if (!exp || exp.getFullYear() !== year) continue;
+
+      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+      if (isPaid) continue;
+
+      const expVal = Number(f.valor_previsto ?? total * (Number(f.percentual) || 0)) || 0;
+      previsto[exp.getMonth()] += expVal;
     }
   }
 
-  return { labels, previstoBruto: previsto, pagoBruto: pagos };
+  return {
+    labels,
+    previstoBruto: previsto,
+    pagoBruto: pagos,
+  };
 }
 
-function projectWeeklyFlows(rows: CommissionWithFlow[]): ProjSeries & { labels: string[] } {
+function projectWeeklyFlows(rows: CommissionWithFlow[]): ProjSeries {
   const operationalRows = rows.filter(isOperationalCommission);
 
   const now = new Date();
@@ -639,25 +778,36 @@ function projectWeeklyFlows(rows: CommissionWithFlow[]): ProjSeries & { labels: 
     for (const f of flows) {
       if (f.data_pagamento_vendedor) {
         const pd = localDateFromISO(f.data_pagamento_vendedor);
+
         if (pd && pd.getFullYear() === year && pd.getMonth() === month) {
           const idx = intervals.findIndex((iv) => pd >= iv.start && pd <= iv.end);
-          if (idx >= 0) pagos[idx] += Number(f.valor_pago_vendedor) || 0;
+
+          if (idx >= 0) {
+            pagos[idx] += Number(f.valor_pago_vendedor) || 0;
+          }
         }
       }
 
       const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
-      if (exp && exp.getFullYear() === year && exp.getMonth() === month) {
-        const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
-        if (!isPaid) {
-          const expVal = Number(f.valor_previsto ?? total * (f.percentual ?? 0)) || 0;
-          const idx = intervals.findIndex((iv) => exp >= iv.start && exp <= iv.end);
-          if (idx >= 0) previsto[idx] += expVal;
-        }
+      if (!exp || exp.getFullYear() !== year || exp.getMonth() !== month) continue;
+
+      const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
+      if (isPaid) continue;
+
+      const expVal = Number(f.valor_previsto ?? total * (Number(f.percentual) || 0)) || 0;
+      const idx = intervals.findIndex((iv) => exp >= iv.start && exp <= iv.end);
+
+      if (idx >= 0) {
+        previsto[idx] += expVal;
       }
     }
   }
 
-  return { labels, previstoBruto: previsto, pagoBruto: pagos };
+  return {
+    labels,
+    previstoBruto: previsto,
+    pagoBruto: pagos,
+  };
 }
 
 /* ========================= Página ========================= */
@@ -711,7 +861,7 @@ export default function ComissoesPage() {
   const canonUserId = (id?: string | null) => (id ? usersById[id]?.id || usersByAuth[id]?.id || null : null);
 
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState<(Commission & { flow?: CommissionFlow[] })[]>([]);
+  const [rows, setRows] = useState<CommissionWithFlow[]>([]);
   const [vendasSemCom, setVendasSemCom] = useState<Venda[]>([]);
   const [genBusy, setGenBusy] = useState<string | null>(null);
 
@@ -879,6 +1029,7 @@ export default function ComissoesPage() {
 
   async function fetchData() {
     setLoading(true);
+
     try {
       let qb = supabase.from("commissions").select("*");
       if (status !== "all") qb = qb.eq("status", status);
@@ -901,10 +1052,12 @@ export default function ComissoesPage() {
       const flowBy: Record<string, CommissionFlow[]> = {};
       (flows || []).forEach((f: any) => {
         if (!flowBy[f.commission_id]) flowBy[f.commission_id] = [];
-        if (!flowBy[f.commission_id].some((x) => x.mes === f.mes)) flowBy[f.commission_id].push(f as CommissionFlow);
+        if (!flowBy[f.commission_id].some((x) => x.mes === f.mes)) {
+          flowBy[f.commission_id].push(f as CommissionFlow);
+        }
       });
 
-      let vendasExtras: Record<
+      const vendasExtras: Record<
         string,
         {
           clienteId?: string;
@@ -930,7 +1083,7 @@ export default function ComissoesPage() {
           )
         );
 
-        let nomes: Record<string, string> = {};
+        const nomes: Record<string, string> = {};
         if (cliIds.length) {
           const { data: cli } = await supabase.from("leads").select("id, nome").in("id", cliIds);
           (cli || []).forEach((c: any) => {
@@ -955,7 +1108,7 @@ export default function ComissoesPage() {
         });
       }
 
-      const mappedRows =
+      const mappedRows: CommissionWithFlow[] =
         (comms || []).map((c: any) => ({
           ...(c as Commission),
           flow: flowBy[c.id] || [],
@@ -995,6 +1148,7 @@ export default function ComissoesPage() {
       const clientIds = Array.from(
         new Set((vendasFiltered || []).map((v: any) => v.lead_id || v.cliente_lead_id).filter((x: any): x is string => !!x))
       );
+
       if (clientIds.length) {
         const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clientIds);
         const map: Record<string, string> = {};
@@ -1009,8 +1163,10 @@ export default function ComissoesPage() {
           const withFix = prev.map((r) => {
             const relevant = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
             const allPaid = relevant.length > 0 && relevant.every((f) => (Number(f.valor_pago_vendedor) || 0) > 0);
+
             if (allPaid && r.status !== "pago") {
               const lastDate = r.data_pagamento || (relevant[relevant.length - 1]?.data_pagamento_vendedor ?? null);
+
               supabase
                 .from("commissions")
                 .update({ status: "pago", data_pagamento: lastDate })
@@ -1018,10 +1174,13 @@ export default function ComissoesPage() {
                 .then(({ error }) => {
                   if (error) console.warn("[reconcile] commissions.update falhou:", error.message);
                 });
+
               return { ...r, status: "pago", data_pagamento: lastDate };
             }
+
             return r;
           });
+
           return withFix;
         });
       } catch (e) {
@@ -1044,60 +1203,87 @@ export default function ComissoesPage() {
     return (n || 0) / 100;
   }, [reciboImpostoPct]);
 
-  function paidInRangeLiquid(s: Date, e: Date) {
-    const validRows = rows.filter((r) => r.status !== "estorno");
+  function paidInRangeGross(s: Date, e: Date) {
+    const operationalRows = rows.filter(isOperationalCommission);
+
     return sum(
-      validRows.flatMap((r) =>
+      operationalRows.flatMap((r) =>
         (r.flow || [])
           .filter((f) => f.data_pagamento_vendedor && isBetweenISO(f.data_pagamento_vendedor, s, e) && Number(f.valor_pago_vendedor) > 0)
-          .map((f) => (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac))
+          .map((f) => Number(f.valor_pago_vendedor) || 0)
       )
     );
   }
 
-  function previstoInRange(s: Date, e: Date) {
+  function previstoInRangeGross(s: Date, e: Date) {
     let total = 0;
-    for (const r of rows) {
-      const totalComissao = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+    const operationalRows = rows.filter(isOperationalCommission);
+
+    for (const r of operationalRows) {
+      const totalComissao = totalCommissionGross(r);
       const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+
       for (const f of flows) {
         const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
         if (isPaid) continue;
+
         const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
         if (!exp) continue;
+
         if (exp.getTime() >= s.getTime() && exp.getTime() <= e.getTime()) {
-          const expVal = (f.valor_previsto ?? totalComissao * (f.percentual ?? 0)) ?? 0;
-          total += expVal * (1 - impostoFrac);
+          const expVal = Number(f.valor_previsto ?? totalComissao * (Number(f.percentual) || 0)) || 0;
+          total += expVal;
         }
       }
     }
+
     return total;
   }
 
   const kpi = useMemo(() => {
-    const comBruta = sum(rows.map((r) => r.valor_total));
-    const comLiquida = comBruta * (1 - impostoFrac);
-    const pagoLiquido = sum(
-      rows
-        .filter((r) => r.status !== "estorno")
-        .flatMap((r) => (r.flow || []).map((f) => (f.valor_pago_vendedor ?? 0) * (1 - impostoFrac)))
-    );
-    const comPendente = clamp0(comLiquida - pagoLiquido);
-    const vendasTotal = sum(rows.map((r) => r.valor_venda ?? r.base_calculo));
-    return { vendasTotal, comBruta, comLiquida, comPaga: pagoLiquido, comPendente };
+    const operationalRows = rows.filter(isOperationalCommission);
+    const canceledRows = rows.filter((r) => r.venda_cancelada);
+
+    const vendasTotal = sum(operationalRows.map((r) => r.valor_venda ?? r.base_calculo));
+
+    const comBruta = sum(operationalRows.map((r) => totalCommissionGross(r)));
+    const comLiquida = commissionNet(comBruta, impostoFrac);
+
+    const comPagaBruta = sum(operationalRows.map((r) => paidCommissionGross(r)));
+    const comPagaLiquida = commissionNet(comPagaBruta, impostoFrac);
+
+    const comPendenteBruta = sum(operationalRows.map((r) => pendingCommissionGross(r)));
+    const comPendenteLiquida = commissionNet(comPendenteBruta, impostoFrac);
+
+    const comPerdidaBruta = sum(canceledRows.map((r) => lostCommissionGross(r)));
+    const comPerdidaLiquida = commissionNet(comPerdidaBruta, impostoFrac);
+
+    return {
+      vendasTotal,
+      comBruta,
+      comLiquida,
+      comPagaBruta,
+      comPagaLiquida,
+      comPendenteBruta,
+      comPendenteLiquida,
+      comPerdidaBruta,
+      comPerdidaLiquida,
+    };
   }, [rows, impostoFrac]);
 
   const annual = useMemo(() => projectAnnualFlows(rows), [rows]);
   const monthlyCurr = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear(), true), [rows]);
   const weeklyCurr = useMemo(() => projectWeeklyFlows(rows), [rows]);
 
+  const previousYearMonthly = useMemo(() => projectMonthlyFlows(rows, new Date().getFullYear() - 1, false), [rows]);
+
   const comissaoProgramada = useMemo(() => {
     const programadas: Array<{ dateIso: string; bruto: number; liquido: number }> = [];
 
     for (const r of rows) {
-      if (r.status === "estorno" || r.venda_cancelada) continue;
+      if (!isOperationalCommission(r)) continue;
 
-      const totalComissao = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+      const totalComissao = totalCommissionGross(r);
       const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
 
       for (const f of flows) {
@@ -1107,8 +1293,8 @@ export default function ComissoesPage() {
         if (!dataProgramada) continue;
         if (valorJaPago > 0) continue;
 
-        const bruto = (f.valor_previsto ?? totalComissao * (Number(f.percentual) || 0)) || 0;
-        const liquido = bruto * (1 - impostoFrac);
+        const bruto = Number(f.valor_previsto ?? totalComissao * (Number(f.percentual) || 0)) || 0;
+        const liquido = commissionNet(bruto, impostoFrac);
 
         programadas.push({
           dateIso: dataProgramada,
@@ -1136,11 +1322,13 @@ export default function ComissoesPage() {
   function onChangeMeses(n: number) {
     setRuleMeses(n);
     const arr = [...ruleFluxoPct];
+
     if (n > arr.length) {
       while (arr.length < n) arr.push("0,00");
     } else {
       arr.length = n;
     }
+
     setRuleFluxoPct(arr);
   }
 
@@ -1154,6 +1342,7 @@ export default function ComissoesPage() {
       setRuleRows([]);
       return;
     }
+
     const { data: rules } = await supabase
       .from("commission_rules")
       .select("vendedor_id, sim_table_id, percent_padrao, fluxo_meses, fluxo_percentuais, obs")
@@ -1167,6 +1356,7 @@ export default function ComissoesPage() {
     const rowsOut = (rules as any[]).map((r) => {
       const st = simTables.find((t) => t.id === r.sim_table_id);
       const adminName = st?.admin_id ? adminById[st.admin_id] || "—" : "—";
+
       return {
         ...(r as CommissionRule),
         segmento: st?.segmento || "-",
@@ -1202,6 +1392,7 @@ export default function ComissoesPage() {
     const somaFluxo = fluxoSoma;
     const soma100 = Math.abs(somaFluxo - 1.0) < 1e-6;
     const somaIgualPadrao = Math.abs(somaFluxo - pctPadraoPercent) < 1e-6;
+
     if (!(soma100 || somaIgualPadrao)) {
       return alert(`Soma do fluxo deve ser 1,00 (100%) ou igual ao % padrão. Soma atual = ${somaFluxo.toFixed(2).replace(".", ",")}`);
     }
@@ -1215,6 +1406,7 @@ export default function ComissoesPage() {
         return pctPadraoPercent > 0 ? v / pctPadraoPercent : 0;
       });
     }
+
     const percent_padrao_frac = pctPadraoPercent / 100;
 
     const baseTable = simTables.find((t) => t.id === ruleSimTableId) || ruleFormSimTable;
@@ -1252,17 +1444,20 @@ export default function ComissoesPage() {
 
     const { error } = await supabase.from("commission_rules").delete().eq("vendedor_id", vId).in("sim_table_id", ids);
     if (error) return alert(error.message);
+
     await fetchRulesForVendor(vId);
   }
 
   function loadRuleToForm(r: CommissionRule & { segmento: string; nome_tabela: string; administradora?: string | null }) {
     setRuleVendorId(r.vendedor_id);
     setRuleSimTableId(r.sim_table_id);
+
     const percentPadrao = (r.percent_padrao ?? 0) * 100;
     const meses = r.fluxo_meses && r.fluxo_meses > 0 ? r.fluxo_meses : 1;
     const fluxos = (r.fluxo_percentuais && r.fluxo_percentuais.length ? r.fluxo_percentuais : Array.from({ length: meses }, () => 0)).map((p) =>
       (p * percentPadrao).toFixed(2).replace(".", ",")
     );
+
     setRulePercent(percentPadrao.toFixed(2).replace(".", ","));
     setRuleMeses(meses);
     setRuleFluxoPct(fluxos);
@@ -1271,6 +1466,7 @@ export default function ComissoesPage() {
 
   function openRuleFormForTable(rep: SimTable) {
     if (!canEdit) return alert("Vendedor não pode alterar regras.");
+
     if (!ruleVendorId) {
       alert("Selecione um vendedor primeiro.");
       return;
@@ -1291,6 +1487,7 @@ export default function ComissoesPage() {
       setRuleFluxoPct(["100,00"]);
       setRuleObs("");
     }
+
     setRuleFormOpen(true);
   }
 
@@ -1318,7 +1515,7 @@ export default function ComissoesPage() {
       }
     }
 
-    const valorTotal = c.valor_total ?? ((c.base_calculo ?? 0) * (c.percent_aplicado ?? 0));
+    const valorTotal = totalCommissionGross(c);
     const inserts = percentuais.map((p, idx) => ({
       commission_id: c.id,
       mes: idx + 1,
@@ -1339,20 +1536,32 @@ export default function ComissoesPage() {
     return (created || []) as CommissionFlow[];
   }
 
-  async function openPaymentFor(c: Commission) {
+  async function openPaymentFor(c: CommissionWithFlow) {
     if (!canEdit) return alert("Vendedor não pode registrar pagamento.");
+
     setPayCommissionId(c.id);
+
     let { data } = await supabase.from("commission_flow").select("*").eq("commission_id", c.id).order("mes", { ascending: true });
+
     if (!data || data.length === 0) {
       const created = await ensureFlowForCommission(c);
       data = created as any;
     }
-    const arr = (data || []).map((f: any) => ({ ...f, _valor_previsto_calc: (c.valor_total ?? 0) * (f.percentual ?? 0) }));
+
+    const totalGross = totalCommissionGross(c);
+    const arr = (data || []).map((f: any) => ({
+      ...f,
+      _valor_previsto_calc: totalGross * (Number(f.percentual) || 0),
+    }));
+
     const uniq = new Map<number, CommissionFlow & { _valor_previsto_calc?: number }>();
     arr.forEach((f: any) => uniq.set(f.mes, f));
+
     const finalArr = Array.from(uniq.values());
+
     setPayFlow(finalArr);
     setPaySelected({});
+
     const registered = hasRegisteredButUnpaid(finalArr);
     setPayDefaultTab(registered ? "arquivos" : "selecionar");
     setPayDate(toDateInput(new Date()));
@@ -1362,21 +1571,25 @@ export default function ComissoesPage() {
 
   async function uploadToBucket(file: File, commissionId: string) {
     const path = `${commissionId}/${Date.now()}-${file.name}`;
+
     const { data, error } = await supabase.storage.from("comissoes").upload(path, file, { upsert: false });
     if (error) {
       alert("Falha ao enviar arquivo: " + error.message);
       return null;
     }
+
     return data?.path || null;
   }
 
   async function getSignedUrl(path: string | null | undefined) {
     if (!path) return null;
+
     const { data, error } = await supabase.storage.from("comissoes").createSignedUrl(path, 60 * 10);
     if (error) {
       console.warn("Signed URL error:", error.message);
       return null;
     }
+
     return (data as any)?.signedUrl || null;
   }
 
@@ -1390,11 +1603,13 @@ export default function ComissoesPage() {
 
     let reciboPath: string | null = null;
     let compPath: string | null = null;
+
     if (payload.recibo_file) reciboPath = await uploadToBucket(payload.recibo_file, payCommissionId);
     if (payload.comprovante_file) compPath = await uploadToBucket(payload.comprovante_file, payCommissionId);
 
     const candidates = payFlow.filter((f) => (Number(f.percentual) || 0) > 0);
     const selected = candidates.filter((f) => paySelected[f.id]);
+
     if (!selected.length) {
       alert("Selecione pelo menos uma parcela para pagar.");
       return;
@@ -1405,11 +1620,12 @@ export default function ComissoesPage() {
         .from("commission_flow")
         .update({
           data_pagamento_vendedor: payload.data_pagamento_vendedor || f.data_pagamento_vendedor || toDateInput(new Date()),
-          valor_pago_vendedor: payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : (f.valor_pago_vendedor ?? 0),
+          valor_pago_vendedor: payload.valor_pago_vendedor !== undefined ? payload.valor_pago_vendedor : f.valor_pago_vendedor ?? 0,
           recibo_vendedor_url: (reciboPath || f.recibo_vendedor_url) ?? null,
           comprovante_pagto_url: (compPath || f.comprovante_pagto_url) ?? null,
         })
         .eq("id", f.id);
+
       if (error) {
         alert("Falha ao atualizar parcela: " + error.message);
         return;
@@ -1428,6 +1644,7 @@ export default function ComissoesPage() {
         data_pagamento: isAllPaid ? payload.data_pagamento_vendedor || toDateInput(new Date()) : null,
       })
       .eq("id", payCommissionId);
+
     if (updErr) console.warn("[commissions.update] falhou:", updErr.message);
 
     const uniq = new Map<number, CommissionFlow>();
@@ -1441,18 +1658,21 @@ export default function ComissoesPage() {
       setShowPaid(true);
       setStatus("pago");
     }
+
     setOpenPay(false);
     fetchData();
   }
 
   async function searchRefundByProposal() {
     const prop = (bulkRefundProp || "").trim();
+
     if (!prop) {
       setBulkRefundFound(null);
       return;
     }
 
     const { data: vendas } = await supabase.from("vendas").select("id, numero_proposta, vendedor_id, valor_venda").ilike("numero_proposta", `%${prop}%`);
+
     if (!vendas?.length) {
       setBulkRefundFound(null);
       alert("Proposta não encontrada.");
@@ -1460,11 +1680,13 @@ export default function ComissoesPage() {
     }
 
     const vendaIds = vendas.map((v: any) => v.id);
+
     let qb = supabase.from("commissions").select("*").in("venda_id", vendaIds);
     if (!isAdmin) qb = qb.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
 
     const { data: comms } = await qb;
     const comm = comms?.[0] as Commission | undefined;
+
     if (!comm) {
       setBulkRefundFound(null);
       alert("Nenhuma comissão encontrada para essa proposta.");
@@ -1496,6 +1718,7 @@ export default function ComissoesPage() {
     }
 
     setBusyRefund(true);
+
     try {
       let remaining = gross;
       const ordered = [...bulkRefundFound.flows].sort((a, b) => (b.data_pagamento_vendedor || "").localeCompare(a.data_pagamento_vendedor || ""));
@@ -1503,15 +1726,17 @@ export default function ComissoesPage() {
       for (const f of ordered) {
         const current = Math.max(0, f.valor_pago_vendedor ?? 0);
         if (remaining <= 0) break;
+
         const take = Math.min(current, remaining);
         const newPaid = current - take;
 
         const { error } = await supabase.from("commission_flow").update({ valor_pago_vendedor: newPaid } as any).eq("id", f.id);
         if (error) throw new Error(error.message);
+
         remaining -= take;
 
         try {
-          const net = take * (1 - impostoFrac);
+          const net = commissionNet(take, impostoFrac);
           await supabase.from("commission_refunds").insert({
             commission_id: f.commission_id,
             flow_id: f.id,
@@ -1541,8 +1766,10 @@ export default function ComissoesPage() {
 
   async function gerarComissaoDeVenda(venda: Venda) {
     if (!canEdit) return alert("Vendedor não pode gerar comissão.");
+
     try {
       setGenBusy(venda.id);
+
       const vendedorIdCanon = canonUserId(venda.vendedor_id);
       if (!vendedorIdCanon) {
         alert("Vínculo do vendedor não encontrado em 'users'.");
@@ -1575,6 +1802,7 @@ export default function ComissoesPage() {
           .eq("vendedor_id", vendedorIdCanon)
           .eq("sim_table_id", simTableId)
           .limit(1);
+
         percent_aplicado = rule?.[0]?.percent_padrao ?? null;
       }
 
@@ -1621,6 +1849,7 @@ export default function ComissoesPage() {
   async function retornarComissao(c: Commission) {
     if (!canEdit) return alert("Vendedor não pode retornar comissão.");
     if (!confirm("Confirmar retorno desta comissão para 'Vendas sem comissão'?")) return;
+
     try {
       const delFlow = await supabase.from("commission_flow").delete().eq("commission_id", c.id).select("id");
       if (delFlow.error) throw delFlow.error;
@@ -1679,6 +1908,7 @@ export default function ComissoesPage() {
     const vendedorSel = reciboVendor !== "all" ? reciboVendor : isAdmin ? null : usersByAuth[authUserId || ""]?.id || null;
 
     const { data: flowsAllOnDate, error: flowsErr } = await supabase.from("commission_flow").select("*, commission_id").eq("data_pagamento_vendedor", dataRecibo);
+
     if (flowsErr) {
       alert("Erro ao buscar parcelas: " + flowsErr.message);
       return;
@@ -1727,6 +1957,7 @@ export default function ComissoesPage() {
 
     const clienteIds = Array.from(new Set((vendas || []).map((v: any) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
     const nomesCli: Record<string, string> = {};
+
     if (clienteIds.length) {
       const { data: cli } = await supabase.from("leads").select("id, nome").in("id", clienteIds);
       (cli || []).forEach((c: any) => {
@@ -1736,10 +1967,12 @@ export default function ComissoesPage() {
 
     const year = new Date(dataRecibo).getFullYear();
     const { data: seqData, error: seqErr } = await supabase.rpc("next_receipt_seq", { p_year: year });
+
     if (seqErr) {
       alert("Erro ao gerar número do recibo: " + seqErr.message);
       return;
     }
+
     const seq = Number(seqData) || 1;
     const numeroRecibo = `${String(seq).padStart(3, "0")}/${year}`;
 
@@ -1747,9 +1980,11 @@ export default function ComissoesPage() {
     const vendInfo = vendedorUsado ? secureById[vendedorUsado] : null;
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.text("RECIBO DE COMISSÃO", 297, 40, { align: "center" });
+
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.text(`Recibo Nº: ${numeroRecibo}`, 40, 60);
@@ -1771,11 +2006,13 @@ export default function ComissoesPage() {
         [vendInfo?.logradouro, vendInfo?.numero, vendInfo?.bairro, vendInfo?.cidade && `${vendInfo.cidade}/${vendInfo.uf}`].filter(Boolean).join(", ") || "—"
       }`,
     ];
+
     y += 10;
     recebedor.forEach((l) => {
       doc.text(l, 40, y);
       y += 14;
     });
+
     y += 6;
     doc.text("Descrição: Pagamento referente às comissões abaixo relacionadas.", 40, y);
     y += 16;
@@ -1800,6 +2037,7 @@ export default function ComissoesPage() {
         const comBruta = (c.percent_aplicado || 0) * (p.percentual || 0) * vendaValor;
         const impostos = comBruta * impostoPct;
         const liquida = comBruta - impostos;
+
         totalLiquido += liquida;
 
         body.push([clienteNome, v?.numero_proposta || "—", `M${p.mes}`, BRL(vendaValor), BRL(comBruta), BRL(impostos), BRL(liquida)]);
@@ -1811,8 +2049,17 @@ export default function ComissoesPage() {
       const refundsOnDate = (refunds || []).filter(
         (r: any) => r.data_estorno === dataRecibo && (!vendedorSel || rows.find((x) => x.id === r.commission_id)?.vendedor_id === vendedorSel)
       );
+
       for (const rf of refundsOnDate) {
-        body.push(["—", rf.numero_proposta || "—", "ESTORNO", "—", BRL(-(rf.valor_bruto || 0)), BRL((rf.valor_bruto || 0) * impostoPct), BRL(-(rf.valor_liquido || 0))]);
+        body.push([
+          "—",
+          rf.numero_proposta || "—",
+          "ESTORNO",
+          "—",
+          BRL(-(rf.valor_bruto || 0)),
+          BRL((rf.valor_bruto || 0) * impostoPct),
+          BRL(-(rf.valor_liquido || 0)),
+        ]);
         totalLiquido -= rf.valor_liquido || 0;
       }
     } catch {}
@@ -1826,11 +2073,14 @@ export default function ComissoesPage() {
     });
 
     const endY = (doc as any).lastAutoTable.finalY + 12;
+
     doc.setFont("helvetica", "bold");
     doc.text(`Valor total líquido da comissão: ${BRL(totalLiquido)} (${valorPorExtenso(totalLiquido)})`, 40, endY);
+
     doc.setFont("helvetica", "normal");
     doc.text(`Forma de Pagamento: PIX`, 40, endY + 18);
     doc.text(`Chave PIX do pagamento: ${secureById[vendedorUsado || ""]?.pix_key || "—"}`, 40, endY + 34);
+
     const signY = endY + 100;
     doc.line(40, signY, 320, signY);
     doc.text(`${userLabel(vendedorUsado || "")}`, 40, signY + 14);
@@ -1839,7 +2089,7 @@ export default function ComissoesPage() {
     doc.save(`recibo_${dataRecibo}_${userLabel(vendedorUsado || "")}.pdf`);
   }
 
-  const rowsAPagarBase = useMemo(() => rows.filter((r) => r.status === "a_pagar" && !r.venda_cancelada), [rows]);
+  const rowsAPagarBase = useMemo(() => rows.filter((r) => r.status === "a_pagar" && isOperationalCommission(r)), [rows]);
 
   const rowsAPagar = useMemo(() => {
     const q = normalize(unpaidPropSearch);
@@ -1848,20 +2098,25 @@ export default function ComissoesPage() {
   }, [rowsAPagarBase, unpaidPropSearch]);
 
   const pagosFlat = useMemo(() => {
-    const list: Array<{ flow: CommissionFlow; comm: Commission }> = [];
+    const list: Array<{ flow: CommissionFlow; comm: CommissionWithFlow }> = [];
+
     rows
       .filter((r) => r.status !== "estorno")
       .forEach((r) =>
         (r.flow || []).forEach((f) => {
-          if ((f.valor_pago_vendedor ?? 0) > 0) list.push({ flow: f, comm: r });
+          if ((Number(f.valor_pago_vendedor) || 0) > 0) {
+            list.push({ flow: f, comm: r });
+          }
         })
       );
+
     return list.sort((a, b) => ((b.flow.data_pagamento_vendedor || "") > (a.flow.data_pagamento_vendedor || "") ? 1 : -1));
   }, [rows]);
 
   const pagosFiltered = useMemo(() => {
     const q = normalize(paidSearch);
     if (!q) return pagosFlat;
+
     return pagosFlat.filter(({ comm }) => {
       const cliente = normalize(comm.cliente_nome || "");
       const prop = normalize(comm.numero_proposta || "");
@@ -1888,6 +2143,7 @@ export default function ComissoesPage() {
               <FilterIcon className="w-5 h-5" /> Filtros
             </CardTitle>
           </CardHeader>
+
           <CardContent className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <div className="flex flex-col gap-2">
               <Label>Vendedor</Label>
@@ -1980,14 +2236,20 @@ export default function ComissoesPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <Donut
-                paid={paidInRangeLiquid(new Date(now.getFullYear() - 5, now.getMonth(), 1), now)}
+                paid={paidInRangeGross(new Date(now.getFullYear() - 5, now.getMonth(), 1), now)}
                 pending={0}
                 label="5 anos"
-                hoverPaidText={`Pago no período: ${BRL(paidInRangeLiquid(new Date(now.getFullYear() - 5, now.getMonth(), 1), now))}`}
+                hoverPaidText={`Pago bruto no período: ${BRL(paidInRangeGross(new Date(now.getFullYear() - 5, now.getMonth(), 1), now))}`}
                 hoverPendText="—"
                 pendingLegend="—"
               />
-              <LineChart labels={annual.labels} series={[{ name: "Previsto", data: annual.previstoBruto.map(() => 0) }, { name: "Pago", data: annual.pagoBruto }]} />
+              <LineChart
+                labels={annual.labels}
+                series={[
+                  { name: "Previsto bruto", data: annual.previstoBruto.map(() => 0) },
+                  { name: "Pago bruto", data: annual.pagoBruto },
+                ]}
+              />
             </CardContent>
           </Card>
 
@@ -1997,18 +2259,18 @@ export default function ComissoesPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <Donut
-                paid={paidInRangeLiquid(new Date(now.getFullYear() - 1, 0, 1), new Date(now.getFullYear() - 1, 11, 31))}
+                paid={paidInRangeGross(new Date(now.getFullYear() - 1, 0, 1), new Date(now.getFullYear() - 1, 11, 31))}
                 pending={0}
                 label="Ano anterior"
-                hoverPaidText={`Pago no ano anterior: ${BRL(paidInRangeLiquid(new Date(now.getFullYear() - 1, 0, 1), new Date(now.getFullYear() - 1, 11, 31)))}`}
+                hoverPaidText={`Pago bruto no ano anterior: ${BRL(paidInRangeGross(new Date(now.getFullYear() - 1, 0, 1), new Date(now.getFullYear() - 1, 11, 31)))}`}
                 hoverPendText="—"
                 pendingLegend="—"
               />
               <LineChart
-                labels={projectMonthlyFlows(rows, new Date().getFullYear() - 1, false).labels}
+                labels={previousYearMonthly.labels}
                 series={[
-                  { name: "Previsto", data: projectMonthlyFlows(rows, new Date().getFullYear() - 1, false).previstoBruto },
-                  { name: "Pago", data: projectMonthlyFlows(rows, new Date().getFullYear() - 1, false).pagoBruto },
+                  { name: "Previsto bruto", data: previousYearMonthly.previstoBruto },
+                  { name: "Pago bruto", data: previousYearMonthly.pagoBruto },
                 ]}
               />
             </CardContent>
@@ -2020,13 +2282,20 @@ export default function ComissoesPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <Donut
-                paid={paidInRangeLiquid(new Date(now.getFullYear(), 0, 1), now)}
-                pending={previstoInRange(new Date(now.getFullYear(), 0, 1), new Date(now.getFullYear(), 11, 31))}
+                paid={paidInRangeGross(new Date(now.getFullYear(), 0, 1), now)}
+                pending={previstoInRangeGross(new Date(now.getFullYear(), 0, 1), new Date(now.getFullYear(), 11, 31))}
                 label="Ano"
-                hoverPaidText={`Pago no ano: ${BRL(paidInRangeLiquid(new Date(now.getFullYear(), 0, 1), now))}`}
-                hoverPendText={`Previsto no ano: ${BRL(previstoInRange(new Date(now.getFullYear(), 0, 1), new Date(now.getFullYear(), 11, 31)))}`}
+                hoverPaidText={`Pago bruto no ano: ${BRL(paidInRangeGross(new Date(now.getFullYear(), 0, 1), now))}`}
+                hoverPendText={`Previsto bruto no ano: ${BRL(previstoInRangeGross(new Date(now.getFullYear(), 0, 1), new Date(now.getFullYear(), 11, 31)))}`}
+                pendingLegend="Previsto bruto"
               />
-              <LineChart labels={monthlyCurr.labels} series={[{ name: "Previsto", data: monthlyCurr.previstoBruto }, { name: "Pago", data: monthlyCurr.pagoBruto }]} />
+              <LineChart
+                labels={monthlyCurr.labels}
+                series={[
+                  { name: "Previsto bruto", data: monthlyCurr.previstoBruto },
+                  { name: "Pago bruto", data: monthlyCurr.pagoBruto },
+                ]}
+              />
             </CardContent>
           </Card>
 
@@ -2036,48 +2305,82 @@ export default function ComissoesPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <Donut
-                paid={paidInRangeLiquid(mStart, now)}
-                pending={previstoInRange(mStart, endOfMonth(now))}
+                paid={paidInRangeGross(mStart, now)}
+                pending={previstoInRangeGross(mStart, endOfMonth(now))}
                 label="Mês"
-                hoverPaidText={`Pago no mês: ${BRL(paidInRangeLiquid(mStart, now))}`}
-                hoverPendText={`Previsto no mês: ${BRL(previstoInRange(mStart, endOfMonth(now)))}`}
+                hoverPaidText={`Pago bruto no mês: ${BRL(paidInRangeGross(mStart, now))}`}
+                hoverPendText={`Previsto bruto no mês: ${BRL(previstoInRangeGross(mStart, endOfMonth(now)))}`}
+                pendingLegend="Previsto bruto"
               />
-              <LineChart labels={weeklyCurr.labels} series={[{ name: "Previsto", data: weeklyCurr.previstoBruto }, { name: "Pago", data: weeklyCurr.pagoBruto }]} />
+              <LineChart
+                labels={weeklyCurr.labels}
+                series={[
+                  { name: "Previsto bruto", data: weeklyCurr.previstoBruto },
+                  { name: "Pago bruto", data: weeklyCurr.pagoBruto },
+                ]}
+              />
             </CardContent>
           </Card>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-6">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>🔥 Vendas</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent>
           </Card>
+
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>🧾 Comissão Bruta</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent>
           </Card>
+
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>✅ Comissão Líquida</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">{BRL(kpi.comLiquida)}</CardContent>
           </Card>
+
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle>📤 Comissão Paga (Liq.)</CardTitle>
+              <CardTitle>📤 Comissão Paga</CardTitle>
             </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.comPaga)}</CardContent>
+            <CardContent>
+              <div className="space-y-1">
+                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPagaBruta)}</div>
+                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(kpi.comPagaLiquida)}</div>
+              </div>
+            </CardContent>
           </Card>
+
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle>⏳ Pendente (Liq.)</CardTitle>
+              <CardTitle>⏳ Comissão Pendente</CardTitle>
             </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.comPendente)}</CardContent>
+            <CardContent>
+              <div className="space-y-1">
+                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPendenteBruta)}</div>
+                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(kpi.comPendenteLiquida)}</div>
+              </div>
+            </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>💔 Comissão Perdida</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-1">
+                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPerdidaBruta)}</div>
+                <div className="text-lg font-bold text-[#A11C27]">Líquida: {BRL(kpi.comPerdidaLiquida)}</div>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>📅 Comissão programada</CardTitle>
@@ -2086,7 +2389,7 @@ export default function ComissoesPage() {
               {comissaoProgramada ? (
                 <div className="space-y-1">
                   <div className="text-lg font-bold">Bruta: {BRL(comissaoProgramada.bruto)}</div>
-                  <div className="text-lg font-bold text-emerald-700">Líquida: {BRL(comissaoProgramada.liquido)}</div>
+                  <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(comissaoProgramada.liquido)}</div>
                   <div className="text-sm text-gray-600">Data do pagamento: {formatISODateBR(comissaoProgramada.data)}</div>
                 </div>
               ) : (
@@ -2132,8 +2435,10 @@ export default function ComissoesPage() {
                       </td>
                     </tr>
                   )}
+
                   {vendasSemCom.map((v) => {
                     const clienteId = v.lead_id || v.cliente_lead_id || "";
+
                     return (
                       <tr key={v.id} className="border-b">
                         <td className="p-2">{formatISODateBR(v.data_venda)}</td>
@@ -2145,8 +2450,14 @@ export default function ComissoesPage() {
                         <td className="p-2">{v.tabela || "—"}</td>
                         <td className="p-2 text-right">{BRL(v.valor_venda)}</td>
                         <td className="p-2">
-                          <Button size="sm" onClick={() => gerarComissaoDeVenda(v)} disabled={!canEdit || genBusy === v.id} title={!canEdit ? "Vendedor não pode gerar comissão" : ""}>
-                            {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />} Gerar Comissão
+                          <Button
+                            size="sm"
+                            onClick={() => gerarComissaoDeVenda(v)}
+                            disabled={!canEdit || genBusy === v.id}
+                            title={!canEdit ? "Vendedor não pode gerar comissão" : ""}
+                          >
+                            {genBusy === v.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PlusCircle className="w-4 h-4 mr-1" />}
+                            Gerar Comissão
                           </Button>
                         </td>
                       </tr>
@@ -2275,7 +2586,7 @@ export default function ComissoesPage() {
                           <td className="p-2">{r.tabela || "—"}</td>
                           <td className="p-2 text-right">{BRL(r.valor_venda ?? r.base_calculo)}</td>
                           <td className="p-2 text-right hidden md:table-cell">{pct100(r.percent_aplicado)}</td>
-                          <td className="p-2 text-right">{BRL(r.valor_total)}</td>
+                          <td className="p-2 text-right">{BRL(totalCommissionGross(r))}</td>
                           <td className="p-2">
                             <span className="font-medium tabular-nums">{total ? `${paid}/${total}` : "—"}</span>
                           </td>
@@ -2306,12 +2617,6 @@ export default function ComissoesPage() {
                                 <RotateCcw className="w-4 h-4 mr-1" /> Retornar
                               </Button>
                             </div>
-
-                            {r.venda_cancelada && (
-                              <div className="mt-1 text-[11px] text-gray-500">
-                                (Venda cancelada detectada: código {r.venda_codigo || "—"} / {r.venda_cancelada_em ? `em ${formatISODateBR(r.venda_cancelada_em)}` : "—"})
-                              </div>
-                            )}
                           </td>
                         </tr>
                       );
@@ -2376,6 +2681,7 @@ export default function ComissoesPage() {
                       </td>
                     </tr>
                   )}
+
                   {pagosPage.map(({ flow, comm }) => (
                     <tr key={flow.id} className="border-b">
                       <td className="p-2">{flow.data_pagamento_vendedor ? formatISODateBR(flow.data_pagamento_vendedor) : "—"}</td>
@@ -2399,6 +2705,7 @@ export default function ComissoesPage() {
                               Recibo
                             </a>
                           )}
+
                           {flow.comprovante_pagto_url && (
                             <a
                               className="underline text-blue-700"
@@ -2781,6 +3088,7 @@ export default function ComissoesPage() {
                     <tbody>
                       {payFlow.map((f) => {
                         const isLocked = (f.valor_pago_vendedor ?? 0) > 0 || Boolean(f.recibo_vendedor_url) || Boolean(f.comprovante_pagto_url);
+
                         return (
                           <tr key={f.id} className={`border-b ${isLocked ? "opacity-60 pointer-events-none" : ""}`}>
                             <td className="p-2">
@@ -2869,6 +3177,7 @@ export default function ComissoesPage() {
                   <b>Vendedor:</b> {userLabel(bulkRefundFound.comm.vendedor_id)} &nbsp; • &nbsp;
                   <b>Proposta:</b> {bulkRefundFound.comm.numero_proposta || "—"}
                 </div>
+
                 <div className="overflow-x-auto">
                   <table className="min-w-[700px] w-full text-sm">
                     <thead>
@@ -2906,7 +3215,7 @@ export default function ComissoesPage() {
                     <div className="p-2 border rounded-md bg-gray-50">
                       {(() => {
                         const g = parseBRL(bulkRefundGross);
-                        const n = g * (1 - impostoFrac);
+                        const n = commissionNet(g, impostoFrac);
                         return BRL(n);
                       })()}
                     </div>

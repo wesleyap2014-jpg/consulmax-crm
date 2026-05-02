@@ -143,6 +143,31 @@ const sum = (arr: (number | null | undefined)[]) => arr.reduce((a, b) => a + (b 
 
 const clamp0 = (n: number) => (n < 0 ? 0 : n);
 
+const totalCommissionGross = (r: CommissionWithFlow) => {
+  return Number(r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0))) || 0;
+};
+
+const paidCommissionGross = (r: CommissionWithFlow) => {
+  return sum((r.flow || []).map((f) => Number(f.valor_pago_vendedor) || 0));
+};
+
+const isOperationalCommission = (r: CommissionWithFlow) => {
+  return r.status !== "estorno" && !r.venda_cancelada;
+};
+
+const pendingCommissionGross = (r: CommissionWithFlow) => {
+  return clamp0(totalCommissionGross(r) - paidCommissionGross(r));
+};
+
+const lostCommissionGross = (r: CommissionWithFlow) => {
+  if (!r.venda_cancelada) return 0;
+  return clamp0(totalCommissionGross(r) - paidCommissionGross(r));
+};
+
+const commissionNet = (gross: number, impostoFrac: number) => {
+  return gross * (1 - impostoFrac);
+};
+
 const toDateInput = (d: Date) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");

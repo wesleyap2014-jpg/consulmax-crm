@@ -22,7 +22,7 @@ type Venda = {
   lead_id: string;
   cpf: string;
   data_venda: string;
-  vendedor_id: string; // auth_user_id (conforme seu schema)
+  vendedor_id: string;
   produto: Produto;
   administradora: Administradora;
   forma_venda: FormaVenda;
@@ -36,28 +36,26 @@ type Venda = {
   codigo: string | null;
   encarteirada_em: string | null;
   contemplada?: boolean | null;
-  data_contemplacao?: string | null; // date
+  data_contemplacao?: string | null;
   tabela?: string | null;
   created_at: string;
   segmento?: string | null;
   data_nascimento?: string | null;
-  cancelada_em?: string | null; // timestamptz
+  cancelada_em?: string | null;
   inad?: boolean | null;
-
-  // ====== NOVOS CAMPOS ======
-  reativada_em?: string | null; // timestamptz
+  reativada_em?: string | null;
   contemplacao_tipo?: string | null;
-  contemplacao_pct?: number | null; // numeric(9,4)
-  inad_em?: string | null; // date
-  inad_revertida_em?: string | null; // date
+  contemplacao_pct?: number | null;
+  inad_em?: string | null;
+  inad_revertida_em?: string | null;
 };
 
 type AppUser = {
-  id: string; // users.id
+  id: string;
   nome: string;
   email?: string | null;
   role?: string | null;
-  auth_user_id?: string | null; // auth.users.id
+  auth_user_id?: string | null;
 };
 
 const PRODUTOS: Produto[] = [
@@ -111,14 +109,12 @@ const formatDateTimeBR = (isoDate?: string | null) => {
   }).format(d);
 };
 
-// Converte input date (YYYY-MM-DD) para timestamptz ISO (00:00 local -> ISO)
 const isoFromDateInput = (dateStr: string) => {
   const d = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 };
 
-// Formata automaticamente como CPF (11 dígitos) ou CNPJ (14 dígitos)
 const formatCPF = (s: string) => {
   const d = onlyDigits(s);
 
@@ -149,7 +145,6 @@ const formatCPF = (s: string) => {
   return `${p1}.${p2}.${p3}/${p4}-${p5}`;
 };
 
-// Valida CPF (11) OU CNPJ (14)
 const validateCPF = (doc: string) => {
   const d = onlyDigits(doc);
 
@@ -191,8 +186,6 @@ const validateCPF = (doc: string) => {
 function normalizeProdutoToSegmento(produto: Produto | string | null | undefined): string | null {
   const p = (produto || "").toString().trim();
   if (!p) return null;
-  // ⚠️ Mantemos essa normalização para o campo "segmento" em vendas (como estava),
-  // pois outras partes do CRM podem depender disso.
   if (p === "Imóvel Estendido") return "Imóvel";
   if (p === "Serviço") return "Serviços";
   return p;
@@ -217,10 +210,6 @@ function normalizeTableName(s: string | null | undefined): string {
     .trim();
 }
 
-/**
- * ✅ CORREÇÃO (TABELAS POR SEGMENTO)
- * Para filtrar sim_tables.segmento corretamente, NÃO podemos colapsar "Imóvel Estendido" -> "Imóvel".
- */
 function segmentCandidatesForProduto(produto: Produto | string | null | undefined): string[] {
   const p = (produto || "").toString().trim();
   if (!p) return [];
@@ -267,7 +256,6 @@ function produtoMatchesTableSegment(produto: Produto, tableSegment: string | nul
   return candidates.includes(segNorm);
 }
 
-// Percentual com 4 casas (input humano -> number)
 const parsePct4 = (raw: string): number | null => {
   const s = (raw || "")
     .replace(/\s/g, "")
@@ -287,6 +275,16 @@ const formatPct4 = (n?: number | null) => {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
   }).format(Number(n));
+};
+
+const monthAlreadyHappened = (year: number, monthIndex: number) => {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+
+  if (year < currentYear) return true;
+  if (year > currentYear) return false;
+  return monthIndex <= currentMonth;
 };
 
 type LinhaEncarteirarProps = {
@@ -316,19 +314,11 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
     <tr className="border-t">
       <td className="p-2">
         <div className="flex items-center gap-2">
-          <button
-            title="Ver venda"
-            className="text-gray-500 hover:text-gray-800"
-            onClick={() => onViewVenda(venda, lead)}
-          >
+          <button title="Ver venda" className="text-gray-500 hover:text-gray-800" onClick={() => onViewVenda(venda, lead)}>
             👁️
           </button>
           <div className="font-medium">{lead?.nome ?? "—"}</div>
-          <button
-            title="Editar pendente"
-            className="text-gray-500 hover:text-gray-800"
-            onClick={() => onOpenEditarVenda(venda)}
-          >
+          <button title="Editar pendente" className="text-gray-500 hover:text-gray-800" onClick={() => onOpenEditarVenda(venda)}>
             ✏️
           </button>
         </div>
@@ -337,37 +327,20 @@ const LinhaEncarteirar: React.FC<LinhaEncarteirarProps> = ({
       <td className="p-2">{venda.administradora}</td>
       <td className="p-2">{venda.numero_proposta}</td>
       <td className="p-2">
-        <input
-          value={grupo}
-          onChange={(e) => setGrupo(e.target.value)}
-          className="border rounded px-2 py-1 w-28"
-          disabled={!canEncarteirar}
-        />
+        <input value={grupo} onChange={(e) => setGrupo(e.target.value)} className="border rounded px-2 py-1 w-28" disabled={!canEncarteirar} />
       </td>
       <td className="p-2">
-        <input
-          value={cota}
-          onChange={(e) => setCota(e.target.value)}
-          className="border rounded px-2 py-1 w-20"
-          disabled={!canEncarteirar}
-        />
+        <input value={cota} onChange={(e) => setCota(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!canEncarteirar} />
       </td>
       <td className="p-2">
-        <input
-          value={codigo}
-          onChange={(e) => setCodigo(e.target.value)}
-          className="border rounded px-2 py-1 w-20"
-          disabled={!canEncarteirar}
-        />
+        <input value={codigo} onChange={(e) => setCodigo(e.target.value)} className="border rounded px-2 py-1 w-20" disabled={!canEncarteirar} />
       </td>
       <td className="p-2">{currency(venda.valor_venda ?? 0)}</td>
       <td className="p-2">
         <div className="flex gap-2">
           <button
             className={`px-3 py-1 rounded ${
-              canEncarteirar
-                ? "bg-[#A11C27] text-white hover:opacity-90"
-                : "bg-gray-200 text-gray-500 cursor-not-allowed"
+              canEncarteirar ? "bg-[#A11C27] text-white hover:opacity-90" : "bg-gray-200 text-gray-500 cursor-not-allowed"
             }`}
             disabled={!canEncarteirar}
             onClick={() => onSubmit(venda.id, grupo, cota, codigo)}
@@ -402,21 +375,13 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onViewVenda, onOpenCotaEdi
     <tr className="border-t">
       <td className="p-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`px-2 py-1 rounded-full text-xs ${
-              ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-            }`}
-          >
+          <span className={`px-2 py-1 rounded-full text-xs ${ativa ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
             {ativa ? "Ativa" : "Cancelada"}
           </span>
 
-          {!!venda.contemplada && (
-            <span className="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-800">Contemplada</span>
-          )}
+          {!!venda.contemplada && <span className="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-800">Contemplada</span>}
 
-          {!!venda.inad && (
-            <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-700">Inadimplente</span>
-          )}
+          {!!venda.inad && <span className="px-2 py-1 rounded-full text-xs bg-red-100 text-red-700">Inadimplente</span>}
         </div>
       </td>
 
@@ -424,11 +389,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onViewVenda, onOpenCotaEdi
 
       <td className="p-2">
         <div className="flex items-center gap-2">
-          <button
-            title="Ver venda"
-            className="text-gray-500 hover:text-gray-800"
-            onClick={() => onViewVenda(venda)}
-          >
+          <button title="Ver venda" className="text-gray-500 hover:text-gray-800" onClick={() => onViewVenda(venda)}>
             👁️
           </button>
           <span>{venda.numero_proposta}</span>
@@ -443,11 +404,7 @@ const LinhaCota: React.FC<LinhaCotaProps> = ({ venda, onViewVenda, onOpenCotaEdi
 
       <td className="p-2">
         {isAdmin ? (
-          <button
-            className="px-3 py-1 rounded border hover:bg-gray-50"
-            onClick={() => onOpenCotaEditor(venda)}
-            title="Editar cota"
-          >
+          <button className="px-3 py-1 rounded border hover:bg-gray-50" onClick={() => onOpenCotaEditor(venda)} title="Editar cota">
             ✏️ Editar
           </button>
         ) : (
@@ -486,8 +443,7 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
             <span className="text-xs text-gray-500 ml-2">{group.cliente.telefone ?? ""}</span>
           </div>
           <div className="text-sm text-gray-600">
-            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> •
-            Segmentos: {segs}
+            Total Ativas: <strong>{currency(group.totalAtivas)}</strong> • Qtd: <strong>{group.qtdAtivas}</strong> • Segmentos: {segs}
           </div>
         </button>
         <button title="Ver cotas" className="text-gray-500 hover:text-gray-800" onClick={() => setOpen(true)}>
@@ -513,13 +469,7 @@ const ClienteBloco: React.FC<ClienteBlocoProps> = ({ group, onViewVenda, onOpenC
             </thead>
             <tbody>
               {group.itens.map((v) => (
-                <LinhaCota
-                  key={v.id}
-                  venda={v}
-                  onViewVenda={onViewVenda}
-                  onOpenCotaEditor={onOpenCotaEditor}
-                  isAdmin={isAdmin}
-                />
+                <LinhaCota key={v.id} venda={v} onViewVenda={onViewVenda} onOpenCotaEditor={onOpenCotaEditor} isAdmin={isAdmin} />
               ))}
             </tbody>
           </table>
@@ -537,13 +487,7 @@ type EditarVendaPendenteModalProps = {
   onSave: (venda: Venda, novo: Partial<Venda>) => Promise<void>;
 };
 
-const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
-  open,
-  venda,
-  leads,
-  onClose,
-  onSave,
-}) => {
+const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({ open, venda, leads, onClose, onSave }) => {
   const [tmp, setTmp] = useState<Partial<Venda>>({});
 
   useEffect(() => {
@@ -580,11 +524,7 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
             <label className="text-sm text-gray-600">Pessoa (Lead)</label>
-            <select
-              className="w-full border rounded-xl px-3 py-2"
-              value={tmp.lead_id ?? ""}
-              onChange={(e) => setTmp((p) => ({ ...p, lead_id: e.target.value }))}
-            >
+            <select className="w-full border rounded-xl px-3 py-2" value={tmp.lead_id ?? ""} onChange={(e) => setTmp((p) => ({ ...p, lead_id: e.target.value }))}>
               <option value="">Selecione um lead…</option>
               {leads.map((l) => (
                 <option key={l.id} value={l.id}>
@@ -596,40 +536,22 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
 
           <div>
             <label className="text-sm text-gray-600">CPF / CNPJ</label>
-            <input
-              className="w-full border rounded-xl px-3 py-2"
-              value={formatCPF(tmp.cpf ?? "")}
-              onChange={(e) => setTmp((p) => ({ ...p, cpf: e.target.value }))}
-            />
+            <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(tmp.cpf ?? "")} onChange={(e) => setTmp((p) => ({ ...p, cpf: e.target.value }))} />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Data da Venda</label>
-            <input
-              type="date"
-              className="w-full border rounded-xl px-3 py-2"
-              value={tmp.data_venda ?? ""}
-              onChange={(e) => setTmp((p) => ({ ...p, data_venda: e.target.value }))}
-            />
+            <input type="date" className="w-full border rounded-xl px-3 py-2" value={tmp.data_venda ?? ""} onChange={(e) => setTmp((p) => ({ ...p, data_venda: e.target.value }))} />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Data de Nascimento</label>
-            <input
-              type="date"
-              className="w-full border rounded-xl px-3 py-2"
-              value={tmp.data_nascimento ?? ""}
-              onChange={(e) => setTmp((p) => ({ ...p, data_nascimento: e.target.value }))}
-            />
+            <input type="date" className="w-full border rounded-xl px-3 py-2" value={tmp.data_nascimento ?? ""} onChange={(e) => setTmp((p) => ({ ...p, data_nascimento: e.target.value }))} />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Produto</label>
-            <select
-              className="w-full border rounded-xl px-3 py-2"
-              value={tmp.produto as Produto}
-              onChange={(e) => setTmp((p) => ({ ...p, produto: e.target.value as Produto }))}
-            >
+            <select className="w-full border rounded-xl px-3 py-2" value={tmp.produto as Produto} onChange={(e) => setTmp((p) => ({ ...p, produto: e.target.value as Produto }))}>
               {PRODUTOS.map((p) => (
                 <option key={p} value={p}>
                   {p}
@@ -640,29 +562,17 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
 
           <div>
             <label className="text-sm text-gray-600">Tabela</label>
-            <input
-              className="w-full border rounded-xl px-3 py-2"
-              value={tmp.tabela ?? ""}
-              onChange={(e) => setTmp((p) => ({ ...p, tabela: e.target.value }))}
-            />
+            <input className="w-full border rounded-xl px-3 py-2" value={tmp.tabela ?? ""} onChange={(e) => setTmp((p) => ({ ...p, tabela: e.target.value }))} />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Administradora</label>
-            <input
-              className="w-full border rounded-xl px-3 py-2"
-              value={(tmp.administradora as string) ?? ""}
-              onChange={(e) => setTmp((p) => ({ ...p, administradora: e.target.value }))}
-            />
+            <input className="w-full border rounded-xl px-3 py-2" value={(tmp.administradora as string) ?? ""} onChange={(e) => setTmp((p) => ({ ...p, administradora: e.target.value }))} />
           </div>
 
           <div>
             <label className="text-sm text-gray-600">Forma da Venda</label>
-            <select
-              className="w-full border rounded-xl px-3 py-2"
-              value={tmp.forma_venda as FormaVenda}
-              onChange={(e) => setTmp((p) => ({ ...p, forma_venda: e.target.value as FormaVenda }))}
-            >
+            <select className="w-full border rounded-xl px-3 py-2" value={tmp.forma_venda as FormaVenda} onChange={(e) => setTmp((p) => ({ ...p, forma_venda: e.target.value as FormaVenda }))}>
               {FORMAS.map((f) => (
                 <option key={f} value={f}>
                   {f}
@@ -673,11 +583,7 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
 
           <div>
             <label className="text-sm text-gray-600">Número da Proposta</label>
-            <input
-              className="w-full border rounded-xl px-3 py-2"
-              value={tmp.numero_proposta ?? ""}
-              onChange={(e) => setTmp((p) => ({ ...p, numero_proposta: e.target.value }))}
-            />
+            <input className="w-full border rounded-xl px-3 py-2" value={tmp.numero_proposta ?? ""} onChange={(e) => setTmp((p) => ({ ...p, numero_proposta: e.target.value }))} />
           </div>
 
           <div>
@@ -693,12 +599,7 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
 
           <div className="md:col-span-2">
             <label className="text-sm text-gray-600">Descrição</label>
-            <textarea
-              className="w-full border rounded-xl px-3 py-2"
-              rows={3}
-              value={tmp.descricao ?? ""}
-              onChange={(e) => setTmp((p) => ({ ...p, descricao: e.target.value }))}
-            />
+            <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={tmp.descricao ?? ""} onChange={(e) => setTmp((p) => ({ ...p, descricao: e.target.value }))} />
           </div>
         </div>
 
@@ -706,10 +607,7 @@ const EditarVendaPendenteModal: React.FC<EditarVendaPendenteModalProps> = ({
           <button className="px-4 py-2 rounded-xl border mr-2" onClick={onClose}>
             Cancelar
           </button>
-          <button
-            className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-            onClick={() => onSave(venda, tmp)}
-          >
+          <button className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90" onClick={() => onSave(venda, tmp)}>
             Salvar
           </button>
         </div>
@@ -722,14 +620,14 @@ type CotaEditMode = "pick" | "cota_codigo" | "contemplacao" | "inad" | "transfer
 
 type MiniDonutProps = {
   label: string;
+  year: number;
   meta: number;
   realizado: number;
 };
 
-// ✅ MiniDonut (novo) — mais clean e MOBILE-FIRST
-const MiniDonut: React.FC<MiniDonutProps> = ({ label, meta, realizado }) => {
+const MiniDonut: React.FC<MiniDonutProps> = ({ label, year, meta, realizado }) => {
   const hasMeta = meta > 0;
-  const pct = hasMeta ? (realizado / meta) * 100 : null; // sem cap em 100
+  const pct = hasMeta ? (realizado / meta) * 100 : null;
 
   const data = useMemo(() => {
     if (!hasMeta) {
@@ -751,32 +649,36 @@ const MiniDonut: React.FC<MiniDonutProps> = ({ label, meta, realizado }) => {
   const centerText = useMemo(() => {
     if (!hasMeta) return "—";
     if (pct == null || !Number.isFinite(pct)) return "—";
-    return formatPctHuman(pct, 0); // no card pequeno, mais legível sem casas
+    return formatPctHuman(pct, 0);
   }, [hasMeta, pct]);
 
-  const rightLabel = useMemo(() => {
-    if (!hasMeta) return "—";
-    return realizado > meta ? "Exced." : "Rest.";
-  }, [hasMeta, realizado, meta]);
-
-  const rightValue = useMemo(() => {
-    if (!hasMeta) return "—";
-    if (realizado > meta) return currency(Math.max(0, realizado - meta));
-    return currency(Math.max(0, meta - realizado));
-  }, [hasMeta, realizado, meta]);
+  const diffLabel = hasMeta && realizado > meta ? "Excedente" : "Falta";
+  const diffValue = hasMeta ? Math.abs(meta - realizado) : 0;
 
   return (
     <div className="rounded-2xl border bg-white p-3 shadow-sm">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold text-gray-900">{label}</div>
-        <div className="text-[11px] text-gray-500">{hasMeta ? `Meta ${currency(meta)}` : "Sem meta"}</div>
-      </div>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-gray-900">
+            {label}/{year}
+          </div>
+          <div className="mt-1 space-y-0.5 text-xs text-gray-600">
+            <div>
+              Meta: <strong className="text-gray-900">{currency(meta || 0)}</strong>
+            </div>
+            <div>
+              Realizado: <strong className="text-gray-900">{currency(realizado || 0)}</strong>
+            </div>
+            <div>
+              {diffLabel}: <strong className="text-gray-900">{hasMeta ? currency(diffValue) : "—"}</strong>
+            </div>
+          </div>
+        </div>
 
-      <div className="mt-2 flex items-center gap-3">
-        <div className="relative h-20 w-20 shrink-0">
+        <div className="relative h-16 w-16 shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={data} innerRadius={26} outerRadius={36} dataKey="value" stroke="none">
+              <Pie data={data} innerRadius={22} outerRadius={31} dataKey="value" stroke="none">
                 {data.map((d, i) => {
                   if (!hasMeta) return <Cell key={`${label}-${i}`} fill={realizado > 0 ? "#1E293F" : "#E5E7EB"} />;
                   if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`${label}-${i}`} fill="#1E293F" />;
@@ -788,17 +690,7 @@ const MiniDonut: React.FC<MiniDonutProps> = ({ label, meta, realizado }) => {
           </ResponsiveContainer>
 
           <div className="absolute inset-0 grid place-items-center pointer-events-none">
-            <div className="text-sm font-bold text-gray-900">{centerText}</div>
-          </div>
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] text-gray-500">Realizado</div>
-          <div className="truncate text-sm font-semibold text-gray-900">{currency(realizado || 0)}</div>
-
-          <div className="mt-2 flex items-center justify-between">
-            <div className="text-[11px] text-gray-500">{rightLabel}</div>
-            <div className="text-sm font-semibold text-gray-900">{rightValue}</div>
+            <div className="text-xs font-bold text-gray-900">{centerText}</div>
           </div>
         </div>
       </div>
@@ -806,8 +698,59 @@ const MiniDonut: React.FC<MiniDonutProps> = ({ label, meta, realizado }) => {
   );
 };
 
+type AtingimentoMesesProps = {
+  selectedYear: number;
+  metas: number[];
+  realizados: number[];
+};
+
+const AtingimentoMeses: React.FC<AtingimentoMesesProps> = ({ selectedYear, metas, realizados }) => {
+  return (
+    <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-gray-900">Atingimento</div>
+          <div className="text-xs text-gray-500">Meta mensal</div>
+        </div>
+        <div className="text-xs text-gray-500">{selectedYear}</div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
+        {MONTHS.map((m, idx) => {
+          const meta = metas[idx] || 0;
+          const realizado = realizados[idx] || 0;
+          const happened = monthAlreadyHappened(selectedYear, idx);
+
+          let icon = "—";
+          let cls = "text-gray-400";
+          let title = "Mês ainda não ocorreu ou sem meta";
+
+          if (meta > 0 && happened) {
+            if (realizado >= meta) {
+              icon = "✓";
+              cls = "text-green-600";
+              title = "Meta atingida";
+            } else {
+              icon = "×";
+              cls = "text-red-600";
+              title = "Meta não atingida";
+            }
+          }
+
+          return (
+            <div key={m} className="flex items-center justify-between rounded-xl bg-gray-50 px-2 py-1.5" title={title}>
+              <span className="text-xs font-medium text-gray-700">{m}</span>
+              <span className={`text-base font-black leading-none ${cls}`}>{icon}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const Carteira: React.FC = () => {
-  const [userId, setUserId] = useState<string>(""); // auth.users.id
+  const [userId, setUserId] = useState<string>("");
   const [userEmail, setUserEmail] = useState<string>("");
   const [userName, setUserName] = useState<string>("");
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -866,7 +809,6 @@ const Carteira: React.FC = () => {
     m: Array(12).fill(0),
   });
 
-  // admin escolhe users.id; vendedor fica travado no próprio users.id
   const [selectedSeller, setSelectedSeller] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [metaMensal, setMetaMensal] = useState<number[]>(Array(12).fill(0));
@@ -875,7 +817,6 @@ const Carteira: React.FC = () => {
   const metaAnual = useMemo(() => metaMensal.reduce((a, b) => a + b, 0), [metaMensal]);
   const realizadoAnual = useMemo(() => realizadoMensal.reduce((a, b) => a + b, 0), [realizadoMensal]);
 
-  // ✅ sem cap em 100 (pode ser 132%, 245%...)
   const pctAnual = useMemo(() => {
     if (metaAnual <= 0) return null;
     const p = (realizadoAnual / metaAnual) * 100;
@@ -885,14 +826,12 @@ const Carteira: React.FC = () => {
 
   const [leadSearch, setLeadSearch] = useState<string>("");
 
-  // Modal de transferência de cota
   const [transferModal, setTransferModal] = useState<{ open: boolean; venda?: Venda }>({ open: false });
   const [transferLeadId, setTransferLeadId] = useState<string>("");
   const [transferSearch, setTransferSearch] = useState<string>("");
   const [transferCpf, setTransferCpf] = useState<string>("");
   const [transferNascimento, setTransferNascimento] = useState<string>("");
 
-  // Editor de “Cota”
   const [cotaEditor, setCotaEditor] = useState<{ open: boolean; venda?: Venda; mode: CotaEditMode }>({
     open: false,
     venda: undefined,
@@ -915,7 +854,6 @@ const Carteira: React.FC = () => {
   const [ceInadEm, setCeInadEm] = useState<string>("");
   const [ceInadRev, setCeInadRev] = useState<string>("");
 
-  // ===== helpers de ID =====
   const authIdFromSellerId = useMemo(() => {
     if (!selectedSeller) return "";
     return users.find((u) => u.id === selectedSeller)?.auth_user_id ?? "";
@@ -926,13 +864,10 @@ const Carteira: React.FC = () => {
     return users.find((u) => u.id === sellerUserId)?.auth_user_id ?? "";
   };
 
-  // ao trocar produto, zera tabela
   useEffect(() => {
     setForm((f) => ({ ...f, tabela: "" }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.produto]);
 
-  // ===== Carregamento inicial =====
   useEffect(() => {
     (async () => {
       try {
@@ -947,7 +882,6 @@ const Carteira: React.FC = () => {
         setUserEmail(uemail);
         setUserName(authData.user?.user_metadata?.nome ?? uemail ?? "Vendedor");
 
-        // Flag admin (tabela users) - por email
         let adminFlag = false;
         try {
           const { data } = await supabase.from("users").select("email, role").eq("email", uemail).maybeSingle();
@@ -955,7 +889,6 @@ const Carteira: React.FC = () => {
         } catch {}
         setIsAdmin(adminFlag);
 
-        // Carrega tudo em paralelo
         const [{ data: lds }, pend, enc, { data: admins }, { data: tables }, { data: us }] = await Promise.all([
           supabase.from("leads").select("id,nome,telefone,email").order("nome", { ascending: true }),
           (async () => {
@@ -965,22 +898,14 @@ const Carteira: React.FC = () => {
             return data;
           })(),
           (async () => {
-            const q = supabase
-              .from("vendas")
-              .select("*")
-              .eq("status", "encarteirada")
-              .order("created_at", { ascending: false });
+            const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
             if (!adminFlag) q.eq("vendedor_id", uid);
             const { data } = await q;
             return data;
           })(),
           supabase.from("sim_admins").select("id,name").order("name", { ascending: true }),
           supabase.from("sim_tables").select("id,admin_id,segmento,nome_tabela,faixa_min,faixa_max,prazo_limite"),
-          supabase
-            .from("users")
-            .select("id,nome,email,role,auth_user_id")
-            .eq("is_active", true)
-            .order("nome", { ascending: true }),
+          supabase.from("users").select("id,nome,email,role,auth_user_id").eq("is_active", true).order("nome", { ascending: true }),
         ]);
 
         const leadsArr = (lds ?? []) as Lead[];
@@ -994,7 +919,6 @@ const Carteira: React.FC = () => {
         setSimTables((tables ?? []) as any);
         setUsers((us ?? []) as AppUser[]);
 
-        // selectedSeller: admin = "" (Todos), vendedor = seu users.id
         const myUserRow = (us ?? []).find((u: any) => u.auth_user_id === uid || u.email === uemail);
         if (adminFlag) {
           setSelectedSeller("");
@@ -1011,7 +935,6 @@ const Carteira: React.FC = () => {
     })();
   }, []);
 
-  // ===== filtros por vendedor (admin) aplicados no que o usuário enxerga =====
   const pendentesVisiveis = useMemo(() => {
     if (!isAdmin) return pendentes;
     if (!selectedSeller) return pendentes;
@@ -1082,9 +1005,7 @@ const Carteira: React.FC = () => {
       map[lead.id].segmentos.add(v.produto);
     }
 
-    return Object.values(map).sort((a, b) =>
-      a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" })
-    );
+    return Object.values(map).sort((a, b) => a.cliente.nome.localeCompare(b.cliente.nome, "pt-BR", { sensitivity: "base" }));
   }, [encarteiradasFiltradas, leadMap]);
 
   const onFormChange = (k: keyof Venda, val: any) => setForm((f) => ({ ...f, [k]: val }));
@@ -1102,10 +1023,7 @@ const Carteira: React.FC = () => {
   async function updateVenda(id: string, patch: any) {
     const { error } = await supabase.from("vendas").update(patch as any).eq("id", id);
     if (error && /data_nascimento/.test(error.message || "")) {
-      const { error: e2 } = await supabase
-        .from("vendas")
-        .update({ ...patch, data_nascimento: undefined } as any)
-        .eq("id", id);
+      const { error: e2 } = await supabase.from("vendas").update({ ...patch, data_nascimento: undefined } as any).eq("id", id);
       if (e2) throw e2;
       return;
     }
@@ -1115,11 +1033,7 @@ const Carteira: React.FC = () => {
   const prefillFromLead = async (leadId: string) => {
     if (!leadId) return;
 
-    const { data: cliente } = await supabase
-      .from("clientes")
-      .select("cpf,data_nascimento")
-      .eq("lead_id", leadId)
-      .maybeSingle();
+    const { data: cliente } = await supabase.from("clientes").select("cpf,data_nascimento").eq("lead_id", leadId).maybeSingle();
 
     if (cliente?.cpf || cliente?.data_nascimento) {
       setForm((f) => ({
@@ -1166,7 +1080,7 @@ const Carteira: React.FC = () => {
         lead_id: form.lead_id,
         cpf: onlyDigits(form.cpf!),
         data_venda: form.data_venda!,
-        vendedor_id: userId, // auth_user_id
+        vendedor_id: userId,
         produto: form.produto as Produto,
         administradora: (form.administradora as Administradora) || "",
         forma_venda: form.forma_venda as FormaVenda,
@@ -1242,11 +1156,7 @@ const Carteira: React.FC = () => {
           return r.data;
         })(),
         (async () => {
-          const q = supabase
-            .from("vendas")
-            .select("*")
-            .eq("status", "encarteirada")
-            .order("created_at", { ascending: false });
+          const q = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
           if (!isAdmin) q.eq("vendedor_id", userId);
           const r = await q;
           return r.data;
@@ -1276,11 +1186,7 @@ const Carteira: React.FC = () => {
   };
 
   const reloadEncarteiradas = async () => {
-    const encQuery = supabase
-      .from("vendas")
-      .select("*")
-      .eq("status", "encarteirada")
-      .order("created_at", { ascending: false });
+    const encQuery = supabase.from("vendas").select("*").eq("status", "encarteirada").order("created_at", { ascending: false });
     if (!isAdmin) encQuery.eq("vendedor_id", userId);
     const { data: enc } = await encQuery;
     setEncarteiradas((enc ?? []) as Venda[]);
@@ -1313,7 +1219,6 @@ const Carteira: React.FC = () => {
     }
   };
 
-  // tabelas filtradas por Admin + Segmento
   const tabelaOptions = useMemo(() => {
     const prod = (form.produto as Produto) || "Automóvel";
     const admName = (form.administradora as string) || "";
@@ -1336,7 +1241,6 @@ const Carteira: React.FC = () => {
     return unique;
   }, [form.produto, form.administradora, simTables, simAdmins]);
 
-  // produtos permitidos para a administradora
   const produtoOptionsForAdmin: Produto[] = useMemo(() => {
     const admName = (form.administradora as string) || "";
     const admId = simAdmins.find((a) => a.name === admName)?.id;
@@ -1405,9 +1309,7 @@ const Carteira: React.FC = () => {
     }
   };
 
-  // ====== MÉTRICAS (metas + realizado) ======
   const loadMetrics = async (sellerId: string, year: number): Promise<void> => {
-    // -------- Metas (metas_vendedores) --------
     if (sellerId) {
       const authId = getAuthByUserId(sellerId);
       let q = supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
@@ -1436,10 +1338,7 @@ const Carteira: React.FC = () => {
 
       setMetaMensal(m);
     } else {
-      const { data: metasAll } = await supabase
-        .from("metas_vendedores")
-        .select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12")
-        .eq("ano", year);
+      const { data: metasAll } = await supabase.from("metas_vendedores").select("m01,m02,m03,m04,m05,m06,m07,m08,m09,m10,m11,m12").eq("ano", year);
 
       const sum = Array(12).fill(0);
       (metasAll ?? []).forEach((row: any) => {
@@ -1463,7 +1362,6 @@ const Carteira: React.FC = () => {
       setMetaMensal(sum);
     }
 
-    // -------- Realizado (encarteiradas ativas - canceladas) --------
     const ativasBase = supabase
       .from("vendas")
       .select("valor_venda, encarteirada_em, vendedor_id, codigo, status")
@@ -1482,17 +1380,8 @@ const Carteira: React.FC = () => {
 
     const authIdToFilter = sellerId ? getAuthByUserId(sellerId) : "";
 
-    const qAtivas = sellerId
-      ? authIdToFilter
-        ? ativasBase.eq("vendedor_id", authIdToFilter)
-        : ativasBase.eq("vendedor_id", "__none__")
-      : ativasBase;
-
-    const qCanc = sellerId
-      ? authIdToFilter
-        ? cancBase.eq("vendedor_id", authIdToFilter)
-        : cancBase.eq("vendedor_id", "__none__")
-      : cancBase;
+    const qAtivas = sellerId ? (authIdToFilter ? ativasBase.eq("vendedor_id", authIdToFilter) : ativasBase.eq("vendedor_id", "__none__")) : ativasBase;
+    const qCanc = sellerId ? (authIdToFilter ? cancBase.eq("vendedor_id", authIdToFilter) : cancBase.eq("vendedor_id", "__none__")) : cancBase;
 
     const [{ data: vendasAtivas }, { data: vendasCanc }] = await Promise.all([qAtivas, qCanc]);
 
@@ -1547,14 +1436,11 @@ const Carteira: React.FC = () => {
     setMetaForm((prev) => ({ ...prev, vendedor_id: sellerId, ano: year, m: arr }));
   };
 
-  // carrega métricas quando muda filtro/ano e quando users chega
   useEffect(() => {
     if (!isAdmin && !selectedSeller) return;
     loadMetrics(selectedSeller, selectedYear);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSeller, selectedYear, users, isAdmin]);
 
-  // Donut anual (com excedente quando estoura)
   const donutAnualData = useMemo(() => {
     if (metaAnual <= 0) {
       if (realizadoAnual > 0) return [{ name: "Realizado", value: realizadoAnual }];
@@ -1601,7 +1487,7 @@ const Carteira: React.FC = () => {
       const authId = getAuthByUserId(metaForm.vendedor_id);
 
       const payload: any = {
-        vendedor_id: metaForm.vendedor_id, // users.id
+        vendedor_id: metaForm.vendedor_id,
         auth_user_id: authId || null,
         ano: metaForm.ano,
         m01: metaForm.m[0],
@@ -1644,7 +1530,6 @@ const Carteira: React.FC = () => {
 
   const openViewVenda = (v: Venda, lead?: Lead) => setViewVendaModal({ open: true, venda: v, lead });
 
-  // ===== Editor de cota =====
   const openCotaEditor = (v: Venda) => {
     setCotaEditor({ open: true, venda: v, mode: "pick" });
 
@@ -1716,14 +1601,19 @@ const Carteira: React.FC = () => {
         patch.contemplacao_pct = null;
       } else {
         if (!ceContDate) throw new Error("Informe a data da contemplação.");
-        if (!ceContTipo) throw new Error("Selecione o tipo de contemplação (lance).");
-        const pct = parsePct4(ceContPctRaw);
-        if (pct == null) throw new Error("Informe o % do lance (ex.: 41,2542%).");
+        if (!ceContTipo) throw new Error("Selecione o tipo de contemplação.");
 
         patch.contemplada = true;
         patch.data_contemplacao = ceContDate;
         patch.contemplacao_tipo = ceContTipo;
-        patch.contemplacao_pct = Number(pct.toFixed(4));
+
+        if (ceContTipo === "Sorteio") {
+          patch.contemplacao_pct = null;
+        } else {
+          const pct = parsePct4(ceContPctRaw);
+          if (pct == null) throw new Error("Informe o % do lance (ex.: 41,2542%).");
+          patch.contemplacao_pct = Number(pct.toFixed(4));
+        }
       }
 
       await updateVenda(v.id, patch);
@@ -1772,9 +1662,7 @@ const Carteira: React.FC = () => {
   if (err) return <div className="p-6 text-red-600">Erro: {err}</div>;
 
   const tabelaOptionsForForm = tabelaOptions;
-  const adminOptionsNames = adminOptions.length
-    ? adminOptions
-    : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
+  const adminOptionsNames = adminOptions.length ? adminOptions : ["Embracon", "Banco do Brasil", "HS Consórcios", "Âncora", "Maggi"];
   const selectedTransferLead = transferLeadId ? leadMap[transferLeadId] : undefined;
 
   return (
@@ -1785,10 +1673,7 @@ const Carteira: React.FC = () => {
           <p className="text-gray-500 text-sm">Gerencie vendas e encarteiramento.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setShowModal(true)}
-            className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90"
-          >
+          <button onClick={() => setShowModal(true)} className="px-4 py-2 rounded-xl bg-[#1E293F] text-white hover:opacity-90">
             + Nova Venda
           </button>
 
@@ -1800,17 +1685,12 @@ const Carteira: React.FC = () => {
         </div>
       </div>
 
-      {/* ===================== Metas (NOVO layout clean + mobile-first) ===================== */}
       <section className="space-y-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h2 className="text-lg font-medium">Metas</h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:flex md:items-center md:gap-2">
-            <select
-              className="w-full border rounded-xl px-3 py-2"
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
-            >
+            <select className="w-full border rounded-xl px-3 py-2" value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
               {Array.from({ length: 6 }).map((_, i) => {
                 const y = new Date().getFullYear() - 1 + i;
                 return (
@@ -1822,11 +1702,7 @@ const Carteira: React.FC = () => {
             </select>
 
             {isAdmin && (
-              <select
-                className="w-full border rounded-xl px-3 py-2"
-                value={selectedSeller}
-                onChange={(e) => setSelectedSeller(e.target.value)}
-              >
+              <select className="w-full border rounded-xl px-3 py-2" value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)}>
                 <option value="">Todos</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
@@ -1838,17 +1714,13 @@ const Carteira: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Resumo anual (compacto + bonito no celular) */}
-          <div className="rounded-2xl border bg-white p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+          <div className="xl:col-span-2 rounded-2xl border bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="text-sm text-gray-500">Resumo anual</div>
-                <div className="mt-1 text-2xl font-bold text-gray-900">
-                  {pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}
-                </div>
+                <div className="text-sm font-semibold text-gray-900">Meta Anual</div>
 
-                <div className="mt-2 text-sm text-gray-700 space-y-1">
+                <div className="mt-3 text-sm text-gray-700 space-y-1">
                   <div>
                     Meta: <strong>{currency(metaAnual)}</strong>
                   </div>
@@ -1856,9 +1728,13 @@ const Carteira: React.FC = () => {
                     Realizado: <strong>{currency(realizadoAnual)}</strong>
                   </div>
                   <div>
-                    {metaAnual > 0 && realizadoAnual > metaAnual ? "Excedente" : "Restante"}:{" "}
+                    {metaAnual > 0 && realizadoAnual > metaAnual ? "Excedente" : "Falta"}:{" "}
                     <strong>{metaAnual > 0 ? currency(Math.abs(metaAnual - realizadoAnual)) : "—"}</strong>
                   </div>
+                </div>
+
+                <div className="mt-3 inline-flex items-center rounded-full bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
+                  {pctAnual == null ? "Sem percentual" : `Atingiu ${formatPctHuman(pctAnual, 1)}`}
                 </div>
               </div>
 
@@ -1867,8 +1743,7 @@ const Carteira: React.FC = () => {
                   <PieChart>
                     <Pie data={donutAnualData} innerRadius={40} outerRadius={54} dataKey="value" stroke="none">
                       {donutAnualData.map((d, i) => {
-                        if (metaAnual <= 0)
-                          return <Cell key={`anual-${i}`} fill={realizadoAnual > 0 ? "#1E293F" : "#E5E7EB"} />;
+                        if (metaAnual <= 0) return <Cell key={`anual-${i}`} fill={realizadoAnual > 0 ? "#1E293F" : "#E5E7EB"} />;
                         if (d.name === "Realizado" || d.name === "Meta") return <Cell key={`anual-${i}`} fill="#1E293F" />;
                         if (d.name === "Restante") return <Cell key={`anual-${i}`} fill="#A11C27" />;
                         return <Cell key={`anual-${i}`} fill="#B5A573" />;
@@ -1878,35 +1753,33 @@ const Carteira: React.FC = () => {
                 </ResponsiveContainer>
 
                 <div className="absolute inset-0 grid place-items-center pointer-events-none">
-                  <div className="text-sm font-bold text-gray-900">
-                    {pctAnual == null ? "—" : formatPctHuman(pctAnual, 0)}
-                  </div>
+                  <div className="text-sm font-bold text-gray-900">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 0)}</div>
                 </div>
               </div>
             </div>
 
             {isAdmin && selectedSeller && (
               <div className="mt-3 text-[11px] text-gray-500">
-                Vendedor:{" "}
-                <strong className="text-gray-800">{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong>
+                Vendedor: <strong className="text-gray-800">{users.find((u) => u.id === selectedSeller)?.nome ?? selectedSeller}</strong>
               </div>
             )}
           </div>
 
-          {/* Mensal (grid bom no celular) */}
-          <div className="lg:col-span-2 rounded-2xl border bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-sm text-gray-700">
-                Metas mensais <span className="text-xs text-gray-500">(pode passar de 100%)</span>
-              </div>
-              <div className="text-xs text-gray-500">Ano {selectedYear}</div>
-            </div>
+          <div className="xl:col-span-2">
+            <AtingimentoMeses selectedYear={selectedYear} metas={metaMensal} realizados={realizadoMensal} />
+          </div>
+        </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {MONTHS.map((m, idx) => (
-                <MiniDonut key={m} label={m} meta={metaMensal[idx] || 0} realizado={realizadoMensal[idx] || 0} />
-              ))}
-            </div>
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-semibold text-gray-900">Metas mensais</div>
+            <div className="text-xs text-gray-500">Ano {selectedYear}</div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            {MONTHS.map((m, idx) => (
+              <MiniDonut key={m} label={m} year={selectedYear} meta={metaMensal[idx] || 0} realizado={realizadoMensal[idx] || 0} />
+            ))}
           </div>
         </div>
 
@@ -1918,17 +1791,10 @@ const Carteira: React.FC = () => {
         )}
       </section>
 
-      {/* ===================== Busca ===================== */}
       <div className="flex items-center gap-3">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Pesquisar cliente pelo nome…"
-          className="w-full border rounded-xl px-3 py-2 outline-none focus:ring"
-        />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pesquisar cliente pelo nome…" className="w-full border rounded-xl px-3 py-2 outline-none focus:ring" />
       </div>
 
-      {/* ===================== Encarteirar ===================== */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Encarteirar</h2>
@@ -1974,7 +1840,6 @@ const Carteira: React.FC = () => {
         </div>
       </section>
 
-      {/* ===================== Chips Totais ===================== */}
       <div className="flex flex-wrap items-center gap-2 sm:gap-4">
         <div className="px-4 py-3 rounded-2xl bg-[#1E293F] text-white">
           Ativas: <strong className="ml-1">{currency(totalAtivas)}</strong>
@@ -1988,32 +1853,21 @@ const Carteira: React.FC = () => {
         <div className="px-4 py-3 rounded-2xl bg-red-100 text-red-900">
           Inadimplentes: <strong className="ml-1">{currency(totalInadimplentes)}</strong>
         </div>
-        <button
-          className="sm:ml-auto w-full sm:w-auto px-4 py-2 rounded-xl border hover:bg-gray-50"
-          onClick={() => setShowCarteira((s) => !s)}
-        >
+        <button className="sm:ml-auto w-full sm:w-auto px-4 py-2 rounded-xl border hover:bg-gray-50" onClick={() => setShowCarteira((s) => !s)}>
           {showCarteira ? "Ocultar carteira" : "Mostrar carteira"}
         </button>
       </div>
 
-      {/* ===================== Carteira por Cliente ===================== */}
       {showCarteira && (
         <section className="space-y-3">
           <h2 className="text-lg font-medium">Carteira</h2>
           {porCliente.length === 0 && <div className="text-gray-500">Nenhuma cota encarteirada ainda.</div>}
           {porCliente.map((group) => (
-            <ClienteBloco
-              key={group.cliente.id}
-              group={group}
-              isAdmin={isAdmin}
-              onViewVenda={(v) => openViewVenda(v, leadMap[v.lead_id])}
-              onOpenCotaEditor={openCotaEditor}
-            />
+            <ClienteBloco key={group.cliente.id} group={group} isAdmin={isAdmin} onViewVenda={(v) => openViewVenda(v, leadMap[v.lead_id])} onOpenCotaEditor={openCotaEditor} />
           ))}
         </section>
       )}
 
-      {/* ===================== Modal Nova Venda ===================== */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2034,17 +1888,8 @@ const Carteira: React.FC = () => {
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Pessoa (Lead)</label>
                 <div className="flex flex-col gap-2">
-                  <input
-                    className="w-full border rounded-xl px-3 py-2"
-                    placeholder="Buscar pelo nome do lead…"
-                    value={leadSearch}
-                    onChange={(e) => setLeadSearch(e.target.value)}
-                  />
-                  <select
-                    className="w-full border rounded-xl px-3 py-2"
-                    value={form.lead_id ?? ""}
-                    onChange={(e) => onSelectLead(e.target.value)}
-                  >
+                  <input className="w-full border rounded-xl px-3 py-2" placeholder="Buscar pelo nome do lead…" value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} />
+                  <select className="w-full border rounded-xl px-3 py-2" value={form.lead_id ?? ""} onChange={(e) => onSelectLead(e.target.value)}>
                     <option value="">Selecione um lead…</option>
                     {filteredLeads.map((l) => (
                       <option key={l.id} value={l.id}>
@@ -2057,41 +1902,22 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Telefone</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2 bg-gray-50"
-                  value={leadMap[form.lead_id as string]?.telefone ?? ""}
-                  readOnly
-                />
+                <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={leadMap[form.lead_id as string]?.telefone ?? ""} readOnly />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">CPF / CNPJ *</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={formatCPF(form.cpf ?? "")}
-                  onChange={(e) => onFormChange("cpf", e.target.value)}
-                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
-                />
+                <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(form.cpf ?? "")} onChange={(e) => onFormChange("cpf", e.target.value)} placeholder="000.000.000-00 ou 00.000.000/0000-00" />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Data da Venda</label>
-                <input
-                  type="date"
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.data_venda ?? ""}
-                  onChange={(e) => onFormChange("data_venda", e.target.value)}
-                />
+                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_venda ?? ""} onChange={(e) => onFormChange("data_venda", e.target.value)} />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Data de Nascimento</label>
-                <input
-                  type="date"
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.data_nascimento ?? ""}
-                  onChange={(e) => onFormChange("data_nascimento", e.target.value)}
-                />
+                <input type="date" className="w-full border rounded-xl px-3 py-2" value={form.data_nascimento ?? ""} onChange={(e) => onFormChange("data_nascimento", e.target.value)} />
               </div>
 
               <div>
@@ -2099,7 +1925,6 @@ const Carteira: React.FC = () => {
                 <input className="w-full border rounded-xl px-3 py-2 bg-gray-50" value={userName} readOnly />
               </div>
 
-              {/* Ordem: Administradora -> Produto -> Tabela */}
               <div>
                 <label className="text-sm text-gray-600">Administradora</label>
                 <select
@@ -2137,11 +1962,7 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Produto (Segmento)</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.produto as Produto}
-                  onChange={(e) => onFormChange("produto", e.target.value as Produto)}
-                >
+                <select className="w-full border rounded-xl px-3 py-2" value={form.produto as Produto} onChange={(e) => onFormChange("produto", e.target.value as Produto)}>
                   {produtoOptionsForAdmin.map((p) => (
                     <option key={p} value={p}>
                       {p}
@@ -2152,15 +1973,8 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Tabela</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.tabela ?? ""}
-                  onChange={(e) => onFormChange("tabela", e.target.value)}
-                  disabled={tabelaOptionsForForm.length === 0}
-                >
-                  <option value="">
-                    {tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}
-                  </option>
+                <select className="w-full border rounded-xl px-3 py-2" value={form.tabela ?? ""} onChange={(e) => onFormChange("tabela", e.target.value)} disabled={tabelaOptionsForForm.length === 0}>
+                  <option value="">{tabelaOptionsForForm.length ? "Selecione a tabela…" : "Sem tabelas para este segmento"}</option>
                   {tabelaOptionsForForm.map((t) => (
                     <option key={t.id} value={t.nome_tabela}>
                       {t.nome_tabela}
@@ -2171,11 +1985,7 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Forma da Venda</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.forma_venda as FormaVenda}
-                  onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}
-                >
+                <select className="w-full border rounded-xl px-3 py-2" value={form.forma_venda as FormaVenda} onChange={(e) => onFormChange("forma_venda", e.target.value as FormaVenda)}>
                   {FORMAS.map((f) => (
                     <option key={f} value={f}>
                       {f}
@@ -2186,30 +1996,17 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">Número da Proposta *</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.numero_proposta ?? ""}
-                  onChange={(e) => onFormChange("numero_proposta", e.target.value)}
-                />
+                <input className="w-full border rounded-xl px-3 py-2" value={form.numero_proposta ?? ""} onChange={(e) => onFormChange("numero_proposta", e.target.value)} />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Valor da Venda</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={(form.valor_venda as any) ?? ""}
-                  onChange={(e) => onFormChange("valor_venda", e.target.value)}
-                  placeholder="R$ 0,00"
-                />
+                <input className="w-full border rounded-xl px-3 py-2" value={(form.valor_venda as any) ?? ""} onChange={(e) => onFormChange("valor_venda", e.target.value)} placeholder="R$ 0,00" />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Tipo da Venda</label>
-                <select
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={form.tipo_venda ?? "Normal"}
-                  onChange={(e) => onFormChange("tipo_venda", e.target.value)}
-                >
+                <select className="w-full border rounded-xl px-3 py-2" value={form.tipo_venda ?? "Normal"} onChange={(e) => onFormChange("tipo_venda", e.target.value)}>
                   <option>Normal</option>
                   <option>Contemplada</option>
                   <option>Bolsão</option>
@@ -2219,24 +2016,13 @@ const Carteira: React.FC = () => {
               {form.tipo_venda === "Bolsão" && (
                 <div>
                   <label className="text-sm text-gray-600">Grupo (Bolsão)</label>
-                  <input
-                    className="w-full border rounded-xl px-3 py-2"
-                    value={form.grupo ?? ""}
-                    onChange={(e) => onFormChange("grupo", e.target.value)}
-                    placeholder="Informe o número do grupo"
-                  />
+                  <input className="w-full border rounded-xl px-3 py-2" value={form.grupo ?? ""} onChange={(e) => onFormChange("grupo", e.target.value)} placeholder="Informe o número do grupo" />
                 </div>
               )}
 
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Descrição da Venda</label>
-                <textarea
-                  className="w-full border rounded-xl px-3 py-2"
-                  rows={3}
-                  value={form.descricao ?? ""}
-                  onChange={(e) => onFormChange("descricao", e.target.value)}
-                  placeholder="Estratégias de contemplação, observações…"
-                />
+                <textarea className="w-full border rounded-xl px-3 py-2" rows={3} value={form.descricao ?? ""} onChange={(e) => onFormChange("descricao", e.target.value)} placeholder="Estratégias de contemplação, observações…" />
               </div>
             </div>
 
@@ -2258,16 +2044,8 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* Modal Editar Venda Pendente */}
-      <EditarVendaPendenteModal
-        open={editVendaModal.open}
-        venda={editVendaModal.venda}
-        leads={leads}
-        onClose={() => setEditVendaModal({ open: false, venda: undefined })}
-        onSave={salvarEdicaoPendente}
-      />
+      <EditarVendaPendenteModal open={editVendaModal.open} venda={editVendaModal.venda} leads={leads} onClose={() => setEditVendaModal({ open: false, venda: undefined })} onSave={salvarEdicaoPendente} />
 
-      {/* Modal Ver Venda */}
       {viewVendaModal.open && viewVendaModal.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2377,7 +2155,7 @@ const Carteira: React.FC = () => {
                   </div>
 
                   <div>
-                    <div className="text-gray-500">Tipo de lance</div>
+                    <div className="text-gray-500">Tipo de contemplação</div>
                     <div>{v.contemplacao_tipo ?? "—"}</div>
                   </div>
                   <div>
@@ -2415,7 +2193,6 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* Modal Transferir Cota */}
       {transferModal.open && transferModal.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2430,17 +2207,8 @@ const Carteira: React.FC = () => {
               <div className="md:col-span-2">
                 <label className="text-sm text-gray-600">Novo Cliente (Lead)</label>
                 <div className="flex flex-col gap-2">
-                  <input
-                    className="w-full border rounded-xl px-3 py-2"
-                    placeholder="Buscar pelo nome do lead…"
-                    value={transferSearch}
-                    onChange={(e) => setTransferSearch(e.target.value)}
-                  />
-                  <select
-                    className="w-full border rounded-xl px-3 py-2"
-                    value={transferLeadId}
-                    onChange={(e) => setTransferLeadId(e.target.value)}
-                  >
+                  <input className="w-full border rounded-xl px-3 py-2" placeholder="Buscar pelo nome do lead…" value={transferSearch} onChange={(e) => setTransferSearch(e.target.value)} />
+                  <select className="w-full border rounded-xl px-3 py-2" value={transferLeadId} onChange={(e) => setTransferLeadId(e.target.value)}>
                     <option value="">Selecione um lead…</option>
                     {filteredTransferLeads.map((l) => (
                       <option key={l.id} value={l.id}>
@@ -2453,22 +2221,12 @@ const Carteira: React.FC = () => {
 
               <div>
                 <label className="text-sm text-gray-600">CPF / CNPJ *</label>
-                <input
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={formatCPF(transferCpf)}
-                  onChange={(e) => setTransferCpf(e.target.value)}
-                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
-                />
+                <input className="w-full border rounded-xl px-3 py-2" value={formatCPF(transferCpf)} onChange={(e) => setTransferCpf(e.target.value)} placeholder="000.000.000-00 ou 00.000.000/0000-00" />
               </div>
 
               <div>
                 <label className="text-sm text-gray-600">Data de Nascimento</label>
-                <input
-                  type="date"
-                  className="w-full border rounded-xl px-3 py-2"
-                  value={transferNascimento}
-                  onChange={(e) => setTransferNascimento(e.target.value)}
-                />
+                <input type="date" className="w-full border rounded-xl px-3 py-2" value={transferNascimento} onChange={(e) => setTransferNascimento(e.target.value)} />
               </div>
 
               <div>
@@ -2497,7 +2255,6 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* Modal Cadastrar Meta */}
       {metaOverlay.open && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2589,7 +2346,6 @@ const Carteira: React.FC = () => {
         </div>
       )}
 
-      {/* Modal Editor de Cota */}
       {cotaEditor.open && cotaEditor.venda && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4">
@@ -2605,36 +2361,24 @@ const Carteira: React.FC = () => {
 
             {cotaEditor.mode === "pick" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "cota_codigo" }))}>
                   <div className="font-medium">🔢 Alterar Grupo / Cota / Código</div>
                   <div className="text-sm text-gray-600 mt-1">
                     Se mudar de <strong>00 → outro</strong> pede data de cancelamento. Se voltar <strong>outro → 00</strong> pede data de reativação.
                   </div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "transfer" }))}>
                   <div className="font-medium">⇄ Transferir</div>
                   <div className="text-sm text-gray-600 mt-1">Abre o overlay de transferência para outro lead.</div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "contemplacao" }))}>
                   <div className="font-medium">🏁 Contemplada</div>
-                  <div className="text-sm text-gray-600 mt-1">Data + Tipo (lance) + % com 4 casas (ex.: 41,2542%).</div>
+                  <div className="text-sm text-gray-600 mt-1">Data + Tipo de contemplação. Em sorteio, o percentual não é exigido.</div>
                 </button>
 
-                <button
-                  className="text-left border rounded-2xl p-4 hover:bg-gray-50"
-                  onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}
-                >
+                <button className="text-left border rounded-2xl p-4 hover:bg-gray-50" onClick={() => setCotaEditor((p) => ({ ...p, mode: "inad" }))}>
                   <div className="font-medium">⚠️ Inadimplência</div>
                   <div className="text-sm text-gray-600 mt-1">Marcar/desmarcar com data de início e data de reversão.</div>
                 </button>
@@ -2710,9 +2454,7 @@ const Carteira: React.FC = () => {
               <div className="space-y-4">
                 <div className="border rounded-2xl p-4 bg-gray-50">
                   <div className="font-medium">Você está indo para o overlay de transferência</div>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Vamos abrir a tela de transferência para selecionar o novo lead e preencher CPF/CNPJ e nascimento.
-                  </div>
+                  <div className="text-sm text-gray-600 mt-1">Vamos abrir a tela de transferência para selecionar o novo lead e preencher CPF/CNPJ e nascimento.</div>
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -2743,20 +2485,33 @@ const Carteira: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="text-sm text-gray-600">Tipo de lance</label>
-                      <select className="w-full border rounded-xl px-3 py-2" value={ceContTipo} onChange={(e) => setCeContTipo(e.target.value)}>
+                      <label className="text-sm text-gray-600">Tipo de Contemplação</label>
+                      <select
+                        className="w-full border rounded-xl px-3 py-2"
+                        value={ceContTipo}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setCeContTipo(value);
+                          if (value === "Sorteio") setCeContPctRaw("");
+                        }}
+                      >
                         <option value="">Selecione…</option>
+                        <option value="Sorteio">Sorteio</option>
                         <option value="Lance Livre">Lance Livre</option>
                         <option value="Primeiro Lance Fixo">Primeiro Lance Fixo</option>
                         <option value="Segundo Lance Fixo">Segundo Lance Fixo</option>
                       </select>
                     </div>
 
-                    <div>
-                      <label className="text-sm text-gray-600">% do lance (4 casas)</label>
-                      <input className="w-full border rounded-xl px-3 py-2" value={ceContPctRaw} onChange={(e) => setCeContPctRaw(e.target.value)} placeholder="Ex.: 41,2542%" />
-                      <div className="text-xs text-gray-500 mt-1">Será salvo como <code>numeric(9,4)</code>.</div>
-                    </div>
+                    {ceContTipo !== "Sorteio" && (
+                      <div>
+                        <label className="text-sm text-gray-600">% do lance (4 casas)</label>
+                        <input className="w-full border rounded-xl px-3 py-2" value={ceContPctRaw} onChange={(e) => setCeContPctRaw(e.target.value)} placeholder="Ex.: 41,2542%" />
+                        <div className="text-xs text-gray-500 mt-1">
+                          Será salvo como <code>numeric(9,4)</code>.
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

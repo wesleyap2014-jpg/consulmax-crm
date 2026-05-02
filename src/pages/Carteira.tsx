@@ -77,20 +77,25 @@ const currency = (n: number) =>
     style: "currency",
     currency: "BRL",
     maximumFractionDigits: 2,
-  }).format(n);
+  }).format(n || 0);
 
 const formatNumberBR = (n: number) =>
   new Intl.NumberFormat("pt-BR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(n);
+  }).format(n || 0);
 
 const formatPctHuman = (n: number, digits = 1) =>
-  `${new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: digits }).format(n)}%`;
+  `${new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(n || 0)}%`;
 
 const isAtiva = (codigo: string | null) => (codigo?.trim() ?? "") === "00";
 
 const onlyDigits = (s: string) => (s || "").replace(/\D/g, "");
+
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 const formatDateBR = (isoDate?: string | null) => {
   if (!isoDate) return "—";
@@ -285,6 +290,91 @@ const monthAlreadyHappened = (year: number, monthIndex: number) => {
   if (year < currentYear) return true;
   if (year > currentYear) return false;
   return monthIndex <= currentMonth;
+};
+
+const annualExpectedPercent = (year: number) => {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  if (year < currentYear) return 100;
+  if (year > currentYear) return 0;
+
+  const start = new Date(year, 0, 1);
+  const end = new Date(year + 1, 0, 1);
+  const totalMs = end.getTime() - start.getTime();
+
+  const todayEnd = new Date(year, now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  const elapsedMs = todayEnd.getTime() - start.getTime();
+
+  return clamp((elapsedMs / totalMs) * 100, 0, 100);
+};
+
+type PaceStatus = {
+  label: "Vencendo" | "No jogo" | "Atenção" | "Risco" | "Virada necessária" | "Sem meta";
+  description: string;
+  pillClass: string;
+  barClass: string;
+  textClass: string;
+};
+
+const getPaceStatus = (diffPct: number | null, hasMeta: boolean): PaceStatus => {
+  if (!hasMeta || diffPct == null || !Number.isFinite(diffPct)) {
+    return {
+      label: "Sem meta",
+      description: "Cadastre uma meta anual para acompanhar o ritmo do jogo.",
+      pillClass: "bg-gray-100 text-gray-700 border-gray-200",
+      barClass: "bg-gray-300",
+      textClass: "text-gray-700",
+    };
+  }
+
+  if (diffPct >= 0) {
+    return {
+      label: "Vencendo",
+      description: "Você está acima do ritmo esperado. Continue acelerando para abrir vantagem.",
+      pillClass: "bg-green-100 text-green-800 border-green-200",
+      barClass: "bg-green-600",
+      textClass: "text-green-800",
+    };
+  }
+
+  if (diffPct >= -5) {
+    return {
+      label: "No jogo",
+      description: "Você está muito próximo do ritmo. Pequenos avanços já colocam a meta em vantagem.",
+      pillClass: "bg-blue-100 text-blue-800 border-blue-200",
+      barClass: "bg-blue-600",
+      textClass: "text-blue-800",
+    };
+  }
+
+  if (diffPct >= -15) {
+    return {
+      label: "Atenção",
+      description: "Você está abaixo do ritmo, mas ainda em zona recuperável. Priorize oportunidades quentes.",
+      pillClass: "bg-amber-100 text-amber-800 border-amber-200",
+      barClass: "bg-amber-500",
+      textClass: "text-amber-800",
+    };
+  }
+
+  if (diffPct >= -30) {
+    return {
+      label: "Risco",
+      description: "O jogo está ficando perigoso. É hora de intensificar follow-ups e propostas.",
+      pillClass: "bg-orange-100 text-orange-800 border-orange-200",
+      barClass: "bg-orange-600",
+      textClass: "text-orange-800",
+    };
+  }
+
+  return {
+    label: "Virada necessária",
+    description: "Você está muito abaixo do ritmo esperado. Foque em ações de impacto imediato.",
+    pillClass: "bg-red-100 text-red-800 border-red-200",
+    barClass: "bg-red-700",
+    textClass: "text-red-800",
+  };
 };
 
 type LinhaEncarteirarProps = {
@@ -823,6 +913,18 @@ const Carteira: React.FC = () => {
     if (!Number.isFinite(p)) return null;
     return p;
   }, [metaAnual, realizadoAnual]);
+
+  const expectedAnnualPct = useMemo(() => annualExpectedPercent(selectedYear), [selectedYear]);
+  const expectedAnnualValue = useMemo(() => (metaAnual > 0 ? metaAnual * (expectedAnnualPct / 100) : 0), [metaAnual, expectedAnnualPct]);
+  const annualPaceGapValue = useMemo(() => realizadoAnual - expectedAnnualValue, [realizadoAnual, expectedAnnualValue]);
+  const annualPaceGapPct = useMemo(() => {
+    if (metaAnual <= 0 || pctAnual == null) return null;
+    return pctAnual - expectedAnnualPct;
+  }, [metaAnual, pctAnual, expectedAnnualPct]);
+
+  const paceStatus = useMemo(() => getPaceStatus(annualPaceGapPct, metaAnual > 0), [annualPaceGapPct, metaAnual]);
+  const annualFillPct = useMemo(() => clamp(pctAnual ?? 0, 0, 100), [pctAnual]);
+  const annualExpectedMarkerPct = useMemo(() => clamp(expectedAnnualPct, 0, 100), [expectedAnnualPct]);
 
   const [leadSearch, setLeadSearch] = useState<string>("");
 
@@ -1716,7 +1818,7 @@ const Carteira: React.FC = () => {
 
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
           <div className="xl:col-span-2 rounded-2xl border bg-white p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.7fr_120px] gap-5 items-center">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-gray-900">Meta Anual</div>
 
@@ -1738,7 +1840,57 @@ const Carteira: React.FC = () => {
                 </div>
               </div>
 
-              <div className="h-28 w-28 relative shrink-0">
+              <div className="min-w-0">
+                <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
+                  <span>
+                    Atingido: <strong className="text-gray-900">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}</strong>
+                  </span>
+                  <span>
+                    Esperado: <strong className="text-gray-900">{formatPctHuman(expectedAnnualPct, 1)}</strong>
+                  </span>
+                </div>
+
+                <div className="relative h-5 rounded-full bg-gray-100 border overflow-hidden">
+                  <div
+                    className={`absolute left-0 top-0 h-full rounded-full ${paceStatus.barClass}`}
+                    style={{ width: `${annualFillPct}%` }}
+                    title={`Atingido: ${pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}`}
+                  />
+
+                  <div
+                    className="absolute top-[-4px] h-7 w-[3px] rounded-full bg-[#1E293F]"
+                    style={{ left: `calc(${annualExpectedMarkerPct}% - 1.5px)` }}
+                    title={`Esperado: ${formatPctHuman(expectedAnnualPct, 1)}`}
+                  />
+
+                  <div
+                    className="absolute top-[3px] h-3 w-3 rounded-full bg-white border-2 border-[#1E293F]"
+                    style={{ left: `calc(${annualExpectedMarkerPct}% - 6px)` }}
+                  />
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-600">
+                  <div className="rounded-xl bg-gray-50 px-3 py-2">
+                    Esperado até hoje
+                    <div className="text-sm font-semibold text-gray-900">{currency(expectedAnnualValue)}</div>
+                  </div>
+
+                  <div className="rounded-xl bg-gray-50 px-3 py-2">
+                    Ritmo do jogo
+                    <div className={`text-sm font-semibold ${paceStatus.textClass}`}>
+                      {annualPaceGapValue >= 0 ? "+" : "-"}
+                      {currency(Math.abs(annualPaceGapValue))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`mt-3 rounded-2xl border px-3 py-2 ${paceStatus.pillClass}`}>
+                  <div className="text-sm font-bold">{paceStatus.label}</div>
+                  <div className="text-xs mt-0.5">{paceStatus.description}</div>
+                </div>
+              </div>
+
+              <div className="h-28 w-28 relative mx-auto shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={donutAnualData} innerRadius={40} outerRadius={54} dataKey="value" stroke="none">

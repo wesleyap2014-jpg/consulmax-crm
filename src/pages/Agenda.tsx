@@ -71,6 +71,8 @@ const PAGE_SIZE = 20;
 const TIPOS: AgendaTipo[] = ["aniversario", "contato", "assembleia", "reuniao", "visita", "outro"];
 const ORIGENS: AgendaOrigem[] = ["auto", "manual"];
 
+const CALENDAR_DATE_TYPES: AgendaTipo[] = ["aniversario", "assembleia"];
+
 const C = {
   ruby: "#A11C27",
   navy: "#1E293F",
@@ -80,7 +82,7 @@ const C = {
   text: "#0f172a",
   muted: "#64748b",
   line: "#e2e8f0",
-  card: "rgba(255,255,255,0.58)",
+  card: "rgba(255,255,255,0.62)",
 };
 
 /** ====== Helpers ====== */
@@ -102,7 +104,9 @@ function formatUTCDateBR(iso: string) {
 
 function fmtDateTimeSmart(iso?: string | null) {
   if (!iso) return "—";
+
   if (isMidnightUTC(iso)) return formatUTCDateBR(iso);
+
   return new Date(iso).toLocaleString("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -114,25 +118,53 @@ function fmtDateTimeSmart(iso?: string | null) {
 
 function fmtDateSmart(iso?: string | null) {
   if (!iso) return "—";
+
   if (isMidnightUTC(iso)) return formatUTCDateBR(iso);
+
   return new Date(iso).toLocaleDateString("pt-BR");
 }
 
 function fmtHour(iso?: string | null) {
   if (!iso) return "—";
+
   if (isMidnightUTC(iso)) return "Dia todo";
+
   return new Date(iso).toLocaleTimeString("pt-BR", {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-const defaultEndFromStart = (isoStart: string) =>
-  new Date(new Date(isoStart).getTime() + 30 * 60 * 1000).toISOString();
+function todayKey() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
-const toISODate = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function toISODate(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
+function addDays(d: Date, days: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function startOfMonthDate(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+function endOfMonthDate(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
+
+/**
+ * Eventos normais usam dia local.
+ * Ex.: reunião marcada hoje às 10h no Brasil precisa cair no hoje local.
+ */
 function localStartOfDayISO(dateStr: string) {
   const d = new Date(`${dateStr}T00:00:00`);
   return d.toISOString();
@@ -150,31 +182,34 @@ function isoRangeForLocalDay(dateStr: string) {
   };
 }
 
-function startOfMonthDate(d = new Date()) {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
+/**
+ * Aniversários e assembleias automáticas/all-day precisam usar a data nominal UTC.
+ * Isso evita o bug:
+ * - aniversário de amanhã aparecendo como hoje;
+ * - aniversário de hoje sumindo do painel no decorrer do dia.
+ */
+function utcDayRange(dateStr: string) {
+  return {
+    startIso: `${dateStr}T00:00:00.000Z`,
+    endIso: `${dateStr}T23:59:59.999Z`,
+  };
 }
 
-function endOfMonthDate(d = new Date()) {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+function utcRangeByDateStrings(dateFrom: string, dateTo: string) {
+  return {
+    startIso: `${dateFrom}T00:00:00.000Z`,
+    endIso: `${dateTo}T23:59:59.999Z`,
+  };
 }
 
-function todayKey() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function addDays(d: Date, days: number) {
-  const x = new Date(d);
-  x.setDate(x.getDate() + days);
-  return x;
+function defaultEndFromStart(isoStart: string) {
+  return new Date(new Date(isoStart).getTime() + 30 * 60 * 1000).toISOString();
 }
 
 function whatsappUrl(raw?: string | null) {
   const d = onlyDigits(String(raw || ""));
   if (!d) return null;
+
   const withCountry = d.startsWith("55") ? d : `55${d}`;
   return `https://wa.me/${withCountry}`;
 }
@@ -182,6 +217,7 @@ function whatsappUrl(raw?: string | null) {
 function waWithText(phone?: string | null, text?: string) {
   const base = whatsappUrl(phone);
   if (!base) return null;
+
   return text ? `${base}?text=${encodeURIComponent(text)}` : base;
 }
 
@@ -202,22 +238,103 @@ function eventPhone(ev: AgendaEvento) {
   return ev.cliente?.telefone || ev.lead?.telefone || null;
 }
 
-function eventIsLate(ev: AgendaEvento) {
-  if (ev.tipo === "aniversario" || ev.tipo === "assembleia") return false;
-  if (ev.origem !== "manual") return false;
-  return new Date(ev.inicio_at).getTime() < Date.now();
+function eventIsCalendarDateType(ev: AgendaEvento) {
+  return CALENDAR_DATE_TYPES.includes(ev.tipo);
+}
+
+function eventDateKey(ev: AgendaEvento) {
+  const d = new Date(ev.inicio_at);
+
+  if (eventIsCalendarDateType(ev) || isMidnightUTC(ev.inicio_at)) {
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  return toISODate(d);
 }
 
 function eventIsToday(ev: AgendaEvento) {
-  const { startIso, endIso } = isoRangeForLocalDay(todayKey());
-  const t = new Date(ev.inicio_at).getTime();
-  return t >= new Date(startIso).getTime() && t <= new Date(endIso).getTime();
+  return eventDateKey(ev) === todayKey();
+}
+
+function eventIsLate(ev: AgendaEvento) {
+  if (eventIsCalendarDateType(ev)) return false;
+  if (ev.origem !== "manual") return false;
+
+  return new Date(ev.inicio_at).getTime() < Date.now();
 }
 
 function statusBadge(ev: AgendaEvento) {
-  if (eventIsToday(ev)) return { label: "Hoje", bg: "#E0CE8C33", color: "#7a641f", border: "#E0CE8C" };
-  if (eventIsLate(ev)) return { label: "Atrasado", bg: "#A11C2722", color: C.ruby, border: "#A11C2755" };
-  return { label: "Programado", bg: "#1E293F14", color: C.navy, border: "#1E293F33" };
+  if (eventIsToday(ev)) {
+    return {
+      label: "Hoje",
+      bg: "#E0CE8C33",
+      color: "#7a641f",
+      border: "#E0CE8C",
+    };
+  }
+
+  if (eventIsLate(ev)) {
+    return {
+      label: "Atrasado",
+      bg: "#A11C2722",
+      color: C.ruby,
+      border: "#A11C2755",
+    };
+  }
+
+  return {
+    label: "Programado",
+    bg: "#1E293F14",
+    color: C.navy,
+    border: "#1E293F33",
+  };
+}
+
+function monthNamePt(monthIndex: number) {
+  const nomes = [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ];
+
+  return nomes[monthIndex] || "";
+}
+
+function makeMonthDays(year: number, monthIndex: number) {
+  const first = new Date(year, monthIndex, 1);
+  const last = new Date(year, monthIndex + 1, 0);
+  const startWeekDay = first.getDay();
+  const daysInMonth = last.getDate();
+
+  const items: Array<{ date: Date | null; key: string }> = [];
+
+  for (let i = 0; i < startWeekDay; i++) {
+    items.push({ date: null, key: `empty-${i}` });
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(year, monthIndex, day);
+    items.push({ date, key: toISODate(date) });
+  }
+
+  return items;
+}
+
+function sameDateKey(a: Date, b = new Date()) {
+  return toISODate(a) === toISODate(b);
+}
+
+function setTimeOnDate(dateStr: string, hour: number, minute: number) {
+  return `${dateStr}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 /** Baixa um .ics de um único evento manual */
@@ -252,13 +369,24 @@ function downloadICS(ev: AgendaEvento) {
   const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
+
   a.href = url;
   a.download = `${(ev.titulo || ev.tipo || "evento").replace(/\s+/g, "-")}.ics`;
+
   document.body.appendChild(a);
   a.click();
   a.remove();
+
   URL.revokeObjectURL(url);
 }
+
+/** ====== Select base ====== */
+const EVENT_SELECT = `
+  id,tipo,titulo,cliente_id,lead_id,user_id,inicio_at,fim_at,videocall_url,origem,relacao_id,created_at,updated_at,
+  cliente:clientes!agenda_eventos_cliente_id_fkey (id,nome,telefone,observacoes),
+  lead:leads!agenda_eventos_lead_id_fkey (id,nome,telefone,descricao),
+  owner:users!agenda_eventos_user_id_fkey (id,auth_user_id,nome,role)
+`;
 
 /** ====== Página ====== */
 export default function AgendaPage() {
@@ -276,8 +404,10 @@ export default function AgendaPage() {
   const [fOrigem, setFOrigem] = useState<"" | AgendaOrigem>("");
   const [fUser, setFUser] = useState<string>("");
 
+  const [eventsAll, setEventsAll] = useState<AgendaEvento[]>([]);
   const [events, setEvents] = useState<AgendaEvento[]>([]);
   const [todayEvents, setTodayEvents] = useState<AgendaEvento[]>([]);
+
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [clientes, setClientes] = useState<ClienteLite[]>([]);
@@ -285,6 +415,7 @@ export default function AgendaPage() {
 
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState<number>(0);
+
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / PAGE_SIZE)), [total]);
 
   const [editing, setEditing] = useState<AgendaEvento | null>(null);
@@ -302,6 +433,13 @@ export default function AgendaPage() {
   const [mustOpenAgenda, setMustOpenAgenda] = useState<{ has: boolean; birthdays: AgendaEvento[] } | null>(null);
 
   const refreshTimer = useRef<number | null>(null);
+
+  /** Calendário de novo evento */
+  const nowForCalendar = useMemo(() => new Date(), []);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(nowForCalendar.getMonth());
+  const [calendarYear, setCalendarYear] = useState(nowForCalendar.getFullYear());
+  const [selectedDateForNew, setSelectedDateForNew] = useState<string>(todayKey());
 
   /** Criar manual */
   const [creating, setCreating] = useState(false);
@@ -329,7 +467,10 @@ export default function AgendaPage() {
       const { data } = await supabase.auth.getUser();
       const user = data?.user;
       const role = (user?.app_metadata as any)?.role || "viewer";
-      if (user) setMe({ id: user.id, role });
+
+      if (user) {
+        setMe({ id: user.id, role });
+      }
     })();
   }, []);
 
@@ -352,18 +493,176 @@ export default function AgendaPage() {
           .from("clientes")
           .select("id,nome,telefone,observacoes")
           .order("nome", { ascending: true })
-          .limit(300),
+          .limit(500),
+
         supabase
           .from("leads")
           .select("id,nome,telefone,descricao")
           .order("nome", { ascending: true })
-          .limit(300),
+          .limit(500),
       ]);
 
       setClientes((cls || []) as any);
       setLeads((lds || []) as any);
     })();
   }, [me?.id, isAdmin]);
+
+  /** Helpers de query */
+  function applyCommonFilters(query: any) {
+    let q = query;
+
+    if (fOrigem) q = q.eq("origem", fOrigem);
+    if (isAdmin && fUser) q = q.eq("user_id", fUser);
+
+    return q;
+  }
+
+  async function fetchCalendarDateEvents(tipo: AgendaTipo, fromDate: string, toDate: string) {
+    const { startIso, endIso } = utcRangeByDateStrings(fromDate, toDate);
+
+    let query = supabase
+      .from("agenda_eventos")
+      .select(EVENT_SELECT)
+      .eq("tipo", tipo)
+      .gte("inicio_at", startIso)
+      .lte("inicio_at", endIso)
+      .order("inicio_at", { ascending: true })
+      .limit(1000);
+
+    query = applyCommonFilters(query);
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    return (data || []) as any as AgendaEvento[];
+  }
+
+  async function fetchNormalEvents(fromDate: string, toDate: string, tipo?: AgendaTipo | "") {
+    const startFromIso = localStartOfDayISO(fromDate);
+    const endToIso = localEndOfDayISO(toDate);
+
+    let query = supabase
+      .from("agenda_eventos")
+      .select(EVENT_SELECT)
+      .gte("inicio_at", startFromIso)
+      .lte("inicio_at", endToIso)
+      .order("inicio_at", { ascending: true })
+      .limit(1000);
+
+    if (tipo) {
+      query = query.eq("tipo", tipo);
+    } else {
+      query = query.neq("tipo", "aniversario").neq("tipo", "assembleia");
+    }
+
+    query = applyCommonFilters(query);
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    return (data || []) as any as AgendaEvento[];
+  }
+
+  function mergeEvents(listas: AgendaEvento[][]) {
+    const map = new Map<string, AgendaEvento>();
+
+    listas.flat().forEach((ev) => {
+      if (!ev?.id) return;
+      map.set(ev.id, ev);
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      const da = eventDateKey(a);
+      const db = eventDateKey(b);
+
+      if (da !== db) return da.localeCompare(db);
+
+      return new Date(a.inicio_at).getTime() - new Date(b.inicio_at).getTime();
+    });
+  }
+
+  function paginateRows(rows: AgendaEvento[], targetPage: number) {
+    const start = (targetPage - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+
+    setEventsAll(rows);
+    setTotal(rows.length);
+    setEvents(rows.slice(start, end));
+    setPage(targetPage);
+  }
+
+  /** Grade principal */
+  async function loadEvents(targetPage = 1) {
+    if (!dateFrom || !dateTo) {
+      alert("Informe período de início e fim.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      let rows: AgendaEvento[] = [];
+
+      if (fTipo === "aniversario") {
+        rows = await fetchCalendarDateEvents("aniversario", dateFrom, dateTo);
+      } else if (fTipo === "assembleia") {
+        rows = await fetchCalendarDateEvents("assembleia", dateFrom, dateTo);
+      } else if (fTipo) {
+        rows = await fetchNormalEvents(dateFrom, dateTo, fTipo);
+      } else {
+        const [normais, aniversarios, assembleias] = await Promise.all([
+          fetchNormalEvents(dateFrom, dateTo),
+          fetchCalendarDateEvents("aniversario", dateFrom, dateTo),
+          fetchCalendarDateEvents("assembleia", dateFrom, dateTo),
+        ]);
+
+        rows = mergeEvents([normais, aniversarios, assembleias]);
+      }
+
+      paginateRows(rows, targetPage);
+    } catch (e: any) {
+      alert("Erro ao carregar agenda: " + (e?.message || "erro desconhecido"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadTodayEvents() {
+    const today = todayKey();
+
+    try {
+      const [normais, aniversarios, assembleias] = await Promise.all([
+        fetchNormalEvents(today, today),
+        fetchCalendarDateEvents("aniversario", today, today),
+        fetchCalendarDateEvents("assembleia", today, today),
+      ]);
+
+      const rows = mergeEvents([normais, aniversarios, assembleias]);
+      setTodayEvents(rows);
+    } catch {
+      setTodayEvents([]);
+    }
+  }
+
+  useEffect(() => {
+    if (!me?.id) return;
+
+    loadEvents(1);
+    loadTodayEvents();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.id]);
+
+  useEffect(() => {
+    if (!me?.id) return;
+
+    loadEvents(1);
+    loadTodayEvents();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo, fTipo, fOrigem, fUser, isAdmin]);
 
   /** Abas rápidas */
   function applyViewMode(mode: ViewMode) {
@@ -421,100 +720,14 @@ export default function AgendaPage() {
     }
   }
 
-  /** Grade principal */
-  async function loadEvents(targetPage = 1) {
-    if (!dateFrom || !dateTo) {
-      alert("Informe período de início e fim.");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const from = (targetPage - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-
-      const { startIso: startFromIso } = isoRangeForLocalDay(dateFrom);
-      const { endIso: endToIso } = isoRangeForLocalDay(dateTo);
-
-      let query = supabase
-        .from("agenda_eventos")
-        .select(
-          `
-          id,tipo,titulo,cliente_id,lead_id,user_id,inicio_at,fim_at,videocall_url,origem,relacao_id,created_at,updated_at,
-          cliente:clientes!agenda_eventos_cliente_id_fkey (id,nome,telefone,observacoes),
-          lead:leads!agenda_eventos_lead_id_fkey (id,nome,telefone,descricao),
-          owner:users!agenda_eventos_user_id_fkey (id,auth_user_id,nome,role)
-        `,
-          { count: "exact" }
-        )
-        .gte("inicio_at", startFromIso)
-        .lte("inicio_at", endToIso)
-        .order("inicio_at", { ascending: true });
-
-      if (fTipo) query = query.eq("tipo", fTipo);
-      if (fOrigem) query = query.eq("origem", fOrigem);
-      if (isAdmin && fUser) query = query.eq("user_id", fUser);
-
-      const { data, error, count } = await query.range(from, to);
-
-      if (error) {
-        alert("Erro ao carregar agenda: " + error.message);
-        return;
-      }
-
-      setEvents((data || []) as any);
-      setTotal(count || 0);
-      setPage(targetPage);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadTodayEvents() {
-    const { startIso, endIso } = isoRangeForLocalDay(todayKey());
-
-    let q = supabase
-      .from("agenda_eventos")
-      .select(
-        `
-        id,tipo,titulo,cliente_id,lead_id,user_id,inicio_at,fim_at,videocall_url,origem,relacao_id,created_at,updated_at,
-        cliente:clientes!agenda_eventos_cliente_id_fkey (id,nome,telefone,observacoes),
-        lead:leads!agenda_eventos_lead_id_fkey (id,nome,telefone,descricao),
-        owner:users!agenda_eventos_user_id_fkey (id,auth_user_id,nome,role)
-      `
-      )
-      .gte("inicio_at", startIso)
-      .lte("inicio_at", endIso)
-      .order("inicio_at", { ascending: true });
-
-    if (isAdmin && fUser) q = q.eq("user_id", fUser);
-
-    const { data } = await q.limit(80);
-    setTodayEvents((data || []) as any);
-  }
-
-  useEffect(() => {
-    if (!me?.id) return;
-    loadEvents(1);
-    loadTodayEvents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.id]);
-
-  useEffect(() => {
-    if (!me?.id) return;
-    loadEvents(1);
-    loadTodayEvents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, fTipo, fOrigem, fUser, isAdmin]);
-
-  /** Painéis rápidos: próximos 120 dias */
+  /** Painéis rápidos */
   async function loadSideLists() {
     setLoadingSide(true);
 
     try {
-      const nowIso = new Date().toISOString();
-      const toIso = new Date(Date.now() + 120 * 24 * 60 * 60 * 1000).toISOString();
+      const fromDate = todayKey();
+      const toDate = toISODate(addDays(new Date(), 120));
+      const { startIso, endIso } = utcRangeByDateStrings(fromDate, toDate);
 
       let qBirth = supabase
         .from("agenda_eventos")
@@ -524,10 +737,10 @@ export default function AgendaPage() {
           lead:leads!agenda_eventos_lead_id_fkey (id,nome,telefone,descricao)
         `)
         .eq("tipo", "aniversario")
-        .gte("inicio_at", nowIso)
-        .lte("inicio_at", toIso)
+        .gte("inicio_at", startIso)
+        .lte("inicio_at", endIso)
         .order("inicio_at", { ascending: true })
-        .limit(80);
+        .limit(100);
 
       let qAsm = supabase
         .from("agenda_eventos")
@@ -535,10 +748,10 @@ export default function AgendaPage() {
           id,tipo,titulo,cliente_id,lead_id,user_id,inicio_at,fim_at,videocall_url,origem,relacao_id,created_at,updated_at
         `)
         .eq("tipo", "assembleia")
-        .gte("inicio_at", nowIso)
-        .lte("inicio_at", toIso)
+        .gte("inicio_at", startIso)
+        .lte("inicio_at", endIso)
         .order("inicio_at", { ascending: true })
-        .limit(80);
+        .limit(100);
 
       if (quickSearch) {
         qBirth = qBirth.ilike("titulo", `%${quickSearch}%`);
@@ -556,6 +769,7 @@ export default function AgendaPage() {
 
   useEffect(() => {
     loadSideLists();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickSearch]);
 
@@ -565,6 +779,7 @@ export default function AgendaPage() {
       .channel("agenda-realtime-all")
       .on("postgres_changes", { event: "*", schema: "public", table: "agenda_eventos" }, () => {
         if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+
         refreshTimer.current = window.setTimeout(() => {
           loadEvents(page);
           loadTodayEvents();
@@ -579,7 +794,7 @@ export default function AgendaPage() {
     };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, fUser, isAdmin]);
+  }, [page, fUser, isAdmin, dateFrom, dateTo, fTipo, fOrigem]);
 
   /** Modal obrigatório ao entrar quando houver evento hoje */
   useEffect(() => {
@@ -589,33 +804,72 @@ export default function AgendaPage() {
       const key = `agenda:shown:${todayKey()}`;
       if (localStorage.getItem(key)) return;
 
-      const { startIso, endIso } = isoRangeForLocalDay(todayKey());
+      const today = todayKey();
+      const { startIso, endIso } = utcDayRange(today);
 
       const { data: bdays } = await supabase
         .from("agenda_eventos")
-        .select("id,tipo,titulo,inicio_at,cliente:clientes!agenda_eventos_cliente_id_fkey(id,nome,telefone)")
+        .select(`
+          id,tipo,titulo,inicio_at,
+          cliente:clientes!agenda_eventos_cliente_id_fkey(id,nome,telefone)
+        `)
         .eq("tipo", "aniversario")
         .gte("inicio_at", startIso)
         .lte("inicio_at", endIso)
         .limit(20);
 
-      const { data: evs } = await supabase
-        .from("agenda_eventos")
-        .select("id,titulo")
-        .gte("inicio_at", startIso)
-        .lte("inicio_at", endIso)
-        .limit(20);
+      const [normais, assembleias] = await Promise.all([
+        fetchNormalEvents(today, today),
+        fetchCalendarDateEvents("assembleia", today, today),
+      ]);
 
-      const hasToday = (bdays?.length || 0) > 0 || (evs?.length || 0) > 0;
+      const hasToday = (bdays?.length || 0) > 0 || normais.length > 0 || assembleias.length > 0;
 
       if (hasToday) {
         setMustOpenAgenda({ has: true, birthdays: (bdays || []) as any });
+
         if (ENABLE_DESKTOP_NOTIF) {
-          tryNotifyDesktop(bdays || [], evs || []);
+          tryNotifyDesktop(bdays || [], [...normais, ...assembleias]);
         }
       }
     })();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.id]);
+
+  /** Calendário overlay */
+  function openCalendarOverlay() {
+    const n = new Date();
+
+    setCalendarMonth(n.getMonth());
+    setCalendarYear(n.getFullYear());
+    setCalendarOpen(true);
+  }
+
+  function moveCalendarMonth(delta: number) {
+    const d = new Date(calendarYear, calendarMonth + delta, 1);
+
+    setCalendarYear(d.getFullYear());
+    setCalendarMonth(d.getMonth());
+  }
+
+  function selectCalendarDay(date: Date) {
+    const key = toISODate(date);
+
+    setSelectedDateForNew(key);
+    setNewStart(setTimeOnDate(key, 9, 0));
+    setNewEnd(setTimeOnDate(key, 9, 30));
+    setNewTipo("reuniao");
+    setNewTitle("");
+    setNewLink("");
+    setNewRelationKind("none");
+    setNewClienteId("");
+    setNewLeadId("");
+    setNewSearch("");
+
+    setCalendarOpen(false);
+    setCreating(true);
+  }
 
   /** Reagendar/excluir */
   function openEdit(ev: AgendaEvento) {
@@ -672,8 +926,11 @@ export default function AgendaPage() {
       }
 
       closeEdit();
+
       await loadEvents(page);
       await loadTodayEvents();
+      await loadSideLists();
+
       alert("Evento reagendado!");
     } finally {
       setLoading(false);
@@ -703,6 +960,8 @@ export default function AgendaPage() {
 
       await loadEvents(page);
       await loadTodayEvents();
+      await loadSideLists();
+
       alert("Evento excluído.");
     } finally {
       setLoading(false);
@@ -711,7 +970,6 @@ export default function AgendaPage() {
 
   async function createManual() {
     if (!newTitle.trim()) return alert("Informe o título.");
-
     if (!newStart || !newEnd) return alert("Informe início e fim.");
 
     const startIso = new Date(newStart).toISOString();
@@ -803,6 +1061,7 @@ export default function AgendaPage() {
     try {
       if (noteEvent.cliente_id) {
         const atual = noteEvent.cliente?.observacoes || "";
+
         const { error } = await supabase
           .from("clientes")
           .update({ observacoes: `${atual}${linha}` })
@@ -814,6 +1073,7 @@ export default function AgendaPage() {
         }
       } else if (noteEvent.lead_id) {
         const atual = noteEvent.lead?.descricao || "";
+
         const { error } = await supabase
           .from("leads")
           .update({ descricao: `${atual}${linha}` })
@@ -829,8 +1089,10 @@ export default function AgendaPage() {
       }
 
       closeNote();
+
       await loadEvents(page);
       await loadTodayEvents();
+
       alert("Nota registrada no histórico.");
     } finally {
       setLoading(false);
@@ -857,33 +1119,44 @@ export default function AgendaPage() {
   );
 
   const lateEvents = useMemo(
-    () => events.filter(eventIsLate),
-    [events]
+    () => eventsAll.filter(eventIsLate),
+    [eventsAll]
   );
 
   const filteredClientes = useMemo(() => {
     const q = newSearch.trim().toLowerCase();
-    if (!q) return clientes.slice(0, 80);
+
+    if (!q) return clientes.slice(0, 120);
+
     return clientes
       .filter((c) => `${c.nome || ""} ${c.telefone || ""}`.toLowerCase().includes(q))
-      .slice(0, 80);
+      .slice(0, 120);
   }, [clientes, newSearch]);
 
   const filteredLeads = useMemo(() => {
     const q = newSearch.trim().toLowerCase();
-    if (!q) return leads.slice(0, 80);
+
+    if (!q) return leads.slice(0, 120);
+
     return leads
       .filter((l) => `${l.nome || ""} ${l.telefone || ""}`.toLowerCase().includes(q))
-      .slice(0, 80);
+      .slice(0, 120);
   }, [leads, newSearch]);
+
+  const calendarDays = useMemo(
+    () => makeMonthDays(calendarYear, calendarMonth),
+    [calendarYear, calendarMonth]
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!editing && !noteEvent && !mustOpenAgenda?.has) return;
+      if (!editing && !noteEvent && !mustOpenAgenda?.has && !calendarOpen && !creating) return;
 
       if (e.key === "Escape") {
         if (editing) closeEdit();
         if (noteEvent) closeNote();
+        if (calendarOpen) setCalendarOpen(false);
+        if (creating) setCreating(false);
         if (mustOpenAgenda?.has) setMustOpenAgenda(null);
       }
 
@@ -893,9 +1166,11 @@ export default function AgendaPage() {
     }
 
     window.addEventListener("keydown", onKey);
+
     return () => window.removeEventListener("keydown", onKey);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, noteEvent, mustOpenAgenda?.has]);
+  }, [editing, noteEvent, mustOpenAgenda?.has, calendarOpen, creating]);
 
   return (
     <div className="agenda-wrap" style={{ maxWidth: 1240, margin: "0 auto", padding: 16 }}>
@@ -908,18 +1183,29 @@ export default function AgendaPage() {
       <header style={hero}>
         <div>
           <p style={eyebrow}>CRM Consulmax</p>
-          <h1 style={{ margin: "2px 0 6px 0", color: C.navy, letterSpacing: -0.4 }}>Agenda Operacional</h1>
+          <h1 style={{ margin: "2px 0 6px 0", color: C.navy, letterSpacing: -0.4 }}>
+            Agenda Operacional
+          </h1>
           <p style={{ margin: 0, color: C.muted }}>
             Compromissos, aniversários, assembleias e contatos em uma visão prática para ação.
           </p>
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button style={btnSecondary} onClick={() => { loadEvents(page); loadTodayEvents(); loadSideLists(); }} disabled={loading}>
+          <button
+            style={btnSecondary}
+            onClick={() => {
+              loadEvents(page);
+              loadTodayEvents();
+              loadSideLists();
+            }}
+            disabled={loading}
+          >
             {loading ? "Atualizando..." : "Atualizar"}
           </button>
-          <button style={btnPrimary} onClick={() => setCreating((v) => !v)}>
-            {creating ? "Fechar criação" : "+ Novo evento"}
+
+          <button style={btnPrimary} onClick={openCalendarOverlay}>
+            + Novo evento
           </button>
         </div>
       </header>
@@ -931,18 +1217,21 @@ export default function AgendaPage() {
           hint={`${todayManual.length} manuais`}
           tone="navy"
         />
+
         <MetricCard
           title="Aniversários hoje"
           value={todayBirthdays.length}
           hint="Ação rápida no WhatsApp"
           tone="gold"
         />
+
         <MetricCard
           title="Assembleias hoje"
           value={todayAssemblies.length}
           hint="Acompanhar grupos"
           tone="ruby"
         />
+
         <MetricCard
           title="Atrasados no filtro"
           value={lateEvents.length}
@@ -958,6 +1247,7 @@ export default function AgendaPage() {
               <p style={eyebrow}>Prioridades</p>
               <h3 style={{ margin: 0, color: C.navy }}>Hoje na sua agenda</h3>
             </div>
+
             <button style={btnSecondary} onClick={() => applyViewMode("hoje")}>
               Ver somente hoje
             </button>
@@ -992,6 +1282,13 @@ export default function AgendaPage() {
                         WhatsApp
                       </a>
                     )}
+
+                    {ev.tipo === "aniversario" && (
+                      <button style={btnTiny} onClick={() => clipboardCopy(BIRTHDAY_MSG(person))}>
+                        Copiar parabéns
+                      </button>
+                    )}
+
                     {(ev.cliente_id || ev.lead_id) && (
                       <button style={btnTiny} onClick={() => openNote(ev)}>
                         Registrar nota
@@ -1034,6 +1331,7 @@ export default function AgendaPage() {
               <p style={eyebrow}>Relacionamento</p>
               <h3 style={{ margin: 0 }}>Aniversários próximos</h3>
             </div>
+
             <input
               style={{ ...input, width: 230 }}
               placeholder="Buscar título/nome..."
@@ -1052,6 +1350,7 @@ export default function AgendaPage() {
                   <th style={th}>Ações</th>
                 </tr>
               </thead>
+
               <tbody>
                 {loadingSide && (
                   <tr>
@@ -1069,14 +1368,26 @@ export default function AgendaPage() {
                 )}
 
                 {birthdays.map((b, i) => {
-                  const nome = b.cliente?.nome || b.titulo || "Cliente";
-                  const phone = b.cliente?.telefone || null;
+                  const nome = b.cliente?.nome || b.lead?.nome || b.titulo || "Cliente";
+                  const phone = b.cliente?.telefone || b.lead?.telefone || null;
                   const waMsg = waWithText(phone, BIRTHDAY_MSG(nome));
+                  const isToday = eventIsToday(b);
 
                   return (
                     <tr key={b.id} className={i % 2 ? "bgRow" : undefined}>
-                      <td style={td}>{fmtDateSmart(b.inicio_at)}</td>
+                      <td style={td}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          {fmtDateSmart(b.inicio_at)}
+                          {isToday && (
+                            <span style={{ ...miniBadge, background: "#E0CE8C33", color: "#7a641f", borderColor: "#E0CE8C" }}>
+                              Hoje
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
                       <td style={td}>{nome}</td>
+
                       <td style={td}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           {waMsg ? (
@@ -1092,6 +1403,7 @@ export default function AgendaPage() {
                               Copiar 🎉
                             </button>
                           )}
+
                           <button style={btnSecondary} onClick={() => clipboardCopy(BIRTHDAY_MSG(nome))}>
                             Copiar texto
                           </button>
@@ -1111,6 +1423,7 @@ export default function AgendaPage() {
               <p style={eyebrow}>Grupos</p>
               <h3 style={{ margin: 0 }}>Assembleias próximas</h3>
             </div>
+
             <button style={btnSecondary} onClick={loadSideLists} disabled={loadingSide}>
               Atualizar
             </button>
@@ -1124,6 +1437,7 @@ export default function AgendaPage() {
                   <th style={th}>Título/Grupo</th>
                 </tr>
               </thead>
+
               <tbody>
                 {loadingSide && (
                   <tr>
@@ -1140,12 +1454,26 @@ export default function AgendaPage() {
                   </tr>
                 )}
 
-                {assemblies.map((a, i) => (
-                  <tr key={a.id} className={i % 2 ? "bgRow" : undefined}>
-                    <td style={td}>{fmtDateTimeSmart(a.inicio_at)}</td>
-                    <td style={td}>{a.titulo || "Assembleia"}</td>
-                  </tr>
-                ))}
+                {assemblies.map((a, i) => {
+                  const isToday = eventIsToday(a);
+
+                  return (
+                    <tr key={a.id} className={i % 2 ? "bgRow" : undefined}>
+                      <td style={td}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          {fmtDateTimeSmart(a.inicio_at)}
+                          {isToday && (
+                            <span style={{ ...miniBadge, background: "#E0CE8C33", color: "#7a641f", borderColor: "#E0CE8C" }}>
+                              Hoje
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td style={td}>{a.titulo || "Assembleia"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1158,6 +1486,7 @@ export default function AgendaPage() {
             <p style={eyebrow}>Filtros</p>
             <h3 style={{ margin: 0 }}>Pesquisar agenda</h3>
           </div>
+
           <small style={{ color: C.muted }}>
             {total > 0 ? `Mostrando ${showingFrom}-${showingTo} de ${total}` : "Nenhum evento"}
           </small>
@@ -1200,7 +1529,7 @@ export default function AgendaPage() {
               <select value={fUser} onChange={(e) => setFUser(e.target.value)} style={input}>
                 <option value="">Equipe toda</option>
                 {users.map((u) => (
-                  <option key={u.id} value={u.id}>
+                  <option key={u.id} value={u.auth_user_id}>
                     {u.nome || u.id} ({(u.role || "").toUpperCase()})
                   </option>
                 ))}
@@ -1211,14 +1540,14 @@ export default function AgendaPage() {
 
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
           <small style={{ color: C.muted }}>
-            Dica: use as abas rápidas acima para trocar entre hoje, semana, mês, aniversários e assembleias.
+            Aniversários e assembleias usam data nominal. Reuniões, visitas e contatos usam data/hora local.
           </small>
 
           <div style={{ display: "flex", gap: 8 }}>
             <button
               style={{ ...btnSecondary, opacity: page <= 1 ? 0.6 : 1 }}
               disabled={page <= 1 || loading}
-              onClick={() => loadEvents(page - 1)}
+              onClick={() => paginateRows(eventsAll, page - 1)}
             >
               ‹ Anterior
             </button>
@@ -1230,7 +1559,7 @@ export default function AgendaPage() {
             <button
               style={{ ...btnSecondary, opacity: page >= totalPages ? 0.6 : 1 }}
               disabled={page >= totalPages || loading}
-              onClick={() => loadEvents(page + 1)}
+              onClick={() => paginateRows(eventsAll, page + 1)}
             >
               Próxima ›
             </button>
@@ -1238,134 +1567,13 @@ export default function AgendaPage() {
         </div>
       </section>
 
-      {creating && (
-        <section style={card} aria-label="Criar evento manual">
-          <div style={listHeader}>
-            <div>
-              <p style={eyebrow}>Novo compromisso</p>
-              <h3 style={{ margin: 0 }}>Criar evento manual</h3>
-            </div>
-            <button style={btnGhost} onClick={() => setCreating(false)} disabled={loading}>
-              Fechar
-            </button>
-          </div>
-
-          <div style={gridCreate}>
-            <label style={label}>
-              Título
-              <input
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                style={input}
-                placeholder="Ex.: Reunião com cliente"
-                autoFocus
-              />
-            </label>
-
-            <label style={label}>
-              Tipo
-              <select value={newTipo} onChange={(e) => setNewTipo(e.target.value as AgendaTipo)} style={input}>
-                {TIPOS.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </label>
-
-            <label style={label}>
-              Início
-              <input type="datetime-local" value={newStart} onChange={(e) => setNewStart(e.target.value)} style={input} />
-            </label>
-
-            <label style={label}>
-              Fim
-              <input type="datetime-local" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} style={input} />
-            </label>
-
-            <label style={label}>
-              Vincular a
-              <select
-                value={newRelationKind}
-                onChange={(e) => {
-                  setNewRelationKind(e.target.value as any);
-                  setNewClienteId("");
-                  setNewLeadId("");
-                }}
-                style={input}
-              >
-                <option value="none">Não vincular</option>
-                <option value="cliente">Cliente</option>
-                <option value="lead">Lead</option>
-              </select>
-            </label>
-
-            {newRelationKind !== "none" && (
-              <label style={label}>
-                Buscar
-                <input
-                  value={newSearch}
-                  onChange={(e) => setNewSearch(e.target.value)}
-                  style={input}
-                  placeholder="Nome ou telefone..."
-                />
-              </label>
-            )}
-
-            {newRelationKind === "cliente" && (
-              <label style={{ ...label, gridColumn: "span 2" }}>
-                Cliente
-                <select value={newClienteId} onChange={(e) => setNewClienteId(e.target.value)} style={input}>
-                  <option value="">Selecione o cliente</option>
-                  {filteredClientes.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nome || "Cliente sem nome"} {c.telefone ? `• ${c.telefone}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {newRelationKind === "lead" && (
-              <label style={{ ...label, gridColumn: "span 2" }}>
-                Lead
-                <select value={newLeadId} onChange={(e) => setNewLeadId(e.target.value)} style={input}>
-                  <option value="">Selecione o lead</option>
-                  {filteredLeads.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.nome || "Lead sem nome"} {l.telefone ? `• ${l.telefone}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            <label style={{ ...label, gridColumn: "1 / -1" }}>
-              Link de vídeo opcional
-              <input
-                value={newLink}
-                onChange={(e) => setNewLink(e.target.value)}
-                style={input}
-                placeholder="https://meet..."
-              />
-            </label>
-
-            <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button style={btnGhost} onClick={() => setCreating(false)} disabled={loading}>
-                Cancelar
-              </button>
-              <button style={btnPrimary} onClick={createManual} disabled={loading}>
-                {loading ? "Criando..." : "Criar evento"}
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-
       <section style={card} aria-label="Lista de eventos">
         <div style={listHeader}>
           <div>
             <p style={eyebrow}>Agenda</p>
             <h3 style={{ margin: 0 }}>Eventos encontrados</h3>
           </div>
+
           <button style={btnSecondary} onClick={() => loadEvents(page)} disabled={loading}>
             Recarregar
           </button>
@@ -1438,6 +1646,7 @@ export default function AgendaPage() {
                             <a href={e.videocall_url} target="_blank" rel="noreferrer" style={btnSecondary}>
                               Abrir link
                             </a>
+
                             <button style={btnSecondary} onClick={() => clipboardCopy(e.videocall_url!)}>
                               Copiar link
                             </button>
@@ -1493,11 +1702,232 @@ export default function AgendaPage() {
         </div>
       </section>
 
+      {calendarOpen && (
+        <>
+          <div style={backdrop} onClick={() => setCalendarOpen(false)} />
+
+          <div role="dialog" aria-modal="true" style={calendarModal}>
+            <div style={listHeader}>
+              <div>
+                <p style={eyebrow}>Novo evento</p>
+                <h3 style={{ margin: 0, color: C.navy }}>
+                  Escolha uma data
+                </h3>
+              </div>
+
+              <button style={btnGhost} onClick={() => setCalendarOpen(false)}>
+                Fechar
+              </button>
+            </div>
+
+            <div style={calendarTop}>
+              <button style={btnSecondary} onClick={() => moveCalendarMonth(-1)}>
+                ‹
+              </button>
+
+              <strong style={{ color: C.navy, fontSize: 18 }}>
+                {monthNamePt(calendarMonth)} de {calendarYear}
+              </strong>
+
+              <button style={btnSecondary} onClick={() => moveCalendarMonth(1)}>
+                ›
+              </button>
+            </div>
+
+            <div style={calendarWeekGrid}>
+              {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((d) => (
+                <div key={d} style={calendarWeekDay}>
+                  {d}
+                </div>
+              ))}
+            </div>
+
+            <div style={calendarGrid}>
+              {calendarDays.map((item) => {
+                if (!item.date) {
+                  return <div key={item.key} style={calendarEmptyDay} />;
+                }
+
+                const key = toISODate(item.date);
+                const isToday = sameDateKey(item.date);
+                const count = eventsAll.filter((ev) => eventDateKey(ev) === key).length;
+
+                return (
+                  <button
+                    key={item.key}
+                    style={{
+                      ...calendarDay,
+                      ...(isToday ? calendarDayToday : {}),
+                    }}
+                    onClick={() => selectCalendarDay(item.date!)}
+                  >
+                    <span style={{ fontWeight: 900 }}>
+                      {item.date.getDate()}
+                    </span>
+
+                    {isToday && (
+                      <small style={{ color: C.ruby, fontWeight: 900 }}>
+                        Hoje
+                      </small>
+                    )}
+
+                    {count > 0 && (
+                      <small style={calendarCount}>
+                        {count} evento{count > 1 ? "s" : ""}
+                      </small>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {creating && (
+        <>
+          <div style={backdrop} onClick={() => setCreating(false)} />
+
+          <div role="dialog" aria-modal="true" style={eventModal}>
+            <div style={listHeader}>
+              <div>
+                <p style={eyebrow}>Novo compromisso</p>
+                <h3 style={{ margin: 0 }}>
+                  Criar evento em {selectedDateForNew.split("-").reverse().join("/")}
+                </h3>
+              </div>
+
+              <button
+                style={btnSecondary}
+                onClick={() => {
+                  setCreating(false);
+                  setCalendarOpen(true);
+                }}
+              >
+                Trocar data
+              </button>
+            </div>
+
+            <div style={gridCreate}>
+              <label style={label}>
+                Título
+                <input
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  style={input}
+                  placeholder="Ex.: Reunião com cliente"
+                  autoFocus
+                />
+              </label>
+
+              <label style={label}>
+                Tipo
+                <select value={newTipo} onChange={(e) => setNewTipo(e.target.value as AgendaTipo)} style={input}>
+                  {TIPOS.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={label}>
+                Início
+                <input type="datetime-local" value={newStart} onChange={(e) => setNewStart(e.target.value)} style={input} />
+              </label>
+
+              <label style={label}>
+                Fim
+                <input type="datetime-local" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} style={input} />
+              </label>
+
+              <label style={label}>
+                Vincular a
+                <select
+                  value={newRelationKind}
+                  onChange={(e) => {
+                    setNewRelationKind(e.target.value as any);
+                    setNewClienteId("");
+                    setNewLeadId("");
+                  }}
+                  style={input}
+                >
+                  <option value="none">Não vincular</option>
+                  <option value="cliente">Cliente</option>
+                  <option value="lead">Lead</option>
+                </select>
+              </label>
+
+              {newRelationKind !== "none" && (
+                <label style={label}>
+                  Buscar
+                  <input
+                    value={newSearch}
+                    onChange={(e) => setNewSearch(e.target.value)}
+                    style={input}
+                    placeholder="Nome ou telefone..."
+                  />
+                </label>
+              )}
+
+              {newRelationKind === "cliente" && (
+                <label style={{ ...label, gridColumn: "span 2" }}>
+                  Cliente
+                  <select value={newClienteId} onChange={(e) => setNewClienteId(e.target.value)} style={input}>
+                    <option value="">Selecione o cliente</option>
+                    {filteredClientes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nome || "Cliente sem nome"} {c.telefone ? `• ${c.telefone}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              {newRelationKind === "lead" && (
+                <label style={{ ...label, gridColumn: "span 2" }}>
+                  Lead
+                  <select value={newLeadId} onChange={(e) => setNewLeadId(e.target.value)} style={input}>
+                    <option value="">Selecione o lead</option>
+                    {filteredLeads.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.nome || "Lead sem nome"} {l.telefone ? `• ${l.telefone}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label style={{ ...label, gridColumn: "1 / -1" }}>
+                Link de vídeo opcional
+                <input
+                  value={newLink}
+                  onChange={(e) => setNewLink(e.target.value)}
+                  style={input}
+                  placeholder="https://meet..."
+                />
+              </label>
+
+              <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button style={btnGhost} onClick={() => setCreating(false)} disabled={loading}>
+                  Cancelar
+                </button>
+
+                <button style={btnPrimary} onClick={createManual} disabled={loading}>
+                  {loading ? "Criando..." : "Criar evento"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {editing && (
         <>
           <div style={backdrop} onClick={closeEdit} />
+
           <div role="dialog" aria-modal="true" style={modal}>
-            <h3 style={{ marginTop: 0, marginBottom: 12 }}>Reagendar evento</h3>
+            <h3 style={{ marginTop: 0, marginBottom: 12 }}>
+              Reagendar evento
+            </h3>
 
             <div style={grid2}>
               <label style={label}>
@@ -1515,6 +1945,7 @@ export default function AgendaPage() {
               <button style={btnGhost} onClick={closeEdit} disabled={loading}>
                 Cancelar
               </button>
+
               <button style={btnPrimary} onClick={saveReschedule} disabled={loading}>
                 {loading ? "Salvando..." : "Salvar"}
               </button>
@@ -1526,8 +1957,12 @@ export default function AgendaPage() {
       {noteEvent && (
         <>
           <div style={backdrop} onClick={closeNote} />
+
           <div role="dialog" aria-modal="true" style={modal}>
-            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Registrar nota</h3>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>
+              Registrar nota
+            </h3>
+
             <p style={{ margin: "0 0 12px", color: C.muted }}>
               {eventPerson(noteEvent)} • {noteEvent.titulo || noteEvent.tipo}
             </p>
@@ -1544,6 +1979,7 @@ export default function AgendaPage() {
               <button style={btnGhost} onClick={closeNote} disabled={loading}>
                 Cancelar
               </button>
+
               <button style={btnPrimary} onClick={saveNote} disabled={loading}>
                 {loading ? "Salvando..." : "Salvar nota"}
               </button>
@@ -1555,12 +1991,16 @@ export default function AgendaPage() {
       {mustOpenAgenda?.has && (
         <>
           <div style={backdrop} />
+
           <div role="dialog" aria-modal="true" style={modal}>
-            <h3 style={{ marginTop: 0, marginBottom: 8 }}>Eventos de hoje</h3>
+            <h3 style={{ marginTop: 0, marginBottom: 8 }}>
+              Eventos de hoje
+            </h3>
 
             {mustOpenAgenda.birthdays?.length ? (
               <div style={{ margin: "8px 0 12px 0" }}>
                 <strong>Aniversários:</strong>
+
                 <ul style={{ margin: "8px 0 0 18px" }}>
                   {mustOpenAgenda.birthdays.map((b) => (
                     <li key={b.id}>
@@ -1580,6 +2020,7 @@ export default function AgendaPage() {
                 style={btnSecondary}
                 onClick={() => {
                   localStorage.setItem(`agenda:shown:${todayKey()}`, "1");
+
                   if (location.pathname !== "/agenda") {
                     window.location.assign("/agenda");
                   } else {
@@ -1605,7 +2046,9 @@ export default function AgendaPage() {
       )}
 
       <style>{`
-        .bgRow { background: rgba(248,250,252,.7); }
+        .bgRow {
+          background: rgba(248,250,252,.7);
+        }
 
         .agenda-wrap {
           position: relative;
@@ -1673,7 +2116,7 @@ export default function AgendaPage() {
           transform: translateY(-1px);
         }
 
-        @media (max-width: 980px) {
+        @media (max-width: 1100px) {
           .agenda-wrap {
             padding: 12px !important;
           }
@@ -1704,9 +2147,11 @@ function MetricCard({
           <p style={{ margin: 0, color: C.muted, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.7 }}>
             {title}
           </p>
+
           <strong style={{ display: "block", color: C.navy, fontSize: 30, lineHeight: 1.1, marginTop: 8 }}>
             {value}
           </strong>
+
           <span style={{ display: "block", color: C.muted, fontSize: 12, marginTop: 6 }}>
             {hint}
           </span>
@@ -1750,6 +2195,7 @@ function tryNotifyDesktop(bdays: any[], evs: any[]) {
         try {
           window.focus();
         } catch {}
+
         window.location.assign("/agenda");
         n.close();
       };
@@ -2023,4 +2469,99 @@ const modal: React.CSSProperties = {
   padding: 18,
   boxShadow: "0 20px 60px rgba(0,0,0,0.24)",
   border: "1px solid #eef2f7",
+};
+
+const calendarModal: React.CSSProperties = {
+  position: "fixed",
+  zIndex: 50,
+  top: "50%",
+  left: "50%",
+  transform: "translate(-50%, -50%)",
+  width: "min(860px, 94vw)",
+  maxHeight: "90vh",
+  overflow: "auto",
+  background: "#fff",
+  borderRadius: 22,
+  padding: 18,
+  boxShadow: "0 24px 70px rgba(0,0,0,0.26)",
+  border: "1px solid #eef2f7",
+};
+
+const eventModal: React.CSSProperties = {
+  position: "fixed",
+  zIndex: 55,
+  top: "50%",
+  left: "50%",
+  transform: "translate(-50%, -50%)",
+  width: "min(820px, 94vw)",
+  maxHeight: "90vh",
+  overflow: "auto",
+  background: "#fff",
+  borderRadius: 22,
+  padding: 18,
+  boxShadow: "0 24px 70px rgba(0,0,0,0.28)",
+  border: "1px solid #eef2f7",
+};
+
+const calendarTop: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  marginBottom: 14,
+};
+
+const calendarWeekGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(7, 1fr)",
+  gap: 8,
+  marginBottom: 8,
+};
+
+const calendarWeekDay: React.CSSProperties = {
+  textAlign: "center",
+  fontSize: 12,
+  fontWeight: 900,
+  color: C.muted,
+  textTransform: "uppercase",
+  letterSpacing: 0.5,
+};
+
+const calendarGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+  gap: 8,
+};
+
+const calendarEmptyDay: React.CSSProperties = {
+  minHeight: 92,
+  borderRadius: 16,
+  background: "#f8fafc",
+  border: "1px dashed #e2e8f0",
+};
+
+const calendarDay: React.CSSProperties = {
+  minHeight: 92,
+  borderRadius: 16,
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+  color: C.navy,
+  cursor: "pointer",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  padding: 10,
+  textAlign: "left",
+};
+
+const calendarDayToday: React.CSSProperties = {
+  border: `2px solid ${C.ruby}`,
+  background: "#A11C2708",
+};
+
+const calendarCount: React.CSSProperties = {
+  color: C.muted,
+  fontSize: 11,
+  fontWeight: 800,
 };

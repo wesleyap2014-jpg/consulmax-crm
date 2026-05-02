@@ -120,6 +120,7 @@ type GroupLastAssemblyRow = {
   ll_high: number | null;
   ll_low: number | null;
   median: number | null;
+  reference_number: number | null;
 };
 
 /* =========================
@@ -1528,6 +1529,7 @@ export default function Relatorios() {
           { header: "SEGMENTO", type: "string" },
           { header: "GRUPO", type: "string" },
           { header: "COTAS DO CLIENTE", type: "string" },
+          { header: "REFERÊNCIA", type: "number" },
           { header: "LF25% Of", type: "number" },
           { header: "LF25% Ent", type: "number" },
           { header: "LF50% Of", type: "number" },
@@ -1565,19 +1567,22 @@ export default function Relatorios() {
     }
 
     const { data: assemblyData, error: assemblyErr } = await supabase
-      .from("v_group_last_assembly")
+      .from("assembly_results")
       .select(
-        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median"
+        "group_id, date, fixed25_offers, fixed25_deliveries, fixed50_offers, fixed50_deliveries, ll_offers, ll_deliveries, ll_high, ll_low, median, reference_number"
       )
       .in("group_id", targetGroupIds)
       .gte("date", exportStatusStart)
-      .lte("date", exportStatusEnd);
+      .lte("date", exportStatusEnd)
+      .order("date", { ascending: false });
 
     if (assemblyErr) throw assemblyErr;
 
     const assemblyByGroupId: Record<string, GroupLastAssemblyRow> = {};
     (assemblyData || []).forEach((a: any) => {
-      if (a?.group_id) assemblyByGroupId[a.group_id] = a as GroupLastAssemblyRow;
+      if (a?.group_id && !assemblyByGroupId[a.group_id]) {
+        assemblyByGroupId[a.group_id] = a as GroupLastAssemblyRow;
+      }
     });
 
     rows = rows.filter((v) => {
@@ -1595,6 +1600,7 @@ export default function Relatorios() {
       segmento: string;
       grupo: string;
       cotasCliente: string[];
+      reference_number: number | null;
       fixed25_offers: number;
       fixed25_deliveries: number;
       fixed50_offers: number;
@@ -1633,6 +1639,7 @@ export default function Relatorios() {
           segmento,
           grupo,
           cotasCliente: [],
+          reference_number: asm.reference_number ?? null,
           fixed25_offers: safeInt(asm.fixed25_offers),
           fixed25_deliveries: safeInt(asm.fixed25_deliveries),
           fixed50_offers: safeInt(asm.fixed50_offers),
@@ -1665,6 +1672,7 @@ export default function Relatorios() {
       { header: "SEGMENTO", type: "string", width: 110 },
       { header: "GRUPO", type: "string", width: 80 },
       { header: "COTAS DO CLIENTE", type: "string", width: 130 },
+      { header: "REFERÊNCIA", type: "number", width: 90 },
       { header: "LF25% Of", type: "number", width: 80 },
       { header: "LF25% Ent", type: "number", width: 80 },
       { header: "LF50% Of", type: "number", width: 80 },
@@ -1686,6 +1694,7 @@ export default function Relatorios() {
         .slice()
         .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }))
         .join("; "),
+      r.reference_number ?? "",
       r.fixed25_offers,
       r.fixed25_deliveries,
       r.fixed50_offers,
@@ -1744,7 +1753,7 @@ export default function Relatorios() {
       return "Esse relatório busca os grupos em public.groups pela coluna prox_vencimento e localiza as cotas relacionadas a esses grupos.";
     }
     if (exportType === "result_assembleia") {
-      return "Esse relatório usa o intervalo da última assembleia em public.v_group_last_assembly (coluna date) e consolida uma linha por cliente dentro do mesmo grupo.";
+      return "Esse relatório usa o intervalo da assembleia em public.assembly_results (coluna date) e consolida uma linha por cliente dentro do mesmo grupo, incluindo a referência salva no resultado da assembleia.";
     }
     return "Se você não preencher a data do status, o relatório é gerado com todo o histórico (respeitando os filtros globais).";
   }, [exportType]);

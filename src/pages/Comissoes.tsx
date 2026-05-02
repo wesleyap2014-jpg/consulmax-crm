@@ -560,48 +560,59 @@ function getWeeklyIntervalsFriToThu(year: number, month: number) {
 
 type ProjSeries = { labels: string[]; previstoBruto: number[]; pagoBruto: number[] };
 
-function projectAnnualFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries {
+function projectAnnualFlows(rows: CommissionWithFlow[]): ProjSeries {
+  const operationalRows = rows.filter(isOperationalCommission);
+
   const now = new Date();
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 4 + i);
   const previsto = Array(years.length).fill(0);
   const pagos = Array(years.length).fill(0);
 
-  for (const r of rows) {
+  for (const r of operationalRows) {
     const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
+
     for (const f of flows) {
       if (f.data_pagamento_vendedor) {
         const pd = localDateFromISO(f.data_pagamento_vendedor);
         if (pd) {
           const yi = years.indexOf(pd.getFullYear());
-          if (yi >= 0) pagos[yi] += f.valor_pago_vendedor ?? 0;
+          if (yi >= 0) pagos[yi] += Number(f.valor_pago_vendedor) || 0;
         }
       }
     }
   }
+
   return { labels: years.map(String), previstoBruto: previsto, pagoBruto: pagos };
 }
 
-function projectMonthlyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>, year: number, includePrevisto: boolean): ProjSeries {
+function projectMonthlyFlows(rows: CommissionWithFlow[], year: number, includePrevisto: boolean): ProjSeries {
+  const operationalRows = rows.filter(isOperationalCommission);
+
   const labels = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
   const previsto = Array(12).fill(0);
   const pagos = Array(12).fill(0);
 
-  for (const r of rows) {
-    const total = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+  for (const r of operationalRows) {
+    const total = totalCommissionGross(r);
     const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
 
     for (const f of flows) {
       if (f.data_pagamento_vendedor) {
         const pd = localDateFromISO(f.data_pagamento_vendedor);
-        if (pd && pd.getFullYear() === year) pagos[pd.getMonth()] += f.valor_pago_vendedor ?? 0;
+        if (pd && pd.getFullYear() === year) {
+          pagos[pd.getMonth()] += Number(f.valor_pago_vendedor) || 0;
+        }
       }
 
       if (!includePrevisto) continue;
+
       const exp = expectedDateForParcel(r.data_venda, flows, f.mes);
       if (exp && exp.getFullYear() === year) {
-        const expVal = (f.valor_previsto ?? total * (f.percentual ?? 0)) ?? 0;
         const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
-        if (!isPaid) previsto[exp.getMonth()] += expVal;
+        if (!isPaid) {
+          const expVal = Number(f.valor_previsto ?? total * (f.percentual ?? 0)) || 0;
+          previsto[exp.getMonth()] += expVal;
+        }
       }
     }
   }
@@ -609,7 +620,9 @@ function projectMonthlyFlows(rows: Array<Commission & { flow?: CommissionFlow[] 
   return { labels, previstoBruto: previsto, pagoBruto: pagos };
 }
 
-function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }>): ProjSeries & { labels: string[] } {
+function projectWeeklyFlows(rows: CommissionWithFlow[]): ProjSeries & { labels: string[] } {
+  const operationalRows = rows.filter(isOperationalCommission);
+
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -619,8 +632,8 @@ function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
   const previsto = Array(intervals.length).fill(0);
   const pagos = Array(intervals.length).fill(0);
 
-  for (const r of rows) {
-    const total = r.valor_total ?? ((r.base_calculo ?? 0) * (r.percent_aplicado ?? 0));
+  for (const r of operationalRows) {
+    const total = totalCommissionGross(r);
     const flows = (r.flow || []).filter((f) => (Number(f.percentual) || 0) > 0);
 
     for (const f of flows) {
@@ -628,7 +641,7 @@ function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
         const pd = localDateFromISO(f.data_pagamento_vendedor);
         if (pd && pd.getFullYear() === year && pd.getMonth() === month) {
           const idx = intervals.findIndex((iv) => pd >= iv.start && pd <= iv.end);
-          if (idx >= 0) pagos[idx] += f.valor_pago_vendedor ?? 0;
+          if (idx >= 0) pagos[idx] += Number(f.valor_pago_vendedor) || 0;
         }
       }
 
@@ -636,7 +649,7 @@ function projectWeeklyFlows(rows: Array<Commission & { flow?: CommissionFlow[] }
       if (exp && exp.getFullYear() === year && exp.getMonth() === month) {
         const isPaid = (Number(f.valor_pago_vendedor) || 0) > 0;
         if (!isPaid) {
-          const expVal = (f.valor_previsto ?? total * (f.percentual ?? 0)) ?? 0;
+          const expVal = Number(f.valor_previsto ?? total * (f.percentual ?? 0)) || 0;
           const idx = intervals.findIndex((iv) => exp >= iv.start && exp <= iv.end);
           if (idx >= 0) previsto[idx] += expVal;
         }

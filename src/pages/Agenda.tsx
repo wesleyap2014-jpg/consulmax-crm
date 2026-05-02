@@ -5,23 +5,26 @@ import { supabase } from "@/lib/supabaseClient";
 /** ====== Configuráveis ====== */
 const ENABLE_DESKTOP_NOTIF = true;
 
+const EMOJI = {
+  festa: "\u{1F389}",
+  brilho: "\u{2728}",
+  brinde: "\u{1F942}",
+  calendario: "\u{1F4C5}",
+};
+
 const BIRTHDAY_MSG = (nome: string) => {
   const primeiro = (nome || "").trim().split(/\s+/)[0] || "Olá";
 
-  const festa = "\u{1F389}"; // 🎉
-  const brilho = "\u{2728}"; // ✨
-  const brinde = "\u{1F942}"; // 🥂
-
   return (
-`${primeiro}, ${festa} *Feliz Aniversário!* ${festa}
+`${primeiro}, ${EMOJI.festa} *Feliz Aniversário!* ${EMOJI.festa}
 
 Hoje celebramos mais um capítulo da sua história, cheio de conquistas, aprendizados e sonhos que se renovam.
 Que este novo ciclo seja repleto de *prosperidade, saúde e realizações* — e que cada meta se transforme em vitória.
 
-Na *Consulmax*, acreditamos que planejar é o caminho para conquistar. Que você continue sonhando grande e realizando cada vez mais! ${brilho}
+Na *Consulmax*, acreditamos que planejar é o caminho para conquistar. Que você continue sonhando grande e realizando cada vez mais! ${EMOJI.brilho}
 
 Um brinde ao seu futuro e a todas as conquistas que estão por vir.
-${brinde} Parabéns pelo seu dia!`
+${EMOJI.brinde} Parabéns pelo seu dia!`
   );
 };
 
@@ -223,12 +226,20 @@ function waWithText(phone?: string | null, text?: string) {
   const base = whatsappUrl(phone);
   if (!base) return null;
 
-  return text ? `${base}?text=${encodeURIComponent(text)}` : base;
+  if (!text) return base;
+
+  const safeText = String(text)
+    .normalize("NFC")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+
+  return `${base}?text=${encodeURIComponent(safeText)}`;
 }
 
 function clipboardCopy(text: string) {
   try {
-    (navigator as any).clipboard?.writeText(text);
+    const safeText = String(text).normalize("NFC");
+    (navigator as any).clipboard?.writeText(safeText);
     alert("Copiado para a área de transferência.");
   } catch {
     prompt("Copie o texto:", text);
@@ -1397,7 +1408,7 @@ export default function AgendaPage() {
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           {waMsg ? (
                             <a href={waMsg} target="_blank" rel="noreferrer" style={btnPrimary}>
-                              Parabenizar 🎉
+                              Parabenizar {EMOJI.festa}
                             </a>
                           ) : (
                             <button
@@ -1405,7 +1416,7 @@ export default function AgendaPage() {
                               onClick={() => clipboardCopy(BIRTHDAY_MSG(nome))}
                               title="Sem telefone: copia a mensagem para você colar no WhatsApp"
                             >
-                              Copiar 🎉
+                              Copiar {EMOJI.festa}
                             </button>
                           )}
 
@@ -2180,8 +2191,8 @@ function tryNotifyDesktop(bdays: any[], evs: any[]) {
   if (typeof window === "undefined" || !("Notification" in window)) return;
 
   const title = bdays?.length
-    ? `🎉 ${bdays.length} aniversário(s) hoje`
-    : `📅 Você tem ${evs?.length || 1} compromisso(s) hoje`;
+    ? `${EMOJI.festa} ${bdays.length} aniversário(s) hoje`
+    : `${EMOJI.calendario} Você tem ${evs?.length || 1} compromisso(s) hoje`;
 
   const body = bdays?.length
     ? bdays.slice(0, 3).map((b: any) => b?.cliente?.nome || b?.titulo || "Cliente").join(", ")

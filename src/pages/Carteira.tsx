@@ -329,14 +329,14 @@ const getPaceStatus = (diffPct: number | null, hasMeta: boolean): PaceStatus => 
   }
 
   if (diffPct >= 0) {
-  return {
-    label: "Vencendo",
-    description: "Você está acima do ritmo esperado. Continue acelerando para abrir vantagem.",
-    pillClass: "bg-[#1E293F]/10 text-[#1E293F] border-[#1E293F]/20",
-    barClass: "bg-[#1E293F]",
-    textClass: "text-[#1E293F]",
-  };
-}
+    return {
+      label: "Vencendo",
+      description: "Você está acima do ritmo esperado. Continue acelerando para abrir vantagem.",
+      pillClass: "bg-[#1E293F]/10 text-[#1E293F] border-[#1E293F]/20",
+      barClass: "bg-[#1E293F]",
+      textClass: "text-[#1E293F]",
+    };
+  }
 
   if (diffPct >= -5) {
     return {
@@ -818,7 +818,7 @@ const AtingimentoMeses: React.FC<AtingimentoMesesProps> = ({ selectedYear, metas
           if (meta > 0 && happened) {
             if (realizado >= meta) {
               icon = "✓";
-              cls = "text-green-600";
+              cls = "text-[#1E293F]";
               title = "Meta atingida";
             } else {
               icon = "×";
@@ -1840,8 +1840,8 @@ const Carteira: React.FC = () => {
                 </div>
               </div>
 
-              <div className="min-w-0">
-                <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
+              <div className="min-w-0 flex flex-col justify-center">
+                <div className="flex items-center justify-between text-xs text-gray-600 mb-2 max-w-[420px] mx-auto w-full">
                   <span>
                     Atingido: <strong className="text-gray-900">{pctAnual == null ? "—" : formatPctHuman(pctAnual, 1)}</strong>
                   </span>
@@ -1850,7 +1850,7 @@ const Carteira: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="relative h-5 rounded-full bg-gray-100 border overflow-hidden">
+                <div className="relative h-5 rounded-full bg-gray-100 border overflow-hidden max-w-[420px] mx-auto w-full">
                   <div
                     className={`absolute left-0 top-0 h-full rounded-full ${paceStatus.barClass}`}
                     style={{ width: `${annualFillPct}%` }}
@@ -1869,7 +1869,7 @@ const Carteira: React.FC = () => {
                   />
                 </div>
 
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-600">
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-600 max-w-[420px] mx-auto w-full">
                   <div className="rounded-xl bg-gray-50 px-3 py-2">
                     Esperado até hoje
                     <div className="text-sm font-semibold text-gray-900">{currency(expectedAnnualValue)}</div>
@@ -1884,7 +1884,7 @@ const Carteira: React.FC = () => {
                   </div>
                 </div>
 
-                <div className={`mt-3 rounded-2xl border px-3 py-2 ${paceStatus.pillClass}`}>
+                <div className={`mt-3 rounded-2xl border px-3 py-2 max-w-[420px] mx-auto w-full ${paceStatus.pillClass}`}>
                   <div className="text-sm font-bold">{paceStatus.label}</div>
                   <div className="text-xs mt-0.5">{paceStatus.description}</div>
                 </div>

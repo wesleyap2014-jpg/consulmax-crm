@@ -329,14 +329,14 @@ const getPaceStatus = (diffPct: number | null, hasMeta: boolean): PaceStatus => 
   }
 
   if (diffPct >= 0) {
-    return {
-      label: "Vencendo",
-      description: "Você está acima do ritmo esperado. Continue acelerando para abrir vantagem.",
-      pillClass: "bg-green-100 text-green-800 border-green-200",
-      barClass: "bg-green-600",
-      textClass: "text-green-800",
-    };
-  }
+  return {
+    label: "Vencendo",
+    description: "Você está acima do ritmo esperado. Continue acelerando para abrir vantagem.",
+    pillClass: "bg-[#1E293F]/10 text-[#1E293F] border-[#1E293F]/20",
+    barClass: "bg-[#1E293F]",
+    textClass: "text-[#1E293F]",
+  };
+}
 
   if (diffPct >= -5) {
     return {

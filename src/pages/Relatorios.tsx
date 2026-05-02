@@ -790,9 +790,9 @@ export default function Relatorios() {
       segs: Array.from(segs).sort(),
       tabs: Array.from(tabs).sort(),
       tipos: Array.from(tipos).sort(),
-      vends: Array.from(vends).sort(),
+      vends: Array.from(vends).sort((a, b) => vendorName(a).localeCompare(vendorName(b), "pt-BR", { sensitivity: "base" })),
     };
-  }, [vendas]);
+  }, [vendas, usersMap, usersByAuth]);
 
   const totalsCarteira = useMemo(() => {
     const vendido = filtered.reduce((s, v) => s + safeNum(v.valor_venda), 0);
@@ -1266,6 +1266,34 @@ export default function Relatorios() {
     setLeadsMap(m);
   }
 
+  async function fetchGroupsByCodes(groupCodesInput: string[]) {
+    const groupCodes = Array.from(new Set(groupCodesInput.map(normalizeGroupDigits).filter(Boolean)));
+    const groupsByCode: Record<string, GroupRow> = {};
+
+    if (!groupCodes.length) return groupsByCode;
+
+    const chunkSize = 200;
+    for (let i = 0; i < groupCodes.length; i += chunkSize) {
+      const chunk = groupCodes.slice(i, i + chunkSize);
+      const { data, error } = await supabase
+        .from("groups")
+        .select("id, administradora, segmento, codigo, prox_vencimento")
+        .in("codigo", chunk);
+
+      if (error) {
+        console.error("Erro ao carregar groups por código:", error.message);
+        continue;
+      }
+
+      (data || []).forEach((g: any) => {
+        const key = normalizeGroupDigits(g?.codigo);
+        if (key && !groupsByCode[key]) groupsByCode[key] = g as GroupRow;
+      });
+    }
+
+    return groupsByCode;
+  }
+
   function applyBaseFiltersToRows(list: VendaRow[]) {
     let rows = list.slice();
 
@@ -1365,13 +1393,23 @@ export default function Relatorios() {
       });
     }
 
-    const columns: ExcelColumn[] = [
+    const needsNextDue = exportType === "vendas" || exportType === "inadimplentes";
+    const groupsByCode = needsNextDue ? await fetchGroupsByCodes(rows.map((v) => v.grupo || "")) : {};
+
+    const baseColumns: ExcelColumn[] = [
       { header: "Vendedor", type: "string", width: 140 },
       { header: "Cliente", type: "string", width: 180 },
       { header: "Número da Proposta", type: "string", width: 120 },
       { header: "Administradora", type: "string", width: 130 },
       { header: "Segmento", type: "string", width: 110 },
       { header: "Tabela", type: "string", width: 130 },
+      { header: "Grupo", type: "string", width: 80 },
+      { header: "Cota", type: "string", width: 80 },
+    ];
+
+    const columns: ExcelColumn[] = [
+      ...baseColumns,
+      ...(needsNextDue ? [{ header: "Próximo Vencimento", type: "date" as ExcelCellType, width: 110 }] : []),
       { header: "Valor", type: "currency", width: 90 },
       { header: "Data da Venda", type: "date", width: 90 },
       { header: "Data do Encarteiramento", type: "date", width: 110 },
@@ -1385,14 +1423,22 @@ export default function Relatorios() {
       const statusDate = getStatusDate(v);
       const cliente = v.lead_id ? leadsMap[v.lead_id]?.nome || v.lead_id : "";
       const proposta = v.numero_proposta || "";
+      const group = groupsByCode[normalizeGroupDigits(v.grupo)];
 
-      return [
+      const base = [
         vendorName(v.vendedor_id),
         cliente,
         proposta,
         v.administradora || "",
         v.segmento || "",
         v.tabela || "",
+        v.grupo || "",
+        v.cota || "",
+      ];
+
+      return [
+        ...base,
+        ...(needsNextDue ? [group?.prox_vencimento || ""] : []),
         safeNum(v.valor_venda),
         v.data_venda || "",
         v.encarteirada_em || "",

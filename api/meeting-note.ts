@@ -18,6 +18,14 @@ function parseBody(req: VercelRequest) {
   return req.body || {}
 }
 
+function normalizeText(value: unknown) {
+  return String(value || '')
+    .normalize('NFC')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim()
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -28,24 +36,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-      return json(res, 500, { error: 'Faltam SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY na Vercel.' })
+      return json(res, 500, {
+        error: 'Faltam SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY na Vercel.',
+      })
     }
 
     const authHeader = req.headers.authorization || ''
-    if (!authHeader.startsWith('Bearer ')) return json(res, 401, { error: 'Usuário não autenticado.' })
+    if (!authHeader.startsWith('Bearer ')) {
+      return json(res, 401, { error: 'Usuário não autenticado.' })
+    }
 
     const jwt = authHeader.replace('Bearer ', '')
     const { data: userData, error: authError } = await admin.auth.getUser(jwt)
     const authUserId = userData?.user?.id ?? null
-    if (authError || !authUserId) return json(res, 401, { error: 'Sessão inválida.' })
+
+    if (authError || !authUserId) {
+      return json(res, 401, { error: 'Sessão inválida.' })
+    }
 
     const body = parseBody(req)
-    const agendaEventoId = String(body?.agenda_evento_id || '').trim()
-    const rawNotes = String(body?.raw_notes || '').trim()
-    const nextSteps = String(body?.next_steps || '').trim()
 
-    if (!agendaEventoId) return json(res, 400, { error: 'agenda_evento_id é obrigatório.' })
-    if (!rawNotes) return json(res, 400, { error: 'raw_notes é obrigatório.' })
+    const agendaEventoId = normalizeText(body?.agenda_evento_id)
+    const rawNotes = normalizeText(body?.raw_notes)
+    const nextSteps = normalizeText(body?.next_steps)
+
+    if (!agendaEventoId) {
+      return json(res, 400, { error: 'agenda_evento_id é obrigatório.' })
+    }
+
+    if (!rawNotes) {
+      return json(res, 400, { error: 'Digite uma nota antes de salvar.' })
+    }
 
     const { data: evento, error: evError } = await admin
       .from('agenda_eventos')
@@ -56,41 +77,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (evError) return json(res, 500, { error: evError.message })
     if (!evento) return json(res, 404, { error: 'Evento não encontrado.' })
 
+    const nowIso = new Date().toISOString()
+
+    /**
+     * Cada salvamento cria uma nova linha.
+     * Assim nenhuma nota antiga é sobrescrita.
+     */
+    const insertPayload: Record<string, any> = {
+      agenda_evento_id: evento.id,
+      cliente_id: evento.cliente_id,
+      lead_id: evento.lead_id,
+      raw_notes: rawNotes,
+      next_steps: nextSteps,
+    }
+
     const { data: note, error: noteError } = await admin
       .from('meeting_notes')
-      .insert({
-        agenda_evento_id: evento.id,
-        cliente_id: evento.cliente_id,
-        lead_id: evento.lead_id,
-        raw_notes: rawNotes,
-        next_steps: nextSteps,
-      })
+      .insert(insertPayload)
       .select('*')
       .single()
 
-    if (noteError) return json(res, 500, { error: noteError.message })
-
-    const completedAt = new Date().toISOString()
-
-    const { error: updateError } = await admin
-      .from('agenda_eventos')
-      .update({ video_status: 'finished', completed_at: completedAt, completion_notes: rawNotes })
-      .eq('id', evento.id)
-
-    if (updateError) return json(res, 500, { error: updateError.message })
-
-    if (evento.video_room_id) {
-      await admin.from('video_rooms').update({ status: 'finished', updated_at: completedAt }).eq('id', evento.video_room_id)
-    } else {
-      await admin.from('video_rooms').update({ status: 'finished', updated_at: completedAt }).eq('agenda_evento_id', evento.id)
+    if (noteError) {
+      return json(res, 500, { error: noteError.message })
     }
 
-    await admin
-      .from('video_sessions')
-      .update({ status: 'finished', ended_at: completedAt })
-      .eq('agenda_evento_id', evento.id)
+    /**
+     * Mantém um resumo rápido no evento para a Agenda exibir a última nota,
+     * mas NÃO marca video_status como finished e NÃO bloqueia a sala.
+     */
+    const { error: updateEventError } = await admin
+      .from('agenda_eventos')
+      .update({
+        completed_at: nowIso,
+        completion_notes: rawNotes,
+      })
+      .eq('id', evento.id)
 
-    return json(res, 200, { ok: true, note })
+    if (updateEventError) {
+      return json(res, 500, { error: updateEventError.message })
+    }
+
+    /**
+     * A sala é reaproveitável.
+     * Não atualizamos video_rooms.status para finished.
+     * Não atualizamos video_sessions.status para finished.
+     *
+     * Apenas tentamos marcar atividade recente, se as colunas existirem.
+     * Se não existirem, ignoramos silenciosamente.
+     */
+    if (evento.video_room_id) {
+      await admin
+        .from('video_rooms')
+        .update({ updated_at: nowIso })
+        .eq('id', evento.video_room_id)
+    } else {
+      await admin
+        .from('video_rooms')
+        .update({ updated_at: nowIso })
+        .eq('agenda_evento_id', evento.id)
+    }
+
+    return json(res, 200, {
+      ok: true,
+      message: 'Nota salva com sucesso.',
+      note,
+      reusable: true,
+    })
   } catch (err: any) {
     return json(res, 500, { error: err?.message || 'Erro inesperado.' })
   }

@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import {
-  ConnectionState,
   LiveKitRoom,
   RoomAudioRenderer,
   VideoConference,
@@ -271,7 +270,7 @@ export default function AgendaSalaPage() {
             <div style={videoTop}>
               <div>
                 <p style={eyebrow}>Ao vivo</p>
-                <strong style={{ color: C.navy }}>Status: <ConnectionState /></strong>
+                <strong style={{ color: C.navy }}>Sala conectada</strong>
               </div>
             </div>
 

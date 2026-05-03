@@ -12,9 +12,22 @@ const LIVEKIT_WS_URL = process.env.LIVEKIT_WS_URL || process.env.LIVEKIT_URL || 
 const REC_S3_ENDPOINT = process.env.RECORDING_S3_ENDPOINT || process.env.SUPABASE_S3_ENDPOINT || ''
 const REC_S3_REGION = process.env.RECORDING_S3_REGION || process.env.SUPABASE_S3_REGION || 'sa-east-1'
 const REC_S3_BUCKET = process.env.RECORDING_S3_BUCKET || process.env.SUPABASE_S3_BUCKET || ''
-const REC_S3_ACCESS_KEY = process.env.RECORDING_S3_ACCESS_KEY || process.env.RECORDING_S3_ACCESS_KEY_ID || process.env.SUPABASE_S3_ACCESS_KEY || process.env.SUPABASE_S3_ACCESS_KEY_ID || ''
-const REC_S3_SECRET_KEY = process.env.RECORDING_S3_SECRET_KEY || process.env.RECORDING_S3_SECRET_ACCESS_KEY || process.env.SUPABASE_S3_SECRET_KEY || process.env.SUPABASE_S3_SECRET_ACCESS_KEY || ''
-const REC_PUBLIC_BASE_URL = process.env.RECORDING_PUBLIC_BASE_URL || process.env.SUPABASE_RECORDING_PUBLIC_BASE_URL || ''
+const REC_S3_ACCESS_KEY =
+  process.env.RECORDING_S3_ACCESS_KEY ||
+  process.env.RECORDING_S3_ACCESS_KEY_ID ||
+  process.env.SUPABASE_S3_ACCESS_KEY ||
+  process.env.SUPABASE_S3_ACCESS_KEY_ID ||
+  ''
+const REC_S3_SECRET_KEY =
+  process.env.RECORDING_S3_SECRET_KEY ||
+  process.env.RECORDING_S3_SECRET_ACCESS_KEY ||
+  process.env.SUPABASE_S3_SECRET_KEY ||
+  process.env.SUPABASE_S3_SECRET_ACCESS_KEY ||
+  ''
+const REC_PUBLIC_BASE_URL =
+  process.env.RECORDING_PUBLIC_BASE_URL ||
+  process.env.SUPABASE_RECORDING_PUBLIC_BASE_URL ||
+  ''
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
@@ -66,11 +79,17 @@ function envPresence() {
 }
 
 function lkHttpUrl() {
-  return LIVEKIT_WS_URL.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://').replace(/\/$/, '')
+  return LIVEKIT_WS_URL.replace(/^wss:\/\//, 'https://')
+    .replace(/^ws:\/\//, 'http://')
+    .replace(/\/$/, '')
 }
 
 function b64url(input: string | Buffer) {
-  return Buffer.from(input).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
 }
 
 function jwt(payload: Record<string, any>) {
@@ -93,12 +112,18 @@ function livekitToken(video: Record<string, any>, ttl = 600) {
 async function authUserId(req: VercelRequest) {
   const h = req.headers.authorization || ''
   if (!h.startsWith('Bearer ')) return null
+
   const { data } = await admin.auth.getUser(h.replace('Bearer ', ''))
   return data?.user?.id ?? null
 }
 
 function safeFileName(raw: string) {
-  return raw.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 90)
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 90)
 }
 
 function recordingFilePath(agendaEventoId: string) {
@@ -111,8 +136,17 @@ function publicRecordingUrl(filepath: string) {
   return `${REC_PUBLIC_BASE_URL.replace(/\/$/, '')}/${filepath}`
 }
 
+function compact(obj: any, max = 1600) {
+  try {
+    return JSON.stringify(obj).slice(0, max)
+  } catch {
+    return String(obj).slice(0, max)
+  }
+}
+
 async function twirp(path: string, payload: Record<string, any>) {
   const egressToken = livekitToken({ roomRecord: true })
+
   const response = await fetch(`${lkHttpUrl()}${path}`, {
     method: 'POST',
     headers: {
@@ -124,7 +158,12 @@ async function twirp(path: string, payload: Record<string, any>) {
 
   const text = await response.text()
   let data: any = {}
-  try { data = text ? JSON.parse(text) : {} } catch { data = { raw: text } }
+
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    data = { raw: text }
+  }
 
   if (!response.ok) {
     const msg = data?.msg || data?.error || data?.raw || `LiveKit Egress falhou: ${response.status}`
@@ -149,11 +188,18 @@ async function fetchVideoRoom(agendaEventoId: string) {
 }
 
 async function tryUpdateVideoRoom(id: string, patch: Record<string, any>) {
-  await admin.from('video_rooms').update(patch).eq('id', id)
+  const { error } = await admin.from('video_rooms').update(patch).eq('id', id)
+  if (error) throw new Error(error.message)
 }
 
 function extractEgressId(started: any) {
-  return started?.egress_id || started?.egressId || started?.info?.egress_id || started?.info?.egressId || null
+  return (
+    started?.egress_id ||
+    started?.egressId ||
+    started?.info?.egress_id ||
+    started?.info?.egressId ||
+    null
+  )
 }
 
 function s3Camel() {
@@ -201,16 +247,43 @@ function payloadCandidates(roomName: string, filepath: string) {
   }
 
   return [
-    { roomName, layout: 'grid', audioOnly: false, videoOnly: false, file: camelFile },
-    { room_name: roomName, layout: 'grid', audio_only: false, video_only: false, file: snakeFile },
-    { roomName, layout: 'grid', audioOnly: false, videoOnly: false, fileOutputs: [camelFile] },
-    { room_name: roomName, layout: 'grid', audio_only: false, video_only: false, file_outputs: [snakeFile] },
     {
       roomName,
       layout: 'grid',
       audioOnly: false,
       videoOnly: false,
-      output: { case: 'file', value: protobufEsFile },
+      file: camelFile,
+    },
+    {
+      room_name: roomName,
+      layout: 'grid',
+      audio_only: false,
+      video_only: false,
+      file: snakeFile,
+    },
+    {
+      roomName,
+      layout: 'grid',
+      audioOnly: false,
+      videoOnly: false,
+      fileOutputs: [camelFile],
+    },
+    {
+      room_name: roomName,
+      layout: 'grid',
+      audio_only: false,
+      video_only: false,
+      file_outputs: [snakeFile],
+    },
+    {
+      roomName,
+      layout: 'grid',
+      audioOnly: false,
+      videoOnly: false,
+      output: {
+        case: 'file',
+        value: protobufEsFile,
+      },
     },
   ]
 }
@@ -226,11 +299,21 @@ async function startRoomCompositeEgress(roomName: string, filepath: string) {
     } catch (err: any) {
       const msg = err?.message || 'erro desconhecido'
       errors.push(`tentativa ${i + 1}: ${msg}`)
-      if (!/output|field|missing|invalid|unknown|unmarshal|json/i.test(String(msg))) break
+
+      if (!/output|field|missing|invalid|unknown|unmarshal|json/i.test(String(msg))) {
+        break
+      }
     }
   }
 
   throw new Error(errors.join(' | '))
+}
+
+async function updateAgendaVideoStatus(agendaEventoId: string, status: string) {
+  await admin
+    .from('agenda_eventos')
+    .update({ video_status: status })
+    .eq('id', agendaEventoId)
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -242,8 +325,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return json(res, 405, { error: 'Método não permitido.' })
 
   try {
-    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return json(res, 500, { error: 'Faltam variáveis do Supabase na Vercel.', env: envPresence() })
-    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_WS_URL) return json(res, 500, { error: 'Faltam variáveis do LiveKit na Vercel.', env: envPresence() })
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+      return json(res, 500, {
+        error: 'Faltam variáveis do Supabase na Vercel.',
+        env: envPresence(),
+      })
+    }
+
+    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_WS_URL) {
+      return json(res, 500, {
+        error: 'Faltam variáveis do LiveKit na Vercel.',
+        env: envPresence(),
+      })
+    }
 
     const missingS3 = missingRecordingEnv()
     if (missingS3.length) {
@@ -258,23 +352,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!authUser) return json(res, 401, { error: 'Usuário não autenticado.' })
 
     const body = parseBody(req)
-    const action: Action = body?.action === 'stop' ? 'stop' : body?.action === 'status' ? 'status' : 'start'
+    const action: Action =
+      body?.action === 'stop' ? 'stop' : body?.action === 'status' ? 'status' : 'start'
+
     const agendaEventoId = String(body?.agenda_evento_id || '').trim()
     const egressIdFromBody = String(body?.egress_id || body?.egressId || '').trim()
 
-    if (!agendaEventoId) return json(res, 400, { error: 'agenda_evento_id é obrigatório.' })
+    if (!agendaEventoId) {
+      return json(res, 400, { error: 'agenda_evento_id é obrigatório.' })
+    }
 
     const room = await fetchVideoRoom(agendaEventoId)
 
     if (action === 'start') {
       if (room.recording_status === 'recording' && room.recording_egress_id) {
-        return json(res, 200, { ok: true, alreadyRecording: true, egressId: room.recording_egress_id, room })
+        return json(res, 200, {
+          ok: true,
+          alreadyRecording: true,
+          egressId: room.recording_egress_id,
+          room,
+        })
       }
 
       const filepath = recordingFilePath(agendaEventoId)
       const recordingUrl = publicRecordingUrl(filepath)
-      const { started, variant } = await startRoomCompositeEgress(room.provider_room_name, filepath)
+
+      const { started, variant } = await startRoomCompositeEgress(
+        room.provider_room_name,
+        filepath
+      )
+
       const egressId = extractEgressId(started)
+
+      if (!egressId) {
+        await tryUpdateVideoRoom(room.id, {
+          recording_status: 'failed',
+          recording_egress_id: null,
+          recording_started_at: null,
+          recording_stopped_at: null,
+          recording_url: null,
+          updated_at: new Date().toISOString(),
+        })
+
+        await updateAgendaVideoStatus(agendaEventoId, 'recording_failed')
+
+        throw new Error(
+          `LiveKit não retornou egressId. Variante ${variant}. Resposta: ${compact(started)}`
+        )
+      }
 
       await tryUpdateVideoRoom(room.id, {
         recording_status: 'recording',
@@ -285,16 +410,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         updated_at: new Date().toISOString(),
       })
 
-      await admin.from('agenda_eventos').update({ video_status: 'recording' }).eq('id', agendaEventoId)
+      await updateAgendaVideoStatus(agendaEventoId, 'recording')
 
-      return json(res, 200, { ok: true, action, egressId, recordingUrl, filepath, variant, egress: started })
+      return json(res, 200, {
+        ok: true,
+        action,
+        egressId,
+        recordingUrl,
+        filepath,
+        variant,
+        egress: started,
+      })
     }
 
     if (action === 'stop') {
       const egressId = egressIdFromBody || room.recording_egress_id || ''
-      if (!egressId) return json(res, 400, { error: 'Nenhuma gravação em andamento foi encontrada.' })
+
+      if (!egressId) {
+        await tryUpdateVideoRoom(room.id, {
+          recording_status: 'failed',
+          recording_stopped_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+
+        return json(res, 400, {
+          error: 'Nenhuma gravação em andamento foi encontrada. O LiveKit não retornou egressId para esta sala.',
+        })
+      }
 
       let stopped: any
+
       try {
         stopped = await twirp('/twirp/livekit.Egress/StopEgress', { egressId })
       } catch {
@@ -307,21 +452,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         updated_at: new Date().toISOString(),
       })
 
-      return json(res, 200, { ok: true, action, egressId, egress: stopped })
+      return json(res, 200, {
+        ok: true,
+        action,
+        egressId,
+        egress: stopped,
+      })
     }
 
     const egressId = egressIdFromBody || room.recording_egress_id || ''
-    if (!egressId) return json(res, 200, { ok: true, action, recording: false, room })
+
+    if (!egressId) {
+      return json(res, 200, {
+        ok: true,
+        action,
+        recording: false,
+        room,
+      })
+    }
 
     let status: any
+
     try {
       status = await twirp('/twirp/livekit.Egress/ListEgress', { egressId })
     } catch {
       status = await twirp('/twirp/livekit.Egress/ListEgress', { egress_id: egressId })
     }
 
-    return json(res, 200, { ok: true, action, recording: room.recording_status === 'recording', room, egress: status })
+    return json(res, 200, {
+      ok: true,
+      action,
+      recording: room.recording_status === 'recording',
+      room,
+      egress: status,
+    })
   } catch (err: any) {
-    return json(res, 500, { error: err?.message || 'Erro inesperado.' })
+    return json(res, 500, {
+      error: err?.message || 'Erro inesperado.',
+    })
   }
 }

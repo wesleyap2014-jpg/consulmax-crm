@@ -69,6 +69,7 @@ type ClientContext = {
 
 type PanelTab = "resumo" | "cadastro" | "carteira" | "notas";
 type NoteAction = "save" | "finish";
+type RecordingAction = "start" | "stop" | "status";
 
 const C = {
   ruby: "#A11C27",
@@ -130,6 +131,24 @@ async function callLiveKitRoom(body: Record<string, any>) {
 
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error || "Falha ao acessar a sala.");
+  return json;
+}
+
+async function callRecordingViaApi(body: Record<string, any>) {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+
+  const res = await fetch("/api/livekit-recording", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error || "Falha ao controlar a gravação.");
   return json;
 }
 
@@ -235,6 +254,11 @@ export default function AgendaSalaPage() {
   const [notes, setNotes] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [finishing, setFinishing] = useState(false);
+
+  const [recording, setRecording] = useState(false);
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const [recordingEgressId, setRecordingEgressId] = useState("");
+  const [recordingUrl, setRecordingUrl] = useState("");
 
   const [clientContext, setClientContext] = useState<ClientContext | null>(null);
   const [loadingContext, setLoadingContext] = useState(false);
@@ -368,10 +392,67 @@ export default function AgendaSalaPage() {
       if (data?.clientUrl && !evento?.videocall_url) {
         setEvento((old) => (old ? { ...old, videocall_url: data.clientUrl } : old));
       }
+
+      if (!isClient) {
+        try {
+          await controlRecording("status", false);
+        } catch {
+          // status é opcional; não bloqueia entrada na sala
+        }
+      }
     } catch (err: any) {
       alert("Erro ao entrar na sala: " + (err?.message || "erro desconhecido"));
     } finally {
       setJoining(false);
+    }
+  }
+
+  async function controlRecording(action: RecordingAction, showConfirm = true) {
+    if (!evento || !eventId || isClient) return;
+
+    if (showConfirm && action === "start" && !confirm("Deseja iniciar a gravação desta videochamada?")) return;
+    if (showConfirm && action === "stop" && !confirm("Deseja parar a gravação desta videochamada?")) return;
+
+    setRecordingBusy(true);
+
+    try {
+      const data = await callRecordingViaApi({
+        agenda_evento_id: eventId,
+        action,
+        egress_id: recordingEgressId || undefined,
+      });
+
+      if (action === "start") {
+        const nextEgress = data?.egressId || data?.egress_id || data?.room?.recording_egress_id || "";
+        const nextUrl = data?.recordingUrl || data?.recording_url || data?.room?.recording_url || "";
+
+        setRecording(true);
+        setRecordingEgressId(nextEgress);
+        setRecordingUrl(nextUrl);
+
+        if (showConfirm) {
+          alert(data?.alreadyRecording ? "A gravação já estava em andamento." : "Gravação iniciada.");
+        }
+      }
+
+      if (action === "stop") {
+        setRecording(false);
+        if (showConfirm) {
+          alert("Gravação parada. O arquivo pode levar alguns minutos para aparecer no Supabase Storage.");
+        }
+      }
+
+      if (action === "status") {
+        const isRec = data?.recording === true || data?.room?.recording_status === "recording";
+        setRecording(isRec);
+        setRecordingEgressId(data?.room?.recording_egress_id || recordingEgressId || "");
+        setRecordingUrl(data?.room?.recording_url || recordingUrl || "");
+      }
+    } catch (err: any) {
+      if (showConfirm) alert("Erro na gravação: " + (err?.message || "erro desconhecido"));
+      throw err;
+    } finally {
+      setRecordingBusy(false);
     }
   }
 
@@ -391,6 +472,14 @@ export default function AgendaSalaPage() {
     }
 
     try {
+      if (action === "finish" && recording) {
+        try {
+          await controlRecording("stop", false);
+        } catch {
+          // não impede a finalização se falhar ao parar gravação
+        }
+      }
+
       const result = await saveMeetingNoteViaApi({
         agenda_evento_id: evento.id,
         raw_notes: raw,
@@ -428,6 +517,7 @@ export default function AgendaSalaPage() {
       if (action === "finish") {
         setToken("");
         setServerUrl("");
+        setRecording(false);
         alert("Atendimento finalizado e nota registrada.");
       } else {
         alert("Nota salva no histórico.");
@@ -627,11 +717,14 @@ export default function AgendaSalaPage() {
           </div>
 
           <div style={headerActions}>
+            {!isClient && recording && <span style={recordingPill}>● Gravando</span>}
+
             {!isClient && waClient && evento.videocall_url && !isFinished && (
               <a href={waClient} target="_blank" rel="noreferrer" style={btnSecondary}>
                 Enviar link no WhatsApp
               </a>
             )}
+
             {!isClient && (
               <Link to="/agenda" style={btnGhost}>
                 Voltar
@@ -693,7 +786,12 @@ export default function AgendaSalaPage() {
                   <p style={eyebrow}>Ao vivo</p>
                   <strong style={{ color: C.navy }}>Sala conectada</strong>
                 </div>
-                {!isClient && <span style={liveBadge}>Atendimento em andamento</span>}
+
+                {!isClient && (
+                  <span style={recording ? recordingPill : liveBadge}>
+                    {recording ? "● Gravando" : "Atendimento em andamento"}
+                  </span>
+                )}
               </div>
 
               <div style={livekitBox}>
@@ -740,6 +838,38 @@ export default function AgendaSalaPage() {
                 <div style={panelScroll}>{renderPanel()}</div>
 
                 <div style={sideFooter}>
+                  <div style={recordingBox}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <strong>{recording ? "Gravação em andamento" : "Gravação da reunião"}</strong>
+                      <span>
+                        {recording
+                          ? "Ao parar, o arquivo pode levar alguns minutos para aparecer no Supabase."
+                          : "O vídeo será salvo no bucket recordings do Supabase."}
+                      </span>
+                    </div>
+
+                    {!recording ? (
+                      <button
+                        type="button"
+                        style={btnSecondary}
+                        onClick={() => controlRecording("start")}
+                        disabled={recordingBusy || isFinished}
+                      >
+                        {recordingBusy ? "Iniciando..." : "Iniciar gravação"}
+                      </button>
+                    ) : (
+                      <button type="button" style={btnSecondary} onClick={() => controlRecording("stop")} disabled={recordingBusy}>
+                        {recordingBusy ? "Parando..." : "Parar gravação"}
+                      </button>
+                    )}
+
+                    {recordingUrl && (
+                      <a href={recordingUrl} target="_blank" rel="noreferrer" style={recordingLink}>
+                        Abrir gravação
+                      </a>
+                    )}
+                  </div>
+
                   {activePanel !== "notas" && (
                     <button type="button" style={btnSecondary} onClick={() => setActivePanel("notas")}>
                       Escrever nota
@@ -887,6 +1017,16 @@ const liveBadge: React.CSSProperties = {
   fontWeight: 900,
 };
 
+const recordingPill: React.CSSProperties = {
+  padding: "6px 10px",
+  borderRadius: 999,
+  background: "#A11C2714",
+  border: "1px solid #A11C2750",
+  color: C.ruby,
+  fontSize: 12,
+  fontWeight: 900,
+};
+
 const sideCard: React.CSSProperties = {
   background: "rgba(255,255,255,.88)",
   borderRadius: 22,
@@ -990,6 +1130,24 @@ const sideFooter: React.CSSProperties = {
   gap: 8,
   paddingTop: 10,
   borderTop: "1px solid #e2e8f0",
+};
+
+const recordingBox: React.CSSProperties = {
+  display: "grid",
+  gap: 8,
+  padding: 10,
+  borderRadius: 16,
+  background: "#fff",
+  border: "1px solid #e2e8f0",
+  fontSize: 12,
+  color: C.text,
+};
+
+const recordingLink: React.CSSProperties = {
+  color: C.ruby,
+  fontWeight: 900,
+  fontSize: 12,
+  textDecoration: "none",
 };
 
 const sectionBoxSoft: React.CSSProperties = {

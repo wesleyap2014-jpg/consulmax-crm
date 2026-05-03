@@ -127,7 +127,8 @@ async function twirp(path: string, payload: Record<string, any>) {
   try { data = text ? JSON.parse(text) : {} } catch { data = { raw: text } }
 
   if (!response.ok) {
-    throw new Error(data?.msg || data?.error || data?.raw || `LiveKit Egress falhou: ${response.status}`)
+    const msg = data?.msg || data?.error || data?.raw || `LiveKit Egress falhou: ${response.status}`
+    throw new Error(msg)
   }
 
   return data
@@ -155,8 +156,8 @@ function extractEgressId(started: any) {
   return started?.egress_id || started?.egressId || started?.info?.egress_id || started?.info?.egressId || null
 }
 
-function buildStartPayload(roomName: string, filepath: string) {
-  const s3 = {
+function s3Camel() {
+  return {
     endpoint: REC_S3_ENDPOINT || undefined,
     region: REC_S3_REGION,
     bucket: REC_S3_BUCKET,
@@ -164,26 +165,72 @@ function buildStartPayload(roomName: string, filepath: string) {
     secret: REC_S3_SECRET_KEY,
     forcePathStyle: !!REC_S3_ENDPOINT,
   }
+}
 
-  const file = {
+function s3Snake() {
+  return {
+    endpoint: REC_S3_ENDPOINT || undefined,
+    region: REC_S3_REGION,
+    bucket: REC_S3_BUCKET,
+    access_key: REC_S3_ACCESS_KEY,
+    secret: REC_S3_SECRET_KEY,
+    force_path_style: !!REC_S3_ENDPOINT,
+  }
+}
+
+function payloadCandidates(roomName: string, filepath: string) {
+  const camelFile = {
+    filepath,
+    disableManifest: false,
+    s3: s3Camel(),
+  }
+
+  const snakeFile = {
+    filepath,
+    disable_manifest: false,
+    s3: s3Snake(),
+  }
+
+  const protobufEsFile = {
     filepath,
     disableManifest: false,
     output: {
       case: 's3',
-      value: s3,
+      value: s3Camel(),
     },
   }
 
-  return {
-    roomName,
-    layout: 'grid',
-    audioOnly: false,
-    videoOnly: false,
-    output: {
-      case: 'file',
-      value: file,
+  return [
+    { roomName, layout: 'grid', audioOnly: false, videoOnly: false, file: camelFile },
+    { room_name: roomName, layout: 'grid', audio_only: false, video_only: false, file: snakeFile },
+    { roomName, layout: 'grid', audioOnly: false, videoOnly: false, fileOutputs: [camelFile] },
+    { room_name: roomName, layout: 'grid', audio_only: false, video_only: false, file_outputs: [snakeFile] },
+    {
+      roomName,
+      layout: 'grid',
+      audioOnly: false,
+      videoOnly: false,
+      output: { case: 'file', value: protobufEsFile },
     },
+  ]
+}
+
+async function startRoomCompositeEgress(roomName: string, filepath: string) {
+  const candidates = payloadCandidates(roomName, filepath)
+  const errors: string[] = []
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    try {
+      const started = await twirp('/twirp/livekit.Egress/StartRoomCompositeEgress', candidates[i])
+      return { started, variant: i + 1 }
+    } catch (err: any) {
+      const msg = err?.message || 'erro desconhecido'
+      errors.push(`tentativa ${i + 1}: ${msg}`)
+      if (!/output|field|missing|invalid|unknown|unmarshal|json/i.test(String(msg))) break
+    }
   }
+
+  throw new Error(errors.join(' | '))
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -226,9 +273,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const filepath = recordingFilePath(agendaEventoId)
       const recordingUrl = publicRecordingUrl(filepath)
-      const payload = buildStartPayload(room.provider_room_name, filepath)
-
-      const started = await twirp('/twirp/livekit.Egress/StartRoomCompositeEgress', payload)
+      const { started, variant } = await startRoomCompositeEgress(room.provider_room_name, filepath)
       const egressId = extractEgressId(started)
 
       await tryUpdateVideoRoom(room.id, {
@@ -242,14 +287,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       await admin.from('agenda_eventos').update({ video_status: 'recording' }).eq('id', agendaEventoId)
 
-      return json(res, 200, { ok: true, action, egressId, recordingUrl, filepath, egress: started })
+      return json(res, 200, { ok: true, action, egressId, recordingUrl, filepath, variant, egress: started })
     }
 
     if (action === 'stop') {
       const egressId = egressIdFromBody || room.recording_egress_id || ''
       if (!egressId) return json(res, 400, { error: 'Nenhuma gravação em andamento foi encontrada.' })
 
-      const stopped = await twirp('/twirp/livekit.Egress/StopEgress', { egressId })
+      let stopped: any
+      try {
+        stopped = await twirp('/twirp/livekit.Egress/StopEgress', { egressId })
+      } catch {
+        stopped = await twirp('/twirp/livekit.Egress/StopEgress', { egress_id: egressId })
+      }
 
       await tryUpdateVideoRoom(room.id, {
         recording_status: 'stopped',
@@ -263,7 +313,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const egressId = egressIdFromBody || room.recording_egress_id || ''
     if (!egressId) return json(res, 200, { ok: true, action, recording: false, room })
 
-    const status = await twirp('/twirp/livekit.Egress/ListEgress', { egressId })
+    let status: any
+    try {
+      status = await twirp('/twirp/livekit.Egress/ListEgress', { egressId })
+    } catch {
+      status = await twirp('/twirp/livekit.Egress/ListEgress', { egress_id: egressId })
+    }
+
     return json(res, 200, { ok: true, action, recording: room.recording_status === 'recording', room, egress: status })
   } catch (err: any) {
     return json(res, 500, { error: err?.message || 'Erro inesperado.' })

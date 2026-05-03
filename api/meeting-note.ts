@@ -69,7 +69,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lead_id: evento.lead_id,
         raw_notes: rawNotes,
         next_steps: nextSteps,
-        created_by: authUserId,
       })
       .select('*')
       .single()

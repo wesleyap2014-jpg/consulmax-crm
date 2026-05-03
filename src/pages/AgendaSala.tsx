@@ -87,6 +87,24 @@ async function callLiveKitRoom(body: Record<string, any>) {
   return json;
 }
 
+async function saveMeetingNoteViaApi(body: Record<string, any>) {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+
+  const res = await fetch("/api/meeting-note", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error || "Falha ao salvar a nota.");
+  return json;
+}
+
 function publicFallbackEvent(eventId: string): AgendaEvento {
   return {
     id: eventId,
@@ -195,25 +213,13 @@ export default function AgendaSalaPage() {
     setSavingNote(true);
 
     try {
-      const { error } = await supabase.from("meeting_notes").insert({
+      await saveMeetingNoteViaApi({
         agenda_evento_id: evento.id,
-        cliente_id: evento.cliente_id,
-        lead_id: evento.lead_id,
         raw_notes: raw,
         next_steps: "",
       });
 
-      if (error) throw error;
-
-      await supabase
-        .from("agenda_eventos")
-        .update({
-          video_status: "finished",
-          completed_at: new Date().toISOString(),
-          completion_notes: raw,
-        })
-        .eq("id", evento.id);
-
+      setEvento((old) => (old ? { ...old, video_status: "finished" } : old));
       alert("Atendimento finalizado e nota registrada.");
     } catch (err: any) {
       alert("Erro ao salvar nota: " + (err?.message || "erro desconhecido"));

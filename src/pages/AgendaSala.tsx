@@ -35,11 +35,22 @@ type CotaResumo = {
   data_venda: string | null;
 };
 
+type MeetingNote = {
+  id?: string;
+  agenda_evento_id?: string;
+  cliente_id?: string | null;
+  lead_id?: string | null;
+  raw_notes?: string | null;
+  next_steps?: string | null;
+  created_at?: string | null;
+};
+
 type ClientContext = {
   ok?: boolean;
   evento?: any;
   cliente?: any | null;
   lead?: any | null;
+  meeting_notes?: MeetingNote[];
   carteira?: {
     qtd_total: number;
     qtd_ativas: number;
@@ -57,6 +68,7 @@ type ClientContext = {
 };
 
 type PanelTab = "resumo" | "cadastro" | "carteira" | "notas";
+type NoteAction = "save" | "finish";
 
 const C = {
   ruby: "#A11C27",
@@ -190,7 +202,15 @@ function KpiMini({ label, value }: { label: string; value: any }) {
   );
 }
 
-function PanelTabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+function PanelTabButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
   return (
     <button type="button" style={active ? panelTabActive : panelTab} onClick={onClick}>
       {children}
@@ -214,6 +234,7 @@ export default function AgendaSalaPage() {
 
   const [notes, setNotes] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [finishing, setFinishing] = useState(false);
 
   const [clientContext, setClientContext] = useState<ClientContext | null>(null);
   const [loadingContext, setLoadingContext] = useState(false);
@@ -221,17 +242,57 @@ export default function AgendaSalaPage() {
   const [activePanel, setActivePanel] = useState<PanelTab>("resumo");
 
   const personName = useMemo(() => {
-    return evento?.cliente?.nome || evento?.lead?.nome || clientContext?.cliente?.nome || clientContext?.lead?.nome || (isClient ? name || "Cliente" : "Cliente");
+    return (
+      evento?.cliente?.nome ||
+      evento?.lead?.nome ||
+      clientContext?.cliente?.nome ||
+      clientContext?.lead?.nome ||
+      (isClient ? name || "Cliente" : "Cliente")
+    );
   }, [evento, clientContext, isClient, name]);
 
   const personPhone = useMemo(() => {
-    return evento?.cliente?.telefone || evento?.lead?.telefone || clientContext?.cliente?.telefone || clientContext?.lead?.telefone || null;
+    return (
+      evento?.cliente?.telefone ||
+      evento?.lead?.telefone ||
+      clientContext?.cliente?.telefone ||
+      clientContext?.lead?.telefone ||
+      null
+    );
   }, [evento, clientContext]);
 
   const cliente = clientContext?.cliente || null;
   const lead = clientContext?.lead || null;
   const carteira = clientContext?.carteira || null;
+  const meetingNotes = clientContext?.meeting_notes || [];
   const isFinished = evento?.video_status === "finished";
+
+  async function reloadEvent() {
+    if (!eventId) return;
+
+    const { data } = await supabase
+      .from("agenda_eventos")
+      .select(`
+        id,tipo,titulo,cliente_id,lead_id,user_id,inicio_at,fim_at,videocall_url,video_status,completion_notes,completed_at,
+        cliente:clientes!agenda_eventos_cliente_id_fkey(id,nome,telefone,observacoes),
+        lead:leads!agenda_eventos_lead_id_fkey(id,nome,telefone,descricao)
+      `)
+      .eq("id", eventId)
+      .maybeSingle();
+
+    if (data) setEvento(data as any);
+  }
+
+  async function refreshContext() {
+    if (!eventId || isClient) return;
+
+    try {
+      const ctx = await loadClientContextViaApi(eventId);
+      setClientContext(ctx);
+    } catch (err: any) {
+      setContextError(err?.message || "Não foi possível carregar dados do cliente.");
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -274,6 +335,7 @@ export default function AgendaSalaPage() {
       if (!eventId || isClient) return;
       setLoadingContext(true);
       setContextError("");
+
       try {
         const ctx = await loadClientContextViaApi(eventId);
         setClientContext(ctx);
@@ -313,26 +375,68 @@ export default function AgendaSalaPage() {
     }
   }
 
-  async function finishMeeting() {
+  async function saveNote(action: NoteAction) {
     if (!evento || isClient) return;
-    const raw = notes.trim();
-    if (!raw) return alert("Digite uma nota antes de finalizar.");
 
-    setSavingNote(true);
+    const raw = notes.trim();
+    if (!raw) {
+      return alert(action === "finish" ? "Digite uma nota antes de finalizar." : "Digite uma nota antes de salvar.");
+    }
+
+    if (action === "finish") {
+      if (!confirm("Deseja finalizar este atendimento? A sala será encerrada para este link.")) return;
+      setFinishing(true);
+    } else {
+      setSavingNote(true);
+    }
 
     try {
-      await saveMeetingNoteViaApi({
+      const result = await saveMeetingNoteViaApi({
         agenda_evento_id: evento.id,
         raw_notes: raw,
         next_steps: "",
+        action,
       });
 
-      setEvento((old) => (old ? { ...old, video_status: "finished", completion_notes: raw, completed_at: new Date().toISOString() } : old));
-      alert("Atendimento finalizado e nota registrada.");
+      const nowIso = new Date().toISOString();
+
+      setEvento((old) =>
+        old
+          ? {
+              ...old,
+              video_status: action === "finish" ? "finished" : old.video_status,
+              completion_notes: raw,
+              completed_at: nowIso,
+            }
+          : old
+      );
+
+      setClientContext((old) => {
+        const current = old || {};
+        const list = current.meeting_notes || [];
+        return {
+          ...current,
+          meeting_notes: [result?.note, ...list].filter(Boolean),
+        };
+      });
+
+      setNotes("");
+
+      await reloadEvent();
+      await refreshContext();
+
+      if (action === "finish") {
+        setToken("");
+        setServerUrl("");
+        alert("Atendimento finalizado e nota registrada.");
+      } else {
+        alert("Nota salva no histórico.");
+      }
     } catch (err: any) {
       alert("Erro ao salvar nota: " + (err?.message || "erro desconhecido"));
     } finally {
       setSavingNote(false);
+      setFinishing(false);
     }
   }
 
@@ -357,7 +461,9 @@ export default function AgendaSalaPage() {
         <div style={loadingCard}>
           <h2>Evento não encontrado</h2>
           {eventoError && <p style={{ color: C.muted }}>{eventoError}</p>}
-          <Link to="/agenda" style={btnSecondary}>Voltar para Agenda</Link>
+          <Link to="/agenda" style={btnSecondary}>
+            Voltar para Agenda
+          </Link>
         </div>
       </div>
     );
@@ -391,6 +497,16 @@ export default function AgendaSalaPage() {
             <SmallInfo label="Segmentos" value={carteira?.segmentos?.join(", ")} />
             <SmallInfo label="Administradoras" value={carteira?.administradoras?.join(", ")} />
           </div>
+
+          {!!meetingNotes.length && (
+            <div style={sectionBoxSoft}>
+              <h4 style={sectionTitle}>Última anotação</h4>
+              <p style={{ margin: 0, whiteSpace: "pre-wrap", color: C.text, fontSize: 12 }}>
+                {meetingNotes[0]?.raw_notes || "—"}
+              </p>
+              <small style={{ color: C.muted }}>{fmtDateTime(meetingNotes[0]?.created_at)}</small>
+            </div>
+          )}
         </div>
       );
     }
@@ -429,9 +545,15 @@ export default function AgendaSalaPage() {
             {carteira?.ultimas_cotas?.length ? (
               carteira.ultimas_cotas.slice(0, 8).map((cota) => (
                 <div key={cota.id} style={cotaCard}>
-                  <strong>{cota.administradora} • {cota.segmento}</strong>
-                  <span>Grupo {cota.grupo} • Cota {cota.cota}</span>
-                  <span>{cota.status} • {cota.valor_venda_fmt}</span>
+                  <strong>
+                    {cota.administradora} • {cota.segmento}
+                  </strong>
+                  <span>
+                    Grupo {cota.grupo} • Cota {cota.cota}
+                  </span>
+                  <span>
+                    {cota.status} • {cota.valor_venda_fmt}
+                  </span>
                 </div>
               ))
             ) : (
@@ -454,11 +576,38 @@ export default function AgendaSalaPage() {
           />
         </label>
 
-        {evento.completion_notes && (
+        <button style={btnSecondary} onClick={() => saveNote("save")} disabled={savingNote || finishing || isFinished}>
+          {savingNote ? "Salvando nota..." : "Salvar nota"}
+        </button>
+
+        <div style={sectionBoxSoft}>
+          <h4 style={sectionTitle}>Histórico de anotações</h4>
+
+          {meetingNotes.length ? (
+            <div style={historyList}>
+              {meetingNotes.map((n, idx) => (
+                <div key={n.id || `${n.created_at}-${idx}`} style={historyItem}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <strong>Nota {meetingNotes.length - idx}</strong>
+                    <small>{fmtDateTime(n.created_at)}</small>
+                  </div>
+
+                  <p style={{ margin: "6px 0 0", whiteSpace: "pre-wrap" }}>{n.raw_notes || "—"}</p>
+
+                  {n.next_steps && <small style={{ color: C.muted }}>Próximos passos: {n.next_steps}</small>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: C.muted, margin: 0, fontSize: 12 }}>Nenhuma nota registrada ainda.</p>
+          )}
+        </div>
+
+        {evento.completion_notes && !meetingNotes.length && (
           <div style={finishedNoteBox}>
-            <strong>Nota já registrada</strong>
+            <strong>Última nota registrada</strong>
             <p>{evento.completion_notes}</p>
-            <small>{evento.completed_at ? `Finalizado em ${fmtDateTime(evento.completed_at)}` : ""}</small>
+            <small>{evento.completed_at ? `Registrado em ${fmtDateTime(evento.completed_at)}` : ""}</small>
           </div>
         )}
       </div>
@@ -473,9 +622,7 @@ export default function AgendaSalaPage() {
             <p style={eyebrow}>Sala Consulmax</p>
             <h1 style={title}>{evento.titulo || "Videochamada Consulmax"}</h1>
             <p style={subtitle}>
-              {isClient
-                ? "Você está no ambiente seguro de atendimento por vídeo."
-                : `${fmtDateTime(evento.inicio_at)} • ${personName}`}
+              {isClient ? "Você está no ambiente seguro de atendimento por vídeo." : `${fmtDateTime(evento.inicio_at)} • ${personName}`}
             </p>
           </div>
 
@@ -485,7 +632,11 @@ export default function AgendaSalaPage() {
                 Enviar link no WhatsApp
               </a>
             )}
-            {!isClient && <Link to="/agenda" style={btnGhost}>Voltar</Link>}
+            {!isClient && (
+              <Link to="/agenda" style={btnGhost}>
+                Voltar
+              </Link>
+            )}
           </div>
         </header>
 
@@ -497,19 +648,23 @@ export default function AgendaSalaPage() {
                   <p style={eyebrow}>Atendimento finalizado</p>
                   <h2 style={{ margin: "4px 0 8px", color: C.navy }}>Esta sala já foi encerrada</h2>
                   <p style={{ margin: 0, color: C.muted }}>
-                    Para uma nova videochamada, crie um novo evento na Agenda.
+                    Este atendimento foi finalizado. Para uma nova videochamada, crie um novo evento na Agenda.
                   </p>
                 </div>
 
                 {!isClient && evento.completion_notes && (
                   <div style={finishedNoteBox}>
-                    <strong>Nota registrada</strong>
+                    <strong>Última nota registrada</strong>
                     <p>{evento.completion_notes}</p>
-                    <small>{evento.completed_at ? `Finalizado em ${fmtDateTime(evento.completed_at)}` : ""}</small>
+                    <small>{evento.completed_at ? `Registrado em ${fmtDateTime(evento.completed_at)}` : ""}</small>
                   </div>
                 )}
 
-                {!isClient && <Link to="/agenda" style={btnSecondary}>Voltar para Agenda</Link>}
+                {!isClient && (
+                  <Link to="/agenda" style={btnSecondary}>
+                    Voltar para Agenda
+                  </Link>
+                )}
               </>
             ) : (
               <>
@@ -568,10 +723,18 @@ export default function AgendaSalaPage() {
                 </div>
 
                 <div style={panelTabs}>
-                  <PanelTabButton active={activePanel === "resumo"} onClick={() => setActivePanel("resumo")}>Resumo</PanelTabButton>
-                  <PanelTabButton active={activePanel === "cadastro"} onClick={() => setActivePanel("cadastro")}>Cadastro</PanelTabButton>
-                  <PanelTabButton active={activePanel === "carteira"} onClick={() => setActivePanel("carteira")}>Carteira</PanelTabButton>
-                  <PanelTabButton active={activePanel === "notas"} onClick={() => setActivePanel("notas")}>Notas</PanelTabButton>
+                  <PanelTabButton active={activePanel === "resumo"} onClick={() => setActivePanel("resumo")}>
+                    Resumo
+                  </PanelTabButton>
+                  <PanelTabButton active={activePanel === "cadastro"} onClick={() => setActivePanel("cadastro")}>
+                    Cadastro
+                  </PanelTabButton>
+                  <PanelTabButton active={activePanel === "carteira"} onClick={() => setActivePanel("carteira")}>
+                    Carteira
+                  </PanelTabButton>
+                  <PanelTabButton active={activePanel === "notas"} onClick={() => setActivePanel("notas")}>
+                    Notas
+                  </PanelTabButton>
                 </div>
 
                 <div style={panelScroll}>{renderPanel()}</div>
@@ -582,8 +745,9 @@ export default function AgendaSalaPage() {
                       Escrever nota
                     </button>
                   )}
-                  <button style={btnPrimary} onClick={finishMeeting} disabled={savingNote || isFinished}>
-                    {savingNote ? "Salvando..." : isFinished ? "Finalizado" : "Finalizar atendimento"}
+
+                  <button style={btnPrimary} onClick={() => saveNote("finish")} disabled={savingNote || finishing || isFinished}>
+                    {finishing ? "Finalizando..." : isFinished ? "Finalizado" : "Finalizar atendimento"}
                   </button>
                 </div>
               </aside>
@@ -872,6 +1036,22 @@ const cotasList: React.CSSProperties = {
 const cotaCard: React.CSSProperties = {
   display: "grid",
   gap: 3,
+  padding: 10,
+  borderRadius: 14,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  fontSize: 12,
+  color: C.text,
+};
+
+const historyList: React.CSSProperties = {
+  display: "grid",
+  gap: 8,
+};
+
+const historyItem: React.CSSProperties = {
+  display: "grid",
+  gap: 4,
   padding: 10,
   borderRadius: 14,
   background: "#f8fafc",

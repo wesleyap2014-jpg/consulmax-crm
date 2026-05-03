@@ -12,6 +12,7 @@ const Inicio = React.lazy(() => import("./pages/Inicio"));
 const Clientes = React.lazy(() => import("./pages/Clientes"));
 const Oportunidades = React.lazy(() => import("./pages/Oportunidades"));
 const Agenda = React.lazy(() => import("./pages/Agenda"));
+const AgendaSala = React.lazy(() => import("./pages/AgendaSala"));
 const Simuladores = React.lazy(() => import("./pages/Simuladores"));
 const Propostas = React.lazy(() => import("./pages/Propostas"));
 const Comissoes = React.lazy(() => import("./pages/Comissoes"));
@@ -67,6 +68,7 @@ export const router = createBrowserRouter([
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   { path: "/simular", element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
+  { path: "/agenda/sala/:eventId", element: withSuspense(<AgendaSala />) },
 
   // Login
   { path: "/login", element: withSuspense(<Login />) },

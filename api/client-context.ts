@@ -57,6 +57,17 @@ async function safeSelectMany(table: string, column: string, value: string) {
   return data || []
 }
 
+async function safeMeetingNotes(agendaEventoId: string) {
+  const { data, error } = await admin
+    .from('meeting_notes')
+    .select('*')
+    .eq('agenda_evento_id', agendaEventoId)
+    .order('created_at', { ascending: false })
+    .limit(50)
+  if (error) return []
+  return data || []
+}
+
 function buildCarteira(vendas: any[]) {
   const ativas = vendas.filter((v) => String(v?.codigo || '') === '00' && !v?.cancelada_em)
   const canceladas = vendas.filter((v) => String(v?.codigo || '') !== '00' || !!v?.cancelada_em)
@@ -150,6 +161,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const vendas = uniqById(vendasBuckets.flat())
     const carteira = buildCarteira(vendas)
+    const meeting_notes = await safeMeetingNotes(agendaEventoId)
 
     return json(res, 200, {
       ok: true,
@@ -157,6 +169,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       cliente,
       lead,
       carteira,
+      meeting_notes,
     })
   } catch (err: any) {
     return json(res, 500, { error: err?.message || 'Erro inesperado.' })

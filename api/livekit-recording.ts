@@ -87,26 +87,6 @@ function publicRecordingUrl(filepath: string) {
   return `${REC_PUBLIC_BASE_URL.replace(/\/$/, '')}/${filepath}`
 }
 
-function s3Output() {
-  if (!REC_S3_BUCKET || !REC_S3_ACCESS_KEY || !REC_S3_SECRET_KEY) return null
-
-  return {
-    endpoint: REC_S3_ENDPOINT || undefined,
-    region: REC_S3_REGION,
-    bucket: REC_S3_BUCKET,
-    access_key: REC_S3_ACCESS_KEY,
-    secret: REC_S3_SECRET_KEY,
-    force_path_style: !!REC_S3_ENDPOINT,
-  }
-}
-
-function encodedFileOutput(filepath: string) {
-  const out: Record<string, any> = { filepath }
-  const s3 = s3Output()
-  if (s3) out.s3 = s3
-  return out
-}
-
 async function twirp(path: string, payload: Record<string, any>) {
   const egressToken = livekitToken({ roomRecord: true })
   const response = await fetch(`${lkHttpUrl()}${path}`, {
@@ -151,6 +131,37 @@ function extractEgressId(started: any) {
   return started?.egress_id || started?.egressId || started?.info?.egress_id || started?.info?.egressId || null
 }
 
+function buildStartPayload(roomName: string, filepath: string) {
+  const s3 = {
+    endpoint: REC_S3_ENDPOINT || undefined,
+    region: REC_S3_REGION,
+    bucket: REC_S3_BUCKET,
+    accessKey: REC_S3_ACCESS_KEY,
+    secret: REC_S3_SECRET_KEY,
+    forcePathStyle: !!REC_S3_ENDPOINT,
+  }
+
+  const file = {
+    filepath,
+    disableManifest: false,
+    output: {
+      case: 's3',
+      value: s3,
+    },
+  }
+
+  return {
+    roomName,
+    layout: 'grid',
+    audioOnly: false,
+    videoOnly: false,
+    output: {
+      case: 'file',
+      value: file,
+    },
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -162,6 +173,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return json(res, 500, { error: 'Faltam variáveis do Supabase na Vercel.' })
     if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_WS_URL) return json(res, 500, { error: 'Faltam variáveis do LiveKit na Vercel.' })
+    if (!REC_S3_BUCKET || !REC_S3_ACCESS_KEY || !REC_S3_SECRET_KEY) return json(res, 500, { error: 'Faltam variáveis S3 da gravação na Vercel.' })
 
     const authUser = await authUserId(req)
     if (!authUser) return json(res, 401, { error: 'Usuário não autenticado.' })
@@ -182,18 +194,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const filepath = recordingFilePath(agendaEventoId)
       const recordingUrl = publicRecordingUrl(filepath)
-      const file = encodedFileOutput(filepath)
-
-      // LiveKit Cloud passou a exigir o campo oneof `output`. No JSON/Twirp, o campo
-      // oneof legado para MP4 é `file`. Mantemos também `file_outputs` para compatibilidade.
-      const payload = {
-        room_name: room.provider_room_name,
-        layout: 'grid',
-        audio_only: false,
-        video_only: false,
-        file,
-        file_outputs: [file],
-      }
+      const payload = buildStartPayload(room.provider_room_name, filepath)
 
       const started = await twirp('/twirp/livekit.Egress/StartRoomCompositeEgress', payload)
       const egressId = extractEgressId(started)
@@ -216,7 +217,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const egressId = egressIdFromBody || room.recording_egress_id || ''
       if (!egressId) return json(res, 400, { error: 'Nenhuma gravação em andamento foi encontrada.' })
 
-      const stopped = await twirp('/twirp/livekit.Egress/StopEgress', { egress_id: egressId })
+      const stopped = await twirp('/twirp/livekit.Egress/StopEgress', { egressId })
 
       await tryUpdateVideoRoom(room.id, {
         recording_status: 'stopped',
@@ -230,7 +231,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const egressId = egressIdFromBody || room.recording_egress_id || ''
     if (!egressId) return json(res, 200, { ok: true, action, recording: false, room })
 
-    const status = await twirp('/twirp/livekit.Egress/ListEgress', { egress_id: egressId })
+    const status = await twirp('/twirp/livekit.Egress/ListEgress', { egressId })
     return json(res, 200, { ok: true, action, recording: room.recording_status === 'recording', room, egress: status })
   } catch (err: any) {
     return json(res, 500, { error: err?.message || 'Erro inesperado.' })

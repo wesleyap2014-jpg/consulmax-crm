@@ -20,6 +20,8 @@ type AgendaEvento = {
   fim_at: string | null;
   videocall_url: string | null;
   video_status?: string | null;
+  completion_notes?: string | null;
+  completed_at?: string | null;
   cliente?: {
     id: string;
     nome: string | null;
@@ -32,6 +34,38 @@ type AgendaEvento = {
     telefone: string | null;
     descricao?: string | null;
   } | null;
+};
+
+type ClientContext = {
+  ok?: boolean;
+  evento?: any;
+  cliente?: any | null;
+  lead?: any | null;
+  carteira?: {
+    qtd_total: number;
+    qtd_ativas: number;
+    qtd_canceladas: number;
+    qtd_contempladas: number;
+    qtd_inadimplentes: number;
+    total_ativo: number;
+    total_ativo_fmt: string;
+    total_geral: number;
+    total_geral_fmt: string;
+    segmentos: string[];
+    administradoras: string[];
+    ultimas_cotas: Array<{
+      id: string;
+      administradora: string;
+      segmento: string;
+      grupo: string;
+      cota: string;
+      codigo: string;
+      status: string;
+      valor_venda: number;
+      valor_venda_fmt: string;
+      data_venda: string | null;
+    }>;
+  };
 };
 
 const C = {
@@ -54,6 +88,16 @@ function fmtDateTime(iso?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function fmtDate(iso?: string | null) {
+  if (!iso) return "—";
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("pt-BR");
+}
+
+function valueOrDash(value: any) {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
 }
 
 function onlyDigits(s: string) {
@@ -105,6 +149,24 @@ async function saveMeetingNoteViaApi(body: Record<string, any>) {
   return json;
 }
 
+async function loadClientContextViaApi(agendaEventoId: string) {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+
+  const res = await fetch("/api/client-context", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ agenda_evento_id: agendaEventoId }),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error || "Falha ao carregar contexto do cliente.");
+  return json as ClientContext;
+}
+
 function publicFallbackEvent(eventId: string): AgendaEvento {
   return {
     id: eventId,
@@ -118,6 +180,24 @@ function publicFallbackEvent(eventId: string): AgendaEvento {
     videocall_url: null,
     video_status: null,
   } as any;
+}
+
+function SmallInfo({ label, value }: { label: string; value: any }) {
+  return (
+    <div style={smallInfo}>
+      <span>{label}</span>
+      <strong>{valueOrDash(value)}</strong>
+    </div>
+  );
+}
+
+function KpiMini({ label, value }: { label: string; value: any }) {
+  return (
+    <div style={kpiMini}>
+      <strong>{valueOrDash(value)}</strong>
+      <span>{label}</span>
+    </div>
+  );
 }
 
 export default function AgendaSalaPage() {
@@ -137,13 +217,21 @@ export default function AgendaSalaPage() {
   const [notes, setNotes] = useState("");
   const [savingNote, setSavingNote] = useState(false);
 
+  const [clientContext, setClientContext] = useState<ClientContext | null>(null);
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [contextError, setContextError] = useState("");
+
   const personName = useMemo(() => {
-    return evento?.cliente?.nome || evento?.lead?.nome || (isClient ? name || "Cliente" : "Cliente");
-  }, [evento, isClient, name]);
+    return evento?.cliente?.nome || evento?.lead?.nome || clientContext?.cliente?.nome || clientContext?.lead?.nome || (isClient ? name || "Cliente" : "Cliente");
+  }, [evento, clientContext, isClient, name]);
 
   const personPhone = useMemo(() => {
-    return evento?.cliente?.telefone || evento?.lead?.telefone || null;
-  }, [evento]);
+    return evento?.cliente?.telefone || evento?.lead?.telefone || clientContext?.cliente?.telefone || clientContext?.lead?.telefone || null;
+  }, [evento, clientContext]);
+
+  const cliente = clientContext?.cliente || null;
+  const lead = clientContext?.lead || null;
+  const carteira = clientContext?.carteira || null;
 
   useEffect(() => {
     async function load() {
@@ -154,7 +242,7 @@ export default function AgendaSalaPage() {
       const { data, error } = await supabase
         .from("agenda_eventos")
         .select(`
-          id,tipo,titulo,cliente_id,lead_id,user_id,inicio_at,fim_at,videocall_url,video_status,
+          id,tipo,titulo,cliente_id,lead_id,user_id,inicio_at,fim_at,videocall_url,video_status,completion_notes,completed_at,
           cliente:clientes!agenda_eventos_cliente_id_fkey(id,nome,telefone,observacoes),
           lead:leads!agenda_eventos_lead_id_fkey(id,nome,telefone,descricao)
         `)
@@ -179,6 +267,24 @@ export default function AgendaSalaPage() {
     }
 
     load();
+  }, [eventId, isClient]);
+
+  useEffect(() => {
+    async function loadContext() {
+      if (!eventId || isClient) return;
+      setLoadingContext(true);
+      setContextError("");
+      try {
+        const ctx = await loadClientContextViaApi(eventId);
+        setClientContext(ctx);
+      } catch (err: any) {
+        setContextError(err?.message || "Não foi possível carregar dados do cliente.");
+      } finally {
+        setLoadingContext(false);
+      }
+    }
+
+    loadContext();
   }, [eventId, isClient]);
 
   async function joinRoom() {
@@ -219,7 +325,7 @@ export default function AgendaSalaPage() {
         next_steps: "",
       });
 
-      setEvento((old) => (old ? { ...old, video_status: "finished" } : old));
+      setEvento((old) => (old ? { ...old, video_status: "finished", completion_notes: raw, completed_at: new Date().toISOString() } : old));
       alert("Atendimento finalizado e nota registrada.");
     } catch (err: any) {
       alert("Erro ao salvar nota: " + (err?.message || "erro desconhecido"));
@@ -234,6 +340,7 @@ export default function AgendaSalaPage() {
   }, [evento?.videocall_url, personName]);
 
   const waClient = whatsappUrl(personPhone, clientMessage);
+  const isFinished = evento?.video_status === "finished";
 
   if (loadingEvento) {
     return (
@@ -269,7 +376,7 @@ export default function AgendaSalaPage() {
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {!isClient && waClient && evento.videocall_url && (
+          {!isClient && waClient && evento.videocall_url && !isFinished && (
             <a href={waClient} target="_blank" rel="noreferrer" style={btnSecondary}>
               Enviar link no WhatsApp
             </a>
@@ -280,20 +387,42 @@ export default function AgendaSalaPage() {
 
       {!token ? (
         <section style={joinCard}>
-          <div>
-            <p style={eyebrow}>{isClient ? "Cliente" : "Consultor"}</p>
-            <h2 style={{ margin: "4px 0 8px", color: C.navy }}>Entrar na videochamada</h2>
-            <p style={{ margin: 0, color: C.muted }}>Informe o nome que aparecerá na sala.</p>
-          </div>
+          {isFinished ? (
+            <>
+              <div>
+                <p style={eyebrow}>Atendimento finalizado</p>
+                <h2 style={{ margin: "4px 0 8px", color: C.navy }}>Esta sala já foi encerrada</h2>
+                <p style={{ margin: 0, color: C.muted }}>
+                  Para uma nova videochamada, crie um novo evento na Agenda.
+                </p>
+              </div>
+              {!isClient && evento.completion_notes && (
+                <div style={finishedNoteBox}>
+                  <strong>Nota registrada</strong>
+                  <p>{evento.completion_notes}</p>
+                  <small>{evento.completed_at ? `Finalizado em ${fmtDateTime(evento.completed_at)}` : ""}</small>
+                </div>
+              )}
+              {!isClient && <Link to="/agenda" style={btnSecondary}>Voltar para Agenda</Link>}
+            </>
+          ) : (
+            <>
+              <div>
+                <p style={eyebrow}>{isClient ? "Cliente" : "Consultor"}</p>
+                <h2 style={{ margin: "4px 0 8px", color: C.navy }}>Entrar na videochamada</h2>
+                <p style={{ margin: 0, color: C.muted }}>Informe o nome que aparecerá na sala.</p>
+              </div>
 
-          <label style={label}>
-            Nome na sala
-            <input style={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" />
-          </label>
+              <label style={label}>
+                Nome na sala
+                <input style={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" />
+              </label>
 
-          <button style={btnPrimary} onClick={joinRoom} disabled={joining}>
-            {joining ? "Entrando..." : "Entrar na sala"}
-          </button>
+              <button style={btnPrimary} onClick={joinRoom} disabled={joining}>
+                {joining ? "Entrando..." : "Entrar na sala"}
+              </button>
+            </>
+          )}
         </section>
       ) : (
         <main style={isClient ? clientLayout : layout}>
@@ -324,7 +453,10 @@ export default function AgendaSalaPage() {
           {!isClient && (
             <aside style={sideCard}>
               <p style={eyebrow}>Atendimento</p>
-              <h3 style={{ marginTop: 4, color: C.navy }}>Dados do cliente</h3>
+              <h3 style={{ marginTop: 4, marginBottom: 0, color: C.navy }}>Dados do cliente</h3>
+
+              {loadingContext && <p style={{ color: C.muted, margin: 0 }}>Carregando dados completos...</p>}
+              {contextError && <p style={{ color: C.ruby, margin: 0, fontSize: 12 }}>{contextError}</p>}
 
               <div style={infoBox}>
                 <strong>{personName}</strong>
@@ -332,10 +464,49 @@ export default function AgendaSalaPage() {
                 <span>{evento.tipo || "Evento"}</span>
               </div>
 
+              <div style={sectionBox}>
+                <h4 style={sectionTitle}>Cadastro</h4>
+                <SmallInfo label="CPF" value={cliente?.cpf} />
+                <SmallInfo label="Nascimento" value={fmtDate(cliente?.data_nascimento)} />
+                <SmallInfo label="E-mail" value={cliente?.email || lead?.email} />
+                <SmallInfo label="Cidade/UF" value={[cliente?.cidade, cliente?.uf].filter(Boolean).join("/")} />
+                <SmallInfo label="CEP" value={cliente?.endereco_cep} />
+                <SmallInfo label="Endereço" value={[cliente?.logradouro, cliente?.numero, cliente?.bairro].filter(Boolean).join(", ")} />
+              </div>
+
+              <div style={sectionBox}>
+                <h4 style={sectionTitle}>Carteira</h4>
+                <div style={kpiGrid}>
+                  <KpiMini label="ativas" value={carteira?.qtd_ativas ?? 0} />
+                  <KpiMini label="contempladas" value={carteira?.qtd_contempladas ?? 0} />
+                  <KpiMini label="inad." value={carteira?.qtd_inadimplentes ?? 0} />
+                  <KpiMini label="total" value={carteira?.qtd_total ?? 0} />
+                </div>
+                <SmallInfo label="Valor ativo" value={carteira?.total_ativo_fmt || "R$ 0,00"} />
+                <SmallInfo label="Valor geral" value={carteira?.total_geral_fmt || "R$ 0,00"} />
+                <SmallInfo label="Segmentos" value={carteira?.segmentos?.join(", ")} />
+                <SmallInfo label="Administradoras" value={carteira?.administradoras?.join(", ")} />
+              </div>
+
+              {!!carteira?.ultimas_cotas?.length && (
+                <div style={sectionBox}>
+                  <h4 style={sectionTitle}>Cotas recentes</h4>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {carteira.ultimas_cotas.slice(0, 5).map((cota) => (
+                      <div key={cota.id} style={cotaCard}>
+                        <strong>{cota.administradora} • {cota.segmento}</strong>
+                        <span>Grupo {cota.grupo} • Cota {cota.cota}</span>
+                        <span>{cota.status} • {cota.valor_venda_fmt}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <label style={label}>
                 Notas da reunião
                 <textarea
-                  style={{ ...input, minHeight: 180, resize: "vertical" }}
+                  style={{ ...input, minHeight: 160, resize: "vertical" }}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Ex.: Cliente quer simular imóvel de R$ 500 mil, possui renda de R$ 15 mil, principal objeção foi prazo..."
@@ -346,7 +517,7 @@ export default function AgendaSalaPage() {
                 {savingNote ? "Salvando..." : "Finalizar atendimento"}
               </button>
 
-              <p style={{ margin: "12px 0 0", color: C.muted, fontSize: 12 }}>
+              <p style={{ margin: "4px 0 0", color: C.muted, fontSize: 12 }}>
                 Depois vamos conectar aqui o resumo com IA, gravação e follow-up automático.
               </p>
             </aside>
@@ -383,7 +554,7 @@ const layout: React.CSSProperties = {
   maxWidth: 1280,
   margin: "0 auto",
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) 360px",
+  gridTemplateColumns: "minmax(0, 1fr) 380px",
   gap: 16,
 };
 
@@ -438,6 +609,8 @@ const sideCard: React.CSSProperties = {
   alignSelf: "start",
   display: "grid",
   gap: 12,
+  maxHeight: "calc(100vh - 140px)",
+  overflow: "auto",
 };
 
 const infoBox: React.CSSProperties = {
@@ -448,6 +621,67 @@ const infoBox: React.CSSProperties = {
   borderRadius: 16,
   padding: 12,
   color: C.text,
+};
+
+const sectionBox: React.CSSProperties = {
+  display: "grid",
+  gap: 8,
+  border: "1px solid #e2e8f0",
+  borderRadius: 16,
+  padding: 12,
+  background: "#ffffff",
+};
+
+const sectionTitle: React.CSSProperties = {
+  margin: 0,
+  color: C.navy,
+  fontSize: 13,
+};
+
+const smallInfo: React.CSSProperties = {
+  display: "grid",
+  gap: 2,
+  borderTop: "1px solid #f1f5f9",
+  paddingTop: 7,
+};
+
+const kpiGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 8,
+};
+
+const kpiMini: React.CSSProperties = {
+  display: "grid",
+  gap: 2,
+  alignContent: "center",
+  justifyItems: "center",
+  minHeight: 58,
+  borderRadius: 14,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  color: C.navy,
+  fontSize: 11,
+};
+
+const cotaCard: React.CSSProperties = {
+  display: "grid",
+  gap: 3,
+  padding: 10,
+  borderRadius: 14,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  fontSize: 12,
+  color: C.text,
+};
+
+const finishedNoteBox: React.CSSProperties = {
+  display: "grid",
+  gap: 6,
+  padding: 14,
+  borderRadius: 16,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
 };
 
 const eyebrow: React.CSSProperties = {

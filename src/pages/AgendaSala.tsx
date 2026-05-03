@@ -2,11 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
-import {
-  LiveKitRoom,
-  RoomAudioRenderer,
-  VideoConference,
-} from "@livekit/components-react";
+import { LiveKitRoom, RoomAudioRenderer, VideoConference } from "@livekit/components-react";
 import "@livekit/components-styles";
 
 type AgendaEvento = {
@@ -22,18 +18,21 @@ type AgendaEvento = {
   video_status?: string | null;
   completion_notes?: string | null;
   completed_at?: string | null;
-  cliente?: {
-    id: string;
-    nome: string | null;
-    telefone: string | null;
-    observacoes?: string | null;
-  } | null;
-  lead?: {
-    id: string;
-    nome: string | null;
-    telefone: string | null;
-    descricao?: string | null;
-  } | null;
+  cliente?: { id: string; nome: string | null; telefone: string | null; observacoes?: string | null } | null;
+  lead?: { id: string; nome: string | null; telefone: string | null; descricao?: string | null } | null;
+};
+
+type CotaResumo = {
+  id: string;
+  administradora: string;
+  segmento: string;
+  grupo: string;
+  cota: string;
+  codigo: string;
+  status: string;
+  valor_venda: number;
+  valor_venda_fmt: string;
+  data_venda: string | null;
 };
 
 type ClientContext = {
@@ -53,20 +52,11 @@ type ClientContext = {
     total_geral_fmt: string;
     segmentos: string[];
     administradoras: string[];
-    ultimas_cotas: Array<{
-      id: string;
-      administradora: string;
-      segmento: string;
-      grupo: string;
-      cota: string;
-      codigo: string;
-      status: string;
-      valor_venda: number;
-      valor_venda_fmt: string;
-      data_venda: string | null;
-    }>;
+    ultimas_cotas: CotaResumo[];
   };
 };
+
+type PanelTab = "resumo" | "cadastro" | "carteira" | "notas";
 
 const C = {
   ruby: "#A11C27",
@@ -200,6 +190,14 @@ function KpiMini({ label, value }: { label: string; value: any }) {
   );
 }
 
+function PanelTabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button type="button" style={active ? panelTabActive : panelTab} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
 export default function AgendaSalaPage() {
   const { eventId } = useParams();
   const [searchParams] = useSearchParams();
@@ -220,6 +218,7 @@ export default function AgendaSalaPage() {
   const [clientContext, setClientContext] = useState<ClientContext | null>(null);
   const [loadingContext, setLoadingContext] = useState(false);
   const [contextError, setContextError] = useState("");
+  const [activePanel, setActivePanel] = useState<PanelTab>("resumo");
 
   const personName = useMemo(() => {
     return evento?.cliente?.nome || evento?.lead?.nome || clientContext?.cliente?.nome || clientContext?.lead?.nome || (isClient ? name || "Cliente" : "Cliente");
@@ -232,6 +231,7 @@ export default function AgendaSalaPage() {
   const cliente = clientContext?.cliente || null;
   const lead = clientContext?.lead || null;
   const carteira = clientContext?.carteira || null;
+  const isFinished = evento?.video_status === "finished";
 
   useEffect(() => {
     async function load() {
@@ -289,6 +289,8 @@ export default function AgendaSalaPage() {
 
   async function joinRoom() {
     if (!eventId) return;
+    if (isFinished) return alert("Esta videochamada já foi finalizada. Crie um novo evento para uma nova chamada.");
+
     setJoining(true);
 
     try {
@@ -340,12 +342,11 @@ export default function AgendaSalaPage() {
   }, [evento?.videocall_url, personName]);
 
   const waClient = whatsappUrl(personPhone, clientMessage);
-  const isFinished = evento?.video_status === "finished";
 
   if (loadingEvento) {
     return (
       <div style={page}>
-        <div style={card}>Carregando sala...</div>
+        <div style={loadingCard}>Carregando sala...</div>
       </div>
     );
   }
@@ -353,7 +354,7 @@ export default function AgendaSalaPage() {
   if (!evento) {
     return (
       <div style={page}>
-        <div style={card}>
+        <div style={loadingCard}>
           <h2>Evento não encontrado</h2>
           {eventoError && <p style={{ color: C.muted }}>{eventoError}</p>}
           <Link to="/agenda" style={btnSecondary}>Voltar para Agenda</Link>
@@ -362,187 +363,269 @@ export default function AgendaSalaPage() {
     );
   }
 
+  const renderPanel = () => {
+    if (loadingContext) return <p style={{ color: C.muted, margin: 0 }}>Carregando dados completos...</p>;
+    if (contextError) return <p style={{ color: C.ruby, margin: 0, fontSize: 12 }}>{contextError}</p>;
+
+    if (activePanel === "resumo") {
+      return (
+        <div style={panelBody}>
+          <div style={clientHero}>
+            <span style={avatarCircle}>{personName.slice(0, 1).toUpperCase()}</span>
+            <div>
+              <strong>{personName}</strong>
+              <span>{personPhone || "Sem telefone"}</span>
+            </div>
+          </div>
+
+          <div style={quickStatsGrid}>
+            <KpiMini label="ativas" value={carteira?.qtd_ativas ?? 0} />
+            <KpiMini label="contempladas" value={carteira?.qtd_contempladas ?? 0} />
+            <KpiMini label="inad." value={carteira?.qtd_inadimplentes ?? 0} />
+            <KpiMini label="total" value={carteira?.qtd_total ?? 0} />
+          </div>
+
+          <div style={sectionBoxSoft}>
+            <SmallInfo label="Valor ativo" value={carteira?.total_ativo_fmt || "R$ 0,00"} />
+            <SmallInfo label="Valor geral" value={carteira?.total_geral_fmt || "R$ 0,00"} />
+            <SmallInfo label="Segmentos" value={carteira?.segmentos?.join(", ")} />
+            <SmallInfo label="Administradoras" value={carteira?.administradoras?.join(", ")} />
+          </div>
+        </div>
+      );
+    }
+
+    if (activePanel === "cadastro") {
+      return (
+        <div style={panelBody}>
+          <SmallInfo label="Nome" value={cliente?.nome || lead?.nome || personName} />
+          <SmallInfo label="CPF" value={cliente?.cpf} />
+          <SmallInfo label="Nascimento" value={fmtDate(cliente?.data_nascimento)} />
+          <SmallInfo label="Telefone" value={cliente?.telefone || lead?.telefone || personPhone} />
+          <SmallInfo label="E-mail" value={cliente?.email || lead?.email} />
+          <SmallInfo label="Cidade/UF" value={[cliente?.cidade, cliente?.uf].filter(Boolean).join("/")} />
+          <SmallInfo label="CEP" value={cliente?.endereco_cep} />
+          <SmallInfo label="Endereço" value={[cliente?.logradouro, cliente?.numero, cliente?.bairro].filter(Boolean).join(", ")} />
+          <SmallInfo label="Observações" value={cliente?.observacoes || lead?.descricao} />
+        </div>
+      );
+    }
+
+    if (activePanel === "carteira") {
+      return (
+        <div style={panelBody}>
+          <div style={quickStatsGrid}>
+            <KpiMini label="ativas" value={carteira?.qtd_ativas ?? 0} />
+            <KpiMini label="canceladas" value={carteira?.qtd_canceladas ?? 0} />
+            <KpiMini label="contempladas" value={carteira?.qtd_contempladas ?? 0} />
+            <KpiMini label="inad." value={carteira?.qtd_inadimplentes ?? 0} />
+          </div>
+
+          <SmallInfo label="Valor ativo" value={carteira?.total_ativo_fmt || "R$ 0,00"} />
+          <SmallInfo label="Valor geral" value={carteira?.total_geral_fmt || "R$ 0,00"} />
+
+          <div style={cotasList}>
+            <h4 style={sectionTitle}>Cotas recentes</h4>
+            {carteira?.ultimas_cotas?.length ? (
+              carteira.ultimas_cotas.slice(0, 8).map((cota) => (
+                <div key={cota.id} style={cotaCard}>
+                  <strong>{cota.administradora} • {cota.segmento}</strong>
+                  <span>Grupo {cota.grupo} • Cota {cota.cota}</span>
+                  <span>{cota.status} • {cota.valor_venda_fmt}</span>
+                </div>
+              ))
+            ) : (
+              <p style={{ color: C.muted, margin: 0, fontSize: 12 }}>Nenhuma cota localizada.</p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={panelBody}>
+        <label style={label}>
+          Notas da reunião
+          <textarea
+            style={notesInput}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Ex.: Cliente quer simular imóvel de R$ 500 mil, possui renda de R$ 15 mil, principal objeção foi prazo..."
+          />
+        </label>
+
+        {evento.completion_notes && (
+          <div style={finishedNoteBox}>
+            <strong>Nota já registrada</strong>
+            <p>{evento.completion_notes}</p>
+            <small>{evento.completed_at ? `Finalizado em ${fmtDateTime(evento.completed_at)}` : ""}</small>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div style={page}>
-      <header style={header}>
-        <div>
-          <p style={eyebrow}>Sala Consulmax</p>
-          <h1 style={{ margin: "4px 0", color: C.navy }}>{evento.titulo || "Videochamada Consulmax"}</h1>
-          <p style={{ margin: 0, color: C.muted }}>
-            {isClient
-              ? "Você está no ambiente seguro de atendimento por vídeo."
-              : `${fmtDateTime(evento.inicio_at)} • ${personName}`}
-          </p>
-        </div>
+      <div className="room-shell" style={roomShell}>
+        <header style={header}>
+          <div style={{ minWidth: 0 }}>
+            <p style={eyebrow}>Sala Consulmax</p>
+            <h1 style={title}>{evento.titulo || "Videochamada Consulmax"}</h1>
+            <p style={subtitle}>
+              {isClient
+                ? "Você está no ambiente seguro de atendimento por vídeo."
+                : `${fmtDateTime(evento.inicio_at)} • ${personName}`}
+            </p>
+          </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {!isClient && waClient && evento.videocall_url && !isFinished && (
-            <a href={waClient} target="_blank" rel="noreferrer" style={btnSecondary}>
-              Enviar link no WhatsApp
-            </a>
-          )}
-          {!isClient && <Link to="/agenda" style={btnGhost}>Voltar</Link>}
-        </div>
-      </header>
+          <div style={headerActions}>
+            {!isClient && waClient && evento.videocall_url && !isFinished && (
+              <a href={waClient} target="_blank" rel="noreferrer" style={btnSecondary}>
+                Enviar link no WhatsApp
+              </a>
+            )}
+            {!isClient && <Link to="/agenda" style={btnGhost}>Voltar</Link>}
+          </div>
+        </header>
 
-      {!token ? (
-        <section style={joinCard}>
-          {isFinished ? (
-            <>
-              <div>
-                <p style={eyebrow}>Atendimento finalizado</p>
-                <h2 style={{ margin: "4px 0 8px", color: C.navy }}>Esta sala já foi encerrada</h2>
-                <p style={{ margin: 0, color: C.muted }}>
-                  Para uma nova videochamada, crie um novo evento na Agenda.
-                </p>
-              </div>
-              {!isClient && evento.completion_notes && (
-                <div style={finishedNoteBox}>
-                  <strong>Nota registrada</strong>
-                  <p>{evento.completion_notes}</p>
-                  <small>{evento.completed_at ? `Finalizado em ${fmtDateTime(evento.completed_at)}` : ""}</small>
+        {!token ? (
+          <section style={joinCard}>
+            {isFinished ? (
+              <>
+                <div>
+                  <p style={eyebrow}>Atendimento finalizado</p>
+                  <h2 style={{ margin: "4px 0 8px", color: C.navy }}>Esta sala já foi encerrada</h2>
+                  <p style={{ margin: 0, color: C.muted }}>
+                    Para uma nova videochamada, crie um novo evento na Agenda.
+                  </p>
                 </div>
-              )}
-              {!isClient && <Link to="/agenda" style={btnSecondary}>Voltar para Agenda</Link>}
-            </>
-          ) : (
-            <>
-              <div>
-                <p style={eyebrow}>{isClient ? "Cliente" : "Consultor"}</p>
-                <h2 style={{ margin: "4px 0 8px", color: C.navy }}>Entrar na videochamada</h2>
-                <p style={{ margin: 0, color: C.muted }}>Informe o nome que aparecerá na sala.</p>
-              </div>
 
-              <label style={label}>
-                Nome na sala
-                <input style={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" />
-              </label>
-
-              <button style={btnPrimary} onClick={joinRoom} disabled={joining}>
-                {joining ? "Entrando..." : "Entrar na sala"}
-              </button>
-            </>
-          )}
-        </section>
-      ) : (
-        <main style={isClient ? clientLayout : layout}>
-          <section style={videoCard}>
-            <div style={videoTop}>
-              <div>
-                <p style={eyebrow}>Ao vivo</p>
-                <strong style={{ color: C.navy }}>Sala conectada</strong>
-              </div>
-            </div>
-
-            <div style={livekitBox}>
-              <LiveKitRoom
-                token={token}
-                serverUrl={serverUrl}
-                connect={true}
-                video={true}
-                audio={true}
-                data-lk-theme="default"
-                style={{ height: "100%" }}
-              >
-                <VideoConference />
-                <RoomAudioRenderer />
-              </LiveKitRoom>
-            </div>
-          </section>
-
-          {!isClient && (
-            <aside style={sideCard}>
-              <p style={eyebrow}>Atendimento</p>
-              <h3 style={{ marginTop: 4, marginBottom: 0, color: C.navy }}>Dados do cliente</h3>
-
-              {loadingContext && <p style={{ color: C.muted, margin: 0 }}>Carregando dados completos...</p>}
-              {contextError && <p style={{ color: C.ruby, margin: 0, fontSize: 12 }}>{contextError}</p>}
-
-              <div style={infoBox}>
-                <strong>{personName}</strong>
-                <span>{personPhone || "Sem telefone"}</span>
-                <span>{evento.tipo || "Evento"}</span>
-              </div>
-
-              <div style={sectionBox}>
-                <h4 style={sectionTitle}>Cadastro</h4>
-                <SmallInfo label="CPF" value={cliente?.cpf} />
-                <SmallInfo label="Nascimento" value={fmtDate(cliente?.data_nascimento)} />
-                <SmallInfo label="E-mail" value={cliente?.email || lead?.email} />
-                <SmallInfo label="Cidade/UF" value={[cliente?.cidade, cliente?.uf].filter(Boolean).join("/")} />
-                <SmallInfo label="CEP" value={cliente?.endereco_cep} />
-                <SmallInfo label="Endereço" value={[cliente?.logradouro, cliente?.numero, cliente?.bairro].filter(Boolean).join(", ")} />
-              </div>
-
-              <div style={sectionBox}>
-                <h4 style={sectionTitle}>Carteira</h4>
-                <div style={kpiGrid}>
-                  <KpiMini label="ativas" value={carteira?.qtd_ativas ?? 0} />
-                  <KpiMini label="contempladas" value={carteira?.qtd_contempladas ?? 0} />
-                  <KpiMini label="inad." value={carteira?.qtd_inadimplentes ?? 0} />
-                  <KpiMini label="total" value={carteira?.qtd_total ?? 0} />
-                </div>
-                <SmallInfo label="Valor ativo" value={carteira?.total_ativo_fmt || "R$ 0,00"} />
-                <SmallInfo label="Valor geral" value={carteira?.total_geral_fmt || "R$ 0,00"} />
-                <SmallInfo label="Segmentos" value={carteira?.segmentos?.join(", ")} />
-                <SmallInfo label="Administradoras" value={carteira?.administradoras?.join(", ")} />
-              </div>
-
-              {!!carteira?.ultimas_cotas?.length && (
-                <div style={sectionBox}>
-                  <h4 style={sectionTitle}>Cotas recentes</h4>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {carteira.ultimas_cotas.slice(0, 5).map((cota) => (
-                      <div key={cota.id} style={cotaCard}>
-                        <strong>{cota.administradora} • {cota.segmento}</strong>
-                        <span>Grupo {cota.grupo} • Cota {cota.cota}</span>
-                        <span>{cota.status} • {cota.valor_venda_fmt}</span>
-                      </div>
-                    ))}
+                {!isClient && evento.completion_notes && (
+                  <div style={finishedNoteBox}>
+                    <strong>Nota registrada</strong>
+                    <p>{evento.completion_notes}</p>
+                    <small>{evento.completed_at ? `Finalizado em ${fmtDateTime(evento.completed_at)}` : ""}</small>
                   </div>
+                )}
+
+                {!isClient && <Link to="/agenda" style={btnSecondary}>Voltar para Agenda</Link>}
+              </>
+            ) : (
+              <>
+                <div>
+                  <p style={eyebrow}>{isClient ? "Cliente" : "Consultor"}</p>
+                  <h2 style={{ margin: "4px 0 8px", color: C.navy }}>Entrar na videochamada</h2>
+                  <p style={{ margin: 0, color: C.muted }}>Informe o nome que aparecerá na sala.</p>
                 </div>
-              )}
 
-              <label style={label}>
-                Notas da reunião
-                <textarea
-                  style={{ ...input, minHeight: 160, resize: "vertical" }}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Ex.: Cliente quer simular imóvel de R$ 500 mil, possui renda de R$ 15 mil, principal objeção foi prazo..."
-                />
-              </label>
+                <label style={label}>
+                  Nome na sala
+                  <input style={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" />
+                </label>
 
-              <button style={btnPrimary} onClick={finishMeeting} disabled={savingNote}>
-                {savingNote ? "Salvando..." : "Finalizar atendimento"}
-              </button>
+                <button style={btnPrimary} onClick={joinRoom} disabled={joining}>
+                  {joining ? "Entrando..." : "Entrar na sala"}
+                </button>
+              </>
+            )}
+          </section>
+        ) : (
+          <main className={isClient ? "room-main room-main-client" : "room-main"} style={isClient ? clientLayout : layout}>
+            <section style={videoCard}>
+              <div style={videoTop}>
+                <div>
+                  <p style={eyebrow}>Ao vivo</p>
+                  <strong style={{ color: C.navy }}>Sala conectada</strong>
+                </div>
+                {!isClient && <span style={liveBadge}>Atendimento em andamento</span>}
+              </div>
 
-              <p style={{ margin: "4px 0 0", color: C.muted, fontSize: 12 }}>
-                Depois vamos conectar aqui o resumo com IA, gravação e follow-up automático.
-              </p>
-            </aside>
-          )}
-        </main>
-      )}
+              <div style={livekitBox}>
+                <LiveKitRoom
+                  token={token}
+                  serverUrl={serverUrl}
+                  connect={true}
+                  video={true}
+                  audio={true}
+                  data-lk-theme="default"
+                  style={{ height: "100%" }}
+                >
+                  <VideoConference />
+                  <RoomAudioRenderer />
+                </LiveKitRoom>
+              </div>
+            </section>
+
+            {!isClient && (
+              <aside style={sideCard}>
+                <div style={sideHeader}>
+                  <div>
+                    <p style={eyebrow}>Atendimento</p>
+                    <h3 style={{ margin: "4px 0 0", color: C.navy }}>Painel do cliente</h3>
+                  </div>
+                  <span style={smallStatus}>{loadingContext ? "Carregando" : "Online"}</span>
+                </div>
+
+                <div style={panelTabs}>
+                  <PanelTabButton active={activePanel === "resumo"} onClick={() => setActivePanel("resumo")}>Resumo</PanelTabButton>
+                  <PanelTabButton active={activePanel === "cadastro"} onClick={() => setActivePanel("cadastro")}>Cadastro</PanelTabButton>
+                  <PanelTabButton active={activePanel === "carteira"} onClick={() => setActivePanel("carteira")}>Carteira</PanelTabButton>
+                  <PanelTabButton active={activePanel === "notas"} onClick={() => setActivePanel("notas")}>Notas</PanelTabButton>
+                </div>
+
+                <div style={panelScroll}>{renderPanel()}</div>
+
+                <div style={sideFooter}>
+                  {activePanel !== "notas" && (
+                    <button type="button" style={btnSecondary} onClick={() => setActivePanel("notas")}>
+                      Escrever nota
+                    </button>
+                  )}
+                  <button style={btnPrimary} onClick={finishMeeting} disabled={savingNote || isFinished}>
+                    {savingNote ? "Salvando..." : isFinished ? "Finalizado" : "Finalizar atendimento"}
+                  </button>
+                </div>
+              </aside>
+            )}
+          </main>
+        )}
+      </div>
+
+      <style>{`
+        .room-shell { width: min(96vw, 1640px); }
+        .room-main { grid-template-columns: minmax(0, 1fr) 360px; }
+        .room-main-client { grid-template-columns: 1fr; }
+        @media (min-width: 1500px) {
+          .room-main { grid-template-columns: minmax(0, 1fr) 340px; }
+        }
+        @media (max-width: 1100px) {
+          .room-main { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }
 
 const page: React.CSSProperties = {
   minHeight: "100vh",
-  padding: 18,
+  padding: 14,
   background:
     "radial-gradient(circle at top left, rgba(161,28,39,.12), transparent 30%), radial-gradient(circle at bottom right, rgba(30,41,63,.14), transparent 34%), #f8fafc",
 };
 
+const roomShell: React.CSSProperties = {
+  margin: "0 auto",
+  display: "grid",
+  gap: 12,
+};
+
 const header: React.CSSProperties = {
-  maxWidth: 1280,
-  margin: "0 auto 16px",
-  background: "rgba(255,255,255,.78)",
-  border: "1px solid rgba(255,255,255,.75)",
+  background: "rgba(255,255,255,.82)",
+  border: "1px solid rgba(255,255,255,.78)",
   borderRadius: 22,
-  padding: 18,
-  boxShadow: "0 18px 50px rgba(15,23,42,.10)",
+  padding: "12px 16px",
+  boxShadow: "0 14px 40px rgba(15,23,42,.08)",
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
@@ -550,22 +633,44 @@ const header: React.CSSProperties = {
   backdropFilter: "blur(14px)",
 };
 
+const headerActions: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+  justifyContent: "flex-end",
+  flexShrink: 0,
+};
+
+const title: React.CSSProperties = {
+  margin: "2px 0 3px",
+  color: C.navy,
+  fontSize: 18,
+  lineHeight: 1.12,
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+const subtitle: React.CSSProperties = {
+  margin: 0,
+  color: C.muted,
+  fontSize: 13,
+};
+
 const layout: React.CSSProperties = {
-  maxWidth: 1280,
-  margin: "0 auto",
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) 380px",
-  gap: 16,
+  gridTemplateColumns: "minmax(0, 1fr) 360px",
+  gap: 12,
+  alignItems: "stretch",
 };
 
 const clientLayout: React.CSSProperties = {
-  maxWidth: 980,
-  margin: "0 auto",
   display: "grid",
-  gap: 16,
+  gridTemplateColumns: "1fr",
+  gap: 12,
 };
 
-const card: React.CSSProperties = {
+const loadingCard: React.CSSProperties = {
   maxWidth: 900,
   margin: "0 auto",
   background: "#fff",
@@ -575,55 +680,155 @@ const card: React.CSSProperties = {
   boxShadow: "0 18px 50px rgba(15,23,42,.10)",
 };
 
-const joinCard: React.CSSProperties = { ...card, display: "grid", gap: 14 };
+const joinCard: React.CSSProperties = {
+  ...loadingCard,
+  display: "grid",
+  gap: 14,
+};
 
 const videoCard: React.CSSProperties = {
-  background: "#fff",
+  background: "rgba(255,255,255,.84)",
   borderRadius: 22,
-  padding: 14,
-  border: "1px solid #e2e8f0",
+  padding: 12,
+  border: "1px solid rgba(226,232,240,.92)",
   boxShadow: "0 18px 50px rgba(15,23,42,.10)",
-  minHeight: 640,
+  minHeight: "calc(100vh - 122px)",
+  display: "grid",
+  gridTemplateRows: "auto minmax(520px, 1fr)",
 };
 
 const videoTop: React.CSSProperties = {
-  padding: "4px 4px 12px",
+  padding: "2px 2px 10px",
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
+  gap: 8,
 };
 
 const livekitBox: React.CSSProperties = {
-  height: "600px",
+  height: "100%",
+  minHeight: 560,
   borderRadius: 18,
   overflow: "hidden",
   background: "#020617",
 };
 
+const liveBadge: React.CSSProperties = {
+  padding: "6px 10px",
+  borderRadius: 999,
+  background: "#1E293F10",
+  border: "1px solid #1E293F22",
+  color: C.navy,
+  fontSize: 12,
+  fontWeight: 900,
+};
+
 const sideCard: React.CSSProperties = {
-  background: "#fff",
+  background: "rgba(255,255,255,.88)",
   borderRadius: 22,
-  padding: 16,
+  padding: 12,
   border: "1px solid #e2e8f0",
   boxShadow: "0 18px 50px rgba(15,23,42,.10)",
-  alignSelf: "start",
+  alignSelf: "stretch",
   display: "grid",
-  gap: 12,
-  maxHeight: "calc(100vh - 140px)",
-  overflow: "auto",
+  gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+  gap: 10,
+  height: "calc(100vh - 122px)",
+  overflow: "hidden",
 };
 
-const infoBox: React.CSSProperties = {
-  display: "grid",
-  gap: 6,
+const sideHeader: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 8,
+  alignItems: "flex-start",
+};
+
+const smallStatus: React.CSSProperties = {
+  padding: "5px 8px",
+  borderRadius: 999,
   background: "#f8fafc",
   border: "1px solid #e2e8f0",
-  borderRadius: 16,
-  padding: 12,
-  color: C.text,
+  color: C.muted,
+  fontSize: 11,
+  fontWeight: 900,
 };
 
-const sectionBox: React.CSSProperties = {
+const panelTabs: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 6,
+  padding: 4,
+  borderRadius: 15,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+};
+
+const panelTab: React.CSSProperties = {
+  border: 0,
+  borderRadius: 11,
+  padding: "8px 5px",
+  background: "transparent",
+  color: C.muted,
+  fontSize: 11,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const panelTabActive: React.CSSProperties = {
+  ...panelTab,
+  background: C.navy,
+  color: "#fff",
+  boxShadow: "0 8px 18px rgba(30,41,63,.16)",
+};
+
+const panelScroll: React.CSSProperties = {
+  overflow: "auto",
+  paddingRight: 2,
+};
+
+const panelBody: React.CSSProperties = {
+  display: "grid",
+  gap: 10,
+};
+
+const clientHero: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "44px 1fr",
+  gap: 10,
+  alignItems: "center",
+  padding: 12,
+  borderRadius: 16,
+  background: "linear-gradient(135deg, rgba(30,41,63,.08), rgba(161,28,39,.06))",
+  border: "1px solid #e2e8f0",
+};
+
+const avatarCircle: React.CSSProperties = {
+  width: 44,
+  height: 44,
+  borderRadius: 16,
+  display: "grid",
+  placeItems: "center",
+  color: "#fff",
+  background: C.navy,
+  fontWeight: 900,
+  fontSize: 18,
+};
+
+const quickStatsGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 7,
+};
+
+const sideFooter: React.CSSProperties = {
+  display: "grid",
+  gap: 8,
+  paddingTop: 10,
+  borderTop: "1px solid #e2e8f0",
+};
+
+const sectionBoxSoft: React.CSSProperties = {
   display: "grid",
   gap: 8,
   border: "1px solid #e2e8f0",
@@ -643,12 +848,7 @@ const smallInfo: React.CSSProperties = {
   gap: 2,
   borderTop: "1px solid #f1f5f9",
   paddingTop: 7,
-};
-
-const kpiGrid: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-  gap: 8,
+  fontSize: 12,
 };
 
 const kpiMini: React.CSSProperties = {
@@ -656,12 +856,17 @@ const kpiMini: React.CSSProperties = {
   gap: 2,
   alignContent: "center",
   justifyItems: "center",
-  minHeight: 58,
+  minHeight: 54,
   borderRadius: 14,
-  background: "#f8fafc",
+  background: "#fff",
   border: "1px solid #e2e8f0",
   color: C.navy,
-  fontSize: 11,
+  fontSize: 10,
+};
+
+const cotasList: React.CSSProperties = {
+  display: "grid",
+  gap: 8,
 };
 
 const cotaCard: React.CSSProperties = {
@@ -687,7 +892,7 @@ const finishedNoteBox: React.CSSProperties = {
 const eyebrow: React.CSSProperties = {
   margin: 0,
   color: C.ruby,
-  fontSize: 11,
+  fontSize: 10,
   fontWeight: 900,
   textTransform: "uppercase",
   letterSpacing: 1.1,
@@ -708,6 +913,13 @@ const input: React.CSSProperties = {
   outline: "none",
   background: "#fff",
   color: C.text,
+};
+
+const notesInput: React.CSSProperties = {
+  ...input,
+  minHeight: 300,
+  resize: "vertical",
+  lineHeight: 1.5,
 };
 
 const btnPrimary: React.CSSProperties = {
@@ -733,6 +945,9 @@ const btnSecondary: React.CSSProperties = {
   fontWeight: 800,
   cursor: "pointer",
   textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
 };
 
 const btnGhost: React.CSSProperties = { ...btnSecondary, background: "#fff" };

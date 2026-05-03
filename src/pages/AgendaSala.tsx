@@ -87,6 +87,21 @@ async function callLiveKitRoom(body: Record<string, any>) {
   return json;
 }
 
+function publicFallbackEvent(eventId: string): AgendaEvento {
+  return {
+    id: eventId,
+    tipo: "videochamada",
+    titulo: "Videochamada Consulmax",
+    cliente_id: null,
+    lead_id: null,
+    user_id: null,
+    inicio_at: null,
+    fim_at: null,
+    videocall_url: null,
+    video_status: null,
+  } as any;
+}
+
 export default function AgendaSalaPage() {
   const { eventId } = useParams();
   const [searchParams] = useSearchParams();
@@ -105,8 +120,8 @@ export default function AgendaSalaPage() {
   const [savingNote, setSavingNote] = useState(false);
 
   const personName = useMemo(() => {
-    return evento?.cliente?.nome || evento?.lead?.nome || "Cliente";
-  }, [evento]);
+    return evento?.cliente?.nome || evento?.lead?.nome || (isClient ? name || "Cliente" : "Cliente");
+  }, [evento, isClient, name]);
 
   const personPhone = useMemo(() => {
     return evento?.cliente?.telefone || evento?.lead?.telefone || null;
@@ -128,8 +143,14 @@ export default function AgendaSalaPage() {
         .eq("id", eventId)
         .maybeSingle();
 
-      if (error) {
-        setEventoError(error.message);
+      if (error || !data) {
+        if (isClient) {
+          setEvento(publicFallbackEvent(eventId));
+          setEventoError("");
+        } else {
+          setEvento(null);
+          setEventoError(error?.message || "Evento não encontrado.");
+        }
       } else {
         setEvento(data as any);
         const nome = (data as any)?.cliente?.nome || (data as any)?.lead?.nome;
@@ -167,7 +188,7 @@ export default function AgendaSalaPage() {
   }
 
   async function finishMeeting() {
-    if (!evento) return;
+    if (!evento || isClient) return;
     const raw = notes.trim();
     if (!raw) return alert("Digite uma nota antes de finalizar.");
 
@@ -233,8 +254,12 @@ export default function AgendaSalaPage() {
       <header style={header}>
         <div>
           <p style={eyebrow}>Sala Consulmax</p>
-          <h1 style={{ margin: "4px 0", color: C.navy }}>{evento.titulo || "Videochamada"}</h1>
-          <p style={{ margin: 0, color: C.muted }}>{fmtDateTime(evento.inicio_at)} • {personName}</p>
+          <h1 style={{ margin: "4px 0", color: C.navy }}>{evento.titulo || "Videochamada Consulmax"}</h1>
+          <p style={{ margin: 0, color: C.muted }}>
+            {isClient
+              ? "Você está no ambiente seguro de atendimento por vídeo."
+              : `${fmtDateTime(evento.inicio_at)} • ${personName}`}
+          </p>
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -243,7 +268,7 @@ export default function AgendaSalaPage() {
               Enviar link no WhatsApp
             </a>
           )}
-          <Link to="/agenda" style={btnGhost}>Voltar</Link>
+          {!isClient && <Link to="/agenda" style={btnGhost}>Voltar</Link>}
         </div>
       </header>
 
@@ -265,7 +290,7 @@ export default function AgendaSalaPage() {
           </button>
         </section>
       ) : (
-        <main style={layout}>
+        <main style={isClient ? clientLayout : layout}>
           <section style={videoCard}>
             <div style={videoTop}>
               <div>
@@ -353,6 +378,13 @@ const layout: React.CSSProperties = {
   margin: "0 auto",
   display: "grid",
   gridTemplateColumns: "minmax(0, 1fr) 360px",
+  gap: 16,
+};
+
+const clientLayout: React.CSSProperties = {
+  maxWidth: 980,
+  margin: "0 auto",
+  display: "grid",
   gap: 16,
 };
 

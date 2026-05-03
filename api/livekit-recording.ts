@@ -9,12 +9,12 @@ const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || ''
 const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || ''
 const LIVEKIT_WS_URL = process.env.LIVEKIT_WS_URL || process.env.LIVEKIT_URL || ''
 
-const REC_S3_ENDPOINT = process.env.RECORDING_S3_ENDPOINT || ''
-const REC_S3_REGION = process.env.RECORDING_S3_REGION || 'sa-east-1'
-const REC_S3_BUCKET = process.env.RECORDING_S3_BUCKET || ''
-const REC_S3_ACCESS_KEY = process.env.RECORDING_S3_ACCESS_KEY || ''
-const REC_S3_SECRET_KEY = process.env.RECORDING_S3_SECRET_KEY || ''
-const REC_PUBLIC_BASE_URL = process.env.RECORDING_PUBLIC_BASE_URL || ''
+const REC_S3_ENDPOINT = process.env.RECORDING_S3_ENDPOINT || process.env.SUPABASE_S3_ENDPOINT || ''
+const REC_S3_REGION = process.env.RECORDING_S3_REGION || process.env.SUPABASE_S3_REGION || 'sa-east-1'
+const REC_S3_BUCKET = process.env.RECORDING_S3_BUCKET || process.env.SUPABASE_S3_BUCKET || ''
+const REC_S3_ACCESS_KEY = process.env.RECORDING_S3_ACCESS_KEY || process.env.RECORDING_S3_ACCESS_KEY_ID || process.env.SUPABASE_S3_ACCESS_KEY || process.env.SUPABASE_S3_ACCESS_KEY_ID || ''
+const REC_S3_SECRET_KEY = process.env.RECORDING_S3_SECRET_KEY || process.env.RECORDING_S3_SECRET_ACCESS_KEY || process.env.SUPABASE_S3_SECRET_KEY || process.env.SUPABASE_S3_SECRET_ACCESS_KEY || ''
+const REC_PUBLIC_BASE_URL = process.env.RECORDING_PUBLIC_BASE_URL || process.env.SUPABASE_RECORDING_PUBLIC_BASE_URL || ''
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
@@ -39,6 +39,30 @@ function json(res: VercelResponse, status: number, body: unknown) {
 function parseBody(req: VercelRequest) {
   if (typeof req.body === 'string' && req.body.length) return JSON.parse(req.body)
   return req.body || {}
+}
+
+function missingRecordingEnv() {
+  const missing: string[] = []
+  if (!REC_S3_BUCKET) missing.push('RECORDING_S3_BUCKET')
+  if (!REC_S3_ACCESS_KEY) missing.push('RECORDING_S3_ACCESS_KEY')
+  if (!REC_S3_SECRET_KEY) missing.push('RECORDING_S3_SECRET_KEY')
+  return missing
+}
+
+function envPresence() {
+  return {
+    RECORDING_S3_ENDPOINT: !!REC_S3_ENDPOINT,
+    RECORDING_S3_REGION: !!REC_S3_REGION,
+    RECORDING_S3_BUCKET: !!REC_S3_BUCKET,
+    RECORDING_S3_ACCESS_KEY: !!REC_S3_ACCESS_KEY,
+    RECORDING_S3_SECRET_KEY: !!REC_S3_SECRET_KEY,
+    RECORDING_PUBLIC_BASE_URL: !!REC_PUBLIC_BASE_URL,
+    LIVEKIT_WS_URL: !!LIVEKIT_WS_URL,
+    LIVEKIT_API_KEY: !!LIVEKIT_API_KEY,
+    LIVEKIT_API_SECRET: !!LIVEKIT_API_SECRET,
+    SUPABASE_URL: !!SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: !!SERVICE_ROLE_KEY,
+  }
 }
 
 function lkHttpUrl() {
@@ -171,9 +195,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return json(res, 405, { error: 'Método não permitido.' })
 
   try {
-    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return json(res, 500, { error: 'Faltam variáveis do Supabase na Vercel.' })
-    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_WS_URL) return json(res, 500, { error: 'Faltam variáveis do LiveKit na Vercel.' })
-    if (!REC_S3_BUCKET || !REC_S3_ACCESS_KEY || !REC_S3_SECRET_KEY) return json(res, 500, { error: 'Faltam variáveis S3 da gravação na Vercel.' })
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return json(res, 500, { error: 'Faltam variáveis do Supabase na Vercel.', env: envPresence() })
+    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_WS_URL) return json(res, 500, { error: 'Faltam variáveis do LiveKit na Vercel.', env: envPresence() })
+
+    const missingS3 = missingRecordingEnv()
+    if (missingS3.length) {
+      return json(res, 500, {
+        error: `Faltam variáveis S3 da gravação na Vercel: ${missingS3.join(', ')}. Verifique se elas estão no mesmo projeto/domínio e faça Redeploy sem cache.`,
+        missing: missingS3,
+        env: envPresence(),
+      })
+    }
 
     const authUser = await authUserId(req)
     if (!authUser) return json(res, 401, { error: 'Usuário não autenticado.' })

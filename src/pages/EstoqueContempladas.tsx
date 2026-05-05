@@ -1007,11 +1007,8 @@ export default function EstoqueContempladas() {
     const rm = calcCompoundRateMonthly(creditTotal, fv, nTaxa);
     const ra = Math.pow(1 + rm, 12) - 1;
     const parcelaLines = buildParcelRangesForSelected(selected);
-    const origem = selected.some((c) => isExternalCota(c)) ? `🌐 Origem: Estoque externo\n` : "";
-
     return (
       `📄 Carta Contemplada • ${seg} 🎯\n` +
-      origem +
       `💰 Crédito: ${formatBRL(creditTotal)}\n` +
       `💳 Entrada: ${formatBRL(entradaTotal)}\n` +
       `🧾 Parcelas:\n${parcelaLines.join("\n")}\n` +
@@ -1331,9 +1328,6 @@ export default function EstoqueContempladas() {
                   <SelectItem value="2.5">2,5%</SelectItem>
                 </SelectContent>
               </Select>
-              <div className="text-[11px] text-muted-foreground mt-1">
-                Comissão vendedor: <b>{commissionPctHuman}</b> • Comissão Consulmax fixa: <b>2,5%</b>
-              </div>
             </div>
 
             <div className="md:col-span-3 flex items-end">
@@ -1420,14 +1414,12 @@ export default function EstoqueContempladas() {
                             {c.codigo}
                           </button>
                           {c.numero_proposta ? <div className="text-xs text-muted-foreground">Proposta: {c.numero_proposta}</div> : null}
-                          {external ? <div className="text-xs text-muted-foreground">ID externo</div> : null}
                         </td>
 
                         <td className="p-3">{formatBRL(Number(c.credito_disponivel || 0))}</td>
                         <td className="p-3">{formatBRL(c._calc.entrada)}</td>
                         <td className="p-3">
                           <div>{formatBRL(c._calc.comissaoVendedor)}</div>
-                          <div className="text-xs text-muted-foreground">Vendedor: {commissionPctHuman}</div>
                         </td>
 
                         <td className="p-3">

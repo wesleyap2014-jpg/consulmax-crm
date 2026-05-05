@@ -322,7 +322,7 @@ export default function EstoqueContempladas() {
   const [sinalFile, setSinalFile] = useState<File | null>(null);
 
   const [reserveVendorId, setReserveVendorId] = useState<string>(NONE);
-  const [reserveVendorPct, setReserveVendorPct] = useState<number>(DEFAULT_COMMISSION_PCT);
+  const [reserveVendorPct, setReserveVendorPct] = useState<number>(DEFAULT_VENDOR_COMMISSION_PCT);
 
   const [reserveRequests, setReserveRequests] = useState<ReservationRequest[]>([]);
   const [selectedRequestId, setSelectedRequestId] = useState<string>(NONE);

@@ -993,6 +993,33 @@ export default function EstoqueContempladas() {
     return 0.01 * Number(c.credito_contratado || 0);
   }
 
+  function taxaTransferenciaLabel(c: any) {
+    if (isExternalCota(c)) {
+      const tx = c.external_taxa_transferencia;
+      if (typeof tx === "string" && normalizeText(tx).includes("inclusa")) return "Inclusa";
+      const value = taxaTransferenciaValue(c);
+      return value > 0 ? formatBRL(value) : "Não informada";
+    }
+
+    const value = taxaTransferenciaValue(c);
+    return value > 0 ? formatBRL(value) : "Não informada";
+  }
+
+  function taxaTransferenciaResumo(selected: any[]) {
+    if (!selected.length) return "Não informada";
+
+    if (selected.length === 1) return taxaTransferenciaLabel(selected[0]);
+
+    const hasIncluded = selected.some((c) => isExternalCota(c) && typeof c.external_taxa_transferencia === "string" && normalizeText(c.external_taxa_transferencia).includes("inclusa"));
+    const total = selected.reduce((acc, c) => acc + taxaTransferenciaValue(c), 0);
+
+    if (total > 0 && hasIncluded) return `${formatBRL(total)} + itens inclusos`;
+    if (total > 0) return formatBRL(total);
+    if (hasIncluded) return "Inclusa";
+
+    return "Não informada";
+  }
+
   function buildResumoText(selected: any[]) {
     if (!selected.length) return "";
 
@@ -1002,7 +1029,7 @@ export default function EstoqueContempladas() {
     const parcelasTotal = selected.reduce((acc, c) => acc + Number(c.prazo_restante || 0) * Number(c.valor_parcela || 0), 0);
     const nTaxa = Math.max(1, selected.reduce((acc, c) => acc + Number(c.prazo_restante || 0), 0));
     const codigoLine = selected.length === 1 ? selected[0].codigo : selected.map((c) => c.codigo).filter(Boolean).join(", ");
-    const txTransfer = selected.reduce((acc, c) => acc + taxaTransferenciaValue(c), 0);
+    const txTransfer = taxaTransferenciaResumo(selected);
     const fv = parcelasTotal + entradaTotal;
     const rm = calcCompoundRateMonthly(creditTotal, fv, nTaxa);
     const ra = Math.pow(1 + rm, 12) - 1;
@@ -1013,7 +1040,8 @@ export default function EstoqueContempladas() {
       `💳 Entrada: ${formatBRL(entradaTotal)}\n` +
       `🧾 Parcelas:\n${parcelaLines.join("\n")}\n` +
       `🆔 Código: ${codigoLine}\n` +
-      `🔁 Tx. Transferência: ${txTransfer > 0 ? formatBRL(txTransfer) : "Inclusa/Não informada"} 💵\n` +
+      `🔁 Tx. Transferência: ${txTransfer} 💵
+` +
       `📈 Taxa: ${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a. 📊\n`
     );
   }
@@ -1200,12 +1228,12 @@ export default function EstoqueContempladas() {
     <div className="p-4 space-y-4 relative">
       {toast ? <div className="fixed top-4 right-4 z-50 rounded-lg border bg-background/95 px-4 py-2 text-sm shadow-md">{toast}</div> : null}
 
-      <div className="fixed bottom-4 right-4 z-40">
+      <div className="fixed bottom-4 right-4 z-40 sm:bottom-5 sm:right-5">
         <Button
           onClick={() => setOpenSum(true)}
           disabled={selectedIds.length < 1}
           size="icon"
-          className="rounded-full shadow-md"
+          className="rounded-full shadow-lg h-12 w-12 sm:h-10 sm:w-10"
           title={selectedIds.length < 1 ? "Selecione cotas para somar" : "Somar (resumo)"}
         >
           <Calculator className="h-5 w-5" />
@@ -1213,16 +1241,13 @@ export default function EstoqueContempladas() {
       </div>
 
       <Card className="border-none shadow-sm">
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <CardTitle>Estoque • Cotas Contempladas</CardTitle>
-            <div className="text-xs text-muted-foreground mt-1">
-              {sourceMode === "externo" ? "Espelhando estoque externo via API. Nenhuma cota externa é salva no Supabase." : "Estoque interno do CRM."}
-            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => loadActiveSource()} disabled={loading}>
+          <div className="flex w-full sm:w-auto items-center gap-2">
+            <Button variant="outline" onClick={() => loadActiveSource()} disabled={loading} className="flex-1 sm:flex-none">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Atualizar"}
             </Button>
 
@@ -1338,8 +1363,8 @@ export default function EstoqueContempladas() {
             </div>
           </div>
 
-          <div className="overflow-auto rounded-lg border">
-            <table className="w-full text-sm">
+          <div className="overflow-auto rounded-lg border -mx-2 md:mx-0 shadow-sm">
+            <table className="w-full min-w-[980px] text-sm">
               <thead className="bg-muted/50">
                 <tr className="text-left">
                   <th className="p-3 w-10"></th>
@@ -1474,20 +1499,20 @@ export default function EstoqueContempladas() {
       </Card>
 
       <Dialog open={openSum} onOpenChange={setOpenSum}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-3xl w-[calc(100vw-1rem)] sm:w-full max-h-[92vh] overflow-y-auto p-3 sm:p-6">
           <DialogHeader>
             <DialogTitle>Resumo</DialogTitle>
           </DialogHeader>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="flex justify-center">
-              <div className="w-full max-w-sm">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="flex justify-center order-2 lg:order-1">
+              <div className="w-full max-w-[280px] sm:max-w-sm">
                 <div className="relative rounded-2xl border shadow-sm overflow-hidden" style={{ aspectRatio: "9 / 16" as any }}>
                   <div className="absolute inset-0 bg-gradient-to-br from-[#1E293F] via-[#0f172a] to-[#A11C27]" />
                   <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.35),transparent_45%),radial-gradient(circle_at_80%_70%,rgba(181,165,115,0.35),transparent_45%)]" />
                   <div className="relative p-5 h-full flex flex-col">
                     <div className="text-white/90 text-sm font-semibold tracking-wide">Consulmax • Estoque</div>
-                    <div className="mt-3 text-white text-[13px] leading-relaxed whitespace-pre-wrap">
+                    <div className="mt-3 text-white text-[11px] sm:text-[13px] leading-relaxed whitespace-pre-wrap">
                       {sumText || "Selecione uma ou mais cotas para ver o resumo"}
                     </div>
                     <div className="mt-auto pt-4 text-white/70 text-xs">Dica: você pode printar este card em formato de story.</div>
@@ -1496,10 +1521,10 @@ export default function EstoqueContempladas() {
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2 order-1 lg:order-2">
               <Label>Texto</Label>
               <textarea
-                className="w-full min-h-[340px] rounded-md border bg-background p-3 text-sm"
+                className="w-full min-h-[260px] sm:min-h-[340px] rounded-md border bg-background p-3 text-sm"
                 readOnly
                 value={sumText || ""}
                 placeholder="Selecione uma ou mais cotas na lista para ver o resumo."
@@ -1510,9 +1535,9 @@ export default function EstoqueContempladas() {
             </div>
           </div>
 
-          <DialogFooter className="mt-2">
-            <Button variant="outline" onClick={() => setOpenSum(false)}>Fechar</Button>
-            <Button onClick={() => copyToClipboard(sumText)} disabled={!sumText.trim()}>
+          <DialogFooter className="mt-2 flex-col-reverse sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setOpenSum(false)} className="w-full sm:w-auto">Fechar</Button>
+            <Button onClick={() => copyToClipboard(sumText)} disabled={!sumText.trim()} className="w-full sm:w-auto">
               <Copy className="h-4 w-4 mr-2" />Copiar texto
             </Button>
           </DialogFooter>

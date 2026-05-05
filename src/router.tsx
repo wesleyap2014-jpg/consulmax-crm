@@ -10,7 +10,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 const Login = React.lazy(() => import("./pages/Login"));
 const Inicio = React.lazy(() => import("./pages/Inicio"));
 const Clientes = React.lazy(() => import("./pages/Clientes"));
-const Oportunidades = React.lazy(() => import("./pages/Oportunidades"));
+const Oportunidades = React.lazy(() => import("./pages/OportunidadesPipeline"));
 const Agenda = React.lazy(() => import("./pages/AgendaLiveKit"));
 const AgendaSala = React.lazy(() => import("./pages/AgendaSala"));
 const Simuladores = React.lazy(() => import("./pages/Simuladores"));

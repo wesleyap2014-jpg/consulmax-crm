@@ -122,7 +122,8 @@ type ExternalCota = {
 const WHATSAPP_RESERVA_NUMBER = "5569993917465";
 const NONE = "__none__";
 const EXTERNAL_STOCK_URL = "https://fragaebitelloconsorcios.com.br/api/json/contemplados";
-const DEFAULT_COMMISSION_PCT = 0.02;
+const DEFAULT_VENDOR_COMMISSION_PCT = 0.025;
+const CONSULMAX_COMMISSION_PCT = 0.025;
 const ALLOWED_COMMISSION_PCTS = [0.005, 0.01, 0.015, 0.02, 0.025];
 
 function formatBRL(v: number) {
@@ -136,11 +137,11 @@ function formatBRLNoSymbol(v: number) {
 }
 
 function clampPct(p: number) {
-  const n = Number(p || DEFAULT_COMMISSION_PCT);
+  const n = Number(p || DEFAULT_VENDOR_COMMISSION_PCT);
 
   return ALLOWED_COMMISSION_PCTS.reduce((closest, current) => {
     return Math.abs(current - n) < Math.abs(closest - n) ? current : closest;
-  }, DEFAULT_COMMISSION_PCT);
+  }, DEFAULT_VENDOR_COMMISSION_PCT);
 }
 
 function pctToHuman(p: number) {
@@ -262,9 +263,8 @@ export default function EstoqueContempladas() {
   const [minValue, setMinValue] = useState<string>("");
   const [maxValue, setMaxValue] = useState<string>("");
 
-  const [commissionPct, setCommissionPct] = useState<number>(DEFAULT_COMMISSION_PCT);
+  const [commissionPct, setCommissionPct] = useState<number>(DEFAULT_VENDOR_COMMISSION_PCT);
   const commissionPctHuman = useMemo(() => pctToHuman(commissionPct), [commissionPct]);
-  const totalCommissionPctHuman = useMemo(() => pctToHuman(commissionPct * 2), [commissionPct]);
 
   const [cotas, setCotas] = useState<CotaRow[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -472,8 +472,8 @@ export default function EstoqueContempladas() {
     if (!error && data?.commission_pct !== undefined && data?.commission_pct !== null) {
       setCommissionPct(clampPct(Number(data.commission_pct)));
     } else {
-      await supabase.from("stock_vendor_settings").upsert({ user_id: userId, commission_pct: DEFAULT_COMMISSION_PCT });
-      setCommissionPct(DEFAULT_COMMISSION_PCT);
+      await supabase.from("stock_vendor_settings").upsert({ user_id: userId, commission_pct: DEFAULT_VENDOR_COMMISSION_PCT });
+      setCommissionPct(DEFAULT_VENDOR_COMMISSION_PCT);
     }
   }
 
@@ -615,7 +615,7 @@ export default function EstoqueContempladas() {
       const credito = Number(c.credito_disponivel || 0);
 
       const comissaoVendedor = credito * pct;
-      const comissaoConsulmax = credito * pct;
+      const comissaoConsulmax = credito * CONSULMAX_COMMISSION_PCT;
       const comissaoTotal = comissaoVendedor + comissaoConsulmax;
       const entrada = Number(c.valor_pago_ao_cliente || 0) + comissaoTotal;
 
@@ -648,9 +648,8 @@ export default function EstoqueContempladas() {
       `• Crédito disponível: ${formatBRL(Number(c.credito_disponivel || 0))}\n` +
       `• Parcela: ${parcelaTxt}\n` +
       `• Entrada estimada: ${formatBRL(entrada)}\n` +
-      `• Comissão vendedor: ${formatBRL(Number(calc?.comissaoVendedor || 0))} (${commissionPctHuman})\n` +
-      `• Comissão Consulmax: ${formatBRL(Number(calc?.comissaoConsulmax || 0))} (${commissionPctHuman})\n` +
-      `• Comissão total: ${formatBRL(Number(calc?.comissaoTotal || 0))} (${totalCommissionPctHuman})\n`;
+      `• Comissão vendedor: ${formatBRL(Number(calc?.comissaoVendedor || 0))} (${commissionPctHuman})
+`; 
 
     if (isExternalCota(c)) {
       text += `• Origem: Estoque externo\n`;
@@ -819,7 +818,7 @@ export default function EstoqueContempladas() {
     setBuyerCpf("");
     setSinalFile(null);
     setReserveVendorId(NONE);
-    setReserveVendorPct(DEFAULT_COMMISSION_PCT);
+    setReserveVendorPct(DEFAULT_VENDOR_COMMISSION_PCT);
     setReserveRequests([]);
     setSelectedRequestId(NONE);
   }
@@ -1018,8 +1017,7 @@ export default function EstoqueContempladas() {
       `🧾 Parcelas:\n${parcelaLines.join("\n")}\n` +
       `🆔 Código: ${codigoLine}\n` +
       `🔁 Tx. Transferência: ${txTransfer > 0 ? formatBRL(txTransfer) : "Inclusa/Não informada"} 💵\n` +
-      `📈 Taxa: ${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a. 📊\n` +
-      `🤝 Comissão vendedor: ${commissionPctHuman} • Consulmax: ${commissionPctHuman} • Total: ${totalCommissionPctHuman}\n`
+      `📈 Taxa: ${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a. 📊\n`
     );
   }
 
@@ -1334,7 +1332,7 @@ export default function EstoqueContempladas() {
                 </SelectContent>
               </Select>
               <div className="text-[11px] text-muted-foreground mt-1">
-                Comissão vendedor: <b>{commissionPctHuman}</b> • Comissão Consulmax: <b>{commissionPctHuman}</b> • Total: <b>{totalCommissionPctHuman}</b>
+                Comissão vendedor: <b>{commissionPctHuman}</b> • Comissão Consulmax fixa: <b>2,5%</b>
               </div>
             </div>
 
@@ -1428,10 +1426,8 @@ export default function EstoqueContempladas() {
                         <td className="p-3">{formatBRL(Number(c.credito_disponivel || 0))}</td>
                         <td className="p-3">{formatBRL(c._calc.entrada)}</td>
                         <td className="p-3">
-                          <div>{formatBRL(c._calc.comissaoTotal)}</div>
-                          <div className="text-xs text-muted-foreground">
-                            Vend.: {formatBRL(c._calc.comissaoVendedor)} • Consulmax: {formatBRL(c._calc.comissaoConsulmax)}
-                          </div>
+                          <div>{formatBRL(c._calc.comissaoVendedor)}</div>
+                          <div className="text-xs text-muted-foreground">Vendedor: {commissionPctHuman}</div>
                         </td>
 
                         <td className="p-3">
@@ -1687,7 +1683,7 @@ export default function EstoqueContempladas() {
                     }
                     if (v === NONE) {
                       setReserveVendorId(NONE);
-                      setReserveVendorPct(DEFAULT_COMMISSION_PCT);
+                      setReserveVendorPct(DEFAULT_VENDOR_COMMISSION_PCT);
                     }
                   }}
                 >

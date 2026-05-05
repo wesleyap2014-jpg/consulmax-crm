@@ -252,6 +252,57 @@ function labelInicialFromQtd(qtd?: number | null) {
   return `Parcelas 1 a ${n}`;
 }
 
+function labelRangeParcela(inicio: number, fim: number) {
+  if (inicio === fim) return `Parcela ${inicio}`;
+  return `Parcelas ${inicio} a ${fim}`;
+}
+
+function buildParcelasAposLanceRows(out: EngineOut, sim: SimRow): [string, string][] {
+  const rows: [string, string][] = [];
+
+  const parcelaContemplacao = Math.max(0, Math.round(Number(out.nContemplacao || 0)));
+  const prazoApos = Math.max(0, Math.round(Number(out.prazoApos || 0)));
+  const antecipParcelas = Math.max(0, Math.round(Number(sim.antecip_parcelas || 0)));
+
+  if (!parcelaContemplacao || !prazoApos) {
+    rows.push(["Parcelas após o lance", brMoney(out.parcelaAposValor)]);
+    return rows;
+  }
+
+  const primeiraParcelaAposContemplacao = parcelaContemplacao + 1;
+  const ultimaParcelaAposLance = parcelaContemplacao + prazoApos;
+
+  const aindaTemAntecipacao =
+    antecipParcelas > 0 && primeiraParcelaAposContemplacao <= antecipParcelas;
+
+  if (aindaTemAntecipacao) {
+    const fimAntecipacaoAposLance = Math.min(antecipParcelas, ultimaParcelaAposLance);
+
+    rows.push([
+      labelRangeParcela(primeiraParcelaAposContemplacao, fimAntecipacaoAposLance),
+      brMoney(out.parcelaInicialValor),
+    ]);
+
+    const inicioParcelaFinal = fimAntecipacaoAposLance + 1;
+
+    if (inicioParcelaFinal <= ultimaParcelaAposLance) {
+      rows.push([
+        labelRangeParcela(inicioParcelaFinal, ultimaParcelaAposLance),
+        brMoney(out.parcelaAposValor),
+      ]);
+    }
+
+    return rows;
+  }
+
+  rows.push([
+    labelRangeParcela(primeiraParcelaAposContemplacao, ultimaParcelaAposLance),
+    brMoney(out.parcelaAposValor),
+  ]);
+
+  return rows;
+}
+
 function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
   const safe = (n: any) => {
     const v = Number(n);
@@ -792,6 +843,9 @@ ${wa}`;
   function gerarPDFDirecionada(sim: SimRow) {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const out = proposalEngine(sim, params);
+    const parcelasAposLanceRows = buildParcelasAposLanceRows(out, sim);
+    const admPctLabel = typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—";
+    const frPctLabel = typeof out.fr === "number" ? formatPercentFraction(out.fr) : "—";
     const w = doc.internal.pageSize.getWidth();
     const marginX = 34;
 
@@ -821,8 +875,8 @@ ${wa}`;
       body: [
         ["Crédito Contratado", brMoney(out.credito)],
         ["Prazo", out.prazo ? `${out.prazo} Meses` : "—"],
-        ["Taxa de Adm total", typeof out.adm === "number" ? formatPercentFraction(out.adm) : "—"],
-        ["Fundo Reserva", typeof out.fr === "number" ? formatPercentFraction(out.fr) : "—"],
+        ["Taxa de Adm total", admPctLabel],
+        ["Fundo Reserva", frPctLabel],
         ["Total de Encargos", out.encargos !== null ? brMoney(out.encargos!) : "—"],
         ["Taxa total mensalizada", (typeof out.adm === "number" && out.prazo)
           ? formatPercentFraction((out.adm || 0) / (out.prazo || 1))
@@ -899,7 +953,7 @@ ${wa}`;
       head: [["CONSÓRCIO", ""]],
       body: [
         ["Lance Pago", brMoney(out.lanceProprioValor)],
-        ["Parcelas após o lance", brMoney(out.parcelaAposValor)],
+        ...parcelasAposLanceRows,
         ["Prazo após o lance", out.prazoApos ? `${out.prazoApos} meses` : "—"],
         ["Crédito Recebido", brMoney(out.creditoLiberado)],
         ["Custo Final", brMoney(custoFinalCons)],
@@ -952,8 +1006,8 @@ ${wa}`;
         ["Crédito", brMoney(out.credito)],
         [out.labelParcelaInicial, brMoney(out.parcelaInicialValor)],
         ["Demais  (Até a contemplação)", brMoney(out.parcelaDemaisValor)],
-        ["Taxa de adm total (20%)", typeof out.adm === "number" ? brMoney((out.credito || 0) * (out.adm || 0)) : "—"],
-        ["Fundo de Reserva (5%)", typeof out.fr === "number" ? brMoney((out.credito || 0) * (out.fr || 0)) : "—"],
+        [`Taxa de adm total (${admPctLabel})`, typeof out.adm === "number" ? brMoney((out.credito || 0) * (out.adm || 0)) : "—"],
+        [`Fundo de Reserva (${frPctLabel})`, typeof out.fr === "number" ? brMoney((out.credito || 0) * (out.fr || 0)) : "—"],
         ["Total do Plano", out.valorCategoria !== null ? brMoney(out.valorCategoria) : "—"],
         ["Lance Sugerido", brMoney(out.lanceProprioValor + out.embutidoValor)],
         ["Crédito sem embutido", brMoney(out.credito)],

@@ -71,11 +71,10 @@ type CotaRow = {
 
   external?: boolean;
   external_taxa_transferencia?: number | string | null;
-  external_entrada_oficial?: number | null;
   external_fundo?: number;
   external_prox_reajuste?: string | null;
-  external_seg_vida?: number | string | null;
   external_reserva_label?: string | null;
+  external_seguro_vida?: number | string | null;
 };
 
 type CotaCalc = CotaRow & {
@@ -103,44 +102,32 @@ type ExternalCota = {
   categoria: string;
   valor_credito: string;
   valor_credito_original: string;
-  entrada: number;
-  taxa_transferencia: number | string;
-  taxa_transferencia_fmt?: string | null;
-  transferencia?: number | string | null;
-  transferencia_fmt?: string | null;
-  valor_transferencia?: number | string | null;
-  valor_transferencia_fmt?: string | null;
-  tx_transferencia?: number | string | null;
-  tx_transferencia_fmt?: string | null;
+  entrada: number | string;
+  taxa_transferencia?: number | string | null;
   parcelas: number;
   valor_parcela: string;
   administradora: string;
   reserva: "Reservar" | "Reservado" | string;
   fundo: string;
   prox_reajuste: string | null;
-  seg_vida?: number | string | null;
-  seg_vida_fmt?: string | null;
-  seguro_vida?: number | string | null;
-  seguro_vida_fmt?: string | null;
-  seguro_de_vida?: number | string | null;
-  seguro_de_vida_fmt?: string | null;
-  vida?: number | string | null;
-  vida_fmt?: string | null;
-  seguro?: number | string | null;
-  seguro_fmt?: string | null;
   administradora_img: string;
-  entrada_sem_comissao: number;
-  entrada_sem_comissao_fmt: string;
+  entrada_sem_comissao?: number | string | null;
+  entrada_sem_comissao_fmt?: string;
   valor_credito_fmt: string;
   valor_credito_original_fmt: string;
   entrada_fmt: string;
   valor_parcela_fmt: string;
   fundo_fmt: string;
+
+  seguro_vida?: number | string | null;
+  seg_vida?: number | string | null;
+  seguro_de_vida?: number | string | null;
 };
 
 const WHATSAPP_RESERVA_NUMBER = "5569993917465";
 const NONE = "__none__";
 const EXTERNAL_STOCK_URL = "https://fragaebitelloconsorcios.com.br/api/json/contemplados";
+
 const DEFAULT_VENDOR_COMMISSION_PCT = 0.025;
 const CONSULMAX_COMMISSION_PCT = 0.025;
 const ALLOWED_COMMISSION_PCTS = [0.005, 0.01, 0.015, 0.02, 0.025];
@@ -191,24 +178,15 @@ function toNumber(v: any) {
   if (typeof v === "number") return Number.isFinite(v) ? v : 0;
   if (v === null || v === undefined) return 0;
 
-  const original = String(v).trim();
-  if (!original) return 0;
+  const s = String(v).trim();
+  if (!s) return 0;
 
-  const lower = normalizeText(original);
-  if (lower.includes("inclus")) return 0;
+  if (s.includes("R$")) {
+    return Number(s.replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".")) || 0;
+  }
 
-  const s = original.replace(/[^0-9,.-]/g, "");
-  if (!s || s === "-" || s === "," || s === ".") return 0;
-
-  // pt-BR: 2.144,23 -> 2144.23
-  if (s.includes(",") && s.includes(".")) return Number(s.split(".").join("").replace(",", ".")) || 0;
-
-  // pt-BR decimal: 103,98 -> 103.98
+  if (s.includes(",") && s.includes(".")) return Number(s.replace(/\./g, "").replace(",", ".")) || 0;
   if (s.includes(",") && !s.includes(".")) return Number(s.replace(",", ".")) || 0;
-
-  // milhares sem vírgula: 153.869 -> 153869
-  const dotCount = s.split(".").length - 1;
-  if (dotCount > 1) return Number(s.split(".").join("")) || 0;
 
   return Number(s) || 0;
 }
@@ -375,38 +353,6 @@ export default function EstoqueContempladas() {
     return Boolean(cota?.external) || String(cota?.id || "").startsWith("external-");
   }
 
-  function externalSegVidaRaw(item: any) {
-    return (
-      item?.seg_vida ??
-      item?.seg_vida_fmt ??
-      item?.seguro_vida ??
-      item?.seguro_vida_fmt ??
-      item?.seguro_de_vida ??
-      item?.seguro_de_vida_fmt ??
-      item?.vida ??
-      item?.vida_fmt ??
-      item?.seguro ??
-      item?.seguro_fmt ??
-      item?.segVida ??
-      item?.seguroVida ??
-      null
-    );
-  }
-
-  function externalTransferRaw(item: any) {
-    return (
-      item?.transferencia ??
-      item?.transferencia_fmt ??
-      item?.valor_transferencia ??
-      item?.valor_transferencia_fmt ??
-      item?.tx_transferencia ??
-      item?.tx_transferencia_fmt ??
-      item?.taxa_transferencia ??
-      item?.taxa_transferencia_fmt ??
-      null
-    );
-  }
-
   function mapExternalSegmento(categoria: string): Segmento {
     const c = normalizeText(categoria);
 
@@ -422,8 +368,21 @@ export default function EstoqueContempladas() {
     return "disponivel";
   }
 
-  function mapExternalToCotaRow(item: ExternalCota): CotaRow {
+  function getExternalEntradaSemComissao(item: ExternalCota) {
     const entradaSemComissao = toNumber(item.entrada_sem_comissao);
+
+    if (entradaSemComissao > 0) return entradaSemComissao;
+
+    const entrada = toNumber(item.entrada);
+    const creditoDisponivel = toNumber(item.valor_credito);
+    const comissaoTotalPadrao = creditoDisponivel * (DEFAULT_VENDOR_COMMISSION_PCT + CONSULMAX_COMMISSION_PCT);
+
+    return Math.max(0, entrada - comissaoTotalPadrao);
+  }
+
+  function mapExternalToCotaRow(item: ExternalCota): CotaRow {
+    const entradaSemComissao = getExternalEntradaSemComissao(item);
+    const seguroVida = item.seguro_vida ?? item.seg_vida ?? item.seguro_de_vida ?? null;
 
     return {
       id: `external-${item.id}`,
@@ -463,12 +422,11 @@ export default function EstoqueContempladas() {
       reservado_em: null,
 
       external: true,
-      external_taxa_transferencia: externalTransferRaw(item),
-      external_entrada_oficial: toNumber(item.entrada),
+      external_taxa_transferencia: item.taxa_transferencia ?? null,
       external_fundo: toNumber(item.fundo),
       external_prox_reajuste: item.prox_reajuste || null,
-      external_seg_vida: externalSegVidaRaw(item),
       external_reserva_label: item.reserva || null,
+      external_seguro_vida: seguroVida,
     };
   }
 
@@ -683,8 +641,7 @@ export default function EstoqueContempladas() {
       const comissaoVendedor = credito * pct;
       const comissaoConsulmax = credito * CONSULMAX_COMMISSION_PCT;
       const comissaoTotal = comissaoVendedor + comissaoConsulmax;
-      const entradaOficialExterna = isExternalCota(c) ? Number((c as any).external_entrada_oficial || 0) : 0;
-      const entrada = entradaOficialExterna > 0 ? entradaOficialExterna : Number(c.valor_pago_ao_cliente || 0) + comissaoTotal;
+      const entrada = Number(c.valor_pago_ao_cliente || 0) + comissaoTotal;
 
       return {
         ...c,
@@ -698,6 +655,19 @@ export default function EstoqueContempladas() {
       };
     });
   }, [cotas, commissionPct]);
+
+  function seguroVidaLabel(c: any) {
+    const raw = c?.external_seguro_vida;
+
+    if (raw === null || raw === undefined || raw === "") return "consultar";
+
+    const value = toNumber(raw);
+    if (value > 0) return formatBRL(value);
+
+    if (typeof raw === "string" && raw.trim()) return raw;
+
+    return "consultar";
+  }
 
   function buildWhatsAppMessage(c: CotaRow) {
     const calc = rows.find((r) => r.id === c.id)?._calc;
@@ -715,13 +685,16 @@ export default function EstoqueContempladas() {
       `• Crédito disponível: ${formatBRL(Number(c.credito_disponivel || 0))}\n` +
       `• Parcela: ${parcelaTxt}\n` +
       `• Entrada estimada: ${formatBRL(entrada)}\n` +
-      `• Comissão vendedor: ${formatBRL(Number(calc?.comissaoVendedor || 0))} (${commissionPctHuman})
-`; 
+      `• Comissão vendedor: ${formatBRL(Number(calc?.comissaoVendedor || 0))} (${commissionPctHuman})\n`;
 
     if (isExternalCota(c)) {
       text += `• Origem: Estoque externo\n`;
-      if (c.external_prox_reajuste) text += `• Próx. reajuste: ${c.external_prox_reajuste}\n`;
-      if (Number(c.external_fundo || 0) > 0) text += `• Fundo: ${formatBRL(Number(c.external_fundo || 0))}\n`;
+      if (c.external_prox_reajuste) text += `• Índice reajuste: ${c.external_prox_reajuste}\n`;
+      if (Number(c.external_fundo || 0) > 0) text += `• Fundo comum: ${formatBRL(Number(c.external_fundo || 0))}\n`;
+      text += `• Transferência: ${taxaTransferenciaLabel(c)}\n`;
+
+      const segVida = seguroVidaLabel(c);
+      if (segVida !== "consultar") text += `• Seg. de Vida: ${segVida}\n`;
     }
 
     return text;
@@ -1051,9 +1024,19 @@ export default function EstoqueContempladas() {
   function taxaTransferenciaValue(c: any) {
     if (isExternalCota(c)) {
       const tx = c.external_taxa_transferencia;
+
       if (typeof tx === "number") return tx;
-      if (typeof tx === "string" && normalizeText(tx).includes("inclusa")) return 0;
-      if (typeof tx === "string") return toNumber(tx);
+
+      if (typeof tx === "string") {
+        const normalized = normalizeText(tx);
+
+        if (normalized.includes("inclusa")) {
+          return Number(c.credito_contratado || 0) * 0.01;
+        }
+
+        return toNumber(tx);
+      }
+
       return 0;
     }
 
@@ -1061,13 +1044,6 @@ export default function EstoqueContempladas() {
   }
 
   function taxaTransferenciaLabel(c: any) {
-    if (isExternalCota(c)) {
-      const tx = c.external_taxa_transferencia;
-      if (typeof tx === "string" && normalizeText(tx).includes("inclusa")) return "Inclusa";
-      const value = taxaTransferenciaValue(c);
-      return value > 0 ? formatBRL(value) : "Não informada";
-    }
-
     const value = taxaTransferenciaValue(c);
     return value > 0 ? formatBRL(value) : "Não informada";
   }
@@ -1077,40 +1053,24 @@ export default function EstoqueContempladas() {
 
     if (selected.length === 1) return taxaTransferenciaLabel(selected[0]);
 
-    const hasIncluded = selected.some((c) => isExternalCota(c) && typeof c.external_taxa_transferencia === "string" && normalizeText(c.external_taxa_transferencia).includes("inclusa"));
     const total = selected.reduce((acc, c) => acc + taxaTransferenciaValue(c), 0);
 
-    if (total > 0 && hasIncluded) return `${formatBRL(total)} + itens inclusos`;
     if (total > 0) return formatBRL(total);
-    if (hasIncluded) return "Inclusa";
 
     return "Não informada";
   }
 
-  function segVidaValue(c: any) {
-    const raw = c?.external_seg_vida;
-    if (raw === null || raw === undefined || raw === "") return 0;
-    if (typeof raw === "string" && normalizeText(raw).includes("inclus")) return 0;
-    return toNumber(raw);
-  }
-
-  function segVidaLabel(c: any) {
-    const raw = c?.external_seg_vida;
-    if (raw === null || raw === undefined || raw === "") return "Não informado";
-    if (typeof raw === "string" && normalizeText(raw).includes("inclus")) return "Incluso";
-    const value = segVidaValue(c);
-    return value > 0 ? formatBRL(value) : "Não informado";
-  }
-
   function segVidaResumo(selected: any[]) {
-    const externalSelected = selected.filter((c) => isExternalCota(c));
-    if (!externalSelected.length) return "";
+    if (!selected.length) return "consultar";
 
-    const labels = externalSelected
-      .map((c) => segVidaLabel(c))
-      .filter((v, i, arr) => Boolean(v) && v !== "Não informado" && arr.indexOf(v) === i);
+    if (selected.length === 1) return seguroVidaLabel(selected[0]);
 
-    return labels.length ? labels.join("; ") : "Não informado";
+    const total = selected.reduce((acc, c) => {
+      const v = toNumber(c.external_seguro_vida);
+      return acc + (v > 0 ? v : 0);
+    }, 0);
+
+    return total > 0 ? formatBRL(total) : "consultar";
   }
 
   function buildResumoText(selected: any[]) {
@@ -1123,24 +1083,37 @@ export default function EstoqueContempladas() {
     const nTaxa = Math.max(1, selected.reduce((acc, c) => acc + Number(c.prazo_restante || 0), 0));
     const codigoLine = selected.length === 1 ? selected[0].codigo : selected.map((c) => c.codigo).filter(Boolean).join(", ");
     const txTransfer = taxaTransferenciaResumo(selected);
-    const segVidaText = segVidaResumo(selected);
+    const segVida = segVidaResumo(selected);
     const fv = parcelasTotal + entradaTotal;
     const rm = calcCompoundRateMonthly(creditTotal, fv, nTaxa);
     const ra = Math.pow(1 + rm, 12) - 1;
     const parcelaLines = buildParcelRangesForSelected(selected);
-    return (
+
+    let text =
       `📄 Carta Contemplada • ${seg} 🎯\n` +
       `💰 Crédito: ${formatBRL(creditTotal)}\n` +
       `💳 Entrada: ${formatBRL(entradaTotal)}\n` +
       `🧾 Parcelas:\n${parcelaLines.join("\n")}\n` +
       `🆔 Código: ${codigoLine}\n` +
-      `🔁 Tx. Transferência: ${txTransfer} 💵
-` +
-      (segVidaText ? `🛡️ Seg. de Vida: ${segVidaText}
-` : "") +
-      `📈 Taxa: ${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a. 📊
-`
+      `🔁 Tx. Transferência: ${txTransfer} 💵\n`;
+
+    if (segVida && segVida !== "consultar") {
+      text += `🛡️ Seg. de Vida: ${segVida}\n`;
+    } else {
+      text += `🛡️ Seg. de Vida: consultar\n`;
+    }
+
+    const fundoTotal = selected.reduce((acc, c) => acc + Number(c.external_fundo || 0), 0);
+    if (fundoTotal > 0) text += `🏦 Fundo Comum: ${formatBRL(fundoTotal)}\n`;
+
+    const reajustes = Array.from(
+      new Set(selected.map((c) => String(c.external_prox_reajuste || "").trim()).filter(Boolean))
     );
+    if (reajustes.length) text += `📌 Índice Reajuste: ${reajustes.join(", ")}\n`;
+
+    text += `📈 Taxa: ${pct2Human(rm)} a.m. ou ${pct2Human(ra)} a.a. 📊\n`;
+
+    return text;
   }
 
   const selectedRows = useMemo(() => {
@@ -1440,7 +1413,7 @@ export default function EstoqueContempladas() {
               <Label>Comissão do vendedor</Label>
               <Select value={String(commissionPct * 100)} onValueChange={(v) => saveCommissionSetting(Number(v) / 100)}>
                 <SelectTrigger>
-                  <SelectValue placeholder="2%" />
+                  <SelectValue placeholder="2,5%" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="0.5">0,5%</SelectItem>
@@ -1518,7 +1491,7 @@ export default function EstoqueContempladas() {
 
                             <div>
                               <div className="font-medium">{c.admin?.nome || "—"}</div>
-                              <div className="text-xs text-muted-foreground">Parceiro: {c.partner?.nome || "—"} {external ? "• Espelhado" : ""}</div>
+                              <div className="text-xs text-muted-foreground">Parceiro: {c.partner?.nome || "—"}</div>
                             </div>
                           </div>
                         </td>
@@ -1552,11 +1525,20 @@ export default function EstoqueContempladas() {
 
                         <td className="p-3">
                           {c.status === "disponivel" ? (
-                            <Badge className="gap-1"><CheckCircle2 className="h-3 w-3" />Disponível</Badge>
+                            <Badge className="gap-1">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Disponível
+                            </Badge>
                           ) : c.status === "reservada" ? (
-                            <Badge variant="secondary" className="gap-1"><Lock className="h-3 w-3" />Reservada</Badge>
+                            <Badge variant="secondary" className="gap-1">
+                              <Lock className="h-3 w-3" />
+                              Reservada
+                            </Badge>
                           ) : (
-                            <Badge variant="outline" className="gap-1"><CheckCheck className="h-3 w-3" />Transferida</Badge>
+                            <Badge variant="outline" className="gap-1">
+                              <CheckCheck className="h-3 w-3" />
+                              Transferida
+                            </Badge>
                           )}
                         </td>
 
@@ -1582,7 +1564,9 @@ export default function EstoqueContempladas() {
                               )}
                             </div>
                           ) : (
-                            <Button variant="outline" disabled>Indisponível</Button>
+                            <Button variant="outline" disabled>
+                              Indisponível
+                            </Button>
                           )}
                         </td>
                       </tr>
@@ -1633,9 +1617,12 @@ export default function EstoqueContempladas() {
           </div>
 
           <DialogFooter className="mt-2 flex-col-reverse sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setOpenSum(false)} className="w-full sm:w-auto">Fechar</Button>
+            <Button variant="outline" onClick={() => setOpenSum(false)} className="w-full sm:w-auto">
+              Fechar
+            </Button>
             <Button onClick={() => copyToClipboard(sumText)} disabled={!sumText.trim()} className="w-full sm:w-auto">
-              <Copy className="h-4 w-4 mr-2" />Copiar texto
+              <Copy className="h-4 w-4 mr-2" />
+              Copiar texto
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1643,22 +1630,34 @@ export default function EstoqueContempladas() {
 
       <Dialog open={openCreate} onOpenChange={setOpenCreate}>
         <DialogContent className="max-w-3xl">
-          <DialogHeader><DialogTitle>Cadastrar cota no estoque</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Cadastrar cota no estoque</DialogTitle>
+          </DialogHeader>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Parceiro</Label>
               <Tabs value={createTabPartner} onValueChange={(v: any) => setCreateTabPartner(v)}>
                 <TabsList className="w-full">
-                  <TabsTrigger value="select" className="flex-1">Selecionar</TabsTrigger>
-                  <TabsTrigger value="new" className="flex-1">Cadastrar</TabsTrigger>
+                  <TabsTrigger value="select" className="flex-1">
+                    Selecionar
+                  </TabsTrigger>
+                  <TabsTrigger value="new" className="flex-1">
+                    Cadastrar
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="select" className="space-y-2">
                   <Select value={partnerId} onValueChange={setPartnerId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione um parceiro" /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione um parceiro" />
+                    </SelectTrigger>
                     <SelectContent>
-                      {partners.map((p) => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                      {partners.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.nome}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </TabsContent>
@@ -1666,7 +1665,9 @@ export default function EstoqueContempladas() {
                 <TabsContent value="new" className="space-y-2">
                   <Input value={newPartnerName} onChange={(e) => setNewPartnerName(e.target.value)} placeholder="Nome do parceiro" />
                   <Input type="file" accept="image/*" onChange={(e) => setNewPartnerLogo(e.target.files?.[0] || null)} />
-                  <div className="text-xs text-muted-foreground">Logo vai para bucket <b>stock_assets</b>.</div>
+                  <div className="text-xs text-muted-foreground">
+                    Logo vai para bucket <b>stock_assets</b>.
+                  </div>
                 </TabsContent>
               </Tabs>
             </div>
@@ -1675,15 +1676,25 @@ export default function EstoqueContempladas() {
               <Label>Administradora</Label>
               <Tabs value={createTabAdmin} onValueChange={(v: any) => setCreateTabAdmin(v)}>
                 <TabsList className="w-full">
-                  <TabsTrigger value="select" className="flex-1">Selecionar</TabsTrigger>
-                  <TabsTrigger value="new" className="flex-1">Cadastrar</TabsTrigger>
+                  <TabsTrigger value="select" className="flex-1">
+                    Selecionar
+                  </TabsTrigger>
+                  <TabsTrigger value="new" className="flex-1">
+                    Cadastrar
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="select" className="space-y-2">
                   <Select value={adminId} onValueChange={setAdminId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione a administradora" /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a administradora" />
+                    </SelectTrigger>
                     <SelectContent>
-                      {admins.map((a) => <SelectItem key={a.id} value={a.id}>{a.nome}</SelectItem>)}
+                      {admins.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.nome}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </TabsContent>
@@ -1691,7 +1702,9 @@ export default function EstoqueContempladas() {
                 <TabsContent value="new" className="space-y-2">
                   <Input value={newAdminName} onChange={(e) => setNewAdminName(e.target.value)} placeholder="Nome da administradora" />
                   <Input type="file" accept="image/*" onChange={(e) => setNewAdminLogo(e.target.files?.[0] || null)} />
-                  <div className="text-xs text-muted-foreground">Logo vai para bucket <b>stock_assets</b>.</div>
+                  <div className="text-xs text-muted-foreground">
+                    Logo vai para bucket <b>stock_assets</b>.
+                  </div>
                 </TabsContent>
               </Tabs>
             </div>
@@ -1699,7 +1712,9 @@ export default function EstoqueContempladas() {
             <div className="space-y-2">
               <Label>Segmento</Label>
               <Select value={segmento} onValueChange={(v: any) => setSegmento(v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Automóvel">Automóvel</SelectItem>
                   <SelectItem value="Imóvel">Imóvel</SelectItem>
@@ -1709,54 +1724,86 @@ export default function EstoqueContempladas() {
               </Select>
             </div>
 
-            <div className="space-y-2"><Label>Código da cota</Label><Input value={codigoCota} onChange={(e) => setCodigoCota(e.target.value)} placeholder="Ex: 3798" /></div>
-            <div className="space-y-2"><Label>Nº da proposta</Label><Input value={numeroProposta} onChange={(e) => setNumeroProposta(e.target.value)} placeholder="Ex: 123456" /></div>
-            <div className="space-y-2"><Label>Crédito contratado</Label><Input value={creditoContratado} onChange={(e) => setCreditoContratado(e.target.value)} placeholder="Ex: 250.000" /></div>
-            <div className="space-y-2"><Label>Crédito disponível</Label><Input value={creditoDisponivel} onChange={(e) => setCreditoDisponivel(e.target.value)} placeholder="Ex: 250.000" /></div>
-            <div className="space-y-2"><Label>Prazo restante (meses)</Label><Input value={prazoRestante} onChange={(e) => setPrazoRestante(e.target.value)} placeholder="Ex: 72" /></div>
-            <div className="space-y-2"><Label>Valor da parcela</Label><Input value={valorParcela} onChange={(e) => setValorParcela(e.target.value)} placeholder="Ex: 1.850" /></div>
-            <div className="space-y-2"><Label>Comissão exigida pela corretora</Label><Input value={comissaoCorretora} onChange={(e) => setComissaoCorretora(e.target.value)} placeholder="Ex: 2.500" /></div>
-            <div className="space-y-2"><Label>Valor pago ao cliente (cedente)</Label><Input value={valorPagoCliente} onChange={(e) => setValorPagoCliente(e.target.value)} placeholder="Ex: 15.000" /></div>
+            <div className="space-y-2">
+              <Label>Código da cota</Label>
+              <Input value={codigoCota} onChange={(e) => setCodigoCota(e.target.value)} placeholder="Ex: 3798" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Nº da proposta</Label>
+              <Input value={numeroProposta} onChange={(e) => setNumeroProposta(e.target.value)} placeholder="Ex: 123456" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Crédito contratado</Label>
+              <Input value={creditoContratado} onChange={(e) => setCreditoContratado(e.target.value)} placeholder="Ex: 250.000" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Crédito disponível</Label>
+              <Input value={creditoDisponivel} onChange={(e) => setCreditoDisponivel(e.target.value)} placeholder="Ex: 250.000" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Prazo restante (meses)</Label>
+              <Input value={prazoRestante} onChange={(e) => setPrazoRestante(e.target.value)} placeholder="Ex: 72" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Valor da parcela</Label>
+              <Input value={valorParcela} onChange={(e) => setValorParcela(e.target.value)} placeholder="Ex: 1.850" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Comissão exigida pela corretora</Label>
+              <Input value={comissaoCorretora} onChange={(e) => setComissaoCorretora(e.target.value)} placeholder="Ex: 2.500" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Valor pago ao cliente (cedente)</Label>
+              <Input value={valorPagoCliente} onChange={(e) => setValorPagoCliente(e.target.value)} placeholder="Ex: 15.000" />
+            </div>
           </div>
 
           <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setOpenCreate(false)} disabled={savingCota}>Cancelar</Button>
-            <Button onClick={() => createCota()} disabled={savingCota}>{savingCota ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Salvar cota</Button>
+            <Button variant="outline" onClick={() => setOpenCreate(false)} disabled={savingCota}>
+              Cancelar
+            </Button>
+            <Button onClick={() => createCota()} disabled={savingCota}>
+              {savingCota ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Salvar cota
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={openVendorReserve.open} onOpenChange={(v) => setOpenVendorReserve({ open: v, cota: v ? openVendorReserve.cota : null })}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Solicitar reserva (WhatsApp)</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Solicitar reserva (WhatsApp)</DialogTitle>
+          </DialogHeader>
 
           {openVendorReserve.cota ? (
             <div className="space-y-3 text-sm">
               <div className="rounded-md border p-3">
                 <div className="font-semibold">{openVendorReserve.cota.codigo}</div>
-                <div className="text-muted-foreground">{openVendorReserve.cota.admin?.nome || "—"} • {openVendorReserve.cota.segmento}</div>
+                <div className="text-muted-foreground">
+                  {openVendorReserve.cota.admin?.nome || "—"} • {openVendorReserve.cota.segmento}
+                </div>
               </div>
 
               <div className="rounded-md bg-muted/40 p-3">
-                {isExternalCota(openVendorReserve.cota) ? (
-                  <>
-                    <div><b>Origem:</b> Estoque externo</div>
-                    <div className="text-xs text-muted-foreground mt-1">Essa cota não será salva no CRM. O botão apenas abre o WhatsApp com a mensagem de reserva.</div>
-                  </>
-                ) : (
-                  <>
-                    <div><b>Comissão vendedor:</b> {commissionPctHuman}</div>
-                    <div className="text-xs text-muted-foreground mt-1">A solicitação fica registrada no banco para o admin ver.</div>
-                  </>
-                )}
-
-                <div className="mt-1"><b>Mensagem será enviada para:</b> {WHATSAPP_RESERVA_NUMBER}</div>
+                <div>
+                  <b>Mensagem será enviada para:</b> {WHATSAPP_RESERVA_NUMBER}
+                </div>
               </div>
             </div>
           ) : null}
 
           <DialogFooter className="mt-3">
-            <Button variant="outline" onClick={() => setOpenVendorReserve({ open: false, cota: null })}>Fechar</Button>
+            <Button variant="outline" onClick={() => setOpenVendorReserve({ open: false, cota: null })}>
+              Fechar
+            </Button>
             <Button
               onClick={async () => {
                 if (!openVendorReserve.cota) return;
@@ -1764,7 +1811,8 @@ export default function EstoqueContempladas() {
                 setOpenVendorReserve({ open: false, cota: null });
               }}
             >
-              <PhoneOutgoing className="h-4 w-4 mr-2" />Abrir WhatsApp
+              <PhoneOutgoing className="h-4 w-4 mr-2" />
+              Abrir WhatsApp
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1772,14 +1820,17 @@ export default function EstoqueContempladas() {
 
       <Dialog open={openReserve.open} onOpenChange={(v) => setOpenReserve({ open: v, cota: v ? openReserve.cota : null })}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Reservar cota (Admin)</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Reservar cota (Admin)</DialogTitle>
+          </DialogHeader>
 
           {openReserve.cota ? (
             <div className="space-y-4">
               <div className="rounded-md border p-3 text-sm">
                 <div className="font-semibold">{openReserve.cota.codigo}</div>
                 <div className="text-muted-foreground">
-                  {openReserve.cota.admin?.nome || "—"} • {openReserve.cota.segmento} • Crédito {formatBRL(Number(openReserve.cota.credito_disponivel || 0))}
+                  {openReserve.cota.admin?.nome || "—"} • {openReserve.cota.segmento} • Crédito{" "}
+                  {formatBRL(Number(openReserve.cota.credito_disponivel || 0))}
                 </div>
               </div>
 
@@ -1801,28 +1852,52 @@ export default function EstoqueContempladas() {
                     }
                   }}
                 >
-                  <SelectTrigger><SelectValue placeholder="Selecione uma solicitação (se houver)" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma solicitação (se houver)" />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>Nenhuma</SelectItem>
                     {reserveRequests.map((r) => (
-                      <SelectItem key={r.id} value={r.id}>{r.vendor_nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} — {new Date(r.created_at).toLocaleString("pt-BR")}</SelectItem>
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.vendor_nome || "Vendedor"} — {pctToHuman(Number(r.vendor_pct))} — {new Date(r.created_at).toLocaleString("pt-BR")}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="space-y-2"><Label>Nome completo do comprador</Label><Input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} placeholder="Nome completo" /></div>
-                <div className="space-y-2"><Label>CPF do comprador</Label><Input value={buyerCpf} onChange={(e) => setBuyerCpf(e.target.value)} placeholder="Somente números ou com máscara" /></div>
-                <div className="space-y-2 md:col-span-2"><Label>Comprovante do sinal</Label><Input type="file" onChange={(e) => setSinalFile(e.target.files?.[0] || null)} /><div className="text-xs text-muted-foreground">Vai para bucket <b>stock_sinais</b>.</div></div>
+                <div className="space-y-2">
+                  <Label>Nome completo do comprador</Label>
+                  <Input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} placeholder="Nome completo" />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>CPF do comprador</Label>
+                  <Input value={buyerCpf} onChange={(e) => setBuyerCpf(e.target.value)} placeholder="Somente números ou com máscara" />
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Comprovante do sinal</Label>
+                  <Input type="file" onChange={(e) => setSinalFile(e.target.files?.[0] || null)} />
+                  <div className="text-xs text-muted-foreground">
+                    Vai para bucket <b>stock_sinais</b>.
+                  </div>
+                </div>
 
                 <div className="space-y-2">
                   <Label>Vendedor (opcional)</Label>
                   <Select value={reserveVendorId} onValueChange={setReserveVendorId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione um vendedor (opcional)" /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione um vendedor (opcional)" />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={NONE}>—</SelectItem>
-                      {vendedores.map((v) => <SelectItem key={v.id} value={v.id}>{v.nome}</SelectItem>)}
+                      {vendedores.map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          {v.nome}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1830,7 +1905,9 @@ export default function EstoqueContempladas() {
                 <div className="space-y-2">
                   <Label>% comissão do vendedor</Label>
                   <Select value={String(reserveVendorPct * 100)} onValueChange={(v) => setReserveVendorPct(clampPct(Number(v) / 100))} disabled={reserveVendorId === NONE}>
-                    <SelectTrigger><SelectValue placeholder="2%" /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue placeholder="2,5%" />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="0.5">0,5%</SelectItem>
                       <SelectItem value="1">1%</SelectItem>
@@ -1845,15 +1922,29 @@ export default function EstoqueContempladas() {
           ) : null}
 
           <DialogFooter className="mt-3">
-            <Button variant="outline" onClick={() => { setOpenReserve({ open: false, cota: null }); resetReserveForm(); }} disabled={savingReserve}>Cancelar</Button>
-            <Button onClick={() => reserveCotaAdmin()} disabled={savingReserve}>{savingReserve ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Confirmar reserva</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setOpenReserve({ open: false, cota: null });
+                resetReserveForm();
+              }}
+              disabled={savingReserve}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={() => reserveCotaAdmin()} disabled={savingReserve}>
+              {savingReserve ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Confirmar reserva
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={openManage.open} onOpenChange={(v) => setOpenManage({ open: v, cota: v ? openManage.cota : null })}>
         <DialogContent className="max-w-3xl">
-          <DialogHeader><DialogTitle>Gerenciar cota</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Gerenciar cota</DialogTitle>
+          </DialogHeader>
 
           {openManage.cota ? (
             <div className="space-y-4">
@@ -1862,14 +1953,27 @@ export default function EstoqueContempladas() {
                   <div>
                     <div className="font-semibold">{openManage.cota.codigo}</div>
                     <div className="text-muted-foreground">
-                      {openManage.cota.admin?.nome || "—"} • {openManage.cota.segmento} • {openManage.cota.status === "disponivel" ? "Disponível" : openManage.cota.status === "reservada" ? "Reservada" : "Transferida"}
+                      {openManage.cota.admin?.nome || "—"} • {openManage.cota.segmento} •{" "}
+                      {openManage.cota.status === "disponivel" ? "Disponível" : openManage.cota.status === "reservada" ? "Reservada" : "Transferida"}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap justify-end">
-                    {openManage.cota.status === "reservada" ? <Button variant="default" onClick={finalizeTransfer} disabled={deleting || savingEdit}><CheckCheck className="h-4 w-4 mr-2" />Finalizar transferência</Button> : null}
-                    {openManage.cota.status === "reservada" ? <Button variant="outline" onClick={reopenToSale} disabled={deleting || savingEdit}>Reabrir para venda</Button> : null}
-                    <Button variant="outline" onClick={deleteCota} disabled={deleting || savingEdit}>{deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}Excluir</Button>
+                    {openManage.cota.status === "reservada" ? (
+                      <Button variant="default" onClick={finalizeTransfer} disabled={deleting || savingEdit}>
+                        <CheckCheck className="h-4 w-4 mr-2" />
+                        Finalizar transferência
+                      </Button>
+                    ) : null}
+                    {openManage.cota.status === "reservada" ? (
+                      <Button variant="outline" onClick={reopenToSale} disabled={deleting || savingEdit}>
+                        Reabrir para venda
+                      </Button>
+                    ) : null}
+                    <Button variant="outline" onClick={deleteCota} disabled={deleting || savingEdit}>
+                      {deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                      Excluir
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -1878,35 +1982,101 @@ export default function EstoqueContempladas() {
                 <div className="space-y-2">
                   <Label>Parceiro</Label>
                   <Select value={editPartnerId} onValueChange={setEditPartnerId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione um parceiro" /></SelectTrigger>
-                    <SelectContent>{partners.map((p) => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}</SelectContent>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione um parceiro" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {partners.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 </div>
 
                 <div className="space-y-2">
                   <Label>Administradora</Label>
                   <Select value={editAdminId} onValueChange={setEditAdminId}>
-                    <SelectTrigger><SelectValue placeholder="Selecione a administradora" /></SelectTrigger>
-                    <SelectContent>{admins.map((a) => <SelectItem key={a.id} value={a.id}>{a.nome}</SelectItem>)}</SelectContent>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a administradora" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {admins.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 </div>
 
-                <div className="space-y-2"><Label>Segmento</Label><Select value={editSegmento} onValueChange={(v: any) => setEditSegmento(v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Automóvel">Automóvel</SelectItem><SelectItem value="Imóvel">Imóvel</SelectItem><SelectItem value="Motocicletas">Motocicletas</SelectItem><SelectItem value="Serviços">Serviços</SelectItem></SelectContent></Select></div>
-                <div className="space-y-2"><Label>Código da cota</Label><Input value={editCodigo} onChange={(e) => setEditCodigo(e.target.value)} /></div>
-                <div className="space-y-2"><Label>Nº da proposta</Label><Input value={editNumeroProposta} onChange={(e) => setEditNumeroProposta(e.target.value)} /></div>
-                <div className="space-y-2"><Label>Crédito contratado</Label><Input value={editCreditoContratado} onChange={(e) => setEditCreditoContratado(e.target.value)} /></div>
-                <div className="space-y-2"><Label>Crédito disponível</Label><Input value={editCreditoDisponivel} onChange={(e) => setEditCreditoDisponivel(e.target.value)} /></div>
-                <div className="space-y-2"><Label>Prazo restante (meses)</Label><Input value={editPrazoRestante} onChange={(e) => setEditPrazoRestante(e.target.value)} /></div>
-                <div className="space-y-2"><Label>Valor da parcela</Label><Input value={editValorParcela} onChange={(e) => setEditValorParcela(e.target.value)} /></div>
-                <div className="space-y-2"><Label>Comissão exigida pela corretora</Label><Input value={editComissaoCorretora} onChange={(e) => setEditComissaoCorretora(e.target.value)} /></div>
-                <div className="space-y-2"><Label>Valor pago ao cliente (cedente)</Label><Input value={editValorPagoCliente} onChange={(e) => setEditValorPagoCliente(e.target.value)} /></div>
+                <div className="space-y-2">
+                  <Label>Segmento</Label>
+                  <Select value={editSegmento} onValueChange={(v: any) => setEditSegmento(v)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Automóvel">Automóvel</SelectItem>
+                      <SelectItem value="Imóvel">Imóvel</SelectItem>
+                      <SelectItem value="Motocicletas">Motocicletas</SelectItem>
+                      <SelectItem value="Serviços">Serviços</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Código da cota</Label>
+                  <Input value={editCodigo} onChange={(e) => setEditCodigo(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Nº da proposta</Label>
+                  <Input value={editNumeroProposta} onChange={(e) => setEditNumeroProposta(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Crédito contratado</Label>
+                  <Input value={editCreditoContratado} onChange={(e) => setEditCreditoContratado(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Crédito disponível</Label>
+                  <Input value={editCreditoDisponivel} onChange={(e) => setEditCreditoDisponivel(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Prazo restante (meses)</Label>
+                  <Input value={editPrazoRestante} onChange={(e) => setEditPrazoRestante(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Valor da parcela</Label>
+                  <Input value={editValorParcela} onChange={(e) => setEditValorParcela(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Comissão exigida pela corretora</Label>
+                  <Input value={editComissaoCorretora} onChange={(e) => setEditComissaoCorretora(e.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Valor pago ao cliente (cedente)</Label>
+                  <Input value={editValorPagoCliente} onChange={(e) => setEditValorPagoCliente(e.target.value)} />
+                </div>
               </div>
             </div>
           ) : null}
 
           <DialogFooter className="mt-2">
-            <Button variant="outline" onClick={() => setOpenManage({ open: false, cota: null })} disabled={savingEdit || deleting}>Fechar</Button>
-            <Button onClick={saveManageEdits} disabled={savingEdit || deleting}>{savingEdit ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Pencil className="h-4 w-4 mr-2" />}Salvar alterações</Button>
+            <Button variant="outline" onClick={() => setOpenManage({ open: false, cota: null })} disabled={savingEdit || deleting}>
+              Fechar
+            </Button>
+            <Button onClick={saveManageEdits} disabled={savingEdit || deleting}>
+              {savingEdit ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Pencil className="h-4 w-4 mr-2" />}
+              Salvar alterações
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

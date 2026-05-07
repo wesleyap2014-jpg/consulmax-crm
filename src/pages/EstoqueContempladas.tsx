@@ -270,6 +270,7 @@ export default function EstoqueContempladas() {
 
   const [segFilter, setSegFilter] = useState<"all" | Segmento>("all");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("disponivel");
+  const [adminFilter, setAdminFilter] = useState<string>("all");
   const [minValue, setMinValue] = useState<string>("");
   const [maxValue, setMaxValue] = useState<string>("");
 
@@ -286,6 +287,24 @@ export default function EstoqueContempladas() {
     for (const v of vendedores) m.set(v.id, v);
     return m;
   }, [vendedores]);
+
+  const adminFilterOptions = useMemo(() => {
+    const m = new Map<string, string>();
+
+    for (const admin of admins) {
+      if (admin.id && admin.nome) m.set(admin.id, admin.nome);
+    }
+
+    for (const cota of cotas) {
+      const id = cota.admin?.id || "";
+      const nome = cota.admin?.nome || "";
+      if (id && nome) m.set(id, nome);
+    }
+
+    return Array.from(m.entries())
+      .map(([id, nome]) => ({ id, nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [admins, cotas]);
 
   const [openCreate, setOpenCreate] = useState(false);
   const [openReserve, setOpenReserve] = useState<{ open: boolean; cota: CotaRow | null }>({ open: false, cota: null });
@@ -534,6 +553,7 @@ export default function EstoqueContempladas() {
         .filter((c) => {
           if (statusFilter !== "all" && c.status !== statusFilter) return false;
           if (segFilter !== "all" && c.segmento !== segFilter) return false;
+          if (adminFilter !== "all" && c.admin?.id !== adminFilter) return false;
           if (minValue.trim() !== "" && Number(c.credito_disponivel || 0) < min) return false;
           if (maxValue.trim() !== "" && Number(c.credito_disponivel || 0) > max) return false;
           return true;
@@ -577,6 +597,7 @@ export default function EstoqueContempladas() {
 
       if (effectiveStatus !== "all") q = q.eq("status", effectiveStatus);
       if (segFilter !== "all") q = q.eq("segmento", segFilter);
+      if (adminFilter !== "all") q = q.eq("admin_id", adminFilter);
 
       const min = parseBRNumber(minValue);
       const max = parseBRNumber(maxValue);
@@ -631,7 +652,7 @@ export default function EstoqueContempladas() {
     if (sourceMode === "externo") loadExternalCotas();
     else loadCotas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segFilter, statusFilter]);
+  }, [segFilter, statusFilter, adminFilter]);
 
   const rows = useMemo<CotaCalc[]>(() => {
     return cotas.map((c) => {
@@ -1358,6 +1379,23 @@ export default function EstoqueContempladas() {
             </div>
 
             <div className="md:col-span-3">
+              <Label>Administradora</Label>
+              <Select value={adminFilter} onValueChange={setAdminFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {adminFilterOptions.map((admin) => (
+                    <SelectItem key={admin.id} value={admin.id}>
+                      {admin.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="md:col-span-3">
               <Label>Segmento</Label>
               <Select value={segFilter} onValueChange={(v: any) => setSegFilter(v)}>
                 <SelectTrigger>
@@ -1373,7 +1411,7 @@ export default function EstoqueContempladas() {
               </Select>
             </div>
 
-            <div className="md:col-span-6">
+            <div className="md:col-span-3">
               <Label>Status</Label>
               <div className="flex flex-wrap gap-2">
                 <Button variant={statusFilter === "disponivel" ? "default" : "outline"} onClick={() => setStatusFilter("disponivel")}>
@@ -1428,7 +1466,7 @@ export default function EstoqueContempladas() {
             <div className="md:col-span-3 flex items-end">
               <Button variant="outline" onClick={() => loadActiveSource()} className="w-full" disabled={loading}>
                 {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                Aplicar filtro de valor
+                Aplicar filtros
               </Button>
             </div>
           </div>

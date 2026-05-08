@@ -40,6 +40,9 @@ const maskCEP = (v: string) => {
 
 const lower = (v: string) => (v || "").trim().toLowerCase();
 
+const compareText = (a?: string | null, b?: string | null) =>
+  String(a || "").localeCompare(String(b || ""), "pt-BR", { sensitivity: "base" });
+
 /* -------------------- tipos -------------------- */
 type RoleUI = "admin" | "vendedor" | "operacoes";
 type RoleAPI = "admin" | "vendedor" | "viewer";
@@ -189,10 +192,18 @@ export default function Usuarios() {
         .select("id,nome,tipo,cidade,uf,is_active")
         .order("tipo", { ascending: true })
         .order("nome", { ascending: true });
+
       if (error) throw error;
-      setUnits((data || []) as Unit[]);
+
+      const sorted = ((data || []) as Unit[]).sort((a, b) => {
+        if (a.tipo !== b.tipo) return a.tipo === "matriz" ? -1 : 1;
+        return compareText(a.nome, b.nome);
+      });
+
+      setUnits(sorted);
     } catch (e: any) {
       alert("Falha ao carregar unidades: " + (e?.message || e));
+      setUnits([]);
     } finally {
       setLoadingUnits(false);
     }
@@ -201,6 +212,11 @@ export default function Usuarios() {
   useEffect(() => {
     if (isAdmin) loadUnits();
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (openUnits) loadUnits();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openUnits]);
 
   function startCreateUnit() {
     setEditingUnitId(null);
@@ -259,7 +275,7 @@ export default function Usuarios() {
   const [users, setUsers] = useState<any[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [search, setSearch] = useState("");
-  const pageSize = 15;
+  const pageSize = 50;
   const [page, setPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
 
@@ -278,17 +294,19 @@ export default function Usuarios() {
       let q = supabase
         .from("users")
         .select(
-          "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes, is_active, unit_id, hierarchy_level, units:unit_id(id,nome,tipo,cidade,uf,is_active)",
+          "id, auth_user_id, nome, email, role, phone, cep, logradouro, numero, bairro, cidade, uf, pix_type, pix_key, avatar_url, scopes, is_active, unit_id, hierarchy_level",
           { count: "exact" }
         )
-        .order("id", { ascending: false })
+        .order("nome", { ascending: true, nullsFirst: false })
         .range(from, to);
 
       if (orSearch) q = q.or(orSearch);
 
       const { data, error, count } = await q;
       if (error) throw error;
-      setUsers(data || []);
+
+      const sorted = (data || []).sort((a: any, b: any) => compareText(a.nome, b.nome));
+      setUsers(sorted);
       setTotalRows(count || 0);
     } catch (e: any) {
       alert("Falha ao carregar usuários: " + (e?.message || e));
@@ -437,7 +455,7 @@ export default function Usuarios() {
       setOpenCreate(false);
       setForm(emptyForm());
       setPage(1);
-      await loadUsers();
+      await Promise.all([loadUnits(), loadUsers()]);
     } catch (e: any) {
       alert("Falha inesperada: " + (e?.message || e));
     } finally {
@@ -534,7 +552,7 @@ export default function Usuarios() {
         alert("Falha ao salvar: " + error.message);
         return;
       }
-      await loadUsers();
+      await Promise.all([loadUnits(), loadUsers()]);
       closeEdit();
     } catch (e: any) {
       alert("Erro inesperado: " + (e?.message || e));
@@ -547,7 +565,7 @@ export default function Usuarios() {
   const scopeCheckboxes = useMemo(
     () =>
       ALL_SCOPES.map((k) => (
-        <label key={k} style={checkboxLabel}>
+        <label key={k} style={checkboxCard}>
           <input
             type="checkbox"
             checked={!!form.scopes[k]}
@@ -566,10 +584,20 @@ export default function Usuarios() {
 
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
+  const activeUsers = useMemo(
+    () => users.filter((u) => u.is_active !== false).sort((a, b) => compareText(a.nome, b.nome)),
+    [users]
+  );
+
+  const inactiveUsers = useMemo(
+    () => users.filter((u) => u.is_active === false).sort((a, b) => compareText(a.nome, b.nome)),
+    [users]
+  );
+
   function getUserUnit(u: any): Unit | null {
-    const joined = u.units;
-    if (joined && !Array.isArray(joined)) return joined as Unit;
-    if (u.unit_id && unitById.has(u.unit_id)) return unitById.get(u.unit_id) || null;
+    if (u.unit_id && unitById.has(u.unit_id)) {
+      return unitById.get(u.unit_id) || null;
+    }
     return null;
   }
 
@@ -591,6 +619,55 @@ export default function Usuarios() {
       const current = Array.isArray(s.scopes) ? s.scopes : [];
       const next = current.includes(scope) ? current.filter((x: string) => x !== scope) : [...current, scope];
       return { ...s, scopes: next };
+    });
+  }
+
+  function renderUserRows(list: any[], inactiveSection = false) {
+    return list.map((u) => {
+      const unit = getUserUnit(u);
+      return (
+        <tr key={u.id} style={inactiveSection || u.is_active === false ? inactiveRow : undefined}>
+          <td style={tdAvatar}>
+            {u.avatar_url ? <img src={u.avatar_url} alt="" style={avatar} /> : <div style={avatarFallback} />}
+          </td>
+          <td style={tdName}>
+            <div style={{ fontWeight: 900 }}>{u.nome}</div>
+            {u.is_active === false && <span style={inactiveBadge}>Inativo</span>}
+          </td>
+          <td style={td}>{u.email}</td>
+          <td style={td}>
+            <span style={roleBadge(u.role)}>{String(u.role || "").toUpperCase()}</span>
+          </td>
+          <td style={td}>
+            {unit ? (
+              <div>
+                <div style={{ fontWeight: 850 }}>{unit.nome}</div>
+                <div style={miniText}>{unit.tipo === "matriz" ? "Matriz" : "Filial"}</div>
+              </div>
+            ) : (
+              <span style={warningText}>Sem unidade</span>
+            )}
+          </td>
+          <td style={td}>
+            <span style={hierarchyBadge(u.hierarchy_level, unit)}>{hierarchyLabel(u.hierarchy_level, unit)}</span>
+          </td>
+          <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
+          <td style={td}>
+            {u.pix_type
+              ? u.pix_type === "cpf"
+                ? maskCPF(String(u.pix_key || ""))
+                : u.pix_type === "telefone"
+                  ? maskPhone(String(u.pix_key || ""))
+                  : String(u.pix_key || "")
+              : "-"}
+          </td>
+          <td style={tdAction}>
+            <button onClick={() => openEdit(u)} style={btnPrimary}>
+              Editar
+            </button>
+          </td>
+        </tr>
+      );
     });
   }
 
@@ -619,7 +696,7 @@ export default function Usuarios() {
   return (
     <PageShell>
       {/* Header / barra ações */}
-      <div style={headerBar}>
+      <div style={heroCard}>
         <div>
           <h1 style={title}>Usuários</h1>
           <p style={subtitle}>Cadastre usuários, vincule unidades e defina a hierarquia de acesso.</p>
@@ -634,7 +711,7 @@ export default function Usuarios() {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={toolbar}>
         <input
           placeholder="Buscar por nome, e-mail ou telefone"
           value={search}
@@ -642,98 +719,47 @@ export default function Usuarios() {
             setPage(1);
             setSearch(e.target.value);
           }}
-          style={{ ...input, width: 420, maxWidth: "100%" }}
+          style={{ ...input, width: 520, maxWidth: "100%" }}
         />
-        <span style={hint}>Unidades ativas: {activeUnits.length}</span>
+        <div style={toolbarStats}>
+          <span style={statPill}>Ativos: {activeUsers.length}</span>
+          <span style={statPill}>Inativos: {inactiveUsers.length}</span>
+          <span style={statPill}>Unidades: {activeUnits.length}</span>
+        </div>
       </div>
 
       {/* Tabela */}
-      <div style={card}>
-        <h2 style={{ margin: "0 0 12px" }}>Usuários Cadastrados</h2>
-        <div style={{ overflowX: "auto" }}>
-          <table style={table}>
-            <thead>
-              <tr>
-                <th style={th}>Foto</th>
-                <th style={th}>Nome</th>
-                <th style={th}>E-mail</th>
-                <th style={th}>Perfil</th>
-                <th style={th}>Unidade</th>
-                <th style={th}>Nível</th>
-                <th style={th}>Celular</th>
-                <th style={th}>PIX</th>
-                <th style={th}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loadingList && (
-                <tr>
-                  <td style={td} colSpan={9}>
-                    Carregando…
-                  </td>
-                </tr>
-              )}
-              {!loadingList &&
-                users.map((u) => {
-                  const unit = getUserUnit(u);
-                  return (
-                    <tr key={u.id} style={u.is_active === false ? inactiveRow : undefined}>
-                      <td style={td}>
-                        {u.avatar_url ? (
-                          <img src={u.avatar_url} alt="" style={avatar} />
-                        ) : (
-                          <div style={avatarFallback} />
-                        )}
-                      </td>
-                      <td style={td}>
-                        <div style={{ fontWeight: 800 }}>{u.nome}</div>
-                        {u.is_active === false && <span style={inactiveBadge}>Inativo</span>}
-                      </td>
-                      <td style={td}>{u.email}</td>
-                      <td style={td}>
-                        <span style={roleBadge(u.role)}>{String(u.role || "").toUpperCase()}</span>
-                      </td>
-                      <td style={td}>
-                        {unit ? (
-                          <div>
-                            <div style={{ fontWeight: 750 }}>{unit.nome}</div>
-                            <div style={miniText}>{unit.tipo === "matriz" ? "Matriz" : "Filial"}</div>
-                          </div>
-                        ) : (
-                          <span style={warningText}>Sem unidade</span>
-                        )}
-                      </td>
-                      <td style={td}>
-                        <span style={hierarchyBadge(u.hierarchy_level, unit)}>{hierarchyLabel(u.hierarchy_level, unit)}</span>
-                      </td>
-                      <td style={td}>{u.phone ? maskPhone(String(u.phone)) : "-"}</td>
-                      <td style={td}>
-                        {u.pix_type
-                          ? u.pix_type === "cpf"
-                            ? maskCPF(String(u.pix_key || ""))
-                            : u.pix_type === "telefone"
-                              ? maskPhone(String(u.pix_key || ""))
-                              : String(u.pix_key || "")
-                          : "-"}
-                      </td>
-                      <td style={td}>
-                        <button onClick={() => openEdit(u)} style={btnPrimary}>
-                          Editar
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              {!loadingList && users.length === 0 && (
-                <tr>
-                  <td style={td} colSpan={9}>
-                    Nenhum usuário encontrado.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      <div style={cardWide}>
+        <div style={sectionHeader}>
+          <div>
+            <h2 style={{ margin: 0 }}>Usuários ativos</h2>
+            <p style={subtitleSmall}>Listagem em ordem alfabética com unidade e nível hierárquico.</p>
+          </div>
         </div>
+
+        <UsersTable
+          loading={loadingList}
+          emptyText="Nenhum usuário ativo encontrado."
+          colSpan={9}
+          rows={renderUserRows(activeUsers)}
+        />
+
+        {inactiveUsers.length > 0 && (
+          <div style={inactiveSectionBox}>
+            <div style={sectionHeader}>
+              <div>
+                <h2 style={{ margin: 0 }}>Usuários inativos</h2>
+                <p style={subtitleSmall}>Usuários separados para não misturar com a operação ativa.</p>
+              </div>
+            </div>
+            <UsersTable
+              loading={false}
+              emptyText="Nenhum usuário inativo encontrado."
+              colSpan={9}
+              rows={renderUserRows(inactiveUsers, true)}
+            />
+          </div>
+        )}
 
         {/* paginação */}
         <div style={pagination}>
@@ -759,7 +785,7 @@ export default function Usuarios() {
           <div style={modalCardWide}>
             <div style={modalHeader}>
               <div>
-                <h3 style={{ margin: 0 }}>Unidades</h3>
+                <h3 style={modalTitle}>Unidades</h3>
                 <p style={subtitleSmall}>Cadastre matriz e filiais usadas na hierarquia do CRM.</p>
               </div>
               <button onClick={() => setOpenUnits(false)} style={btnGhost}>
@@ -769,35 +795,51 @@ export default function Usuarios() {
 
             <div style={unitManagerGrid}>
               <div style={softPanel}>
-                <h4 style={{ margin: "0 0 10px" }}>{editingUnitId ? "Editar unidade" : "Nova unidade"}</h4>
-                <div style={grid2}>
-                  <input
-                    placeholder="Nome da unidade"
-                    value={unitForm.nome}
-                    onChange={(e) => setUnitForm((s) => ({ ...s, nome: e.target.value }))}
-                    style={input}
-                  />
-                  <select
-                    value={unitForm.tipo}
-                    onChange={(e) => setUnitForm((s) => ({ ...s, tipo: e.target.value as UnitType }))}
-                    style={input}
-                  >
-                    <option value="matriz">Matriz</option>
-                    <option value="filial">Filial</option>
-                  </select>
-                  <input
-                    placeholder="Cidade"
-                    value={unitForm.cidade}
-                    onChange={(e) => setUnitForm((s) => ({ ...s, cidade: e.target.value }))}
-                    style={input}
-                  />
-                  <input
-                    placeholder="UF"
-                    value={unitForm.uf}
-                    onChange={(e) => setUnitForm((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))}
-                    style={input}
-                  />
-                  <label style={checkboxLabel}>
+                <div style={panelHeader}>
+                  <h4 style={{ margin: 0 }}>{editingUnitId ? "Editar unidade" : "Nova unidade"}</h4>
+                  <span style={panelHint}>Matriz vê tudo; filial respeita gestor/vendedor.</span>
+                </div>
+
+                <div style={formGrid2}>
+                  <Field label="Nome da unidade">
+                    <input
+                      placeholder="Ex.: Consulmax Ji-Paraná"
+                      value={unitForm.nome}
+                      onChange={(e) => setUnitForm((s) => ({ ...s, nome: e.target.value }))}
+                      style={input}
+                    />
+                  </Field>
+
+                  <Field label="Tipo">
+                    <select
+                      value={unitForm.tipo}
+                      onChange={(e) => setUnitForm((s) => ({ ...s, tipo: e.target.value as UnitType }))}
+                      style={input}
+                    >
+                      <option value="matriz">Matriz</option>
+                      <option value="filial">Filial</option>
+                    </select>
+                  </Field>
+
+                  <Field label="Cidade">
+                    <input
+                      placeholder="Cidade"
+                      value={unitForm.cidade}
+                      onChange={(e) => setUnitForm((s) => ({ ...s, cidade: e.target.value }))}
+                      style={input}
+                    />
+                  </Field>
+
+                  <Field label="UF">
+                    <input
+                      placeholder="UF"
+                      value={unitForm.uf}
+                      onChange={(e) => setUnitForm((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))}
+                      style={input}
+                    />
+                  </Field>
+
+                  <label style={checkboxCard}>
                     <input
                       type="checkbox"
                       checked={unitForm.is_active}
@@ -806,7 +848,8 @@ export default function Usuarios() {
                     Unidade ativa
                   </label>
                 </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+
+                <div style={modalActions}>
                   <button onClick={saveUnit} disabled={savingUnit} style={btnPrimary}>
                     {savingUnit ? "Salvando..." : editingUnitId ? "Salvar unidade" : "Cadastrar unidade"}
                   </button>
@@ -819,14 +862,19 @@ export default function Usuarios() {
               </div>
 
               <div style={softPanel}>
-                <h4 style={{ margin: "0 0 10px" }}>Unidades cadastradas</h4>
+                <div style={panelHeader}>
+                  <h4 style={{ margin: 0 }}>Unidades cadastradas</h4>
+                  <span style={panelHint}>{units.length} unidade(s)</span>
+                </div>
+
                 {loadingUnits && <div style={hint}>Carregando unidades…</div>}
                 {!loadingUnits && units.length === 0 && <div style={hint}>Nenhuma unidade cadastrada.</div>}
-                <div style={{ display: "grid", gap: 8, maxHeight: 360, overflow: "auto" }}>
+
+                <div style={unitList}>
                   {units.map((u) => (
                     <div key={u.id} style={unitRow}>
                       <div>
-                        <div style={{ fontWeight: 850 }}>{u.nome}</div>
+                        <div style={{ fontWeight: 900 }}>{u.nome}</div>
                         <div style={miniText}>
                           {u.tipo === "matriz" ? "Matriz" : "Filial"} • {u.cidade || "Cidade não informada"}
                           {u.uf ? `/${u.uf}` : ""}
@@ -850,168 +898,231 @@ export default function Usuarios() {
       {/* Overlay de cadastro */}
       {openCreate && (
         <div style={modalBackdrop}>
-          <div style={modalCardWide}>
+          <div style={modalCardLarge}>
             <div style={modalHeader}>
               <div>
-                <h3 style={{ margin: 0 }}>Novo usuário</h3>
-                <p style={subtitleSmall}>Defina unidade e nível de acesso já no cadastro.</p>
+                <h3 style={modalTitle}>Novo usuário</h3>
+                <p style={subtitleSmall}>Dados pessoais, unidade, hierarquia e acessos em uma tela mais organizada.</p>
               </div>
               <button onClick={() => setOpenCreate(false)} style={btnGhost}>
                 Fechar
               </button>
             </div>
 
-            <div style={grid3}>
-              <input
-                placeholder="Nome completo"
-                value={form.nome}
-                onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
-                style={input}
-              />
-              <input
-                placeholder="CPF"
-                value={form.cpf}
-                onChange={(e) => setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))}
-                style={input}
-                inputMode="numeric"
-              />
-              <input
-                placeholder="Celular"
-                value={form.celular}
-                onChange={(e) => setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))}
-                style={input}
-                inputMode="tel"
-              />
-
-              <input
-                placeholder="CEP"
-                value={form.cep}
-                onChange={(e) => setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))}
-                style={input}
-                inputMode="numeric"
-              />
-              <input
-                placeholder="Logradouro"
-                value={form.logradouro}
-                onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
-                style={input}
-              />
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  placeholder="Número"
-                  value={form.sn ? "s/n" : form.numero}
-                  disabled={form.sn}
-                  onChange={(e) => setForm((s) => ({ ...s, numero: e.target.value }))}
-                  style={input}
-                />
-                <label style={checkboxLabel}>
+            <div style={formSection}>
+              <h4 style={formSectionTitle}>Dados principais</h4>
+              <div style={formGrid3}>
+                <Field label="Nome completo">
                   <input
-                    type="checkbox"
-                    checked={form.sn}
-                    onChange={(e) =>
-                      setForm((s) => ({ ...s, sn: e.target.checked, numero: e.target.checked ? "" : s.numero }))
-                    }
+                    placeholder="Nome completo"
+                    value={form.nome}
+                    onChange={(e) => setForm((s) => ({ ...s, nome: e.target.value }))}
+                    style={input}
                   />
-                  s/n
-                </label>
+                </Field>
+
+                <Field label="CPF">
+                  <input
+                    placeholder="000.000.000-00"
+                    value={form.cpf}
+                    onChange={(e) => setForm((s) => ({ ...s, cpf: maskCPF(e.target.value) }))}
+                    style={input}
+                    inputMode="numeric"
+                  />
+                </Field>
+
+                <Field label="Celular">
+                  <input
+                    placeholder="(00) 0 0000-0000"
+                    value={form.celular}
+                    onChange={(e) => setForm((s) => ({ ...s, celular: maskPhone(e.target.value) }))}
+                    style={input}
+                    inputMode="tel"
+                  />
+                </Field>
+
+                <Field label="E-mail">
+                  <input
+                    placeholder="email@exemplo.com"
+                    value={form.email}
+                    type="email"
+                    onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
+
+                <Field label="Perfil">
+                  <select
+                    value={form.role}
+                    onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
+                    style={input}
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="vendedor">Vendedor</option>
+                    <option value="operacoes">Operações</option>
+                  </select>
+                </Field>
+
+                <Field label="Foto">
+                  <div style={fileRow}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setForm((s) => ({ ...s, fotoFile: f, fotoPreview: f ? URL.createObjectURL(f) : null }));
+                      }}
+                    />
+                    {form.fotoPreview && <img src={form.fotoPreview} alt="preview" style={avatarLg} />}
+                  </div>
+                </Field>
               </div>
+            </div>
 
-              <input
-                placeholder="Bairro"
-                value={form.bairro}
-                onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
-                style={input}
-              />
-              <input
-                placeholder="Cidade"
-                value={form.cidade}
-                onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
-                style={input}
-              />
-              <input
-                placeholder="UF"
-                value={form.uf}
-                onChange={(e) => setForm((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))}
-                style={input}
-              />
+            <div style={formSection}>
+              <h4 style={formSectionTitle}>Endereço</h4>
+              <div style={formGrid4}>
+                <Field label="CEP">
+                  <input
+                    placeholder="00000-000"
+                    value={form.cep}
+                    onChange={(e) => setForm((s) => ({ ...s, cep: maskCEP(e.target.value) }))}
+                    style={input}
+                    inputMode="numeric"
+                  />
+                </Field>
 
-              <input
-                placeholder="E-mail"
-                value={form.email}
-                type="email"
-                onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
-                style={input}
-              />
-              <select
-                value={form.role}
-                onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as RoleUI }))}
-                style={input}
-              >
-                <option value="admin">Admin</option>
-                <option value="vendedor">Vendedor</option>
-                <option value="operacoes">Operações</option>
-              </select>
-              <select
-                value={form.unit_id}
-                onChange={(e) => setForm((s) => ({ ...s, unit_id: e.target.value }))}
-                style={input}
-              >
-                <option value="">Selecione a unidade</option>
-                {activeUnits.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.nome} — {u.tipo === "matriz" ? "Matriz" : "Filial"}
-                  </option>
-                ))}
-              </select>
+                <Field label="Logradouro">
+                  <input
+                    placeholder="Rua, avenida..."
+                    value={form.logradouro}
+                    onChange={(e) => setForm((s) => ({ ...s, logradouro: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
 
-              <select
-                value={form.hierarchy_level}
-                onChange={(e) => setForm((s) => ({ ...s, hierarchy_level: e.target.value as HierarchyLevel }))}
-                style={input}
-              >
-                <option value="usuario">Usuário / Vendedor</option>
-                <option value="gestor_filial">Gestor da Filial</option>
-              </select>
-              <div style={infoBox}>{hierarchyHelp(form.unit_id, form.hierarchy_level)}</div>
+                <Field label="Número">
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      placeholder="Número"
+                      value={form.sn ? "s/n" : form.numero}
+                      disabled={form.sn}
+                      onChange={(e) => setForm((s) => ({ ...s, numero: e.target.value }))}
+                      style={input}
+                    />
+                    <label style={checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={form.sn}
+                        onChange={(e) =>
+                          setForm((s) => ({ ...s, sn: e.target.checked, numero: e.target.checked ? "" : s.numero }))
+                        }
+                      />
+                      s/n
+                    </label>
+                  </div>
+                </Field>
 
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <select
-                  value={form.pix_type}
-                  onChange={(e) => setForm((s) => ({ ...s, pix_type: e.target.value as any }))}
-                  style={input}
-                >
-                  <option value="">Tipo da chave PIX</option>
-                  <option value="cpf">CPF</option>
-                  <option value="email">E-mail</option>
-                  <option value="telefone">Telefone</option>
-                </select>
-                <input
-                  placeholder="Chave PIX"
-                  value={form.pix_key}
-                  onChange={(e) => setForm((s) => ({ ...s, pix_key: e.target.value }))}
-                  style={input}
-                />
+                <Field label="Bairro">
+                  <input
+                    placeholder="Bairro"
+                    value={form.bairro}
+                    onChange={(e) => setForm((s) => ({ ...s, bairro: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
+
+                <Field label="Cidade">
+                  <input
+                    placeholder="Cidade"
+                    value={form.cidade}
+                    onChange={(e) => setForm((s) => ({ ...s, cidade: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
+
+                <Field label="UF">
+                  <input
+                    placeholder="UF"
+                    value={form.uf}
+                    onChange={(e) => setForm((s) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))}
+                    style={input}
+                  />
+                </Field>
               </div>
+            </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null;
-                    setForm((s) => ({ ...s, fotoFile: f, fotoPreview: f ? URL.createObjectURL(f) : null }));
-                  }}
-                />
-                {form.fotoPreview && <img src={form.fotoPreview} alt="preview" style={avatarLg} />}
+            <div style={formSection}>
+              <h4 style={formSectionTitle}>Unidade e hierarquia</h4>
+              <div style={formGrid3}>
+                <Field label="Unidade">
+                  <select
+                    value={form.unit_id}
+                    onChange={(e) => setForm((s) => ({ ...s, unit_id: e.target.value }))}
+                    style={input}
+                  >
+                    <option value="">Selecione a unidade</option>
+                    {activeUnits.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.nome} — {u.tipo === "matriz" ? "Matriz" : "Filial"}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Nível">
+                  <select
+                    value={form.hierarchy_level}
+                    onChange={(e) => setForm((s) => ({ ...s, hierarchy_level: e.target.value as HierarchyLevel }))}
+                    style={input}
+                  >
+                    <option value="usuario">Usuário / Vendedor</option>
+                    <option value="gestor_filial">Gestor da Filial</option>
+                  </select>
+                </Field>
+
+                <div style={infoBox}>{hierarchyHelp(form.unit_id, form.hierarchy_level)}</div>
+              </div>
+            </div>
+
+            <div style={formSection}>
+              <h4 style={formSectionTitle}>PIX e acessos</h4>
+              <div style={formGrid3}>
+                <Field label="Tipo da chave PIX">
+                  <select
+                    value={form.pix_type}
+                    onChange={(e) => setForm((s) => ({ ...s, pix_type: e.target.value as any }))}
+                    style={input}
+                  >
+                    <option value="">Tipo da chave PIX</option>
+                    <option value="cpf">CPF</option>
+                    <option value="email">E-mail</option>
+                    <option value="telefone">Telefone</option>
+                  </select>
+                </Field>
+
+                <Field label="Chave PIX">
+                  <input
+                    placeholder="Chave PIX"
+                    value={form.pix_key}
+                    onChange={(e) => setForm((s) => ({ ...s, pix_key: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
               </div>
 
               <div style={scopesBox}>
-                <div style={{ fontWeight: 800, marginBottom: 4 }}>Guias com acesso:</div>
+                <div style={{ fontWeight: 900, marginBottom: 4, gridColumn: "1 / -1" }}>Guias com acesso:</div>
                 {scopeCheckboxes}
               </div>
+            </div>
 
-              <button onClick={submitCreate} disabled={creating} style={btnPrimaryFull}>
-                {creating ? "Cadastrando..." : "Cadastrar"}
+            <div style={modalActionsSticky}>
+              <button onClick={() => setOpenCreate(false)} style={btnGhost}>
+                Cancelar
+              </button>
+              <button onClick={submitCreate} disabled={creating} style={btnPrimary}>
+                {creating ? "Cadastrando..." : "Cadastrar usuário"}
               </button>
             </div>
           </div>
@@ -1021,10 +1132,10 @@ export default function Usuarios() {
       {/* Modal de edição */}
       {editing && (
         <div style={modalBackdrop}>
-          <div style={modalCardWide}>
+          <div style={modalCardLarge}>
             <div style={modalHeader}>
               <div>
-                <h3 style={{ margin: 0 }}>Editar usuário {editing.is_active === false ? "(INATIVO)" : ""}</h3>
+                <h3 style={modalTitle}>Editar usuário {editing.is_active === false ? "(INATIVO)" : ""}</h3>
                 <p style={subtitleSmall}>Atualize dados, unidade, nível de acesso e escopos.</p>
               </div>
               <button onClick={closeEdit} style={btnGhost}>
@@ -1032,141 +1143,205 @@ export default function Usuarios() {
               </button>
             </div>
 
-            <div style={grid3}>
-              <input
-                placeholder="Nome"
-                value={editing.nome || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, nome: e.target.value }))}
-                style={input}
-              />
-              <input
-                placeholder="E-mail"
-                value={editing.email || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, email: e.target.value }))}
-                style={input}
-              />
-              <select
-                value={editing.role_ui || roleToUI(editing.role)}
-                onChange={(e) => setEditing((s: any) => ({ ...s, role_ui: e.target.value as RoleUI }))}
-                style={input}
-              >
-                <option value="operacoes">Operações</option>
-                <option value="vendedor">Vendedor</option>
-                <option value="admin">Admin</option>
-              </select>
+            <div style={formSection}>
+              <h4 style={formSectionTitle}>Dados principais</h4>
+              <div style={formGrid3}>
+                <Field label="Nome">
+                  <input
+                    placeholder="Nome"
+                    value={editing.nome || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, nome: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
 
-              <select
-                value={editing.unit_id || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, unit_id: e.target.value }))}
-                style={input}
-              >
-                <option value="">Selecione a unidade</option>
-                {activeUnits.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.nome} — {u.tipo === "matriz" ? "Matriz" : "Filial"}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={editing.hierarchy_level || "usuario"}
-                onChange={(e) => setEditing((s: any) => ({ ...s, hierarchy_level: e.target.value as HierarchyLevel }))}
-                style={input}
-              >
-                <option value="usuario">Usuário / Vendedor</option>
-                <option value="gestor_filial">Gestor da Filial</option>
-              </select>
-              <div style={infoBox}>{hierarchyHelp(editing.unit_id || "", editing.hierarchy_level || "usuario")}</div>
+                <Field label="E-mail">
+                  <input
+                    placeholder="E-mail"
+                    value={editing.email || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, email: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
 
-              <input
-                placeholder="Celular"
-                value={editing.celular || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, celular: maskPhone(e.target.value) }))}
-                style={input}
-              />
-              <input
-                placeholder="CEP"
-                value={editing.cep || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))}
-                style={input}
-              />
-              <input
-                placeholder="Logradouro"
-                value={editing.logradouro || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, logradouro: e.target.value }))}
-                style={input}
-              />
+                <Field label="Perfil">
+                  <select
+                    value={editing.role_ui || roleToUI(editing.role)}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, role_ui: e.target.value as RoleUI }))}
+                    style={input}
+                  >
+                    <option value="operacoes">Operações</option>
+                    <option value="vendedor">Vendedor</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </Field>
 
-              <input
-                placeholder="Número"
-                value={editing.numero || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, numero: e.target.value }))}
-                style={input}
-              />
-              <input
-                placeholder="Bairro"
-                value={editing.bairro || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, bairro: e.target.value }))}
-                style={input}
-              />
-              <input
-                placeholder="Cidade"
-                value={editing.cidade || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, cidade: e.target.value }))}
-                style={input}
-              />
+                <Field label="Celular">
+                  <input
+                    placeholder="Celular"
+                    value={editing.celular || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, celular: maskPhone(e.target.value) }))}
+                    style={input}
+                  />
+                </Field>
 
-              <input
-                placeholder="UF"
-                value={editing.uf || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))}
-                style={input}
-              />
-              <select
-                value={editing.pix_type || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, pix_type: e.target.value }))}
-                style={input}
-              >
-                <option value="">Tipo da chave PIX</option>
-                <option value="cpf">CPF</option>
-                <option value="email">E-mail</option>
-                <option value="telefone">Telefone</option>
-              </select>
-              <input
-                placeholder="Chave PIX"
-                value={editing.pix_key || ""}
-                onChange={(e) => setEditing((s: any) => ({ ...s, pix_key: e.target.value }))}
-                style={input}
-              />
+                <Field label="Foto">
+                  <div style={fileRow}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setEditing((s: any) => ({
+                          ...s,
+                          fotoFile: f,
+                          fotoPreview: f ? URL.createObjectURL(f) : null,
+                        }));
+                      }}
+                    />
+                    {(editing.fotoPreview || editing.avatar_url) && (
+                      <img src={editing.fotoPreview || editing.avatar_url} alt="preview" style={avatarLg} />
+                    )}
+                  </div>
+                </Field>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null;
-                    setEditing((s: any) => ({ ...s, fotoFile: f, fotoPreview: f ? URL.createObjectURL(f) : null }));
-                  }}
-                />
-                {(editing.fotoPreview || editing.avatar_url) && (
-                  <img src={editing.fotoPreview || editing.avatar_url} alt="preview" style={avatarLg} />
-                )}
+                <label style={checkboxCard}>
+                  <input
+                    type="checkbox"
+                    checked={editing.is_active !== false}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, is_active: e.target.checked }))}
+                  />
+                  Usuário ativo
+                </label>
+              </div>
+            </div>
+
+            <div style={formSection}>
+              <h4 style={formSectionTitle}>Unidade e hierarquia</h4>
+              <div style={formGrid3}>
+                <Field label="Unidade">
+                  <select
+                    value={editing.unit_id || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, unit_id: e.target.value }))}
+                    style={input}
+                  >
+                    <option value="">Selecione a unidade</option>
+                    {activeUnits.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.nome} — {u.tipo === "matriz" ? "Matriz" : "Filial"}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Nível">
+                  <select
+                    value={editing.hierarchy_level || "usuario"}
+                    onChange={(e) =>
+                      setEditing((s: any) => ({ ...s, hierarchy_level: e.target.value as HierarchyLevel }))
+                    }
+                    style={input}
+                  >
+                    <option value="usuario">Usuário / Vendedor</option>
+                    <option value="gestor_filial">Gestor da Filial</option>
+                  </select>
+                </Field>
+
+                <div style={infoBox}>{hierarchyHelp(editing.unit_id || "", editing.hierarchy_level || "usuario")}</div>
+              </div>
+            </div>
+
+            <div style={formSection}>
+              <h4 style={formSectionTitle}>Endereço</h4>
+              <div style={formGrid4}>
+                <Field label="CEP">
+                  <input
+                    placeholder="CEP"
+                    value={editing.cep || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, cep: maskCEP(e.target.value) }))}
+                    style={input}
+                  />
+                </Field>
+
+                <Field label="Logradouro">
+                  <input
+                    placeholder="Logradouro"
+                    value={editing.logradouro || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, logradouro: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
+
+                <Field label="Número">
+                  <input
+                    placeholder="Número"
+                    value={editing.numero || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, numero: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
+
+                <Field label="Bairro">
+                  <input
+                    placeholder="Bairro"
+                    value={editing.bairro || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, bairro: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
+
+                <Field label="Cidade">
+                  <input
+                    placeholder="Cidade"
+                    value={editing.cidade || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, cidade: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
+
+                <Field label="UF">
+                  <input
+                    placeholder="UF"
+                    value={editing.uf || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, uf: e.target.value.toUpperCase().slice(0, 2) }))}
+                    style={input}
+                  />
+                </Field>
+              </div>
+            </div>
+
+            <div style={formSection}>
+              <h4 style={formSectionTitle}>PIX e acessos</h4>
+              <div style={formGrid3}>
+                <Field label="Tipo da chave PIX">
+                  <select
+                    value={editing.pix_type || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, pix_type: e.target.value }))}
+                    style={input}
+                  >
+                    <option value="">Tipo da chave PIX</option>
+                    <option value="cpf">CPF</option>
+                    <option value="email">E-mail</option>
+                    <option value="telefone">Telefone</option>
+                  </select>
+                </Field>
+
+                <Field label="Chave PIX">
+                  <input
+                    placeholder="Chave PIX"
+                    value={editing.pix_key || ""}
+                    onChange={(e) => setEditing((s: any) => ({ ...s, pix_key: e.target.value }))}
+                    style={input}
+                  />
+                </Field>
               </div>
 
-              <label style={checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={editing.is_active !== false}
-                  onChange={(e) => setEditing((s: any) => ({ ...s, is_active: e.target.checked }))}
-                />
-                Usuário ativo
-              </label>
-
               <div style={scopesBox}>
-                <div style={{ fontWeight: 800, marginBottom: 4 }}>Guias com acesso:</div>
+                <div style={{ fontWeight: 900, marginBottom: 4, gridColumn: "1 / -1" }}>Guias com acesso:</div>
                 {ALL_SCOPES.map((k) => {
                   const checked = Array.isArray(editing.scopes) && editing.scopes.includes(k);
                   return (
-                    <label key={k} style={checkboxLabel}>
+                    <label key={k} style={checkboxCard}>
                       <input type="checkbox" checked={checked} onChange={() => toggleEditingScope(k)} />
                       <span style={{ textTransform: "capitalize" }}>{k.replace("_", " ")}</span>
                     </label>
@@ -1175,7 +1350,7 @@ export default function Usuarios() {
               </div>
             </div>
 
-            <div style={footerActions}>
+            <div style={modalActionsSticky}>
               <button onClick={closeEdit} style={btnGhost}>
                 Cancelar
               </button>
@@ -1194,6 +1369,65 @@ function PageShell({ children }: { children: React.ReactNode }) {
   return <div style={pageShell}>{children}</div>;
 }
 
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label style={fieldWrap}>
+      <span style={fieldLabel}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function UsersTable({
+  loading,
+  emptyText,
+  colSpan,
+  rows,
+}: {
+  loading: boolean;
+  emptyText: string;
+  colSpan: number;
+  rows: React.ReactNode;
+}) {
+  const rowArray = React.Children.toArray(rows);
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={table}>
+        <thead>
+          <tr>
+            <th style={th}>Foto</th>
+            <th style={th}>Nome</th>
+            <th style={th}>E-mail</th>
+            <th style={th}>Perfil</th>
+            <th style={th}>Unidade</th>
+            <th style={th}>Nível</th>
+            <th style={th}>Celular</th>
+            <th style={th}>PIX</th>
+            <th style={{ ...th, textAlign: "right" }}>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {loading && (
+            <tr>
+              <td style={td} colSpan={colSpan}>
+                Carregando…
+              </td>
+            </tr>
+          )}
+          {!loading && rowArray.length > 0 && rowArray}
+          {!loading && rowArray.length === 0 && (
+            <tr>
+              <td style={td} colSpan={colSpan}>
+                {emptyText}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /* -------------------- estilos -------------------- */
 const C = {
   ruby: "#A11C27",
@@ -1208,38 +1442,70 @@ const C = {
 };
 
 const pageShell: React.CSSProperties = {
-  maxWidth: 1380,
+  width: "min(1680px, calc(100vw - 52px))",
   margin: "32px auto",
-  padding: "0 18px",
+  padding: "0 26px 48px",
   fontFamily: "Inter, system-ui, Arial",
   color: C.ink,
 };
 
-const headerBar: React.CSSProperties = {
+const heroCard: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: 16,
-  marginBottom: 14,
+  alignItems: "center",
+  gap: 18,
+  marginBottom: 16,
+  padding: "18px 20px",
+  borderRadius: 26,
+  background: "rgba(255,255,255,.76)",
+  border: `1px solid ${C.border}`,
+  boxShadow: "0 22px 70px rgba(15, 23, 42, .06)",
 };
 
 const title: React.CSSProperties = {
   margin: 0,
-  fontSize: 28,
+  fontSize: 30,
   lineHeight: 1.1,
   color: C.navy,
-  letterSpacing: -0.4,
+  letterSpacing: -0.6,
 };
 
 const subtitle: React.CSSProperties = {
-  margin: "6px 0 0",
+  margin: "7px 0 0",
   color: C.muted,
   fontSize: 13,
 };
 
 const subtitleSmall: React.CSSProperties = {
-  margin: "4px 0 0",
+  margin: "5px 0 0",
   color: C.muted,
+  fontSize: 12,
+};
+
+const toolbar: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 14,
+  flexWrap: "wrap",
+  marginBottom: 14,
+};
+
+const toolbarStats: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+};
+
+const statPill: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  borderRadius: 999,
+  padding: "8px 11px",
+  background: "#fff",
+  border: `1px solid ${C.border}`,
+  color: C.navy,
+  fontWeight: 850,
   fontSize: 12,
 };
 
@@ -1251,25 +1517,45 @@ const card: React.CSSProperties = {
   boxShadow: "0 22px 70px rgba(15, 23, 42, .08)",
 };
 
+const cardWide: React.CSSProperties = {
+  ...card,
+  padding: 20,
+};
+
 const softPanel: React.CSSProperties = {
   background: "#fff",
   border: `1px solid ${C.border}`,
-  borderRadius: 18,
-  padding: 14,
+  borderRadius: 22,
+  padding: 18,
+};
+
+const sectionHeader: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  marginBottom: 12,
+};
+
+const inactiveSectionBox: React.CSSProperties = {
+  marginTop: 24,
+  paddingTop: 18,
+  borderTop: `1px dashed ${C.border}`,
 };
 
 const table: React.CSSProperties = {
   width: "100%",
+  minWidth: 1080,
   borderCollapse: "separate",
   borderSpacing: 0,
 };
 
 const th: React.CSSProperties = {
   textAlign: "left",
-  padding: "10px 12px",
+  padding: "12px 14px",
   borderBottom: `1px solid ${C.border}`,
   color: C.navy,
-  fontSize: 12,
+  fontSize: 11,
   textTransform: "uppercase",
   letterSpacing: 0.04,
   background: "#F8FAFC",
@@ -1277,18 +1563,35 @@ const th: React.CSSProperties = {
 };
 
 const td: React.CSSProperties = {
-  padding: "12px",
+  padding: "13px 14px",
   borderBottom: `1px solid ${C.border}`,
   verticalAlign: "middle",
   fontSize: 13,
+  lineHeight: 1.25,
+};
+
+const tdAvatar: React.CSSProperties = {
+  ...td,
+  width: 58,
+};
+
+const tdName: React.CSSProperties = {
+  ...td,
+  minWidth: 210,
+};
+
+const tdAction: React.CSSProperties = {
+  ...td,
+  textAlign: "right",
+  width: 96,
 };
 
 const input: React.CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
   border: `1px solid ${C.border}`,
-  borderRadius: 14,
-  padding: "11px 12px",
+  borderRadius: 15,
+  padding: "12px 13px",
   outline: "none",
   background: "#fff",
   color: C.ink,
@@ -1298,49 +1601,43 @@ const input: React.CSSProperties = {
 const chipButton: React.CSSProperties = {
   border: 0,
   borderRadius: 999,
-  padding: "11px 16px",
+  padding: "12px 17px",
   color: "#fff",
   background: `linear-gradient(135deg, ${C.ruby}, ${C.navy})`,
-  fontWeight: 800,
+  fontWeight: 900,
   cursor: "pointer",
-  boxShadow: "0 12px 28px rgba(161, 28, 39, .25)",
+  boxShadow: "0 16px 34px rgba(161, 28, 39, .25)",
 };
 
 const btnPrimary: React.CSSProperties = {
   border: 0,
-  borderRadius: 12,
-  padding: "9px 12px",
+  borderRadius: 13,
+  padding: "10px 13px",
   color: "#fff",
   background: C.navy,
-  fontWeight: 800,
+  fontWeight: 900,
   cursor: "pointer",
+  whiteSpace: "nowrap",
 };
 
 const btnSecondary: React.CSSProperties = {
   border: `1px solid ${C.border}`,
   borderRadius: 999,
-  padding: "10px 15px",
+  padding: "11px 16px",
   color: C.navy,
   background: "#fff",
-  fontWeight: 800,
+  fontWeight: 900,
   cursor: "pointer",
 };
 
 const btnGhost: React.CSSProperties = {
   border: `1px solid ${C.border}`,
-  borderRadius: 12,
-  padding: "8px 11px",
+  borderRadius: 13,
+  padding: "9px 12px",
   color: C.navy,
   background: "#fff",
-  fontWeight: 750,
+  fontWeight: 850,
   cursor: "pointer",
-};
-
-const btnPrimaryFull: React.CSSProperties = {
-  ...btnPrimary,
-  gridColumn: "1 / span 3",
-  padding: "12px 14px",
-  background: `linear-gradient(135deg, ${C.ruby}, ${C.navy})`,
 };
 
 const modalBackdrop: React.CSSProperties = {
@@ -1352,15 +1649,23 @@ const modalBackdrop: React.CSSProperties = {
   display: "flex",
   justifyContent: "center",
   alignItems: "flex-start",
-  padding: "30px 16px",
+  padding: "24px 18px",
   overflow: "auto",
 };
 
 const modalCardWide: React.CSSProperties = {
-  width: "min(1120px, 100%)",
+  width: "min(1240px, 100%)",
   background: "#fff",
-  borderRadius: 24,
-  padding: 18,
+  borderRadius: 28,
+  padding: 22,
+  boxShadow: "0 30px 90px rgba(0,0,0,.24)",
+};
+
+const modalCardLarge: React.CSSProperties = {
+  width: "min(1360px, 100%)",
+  background: "#fff",
+  borderRadius: 28,
+  padding: 22,
   boxShadow: "0 30px 90px rgba(0,0,0,.24)",
 };
 
@@ -1368,38 +1673,91 @@ const modalHeader: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "flex-start",
+  gap: 14,
+  marginBottom: 16,
+};
+
+const modalTitle: React.CSSProperties = {
+  margin: 0,
+  color: C.navy,
+  fontSize: 22,
+  letterSpacing: -0.3,
+};
+
+const panelHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
   gap: 12,
-  marginBottom: 12,
+  marginBottom: 14,
 };
 
-const grid3: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-  gap: 10,
+const panelHint: React.CSSProperties = {
+  color: C.muted,
+  fontSize: 11,
+  fontWeight: 700,
 };
 
-const grid2: React.CSSProperties = {
+const formSection: React.CSSProperties = {
+  padding: 16,
+  border: `1px solid ${C.border}`,
+  borderRadius: 22,
+  background: "#fff",
+  marginBottom: 14,
+};
+
+const formSectionTitle: React.CSSProperties = {
+  margin: "0 0 13px",
+  color: C.navy,
+  fontSize: 15,
+};
+
+const formGrid2: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: 10,
+  gap: 12,
+};
+
+const formGrid3: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gap: 12,
+};
+
+const formGrid4: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr 2fr 1fr 1.3fr",
+  gap: 12,
 };
 
 const unitManagerGrid: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "420px minmax(0, 1fr)",
-  gap: 14,
+  gridTemplateColumns: "minmax(360px, 450px) minmax(0, 1fr)",
+  gap: 16,
 };
 
 const scopesBox: React.CSSProperties = {
-  gridColumn: "1 / span 3",
   display: "grid",
   gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-  gap: 8,
-  marginTop: 4,
-  padding: 12,
+  gap: 9,
+  marginTop: 12,
+  padding: 13,
   border: `1px solid ${C.border}`,
-  borderRadius: 16,
+  borderRadius: 18,
   background: C.bg,
+};
+
+const fieldWrap: React.CSSProperties = {
+  display: "grid",
+  gap: 6,
+};
+
+const fieldLabel: React.CSSProperties = {
+  fontSize: 11,
+  color: C.muted,
+  fontWeight: 850,
+  textTransform: "uppercase",
+  letterSpacing: 0.03,
 };
 
 const checkboxLabel: React.CSSProperties = {
@@ -1408,28 +1766,62 @@ const checkboxLabel: React.CSSProperties = {
   alignItems: "center",
   fontSize: 13,
   color: C.ink,
+  whiteSpace: "nowrap",
 };
 
-const footerActions: React.CSSProperties = {
+const checkboxCard: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  alignItems: "center",
+  fontSize: 13,
+  color: C.ink,
+  padding: "9px 10px",
+  border: `1px solid ${C.border}`,
+  borderRadius: 13,
+  background: "#fff",
+};
+
+const fileRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+  minHeight: 46,
+};
+
+const modalActions: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  marginTop: 14,
+  flexWrap: "wrap",
+};
+
+const modalActionsSticky: React.CSSProperties = {
+  position: "sticky",
+  bottom: -22,
   display: "flex",
   justifyContent: "flex-end",
   gap: 8,
-  marginTop: 14,
+  margin: "16px -22px -22px",
+  padding: "14px 22px",
+  background: "rgba(255,255,255,.92)",
+  borderTop: `1px solid ${C.border}`,
+  backdropFilter: "blur(10px)",
+  borderRadius: "0 0 28px 28px",
 };
 
 const pagination: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 8,
-  marginTop: 12,
+  marginTop: 14,
   flexWrap: "wrap",
 };
 
 const avatar: React.CSSProperties = {
-  width: 42,
-  height: 42,
+  width: 46,
+  height: 46,
   objectFit: "cover",
-  borderRadius: 14,
+  borderRadius: 16,
   border: `1px solid ${C.border}`,
 };
 
@@ -1442,15 +1834,15 @@ const avatarLg: React.CSSProperties = {
 };
 
 const avatarFallback: React.CSSProperties = {
-  width: 42,
-  height: 42,
-  borderRadius: 14,
+  width: 46,
+  height: 46,
+  borderRadius: 16,
   background: "linear-gradient(135deg, #f1f5f9, #e2e8f0)",
   border: `1px solid ${C.border}`,
 };
 
 const inactiveRow: React.CSSProperties = {
-  opacity: 0.48,
+  opacity: 0.58,
   backgroundColor: "#F9FAFB",
 };
 
@@ -1480,17 +1872,28 @@ const hint: React.CSSProperties = {
 const warningText: React.CSSProperties = {
   color: C.ruby,
   fontSize: 12,
-  fontWeight: 800,
+  fontWeight: 900,
 };
 
 const infoBox: React.CSSProperties = {
   border: `1px solid ${C.border}`,
-  borderRadius: 14,
-  padding: "10px 12px",
+  borderRadius: 15,
+  padding: "11px 13px",
   background: "#FFF7ED",
   color: "#7C2D12",
   fontSize: 12,
   lineHeight: 1.35,
+  minHeight: 42,
+  display: "flex",
+  alignItems: "center",
+};
+
+const unitList: React.CSSProperties = {
+  display: "grid",
+  gap: 9,
+  maxHeight: 460,
+  overflow: "auto",
+  paddingRight: 4,
 };
 
 const unitRow: React.CSSProperties = {
@@ -1499,8 +1902,8 @@ const unitRow: React.CSSProperties = {
   alignItems: "center",
   gap: 12,
   border: `1px solid ${C.border}`,
-  borderRadius: 14,
-  padding: 10,
+  borderRadius: 16,
+  padding: 12,
   background: "#fff",
 };
 
@@ -1511,9 +1914,9 @@ function roleBadge(role: string | null | undefined): React.CSSProperties {
   return {
     display: "inline-flex",
     borderRadius: 999,
-    padding: "4px 8px",
+    padding: "5px 9px",
     fontSize: 11,
-    fontWeight: 900,
+    fontWeight: 950,
     color: isAdmin ? "#fff" : isVendedor ? C.navy : C.muted,
     background: isAdmin ? C.ruby : isVendedor ? "#E0E7FF" : "#F1F5F9",
     border: `1px solid ${isAdmin ? C.ruby : C.border}`,
@@ -1527,9 +1930,9 @@ function hierarchyBadge(level: string | null | undefined, unit?: Unit | null): R
   return {
     display: "inline-flex",
     borderRadius: 999,
-    padding: "4px 8px",
+    padding: "5px 9px",
     fontSize: 11,
-    fontWeight: 900,
+    fontWeight: 950,
     color: isMatriz ? "#fff" : isGestor ? C.navy : C.muted,
     background: isMatriz ? C.navy : isGestor ? "#FEF3C7" : "#F1F5F9",
     border: `1px solid ${isMatriz ? C.navy : isGestor ? C.goldLight : C.border}`,

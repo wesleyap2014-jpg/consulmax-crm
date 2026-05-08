@@ -270,7 +270,9 @@ function buildParcelasAposLanceRows(out: EngineOut, sim: SimRow): [string, strin
   }
 
   const primeiraParcelaAposContemplacao = parcelaContemplacao + 1;
-  const ultimaParcelaAposLance = primeiraParcelaAposContemplacao + prazoApos - 1;
+  // Para exibição no PDF, o intervalo final deve terminar no novo prazo após o lance.
+  // Ex.: prazo após o lance = 53 meses => "Parcelas 13 a 53", e não "13 a 54".
+  const ultimaParcelaAposLance = prazoApos;
 
   // Diferença da antecipação antes da contemplação.
   // Ex.: Parcela 1 e 2 = 2.470,83; demais = 1.470,83; antecipação mensal = 1.000,00.
@@ -553,11 +555,16 @@ export default function Propostas() {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
       if (!uid) return;
-      const { data } = await supabase.from("user").select("nome, phone, avatar_url").eq("auth_user_id", uid).maybeSingle();
+      const { data } = await supabase
+        .from("users")
+        .select("nome, phone, telefone, avatar_url, photo_url")
+        .eq("auth_user_id", uid)
+        .maybeSingle();
+
       setSeller({
         nome: (data?.nome || "").toString().trim() || "Consultor Consulmax",
-        phone: (data?.phone || "").toString(),
-        avatar_url: data?.avatar_url || null,
+        phone: (data?.phone || data?.telefone || "").toString(),
+        avatar_url: data?.avatar_url || data?.photo_url || null,
       });
     })();
   }, []);

@@ -58,23 +58,90 @@ const roleToUI = (r: string | null | undefined): RoleUI => {
 type ScopeKey =
   | "leads"
   | "oportunidades"
-  | "usuarios"
-  | "lgpd"
+  | "simuladores"
+  | "propostas"
   | "carteira"
+  | "estoque_contempladas"
   | "gestao_grupos"
+  | "clientes"
+  | "agenda"
+  | "planejamento"
+  | "relatorios"
   | "comissoes"
+  | "ranking"
+  | "usuarios"
+  | "parametros"
+  | "links"
+  | "procedimentos"
+  | "processos"
+  | "fluxo_caixa"
+  | "giro_carteira"
+  | "vendas"
+  | "pos_venda"
+  | "financeiro"
+  | "administrativo"
+  | "lgpd"
   | "suporte";
 
 const ALL_SCOPES: ScopeKey[] = [
+  "vendas",
+  "pos_venda",
   "leads",
   "oportunidades",
-  "usuarios",
-  "lgpd",
+  "simuladores",
+  "propostas",
   "carteira",
+  "estoque_contempladas",
   "gestao_grupos",
+  "clientes",
+  "agenda",
+  "planejamento",
+  "relatorios",
   "comissoes",
+  "ranking",
+  "usuarios",
+  "parametros",
+  "links",
+  "procedimentos",
+  "processos",
+  "fluxo_caixa",
+  "giro_carteira",
+  "financeiro",
+  "administrativo",
+  "lgpd",
   "suporte",
 ];
+
+const SCOPE_LABELS: Record<ScopeKey, string> = {
+  vendas: "Vendas",
+  pos_venda: "Pós-venda",
+  leads: "Leads",
+  oportunidades: "Oportunidades",
+  simuladores: "Simuladores",
+  propostas: "Propostas",
+  carteira: "Carteira",
+  estoque_contempladas: "Contempladas",
+  gestao_grupos: "Gestão de Grupos",
+  clientes: "Clientes",
+  agenda: "Agenda",
+  planejamento: "Planejamento",
+  relatorios: "Relatórios",
+  comissoes: "Comissões",
+  ranking: "Ranking",
+  usuarios: "Usuários",
+  parametros: "Parâmetros",
+  links: "Links",
+  procedimentos: "Procedimentos",
+  processos: "Processos",
+  fluxo_caixa: "Fluxo de Caixa",
+  giro_carteira: "Giro de Carteira",
+  financeiro: "Financeiro",
+  administrativo: "Administrativo",
+  lgpd: "LGPD",
+  suporte: "Suporte",
+};
+
+const scopeLabel = (scope: ScopeKey) => SCOPE_LABELS[scope] || scope.replace("_", " ");
 
 type HierarchyLevel = "gestor_filial" | "usuario";
 type UnitType = "matriz" | "filial";
@@ -576,7 +643,7 @@ export default function Usuarios() {
               }))
             }
           />
-          <span style={{ textTransform: "capitalize" }}>{k.replace("_", " ")}</span>
+          <span>{scopeLabel(k)}</span>
         </label>
       )),
     [form.scopes]
@@ -1343,7 +1410,7 @@ export default function Usuarios() {
                   return (
                     <label key={k} style={checkboxCard}>
                       <input type="checkbox" checked={checked} onChange={() => toggleEditingScope(k)} />
-                      <span style={{ textTransform: "capitalize" }}>{k.replace("_", " ")}</span>
+                      <span>{scopeLabel(k)}</span>
                     </label>
                   );
                 })}
@@ -1644,28 +1711,32 @@ const modalBackdrop: React.CSSProperties = {
   position: "fixed",
   inset: 0,
   zIndex: 9999,
-  background: "rgba(15,23,42,.45)",
+  background: "rgba(15,23,42,.42)",
   backdropFilter: "blur(8px)",
   display: "flex",
   justifyContent: "center",
   alignItems: "flex-start",
-  padding: "24px 18px",
+  padding: "22px clamp(18px, 3vw, 44px)",
   overflow: "auto",
 };
 
 const modalCardWide: React.CSSProperties = {
-  width: "min(1240px, 100%)",
+  width: "min(1460px, calc(100vw - 72px))",
+  maxHeight: "calc(100vh - 52px)",
+  overflow: "auto",
   background: "#fff",
-  borderRadius: 28,
-  padding: 22,
+  borderRadius: 30,
+  padding: "clamp(22px, 2vw, 32px)",
   boxShadow: "0 30px 90px rgba(0,0,0,.24)",
 };
 
 const modalCardLarge: React.CSSProperties = {
-  width: "min(1360px, 100%)",
+  width: "min(1580px, calc(100vw - 72px))",
+  maxHeight: "calc(100vh - 52px)",
+  overflow: "auto",
   background: "#fff",
-  borderRadius: 28,
-  padding: 22,
+  borderRadius: 30,
+  padding: "clamp(22px, 2vw, 32px)",
   boxShadow: "0 30px 90px rgba(0,0,0,.24)",
 };
 
@@ -1673,8 +1744,10 @@ const modalHeader: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "flex-start",
-  gap: 14,
-  marginBottom: 16,
+  gap: 18,
+  marginBottom: 22,
+  paddingBottom: 16,
+  borderBottom: `1px solid ${C.border}`,
 };
 
 const modalTitle: React.CSSProperties = {
@@ -1699,11 +1772,11 @@ const panelHint: React.CSSProperties = {
 };
 
 const formSection: React.CSSProperties = {
-  padding: 16,
+  padding: "clamp(18px, 1.6vw, 24px)",
   border: `1px solid ${C.border}`,
-  borderRadius: 22,
+  borderRadius: 24,
   background: "#fff",
-  marginBottom: 14,
+  marginBottom: 16,
 };
 
 const formSectionTitle: React.CSSProperties = {
@@ -1720,14 +1793,14 @@ const formGrid2: React.CSSProperties = {
 
 const formGrid3: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-  gap: 12,
+  gridTemplateColumns: "repeat(3, minmax(260px, 1fr))",
+  gap: 14,
 };
 
 const formGrid4: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "1fr 2fr 1fr 1.3fr",
-  gap: 12,
+  gridTemplateColumns: "minmax(150px, 0.8fr) minmax(280px, 1.8fr) minmax(140px, 0.8fr) minmax(200px, 1fr)",
+  gap: 14,
 };
 
 const unitManagerGrid: React.CSSProperties = {
@@ -1738,12 +1811,12 @@ const unitManagerGrid: React.CSSProperties = {
 
 const scopesBox: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-  gap: 9,
-  marginTop: 12,
-  padding: 13,
+  gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+  gap: 10,
+  marginTop: 14,
+  padding: 15,
   border: `1px solid ${C.border}`,
-  borderRadius: 18,
+  borderRadius: 20,
   background: C.bg,
 };
 
@@ -1775,10 +1848,11 @@ const checkboxCard: React.CSSProperties = {
   alignItems: "center",
   fontSize: 13,
   color: C.ink,
-  padding: "9px 10px",
+  padding: "10px 12px",
   border: `1px solid ${C.border}`,
-  borderRadius: 13,
+  borderRadius: 14,
   background: "#fff",
+  minHeight: 38,
 };
 
 const fileRow: React.CSSProperties = {
@@ -1797,16 +1871,16 @@ const modalActions: React.CSSProperties = {
 
 const modalActionsSticky: React.CSSProperties = {
   position: "sticky",
-  bottom: -22,
+  bottom: -32,
   display: "flex",
   justifyContent: "flex-end",
-  gap: 8,
-  margin: "16px -22px -22px",
-  padding: "14px 22px",
-  background: "rgba(255,255,255,.92)",
+  gap: 10,
+  margin: "18px -32px -32px",
+  padding: "16px 32px",
+  background: "rgba(255,255,255,.94)",
   borderTop: `1px solid ${C.border}`,
   backdropFilter: "blur(10px)",
-  borderRadius: "0 0 28px 28px",
+  borderRadius: "0 0 30px 30px",
 };
 
 const pagination: React.CSSProperties = {

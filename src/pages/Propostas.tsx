@@ -270,7 +270,17 @@ function buildParcelasAposLanceRows(out: EngineOut, sim: SimRow): [string, strin
   }
 
   const primeiraParcelaAposContemplacao = parcelaContemplacao + 1;
-  const ultimaParcelaAposLance = parcelaContemplacao + prazoApos;
+  const ultimaParcelaAposLance = primeiraParcelaAposContemplacao + prazoApos - 1;
+
+  // Diferença da antecipação antes da contemplação.
+  // Ex.: Parcela 1 e 2 = 2.470,83; demais = 1.470,83; antecipação mensal = 1.000,00.
+  // Após o lance, a parcela que ainda carrega antecipação deve ser:
+  // parcela escolhida pós-lance + antecipação mensal.
+  const antecipacaoMensal = Math.max(
+    0,
+    Number(sim.parcela_ate_1_ou_2 || 0) - Number(sim.parcela_demais || 0)
+  );
+  const parcelaAposLanceComAntecipacao = out.parcelaAposValor + antecipacaoMensal;
 
   const aindaTemAntecipacao =
     antecipParcelas > 0 && primeiraParcelaAposContemplacao <= antecipParcelas;
@@ -280,7 +290,7 @@ function buildParcelasAposLanceRows(out: EngineOut, sim: SimRow): [string, strin
 
     rows.push([
       labelRangeParcela(primeiraParcelaAposContemplacao, fimAntecipacaoAposLance),
-      brMoney(out.parcelaInicialValor),
+      brMoney(parcelaAposLanceComAntecipacao),
     ]);
 
     const inicioParcelaFinal = fimAntecipacaoAposLance + 1;

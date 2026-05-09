@@ -15,6 +15,7 @@ const Agenda = React.lazy(() => import("./pages/AgendaLiveKit"));
 const AgendaSala = React.lazy(() => import("./pages/AgendaSala"));
 const Simuladores = React.lazy(() => import("./pages/SimuladoresHub"));
 const EmbraconSimulator = React.lazy(() => import("./pages/simuladores/EmbraconSimulator"));
+const MaggiSimulator = React.lazy(() => import("./pages/simuladores/MaggiSimulator"));
 const Propostas = React.lazy(() => import("./pages/Propostas"));
 const Comissoes = React.lazy(() => import("./pages/Comissoes"));
 const Carteira = React.lazy(() => import("./pages/Carteira"));
@@ -96,6 +97,7 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: withSuspense(<Simuladores />) },
               { path: "embracon", element: withSuspense(<EmbraconSimulator />) },
+              { path: "maggi", element: withSuspense(<MaggiSimulator />) },
               { path: ":id", element: withSuspense(<EmbraconSimulator />) },
             ],
           },

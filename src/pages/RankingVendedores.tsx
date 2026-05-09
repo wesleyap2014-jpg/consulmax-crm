@@ -214,7 +214,20 @@ export default function RankingVendedores() {
 
   const { playCash, playSuccess } = useAudio();
 
-  const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  const months = [
+    "Jan",
+    "Fev",
+    "Mar",
+    "Abr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Ago",
+    "Set",
+    "Out",
+    "Nov",
+    "Dez",
+  ];
 
   const reloadRanking = useCallback(
     async (showLoading = true) => {
@@ -257,13 +270,11 @@ export default function RankingVendedores() {
   }, [startStr, endStr]);
 
   // Ranking principal via RPC agregada.
-  // Isso resolve o problema do vendedor enxergar somente as próprias vendas via RLS.
   useEffect(() => {
     void reloadRanking(true);
   }, [reloadRanking]);
 
   // Mantido para o ranking por administradora.
-  // Observação: se o vendedor tiver RLS restrita em vendas, essa seção pode mostrar só a visão dele.
   useEffect(() => {
     void reloadDealsForAdminRanking();
   }, [reloadDealsForAdminRanking]);
@@ -361,7 +372,15 @@ export default function RankingVendedores() {
     return Object.values(map).sort((a, b) => b.producao - a.producao);
   }, [deals]);
 
-  const top3 = ranking.slice(0, 3);
+  // O pódio considera apenas vendedores com produção real.
+  const podiumRanking = useMemo(
+    () => ranking.filter((r) => Number(r.producao || 0) > 0),
+    [ranking]
+  );
+
+  const top3 = podiumRanking.slice(0, 3);
+
+  // O ranking completo continua exibindo todos os vendedores retornados pela RPC.
   const others = ranking.slice(3);
   const firstValue = top3[0]?.producao ?? 0;
 
@@ -459,7 +478,7 @@ export default function RankingVendedores() {
             <div className="text-center p-10 text-muted-foreground">Carregando…</div>
           ) : top3.length === 0 ? (
             <div className="text-center p-10 text-muted-foreground">
-              Sem dados neste período.
+              Sem produção para formar pódio neste período.
             </div>
           ) : (
             <div className="relative mx-auto max-w-5xl">
@@ -633,13 +652,17 @@ export default function RankingVendedores() {
                       metaUser > 0
                         ? Math.min(100, Math.round((r.producao / metaUser) * 100))
                         : 0;
-                    const diff = i === 0 ? 0 : Math.max(0, firstValue - r.producao);
+
+                    const diff =
+                      firstValue > 0 && Number(r.producao || 0) > 0
+                        ? Math.max(0, firstValue - r.producao)
+                        : 0;
 
                     return (
                       <tr
                         key={r.userId}
                         className={`border-t hover:bg-white/60 transition-colors ${
-                          i < 3
+                          i < 3 && Number(r.producao || 0) > 0
                             ? "bg-gradient-to-r from-transparent via-amber-50/40 to-transparent"
                             : ""
                         }`}
@@ -682,7 +705,9 @@ export default function RankingVendedores() {
                         </td>
 
                         <td className="py-3 px-2">
-                          {i === 0 ? "—" : `− ${formatCurrency(diff)}`}
+                          {i === 0 || firstValue <= 0 || Number(r.producao || 0) <= 0
+                            ? "—"
+                            : `− ${formatCurrency(diff)}`}
                         </td>
 
                         <td className="py-3 px-2">
@@ -775,10 +800,6 @@ export default function RankingVendedores() {
               </table>
             </div>
           )}
-
-          <div className="mt-4 text-xs text-muted-foreground">
-            Observação: o ranking principal usa RPC agregada para permitir que vendedores vejam a posição geral sem acessar vendas brutas dos outros. O ranking por administradora ainda depende da leitura da tabela vendas; se quiser que vendedores também vejam essa visão geral completa, o ideal é criar uma segunda RPC agregada para administradoras.
-          </div>
         </CardContent>
       </Card>
     </div>

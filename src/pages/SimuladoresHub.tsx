@@ -36,16 +36,27 @@ function adminSlug(admin: AdminRow) {
 
 function isEmbracon(admin: AdminRow) {
   const s = adminSlug(admin);
-  return s === "embracon" || (admin.name || "").toLowerCase() === "embracon";
+  return s === "embracon" || (admin.name || "").toLowerCase().trim() === "embracon";
+}
+
+function isMaggi(admin: AdminRow) {
+  const s = adminSlug(admin);
+  const name = (admin.name || "").toLowerCase().trim();
+  return s === "maggi" || name.includes("maggi");
+}
+
+function isAvailable(admin: AdminRow) {
+  return isEmbracon(admin) || isMaggi(admin);
 }
 
 function logoFallback(name: string) {
-  const initials = (name || "AD")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase())
-    .join("") || "AD";
+  const initials =
+    (name || "AD")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase())
+      .join("") || "AD";
 
   return (
     <div
@@ -59,9 +70,15 @@ function logoFallback(name: string) {
 
 function descriptionFor(admin: AdminRow) {
   if (admin.description) return admin.description;
+
   if (isEmbracon(admin)) {
     return "Simulador exclusivo para regras Embracon: crédito, parcelas, lance embutido, lance próprio e pós-contemplação.";
   }
+
+  if (isMaggi(admin)) {
+    return "Simulador Maggi por perfil de grupo: automóveis, imóveis, modalidades de lance e resultado pós-contemplação.";
+  }
+
   return "Administradora cadastrada no CRM. O simulador exclusivo dela será criado quando a operação for implantada.";
 }
 
@@ -72,8 +89,10 @@ export default function SimuladoresHub() {
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
       setLoading(true);
+
       const { data, error } = await supabase
         .from("sim_admins")
         .select("id,name,slug,logo_url,description")
@@ -88,6 +107,7 @@ export default function SimuladoresHub() {
       } else {
         setAdmins((data ?? []) as AdminRow[]);
       }
+
       setLoading(false);
     })();
 
@@ -100,6 +120,8 @@ export default function SimuladoresHub() {
     return [...admins].sort((a, b) => {
       if (isEmbracon(a) && !isEmbracon(b)) return -1;
       if (!isEmbracon(a) && isEmbracon(b)) return 1;
+      if (isMaggi(a) && !isMaggi(b)) return -1;
+      if (!isMaggi(a) && isMaggi(b)) return 1;
       return (a.name || "").localeCompare(b.name || "", "pt-BR");
     });
   }, [admins]);
@@ -109,6 +131,12 @@ export default function SimuladoresHub() {
       navigate("/simuladores/embracon");
       return;
     }
+
+    if (isMaggi(admin)) {
+      navigate("/simuladores/maggi");
+      return;
+    }
+
     navigate(`/simuladores/${adminSlug(admin)}`);
   }
 
@@ -141,12 +169,13 @@ export default function SimuladoresHub() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {orderedAdmins.map((admin) => {
-          const active = isEmbracon(admin);
+          const available = isAvailable(admin);
+
           return (
             <Card
               key={admin.id}
               className="group overflow-hidden rounded-[28px] border bg-white/72 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:shadow-xl"
-              style={{ borderColor: active ? "rgba(161,28,39,.22)" : "rgba(30,41,63,.12)" }}
+              style={{ borderColor: available ? "rgba(161,28,39,.22)" : "rgba(30,41,63,.12)" }}
             >
               <CardContent className="p-5 space-y-5">
                 <div className="flex items-start justify-between gap-4">
@@ -164,13 +193,15 @@ export default function SimuladoresHub() {
                       logoFallback(admin.name)
                     )}
                     <div>
-                      <h2 className="text-lg font-black" style={{ color: C.navy }}>{admin.name}</h2>
+                      <h2 className="text-lg font-black" style={{ color: C.navy }}>
+                        {admin.name}
+                      </h2>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <span
                           className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold"
-                          style={{ background: active ? "rgba(161,28,39,.10)" : "rgba(30,41,63,.08)", color: active ? C.ruby : C.navy }}
+                          style={{ background: available ? "rgba(161,28,39,.10)" : "rgba(30,41,63,.08)", color: available ? C.ruby : C.navy }}
                         >
-                          {active ? "Disponível" : "Em implantação"}
+                          {available ? "Disponível" : "Em implantação"}
                         </span>
                       </div>
                     </div>
@@ -189,10 +220,10 @@ export default function SimuladoresHub() {
 
                 <Button
                   className="h-11 w-full rounded-2xl font-semibold"
-                  style={{ background: active ? C.ruby : C.navy, color: "white" }}
+                  style={{ background: available ? C.ruby : C.navy, color: "white" }}
                   onClick={() => openAdmin(admin)}
                 >
-                  {active ? "Iniciar simulação" : "Ver administradora"}
+                  {available ? "Iniciar simulação" : "Ver administradora"}
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </CardContent>

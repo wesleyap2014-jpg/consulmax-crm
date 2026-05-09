@@ -22,6 +22,7 @@ const Usuarios = React.lazy(() => import("./pages/Usuarios"));
 const GestaoDeGrupos = React.lazy(() => import("./pages/GestaoDeGrupos"));
 const Parametros = React.lazy(() => import("./pages/Parametros"));
 const TermsLGPD = React.lazy(() => import("./pages/TermsLGPD"));
+const AlterarSenha = React.lazy(() => import("./pages/AlterarSenha"));
 const LinksUteis = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador = React.lazy(() => import("./pages/PublicSimulador"));

@@ -283,7 +283,7 @@ function buildParcelasAteContemplacaoCliente(input: {
       `💵 ${labelParcelasRangeCliente(
         inicioDemais,
         fimDemais
-      )} até a contemplação: ${brMoney(parcelaNormal)}`
+      )}  (Ou até a contemplação): ${brMoney(parcelaNormal)}`
     );
   }
 

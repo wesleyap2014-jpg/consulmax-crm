@@ -64,6 +64,8 @@ type SimTable = {
 };
 
 type FormaContratacao = "Parcela Cheia" | "Reduzida 25%" | "Reduzida 50%";
+type LanceTipo = "livre" | "fixo_25" | "fixo_50";
+
 
 /* ======================= Helpers ========================= */
 const C = {
@@ -608,6 +610,29 @@ function segmentVisual(seg?: string | null) {
   return { label: String(seg || "Segmento"), Icon: Sparkles };
 }
 
+function lanceTipoLabel(tipo: LanceTipo) {
+  if (tipo === "fixo_50") return "Fixo de 50%";
+  if (tipo === "fixo_25") return "Fixo de 25%";
+  return "Lance Livre";
+}
+
+function lancePctFromTipo(tipo: LanceTipo) {
+  if (tipo === "fixo_50") return 0.5;
+  if (tipo === "fixo_25") return 0.25;
+  return 0;
+}
+
+function allowedLanceTipos(tabela?: SimTable | null): LanceTipo[] {
+  if (!tabela) return [];
+
+  const opts: LanceTipo[] = [];
+  if (tabela.permite_lance_livre) opts.push("livre");
+  if (tabela.permite_lance_fixo_50) opts.push("fixo_50");
+  if (tabela.permite_lance_fixo_25) opts.push("fixo_25");
+
+  return opts;
+}
+
 /* ========================= Página ======================== */
 export default function EmbraconPage() {
   const { id } = useParams<{ id: string }>();
@@ -635,6 +660,7 @@ export default function EmbraconPage() {
   const [prazoVenda, setPrazoVenda] = useState(0);
   const [forma, setForma] = useState<FormaContratacao>("Parcela Cheia");
   const [seguroPrest, setSeguroPrest] = useState(false);
+  const [lanceTipo, setLanceTipo] = useState<LanceTipo>("livre");
   const [lanceOfertPct, setLanceOfertPct] = useState(0);
   const [lanceEmbutPct, setLanceEmbutPct] = useState(0);
   const [prazoOriginalGrupo, setPrazoOriginalGrupo] = useState(0);
@@ -645,6 +671,7 @@ export default function EmbraconPage() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
   const [userPhone, setUserPhone] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => setActiveAdminId(routeAdminId), [routeAdminId]);
   useEffect(() => {
@@ -679,8 +706,15 @@ export default function EmbraconPage() {
       const { data: userRes } = await supabase.auth.getUser();
       const uid = userRes?.user?.id;
       if (!uid) return;
-      const { data } = await supabase.from("users").select("phone, telefone").eq("auth_user_id", uid).maybeSingle();
+      const { data } = await supabase
+        .from("users")
+        .select("phone, telefone, role, user_role")
+        .eq("auth_user_id", uid)
+        .maybeSingle();
+
       setUserPhone((data?.phone || data?.telefone || "").toString());
+      const role = String(data?.role || data?.user_role || "").toLowerCase();
+      setIsAdmin(role === "admin");
     })();
   }, []);
 
@@ -728,11 +762,32 @@ export default function EmbraconPage() {
     if (forma === "Reduzida 50%" && !tabelaSelecionada.contrata_reduzida_50) setForma("Parcela Cheia");
   }, [tabelaSelecionada, forma]);
 
-  const embutCapPct = adminRules?.embut_cap_adm_pct ?? 0.25;
+  const embutCapPct = Math.min(Number(adminRules?.embut_cap_adm_pct ?? 0.25), 0.25);
+  const tiposLancePermitidos = useMemo(() => allowedLanceTipos(tabelaSelecionada), [tabelaSelecionada]);
+  const permiteEmbutido = !!tabelaSelecionada?.permite_lance_embutido;
 
   useEffect(() => {
     if (lanceEmbutPct > embutCapPct) setLanceEmbutPct(embutCapPct);
   }, [lanceEmbutPct, embutCapPct]);
+
+  useEffect(() => {
+    if (!tabelaSelecionada) return;
+
+    const permitidos = allowedLanceTipos(tabelaSelecionada);
+    const nextTipo = permitidos.includes(lanceTipo) ? lanceTipo : permitidos[0] || "livre";
+
+    if (nextTipo !== lanceTipo) setLanceTipo(nextTipo);
+
+    if (!tabelaSelecionada.permite_lance_embutido && lanceEmbutPct !== 0) {
+      setLanceEmbutPct(0);
+    }
+  }, [tabelaSelecionada, lanceTipo, lanceEmbutPct]);
+
+  useEffect(() => {
+    if (lanceTipo === "fixo_50" || lanceTipo === "fixo_25") {
+      setLanceOfertPct(lancePctFromTipo(lanceTipo));
+    }
+  }, [lanceTipo]);
 
   const prazoAviso = prazoVenda > 0 && prazoAte > 0 && prazoVenda > prazoAte ? "⚠️ Prazo da venda ultrapassa o Prazo Até da tabela selecionada." : null;
   const podeCalcular = !!tabelaSelecionada && credito > 0 && prazoVenda > 0 && parcContemplacao > 0 && parcContemplacao < prazoVenda;
@@ -798,6 +853,7 @@ export default function EmbraconPage() {
       seguro_prestamista: seguroPrest,
       lance_modelo: adminRules?.modelo_lance ?? "percentual",
       lance_base: adminRules?.modelo_lance_base ?? (adminRules?.modelo_lance === "parcela" ? "parcela_termo" : "credito"),
+      modelo_lance: lanceModoParcela ? "parcela" : lanceTipoLabel(lanceTipo),
       prazo_original_grupo: prazoOriginalGrupo || null,
       lance_ofertado_pct: lanceOfertPct,
       lance_embutido_pct: Math.min(lanceEmbutPct, embutCapPct),
@@ -923,9 +979,9 @@ ${wa}`;
             </p>
           </div>
 
-          {activeAdmin && (
+          {activeAdmin && isAdmin && (
             <Button className="h-11 rounded-2xl bg-white text-slate-900 hover:bg-white/90" onClick={() => setMgrOpen(true)}>
-              <Settings className="mr-2 h-4 w-4" /> Gerenciar tabelas
+              <Settings className="mr-2 h-4 w-4" /> Configurar tabelas
             </Button>
           )}
         </div>
@@ -1129,15 +1185,54 @@ ${wa}`;
                     ) : (
                       <>
                         <div>
-                          <Label>Lance ofertado (%)</Label>
-                          <PercentInput valueDecimal={lanceOfertPct} onChangeDecimal={setLanceOfertPct} />
-                          <p className="mt-1 text-xs text-slate-500">Base: {adminRules?.lance_ofert_base === "valor_categoria" ? "Crédito + taxas" : "Crédito"}.</p>
+                          <Label>Tipo de lance</Label>
+                          <select
+                            className="h-10 w-full rounded-md border px-3"
+                            value={lanceTipo}
+                            disabled={!tabelaSelecionada || tiposLancePermitidos.length === 0}
+                            onChange={(e) => setLanceTipo(e.target.value as LanceTipo)}
+                          >
+                            {tiposLancePermitidos.length === 0 && <option value="livre">Nenhum lance permitido</option>}
+                            {tiposLancePermitidos.map((tipo) => (
+                              <option key={tipo} value={tipo}>{lanceTipoLabel(tipo)}</option>
+                            ))}
+                          </select>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Permitidos conforme a tabela selecionada. Base: {adminRules?.lance_ofert_base === "valor_categoria" ? "Crédito + taxas" : "Crédito"}.
+                          </p>
                         </div>
-                        <div>
-                          <Label>Lance embutido (%)</Label>
-                          <PercentInput valueDecimal={lanceEmbutPct} onChangeDecimal={(d) => setLanceEmbutPct(Math.min(d, embutCapPct))} maxDecimal={embutCapPct} />
-                          <p className="mt-1 text-xs text-slate-500">Base: {adminRules?.lance_embut_base === "valor_categoria" ? "Categoria" : "Crédito"} • Teto {pctHuman(embutCapPct)}.</p>
-                        </div>
+
+                        {lanceTipo === "livre" ? (
+                          <div>
+                            <Label>Lance livre (%)</Label>
+                            <PercentInput valueDecimal={lanceOfertPct} onChangeDecimal={setLanceOfertPct} />
+                            <p className="mt-1 text-xs text-slate-500">Informe o percentual que será ofertado.</p>
+                          </div>
+                        ) : (
+                          <div>
+                            <Label>Percentual aplicado</Label>
+                            <Input value={pctHuman(lancePctFromTipo(lanceTipo))} readOnly className="text-right" />
+                            <p className="mt-1 text-xs text-slate-500">Percentual fixo da modalidade selecionada.</p>
+                          </div>
+                        )}
+
+                        {permiteEmbutido ? (
+                          <div>
+                            <Label>Lance embutido (%)</Label>
+                            <PercentInput
+                              valueDecimal={lanceEmbutPct}
+                              onChangeDecimal={(d) => setLanceEmbutPct(Math.min(d, embutCapPct))}
+                              maxDecimal={embutCapPct}
+                            />
+                            <p className="mt-1 text-xs text-slate-500">
+                              Base: {adminRules?.lance_embut_base === "valor_categoria" ? "Categoria" : "Crédito"} • Teto {pctHuman(embutCapPct)}.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-500">
+                            Esta tabela não permite lance embutido.
+                          </div>
+                        )}
                       </>
                     )}
 
@@ -1236,7 +1331,7 @@ ${wa}`;
         </div>
       </div>
 
-      {mgrOpen && activeAdmin && (
+      {mgrOpen && activeAdmin && isAdmin && (
         <TableManagerModal
           admin={activeAdmin}
           allTables={adminTables}
@@ -1444,7 +1539,7 @@ function TableManagerModal({
   }
 
   return (
-    <ModalBase onClose={onClose} title="Gerenciador de Tabelas Embracon">
+    <ModalBase onClose={onClose} title="Configurar Tabelas Embracon">
       <div className="max-h-[calc(92vh-76px)] overflow-y-auto p-5">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="text-sm text-muted-foreground">Admin ativa: <strong>{admin.name}</strong> • {allTables.length} tabela(s)</div>

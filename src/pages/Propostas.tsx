@@ -41,8 +41,12 @@ type SimRow = {
   parcela_ate_1_ou_2: number | null;
   parcela_demais: number | null;
 
+  valor_categoria?: number | null;
+  lance_ofertado_valor?: number | null;
+  lance_embutido_valor?: number | null;
   lance_proprio_valor: number | null;
   lance_ofertado_pct?: number | null;
+  lance_percebido_pct?: number | null;
 
   adm_tax_pct?: number | null;
   fr_tax_pct?: number | null;
@@ -330,20 +334,41 @@ function proposalEngine(sim: SimRow, p: EngineParams): EngineOut {
   const adm = typeof sim.adm_tax_pct === "number" ? safe(sim.adm_tax_pct) : null;
   const fr  = typeof sim.fr_tax_pct  === "number" ? safe(sim.fr_tax_pct)  : null;
 
-  const valorCategoria =
-    typeof adm === "number" && typeof fr === "number" ? C * (1 + adm + fr) : null;
-  const encargos =
-    typeof adm === "number" && typeof fr === "number" ? C * (adm + fr) : null;
+  // Prioriza os valores finais salvos pelo simulador.
+  // Isso evita recalcular lance com base errada quando a administradora usa uma regra própria
+  // (ex.: Maggi calcula o lance sobre crédito + taxas, e não apenas sobre o crédito).
+  const valorCategoriaSalvo = safe(sim.valor_categoria);
+  const valorCategoria = valorCategoriaSalvo > 0
+    ? valorCategoriaSalvo
+    : (typeof adm === "number" && typeof fr === "number" ? C * (1 + adm + fr) : null);
+
+  const encargos = valorCategoria !== null && valorCategoria > 0
+    ? Math.max(0, valorCategoria - C)
+    : (typeof adm === "number" && typeof fr === "number" ? C * (adm + fr) : null);
 
   const novoCredito = safe(sim.novo_credito);
-  const embutidoValor = Math.max(0, C - novoCredito);
 
-  const lancePctInformado = sim.lance_ofertado_pct;
-  const lancePctCalc = C > 0 ? (embutidoValor + safe(sim.lance_proprio_valor)) / C : 0;
-  const lancePct = typeof lancePctInformado === "number" ? safe(lancePctInformado) : lancePctCalc;
+  const lanceOfertadoSalvo = safe(sim.lance_ofertado_valor);
+  const lanceEmbutidoSalvo = safe(sim.lance_embutido_valor);
+  const lanceProprioSalvo = safe(sim.lance_proprio_valor);
 
-  const lanceOfertadoValor = C * lancePct;
-  const lanceProprioValor = Math.max(0, lanceOfertadoValor - embutidoValor);
+  const embutidoValor = lanceEmbutidoSalvo > 0
+    ? lanceEmbutidoSalvo
+    : Math.max(0, C - novoCredito);
+
+  const lanceProprioValor = lanceProprioSalvo > 0
+    ? lanceProprioSalvo
+    : Math.max(0, lanceOfertadoSalvo - embutidoValor);
+
+  const lanceOfertadoValor = lanceOfertadoSalvo > 0
+    ? lanceOfertadoSalvo
+    : Math.max(0, embutidoValor + lanceProprioValor);
+
+  const baseLance = valorCategoria && valorCategoria > 0 ? valorCategoria : C;
+  const lancePctInformado = safe(sim.lance_ofertado_pct);
+  const lancePct = lancePctInformado > 0
+    ? lancePctInformado
+    : (baseLance > 0 ? lanceOfertadoValor / baseLance : 0);
 
   const n = safe(sim.parcela_contemplacao);
   const p1 = safe(sim.parcela_ate_1_ou_2);
@@ -581,7 +606,10 @@ export default function Propostas() {
         "credito","prazo_venda","parcela_contemplacao",
         "novo_credito","parcela_escolhida","novo_prazo",
         "parcela_ate_1_ou_2","parcela_demais",
-        "lance_proprio_valor","adm_tax_pct","fr_tax_pct","lance_ofertado_pct",
+        "valor_categoria",
+        "lance_ofertado_valor","lance_embutido_valor","lance_proprio_valor",
+        "lance_ofertado_pct","lance_percebido_pct",
+        "adm_tax_pct","fr_tax_pct",
         "antecip_parcelas",
       ].join(","))
       .order("created_at", { ascending: false })

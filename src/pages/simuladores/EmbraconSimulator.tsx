@@ -409,10 +409,15 @@ function normalizeRules(raw: any) {
 
 const SEGMENT_CARD_ORDER = [
   "automoveis",
+  "automovel",
   "motocicletas",
+  "motocicleta",
   "imoveis",
+  "imovel",
   "servicos",
+  "servico",
   "pesados",
+  "pesado",
   "imovel estendido",
 ];
 
@@ -436,6 +441,36 @@ function sortSegmentsLikeCards(a: string, b: string) {
 
   if (safeA !== safeB) return safeA - safeB;
   return aa.localeCompare(bb, "pt-BR");
+}
+
+function segmentVisual(seg?: string | null) {
+  const key = normalizeSegmentForCardOrder(seg);
+
+  if (key.includes("moto")) {
+    return { label: "Motocicletas", Icon: Bike };
+  }
+
+  if (key.includes("imovel estendido")) {
+    return { label: "Imóvel Estendido", Icon: Sparkles };
+  }
+
+  if (key.includes("imovel")) {
+    return { label: "Imóveis", Icon: Home };
+  }
+
+  if (key.includes("serv")) {
+    return { label: "Serviços", Icon: Wrench };
+  }
+
+  if (key.includes("pesad")) {
+    return { label: "Pesados", Icon: Truck };
+  }
+
+  if (key.includes("auto")) {
+    return { label: "Automóveis", Icon: Car };
+  }
+
+  return { label: String(seg || "Segmento"), Icon: Sparkles };
 }
 
 /* ========================= Página ======================== */

@@ -115,6 +115,38 @@ function normalizeText(s: string) {
     .toLowerCase();
 }
 
+
+function segmentMeta(seg?: string | null) {
+  const raw = String(seg || "").trim();
+  const n = normalizeText(raw);
+
+  if (n.includes("imovel estendido")) {
+    return { label: "Imóvel Estendido", bem: "imóvel", emoji: "🏘️" };
+  }
+
+  if (n.includes("imovel") || n.includes("imoveis")) {
+    return { label: "Imóveis", bem: "imóvel", emoji: "🏠" };
+  }
+
+  if (n.includes("moto")) {
+    return { label: "Motocicletas", bem: "motocicleta", emoji: "🏍️" };
+  }
+
+  if (n.includes("serv")) {
+    return { label: "Serviços", bem: "serviço", emoji: "✈️" };
+  }
+
+  if (n.includes("pesad")) {
+    return { label: "Pesados", bem: "bem pesado", emoji: "🚚" };
+  }
+
+  if (n.includes("auto")) {
+    return { label: "Automóveis", bem: "veículo", emoji: "🚗" };
+  }
+
+  return { label: raw || "Consórcio", bem: "bem", emoji: "📌" };
+}
+
 function labelAntecipacao(antecipParcelas?: number | null) {
   if (!antecipParcelas || antecipParcelas <= 0) return "Parcela inicial";
   if (antecipParcelas === 1) return "Parcela 1";

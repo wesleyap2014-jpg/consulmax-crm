@@ -155,12 +155,14 @@ type GroupForm = {
 
 type Lead = {
   id: string;
-  nome?: string | null;
-  name?: string | null;
-  telefone?: string | null;
-  phone?: string | null;
-  email?: string | null;
+  nome: string;
+  telefone: string | null;
+  email: string | null;
+  origem: string | null;
+  descricao: string | null;
+  owner_id: string;
   created_at?: string | null;
+  updated_at?: string | null;
 };
 
 type LoggedUserProfile = {
@@ -294,11 +296,11 @@ function onlyDigits(value?: string | null) {
 }
 
 function getLeadName(lead?: Lead | null) {
-  return String(lead?.nome || lead?.name || "Lead sem nome");
+  return String(lead?.nome || "Lead sem nome");
 }
 
 function getLeadPhone(lead?: Lead | null) {
-  return String(lead?.telefone || lead?.phone || "");
+  return String(lead?.telefone || "");
 }
 
 function getUserName(user?: LoggedUserProfile | null) {
@@ -1867,7 +1869,7 @@ export default function MaggiSimulator() {
 
     const { data, error } = await supabase
       .from("leads")
-      .select("id, nome, name, telefone, phone, email, created_at")
+      .select("id, nome, telefone, email, origem, descricao, owner_id, created_at, updated_at")
       .order("created_at", { ascending: false })
       .limit(300);
 

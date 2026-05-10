@@ -407,6 +407,37 @@ function normalizeRules(raw: any) {
   };
 }
 
+const SEGMENT_CARD_ORDER = [
+  "automoveis",
+  "motocicletas",
+  "imoveis",
+  "servicos",
+  "pesados",
+  "imovel estendido",
+];
+
+function normalizeSegmentForCardOrder(seg?: string | null) {
+  return String(seg || "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function sortSegmentsLikeCards(a: string, b: string) {
+  const aa = normalizeSegmentForCardOrder(a);
+  const bb = normalizeSegmentForCardOrder(b);
+
+  const ia = SEGMENT_CARD_ORDER.findIndex((x) => x === aa);
+  const ib = SEGMENT_CARD_ORDER.findIndex((x) => x === bb);
+
+  const safeA = ia >= 0 ? ia : 999;
+  const safeB = ib >= 0 ? ib : 999;
+
+  if (safeA !== safeB) return safeA - safeB;
+  return aa.localeCompare(bb, "pt-BR");
+}
+
 /* ========================= Página ======================== */
 export default function EmbraconPage() {
   const { id } = useParams<{ id: string }>();

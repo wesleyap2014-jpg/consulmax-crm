@@ -243,6 +243,68 @@ function PercentInput({
   );
 }
 
+
+function labelParcelasRangeCliente(inicio: number, fim: number) {
+  if (inicio === fim) return `Parcela ${inicio}`;
+  return `Parcelas ${inicio} a ${fim}`;
+}
+
+function buildParcelasRestantesCliente(input: {
+  calc: ReturnType<typeof calcularSimulacao>;
+  antecipParcelas?: number | null;
+  parcContemplacao: number;
+}) {
+  const { calc, antecipParcelas, parcContemplacao } = input;
+
+  const totalPrazoRestante = Math.max(0, Math.round(Number(calc.novoPrazo || 0)));
+  const parcelaNormal = Math.max(0, Number(calc.parcelaEscolhida || 0));
+  const antecipAteParcela = Math.max(0, Math.round(Number(antecipParcelas || 0)));
+  const primeiraParcelaDepoisContemplacao = Math.max(1, Math.round(Number(parcContemplacao || 0)) + 1);
+  const adicionalAntecipacao = Math.max(0, Number(calc.antecipAdicionalCada || 0));
+
+  const aindaTemAntecipacao =
+    totalPrazoRestante > 0 &&
+    antecipAteParcela > 0 &&
+    primeiraParcelaDepoisContemplacao <= antecipAteParcela &&
+    adicionalAntecipacao > 0;
+
+  if (!aindaTemAntecipacao) {
+    return `📆 Parcelas restantes:
++ ${totalPrazoRestante} x de ${brMoney(parcelaNormal)}`;
+  }
+
+  const ultimaParcelaComAntecipacao = Math.min(
+    antecipAteParcela,
+    primeiraParcelaDepoisContemplacao + totalPrazoRestante - 1
+  );
+
+  const qtdParcelasComAntecipacao = Math.max(
+    0,
+    ultimaParcelaComAntecipacao - primeiraParcelaDepoisContemplacao + 1
+  );
+
+  const qtdParcelasNormais = Math.max(
+    0,
+    totalPrazoRestante - qtdParcelasComAntecipacao
+  );
+
+  const parcelaComAntecipacao = parcelaNormal + adicionalAntecipacao;
+
+  const linhas = [
+    `📆 Parcelas restantes:`,
+    `${labelParcelasRangeCliente(
+      primeiraParcelaDepoisContemplacao,
+      ultimaParcelaComAntecipacao
+    )}: ${brMoney(parcelaComAntecipacao)}`,
+  ];
+
+  if (qtdParcelasNormais > 0) {
+    linhas.push(`+ ${qtdParcelasNormais} x de ${brMoney(parcelaNormal)}`);
+  }
+
+  return linhas.join("\n");
+}
+
 function MoneyInput({ value, onChange, ...rest }: { value: number; onChange: (n: number) => void } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <Input
@@ -749,10 +811,11 @@ export default function EmbraconPage() {
     const telComPais = telDigits ? (telDigits.startsWith("55") ? telDigits : `55${telDigits}`) : "";
     const wa = `https://wa.me/${telComPais}`;
 
-    const segundaParcExtra =
-      calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao
-        ? `\n⚠️ Parcela com antecipação da taxa de administração: ${brMoney(calc.segundaParcelaComAntecipacao)}`
-        : "";
+    const parcelasRestantesTexto = buildParcelasRestantesCliente({
+      calc,
+      antecipParcelas: tabelaSelecionada.antecip_parcelas,
+      parcContemplacao,
+    });
 
     return `🎯 *Simulação Embracon ${segmentoLabel}${grupoInfo}*
 
@@ -767,7 +830,7 @@ export default function EmbraconPage() {
 
 ✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
 
-📆 Parcelas restantes (valor): ${brMoney(calc.parcelaEscolhida)}${segundaParcExtra}
+${parcelasRestantesTexto}
 
 ⏳ Prazo restante: ${calc.novoPrazo} meses
 

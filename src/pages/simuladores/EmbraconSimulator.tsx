@@ -249,6 +249,47 @@ function labelParcelasRangeCliente(inicio: number, fim: number) {
   return `Parcelas ${inicio} a ${fim}`;
 }
 
+
+function buildParcelasAteContemplacaoCliente(input: {
+  calc: ReturnType<typeof calcularSimulacao>;
+  antecipParcelas?: number | null;
+  parcContemplacao: number;
+}) {
+  const { calc, antecipParcelas, parcContemplacao } = input;
+
+  const nCont = Math.max(0, Math.round(Number(parcContemplacao || 0)));
+  const antecipAteParcela = Math.max(0, Math.round(Number(antecipParcelas || 0)));
+  const parcelaComAntecipacao = Math.max(0, Number(calc.parcelaAte || 0));
+  const parcelaNormal = Math.max(0, Number(calc.parcelaDemais || 0));
+
+  if (nCont <= 0) return "";
+
+  const linhas: string[] = [];
+
+  const qtdComAntecipacao = Math.min(nCont, antecipAteParcela > 0 ? antecipAteParcela : nCont);
+
+  if (qtdComAntecipacao > 0) {
+    linhas.push(
+      `💳 ${labelParcelasRangeCliente(1, qtdComAntecipacao)}: ${brMoney(
+        parcelaComAntecipacao
+      )} (Primeira parcela em até 3x sem juros no cartão)`
+    );
+  }
+
+  if (nCont > qtdComAntecipacao) {
+    const inicioDemais = qtdComAntecipacao + 1;
+    const fimDemais = nCont;
+    linhas.push(
+      `💵 ${labelParcelasRangeCliente(
+        inicioDemais,
+        fimDemais
+      )} até a contemplação: ${brMoney(parcelaNormal)}`
+    );
+  }
+
+  return linhas.join("\n\n");
+}
+
 function buildParcelasRestantesCliente(input: {
   calc: ReturnType<typeof calcularSimulacao>;
   antecipParcelas?: number | null;
@@ -806,10 +847,15 @@ export default function EmbraconPage() {
 
     const segmentoLabel = segmentMeta(segmento || tabelaSelecionada.segmento).label;
     const grupoInfo = grupo.trim() ? ` - Grupo ${grupo.trim()}` : "";
-    const primeiraParcelaLabel = labelAntecipacao(tabelaSelecionada.antecip_parcelas);
     const telDigits = onlyDigits(userPhone);
     const telComPais = telDigits ? (telDigits.startsWith("55") ? telDigits : `55${telDigits}`) : "";
     const wa = `https://wa.me/${telComPais}`;
+
+    const parcelasAteContemplacaoTexto = buildParcelasAteContemplacaoCliente({
+      calc,
+      antecipParcelas: tabelaSelecionada.antecip_parcelas,
+      parcContemplacao,
+    });
 
     const parcelasRestantesTexto = buildParcelasRestantesCliente({
       calc,
@@ -821,9 +867,7 @@ export default function EmbraconPage() {
 
 💰 Crédito contratado: ${brMoney(credito)}
 
-💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (Primeira parcela em até 3x sem juros no cartão)
-
-💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
+${parcelasAteContemplacaoTexto}
 
 📈 Após a contemplação (prevista em ${parcContemplacao} meses):
 🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}

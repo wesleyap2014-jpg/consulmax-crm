@@ -8,10 +8,13 @@ import { Label } from "@/components/ui/label";
 import {
   AlertTriangle,
   Banknote,
+  Bike,
   Calculator,
+  Car,
   ChevronsUpDown,
   Copy,
   FileText,
+  Home,
   Loader2,
   Pencil,
   Plus,
@@ -19,9 +22,12 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Sparkles,
   Trash2,
   TrendingUp,
+  Truck,
   UserRound,
+  Wrench,
   X,
 } from "lucide-react";
 import { useParams, useSearchParams } from "react-router-dom";
@@ -487,7 +493,10 @@ export default function EmbraconPage() {
   const adminRulesRaw = (activeAdmin?.rules || {}) as any;
   const adminRules = useMemo(() => normalizeRules(adminRulesRaw), [adminRulesRaw]);
   const adminTables = useMemo(() => tables.filter((t) => t.admin_id === activeAdminId), [tables, activeAdminId]);
-  const segmentosDisponiveis = useMemo(() => Array.from(new Set(adminTables.map((t) => t.segmento))).sort(), [adminTables]);
+  const segmentosDisponiveis = useMemo(
+    () => Array.from(new Set(adminTables.map((t) => t.segmento))).sort(sortSegmentsLikeCards),
+    [adminTables]
+  );
   const nomesTabelaSegmento = useMemo(
     () => Array.from(new Set(adminTables.filter((t) => (segmento ? t.segmento === segmento : true)).map((t) => t.nome_tabela))).sort(),
     [adminTables, segmento]
@@ -497,6 +506,19 @@ export default function EmbraconPage() {
     [adminTables, segmento, nomeTabela]
   );
   const tabelaSelecionada = useMemo(() => tables.find((t) => t.id === tabelaId) || null, [tables, tabelaId]);
+  const prazoRangeIndex = useMemo(() => {
+    const idx = variantesDaTabela.findIndex((t) => t.id === tabelaId);
+    return idx >= 0 ? idx : 0;
+  }, [variantesDaTabela, tabelaId]);
+  const prazoRangeSelecionado = variantesDaTabela[prazoRangeIndex] || null;
+
+  useEffect(() => {
+    if (!nomeTabela) return;
+    if (!variantesDaTabela.length) return;
+    if (!tabelaId || !variantesDaTabela.some((t) => t.id === tabelaId)) {
+      setTabelaId(variantesDaTabela[0].id);
+    }
+  }, [nomeTabela, variantesDaTabela, tabelaId]);
 
   useEffect(() => {
     if (!tabelaSelecionada) return;
@@ -737,58 +759,100 @@ export default function EmbraconPage() {
                   <SectionTitle icon={FileText} title="Plano e tabela" subtitle="Escolha segmento, tabela e prazo. A personalidade vem da tabela selecionada." />
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-4">
+                  <div className="space-y-5">
                     <div>
                       <Label>Segmento</Label>
-                      <select
-                        className="h-10 w-full rounded-md border px-3"
-                        value={segmento}
-                        onChange={(e) => {
-                          setSegmento(e.target.value);
-                          setNomeTabela("");
-                          setTabelaId("");
-                        }}
-                      >
-                        <option value="">Selecione o segmento</option>
-                        {segmentosDisponiveis.map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
+                      <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+                        {segmentosDisponiveis.map((seg) => {
+                          const { label, Icon } = segmentVisual(seg);
+                          const active = segmento === seg;
+
+                          return (
+                            <button
+                              key={seg}
+                              type="button"
+                              onClick={() => {
+                                setSegmento(seg);
+                                setNomeTabela("");
+                                setTabelaId("");
+                              }}
+                              className="flex h-24 flex-col items-center justify-center gap-2 rounded-2xl border bg-white text-center text-[11px] font-black uppercase tracking-wide transition hover:-translate-y-0.5"
+                              style={{
+                                borderColor: active ? C.ruby : "rgba(161,28,39,.55)",
+                                color: C.ruby,
+                                background: active ? "rgba(161,28,39,.08)" : "#fff",
+                                boxShadow: active ? "0 10px 24px rgba(161,28,39,.16)" : "none",
+                              }}
+                              title={seg}
+                            >
+                              <Icon className="h-8 w-8" />
+                              <span>{label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
 
-                    <div>
-                      <Label>Tabela</Label>
-                      <select
-                        className="h-10 w-full rounded-md border px-3"
-                        value={nomeTabela}
-                        disabled={!segmento}
-                        onChange={(e) => {
-                          setNomeTabela(e.target.value);
-                          setTabelaId("");
-                        }}
-                      >
-                        <option value="">{segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}</option>
-                        {nomesTabelaSegmento.map((n) => (
-                          <option key={n} value={n}>{n}</option>
-                        ))}
-                      </select>
-                    </div>
+                    <div className="grid gap-4 md:grid-cols-[1fr_1.35fr_1fr]">
+                      <div>
+                        <Label>Tabela</Label>
+                        <select
+                          className="h-10 w-full rounded-md border px-3"
+                          value={nomeTabela}
+                          disabled={!segmento}
+                          onChange={(e) => {
+                            setNomeTabela(e.target.value);
+                            setTabelaId("");
+                          }}
+                        >
+                          <option value="">{segmento ? "Selecione a tabela" : "Selecione o segmento primeiro"}</option>
+                          {nomesTabelaSegmento.map((n) => (
+                            <option key={n} value={n}>{n}</option>
+                          ))}
+                        </select>
+                      </div>
 
-                    <div>
-                      <Label>Prazo até</Label>
-                      <select className="h-10 w-full rounded-md border px-3" value={tabelaId} disabled={!nomeTabela} onChange={(e) => setTabelaId(e.target.value)}>
-                        <option value="">{nomeTabela ? "Selecione o prazo" : "Selecione a tabela antes"}</option>
-                        {variantesDaTabela.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.prazo_limite} meses • Adm {pctHuman(t.taxa_adm_pct)} • FR {pctHuman(t.fundo_reserva_pct)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                      <div>
+                        <div className="flex items-center justify-between gap-3">
+                          <Label>Prazo até</Label>
+                          <span className="text-xs font-semibold" style={{ color: C.ruby }}>
+                            {prazoRangeSelecionado ? `${prazoRangeSelecionado.prazo_limite} meses` : "—"}
+                          </span>
+                        </div>
 
-                    <div>
-                      <Label>Faixa de crédito</Label>
-                      <Input value={faixa ? `${brMoney(faixa.min)} a ${brMoney(faixa.max)}` : ""} readOnly />
+                        <div className="mt-2 rounded-2xl border bg-slate-50/70 px-4 py-3">
+                          <input
+                            type="range"
+                            className="w-full accent-[#A11C27]"
+                            min={0}
+                            max={Math.max(0, variantesDaTabela.length - 1)}
+                            step={1}
+                            value={prazoRangeIndex}
+                            disabled={!nomeTabela || variantesDaTabela.length === 0}
+                            onChange={(e) => {
+                              const idx = Number(e.target.value);
+                              const next = variantesDaTabela[idx];
+                              if (next) setTabelaId(next.id);
+                            }}
+                          />
+
+                          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                            <span>{variantesDaTabela[0] ? `${variantesDaTabela[0].prazo_limite}m` : "—"}</span>
+                            <span>{variantesDaTabela.length} faixa(s) de prazo</span>
+                            <span>{variantesDaTabela[variantesDaTabela.length - 1] ? `${variantesDaTabela[variantesDaTabela.length - 1].prazo_limite}m` : "—"}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label>Faixa de crédito</Label>
+                        <Input value={faixa ? `${brMoney(faixa.min)} a ${brMoney(faixa.max)}` : ""} readOnly />
+                        {prazoRangeSelecionado && (
+                          <p className="mt-1 text-xs text-slate-500">
+                            Adm {pctHuman(prazoRangeSelecionado.taxa_adm_pct)} • FR {pctHuman(prazoRangeSelecionado.fundo_reserva_pct)}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
 

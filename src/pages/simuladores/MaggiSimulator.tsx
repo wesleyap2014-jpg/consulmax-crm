@@ -11,16 +11,19 @@ import {
   AlertTriangle,
   Calculator,
   Car,
+  CheckCircle2,
   Copy,
   Home,
   Loader2,
   Pencil,
   Plus,
   Save,
+  Search,
   Settings,
   ShieldCheck,
   Trash2,
   TrendingUp,
+  UserRound,
   X,
 } from "lucide-react";
 
@@ -39,6 +42,8 @@ type RegraPos =
   | "custom";
 
 type SeguroMomento = "contratacao" | "contemplacao";
+
+type PrimeiraParcelaTipo = "nenhum" | "valor_fixo" | "pct_credito" | "pct_categoria";
 
 type CreditRange = {
   id: string;
@@ -67,6 +72,12 @@ type CustomRule = {
   llParcelaPct: number;
 };
 
+type FirstParcelRule = {
+  enabled: boolean;
+  tipo: PrimeiraParcelaTipo;
+  valor: number;
+};
+
 type MaggiConfig = {
   creditRanges: CreditRange[];
   prazoRules: PrazoRule[];
@@ -74,6 +85,7 @@ type MaggiConfig = {
   maxLanceEmbutidoPct: number;
   seguroMomento: SeguroMomento;
   customRule: CustomRule;
+  firstParcelRule: FirstParcelRule;
   customRuleNotes?: string;
 };
 
@@ -134,6 +146,34 @@ type GroupForm = {
     llPrazoPct: string;
     llParcelaPct: string;
   };
+  firstParcelRule: {
+    enabled: boolean;
+    tipo: PrimeiraParcelaTipo;
+    valor: string;
+  };
+};
+
+type Lead = {
+  id: string;
+  nome?: string | null;
+  name?: string | null;
+  telefone?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  created_at?: string | null;
+};
+
+type LoggedUserProfile = {
+  id: string;
+  auth_user_id?: string | null;
+  nome?: string | null;
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  telefone?: string | null;
+  avatar_url?: string | null;
+  role?: string | null;
+  user_role?: string | null;
 };
 
 const C = {
@@ -191,6 +231,12 @@ const DEFAULT_CUSTOM_RULE: CustomRule = {
   llParcelaPct: 0.5,
 };
 
+const DEFAULT_FIRST_PARCEL_RULE: FirstParcelRule = {
+  enabled: false,
+  tipo: "nenhum",
+  valor: 0,
+};
+
 function makeId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
@@ -243,12 +289,54 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function onlyDigits(value?: string | null) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function getLeadName(lead?: Lead | null) {
+  return String(lead?.nome || lead?.name || "Lead sem nome");
+}
+
+function getLeadPhone(lead?: Lead | null) {
+  return String(lead?.telefone || lead?.phone || "");
+}
+
+function getUserName(user?: LoggedUserProfile | null) {
+  return String(user?.nome || user?.name || user?.email || "Consultor");
+}
+
+function getUserPhone(user?: LoggedUserProfile | null) {
+  return onlyDigits(user?.phone || user?.telefone || "");
+}
+
+function buildWhatsappLink(user?: LoggedUserProfile | null) {
+  const phone = getUserPhone(user);
+  return phone ? `https://wa.me/${phone}` : "";
+}
+
 function sanitizeCustomRule(raw?: Partial<CustomRule> | null): CustomRule {
   return {
     lePrazoPct: Number(raw?.lePrazoPct ?? DEFAULT_CUSTOM_RULE.lePrazoPct),
     leParcelaPct: Number(raw?.leParcelaPct ?? DEFAULT_CUSTOM_RULE.leParcelaPct),
     llPrazoPct: Number(raw?.llPrazoPct ?? DEFAULT_CUSTOM_RULE.llPrazoPct),
     llParcelaPct: Number(raw?.llParcelaPct ?? DEFAULT_CUSTOM_RULE.llParcelaPct),
+  };
+}
+
+function sanitizeFirstParcelRule(
+  raw?: Partial<FirstParcelRule> | null
+): FirstParcelRule {
+  const tipo: PrimeiraParcelaTipo =
+    raw?.tipo === "valor_fixo" ||
+    raw?.tipo === "pct_credito" ||
+    raw?.tipo === "pct_categoria"
+      ? raw.tipo
+      : "nenhum";
+
+  return {
+    enabled: Boolean(raw?.enabled && tipo !== "nenhum"),
+    tipo,
+    valor: Number(raw?.valor || 0),
   };
 }
 
@@ -311,6 +399,7 @@ function normalizeConfig(group?: Partial<MaggiGroup> | null): MaggiConfig {
     seguroMomento:
       raw.seguroMomento === "contemplacao" ? "contemplacao" : "contratacao",
     customRule: sanitizeCustomRule(raw.customRule),
+    firstParcelRule: sanitizeFirstParcelRule(raw.firstParcelRule),
     customRuleNotes: String(raw.customRuleNotes || ""),
   };
 }
@@ -354,6 +443,11 @@ function defaultForm(segmento: SegmentoMaggi): GroupForm {
       leParcelaPct: "0,0000",
       llPrazoPct: "50,0000",
       llParcelaPct: "50,0000",
+    },
+    firstParcelRule: {
+      enabled: false,
+      tipo: "nenhum",
+      valor: formatMoneyInput(0),
     },
   };
 }
@@ -415,6 +509,14 @@ function formFromGroup(group: MaggiGroup): GroupForm {
       llPrazoPct: formatPercentInput(config.customRule.llPrazoPct),
       llParcelaPct: formatPercentInput(config.customRule.llParcelaPct),
     },
+    firstParcelRule: {
+      enabled: config.firstParcelRule.enabled,
+      tipo: config.firstParcelRule.tipo,
+      valor:
+        config.firstParcelRule.tipo === "valor_fixo"
+          ? formatMoneyInput(config.firstParcelRule.valor)
+          : formatPercentInput(config.firstParcelRule.valor),
+    },
   };
 }
 
@@ -457,6 +559,15 @@ function normalizeGroupPayload(form: GroupForm) {
     llParcelaPct: parsePercent(form.customRule.llParcelaPct),
   };
 
+  const firstParcelRule: FirstParcelRule = {
+    enabled: form.firstParcelRule.enabled && form.firstParcelRule.tipo !== "nenhum",
+    tipo: form.firstParcelRule.enabled ? form.firstParcelRule.tipo : "nenhum",
+    valor:
+      form.firstParcelRule.tipo === "valor_fixo"
+        ? parseMoney(form.firstParcelRule.valor)
+        : parsePercent(form.firstParcelRule.valor),
+  };
+
   return {
     grupo: form.grupo.trim(),
     segmento: form.segmento,
@@ -494,6 +605,7 @@ function normalizeGroupPayload(form: GroupForm) {
       maxLanceEmbutidoPct: parsePercent(form.maxLanceEmbutidoPct),
       seguroMomento: form.seguroMomento,
       customRule,
+      firstParcelRule,
       customRuleNotes: form.custom_rule_notes.trim(),
     },
   };
@@ -527,6 +639,23 @@ function findCreditRange(group: MaggiGroup | null, credito: number): CreditRange
 
   const ordered = [...ranges].sort((a, b) => a.valor - b.valor);
   return ordered.find((r) => credito <= r.valor) || ordered[ordered.length - 1] || null;
+}
+
+function calcFirstParcelAdd(input: {
+  credito: number;
+  valorCategoria: number;
+  rule: FirstParcelRule;
+}) {
+  const { credito, valorCategoria, rule } = input;
+
+  if (!rule.enabled || rule.tipo === "nenhum") return 0;
+
+  if (rule.tipo === "valor_fixo") return Math.max(0, Number(rule.valor || 0));
+  if (rule.tipo === "pct_credito") return Math.max(0, credito * Number(rule.valor || 0));
+  if (rule.tipo === "pct_categoria")
+    return Math.max(0, valorCategoria * Number(rule.valor || 0));
+
+  return 0;
 }
 
 function calcPreviewParcela(input: {
@@ -593,6 +722,7 @@ function calcMaggi(input: {
   const seguroPct = Number(group.seguro_pct || 0);
   const seguroMomento = cfg.seguroMomento || "contratacao";
   const customRule = sanitizeCustomRule(cfg.customRule);
+  const firstParcelRule = sanitizeFirstParcelRule(cfg.firstParcelRule);
 
   const prazo = Math.max(1, Number(prazoRule.prazo || 1));
   const parcelaContempl = clamp(Math.max(1, Number(parcelaContemplacao || 1)), 1, prazo);
@@ -604,10 +734,20 @@ function calcMaggi(input: {
   const seguroMensal = valorCategoria * seguroPct;
   const parcelaBase = valorCategoria / prazo;
 
-  const parcelaAntes =
+  const demaisParcelasAntes =
     parcelaBase + (seguroMomento === "contratacao" ? seguroMensal : 0);
 
-  const totalPagoAteContemplacao = parcelaBase * parcelaContempl;
+  const adicionalPrimeiraParcela = calcFirstParcelAdd({
+    credito,
+    valorCategoria,
+    rule: firstParcelRule,
+  });
+
+  const parcela1 = demaisParcelasAntes + adicionalPrimeiraParcela;
+  const parcelaAntes = demaisParcelasAntes;
+
+  const totalPagoAteContemplacao =
+    parcelaBase * parcelaContempl + adicionalPrimeiraParcela;
 
   const maxEmbutidoPct = Number(cfg.maxLanceEmbutidoPct || 0);
 
@@ -705,6 +845,9 @@ function calcMaggi(input: {
       seguroMensal,
       seguroMomento,
       parcelaBase,
+      parcela1,
+      demaisParcelasAntes,
+      adicionalPrimeiraParcela,
       parcelaAntes,
       totalPagoAteContemplacao,
       saldoDevedorInicial,
@@ -720,12 +863,12 @@ function calcMaggi(input: {
       prazoAposContemplacaoBase,
       percentualLanceTotal,
       lanceNome: lanceOption.nomeComercial || LANCE_LABELS[lanceOption.key],
-      lanceProprioPct:
-        baseLance > 0 ? lanceProprioValor / baseLance : 0,
+      lanceProprioPct: baseLance > 0 ? lanceProprioValor / baseLance : 0,
       lanceEmbutidoFinalPct,
       parcelasAmortizadasPorLE,
       parcelasAmortizadasPorLL,
       customRule,
+      firstParcelRule,
     },
   };
 }
@@ -863,6 +1006,31 @@ function ConfigGroupsOverlay({
         [field]: value,
       },
     }));
+  }
+
+  function updateFirstParcelRule(
+    field: keyof GroupForm["firstParcelRule"],
+    value: boolean | string
+  ) {
+    setForm((prev) => {
+      const next = {
+        ...prev.firstParcelRule,
+        [field]: value,
+      };
+
+      if (field === "enabled" && value === false) {
+        next.tipo = "nenhum";
+      }
+
+      if (field === "enabled" && value === true && next.tipo === "nenhum") {
+        next.tipo = "valor_fixo";
+      }
+
+      return {
+        ...prev,
+        firstParcelRule: next,
+      };
+    });
   }
 
   async function saveGroup() {
@@ -1022,9 +1190,11 @@ function ConfigGroupsOverlay({
                             </span>
                           )}
                         </div>
+
                         <div className="text-xs text-slate-500">
                           {g.nome_grupo || g.perfil_grupo || "Sem descrição"}
                         </div>
+
                         <div className="mt-1 text-xs text-slate-500">
                           {cfg.creditRanges.length} faixa(s) de crédito •{" "}
                           {cfg.prazoRules.length} prazo(s) • Seguro na{" "}
@@ -1032,6 +1202,12 @@ function ConfigGroupsOverlay({
                             ? "contratação"
                             : "contemplação"}
                         </div>
+
+                        {cfg.firstParcelRule.enabled && (
+                          <div className="mt-1 text-xs text-amber-700">
+                            1ª parcela diferenciada configurada
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex gap-1">
@@ -1136,6 +1312,7 @@ function ConfigGroupsOverlay({
                   <option value="contratacao">Na contratação</option>
                   <option value="contemplacao">Na contemplação</option>
                 </select>
+
                 <p className="mt-1 text-xs text-slate-500">
                   Na contratação entra nas parcelas iniciais. Na contemplação
                   entra apenas após contemplar.
@@ -1169,6 +1346,83 @@ function ConfigGroupsOverlay({
                   </option>
                   <option value="custom">Customizada</option>
                 </select>
+              </div>
+
+              <div className="md:col-span-2 rounded-3xl border p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-black" style={{ color: C.navy }}>
+                      1ª parcela diferenciada
+                    </h4>
+                    <p className="text-xs text-slate-500">
+                      Use quando a primeira parcela tiver adesão, taxa ou valor
+                      adicional em relação às demais parcelas.
+                    </p>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 text-sm font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={form.firstParcelRule.enabled}
+                    onChange={(e) =>
+                      updateFirstParcelRule("enabled", e.target.checked)
+                    }
+                  />
+                  Ativar 1ª parcela diferenciada
+                </label>
+
+                {form.firstParcelRule.enabled && (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div>
+                      <Label>Tipo de adicional</Label>
+                      <select
+                        className="h-10 w-full rounded-md border px-3"
+                        value={form.firstParcelRule.tipo}
+                        onChange={(e) => {
+                          const tipo = e.target.value as PrimeiraParcelaTipo;
+                          updateFirstParcelRule("tipo", tipo);
+                          updateFirstParcelRule(
+                            "valor",
+                            tipo === "valor_fixo"
+                              ? formatMoneyInput(0)
+                              : "0,0000"
+                          );
+                        }}
+                      >
+                        <option value="valor_fixo">Valor fixo adicional</option>
+                        <option value="pct_credito">% sobre o crédito</option>
+                        <option value="pct_categoria">
+                          % sobre crédito + taxas
+                        </option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <Label>
+                        {form.firstParcelRule.tipo === "valor_fixo"
+                          ? "Valor adicional"
+                          : "Percentual adicional (%)"}
+                      </Label>
+                      <Input
+                        value={form.firstParcelRule.valor}
+                        inputMode={
+                          form.firstParcelRule.tipo === "valor_fixo"
+                            ? "numeric"
+                            : "decimal"
+                        }
+                        onChange={(e) =>
+                          updateFirstParcelRule(
+                            "valor",
+                            form.firstParcelRule.tipo === "valor_fixo"
+                              ? formatMoneyInput(parseMoney(e.target.value))
+                              : e.target.value
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="md:col-span-2 rounded-3xl border p-4">
@@ -1547,6 +1801,14 @@ export default function MaggiSimulator() {
   const [loadingGroups, setLoadingGroups] = useState(true);
   const [configOpen, setConfigOpen] = useState(false);
 
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [loggedUser, setLoggedUser] = useState<LoggedUserProfile | null>(null);
+
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loadingLeads, setLoadingLeads] = useState(true);
+  const [leadSearch, setLeadSearch] = useState("");
+  const [selectedLeadId, setSelectedLeadId] = useState("");
+
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [credito, setCredito] = useState(0);
   const [prazoRuleId, setPrazoRuleId] = useState("");
@@ -1556,6 +1818,30 @@ export default function MaggiSimulator() {
   const [lanceEmbutidoPctInput, setLanceEmbutidoPctInput] =
     useState("25,0000");
   const [parcelaContemplacao, setParcelaContemplacao] = useState(1);
+
+  const [savingSimulation, setSavingSimulation] = useState(false);
+
+  async function loadLoggedUser() {
+    const { data } = await supabase.auth.getUser();
+    const uid = data?.user?.id ?? null;
+
+    setAuthUserId(uid);
+
+    if (!uid) {
+      setLoggedUser(null);
+      return;
+    }
+
+    const { data: profile } = await supabase
+      .from("users")
+      .select(
+        "id, auth_user_id, nome, email, phone, telefone, avatar_url, role, user_role"
+      )
+      .eq("auth_user_id", uid)
+      .maybeSingle();
+
+    setLoggedUser((profile ?? null) as LoggedUserProfile | null);
+  }
 
   async function loadGroups() {
     setLoadingGroups(true);
@@ -1576,8 +1862,29 @@ export default function MaggiSimulator() {
     setLoadingGroups(false);
   }
 
+  async function loadLeads() {
+    setLoadingLeads(true);
+
+    const { data, error } = await supabase
+      .from("leads")
+      .select("id, nome, name, telefone, phone, email, created_at")
+      .order("created_at", { ascending: false })
+      .limit(300);
+
+    if (error) {
+      console.error("Erro ao carregar leads:", error.message);
+      setLeads([]);
+    } else {
+      setLeads((data ?? []) as Lead[]);
+    }
+
+    setLoadingLeads(false);
+  }
+
   useEffect(() => {
+    loadLoggedUser();
     loadGroups();
+    loadLeads();
   }, []);
 
   const configGroups = useMemo(
@@ -1609,6 +1916,31 @@ export default function MaggiSimulator() {
     () => findCreditRange(selectedGroup, credito),
     [selectedGroup, credito]
   );
+
+  const selectedLead = useMemo(
+    () => leads.find((l) => l.id === selectedLeadId) || null,
+    [leads, selectedLeadId]
+  );
+
+  const filteredLeads = useMemo(() => {
+    const q = leadSearch.trim().toLowerCase();
+
+    if (!q) return leads.slice(0, 30);
+
+    return leads
+      .filter((lead) => {
+        const hay = [
+          getLeadName(lead),
+          getLeadPhone(lead),
+          lead.email || "",
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return hay.includes(q);
+      })
+      .slice(0, 30);
+  }, [leads, leadSearch]);
 
   const previewRows = useMemo(() => {
     if (!selectedGroup) return [];
@@ -1681,45 +2013,43 @@ export default function MaggiSimulator() {
     parcelaContemplacao,
   ]);
 
+  const whatsappLink = useMemo(() => {
+    return buildWhatsappLink(loggedUser);
+  }, [loggedUser]);
+
   const resumoTexto = useMemo(() => {
     if (!selectedGroup || !result) return "";
 
-    return `🔥 Simulação Maggi - ${
-      segmento === "automoveis" ? "Automóveis" : "Imóveis"
-    }
+    const segmentoLabel = segmento === "imoveis" ? "Imóveis" : "Automóveis";
+    const wa = whatsappLink || "https://wa.me/";
 
-Grupo: ${selectedGroup.grupo}
-Perfil: ${selectedGroup.perfil_grupo || "—"}
-Crédito contratado: ${brMoney(credito)}
-Valor categoria/base de lance: ${brMoney(result.valorCategoria)}
-Prazo escolhido: ${result.prazo} meses
-Taxa adm: ${pctHuman(result.taxaAdm)}
-Fundo reserva: ${pctHuman(result.fundoReserva)}
-Seguro: ${
-      result.seguroMomento === "contratacao"
-        ? "Na contratação"
-        : "Na contemplação"
-    } (${brMoney(result.seguroMensal)}/mês)
-Modalidade de lance: ${result.lanceNome}
-Lance ofertado: ${brMoney(result.lanceOfertadoValor)} (${pctHuman(
-      result.percentualLanceTotal
-    )})
-Lance embutido: ${brMoney(result.lanceEmbutidoValor)} (${pctHuman(
-      result.lanceEmbutidoFinalPct
-    )})
-Lance próprio: ${brMoney(result.lanceProprioValor)} (${pctHuman(
-      result.lanceProprioPct
-    )})
-Crédito líquido estimado: ${brMoney(result.creditoLiquido)}
+    return `🎯 *Simulação Maggi ${segmentoLabel} - Grupo ${selectedGroup.grupo}*
 
-Parcela antes da contemplação: ${brMoney(result.parcelaAntes)}
-Contemplação prevista: parcela ${parcelaContemplacao}
-Saldo devedor projetado após lance: ${brMoney(result.saldoDevedorProjetado)}
-Parcela após contemplação: ${brMoney(result.parcelaApos)}
-Prazo estimado após contemplação: ${result.prazoAposContemplacao} meses
+💰 Crédito contratado: ${brMoney(credito)}
 
-Observação: simulação sujeita às regras do grupo e confirmação da administradora.`;
-  }, [selectedGroup, result, segmento, credito, parcelaContemplacao]);
+💳 Parcela 1: ${brMoney(result.parcela1)}
+
+💵 Demais parcelas até a contemplação: ${brMoney(result.demaisParcelasAntes)}
+
+📈 Após a contemplação (prevista em ${parcelaContemplacao} meses):
+🏦 Lance próprio: ${brMoney(result.lanceProprioValor)}
+
+✅ Crédito líquido liberado: ${brMoney(result.creditoLiquido)}
+
+📆 Parcelas restantes (valor): ${brMoney(result.parcelaApos)}
+
+⏳ Prazo restante: ${result.prazoAposContemplacao} meses
+
+Me chama aqui e eu te mostro o melhor caminho 👇
+${wa}`;
+  }, [
+    selectedGroup,
+    result,
+    segmento,
+    credito,
+    parcelaContemplacao,
+    whatsappLink,
+  ]);
 
   async function copiarResumo() {
     if (!resumoTexto) return;
@@ -1730,6 +2060,110 @@ Observação: simulação sujeita às regras do grupo e confirmação da adminis
     } catch {
       alert("Não foi possível copiar o resumo.");
     }
+  }
+
+  async function saveSimulation() {
+    if (!selectedGroup || !result) {
+      alert("Gere uma simulação antes de salvar.");
+      return;
+    }
+
+    if (!selectedLeadId) {
+      alert("Selecione um lead antes de salvar a simulação.");
+      return;
+    }
+
+    setSavingSimulation(true);
+
+    const payload = {
+      lead_id: selectedLeadId,
+      user_id: loggedUser?.id ?? null,
+      created_by: authUserId,
+      administradora: "Maggi",
+      admin_name: "Maggi",
+      segmento,
+      grupo: selectedGroup.grupo,
+      group_id: selectedGroup.id,
+      credito,
+      prazo: result.prazo,
+      parcela: result.demaisParcelasAntes,
+      parcela_1: result.parcela1,
+      parcela_apos: result.parcelaApos,
+      lance_ofertado_pct: result.percentualLanceTotal,
+      lance_embutido_pct: result.lanceEmbutidoFinalPct,
+      lance_ofertado_valor: result.lanceOfertadoValor,
+      lance_embutido_valor: result.lanceEmbutidoValor,
+      lance_proprio_valor: result.lanceProprioValor,
+      credito_liquido: result.creditoLiquido,
+      prazo_apos: result.prazoAposContemplacao,
+      resultado_json: {
+        source: "MaggiSimulator",
+        selectedLead,
+        selectedGroup,
+        selectedConfig,
+        input: {
+          segmento,
+          credito,
+          prazoRuleId,
+          lanceKey,
+          lanceLivrePctInput,
+          usarEmbutido,
+          lanceEmbutidoPctInput,
+          parcelaContemplacao,
+        },
+        result,
+        resumoTexto,
+        vendedor: {
+          id: loggedUser?.id ?? null,
+          auth_user_id: authUserId,
+          nome: getUserName(loggedUser),
+          telefone: getUserPhone(loggedUser),
+        },
+        created_at: new Date().toISOString(),
+      },
+    };
+
+    const attempts = [
+      payload,
+      {
+        lead_id: payload.lead_id,
+        administradora: payload.administradora,
+        segmento: payload.segmento,
+        credito: payload.credito,
+        prazo: payload.prazo,
+        parcela: payload.parcela,
+        resultado_json: payload.resultado_json,
+        created_by: payload.created_by,
+      },
+      {
+        lead_id: payload.lead_id,
+        segmento: payload.segmento,
+        credito: payload.credito,
+        prazo: payload.prazo,
+        resultado: payload.resultado_json,
+      },
+    ];
+
+    let lastError: any = null;
+
+    for (const item of attempts) {
+      const { error } = await supabase.from("sim_simulations").insert(item);
+
+      if (!error) {
+        setSavingSimulation(false);
+        alert("Simulação salva com sucesso!");
+        return;
+      }
+
+      lastError = error;
+    }
+
+    setSavingSimulation(false);
+    alert(
+      `Não foi possível salvar a simulação. Verifique as colunas da tabela sim_simulations. Erro: ${
+        lastError?.message || "erro desconhecido"
+      }`
+    );
   }
 
   return (
@@ -1759,8 +2193,8 @@ Observação: simulação sujeita às regras do grupo e confirmação da adminis
             </h1>
 
             <p className="mt-3 text-sm text-white/82 md:text-base">
-              Escolha o segmento, selecione o grupo Maggi e configure a
-              estratégia de lance para visualizar o resultado projetado.
+              Escolha o lead, selecione o grupo Maggi e configure a estratégia
+              para visualizar o resultado projetado.
             </p>
           </div>
 
@@ -1819,11 +2253,88 @@ Observação: simulação sujeita às regras do grupo e confirmação da adminis
             <SectionTitle
               icon={Settings}
               title="Configuração da simulação"
-              subtitle="Selecione grupo, prazo, crédito, seguro e lance permitido."
+              subtitle="Selecione lead, grupo, prazo, crédito, seguro e lance permitido."
             />
           </CardHeader>
 
           <CardContent className="space-y-5">
+            <div className="rounded-3xl border p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <UserRound className="h-4 w-4" style={{ color: C.ruby }} />
+                <div>
+                  <div className="font-black" style={{ color: C.navy }}>
+                    Lead / Cliente
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Selecione o lead para vincular e salvar a simulação.
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                <Input
+                  className="pl-9"
+                  value={leadSearch}
+                  onChange={(e) => setLeadSearch(e.target.value)}
+                  placeholder={
+                    loadingLeads
+                      ? "Carregando leads..."
+                      : "Buscar por nome, telefone ou e-mail"
+                  }
+                />
+              </div>
+
+              <div className="mt-3 max-h-52 overflow-y-auto rounded-2xl border">
+                {filteredLeads.map((lead) => {
+                  const active = selectedLeadId === lead.id;
+
+                  return (
+                    <button
+                      key={lead.id}
+                      type="button"
+                      onClick={() => setSelectedLeadId(lead.id)}
+                      className="flex w-full items-center justify-between gap-3 border-b px-3 py-3 text-left text-sm last:border-b-0 hover:bg-slate-50"
+                      style={{
+                        background: active ? "rgba(161,28,39,.06)" : undefined,
+                      }}
+                    >
+                      <div>
+                        <div className="font-bold" style={{ color: C.navy }}>
+                          {getLeadName(lead)}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {getLeadPhone(lead) || lead.email || "Sem contato"}
+                        </div>
+                      </div>
+
+                      {active && (
+                        <CheckCircle2
+                          className="h-4 w-4"
+                          style={{ color: C.ruby }}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+
+                {!loadingLeads && filteredLeads.length === 0 && (
+                  <div className="p-4 text-center text-sm text-slate-500">
+                    Nenhum lead encontrado.
+                  </div>
+                )}
+              </div>
+
+              {selectedLead && (
+                <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
+                  Lead selecionado:{" "}
+                  <strong style={{ color: C.navy }}>
+                    {getLeadName(selectedLead)}
+                  </strong>
+                </div>
+              )}
+            </div>
+
             <div className="grid gap-4 md:grid-cols-2">
               <div>
                 <Label>Grupo Maggi</Label>
@@ -1976,6 +2487,11 @@ Observação: simulação sujeita às regras do grupo e confirmação da adminis
                       : "na contemplação"}
                   </strong>
                 </div>
+                {selectedConfig.firstParcelRule.enabled && (
+                  <div className="mt-1">
+                    1ª parcela: <strong>diferenciada</strong>
+                  </div>
+                )}
                 {selectedGroup.observacoes && (
                   <div className="mt-2 text-xs">
                     Obs.: {selectedGroup.observacoes}
@@ -2079,8 +2595,8 @@ Observação: simulação sujeita às regras do grupo e confirmação da adminis
 
             {!result ? (
               <div className="rounded-3xl border border-dashed p-8 text-center text-sm text-slate-500">
-                Selecione um grupo, prazo e informe o valor do crédito para
-                gerar a simulação.
+                Selecione um lead, grupo, prazo e informe o valor do crédito
+                para gerar a simulação.
               </div>
             ) : (
               <div className="space-y-4">
@@ -2090,19 +2606,20 @@ Observação: simulação sujeita às regras do grupo e confirmação da adminis
                     value={brMoney(credito)}
                   />
                   <MetricCard
-                    title="Base de lance"
-                    value={brMoney(result.baseLance)}
-                    hint="Crédito + taxas"
+                    title="Parcela 1"
+                    value={brMoney(result.parcela1)}
+                    hint={
+                      result.adicionalPrimeiraParcela > 0
+                        ? `Inclui adicional de ${brMoney(
+                            result.adicionalPrimeiraParcela
+                          )}`
+                        : "Sem adicional configurado."
+                    }
                   />
                   <MetricCard
-                    title="Crédito líquido"
-                    value={brMoney(result.creditoLiquido)}
-                    hint="Após lance embutido, se houver."
-                  />
-                  <MetricCard
-                    title="Lance ofertado"
-                    value={brMoney(result.lanceOfertadoValor)}
-                    hint={pctHuman(result.percentualLanceTotal)}
+                    title="Demais até contemplar"
+                    value={brMoney(result.demaisParcelasAntes)}
+                    hint={`Até a parcela ${parcelaContemplacao}`}
                   />
                   <MetricCard
                     title="Lance próprio"
@@ -2110,24 +2627,39 @@ Observação: simulação sujeita às regras do grupo e confirmação da adminis
                     hint={pctHuman(result.lanceProprioPct)}
                   />
                   <MetricCard
-                    title="Lance embutido"
-                    value={brMoney(result.lanceEmbutidoValor)}
-                    hint={pctHuman(result.lanceEmbutidoFinalPct)}
-                  />
-                  <MetricCard
-                    title="Parcela antes"
-                    value={brMoney(result.parcelaAntes)}
-                    hint={
-                      result.seguroMomento === "contratacao"
-                        ? "Com seguro na contratação."
-                        : "Sem seguro antes da contemplação."
-                    }
+                    title="Crédito líquido"
+                    value={brMoney(result.creditoLiquido)}
+                    hint="Após lance embutido, se houver."
                   />
                   <MetricCard
                     title="Parcela após"
                     value={brMoney(result.parcelaApos)}
                     hint={`${result.prazoAposContemplacao} meses estimados`}
                   />
+                  <MetricCard
+                    title="Lance ofertado"
+                    value={brMoney(result.lanceOfertadoValor)}
+                    hint={pctHuman(result.percentualLanceTotal)}
+                  />
+                  <MetricCard
+                    title="Lance embutido"
+                    value={brMoney(result.lanceEmbutidoValor)}
+                    hint={pctHuman(result.lanceEmbutidoFinalPct)}
+                  />
+                </div>
+
+                <div className="rounded-3xl border bg-slate-50/80 p-4 text-sm text-slate-600">
+                  <div
+                    className="flex items-center gap-2 font-black"
+                    style={{ color: C.navy }}
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    Prévia do texto para WhatsApp
+                  </div>
+
+                  <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-white p-3 text-xs leading-relaxed text-slate-700">
+                    {resumoTexto}
+                  </pre>
                 </div>
 
                 <div className="rounded-3xl border bg-slate-50/80 p-4 text-sm text-slate-600">
@@ -2198,39 +2730,39 @@ Observação: simulação sujeita às regras do grupo e confirmação da adminis
                   )}
                 </div>
 
-                <div className="rounded-3xl border bg-slate-50/80 p-4 text-sm text-slate-600">
-                  <div
-                    className="flex items-center gap-2 font-black"
-                    style={{ color: C.navy }}
-                  >
-                    <ShieldCheck className="h-4 w-4" />
-                    Inteligência comercial
+                {!whatsappLink && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    Não encontrei telefone no usuário logado. O link do
+                    WhatsApp ficará incompleto até preencher o campo{" "}
+                    <strong>phone</strong> ou <strong>telefone</strong> em{" "}
+                    <strong>users</strong>.
                   </div>
-                  <p className="mt-2">
-                    {selectedGroup?.perfil_grupo ||
-                      "Cadastre um perfil para este grupo no overlay de configuração."}
-                  </p>
-                  <p className="mt-1 text-xs">
-                    Regra pós-contemplação:{" "}
-                    {selectedGroup?.regra_pos_contemplacao ||
-                      "saldo_devedor_prazo_restante"}
-                    .
-                  </p>
-                  <p className="mt-1 text-xs">
-                    O lance embutido é tratado como composição do lance
-                    ofertado. Portanto, ele reduz o valor de recurso próprio
-                    necessário, mas não aumenta o percentual total ofertado.
-                  </p>
-                </div>
+                )}
 
-                <Button
-                  variant="secondary"
-                  className="h-10 w-full rounded-2xl"
-                  onClick={copiarResumo}
-                >
-                  <Copy className="mr-2 h-4 w-4" />
-                  Copiar resumo para WhatsApp
-                </Button>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button
+                    variant="secondary"
+                    className="h-10 rounded-2xl"
+                    onClick={copiarResumo}
+                  >
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copiar WhatsApp
+                  </Button>
+
+                  <Button
+                    className="h-10 rounded-2xl"
+                    onClick={saveSimulation}
+                    disabled={savingSimulation || !selectedLeadId || !result}
+                    style={{ background: C.ruby }}
+                  >
+                    {savingSimulation ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="mr-2 h-4 w-4" />
+                    )}
+                    Salvar Simulação
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>

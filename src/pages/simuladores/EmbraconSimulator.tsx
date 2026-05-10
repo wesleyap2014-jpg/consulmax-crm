@@ -510,7 +510,6 @@ export default function EmbraconPage() {
   const [salvando, setSalvando] = useState(false);
   const [simCode, setSimCode] = useState<number | null>(null);
   const [userPhone, setUserPhone] = useState("");
-  const [assembleia, setAssembleia] = useState("15/10");
 
   useEffect(() => setActiveAdminId(routeAdminId), [routeAdminId]);
   useEffect(() => {
@@ -711,22 +710,38 @@ export default function EmbraconPage() {
   const resumoTexto = useMemo(() => {
     if (!tabelaSelecionada || !calc || !podeCalcular) return "";
 
-    const bem = (() => {
-      const seg = (segmento || tabelaSelecionada.segmento || "").toLowerCase();
-      if (seg.includes("imó") || seg.includes("imo")) return "imóvel";
-      if (seg.includes("serv")) return "serviço";
-      if (seg.includes("moto")) return "motocicleta";
-      return "veículo";
-    })();
-
+    const segmentoLabel = segmentMeta(segmento || tabelaSelecionada.segmento).label;
+    const grupoInfo = grupo.trim() ? ` - Grupo ${grupo.trim()}` : "";
     const primeiraParcelaLabel = labelAntecipacao(tabelaSelecionada.antecip_parcelas);
-    const parcelaRestanteValor = brMoney(calc.parcelaEscolhida);
-    const segundaParcExtra = calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao ? ` (2ª parcela com antecipação: ${brMoney(calc.segundaParcelaComAntecipacao)})` : "";
     const telDigits = onlyDigits(userPhone);
-    const wa = `https://wa.me/${telDigits || ""}`;
+    const telComPais = telDigits ? (telDigits.startsWith("55") ? telDigits : `55${telDigits}`) : "";
+    const wa = `https://wa.me/${telComPais}`;
 
-    return `🎯 Com a estratégia certa, você conquista seu ${bem} sem pagar juros, sem entrada e ainda economiza!\n\n📌 Confira essa simulação real:\n\n💰 Crédito contratado: ${brMoney(credito)}\n\n💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (Primeira parcela em até 3x sem juros no cartão)\n\n💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}\n\n📈 Após a contemplação (prevista em ${parcContemplacao} meses):\n🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}\n\n✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}\n\n📆 Parcelas restantes (valor): ${parcelaRestanteValor}${segundaParcExtra}\n\n⏳ Prazo restante: ${calc.novoPrazo} meses\n\n💡 Um planejamento inteligente que cabe no seu bolso e acelera a realização do seu sonho!\n\n👉 Quer simular com o valor do seu ${bem} dos sonhos?\nMe chama aqui e eu te mostro o melhor caminho 👇\n${wa}`;
-  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone]);
+    const segundaParcExtra =
+      calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao
+        ? `\n⚠️ Parcela com antecipação da taxa de administração: ${brMoney(calc.segundaParcelaComAntecipacao)}`
+        : "";
+
+    return `🎯 *Simulação Embracon ${segmentoLabel}${grupoInfo}*
+
+💰 Crédito contratado: ${brMoney(credito)}
+
+💳 ${primeiraParcelaLabel}: ${brMoney(calc.parcelaAte)} (Primeira parcela em até 3x sem juros no cartão)
+
+💵 Demais parcelas até a contemplação: ${brMoney(calc.parcelaDemais)}
+
+📈 Após a contemplação (prevista em ${parcContemplacao} meses):
+🏦 Lance próprio: ${brMoney(calc.lanceProprioValor)}
+
+✅ Crédito líquido liberado: ${brMoney(calc.novoCredito)}
+
+📆 Parcelas restantes (valor): ${brMoney(calc.parcelaEscolhida)}${segundaParcExtra}
+
+⏳ Prazo restante: ${calc.novoPrazo} meses
+
+Me chama aqui e eu te mostro o melhor caminho 👇
+${wa}`;
+  }, [tabelaSelecionada, calc, podeCalcular, segmento, credito, parcContemplacao, userPhone, grupo]);
 
   async function copiarResumo() {
     try {
@@ -734,32 +749,6 @@ export default function EmbraconPage() {
       alert("Resumo copiado!");
     } catch {
       alert("Não foi possível copiar o resumo.");
-    }
-  }
-
-  const propostaTexto = useMemo(() => {
-    if (!calc || !podeCalcular) return "";
-
-    const segBase = segmento || tabelaSelecionada?.segmento || "Automóvel";
-    const seg = normalizarSegmento(segBase);
-    const emoji = emojiDoSegmento(segBase);
-    const parcela1 = brMoney(calc.parcelaAte);
-    const mostraParc2 = !!(calc.has2aAntecipDepois && calc.segundaParcelaComAntecipacao != null);
-    const linhaParc2 = mostraParc2 ? `\n💰 Parcela 2: ${brMoney(calc.segundaParcelaComAntecipacao!)} (com antecipação)` : "";
-    const linhaPrazo = `📆 + ${calc.novoPrazo}x de ${brMoney(calc.parcelaEscolhida)}`;
-    const grupoTxt = grupo || "—";
-    const whatsappFmt = formatPhoneBR(userPhone);
-    const whatsappLine = whatsappFmt ? `\nWhatsApp: ${whatsappFmt}` : "";
-
-    return `🚨OPORTUNIDADE 🚨\n\n🔥 PROPOSTA ${activeAdmin?.name || ""}🔥\n\nProposta ${seg}\n\n${emoji} Crédito: ${brMoney(calc.novoCredito)}\n💰 Parcela 1: ${parcela1} (Em até 3x no cartão)${linhaParc2}\n${linhaPrazo}\n💵 Lance Próprio: ${brMoney(calc.lanceProprioValor)}\n📢 Grupo: ${grupoTxt}\n\n🚨 POUCAS VAGAS DISPONÍVEIS🚨\n\nAssembleia ${assembleia}\n\n📲 Garanta sua vaga agora!${whatsappLine}\n\nVantagens\n✅ Primeira parcela em até 3x no cartão\n✅ Parcelas acessíveis\n✅ Alta taxa de contemplação`;
-  }, [calc, podeCalcular, segmento, tabelaSelecionada, grupo, assembleia, userPhone, activeAdmin?.name]);
-
-  async function copiarProposta() {
-    try {
-      await navigator.clipboard.writeText(propostaTexto);
-      alert("Texto copiado!");
-    } catch {
-      alert("Não foi possível copiar o texto.");
     }
   }
 
@@ -1105,21 +1094,6 @@ export default function EmbraconPage() {
             </CardContent>
           </Card>
 
-          <Card className={glassCardClass()}>
-            <CardHeader><CardTitle className="text-base" style={{ color: C.navy }}>Texto: Oportunidade / Proposta</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <Label>Assembleia</Label>
-                <Input value={assembleia} onChange={(e) => setAssembleia(e.target.value)} placeholder="dd/mm" />
-              </div>
-              <textarea className="h-72 w-full rounded-md border p-3 text-sm leading-relaxed" style={{ lineHeight: "1.6" }} readOnly value={propostaTexto} placeholder="Preencha a simulação para gerar o texto." />
-              <div className="flex justify-end">
-                <Button onClick={copiarProposta} disabled={!propostaTexto} variant="secondary" className="rounded-2xl">
-                  <Copy className="mr-2 h-4 w-4" /> Copiar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
 

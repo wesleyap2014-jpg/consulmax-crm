@@ -38,6 +38,8 @@ type RegraPos =
   | "mantem_parcela_reduz_prazo"
   | "custom";
 
+type SeguroTiming = "none" | "contratacao" | "contemplacao";
+
 type CreditRange = {
   id: string;
   label: string;
@@ -58,11 +60,20 @@ type LanceOption = {
   pct: number;
 };
 
+type CustomRule = {
+  lePrazoPct: number;
+  leParcelaPct: number;
+  llPrazoPct: number;
+  llParcelaPct: number;
+};
+
 type MaggiConfig = {
   creditRanges: CreditRange[];
   prazoRules: PrazoRule[];
   lanceOptions: LanceOption[];
   maxLanceEmbutidoPct: number;
+  seguroTiming: SeguroTiming;
+  customRule: CustomRule;
   customRuleNotes?: string;
 };
 
@@ -99,8 +110,13 @@ type GroupForm = {
   perfil_grupo: string;
   observacoes: string;
   seguro_pct: string;
+  seguroTiming: SeguroTiming;
   regra_pos_contemplacao: RegraPos;
   custom_rule_notes: string;
+  custom_le_prazo_pct: string;
+  custom_le_parcela_pct: string;
+  custom_ll_prazo_pct: string;
+  custom_ll_parcela_pct: string;
   is_active: boolean;
   creditRanges: { id: string; label: string; valor: string }[];
   prazoRules: {
@@ -166,6 +182,13 @@ const DEFAULT_LANCES: LanceOption[] = [
   },
 ];
 
+const DEFAULT_CUSTOM_RULE: CustomRule = {
+  lePrazoPct: 1,
+  leParcelaPct: 0,
+  llPrazoPct: 0.5,
+  llParcelaPct: 0.5,
+};
+
 function makeId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
@@ -217,21 +240,15 @@ function numberFrom(value: string) {
 function normalizeConfig(group?: Partial<MaggiGroup> | null): MaggiConfig {
   const raw = (group?.config || {}) as Record<string, any>;
 
-  const rawRanges = Array.isArray(raw.creditRanges)
-    ? raw.creditRanges
-    : [];
-
-  const rawPrazoRules = Array.isArray(raw.prazoRules)
-    ? raw.prazoRules
-    : [];
-
-  const rawLances = Array.isArray(raw.lanceOptions)
-    ? raw.lanceOptions
-    : [];
+  const rawRanges = Array.isArray(raw.creditRanges) ? raw.creditRanges : [];
+  const rawPrazoRules = Array.isArray(raw.prazoRules) ? raw.prazoRules : [];
+  const rawLances = Array.isArray(raw.lanceOptions) ? raw.lanceOptions : [];
 
   const legacyMin = Number(group?.credito_min || 0);
   const legacyMax = Number(group?.credito_max || 0);
-  const legacyPrazo = Number(group?.prazo_original || group?.prazo_restante || 0);
+  const legacyPrazo = Number(
+    group?.prazo_original || group?.prazo_restante || 0
+  );
 
   const creditRanges: CreditRange[] = rawRanges.length
     ? rawRanges.map((r: any, idx: number) => ({
@@ -272,6 +289,8 @@ function normalizeConfig(group?: Partial<MaggiGroup> | null): MaggiConfig {
     };
   });
 
+  const rawCustom = raw.customRule || {};
+
   return {
     creditRanges,
     prazoRules,
@@ -279,6 +298,17 @@ function normalizeConfig(group?: Partial<MaggiGroup> | null): MaggiConfig {
     maxLanceEmbutidoPct: Number(
       raw.maxLanceEmbutidoPct ?? group?.lance_embutido_max_pct ?? 0.25
     ),
+    seguroTiming: (raw.seguroTiming || "none") as SeguroTiming,
+    customRule: {
+      lePrazoPct: Number(rawCustom.lePrazoPct ?? DEFAULT_CUSTOM_RULE.lePrazoPct),
+      leParcelaPct: Number(
+        rawCustom.leParcelaPct ?? DEFAULT_CUSTOM_RULE.leParcelaPct
+      ),
+      llPrazoPct: Number(rawCustom.llPrazoPct ?? DEFAULT_CUSTOM_RULE.llPrazoPct),
+      llParcelaPct: Number(
+        rawCustom.llParcelaPct ?? DEFAULT_CUSTOM_RULE.llParcelaPct
+      ),
+    },
     customRuleNotes: String(raw.customRuleNotes || ""),
   };
 }
@@ -291,8 +321,13 @@ function defaultForm(segmento: SegmentoMaggi): GroupForm {
     perfil_grupo: "",
     observacoes: "",
     seguro_pct: "0,0000",
+    seguroTiming: "none",
     regra_pos_contemplacao: "saldo_devedor_prazo_restante",
     custom_rule_notes: "",
+    custom_le_prazo_pct: "100,0000",
+    custom_le_parcela_pct: "0,0000",
+    custom_ll_prazo_pct: "50,0000",
+    custom_ll_parcela_pct: "50,0000",
     is_active: true,
     creditRanges: [
       {
@@ -329,10 +364,15 @@ function formFromGroup(group: MaggiGroup): GroupForm {
     perfil_grupo: group.perfil_grupo || "",
     observacoes: group.observacoes || "",
     seguro_pct: formatPercentInput(group.seguro_pct),
+    seguroTiming: config.seguroTiming,
     regra_pos_contemplacao:
       (group.regra_pos_contemplacao as RegraPos) ||
       "saldo_devedor_prazo_restante",
     custom_rule_notes: config.customRuleNotes || "",
+    custom_le_prazo_pct: formatPercentInput(config.customRule.lePrazoPct),
+    custom_le_parcela_pct: formatPercentInput(config.customRule.leParcelaPct),
+    custom_ll_prazo_pct: formatPercentInput(config.customRule.llPrazoPct),
+    custom_ll_parcela_pct: formatPercentInput(config.customRule.llParcelaPct),
     is_active: group.is_active !== false,
     creditRanges: config.creditRanges.length
       ? config.creditRanges.map((r, idx) => ({
@@ -390,7 +430,7 @@ function normalizeGroupPayload(form: GroupForm) {
       fundoReservaPct: parsePercent(r.fundoReservaPct),
     }))
     .filter((r) => r.prazo > 0)
-    .sort((a, b) => a.prazo - b.prazo);
+    .sort((a, b) => b.prazo - a.prazo);
 
   const lanceOptions = form.lanceOptions.map((o) => ({
     key: o.key,
@@ -439,6 +479,13 @@ function normalizeGroupPayload(form: GroupForm) {
       prazoRules,
       lanceOptions,
       maxLanceEmbutidoPct: parsePercent(form.maxLanceEmbutidoPct),
+      seguroTiming: form.seguroTiming,
+      customRule: {
+        lePrazoPct: parsePercent(form.custom_le_prazo_pct),
+        leParcelaPct: parsePercent(form.custom_le_parcela_pct),
+        llPrazoPct: parsePercent(form.custom_ll_prazo_pct),
+        llParcelaPct: parsePercent(form.custom_ll_parcela_pct),
+      },
       customRuleNotes: form.custom_rule_notes.trim(),
     },
   };
@@ -451,7 +498,11 @@ function findPrazoRule(
   if (!group) return null;
 
   const cfg = normalizeConfig(group);
-  return cfg.prazoRules.find((r) => r.id === prazoRuleId) || cfg.prazoRules[0] || null;
+  return (
+    cfg.prazoRules.find((r) => r.id === prazoRuleId) ||
+    cfg.prazoRules[0] ||
+    null
+  );
 }
 
 function findLanceOption(
@@ -464,14 +515,34 @@ function findLanceOption(
   return cfg.lanceOptions.find((l) => l.key === lanceKey && l.enabled) || null;
 }
 
-function findCreditRange(group: MaggiGroup | null, credito: number): CreditRange | null {
+function findCreditRange(
+  group: MaggiGroup | null,
+  credito: number
+): CreditRange | null {
   if (!group || !credito) return null;
 
   const ranges = normalizeConfig(group).creditRanges;
   if (!ranges.length) return null;
 
   const ordered = [...ranges].sort((a, b) => a.valor - b.valor);
-  return ordered.find((r) => credito <= r.valor) || ordered[ordered.length - 1] || null;
+  return (
+    ordered.find((r) => credito <= r.valor) || ordered[ordered.length - 1] || null
+  );
+}
+
+function calcPreviewParcela(
+  credito: number,
+  prazoRule: PrazoRule,
+  seguroPct: number,
+  seguroTiming: SeguroTiming
+) {
+  const valorCategoria =
+    credito * (1 + prazoRule.taxaAdmPct + prazoRule.fundoReservaPct);
+
+  const parcelaBase = valorCategoria / Math.max(1, prazoRule.prazo);
+  const seguro = seguroTiming === "contratacao" ? valorCategoria * seguroPct : 0;
+
+  return parcelaBase + seguro;
 }
 
 function calcMaggi(input: {
@@ -518,6 +589,7 @@ function calcMaggi(input: {
   const taxaAdm = Number(prazoRule.taxaAdmPct || 0);
   const fundoReserva = Number(prazoRule.fundoReservaPct || 0);
   const seguroPct = Number(group.seguro_pct || 0);
+  const seguroTiming = cfg.seguroTiming;
 
   const prazo = Math.max(1, Number(prazoRule.prazo || 1));
   const parcelaContempl = Math.max(1, Number(parcelaContemplacao || 1));
@@ -525,22 +597,34 @@ function calcMaggi(input: {
 
   const valorCategoria = credito * (1 + taxaAdm + fundoReserva);
 
-  // Base de cálculo dos lances: Crédito + Taxas
+  // Base de cálculo dos lances: Crédito + Taxas.
   const baseLance = valorCategoria;
 
   const seguroMensal = valorCategoria * seguroPct;
+
   const parcelaBase = valorCategoria / prazo;
-  const parcelaAntes = parcelaBase + seguroMensal;
+
+  const parcelaAntes =
+    parcelaBase + (seguroTiming === "contratacao" ? seguroMensal : 0);
+
   const totalPagoAteContemplacao = parcelaBase * parcelaContempl;
+
+  const seguroDepois =
+    seguroTiming === "contratacao" || seguroTiming === "contemplacao"
+      ? seguroMensal
+      : 0;
 
   const maxEmbutidoPct = Number(cfg.maxLanceEmbutidoPct || 0);
 
   const lanceProprioPct =
-    lanceKey === "livre" ? Math.max(0, lanceLivrePct) : Number(lanceOption.pct || 0);
+    lanceKey === "livre"
+      ? Math.max(0, lanceLivrePct)
+      : Number(lanceOption.pct || 0);
 
   let lanceEmbutidoFinalPct = 0;
 
-  if (lanceKey === "livre" && usarEmbutido) {
+  // Agora qualquer lance permitido pode usar lance embutido.
+  if (usarEmbutido) {
     lanceEmbutidoFinalPct = Math.max(0, lanceEmbutidoPct);
 
     if (maxEmbutidoPct > 0 && lanceEmbutidoFinalPct > maxEmbutidoPct) {
@@ -560,21 +644,47 @@ function calcMaggi(input: {
   const lanceOfertadoValor = lanceLivreValor + lanceEmbutidoValor;
 
   const creditoLiquido = Math.max(0, credito - lanceEmbutidoValor);
+
   const saldoDevedorProjetado = Math.max(
     0,
     valorCategoria - totalPagoAteContemplacao - lanceOfertadoValor
   );
 
-  let parcelaApos = saldoDevedorProjetado / prazoAposContemplacao + seguroMensal;
+  let parcelaApos =
+    saldoDevedorProjetado / prazoAposContemplacao + seguroDepois;
+
   let prazoFinal = prazoAposContemplacao;
+
+  let parcelasAmortizadasLE = 0;
+  let parcelasAmortizadasLL = 0;
 
   if (group.regra_pos_contemplacao === "mantem_parcela_reduz_prazo") {
     const parcelaReferencia = Math.max(1, parcelaAntes - seguroMensal);
-    prazoFinal = Math.max(1, Math.ceil(saldoDevedorProjetado / parcelaReferencia));
-    parcelaApos = parcelaReferencia + seguroMensal;
+
+    prazoFinal = Math.max(
+      1,
+      Math.ceil(saldoDevedorProjetado / parcelaReferencia)
+    );
+
+    parcelaApos = parcelaReferencia + seguroDepois;
   }
 
-  // Customizada fica registrada, mas ainda usa cálculo padrão até definirmos a fórmula específica.
+  if (group.regra_pos_contemplacao === "custom") {
+    const parcelaReferencia = Math.max(1, parcelaBase);
+
+    const valorLEPrazo = lanceEmbutidoValor * cfg.customRule.lePrazoPct;
+    const valorLLPrazo = lanceLivreValor * cfg.customRule.llPrazoPct;
+
+    parcelasAmortizadasLE = Math.round(valorLEPrazo / parcelaReferencia);
+    parcelasAmortizadasLL = Math.round(valorLLPrazo / parcelaReferencia);
+
+    prazoFinal = Math.max(
+      1,
+      prazoAposContemplacao - parcelasAmortizadasLE - parcelasAmortizadasLL
+    );
+
+    parcelaApos = saldoDevedorProjetado / prazoFinal + seguroDepois;
+  }
 
   return {
     error: "",
@@ -597,6 +707,10 @@ function calcMaggi(input: {
       lanceNome: lanceOption.nomeComercial || LANCE_LABELS[lanceOption.key],
       lanceProprioPct,
       lanceEmbutidoFinalPct,
+      parcelasAmortizadasLE,
+      parcelasAmortizadasLL,
+      seguroMensal,
+      seguroTiming,
     },
   };
 }
@@ -737,7 +851,9 @@ function ConfigGroupsOverlay({
     }
 
     if ((payload.config.prazoRules || []).length === 0) {
-      alert("Cadastre pelo menos uma faixa de prazo, taxa de administração e fundo reserva.");
+      alert(
+        "Cadastre pelo menos uma faixa de prazo, taxa de administração e fundo reserva."
+      );
       return;
     }
 
@@ -844,7 +960,9 @@ function ConfigGroupsOverlay({
                   <div
                     key={g.id}
                     className={`rounded-2xl border p-3 text-sm ${
-                      g.is_active === false ? "bg-slate-50 opacity-75" : "bg-white"
+                      g.is_active === false
+                        ? "bg-slate-50 opacity-75"
+                        : "bg-white"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -957,6 +1075,21 @@ function ConfigGroupsOverlay({
               </div>
 
               <div>
+                <Label>Momento do seguro</Label>
+                <select
+                  className="h-10 w-full rounded-md border px-3"
+                  value={form.seguroTiming}
+                  onChange={(e) =>
+                    update("seguroTiming", e.target.value as SeguroTiming)
+                  }
+                >
+                  <option value="none">Não usar seguro</option>
+                  <option value="contratacao">Na contratação</option>
+                  <option value="contemplacao">Na contemplação</option>
+                </select>
+              </div>
+
+              <div>
                 <Label>Máx. lance embutido (%)</Label>
                 <Input
                   value={form.maxLanceEmbutidoPct}
@@ -1049,7 +1182,8 @@ function ConfigGroupsOverlay({
                       Faixas de prazo, taxa de adm e fundo reserva
                     </h4>
                     <p className="text-xs text-slate-500">
-                      Cada prazo pode ter taxa de administração e fundo reserva próprios.
+                      Cada prazo pode ter taxa de administração e fundo reserva
+                      próprios.
                     </p>
                   </div>
 
@@ -1133,7 +1267,8 @@ function ConfigGroupsOverlay({
                   Lances permitidos
                 </h4>
                 <p className="mb-3 text-xs text-slate-500">
-                  Para lances pré-configurados, informe o nome comercial e o percentual.
+                  Para lances pré-configurados, informe o nome comercial e o
+                  percentual.
                 </p>
 
                 <div className="grid gap-3">
@@ -1227,16 +1362,62 @@ function ConfigGroupsOverlay({
                     <AlertTriangle className="h-4 w-4" />
                     Regra customizada
                   </div>
+
                   <p className="mt-1 text-xs">
-                    Por enquanto, este campo guarda a descrição da regra. Depois transformamos essa regra em cálculo quando a regra operacional estiver definida.
+                    Configure como o Lance Embutido e o Lance Livre/Recurso
+                    Próprio serão usados para abater prazo e/ou valor das
+                    parcelas.
                   </p>
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div>
+                      <Label>% do LE que abaterá no prazo</Label>
+                      <Input
+                        value={form.custom_le_prazo_pct}
+                        onChange={(e) =>
+                          update("custom_le_prazo_pct", e.target.value)
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <Label>% do LE que abaterá no valor das parcelas</Label>
+                      <Input
+                        value={form.custom_le_parcela_pct}
+                        onChange={(e) =>
+                          update("custom_le_parcela_pct", e.target.value)
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <Label>% do LL que abaterá no prazo</Label>
+                      <Input
+                        value={form.custom_ll_prazo_pct}
+                        onChange={(e) =>
+                          update("custom_ll_prazo_pct", e.target.value)
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <Label>% do LL que abaterá no valor das parcelas</Label>
+                      <Input
+                        value={form.custom_ll_parcela_pct}
+                        onChange={(e) =>
+                          update("custom_ll_parcela_pct", e.target.value)
+                        }
+                      />
+                    </div>
+                  </div>
+
                   <textarea
-                    className="mt-2 min-h-[80px] w-full rounded-md border bg-white p-3 text-sm"
+                    className="mt-3 min-h-[80px] w-full rounded-md border bg-white p-3 text-sm"
                     value={form.custom_rule_notes}
                     onChange={(e) =>
                       update("custom_rule_notes", e.target.value)
                     }
-                    placeholder="Descreva a regra customizada deste grupo..."
+                    placeholder="Observações sobre a regra customizada deste grupo..."
                   />
                 </div>
               )}
@@ -1282,525 +1463,6 @@ function ConfigGroupsOverlay({
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-export default function MaggiSimulator() {
-  const [segmento, setSegmento] = useState<SegmentoMaggi>("automoveis");
-  const [groups, setGroups] = useState<MaggiGroup[]>([]);
-  const [loadingGroups, setLoadingGroups] = useState(true);
-  const [configOpen, setConfigOpen] = useState(false);
-
-  const [selectedGroupId, setSelectedGroupId] = useState("");
-  const [credito, setCredito] = useState(0);
-  const [prazoRuleId, setPrazoRuleId] = useState("");
-  const [lanceKey, setLanceKey] = useState<LanceKey>("livre");
-  const [lanceLivrePctInput, setLanceLivrePctInput] = useState("20,0000");
-  const [usarEmbutido, setUsarEmbutido] = useState(false);
-  const [lanceEmbutidoPctInput, setLanceEmbutidoPctInput] =
-    useState("25,0000");
-  const [parcelaContemplacao, setParcelaContemplacao] = useState(1);
-
-  async function loadGroups() {
-    setLoadingGroups(true);
-
-    const { data, error } = await supabase
-      .from("sim_maggi_groups")
-      .select("*")
-      .order("segmento", { ascending: true })
-      .order("grupo", { ascending: true });
-
-    if (error) {
-      console.error("Erro ao carregar grupos Maggi:", error.message);
-      setGroups([]);
-    } else {
-      setGroups((data ?? []) as MaggiGroup[]);
-    }
-
-    setLoadingGroups(false);
-  }
-
-  useEffect(() => {
-    loadGroups();
-  }, []);
-
-  const configGroups = useMemo(
-    () => groups.filter((g) => g.segmento === segmento),
-    [groups, segmento]
-  );
-
-  const activeGroups = useMemo(
-    () => configGroups.filter((g) => g.is_active !== false),
-    [configGroups]
-  );
-
-  const selectedGroup = useMemo(
-    () => activeGroups.find((g) => g.id === selectedGroupId) || null,
-    [activeGroups, selectedGroupId]
-  );
-
-  const selectedConfig = useMemo(
-    () => normalizeConfig(selectedGroup),
-    [selectedGroup]
-  );
-
-  const activeLanceOptions = useMemo(
-    () => selectedConfig.lanceOptions.filter((o) => o.enabled),
-    [selectedConfig]
-  );
-
-  const selectedFaixa = useMemo(
-    () => findCreditRange(selectedGroup, credito),
-    [selectedGroup, credito]
-  );
-
-  useEffect(() => {
-    setSelectedGroupId("");
-    setPrazoRuleId("");
-  }, [segmento]);
-
-  useEffect(() => {
-    if (selectedGroup) {
-      const cfg = normalizeConfig(selectedGroup);
-      setPrazoRuleId(cfg.prazoRules[0]?.id || "");
-      setLanceKey(
-        (cfg.lanceOptions.find((o) => o.enabled)?.key || "livre") as LanceKey
-      );
-    }
-  }, [selectedGroupId, selectedGroup]);
-
-  useEffect(() => {
-    if (
-      activeLanceOptions.length &&
-      !activeLanceOptions.some((o) => o.key === lanceKey)
-    ) {
-      setLanceKey(activeLanceOptions[0].key);
-    }
-  }, [activeLanceOptions, lanceKey]);
-
-  const { result, error: calcError } = useMemo(() => {
-    return calcMaggi({
-      group: selectedGroup,
-      credito,
-      prazoRuleId,
-      lanceKey,
-      lanceLivrePct: parsePercent(lanceLivrePctInput),
-      usarEmbutido,
-      lanceEmbutidoPct: parsePercent(lanceEmbutidoPctInput),
-      parcelaContemplacao,
-    });
-  }, [
-    selectedGroup,
-    credito,
-    prazoRuleId,
-    lanceKey,
-    lanceLivrePctInput,
-    usarEmbutido,
-    lanceEmbutidoPctInput,
-    parcelaContemplacao,
-  ]);
-
-  const resumoTexto = useMemo(() => {
-    if (!selectedGroup || !result) return "";
-
-    return `🔥 Simulação Maggi - ${
-      segmento === "automoveis" ? "Automóveis" : "Imóveis"
-    }
-
-Grupo: ${selectedGroup.grupo}
-Perfil: ${selectedGroup.perfil_grupo || "—"}
-Crédito contratado: ${brMoney(credito)}
-Valor categoria/base de lance: ${brMoney(result.valorCategoria)}
-Prazo escolhido: ${result.prazo} meses
-Taxa adm: ${pctHuman(result.taxaAdm)}
-Fundo reserva: ${pctHuman(result.fundoReserva)}
-Modalidade de lance: ${result.lanceNome}
-Lance ofertado: ${brMoney(result.lanceOfertadoValor)} (${pctHuman(
-      result.percentualLanceTotal
-    )})
-Lance embutido: ${brMoney(result.lanceEmbutidoValor)}
-Lance próprio: ${brMoney(result.lanceLivreValor)}
-Crédito líquido estimado: ${brMoney(result.creditoLiquido)}
-
-Parcela antes da contemplação: ${brMoney(result.parcelaAntes)}
-Contemplação prevista: parcela ${parcelaContemplacao}
-Parcela após contemplação: ${brMoney(result.parcelaApos)}
-Prazo estimado após contemplação: ${result.prazoAposContemplacao} meses
-
-Observação: simulação sujeita às regras do grupo e confirmação da administradora.`;
-  }, [selectedGroup, result, segmento, credito, parcelaContemplacao]);
-
-  async function copiarResumo() {
-    if (!resumoTexto) return;
-
-    try {
-      await navigator.clipboard.writeText(resumoTexto);
-      alert("Resumo copiado!");
-    } catch {
-      alert("Não foi possível copiar o resumo.");
-    }
-  }
-
-  return (
-    <div className="p-4 md:p-6 space-y-6">
-      <section
-        className="relative overflow-hidden rounded-[28px] border p-6 md:p-8 shadow-sm"
-        style={{
-          background:
-            "linear-gradient(135deg, rgba(30,41,63,.98), rgba(161,28,39,.94))",
-          borderColor: "rgba(255,255,255,.22)",
-        }}
-      >
-        <div
-          className="absolute -right-16 -top-16 h-52 w-52 rounded-full blur-3xl"
-          style={{ background: "rgba(181,165,115,.28)" }}
-        />
-
-        <div className="relative z-[1] flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div className="max-w-3xl text-white">
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur">
-              <Calculator className="h-3.5 w-3.5" />
-              Simulador Maggi
-            </div>
-
-            <h1 className="text-2xl md:text-4xl font-black tracking-tight">
-              Estratégia por grupo e modalidade de lance
-            </h1>
-
-            <p className="mt-3 text-sm md:text-base text-white/82">
-              Escolha o segmento, selecione o grupo Maggi e configure a
-              estratégia de lance para visualizar o resultado projetado.
-            </p>
-          </div>
-
-          <Button
-            className="h-11 rounded-2xl bg-white text-slate-900 hover:bg-white/90"
-            onClick={() => setConfigOpen(true)}
-          >
-            <Settings className="mr-2 h-4 w-4" />
-            Configurar grupos
-          </Button>
-        </div>
-      </section>
-
-      <Card className="rounded-[28px] border bg-white/75 shadow-sm backdrop-blur">
-        <CardHeader>
-          <CardTitle className="text-base" style={{ color: C.navy }}>
-            Bem desejado
-          </CardTitle>
-        </CardHeader>
-
-        <CardContent>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
-            {segmentos.map((item) => {
-              const Icon = item.icon;
-              const active = segmento === item.key;
-
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => setSegmento(item.key)}
-                  className="h-24 rounded-2xl border flex flex-col items-center justify-center gap-2 transition hover:-translate-y-0.5"
-                  style={{
-                    borderColor: active ? C.ruby : "rgba(161,28,39,.55)",
-                    background: active ? "rgba(161,28,39,.08)" : "#fff",
-                    color: C.ruby,
-                    boxShadow: active
-                      ? "0 10px 24px rgba(161,28,39,.16)"
-                      : "none",
-                  }}
-                >
-                  <Icon className="h-8 w-8" />
-                  <span className="text-xs font-black uppercase">
-                    {item.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 lg:grid-cols-[1fr_.95fr]">
-        <Card className="rounded-[28px] border bg-white/75 shadow-sm backdrop-blur">
-          <CardHeader>
-            <SectionTitle
-              icon={Settings}
-              title="Configuração da simulação"
-              subtitle="Selecione grupo, prazo, crédito e lance permitido."
-            />
-          </CardHeader>
-
-          <CardContent className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <Label>Grupo Maggi</Label>
-                <select
-                  className="h-10 w-full rounded-md border px-3"
-                  value={selectedGroupId}
-                  onChange={(e) => setSelectedGroupId(e.target.value)}
-                  disabled={loadingGroups}
-                >
-                  <option value="">
-                    {loadingGroups ? "Carregando grupos..." : "Selecione o grupo"}
-                  </option>
-                  {activeGroups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      Grupo {g.grupo} {g.nome_grupo ? `• ${g.nome_grupo}` : ""}
-                    </option>
-                  ))}
-                </select>
-
-                {!loadingGroups && activeGroups.length === 0 && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Nenhum grupo ativo cadastrado para este segmento.
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <Label>Faixa de prazo / taxa</Label>
-                <select
-                  className="h-10 w-full rounded-md border px-3"
-                  value={prazoRuleId}
-                  onChange={(e) => setPrazoRuleId(e.target.value)}
-                  disabled={!selectedGroup}
-                >
-                  <option value="">Selecione o prazo</option>
-                  {selectedConfig.prazoRules.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.prazo} meses • Adm {pctHuman(r.taxaAdmPct)} • FR{" "}
-                      {pctHuman(r.fundoReservaPct)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <Label>Valor do crédito</Label>
-                <Input
-                  value={formatMoneyInput(credito)}
-                  inputMode="numeric"
-                  onChange={(e) => setCredito(parseMoney(e.target.value))}
-                />
-                {selectedFaixa && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Faixa referência: {selectedFaixa.label} •{" "}
-                    {brMoney(selectedFaixa.valor)}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <Label>Contemplação prevista na parcela</Label>
-                <Input
-                  type="number"
-                  value={parcelaContemplacao}
-                  onChange={(e) =>
-                    setParcelaContemplacao(
-                      Math.max(1, Number(e.target.value || 1))
-                    )
-                  }
-                />
-              </div>
-
-              <div>
-                <Label>Lance permitido</Label>
-                <select
-                  className="h-10 w-full rounded-md border px-3"
-                  value={lanceKey}
-                  onChange={(e) => setLanceKey(e.target.value as LanceKey)}
-                  disabled={!selectedGroup}
-                >
-                  {activeLanceOptions.map((m) => (
-                    <option key={m.key} value={m.key}>
-                      {m.nomeComercial || LANCE_LABELS[m.key]}{" "}
-                      {m.key !== "livre" ? `• ${pctHuman(m.pct)}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {lanceKey === "livre" && (
-                <div>
-                  <Label>% do lance ofertado</Label>
-                  <Input
-                    value={lanceLivrePctInput}
-                    onChange={(e) => setLanceLivrePctInput(e.target.value)}
-                  />
-                </div>
-              )}
-            </div>
-
-            {lanceKey === "livre" && (
-              <div className="rounded-3xl border p-4">
-                <label className="flex items-center gap-2 text-sm font-semibold">
-                  <input
-                    type="checkbox"
-                    checked={usarEmbutido}
-                    onChange={(e) => setUsarEmbutido(e.target.checked)}
-                  />
-                  Usar lance embutido
-                </label>
-
-                {usarEmbutido && (
-                  <div className="mt-3 max-w-sm">
-                    <Label>% do lance embutido</Label>
-                    <Input
-                      value={lanceEmbutidoPctInput}
-                      onChange={(e) =>
-                        setLanceEmbutidoPctInput(e.target.value)
-                      }
-                    />
-                    <p className="mt-1 text-xs text-slate-500">
-                      Máximo permitido:{" "}
-                      {pctHuman(selectedConfig.maxLanceEmbutidoPct)}
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {selectedGroup && (
-              <div className="rounded-3xl border bg-slate-50/80 p-4 text-sm text-slate-600">
-                <div className="font-black" style={{ color: C.navy }}>
-                  Grupo {selectedGroup.grupo}
-                </div>
-                <div className="mt-1">
-                  Perfil: {selectedGroup.perfil_grupo || "—"}
-                </div>
-                <div className="mt-1">
-                  Faixas de crédito:{" "}
-                  {selectedConfig.creditRanges
-                    .map((r) => `${r.label}: ${brMoney(r.valor)}`)
-                    .join(" • ") || "—"}
-                </div>
-                <div className="mt-1">
-                  Base dos lances: <strong>Crédito + taxas</strong>
-                </div>
-                {selectedGroup.observacoes && (
-                  <div className="mt-2 text-xs">
-                    Obs.: {selectedGroup.observacoes}
-                  </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-[28px] border bg-white/75 shadow-sm backdrop-blur">
-          <CardHeader>
-            <SectionTitle
-              icon={TrendingUp}
-              title="Resultado da simulação"
-              subtitle="Cards calculados com base no perfil do grupo."
-            />
-          </CardHeader>
-
-          <CardContent>
-            {calcError && (
-              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                <div className="flex items-center gap-2 font-bold">
-                  <AlertTriangle className="h-4 w-4" />
-                  Atenção
-                </div>
-                <p className="mt-1">{calcError}</p>
-              </div>
-            )}
-
-            {!result ? (
-              <div className="rounded-3xl border border-dashed p-8 text-center text-sm text-slate-500">
-                Selecione um grupo, prazo e informe o valor do crédito para
-                gerar a simulação.
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <MetricCard title="Crédito contratado" value={brMoney(credito)} />
-                  <MetricCard
-                    title="Base de lance"
-                    value={brMoney(result.baseLance)}
-                    hint="Crédito + taxas"
-                  />
-                  <MetricCard
-                    title="Crédito líquido"
-                    value={brMoney(result.creditoLiquido)}
-                    hint="Após lance embutido, se houver."
-                  />
-                  <MetricCard
-                    title="Lance ofertado"
-                    value={brMoney(result.lanceOfertadoValor)}
-                    hint={pctHuman(result.percentualLanceTotal)}
-                  />
-                  <MetricCard
-                    title="Lance próprio"
-                    value={brMoney(result.lanceLivreValor)}
-                  />
-                  <MetricCard
-                    title="Lance embutido"
-                    value={brMoney(result.lanceEmbutidoValor)}
-                  />
-                  <MetricCard
-                    title="Parcela antes"
-                    value={brMoney(result.parcelaAntes)}
-                    hint="Estimativa antes da contemplação."
-                  />
-                  <MetricCard
-                    title="Parcela após"
-                    value={brMoney(result.parcelaApos)}
-                    hint={`${result.prazoAposContemplacao} meses estimados`}
-                  />
-                </div>
-
-                <div className="rounded-3xl border bg-slate-50/80 p-4 text-sm text-slate-600">
-                  <div
-                    className="flex items-center gap-2 font-black"
-                    style={{ color: C.navy }}
-                  >
-                    <ShieldCheck className="h-4 w-4" />
-                    Inteligência comercial
-                  </div>
-                  <p className="mt-2">
-                    {selectedGroup?.perfil_grupo ||
-                      "Cadastre um perfil para este grupo no overlay de configuração."}
-                  </p>
-                  <p className="mt-1 text-xs">
-                    Regra pós-contemplação:{" "}
-                    {selectedGroup?.regra_pos_contemplacao ||
-                      "saldo_devedor_prazo_restante"}
-                    .
-                  </p>
-                  {selectedGroup?.regra_pos_contemplacao === "custom" && (
-                    <p className="mt-1 text-xs text-amber-700">
-                      Regra customizada registrada em configuração. O cálculo usa
-                      a regra padrão até definirmos a fórmula específica.
-                    </p>
-                  )}
-                </div>
-
-                <Button
-                  variant="secondary"
-                  className="h-10 w-full rounded-2xl"
-                  onClick={copiarResumo}
-                >
-                  <Copy className="mr-2 h-4 w-4" />
-                  Copiar resumo para WhatsApp
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <ConfigGroupsOverlay
-        open={configOpen}
-        onClose={() => setConfigOpen(false)}
-        segmento={segmento}
-        groups={configGroups}
-        onReload={loadGroups}
-      />
     </div>
   );
 }

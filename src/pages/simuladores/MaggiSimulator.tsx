@@ -2064,6 +2064,63 @@ ${wa}`;
     }
   }
 
+  async function resolveMaggiAdminAndTable() {
+    const { data: admins, error: adminError } = await supabase
+      .from("sim_admins")
+      .select("id, name, slug")
+      .limit(200);
+
+    if (adminError) {
+      throw new Error(`Erro ao buscar administradora Maggi: ${adminError.message}`);
+    }
+
+    const admin =
+      (admins || []).find((a: any) =>
+        String(a.slug || "").toLowerCase().includes("maggi")
+      ) ||
+      (admins || []).find((a: any) =>
+        String(a.name || "").toLowerCase().includes("maggi")
+      );
+
+    if (!admin?.id) {
+      throw new Error(
+        "Não encontrei a administradora MAGGI em sim_admins. Cadastre a Maggi em Administradoras antes de salvar a simulação."
+      );
+    }
+
+    const { data: tables, error: tableError } = await supabase
+      .from("sim_tables")
+      .select("id, admin_id, segmento, nome_tabela")
+      .eq("admin_id", admin.id)
+      .limit(200);
+
+    if (tableError) {
+      throw new Error(`Erro ao buscar tabela Maggi: ${tableError.message}`);
+    }
+
+    const wantedSegment =
+      segmento === "imoveis"
+        ? ["imovel", "imóvel", "imoveis", "imóveis"]
+        : ["auto", "automovel", "automóvel"];
+
+    const table =
+      (tables || []).find((t: any) => {
+        const seg = String(t.segmento || "").toLowerCase();
+        const nome = String(t.nome_tabela || "").toLowerCase();
+        return wantedSegment.some(
+          (token) => seg.includes(token) || nome.includes(token)
+        );
+      }) || (tables || [])[0];
+
+    if (!table?.id) {
+      throw new Error(
+        "Não encontrei nenhuma tabela da Maggi em sim_tables. Crie pelo menos uma tabela vinculada à administradora Maggi para permitir salvar a simulação."
+      );
+    }
+
+    return { admin, table };
+  }
+
   async function saveSimulation() {
     if (!selectedGroup || !result) {
       alert("Gere uma simulação antes de salvar.");
@@ -2075,97 +2132,90 @@ ${wa}`;
       return;
     }
 
-    setSavingSimulation(true);
+    const lead = selectedLead;
 
-    const payload = {
-      lead_id: selectedLeadId,
-      user_id: loggedUser?.id ?? null,
-      created_by: authUserId,
-      administradora: "Maggi",
-      admin_name: "Maggi",
-      segmento,
-      grupo: selectedGroup.grupo,
-      group_id: selectedGroup.id,
-      credito,
-      prazo: result.prazo,
-      parcela: result.demaisParcelasAntes,
-      parcela_1: result.parcela1,
-      parcela_apos: result.parcelaApos,
-      lance_ofertado_pct: result.percentualLanceTotal,
-      lance_embutido_pct: result.lanceEmbutidoFinalPct,
-      lance_ofertado_valor: result.lanceOfertadoValor,
-      lance_embutido_valor: result.lanceEmbutidoValor,
-      lance_proprio_valor: result.lanceProprioValor,
-      credito_liquido: result.creditoLiquido,
-      prazo_apos: result.prazoAposContemplacao,
-      resultado_json: {
-        source: "MaggiSimulator",
-        selectedLead,
-        selectedGroup,
-        selectedConfig,
-        input: {
-          segmento,
-          credito,
-          prazoRuleId,
-          lanceKey,
-          lanceLivrePctInput,
-          usarEmbutido,
-          lanceEmbutidoPctInput,
-          parcelaContemplacao,
-        },
-        result,
-        resumoTexto,
-        vendedor: {
-          id: loggedUser?.id ?? null,
-          auth_user_id: authUserId,
-          nome: getUserName(loggedUser),
-          telefone: getUserPhone(loggedUser),
-        },
-        created_at: new Date().toISOString(),
-      },
-    };
-
-    const attempts = [
-      payload,
-      {
-        lead_id: payload.lead_id,
-        administradora: payload.administradora,
-        segmento: payload.segmento,
-        credito: payload.credito,
-        prazo: payload.prazo,
-        parcela: payload.parcela,
-        resultado_json: payload.resultado_json,
-        created_by: payload.created_by,
-      },
-      {
-        lead_id: payload.lead_id,
-        segmento: payload.segmento,
-        credito: payload.credito,
-        prazo: payload.prazo,
-        resultado: payload.resultado_json,
-      },
-    ];
-
-    let lastError: any = null;
-
-    for (const item of attempts) {
-      const { error } = await supabase.from("sim_simulations").insert(item);
-
-      if (!error) {
-        setSavingSimulation(false);
-        alert("Simulação salva com sucesso!");
-        return;
-      }
-
-      lastError = error;
+    if (!lead) {
+      alert("Lead selecionado não encontrado. Selecione novamente.");
+      return;
     }
 
-    setSavingSimulation(false);
-    alert(
-      `Não foi possível salvar a simulação. Verifique as colunas da tabela sim_simulations. Erro: ${
-        lastError?.message || "erro desconhecido"
-      }`
-    );
+    setSavingSimulation(true);
+
+    try {
+      const { admin, table } = await resolveMaggiAdminAndTable();
+
+      const payload = {
+        admin_id: admin.id,
+        table_id: table.id,
+
+        lead_id: lead.id,
+        lead_nome: getLeadName(lead),
+        lead_telefone: getLeadPhone(lead),
+
+        grupo: selectedGroup.grupo,
+        segmento: segmento === "imoveis" ? "IMÓVEL" : "AUTOMÓVEL",
+        nome_tabela:
+          selectedGroup.nome_grupo ||
+          table.nome_tabela ||
+          `Maggi Grupo ${selectedGroup.grupo}`,
+
+        credito: Number(credito || 0),
+        prazo_venda: Number(result.prazo || 0),
+        forma_contratacao: "Maggi",
+        seguro_prestamista: Number(selectedGroup.seguro_pct || 0) > 0,
+
+        lance_ofertado_pct: Number(result.percentualLanceTotal || 0),
+        lance_embutido_pct: Number(result.lanceEmbutidoFinalPct || 0),
+        parcela_contemplacao: Number(parcelaContemplacao || 1),
+
+        valor_categoria: Number(result.valorCategoria || 0),
+        parcela_ate_1_ou_2: Number(result.parcela1 || 0),
+        parcela_demais: Number(result.demaisParcelasAntes || 0),
+
+        lance_ofertado_valor: Number(result.lanceOfertadoValor || 0),
+        lance_embutido_valor: Number(result.lanceEmbutidoValor || 0),
+        lance_proprio_valor: Number(result.lanceProprioValor || 0),
+
+        lance_percebido_pct: Number(result.percentualLanceTotal || 0),
+        novo_credito: Number(result.creditoLiquido || 0),
+
+        nova_parcela_sem_limite: Number(result.parcelaApos || 0),
+        parcela_limitante: Number(result.parcelaApos || 0),
+        parcela_escolhida: Number(result.parcelaApos || 0),
+
+        saldo_devedor_final: Number(result.saldoDevedorProjetado || 0),
+        novo_prazo: Number(result.prazoAposContemplacao || 0),
+
+        adm_tax_pct: Number(result.taxaAdm || 0),
+        fr_tax_pct: Number(result.fundoReserva || 0),
+
+        lance_base: "credito_taxas",
+        lance_modelo: "percentual",
+        modelo_lance: result.lanceNome || "Maggi",
+
+        prazo_original_grupo: Number(result.prazo || 0),
+        lance_ofertado_parcelas: 0,
+        lance_embutido_parcelas: 0,
+        parcela_termo: Number(result.parcelaBase || 0),
+        antecip_parcelas: 0,
+      };
+
+      const { error } = await supabase.from("sim_simulations").insert(payload);
+
+      if (error) {
+        throw error;
+      }
+
+      alert("Simulação salva com sucesso!");
+    } catch (err: any) {
+      alert(
+        `Não foi possível salvar a simulação. Erro: ${
+          err?.message || "erro desconhecido"
+        }`
+      );
+    } finally {
+      setSavingSimulation(false);
+    }
   }
 
   return (

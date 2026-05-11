@@ -41,6 +41,10 @@ function adminSlug(admin: AdminRow) {
   return admin.slug || slugify(admin.name);
 }
 
+function adminKey(admin: AdminRow) {
+  return `${adminSlug(admin)} ${(admin.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`;
+}
+
 function isEmbracon(admin: AdminRow) {
   const s = adminSlug(admin);
   return s === "embracon" || (admin.name || "").toLowerCase().trim() === "embracon";
@@ -52,8 +56,13 @@ function isMaggi(admin: AdminRow) {
   return s === "maggi" || name.includes("maggi");
 }
 
+function isBBConsorcios(admin: AdminRow) {
+  const key = adminKey(admin);
+  return key.includes("bb-consorcios") || key.includes("bb consorcios") || key.includes("banco do brasil");
+}
+
 function isAvailable(admin: AdminRow) {
-  return isEmbracon(admin) || isMaggi(admin);
+  return isEmbracon(admin) || isMaggi(admin) || isBBConsorcios(admin);
 }
 
 function logoFallback(name: string) {
@@ -103,6 +112,10 @@ function descriptionFor(admin: AdminRow) {
 
   if (isMaggi(admin)) {
     return "Simulador Maggi disponível por perfil de grupo, modalidade de lance e resultado pós-contemplação.";
+  }
+
+  if (isBBConsorcios(admin)) {
+    return "Simulador BB Consórcios disponível por grupo, faixa de crédito, prazo e estratégia de lance.";
   }
 
   return "Administradora cadastrada. Simulador em desenvolvimento.";
@@ -173,6 +186,11 @@ export default function SimuladoresHub() {
 
     if (isMaggi(admin)) {
       navigate("/simuladores/maggi");
+      return;
+    }
+
+    if (isBBConsorcios(admin)) {
+      navigate("/simuladores/bb-consorcios");
       return;
     }
   }

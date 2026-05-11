@@ -17,6 +17,7 @@ const Simuladores = React.lazy(() => import("./pages/SimuladoresHub"));
 const AdicionarAdministradora = React.lazy(() => import("./pages/AdicionarAdministradora"));
 const EmbraconSimulator = React.lazy(() => import("./pages/simuladores/EmbraconSimulator"));
 const MaggiSimulator = React.lazy(() => import("./pages/simuladores/MaggiSimulator"));
+const BBConsorciosSimulator = React.lazy(() => import("./pages/simuladores/BBConsorciosSimulator"));
 const Propostas = React.lazy(() => import("./pages/Propostas"));
 const Comissoes = React.lazy(() => import("./pages/Comissoes"));
 const Carteira = React.lazy(() => import("./pages/Carteira"));
@@ -101,6 +102,7 @@ export const router = createBrowserRouter([
               { path: "admin/:id", element: withSuspense(<AdicionarAdministradora />) },
               { path: "embracon", element: withSuspense(<EmbraconSimulator />) },
               { path: "maggi", element: withSuspense(<MaggiSimulator />) },
+              { path: "bb-consorcios", element: withSuspense(<BBConsorciosSimulator />) },
               { path: ":id", element: withSuspense(<EmbraconSimulator />) },
             ],
           },

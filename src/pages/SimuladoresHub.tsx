@@ -4,7 +4,15 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Loader2, ArrowRight, Building2, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  Loader2,
+  ArrowRight,
+  Building2,
+  ShieldCheck,
+  Sparkles,
+  PlusCircle,
+  Pencil,
+} from "lucide-react";
 
 type AdminRow = {
   id: string;
@@ -61,10 +69,29 @@ function logoFallback(name: string) {
   return (
     <div
       className="flex h-16 w-16 items-center justify-center rounded-3xl text-lg font-black shadow-inner"
-      style={{ background: "rgba(30,41,63,.08)", color: C.navy, border: "1px solid rgba(30,41,63,.10)" }}
+      style={{
+        background: "rgba(30,41,63,.08)",
+        color: C.navy,
+        border: "1px solid rgba(30,41,63,.10)",
+      }}
     >
       {initials}
     </div>
+  );
+}
+
+function AdminLogo({ admin }: { admin: AdminRow }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!admin.logo_url || failed) return logoFallback(admin.name);
+
+  return (
+    <img
+      src={admin.logo_url}
+      alt={`Logo ${admin.name}`}
+      className="h-16 w-16 rounded-3xl border bg-white object-contain p-2 shadow-inner"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -86,12 +113,29 @@ export default function SimuladoresHub() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState<AdminRow[]>([]);
+  const [canManage, setCanManage] = useState(false);
 
   useEffect(() => {
     let alive = true;
 
     (async () => {
       setLoading(true);
+
+      const { data: authData } = await supabase.auth.getUser();
+      const authUserId = authData?.user?.id ?? null;
+
+      if (authUserId) {
+        const { data: me } = await supabase
+          .from("users")
+          .select("role,user_role")
+          .eq("auth_user_id", authUserId)
+          .maybeSingle();
+
+        if (alive) {
+          const role = String((me as any)?.role || (me as any)?.user_role || "").toLowerCase();
+          setCanManage(role === "admin");
+        }
+      }
 
       const { data, error } = await supabase
         .from("sim_admins")
@@ -152,18 +196,34 @@ export default function SimuladoresHub() {
     <div className="p-4 md:p-6 space-y-6">
       <section
         className="relative overflow-hidden rounded-[28px] border p-6 md:p-8 shadow-sm"
-        style={{ background: "linear-gradient(135deg, rgba(30,41,63,.98), rgba(161,28,39,.94))", borderColor: "rgba(255,255,255,.22)" }}
+        style={{
+          background: "linear-gradient(135deg, rgba(30,41,63,.98), rgba(161,28,39,.94))",
+          borderColor: "rgba(255,255,255,.22)",
+        }}
       >
         <div className="absolute -right-16 -top-16 h-52 w-52 rounded-full blur-3xl" style={{ background: "rgba(181,165,115,.28)" }} />
         <div className="absolute -bottom-24 left-12 h-56 w-56 rounded-full blur-3xl" style={{ background: "rgba(255,255,255,.12)" }} />
-        <div className="relative z-[1] max-w-3xl text-white">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur">
-            <Sparkles className="h-3.5 w-3.5" /> Hub de Simuladores Consulmax
+        <div className="relative z-[1] flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div className="max-w-3xl text-white">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium backdrop-blur">
+              <Sparkles className="h-3.5 w-3.5" /> Hub de Simuladores Consulmax
+            </div>
+            <h1 className="text-2xl md:text-4xl font-black tracking-tight">Escolha a administradora para iniciar a simulação</h1>
+            <p className="mt-3 text-sm md:text-base text-white/82">
+              Cada administradora terá seu próprio arquivo e sua própria regra de cálculo. Assim, a Embracon fica blindada e novas administradoras entram sem quebrar o que já funciona.
+            </p>
           </div>
-          <h1 className="text-2xl md:text-4xl font-black tracking-tight">Escolha a administradora para iniciar a simulação</h1>
-          <p className="mt-3 text-sm md:text-base text-white/82">
-            Cada administradora terá seu próprio arquivo e sua própria regra de cálculo. Assim, a Embracon fica blindada e novas administradoras entram sem quebrar o que já funciona.
-          </p>
+
+          {canManage && (
+            <Button
+              type="button"
+              onClick={() => navigate("/simuladores/add")}
+              className="h-11 shrink-0 rounded-2xl bg-white px-4 font-semibold text-slate-900 hover:bg-white/90"
+            >
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Nova administradora
+            </Button>
+          )}
         </div>
       </section>
 
@@ -180,18 +240,7 @@ export default function SimuladoresHub() {
               <CardContent className="p-5 space-y-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-4">
-                    {admin.logo_url ? (
-                      <img
-                        src={admin.logo_url}
-                        alt={`Logo ${admin.name}`}
-                        className="h-16 w-16 rounded-3xl border bg-white object-contain p-2 shadow-inner"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    ) : (
-                      logoFallback(admin.name)
-                    )}
+                    <AdminLogo admin={admin} />
                     <div>
                       <h2 className="text-lg font-black" style={{ color: C.navy }}>
                         {admin.name}
@@ -199,7 +248,10 @@ export default function SimuladoresHub() {
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <span
                           className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold"
-                          style={{ background: available ? "rgba(161,28,39,.10)" : "rgba(30,41,63,.08)", color: available ? C.ruby : C.navy }}
+                          style={{
+                            background: available ? "rgba(161,28,39,.10)" : "rgba(30,41,63,.08)",
+                            color: available ? C.ruby : C.navy,
+                          }}
                         >
                           {available ? "Disponível" : "Em implantação"}
                         </span>
@@ -218,14 +270,28 @@ export default function SimuladoresHub() {
                   <p className="mt-1">Arquivo próprio, cálculo próprio e evolução sem interferir nos demais simuladores.</p>
                 </div>
 
-                <Button
-                  className="h-11 w-full rounded-2xl font-semibold"
-                  style={{ background: available ? C.ruby : C.navy, color: "white" }}
-                  onClick={() => openAdmin(admin)}
-                >
-                  {available ? "Iniciar simulação" : "Ver administradora"}
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
+                <div className="grid gap-2">
+                  <Button
+                    className="h-11 w-full rounded-2xl font-semibold"
+                    style={{ background: available ? C.ruby : C.navy, color: "white" }}
+                    onClick={() => openAdmin(admin)}
+                  >
+                    {available ? "Iniciar simulação" : "Ver administradora"}
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+
+                  {canManage && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-10 w-full rounded-2xl font-semibold"
+                      onClick={() => navigate(`/simuladores/admin/${admin.id}`)}
+                    >
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Editar logo e dados
+                    </Button>
+                  )}
+                </div>
               </CardContent>
             </Card>
           );

@@ -8,7 +8,6 @@ import {
   Loader2,
   ArrowRight,
   Building2,
-  ShieldCheck,
   Sparkles,
   PlusCircle,
   Pencil,
@@ -99,14 +98,14 @@ function descriptionFor(admin: AdminRow) {
   if (admin.description) return admin.description;
 
   if (isEmbracon(admin)) {
-    return "Simulador exclusivo para regras Embracon: crédito, parcelas, lance embutido, lance próprio e pós-contemplação.";
+    return "Simulador Embracon disponível para simulação de crédito, parcelas, lance embutido, lance próprio e pós-contemplação.";
   }
 
   if (isMaggi(admin)) {
-    return "Simulador Maggi por perfil de grupo: automóveis, imóveis, modalidades de lance e resultado pós-contemplação.";
+    return "Simulador Maggi disponível por perfil de grupo, modalidade de lance e resultado pós-contemplação.";
   }
 
-  return "Administradora cadastrada no CRM. O simulador exclusivo dela será criado quando a operação for implantada.";
+  return "Administradora cadastrada. Simulador em desenvolvimento.";
 }
 
 export default function SimuladoresHub() {
@@ -161,16 +160,12 @@ export default function SimuladoresHub() {
   }, []);
 
   const orderedAdmins = useMemo(() => {
-    return [...admins].sort((a, b) => {
-      if (isEmbracon(a) && !isEmbracon(b)) return -1;
-      if (!isEmbracon(a) && isEmbracon(b)) return 1;
-      if (isMaggi(a) && !isMaggi(b)) return -1;
-      if (!isMaggi(a) && isMaggi(b)) return 1;
-      return (a.name || "").localeCompare(b.name || "", "pt-BR");
-    });
+    return [...admins].sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR"));
   }, [admins]);
 
   function openAdmin(admin: AdminRow) {
+    if (!isAvailable(admin)) return;
+
     if (isEmbracon(admin)) {
       navigate("/simuladores/embracon");
       return;
@@ -180,8 +175,6 @@ export default function SimuladoresHub() {
       navigate("/simuladores/maggi");
       return;
     }
-
-    navigate(`/simuladores/${adminSlug(admin)}`);
   }
 
   if (loading) {
@@ -209,9 +202,6 @@ export default function SimuladoresHub() {
               <Sparkles className="h-3.5 w-3.5" /> Hub de Simuladores Consulmax
             </div>
             <h1 className="text-2xl md:text-4xl font-black tracking-tight">Escolha a administradora para iniciar a simulação</h1>
-            <p className="mt-3 text-sm md:text-base text-white/82">
-              Cada administradora terá seu próprio arquivo e sua própria regra de cálculo. Assim, a Embracon fica blindada e novas administradoras entram sem quebrar o que já funciona.
-            </p>
           </div>
 
           {canManage && (
@@ -263,21 +253,15 @@ export default function SimuladoresHub() {
 
                 <p className="min-h-[64px] text-sm leading-relaxed text-slate-600">{descriptionFor(admin)}</p>
 
-                <div className="rounded-2xl border bg-slate-50/80 p-3 text-xs text-slate-600">
-                  <div className="flex items-center gap-2 font-semibold" style={{ color: C.navy }}>
-                    <ShieldCheck className="h-4 w-4" /> Estrutura isolada por administradora
-                  </div>
-                  <p className="mt-1">Arquivo próprio, cálculo próprio e evolução sem interferir nos demais simuladores.</p>
-                </div>
-
                 <div className="grid gap-2">
                   <Button
-                    className="h-11 w-full rounded-2xl font-semibold"
-                    style={{ background: available ? C.ruby : C.navy, color: "white" }}
+                    className="h-11 w-full rounded-2xl font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                    style={{ background: available ? C.ruby : "rgba(30,41,63,.65)", color: "white" }}
                     onClick={() => openAdmin(admin)}
+                    disabled={!available}
                   >
-                    {available ? "Iniciar simulação" : "Ver administradora"}
-                    <ArrowRight className="ml-2 h-4 w-4" />
+                    {available ? "Iniciar simulação" : "Simulador em desenvolvimento"}
+                    {available && <ArrowRight className="ml-2 h-4 w-4" />}
                   </Button>
 
                   {canManage && (

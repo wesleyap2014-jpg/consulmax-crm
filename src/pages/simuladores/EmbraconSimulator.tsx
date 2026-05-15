@@ -684,7 +684,7 @@ export default function EmbraconPage() {
       const [{ data: a }, { data: t }, { data: l }] = await Promise.all([
         supabase.from("sim_admins").select("id,name,rules").order("name", { ascending: true }),
         supabase.from("sim_tables").select("*"),
-        supabase.from("leads").select("id, nome, telefone").limit(300).order("created_at", { ascending: false }),
+        supabase.from("leads").select("id, nome, telefone").limit(80).order("created_at", { ascending: false }),
       ]);
 
       setAdmins((a ?? []) as Admin[]);
@@ -995,7 +995,18 @@ ${wa}`;
             </CardHeader>
             <CardContent>
               {activeAdmin ? (
-                <LeadAndGroupBlock leads={leads} leadId={leadId} setLeadId={setLeadId} leadInfo={leadInfo} grupo={grupo} setGrupo={setGrupo} adminName={activeAdmin.name} />
+                <LeadAndGroupBlock
+                  leads={leads}
+                  leadInfo={leadInfo}
+                  grupo={grupo}
+                  setGrupo={setGrupo}
+                  adminName={activeAdmin.name}
+                  onLeadSelected={(lead) => {
+                    setLeads((prev) => (prev.some((x) => x.id === lead.id) ? prev : [lead, ...prev]));
+                    setLeadId(lead.id);
+                    setLeadInfo({ nome: lead.nome, telefone: lead.telefone });
+                  }}
+                />
               ) : (
                 <div className="text-sm text-muted-foreground">Nenhuma administradora encontrada.</div>
               )}
@@ -1346,37 +1357,104 @@ ${wa}`;
 
 function LeadAndGroupBlock({
   leads,
-  leadId,
-  setLeadId,
   leadInfo,
   grupo,
   setGrupo,
   adminName,
+  onLeadSelected,
 }: {
   leads: Lead[];
-  leadId: string;
-  setLeadId: (v: string) => void;
   leadInfo: { nome: string; telefone?: string | null } | null;
   grupo: string;
   setGrupo: (v: string) => void;
   adminName: string;
+  onLeadSelected: (lead: Lead) => void;
 }) {
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadQuery, setLeadQuery] = useState("");
+  const [remoteLeads, setRemoteLeads] = useState<Lead[]>([]);
+  const [searchingLead, setSearchingLead] = useState(false);
+
+  useEffect(() => {
+    if (!leadOpen) {
+      setLeadQuery("");
+      setRemoteLeads([]);
+      setSearchingLead(false);
+    }
+  }, [leadOpen]);
+
+  useEffect(() => {
+    if (!leadOpen) return;
+
+    const qRaw = leadQuery.trim();
+    const qDigits = onlyDigits(qRaw);
+
+    if (qRaw.length < 2 && qDigits.length < 4) {
+      setRemoteLeads([]);
+      setSearchingLead(false);
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
+      setSearchingLead(true);
+
+      const nameQuery = supabase
+        .from("leads")
+        .select("id, nome, telefone")
+        .ilike("nome", `%${qRaw}%`)
+        .limit(50)
+        .order("nome", { ascending: true });
+
+      const phoneQuery =
+        qDigits.length >= 4
+          ? supabase
+              .from("leads")
+              .select("id, nome, telefone")
+              .ilike("telefone", `%${qDigits}%`)
+              .limit(50)
+              .order("nome", { ascending: true })
+          : Promise.resolve({ data: [], error: null } as any);
+
+      const [nameRes, phoneRes] = await Promise.all([nameQuery, phoneQuery]);
+
+      const rows = [...(nameRes.data ?? []), ...(phoneRes.data ?? [])];
+      const unique = new Map<string, Lead>();
+
+      rows.forEach((x: any) => {
+        if (!x?.id) return;
+        unique.set(x.id, {
+          id: x.id,
+          nome: x.nome,
+          telefone: x.telefone,
+        });
+      });
+
+      setRemoteLeads(Array.from(unique.values()));
+      setSearchingLead(false);
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [leadOpen, leadQuery]);
 
   const filteredLeads = useMemo(() => {
     const qRaw = leadQuery.trim();
     const q = normalizeText(qRaw);
     const qDigits = onlyDigits(qRaw);
 
-    return leads
-      .filter((l) => normalizeText(l.nome || "").includes(q) || (!!qDigits && onlyDigits(l.telefone).includes(qDigits)))
+    const local = leads
+      .filter((l) => {
+        if (!q && !qDigits) return true;
+        return normalizeText(l.nome || "").includes(q) || (!!qDigits && onlyDigits(l.telefone).includes(qDigits));
+      })
       .slice(0, 60);
-  }, [leads, leadQuery]);
 
-  useEffect(() => {
-    if (!leadOpen) setLeadQuery("");
-  }, [leadOpen]);
+    const source = qRaw.length >= 2 || qDigits.length >= 4 ? [...remoteLeads, ...local] : local;
+
+    const unique = new Map<string, Lead>();
+    source.forEach((l) => unique.set(l.id, l));
+
+    return Array.from(unique.values()).slice(0, 60);
+  }, [leads, remoteLeads, leadQuery]);
 
   return (
     <div className="grid gap-4 md:grid-cols-3">
@@ -1390,9 +1468,22 @@ function LeadAndGroupBlock({
           <PopoverContent className="z-50 min-w-[320px] p-2">
             <div className="mb-2 flex items-center gap-2">
               <Search className="h-4 w-4 opacity-60" />
-              <Input placeholder="Buscar lead por nome ou telefone..." value={leadQuery} onChange={(e) => setLeadQuery(e.target.value)} className="h-8" />
+              <Input
+                placeholder="Buscar lead por nome ou telefone..."
+                value={leadQuery}
+                onChange={(e) => setLeadQuery(e.target.value)}
+                className="h-8"
+              />
             </div>
+
             <div className="max-h-64 space-y-1 overflow-y-auto">
+              {searchingLead && (
+                <div className="flex items-center justify-center gap-2 px-2 py-3 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Buscando no banco...
+                </div>
+              )}
+
               {filteredLeads.length > 0 ? (
                 filteredLeads.map((l) => (
                   <PopoverClose asChild key={l.id}>
@@ -1400,8 +1491,9 @@ function LeadAndGroupBlock({
                       type="button"
                       className="w-full rounded px-2 py-1.5 text-left hover:bg-muted"
                       onClick={() => {
-                        setLeadId(l.id);
+                        onLeadSelected(l);
                         setLeadQuery("");
+                        setRemoteLeads([]);
                       }}
                     >
                       <div className="text-sm font-medium">{l.nome}</div>
@@ -1410,7 +1502,13 @@ function LeadAndGroupBlock({
                   </PopoverClose>
                 ))
               ) : (
-                <div className="px-2 py-6 text-center text-sm text-muted-foreground">Nenhum lead encontrado</div>
+                !searchingLead && (
+                  <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+                    {leadQuery.trim().length > 0
+                      ? "Nenhum lead encontrado"
+                      : "Digite ao menos 2 letras do nome ou 4 números do telefone"}
+                  </div>
+                )
               )}
             </div>
           </PopoverContent>

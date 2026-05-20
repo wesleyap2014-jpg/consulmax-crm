@@ -1,4 +1,4 @@
-import { supabaseAdmin, getAuthUser, json, badRequest, unauthorized } from "./_supabase";
+import { supabaseAdmin, getAuthUser, json, badRequest, unauthorized } from "../_supabase";
 
 export default async function handler(req: any, res: any) {
   const { user } = await getAuthUser(req);

@@ -40,7 +40,7 @@ type GiroItemRow = { id?: string | null; lead_id?: string | null; cliente_id?: s
 type KBProcRow = { id: string; title?: string | null; titulo?: string | null; status?: string | null; created_at?: string | null; updated_at?: string | null };
 type CommissionRow = { id: string; venda_id: string; vendedor_id: string; valor_total: number | null; base_calculo?: number | null; percent_aplicado?: number | null; status: string | null; data_venda?: string | null };
 type CommissionFlowRow = { id?: string; commission_id: string; mes?: number | null; percentual?: number | null; valor_previsto: number | null; valor_pago_vendedor: number | null; data_pagamento_vendedor: string | null };
-type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; segmento?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; status?: string | null; contemplada?: boolean | null };
+type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; segmento?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null };
 type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string } };
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
@@ -63,6 +63,8 @@ function isAdmin(u?: UserRow | null) { return (u?.role || u?.user_role || "").to
 function humanErr(e: any) { if (!e) return "Erro desconhecido."; if (typeof e === "string") return e; return String(e?.message || e?.error_description || e?.details || e?.hint || JSON.stringify(e)); }
 function metaFieldForMonth(month: number) { return `m${String(month).padStart(2, "0")}` as any; }
 function daysDiffYMD(a: string, b: string) { if (!a || !b) return 0; const [ay, am, ad] = a.slice(0, 10).split("-").map(Number); const [by, bm, bd] = b.slice(0, 10).split("-").map(Number); return Math.round((Date.UTC(ay, am - 1, ad, 12) - Date.UTC(by, bm - 1, bd, 12)) / 86400000); }
+function weekdayYMD(ymd: string) { const [y, m, d] = ymd.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay(); }
+function isBillingRuleDay(ymd: string) { const w = weekdayYMD(ymd); return w === 2 || w === 4; }
 function normalizeText(v?: string | null) { return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase(); }
 function isOpenOpportunityStage(v?: string | null) { const s = normalizeText(v); return ["novo", "qualificando", "qualificacao", "proposta", "negociacao"].includes(s); }
 function stripAccents(s: string) { return s.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
@@ -278,6 +280,60 @@ export default function Inicio() {
     const { data: allBirth, error: birthErr } = await supabase.from("clientes").select("id,nome,data_nascimento,telefone").not("data_nascimento", "is", null).limit(2000);
     if (birthErr) throw birthErr;
     const birthdayToday = ((allBirth || []) as ClienteRow[]).filter((c) => (toYMD(c.data_nascimento) || "").slice(5) === today.slice(5)).slice(0, 50);
+    const inadimplentesByBucket = new Map<string, { count: number; names: string[] }>();
+    if (isBillingRuleDay(today)) {
+      try {
+        let inadQ = supabase
+          .from("vendas")
+          .select("id,vendedor_id,lead_id,cliente_lead_id,grupo,cota,codigo,cancelada_em,inad,inad_em,inad_revertida_em")
+          .eq("inad", true)
+          .is("inad_revertida_em", null)
+          .limit(5000);
+
+        if (!admin) inadQ = inadQ.eq("vendedor_id", scopeAuthId);
+        if (admin && scopeAuthId !== ALL) inadQ = inadQ.eq("vendedor_id", scopeAuthId);
+
+        const { data: inadRowsRaw, error: inadErr } = await inadQ;
+        if (inadErr) throw inadErr;
+
+        const inadRows = ((inadRowsRaw || []) as any as VendaMini[])
+          .filter((v) => !isVendaCancelada(v))
+          .filter((v) => Boolean(toYMD(v.inad_em)));
+
+        const inadLeadIds = Array.from(
+          new Set(
+            inadRows
+              .map((v) => v.lead_id || v.cliente_lead_id)
+              .filter(Boolean) as string[]
+          )
+        );
+
+        const inadLeadsMap = await tryLoadLeadsMap(inadLeadIds);
+
+        for (const v of inadRows) {
+          const base = toYMD(v.inad_em);
+          if (!base) continue;
+
+          const dias = Math.max(1, daysDiffYMD(today, base));
+          const leadId = v.lead_id || v.cliente_lead_id || "";
+          const nome = inadLeadsMap.get(leadId)?.nome || `Grupo ${v.grupo || "—"} / Cota ${v.cota || "—"}`;
+
+          let bucket = "";
+          if (dias <= 15) bucket = "1-15";
+          else if (dias <= 30) bucket = "16-30";
+          else if (dias <= 60) bucket = "31-60";
+          else bucket = "60+";
+
+          const cur = inadimplentesByBucket.get(bucket) || { count: 0, names: [] };
+          cur.count += 1;
+          if (cur.names.length < 5) cur.names.push(nome);
+          inadimplentesByBucket.set(bucket, cur);
+        }
+      } catch (e) {
+        console.warn("[Inicio] Não foi possível carregar régua de inadimplência:", e);
+      }
+    }
+
     let newProceduresCount = 0;
     try { const sevenDaysAgo = addDaysYMD(today, -7); const { data: kbRows, error: kbErr } = await supabase.from("kb_procedures").select("id,title,titulo,status,created_at,updated_at").order("created_at", { ascending: false }).limit(200); if (!kbErr && kbRows) newProceduresCount = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active" && (toYMD(p.created_at) || "") >= sevenDaysAgo).length; } catch {}
 
@@ -285,6 +341,8 @@ export default function Inicio() {
     if (pendingGroupRegistrationCount > 0) { const groups = Array.from(missingGroupsMap.values()).map((v) => ({ codigo: normalizeGroupDigits(v.grupo) })); myDay.push({ id: "pending-groups", priority: 10, icon: "alert", title: `Grupos pendentes de cadastro: ${groupListLabel(groups)}`, desc: "Há vendas em grupos que ainda não estão cadastrados na Gestão de Grupos.", action: { label: "Cadastrar Grupos", to: "/gestao-de-grupos" } }); }
     const boletoGroups = groupRows.filter((g) => groupVencYMD(g) === tomorrow);
     if (boletoGroups.length) myDay.push({ id: "boleto-groups", priority: 20, icon: "ticket", title: `Enviar boleto dos grupos ${groupListLabel(boletoGroups)}`, desc: `Vencimento previsto para ${fmtDateBRFromYMD(tomorrow)}.`, action: { label: "Ver Grupos", to: "/gestao-de-grupos" } });
+    const vencimentoTodayGroups = groupRows.filter((g) => groupVencYMD(g) === today);
+    if (vencimentoTodayGroups.length) myDay.push({ id: "vencimento-today-groups", priority: 25, icon: "ticket", title: `Vencimento dos grupos ${groupListLabel(vencimentoTodayGroups)}`, desc: "Verificar se há clientes com pagamento pendente e emitir alerta/recobrança.", action: { label: "Ver Grupos", to: "/gestao-de-grupos" } });
     const loteriaGroups = groupRows.filter((g) => { const sorteio = groupSorteioYMD(g); const asm = groupAsmYMD(g); if (!sorteio || !asm) return false; return today >= sorteio && today < asm && !hasDraw(drawsByDate, sorteio); });
     if (loteriaGroups.length) myDay.push({ id: "loteria-groups", priority: 30, icon: "alert", title: `Informar resultado da Loteria para os grupos ${groupListLabel(loteriaGroups)}`, desc: "Esse alerta some quando o resultado da Loteria Federal da data do sorteio é informado.", action: { label: "Informar Loteria", to: "/gestao-de-grupos" } });
     const lanceGroups = groupRows.filter((g) => { const adm = normalizeAdmin(g.administradora).toLowerCase(); const sorteio = groupSorteioYMD(g); const asm = groupAsmYMD(g); if (adm === "maggi" || adm === "hs") return sorteio === tomorrow; return asm === tomorrow; });
@@ -293,6 +351,27 @@ export default function Inicio() {
     if (assembleiaTodayGroups.length) myDay.push({ id: "assembleia-today", priority: 50, icon: "bell", title: `Hoje tem assembleia dos grupos ${groupListLabel(assembleiaTodayGroups)}`, desc: "Verificar se os clientes foram contemplados.", action: { label: "Ver Assembleias", to: "/gestao-de-grupos" } });
     const assembleiaYesterdayGroups = groupRows.filter((g) => groupAsmYMD(g) === yesterday);
     if (assembleiaYesterdayGroups.length) myDay.push({ id: "assembleia-result", priority: 60, icon: "alert", title: `Informar o resultado da assembleia dos grupos ${groupListLabel(assembleiaYesterdayGroups)}`, desc: `Assembleia realizada em ${fmtDateBRFromYMD(yesterday)}.`, action: { label: "Informar Resultado", to: "/gestao-de-grupos" } });
+    const billingBuckets = [
+      { key: "1-15", title: "Clientes inadimplentes de 1 a 15 dias", desc: "Cliente inadimplente: reenviar boleto de cobrança." },
+      { key: "16-30", title: "Clientes inadimplentes de 16 a 30 dias", desc: "Realizar ligação solicitando o pagamento da parcela em aberto." },
+      { key: "31-60", title: "Clientes inadimplentes de 30 a 60 dias", desc: "Ligar para entender a situação e agendar uma data de regularização." },
+      { key: "60+", title: "Clientes inadimplentes há mais de 60 dias", desc: "Ligar e ofertar reparcelamento das parcelas inadimplentes." },
+    ];
+
+    billingBuckets.forEach((b, idx) => {
+      const data = inadimplentesByBucket.get(b.key);
+      if (!data || data.count <= 0) return;
+      const nomes = data.names.length ? ` Clientes: ${data.names.join(", ")}${data.count > data.names.length ? ` +${data.count - data.names.length}` : ""}.` : "";
+      myDay.push({
+        id: `inad-${b.key}`,
+        priority: 65 + idx,
+        icon: "alert",
+        title: `${b.title}: ${data.count} cliente(s)`,
+        desc: `${b.desc}${nomes}`,
+        action: { label: "Abrir Carteira", to: "/carteira" },
+      });
+    });
+
     birthdayToday.forEach((c) => myDay.push({ id: `birthday:${c.id}`, priority: 70, icon: "gift", title: `Hoje é aniversário do cliente ${c.nome}`, desc: "Parabenize-o e fortaleça o relacionamento.", action: { label: "Ver Clientes", to: "/clientes" } }));
     const commissionToday = scheduledByDate.get(today) || 0;
     if (commissionToday > 0) myDay.push({ id: "commission-today", priority: 80, icon: "trophy", title: `Hoje você receberá ${fmtBRL(commissionToday)} de comissão`, desc: "Celebre esse momento. Resultado é consequência de processo bem feito.", action: { label: "Abrir Comissões", to: "/comissoes" } });
@@ -331,42 +410,482 @@ export default function Inicio() {
   useEffect(() => { if (!me) return; const handleRefreshOnReturn = () => { const path = window.location.pathname.toLowerCase(); if (path === "/" || path === "/inicio") reload(false); }; const handleVisibility = () => { if (document.visibilityState === "visible") handleRefreshOnReturn(); }; window.addEventListener("focus", handleRefreshOnReturn); document.addEventListener("visibilitychange", handleVisibility); return () => { window.removeEventListener("focus", handleRefreshOnReturn); document.removeEventListener("visibilitychange", handleVisibility); }; }, [me?.id, vendorScope, users.length]);
 
   const admin = isAdmin(me);
-  const glassCard = "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";
-  if (loading) return <div className="p-6"><div className="text-slate-600 text-sm">Carregando Início…</div></div>;
+  const brand = {
+    ruby: "#A11C27",
+    navy: "#1E293F",
+    gold: "#B5A573",
+    cream: "#F5F5F5",
+  };
+
+  const glassCard =
+    "relative overflow-hidden rounded-3xl border border-white/60 bg-white/75 shadow-[0_24px_80px_rgba(15,23,42,0.12)] backdrop-blur-2xl";
+  const softCard =
+    "relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white/80 shadow-[0_16px_45px_rgba(15,23,42,0.08)] backdrop-blur-xl";
+  const subtleButton =
+    "rounded-xl border border-slate-200 bg-white/80 text-slate-900 shadow-sm hover:bg-slate-50";
+  const primaryButton =
+    "rounded-xl bg-[#1E293F] text-white shadow-[0_12px_28px_rgba(30,41,63,0.22)] hover:bg-[#A11C27]";
+
+  if (loading) {
+    return (
+      <div className="min-h-[calc(100vh-64px)] bg-[radial-gradient(circle_at_top_left,rgba(161,28,39,0.10),transparent_34%),radial-gradient(circle_at_top_right,rgba(181,165,115,0.18),transparent_30%),linear-gradient(135deg,#F8FAFC,#F5F5F5)] p-6 text-slate-900">
+        <Card className={`${glassCard} mx-auto mt-12 max-w-xl`}>
+          <CardContent className="flex items-center gap-4 p-6">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#1E293F] text-white shadow-lg">
+              <RefreshCcw className="h-5 w-5 animate-spin" />
+            </div>
+            <div>
+              <div className="text-base font-semibold text-slate-900">Carregando Central de Comando…</div>
+              <div className="text-sm text-slate-500">Organizando seus alertas, eventos e indicadores.</div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const ActionCard = ({
+    title,
+    desc,
+    icon,
+    to,
+  }: {
+    title: string;
+    desc: string;
+    icon: React.ReactNode;
+    to: string;
+  }) => (
+    <button
+      type="button"
+      onClick={() => nav(to)}
+      className="group rounded-2xl border border-slate-200/80 bg-white/75 p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#B5A573]/70 hover:bg-white hover:shadow-[0_18px_45px_rgba(15,23,42,0.10)]"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#1E293F]/95 text-white shadow-md transition-colors group-hover:bg-[#A11C27]">
+            {icon}
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">{title}</div>
+            <div className="mt-0.5 text-xs leading-relaxed text-slate-500">{desc}</div>
+          </div>
+        </div>
+        <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-1 group-hover:text-[#A11C27]" />
+      </div>
+    </button>
+  );
+
+  const StatCard = ({
+    label,
+    value,
+    helper,
+    icon,
+    to,
+    featured = false,
+  }: {
+    label: string;
+    value: React.ReactNode;
+    helper?: React.ReactNode;
+    icon: React.ReactNode;
+    to?: string;
+    featured?: boolean;
+  }) => (
+    <Card className={`${softCard} group ${featured ? "border-[#B5A573]/50 bg-gradient-to-br from-white via-white to-[#F5F5F5]" : ""}`}>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">{label}</div>
+            <div className="mt-3 text-2xl font-bold tracking-tight text-slate-950">{value}</div>
+            {helper ? <div className="mt-1 text-sm text-slate-500">{helper}</div> : null}
+          </div>
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#1E293F] text-white shadow-lg shadow-slate-900/15">
+            {icon}
+          </div>
+        </div>
+        {to ? (
+          <Button className={`mt-5 w-full ${subtleButton}`} onClick={() => nav(to)}>
+            Abrir <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+
+  const alertTone = (kind?: MeuDiaAlert["icon"]) => {
+    if (kind === "alert") return "border-red-200/80 bg-red-50/80 text-red-900";
+    if (kind === "ticket") return "border-amber-200/80 bg-amber-50/85 text-amber-900";
+    if (kind === "trophy") return "border-emerald-200/80 bg-emerald-50/85 text-emerald-900";
+    if (kind === "gift") return "border-pink-200/80 bg-pink-50/80 text-pink-900";
+    return "border-slate-200/80 bg-white/85 text-slate-900";
+  };
 
   const MeuDiaCard = (
-    <div id="meu-dia" className="mt-6">
-      <Card className={glassCard}>
-        <CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Bell className="h-4 w-4" /> Meu Dia</CardTitle></CardHeader>
-        <CardContent className="space-y-2">
-          {myDayAlerts.length === 0 ? <div className="text-slate-500 text-sm">Nenhum alerta operacional para hoje. 👏</div> : <>
-            {myDaySlice.map((a) => <div key={a.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2"><div className="flex items-start justify-between gap-3"><div className="min-w-0 flex gap-2"><div className="mt-0.5">{alertIcon(a.icon)}</div><div className="min-w-0"><div className="text-sm font-medium text-slate-900">{a.title}</div>{a.desc ? <div className="text-xs text-slate-500 mt-0.5">{a.desc}</div> : null}</div></div>{a.action ? <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shrink-0" onClick={() => { if (a.action?.to) nav(a.action.to); else if (a.action?.href) window.open(a.action.href, "_blank"); }}>{a.action.label} <ArrowRight className="h-4 w-4 ml-1" /></Button> : null}</div></div>)}
-            <div className="flex items-center justify-between pt-2"><div className="text-xs text-slate-500">Página {myDayPage + 1} de {myDayPageCount}</div><div className="flex items-center gap-2"><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setMyDayPage((p) => Math.max(0, p - 1))} disabled={myDayPage <= 0}>Anterior</Button><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setMyDayPage((p) => Math.min(myDayPageCount - 1, p + 1))} disabled={myDayPage >= myDayPageCount - 1}>Próxima</Button></div></div>
-          </>}
-        </CardContent>
-      </Card>
-    </div>
+    <Card id="meu-dia" className={`${glassCard} border-[#B5A573]/40 bg-gradient-to-br from-white/90 via-white/80 to-[#F5F5F5]/80`}>
+      <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-[#A11C27]/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-20 left-10 h-52 w-52 rounded-full bg-[#B5A573]/20 blur-3xl" />
+      <CardHeader className="relative pb-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg text-slate-950">
+              <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[#A11C27] text-white shadow-md">
+                <Bell className="h-4 w-4" />
+              </span>
+              Meu Dia
+            </CardTitle>
+            <div className="mt-1 text-sm text-slate-500">
+              Sua central de ação: cobranças, grupos, aniversários, comissões e alertas operacionais.
+            </div>
+          </div>
+          <Badge className="w-fit rounded-full border border-[#B5A573]/50 bg-[#B5A573]/15 px-3 py-1 text-[#1E293F]">
+            {kpi.myDayCount} alerta(s)
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="relative space-y-3">
+        {myDayAlerts.length === 0 ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-900">
+            Nenhum alerta operacional para hoje. Dia limpo para prospectar, vender e fortalecer relacionamento. 👏
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              {myDaySlice.map((a) => (
+                <div key={a.id} className={`rounded-2xl border p-4 shadow-sm ${alertTone(a.icon)}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 gap-3">
+                      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white/85 shadow-sm">
+                        {alertIcon(a.icon)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold leading-snug">{a.title}</div>
+                        {a.desc ? <div className="mt-1 text-xs leading-relaxed opacity-80">{a.desc}</div> : null}
+                      </div>
+                    </div>
+                    {a.action ? (
+                      <Button
+                        size="sm"
+                        className="shrink-0 rounded-xl border border-white/70 bg-white/85 text-slate-900 shadow-sm hover:bg-white"
+                        onClick={() => {
+                          if (a.action?.to) nav(a.action.to);
+                          else if (a.action?.href) window.open(a.action.href, "_blank");
+                        }}
+                      >
+                        {a.action.label} <ArrowRight className="ml-1 h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-200/70 pt-3">
+              <div className="text-xs text-slate-500">Página {myDayPage + 1} de {myDayPageCount}</div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" className={subtleButton} onClick={() => setMyDayPage((p) => Math.max(0, p - 1))} disabled={myDayPage <= 0}>
+                  Anterior
+                </Button>
+                <Button size="sm" className={subtleButton} onClick={() => setMyDayPage((p) => Math.min(myDayPageCount - 1, p + 1))} disabled={myDayPage >= myDayPageCount - 1}>
+                  Próxima
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 
   return (
-    <div className="min-h-[calc(100vh-64px)] p-6 text-slate-900">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><div className="text-2xl font-semibold">Bem-vindo(a), <span className="text-slate-900">{me?.nome?.split(" ")?.[0] || "Max"}</span> 👋</div><div className="text-slate-600 text-sm">Hoje é <span className="font-medium">{rangeToday.br}</span> • Painel de comando do CRM</div></div><div className="flex items-center gap-2 flex-wrap">{admin && <div className="min-w-[260px]"><Select value={vendorScope} onValueChange={setVendorScope}><SelectTrigger className="bg-white border border-slate-200 text-slate-900"><SelectValue placeholder="Vendedor: Todos" /></SelectTrigger><SelectContent><SelectItem value={ALL}>Todos (Admin)</SelectItem>{users.filter((u) => (u.role || u.user_role || "").toLowerCase() !== "viewer").map((u) => <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>)}</SelectContent></Select></div>}<Button variant="secondary" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => reload(true)} disabled={refreshing} title="Atualizar painel"><RefreshCcw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />Atualizar</Button></div></div>
-      {errMsg ? <div className="mt-5"><Card className={`${glassCard} border-red-200`}><CardHeader className="pb-2"><CardTitle className="text-sm text-red-700 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Erro ao carregar o painel</CardTitle></CardHeader><CardContent className="text-sm text-slate-700"><div className="mb-2">Copia essa mensagem e me manda:</div><pre className="whitespace-pre-wrap break-words rounded-md bg-white border border-slate-200 p-3 text-xs text-slate-800">{errMsg}</pre></CardContent></Card></div> : null}
+    <div className="min-h-[calc(100vh-64px)] bg-[radial-gradient(circle_at_top_left,rgba(161,28,39,0.13),transparent_32%),radial-gradient(circle_at_top_right,rgba(181,165,115,0.18),transparent_30%),linear-gradient(135deg,#F8FAFC,#F5F5F5_42%,#EEF2F7)] p-4 text-slate-900 md:p-6">
+      <div className="mx-auto max-w-[1500px] space-y-6">
+        <Card className={`${glassCard} border-white/70 bg-gradient-to-br from-[#1E293F] via-[#26344f] to-[#A11C27] text-white`}>
+          <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-24 left-1/3 h-64 w-64 rounded-full bg-[#B5A573]/25 blur-3xl" />
+          <CardContent className="relative p-6 md:p-8">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="max-w-3xl">
+                <Badge className="mb-3 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-white shadow-sm backdrop-blur">
+                  Central de Comando Consulmax
+                </Badge>
+                <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
+                  Bem-vindo(a), {me?.nome?.split(" ")?.[0] || "Max"} 👋
+                </h1>
+                <p className="mt-2 text-sm text-white/75 md:text-base">
+                  Hoje é <span className="font-semibold text-white">{rangeToday.br}</span>. Você tem <span className="font-semibold text-[#E0CE8C]">{kpi.myDayCount}</span> ação(ões) importante(s) para movimentar a operação.
+                </p>
+              </div>
 
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
-        <Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Bell className="h-4 w-4" /> Meu Dia</CardTitle></CardHeader><CardContent><div className="text-3xl font-semibold">{kpi.myDayCount}</div><div className="text-slate-600 text-sm mt-1">alerta(s) para agir hoje</div><Button className="mt-3 bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => document.getElementById("meu-dia")?.scrollIntoView({ behavior: "smooth" })}>Ver Meu Dia <ArrowRight className="h-4 w-4 ml-2" /></Button></CardContent></Card>
-        <Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Oportunidades</CardTitle></CardHeader><CardContent><div className="text-3xl font-semibold">{kpi.openOppCount}</div><div className="text-slate-600 text-sm mt-1">{fmtBRL(kpi.openOppTotal)}</div><Button className="mt-3 bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/oportunidades")}>Ver Oportunidades <ArrowRight className="h-4 w-4 ml-2" /></Button></CardContent></Card>
-        <Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Calendar className="h-4 w-4" /> Agenda de hoje</CardTitle></CardHeader><CardContent><div className="text-3xl font-semibold">{kpi.todayEventsCount}</div><div className="text-slate-600 text-sm mt-1">{admin && vendorScope !== ALL ? `Filtrado: ${scopedUser?.nome || "—"}` : admin ? "Visão geral" : "Somente seus eventos"}</div><Button className="mt-3 bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/agenda")}>Abrir Agenda <ArrowRight className="h-4 w-4 ml-2" /></Button></CardContent></Card>
-        <Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Briefcase className="h-4 w-4" /> Meta x Vendas (mês)</CardTitle></CardHeader><CardContent><div className="flex items-center gap-4"><Donut pct={kpi.monthSalesPct} centerTop={`${kpi.monthSalesPct.toFixed(1).replace(".", ",")}%`} centerBottom="da meta" /><div className="min-w-0 flex-1"><div className="text-sm text-slate-600">Realizado</div><div className="text-lg font-semibold text-slate-900">{fmtBRL(kpi.monthSalesTotal)}</div><div className="mt-2 text-sm text-slate-600">Meta</div><div className="text-base font-semibold text-slate-900">{fmtBRL(kpi.monthSalesMeta)}</div></div></div></CardContent></Card>
-        <Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Wallet className="h-4 w-4" /> Carteira ativa</CardTitle></CardHeader><CardContent><div className="text-2xl font-semibold">{fmtBRL(kpi.carteiraAtivaTotal)}</div><Button className="mt-3 bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/carteira")}>Abrir Carteira <ArrowRight className="h-4 w-4 ml-2" /></Button></CardContent></Card>
+              <div className="flex flex-col gap-3 sm:flex-row lg:items-center">
+                {admin && (
+                  <div className="min-w-[260px]">
+                    <Select value={vendorScope} onValueChange={setVendorScope}>
+                      <SelectTrigger className="rounded-2xl border border-white/20 bg-white/10 text-white shadow-sm backdrop-blur placeholder:text-white/70">
+                        <SelectValue placeholder="Vendedor: Todos" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL}>Todos (Admin)</SelectItem>
+                        {users
+                          .filter((u) => (u.role || u.user_role || "").toLowerCase() !== "viewer")
+                          .map((u) => (
+                            <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <Button className="rounded-2xl border border-white/20 bg-white/10 text-white shadow-sm backdrop-blur hover:bg-white/20" onClick={() => reload(true)} disabled={refreshing}>
+                  <RefreshCcw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                  Atualizar
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur">
+                <div className="text-xs uppercase tracking-[0.16em] text-white/60">Meu Dia</div>
+                <div className="mt-1 text-2xl font-bold">{kpi.myDayCount}</div>
+              </div>
+              <div className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur">
+                <div className="text-xs uppercase tracking-[0.16em] text-white/60">Oportunidades</div>
+                <div className="mt-1 text-2xl font-bold">{kpi.openOppCount}</div>
+              </div>
+              <div className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur">
+                <div className="text-xs uppercase tracking-[0.16em] text-white/60">Agenda hoje</div>
+                <div className="mt-1 text-2xl font-bold">{kpi.todayEventsCount}</div>
+              </div>
+              <div className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur">
+                <div className="text-xs uppercase tracking-[0.16em] text-white/60">Carteira</div>
+                <div className="mt-1 text-lg font-bold">{fmtBRL(kpi.carteiraAtivaTotal)}</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {errMsg ? (
+          <Card className={`${glassCard} border-red-200 bg-red-50/80`}>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm text-red-700">
+                <AlertTriangle className="h-4 w-4" /> Erro ao carregar o painel
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-slate-700">
+              <div className="mb-2">Copia essa mensagem e me manda:</div>
+              <pre className="whitespace-pre-wrap break-words rounded-2xl border border-red-100 bg-white/80 p-3 text-xs text-slate-800">{errMsg}</pre>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <StatCard label="Meu Dia" value={kpi.myDayCount} helper="ações para hoje" icon={<Bell className="h-5 w-5" />} featured />
+          <StatCard label="Oportunidades" value={kpi.openOppCount} helper={fmtBRL(kpi.openOppTotal)} icon={<AlertTriangle className="h-5 w-5" />} to="/oportunidades" />
+          <StatCard label="Agenda" value={kpi.todayEventsCount} helper={admin && vendorScope !== ALL ? `Filtrado: ${scopedUser?.nome || "—"}` : admin ? "Visão geral" : "Somente seus eventos"} icon={<Calendar className="h-5 w-5" />} to="/agenda" />
+          <Card className={softCard}>
+            <CardContent className="flex items-center gap-4 p-5">
+              <Donut pct={kpi.monthSalesPct} size={112} stroke={10} centerTop={`${kpi.monthSalesPct.toFixed(1).replace(".", ",")}%`} centerBottom="da meta" />
+              <div className="min-w-0">
+                <div className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Meta x Vendas</div>
+                <div className="mt-2 text-sm text-slate-500">Realizado</div>
+                <div className="text-base font-bold text-slate-950">{fmtBRL(kpi.monthSalesTotal)}</div>
+                <div className="mt-1 text-xs text-slate-500">Meta: {fmtBRL(kpi.monthSalesMeta)}</div>
+              </div>
+            </CardContent>
+          </Card>
+          <StatCard label="Carteira ativa" value={fmtBRL(kpi.carteiraAtivaTotal)} helper="cotas ativas" icon={<Wallet className="h-5 w-5" />} to="/carteira" />
+        </div>
+
+        {MeuDiaCard}
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <Card className={`${glassCard} xl:col-span-2`}>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-slate-950">
+                <Rocket className="h-5 w-5 text-[#A11C27]" /> Ações rápidas
+              </CardTitle>
+              <div className="text-sm text-slate-500">Atalhos principais para movimentar venda, operação e relacionamento.</div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <ActionCard title="Oportunidades" desc="Criar, qualificar e avançar negociações." icon={<Target className="h-5 w-5" />} to="/oportunidades" />
+                <ActionCard title="Simular" desc="Montar estratégia de consórcio para o lead." icon={<Briefcase className="h-5 w-5" />} to="/simuladores" />
+                <ActionCard title="Gerar Proposta" desc="Transformar simulação em proposta visual." icon={<FileText className="h-5 w-5" />} to="/propostas" />
+                <ActionCard title="Comissões" desc="Acompanhar pendências, fluxo e recibos." icon={<Trophy className="h-5 w-5" />} to="/comissoes" />
+                <ActionCard title="Gestão de Grupos" desc="Sorteios, assembleias, lances e vencimentos." icon={<Calendar className="h-5 w-5" />} to="/gestao-de-grupos" />
+                <ActionCard title="Contempladas" desc="Consultar estoque e solicitações de reserva." icon={<Ticket className="h-5 w-5" />} to="/estoque-contempladas" />
+                <ActionCard title="Playbook" desc="Planejamento, scripts e rotina comercial." icon={<BookOpen className="h-5 w-5" />} to="/planejamento" />
+                <ActionCard title="Links Úteis" desc="Materiais e acessos importantes." icon={<LinkIcon className="h-5 w-5" />} to="/links" />
+                <ActionCard title="Relatórios" desc="Extrair dados para gestão e decisão." icon={<FileText className="h-5 w-5" />} to="/relatorios" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className={glassCard}>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-slate-950">
+                <Target className="h-5 w-5 text-[#A11C27]" /> Alertas do sistema
+              </CardTitle>
+              <div className="text-sm text-slate-500">Resumo operacional para não deixar nada escapar.</div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {[
+                ["Procedimentos novos", kpi.newProceduresCount],
+                ["Grupos com evento hoje", kpi.todayGroupsCount],
+                ["Grupos pendentes de cadastro", kpi.pendingGroupRegistrationCount],
+                ["Vendas sem comissão", kpi.vendasSemComissaoCount],
+                ["Comissões pendentes", kpi.commissionsPendingCount],
+                ["Giro pendente", kpi.giroDueCount],
+                ["Solicitações de reserva", kpi.openStockReqCount],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="flex items-center justify-between rounded-2xl border border-slate-200/75 bg-white/70 px-3 py-2.5">
+                  <div className="text-sm text-slate-700">{label}</div>
+                  <Badge className="rounded-full border border-slate-200 bg-slate-50 text-slate-800">{value}</Badge>
+                </div>
+              ))}
+              <div className="rounded-2xl border border-[#B5A573]/40 bg-[#B5A573]/10 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">Total pendente</div>
+                    <div className="text-xs text-slate-500">Comissões a receber</div>
+                  </div>
+                  <div className="text-right text-sm font-bold text-slate-950">{fmtBRL(kpi.commissionsPendingTotal)}</div>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-emerald-950">Comissão programada</div>
+                    <div className="text-xs text-emerald-700">{kpi.commissionScheduledDate ? fmtDateBRFromYMD(kpi.commissionScheduledDate) : "Sem data"}</div>
+                  </div>
+                  <div className="text-right text-sm font-bold text-emerald-950">{fmtBRL(kpi.commissionScheduledTotal)}</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <Card className={glassCard}>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-slate-950">
+                <AlertTriangle className="h-5 w-5 text-[#A11C27]" /> Oportunidades atrasadas
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {overdueOpps.length === 0 ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-sm text-emerald-900">Nada atrasado por aqui. 👏</div>
+              ) : (
+                overdueOpps.map((o) => (
+                  <div key={o.id} className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-950">{o.lead_nome || "Lead"}</div>
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {(o.estagio || "—") as any} • {typeof o.daysWaiting === "number" ? `${o.daysWaiting} dia(s) aguardando` : "—"}
+                        </div>
+                        <div className="mt-0.5 truncate text-xs text-slate-400">{o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}</div>
+                      </div>
+                      <div className="shrink-0 text-right text-sm font-bold text-slate-950">{fmtBRL(Number(o.valor_credito || 0) || 0)}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+              <Button className={`w-full ${primaryButton}`} onClick={() => nav("/oportunidades")}>Ver Oportunidades <ArrowRight className="ml-2 h-4 w-4" /></Button>
+            </CardContent>
+          </Card>
+
+          <Card className={glassCard}>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-slate-950">
+                <Wallet className="h-5 w-5 text-[#A11C27]" /> Giros pendentes
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {giroAll.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm text-slate-500">
+                  {kpi.giroDueCount > 0 ? `Você tem ${kpi.giroDueCount} giro(s) pendente(s).` : "Sem giros pendentes no momento."}
+                </div>
+              ) : (
+                <>
+                  {giroSlice.map((g) => (
+                    <div key={g.id} className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-slate-950">{g.nome}</div>
+                          <div className="truncate text-xs text-slate-500">Carteira ativa: {fmtBRL(Number(g.carteiraAtiva || 0) || 0)}</div>
+                        </div>
+                        <Button size="sm" className={subtleButton} onClick={() => nav("/giro-de-carteira")}>Abrir</Button>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between border-t border-slate-200/70 pt-3">
+                    <div className="text-xs text-slate-500">Página {giroPage + 1} de {giroPageCount}</div>
+                    <div className="flex gap-2">
+                      <Button size="sm" className={subtleButton} onClick={() => setGiroPage((p) => Math.max(0, p - 1))} disabled={giroPage <= 0}>Anterior</Button>
+                      <Button size="sm" className={subtleButton} onClick={() => setGiroPage((p) => Math.min(giroPageCount - 1, p + 1))} disabled={giroPage >= giroPageCount - 1}>Próxima</Button>
+                    </div>
+                  </div>
+                </>
+              )}
+              <Button className={`w-full ${primaryButton}`} onClick={() => nav("/giro-de-carteira")}>Abrir Giro <ArrowRight className="ml-2 h-4 w-4" /></Button>
+            </CardContent>
+          </Card>
+
+          <Card className={glassCard}>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-slate-950">
+                <Calendar className="h-5 w-5 text-[#A11C27]" /> Próximos eventos
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {eventsAll.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm text-slate-500">Sem eventos futuros para esta semana.</div>
+              ) : (
+                <>
+                  {eventsSlice.map((e) => (
+                    <div key={e.id} className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <Badge className={`${flagBadgeClass(e.flag)} rounded-full`}>{e.flag}</Badge>
+                            <div className="text-xs text-slate-500">{e.whenLabel}</div>
+                          </div>
+                          <div className="mt-2 truncate text-sm font-semibold text-slate-950">{e.title}</div>
+                          {e.desc ? <div className="mt-0.5 truncate text-xs text-slate-500">{e.desc}</div> : null}
+                        </div>
+                        {e.action ? (
+                          <Button size="sm" className={subtleButton} onClick={() => { if (e.action?.to) nav(e.action.to); else if (e.action?.href) window.open(e.action.href, "_blank"); }}>
+                            Abrir
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between border-t border-slate-200/70 pt-3">
+                    <div className="text-xs text-slate-500">Página {eventsPage + 1} de {eventsPageCount}</div>
+                    <div className="flex gap-2">
+                      <Button size="sm" className={subtleButton} onClick={() => setEventsPage((p) => Math.max(0, p - 1))} disabled={eventsPage <= 0}>Anterior</Button>
+                      <Button size="sm" className={subtleButton} onClick={() => setEventsPage((p) => Math.min(eventsPageCount - 1, p + 1))} disabled={eventsPage >= eventsPageCount - 1}>Próxima</Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className={`${glassCard} border-[#B5A573]/40`}>
+          <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#1E293F] text-white shadow-md">
+                <MessageCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-slate-950">Pensamento do Dia</div>
+                <div className="mt-1 text-sm text-slate-600">“{thoughtOfDay || FALLBACK_THOUGHTS[0]}”</div>
+              </div>
+            </div>
+            <Button className={primaryButton} onClick={() => nav("/planejamento")}>Abrir Playbook <ArrowRight className="ml-2 h-4 w-4" /></Button>
+          </CardContent>
+        </Card>
       </div>
-
-      {MeuDiaCard}
-
-      <div className="mt-6 grid grid-cols-1 xl:grid-cols-3 gap-4"><Card className={`${glassCard} xl:col-span-2`}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Rocket className="h-4 w-4" /> Ações rápidas</CardTitle></CardHeader><CardContent><div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/oportunidades")}>Nova / Gerir Oportunidades <ArrowRight className="h-4 w-4" /></Button><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/simuladores")}>Simular <ArrowRight className="h-4 w-4" /></Button><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/propostas")}>Gerar Proposta <ArrowRight className="h-4 w-4" /></Button><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/comissoes")}>Comissões <ArrowRight className="h-4 w-4" /></Button><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/gestao-de-grupos")}>Gestão de Grupos <ArrowRight className="h-4 w-4" /></Button><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/estoque-contempladas")}>Contempladas <ArrowRight className="h-4 w-4" /></Button><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/planejamento")}><span className="inline-flex items-center gap-2"><BookOpen className="h-4 w-4" /> Playbook de Vendas</span><ArrowRight className="h-4 w-4" /></Button><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/links")}><span className="inline-flex items-center gap-2"><LinkIcon className="h-4 w-4" /> Links Úteis</span><ArrowRight className="h-4 w-4" /></Button><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 justify-between" onClick={() => nav("/relatorios")}>Extrair Relatório <ArrowRight className="h-4 w-4" /></Button></div></CardContent></Card><Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Target className="h-4 w-4" /> Alertas do sistema</CardTitle></CardHeader><CardContent className="space-y-3"><div className="flex items-center justify-between"><div className="text-slate-700 inline-flex items-center gap-2"><FileText className="h-4 w-4 text-slate-500" />Procedimentos novos</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.newProceduresCount}</Badge></div><div className="flex items-center justify-between"><div className="text-slate-700">Grupos com evento hoje</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.todayGroupsCount}</Badge></div><div className="flex items-center justify-between"><div className="text-slate-700">Grupos pendentes de cadastro</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.pendingGroupRegistrationCount}</Badge></div><div className="flex items-center justify-between"><div className="text-slate-700">Vendas sem comissão</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.vendasSemComissaoCount}</Badge></div><div className="flex items-center justify-between"><div className="text-slate-700">Comissões pendentes</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.commissionsPendingCount}</Badge></div><div className="flex items-center justify-between"><div className="text-slate-700">Total pendente</div><div className="text-slate-900 font-medium">{fmtBRL(kpi.commissionsPendingTotal)}</div></div><div className="flex items-center justify-between"><div className="text-slate-700">Comissão programada</div><div className="text-right"><div className="text-slate-900 font-medium">{fmtBRL(kpi.commissionScheduledTotal)}</div><div className="text-xs text-slate-500">{kpi.commissionScheduledDate ? fmtDateBRFromYMD(kpi.commissionScheduledDate) : "Sem data"}</div></div></div><div className="flex items-center justify-between"><div className="text-slate-700">Giro pendente</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.giroDueCount}</Badge></div><div className="flex items-center justify-between"><div className="text-slate-700">Solicitações de reserva</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.openStockReqCount}</Badge></div></CardContent></Card></div>
-
-      <div className="mt-6 grid grid-cols-1 xl:grid-cols-3 gap-4"><Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Oportunidades Atrasadas</CardTitle></CardHeader><CardContent className="space-y-2">{overdueOpps.length === 0 ? <div className="text-slate-500 text-sm">Nada atrasado por aqui. 👏</div> : overdueOpps.map((o) => <div key={o.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2"><div className="min-w-0"><div className="text-sm font-medium truncate">{o.lead_nome || "Lead"} <span className="text-slate-500">• {(o.estagio || "—") as any}</span></div><div className="text-xs text-slate-500 truncate">{typeof o.daysWaiting === "number" ? `${o.daysWaiting} dia(s) aguardando` : "—"} • {o.lead_tel ? `Tel: ${o.lead_tel}` : "Sem telefone"}</div></div><div className="text-sm font-semibold">{fmtBRL(Number(o.valor_credito || 0) || 0)}</div></div>)}<Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 w-full" onClick={() => nav("/oportunidades")}>Ver Oportunidades <ArrowRight className="h-4 w-4 ml-2" /></Button></CardContent></Card><Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Wallet className="h-4 w-4" /> Giros Pendentes</CardTitle></CardHeader><CardContent className="space-y-2">{giroAll.length === 0 ? <div className="text-slate-500 text-sm">{kpi.giroDueCount > 0 ? `Você tem ${kpi.giroDueCount} giro(s) pendente(s).` : "Sem giros pendentes no momento."}</div> : <>{giroSlice.map((g) => <div key={g.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2"><div className="min-w-0"><div className="text-sm font-medium truncate">{g.nome}</div><div className="text-xs text-slate-500 truncate">Carteira ativa: {fmtBRL(Number(g.carteiraAtiva || 0) || 0)}</div></div><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/giro-de-carteira")}>Abrir <ArrowRight className="h-4 w-4 ml-1" /></Button></div>)}<div className="flex items-center justify-between pt-2"><div className="text-xs text-slate-500">Página {giroPage + 1} de {giroPageCount}</div><div className="flex items-center gap-2"><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setGiroPage((p) => Math.max(0, p - 1))} disabled={giroPage <= 0}>Anterior</Button><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setGiroPage((p) => Math.min(giroPageCount - 1, p + 1))} disabled={giroPage >= giroPageCount - 1}>Próxima</Button></div></div></>}<Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 w-full" onClick={() => nav("/giro-de-carteira")}>Abrir Giro <ArrowRight className="h-4 w-4 ml-2" /></Button></CardContent></Card><Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Calendar className="h-4 w-4" /> Próximos Eventos</CardTitle></CardHeader><CardContent className="space-y-2">{eventsAll.length === 0 ? <div className="text-slate-500 text-sm">Sem eventos futuros para esta semana.</div> : <>{eventsSlice.map((e) => <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="flex items-center gap-2"><Badge className={flagBadgeClass(e.flag)}>{e.flag}</Badge><div className="text-xs text-slate-500">{e.whenLabel}</div></div><div className="text-sm font-medium truncate mt-1">{e.title}</div>{e.desc ? <div className="text-xs text-slate-500 truncate">{e.desc}</div> : null}</div>{e.action ? <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shrink-0" onClick={() => { if (e.action?.to) nav(e.action.to); else if (e.action?.href) window.open(e.action.href, "_blank"); }}>{e.action.label} <ArrowRight className="h-4 w-4 ml-1" /></Button> : null}</div></div>)}<div className="flex items-center justify-between pt-2"><div className="text-xs text-slate-500">Página {eventsPage + 1} de {eventsPageCount}</div><div className="flex items-center gap-2"><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setEventsPage((p) => Math.max(0, p - 1))} disabled={eventsPage <= 0}>Anterior</Button><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setEventsPage((p) => Math.min(eventsPageCount - 1, p + 1))} disabled={eventsPage >= eventsPageCount - 1}>Próxima</Button></div></div></>}</CardContent></Card></div>
-      <div className="mt-6"><Card className={glassCard}><CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><MessageCircle className="h-4 w-4" /> Pensamento do Dia</CardTitle></CardHeader><CardContent className="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div className="text-slate-700"><span className="font-semibold">“{thoughtOfDay || FALLBACK_THOUGHTS[0]}”</span></div><Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/planejamento")}>Abrir Playbook <ArrowRight className="h-4 w-4 ml-2" /></Button></CardContent></Card></div>
     </div>
   );
 }

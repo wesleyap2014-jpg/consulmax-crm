@@ -40,7 +40,7 @@ type GiroItemRow = { id?: string | null; lead_id?: string | null; cliente_id?: s
 type KBProcRow = { id: string; title?: string | null; titulo?: string | null; status?: string | null; created_at?: string | null; updated_at?: string | null };
 type CommissionRow = { id: string; venda_id: string; vendedor_id: string; valor_total: number | null; base_calculo?: number | null; percent_aplicado?: number | null; status: string | null; data_venda?: string | null };
 type CommissionFlowRow = { id?: string; commission_id: string; mes?: number | null; percentual?: number | null; valor_previsto: number | null; valor_pago_vendedor: number | null; data_pagamento_vendedor: string | null };
-type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; segmento?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; cota?: string | null; status?: string | null; contemplada?: boolean | null; lead_id?: string | null; cliente_lead_id?: string | null; inad?: boolean | null; inad_em?: string | null; inad_revertida_em?: string | null };
+type VendaMini = { id: string; vendedor_id: string; valor_venda?: number | null; data_venda?: string | null; encarteirada_em?: string | null; codigo?: string | null; cancelada_em?: string | null; segmento?: string | null; tabela?: string | null; administradora?: string | null; grupo?: string | null; status?: string | null; contemplada?: boolean | null };
 type MeuDiaAlert = { id: string; priority: number; title: string; desc?: string | null; icon?: "bell" | "gift" | "ticket" | "trophy" | "alert"; action?: { label: string; to?: string; href?: string } };
 type DateFlag = "Hoje" | "Amanhã" | "Esta Semana";
 type NextEventItem = { id: string; whenSort: number; whenLabel: string; flag: DateFlag; title: string; desc?: string | null; action?: { label: string; to?: string; href?: string } };
@@ -63,8 +63,6 @@ function isAdmin(u?: UserRow | null) { return (u?.role || u?.user_role || "").to
 function humanErr(e: any) { if (!e) return "Erro desconhecido."; if (typeof e === "string") return e; return String(e?.message || e?.error_description || e?.details || e?.hint || JSON.stringify(e)); }
 function metaFieldForMonth(month: number) { return `m${String(month).padStart(2, "0")}` as any; }
 function daysDiffYMD(a: string, b: string) { if (!a || !b) return 0; const [ay, am, ad] = a.slice(0, 10).split("-").map(Number); const [by, bm, bd] = b.slice(0, 10).split("-").map(Number); return Math.round((Date.UTC(ay, am - 1, ad, 12) - Date.UTC(by, bm - 1, bd, 12)) / 86400000); }
-function weekdayYMD(ymd: string) { const [y, m, d] = ymd.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay(); }
-function isBillingRuleDay(ymd: string) { const w = weekdayYMD(ymd); return w === 2 || w === 4; }
 function normalizeText(v?: string | null) { return String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase(); }
 function isOpenOpportunityStage(v?: string | null) { const s = normalizeText(v); return ["novo", "qualificando", "qualificacao", "proposta", "negociacao"].includes(s); }
 function stripAccents(s: string) { return s.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
@@ -280,60 +278,6 @@ export default function Inicio() {
     const { data: allBirth, error: birthErr } = await supabase.from("clientes").select("id,nome,data_nascimento,telefone").not("data_nascimento", "is", null).limit(2000);
     if (birthErr) throw birthErr;
     const birthdayToday = ((allBirth || []) as ClienteRow[]).filter((c) => (toYMD(c.data_nascimento) || "").slice(5) === today.slice(5)).slice(0, 50);
-    const inadimplentesByBucket = new Map<string, { count: number; names: string[] }>();
-    if (isBillingRuleDay(today)) {
-      try {
-        let inadQ = supabase
-          .from("vendas")
-          .select("id,vendedor_id,lead_id,cliente_lead_id,grupo,cota,codigo,cancelada_em,inad,inad_em,inad_revertida_em")
-          .eq("inad", true)
-          .is("inad_revertida_em", null)
-          .limit(5000);
-
-        if (!admin) inadQ = inadQ.eq("vendedor_id", scopeAuthId);
-        if (admin && scopeAuthId !== ALL) inadQ = inadQ.eq("vendedor_id", scopeAuthId);
-
-        const { data: inadRowsRaw, error: inadErr } = await inadQ;
-        if (inadErr) throw inadErr;
-
-        const inadRows = ((inadRowsRaw || []) as any as VendaMini[])
-          .filter((v) => !isVendaCancelada(v))
-          .filter((v) => Boolean(toYMD(v.inad_em)));
-
-        const inadLeadIds = Array.from(
-          new Set(
-            inadRows
-              .map((v) => v.lead_id || v.cliente_lead_id)
-              .filter(Boolean) as string[]
-          )
-        );
-
-        const inadLeadsMap = await tryLoadLeadsMap(inadLeadIds);
-
-        for (const v of inadRows) {
-          const base = toYMD(v.inad_em);
-          if (!base) continue;
-
-          const dias = Math.max(1, daysDiffYMD(today, base));
-          const leadId = v.lead_id || v.cliente_lead_id || "";
-          const nome = inadLeadsMap.get(leadId)?.nome || `Grupo ${v.grupo || "—"} / Cota ${v.cota || "—"}`;
-
-          let bucket = "";
-          if (dias <= 15) bucket = "1-15";
-          else if (dias <= 30) bucket = "16-30";
-          else if (dias <= 60) bucket = "31-60";
-          else bucket = "60+";
-
-          const cur = inadimplentesByBucket.get(bucket) || { count: 0, names: [] };
-          cur.count += 1;
-          if (cur.names.length < 5) cur.names.push(nome);
-          inadimplentesByBucket.set(bucket, cur);
-        }
-      } catch (e) {
-        console.warn("[Inicio] Não foi possível carregar régua de inadimplência:", e);
-      }
-    }
-
     let newProceduresCount = 0;
     try { const sevenDaysAgo = addDaysYMD(today, -7); const { data: kbRows, error: kbErr } = await supabase.from("kb_procedures").select("id,title,titulo,status,created_at,updated_at").order("created_at", { ascending: false }).limit(200); if (!kbErr && kbRows) newProceduresCount = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active" && (toYMD(p.created_at) || "") >= sevenDaysAgo).length; } catch {}
 
@@ -341,8 +285,6 @@ export default function Inicio() {
     if (pendingGroupRegistrationCount > 0) { const groups = Array.from(missingGroupsMap.values()).map((v) => ({ codigo: normalizeGroupDigits(v.grupo) })); myDay.push({ id: "pending-groups", priority: 10, icon: "alert", title: `Grupos pendentes de cadastro: ${groupListLabel(groups)}`, desc: "Há vendas em grupos que ainda não estão cadastrados na Gestão de Grupos.", action: { label: "Cadastrar Grupos", to: "/gestao-de-grupos" } }); }
     const boletoGroups = groupRows.filter((g) => groupVencYMD(g) === tomorrow);
     if (boletoGroups.length) myDay.push({ id: "boleto-groups", priority: 20, icon: "ticket", title: `Enviar boleto dos grupos ${groupListLabel(boletoGroups)}`, desc: `Vencimento previsto para ${fmtDateBRFromYMD(tomorrow)}.`, action: { label: "Ver Grupos", to: "/gestao-de-grupos" } });
-    const vencimentoTodayGroups = groupRows.filter((g) => groupVencYMD(g) === today);
-    if (vencimentoTodayGroups.length) myDay.push({ id: "vencimento-today-groups", priority: 25, icon: "ticket", title: `Vencimento dos grupos ${groupListLabel(vencimentoTodayGroups)}`, desc: "Verificar se há clientes com pagamento pendente e emitir alerta/recobrança.", action: { label: "Ver Grupos", to: "/gestao-de-grupos" } });
     const loteriaGroups = groupRows.filter((g) => { const sorteio = groupSorteioYMD(g); const asm = groupAsmYMD(g); if (!sorteio || !asm) return false; return today >= sorteio && today < asm && !hasDraw(drawsByDate, sorteio); });
     if (loteriaGroups.length) myDay.push({ id: "loteria-groups", priority: 30, icon: "alert", title: `Informar resultado da Loteria para os grupos ${groupListLabel(loteriaGroups)}`, desc: "Esse alerta some quando o resultado da Loteria Federal da data do sorteio é informado.", action: { label: "Informar Loteria", to: "/gestao-de-grupos" } });
     const lanceGroups = groupRows.filter((g) => { const adm = normalizeAdmin(g.administradora).toLowerCase(); const sorteio = groupSorteioYMD(g); const asm = groupAsmYMD(g); if (adm === "maggi" || adm === "hs") return sorteio === tomorrow; return asm === tomorrow; });
@@ -351,27 +293,6 @@ export default function Inicio() {
     if (assembleiaTodayGroups.length) myDay.push({ id: "assembleia-today", priority: 50, icon: "bell", title: `Hoje tem assembleia dos grupos ${groupListLabel(assembleiaTodayGroups)}`, desc: "Verificar se os clientes foram contemplados.", action: { label: "Ver Assembleias", to: "/gestao-de-grupos" } });
     const assembleiaYesterdayGroups = groupRows.filter((g) => groupAsmYMD(g) === yesterday);
     if (assembleiaYesterdayGroups.length) myDay.push({ id: "assembleia-result", priority: 60, icon: "alert", title: `Informar o resultado da assembleia dos grupos ${groupListLabel(assembleiaYesterdayGroups)}`, desc: `Assembleia realizada em ${fmtDateBRFromYMD(yesterday)}.`, action: { label: "Informar Resultado", to: "/gestao-de-grupos" } });
-    const billingBuckets = [
-      { key: "1-15", title: "Clientes inadimplentes de 1 a 15 dias", desc: "Cliente inadimplente: reenviar boleto de cobrança." },
-      { key: "16-30", title: "Clientes inadimplentes de 16 a 30 dias", desc: "Realizar ligação solicitando o pagamento da parcela em aberto." },
-      { key: "31-60", title: "Clientes inadimplentes de 30 a 60 dias", desc: "Ligar para entender a situação e agendar uma data de regularização." },
-      { key: "60+", title: "Clientes inadimplentes há mais de 60 dias", desc: "Ligar e ofertar reparcelamento das parcelas inadimplentes." },
-    ];
-
-    billingBuckets.forEach((b, idx) => {
-      const data = inadimplentesByBucket.get(b.key);
-      if (!data || data.count <= 0) return;
-      const nomes = data.names.length ? ` Clientes: ${data.names.join(", ")}${data.count > data.names.length ? ` +${data.count - data.names.length}` : ""}.` : "";
-      myDay.push({
-        id: `inad-${b.key}`,
-        priority: 65 + idx,
-        icon: "alert",
-        title: `${b.title}: ${data.count} cliente(s)`,
-        desc: `${b.desc}${nomes}`,
-        action: { label: "Abrir Carteira", to: "/carteira" },
-      });
-    });
-
     birthdayToday.forEach((c) => myDay.push({ id: `birthday:${c.id}`, priority: 70, icon: "gift", title: `Hoje é aniversário do cliente ${c.nome}`, desc: "Parabenize-o e fortaleça o relacionamento.", action: { label: "Ver Clientes", to: "/clientes" } }));
     const commissionToday = scheduledByDate.get(today) || 0;
     if (commissionToday > 0) myDay.push({ id: "commission-today", priority: 80, icon: "trophy", title: `Hoje você receberá ${fmtBRL(commissionToday)} de comissão`, desc: "Celebre esse momento. Resultado é consequência de processo bem feito.", action: { label: "Abrir Comissões", to: "/comissoes" } });

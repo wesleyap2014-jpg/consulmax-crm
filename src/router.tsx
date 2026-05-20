@@ -30,6 +30,7 @@ const LinksUteis = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador = React.lazy(() => import("./pages/PublicSimulador"));
 const PublicPonto = React.lazy(() => import("./pages/PublicPonto"));
+const PublicTrabalheConosco = React.lazy(() => import("./pages/PublicTrabalheConosco"));
 const FluxoDeCaixa = React.lazy(() => import("./pages/FluxoDeCaixa"));
 const Planejamento = React.lazy(() => import("./pages/Planejamento"));
 const Relatorios = React.lazy(() => import("./pages/Relatorios"));
@@ -89,6 +90,10 @@ export const router = createBrowserRouter([
   { path: "/ponto", element: withSuspense(<PublicPonto />) },
   { path: "/registro-ponto", element: <Navigate to="/ponto" replace /> },
   { path: "/ponto-eletronico", element: <Navigate to="/ponto" replace /> },
+  { path: "/trabalhe-conosco", element: withSuspense(<PublicTrabalheConosco />) },
+  { path: "/trabalheconosco", element: <Navigate to="/trabalhe-conosco" replace /> },
+  { path: "/carreiras", element: <Navigate to="/trabalhe-conosco" replace /> },
+  { path: "/vagas", element: <Navigate to="/trabalhe-conosco" replace /> },
   { path: "/agenda/sala/:eventId", element: withSuspense(<AgendaSala />) },
 
   { path: "/login", element: withSuspense(<Login />) },

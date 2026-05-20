@@ -304,8 +304,9 @@ function isVendaCancelada(venda: { codigo?: string | null; cancelada_em?: string
   const codigo = venda.codigo ?? null;
   const canceladaEm = venda.cancelada_em ?? null;
 
-  if (canceladaEm) return true;
+  if (codigo === "00") return false;
   if (codigo && codigo !== "00") return true;
+  if (canceladaEm) return true;
 
   return false;
 }
@@ -2508,9 +2509,7 @@ export default function ComissoesPage() {
                         </Button>
                       )}
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {isAdmin ? "Esse percentual será usado em todos os recibos." : "Percentual definido pela administração."}
-                    </div>
+                    {!isAdmin && <div className="text-xs text-gray-500">Percentual definido pela administração.</div>}
                   </div>
 
                   <div className="flex items-end gap-3">
@@ -3130,7 +3129,6 @@ export default function ComissoesPage() {
               <DialogTitle>Configurar imposto (fixo)</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="text-sm text-gray-600">Esse valor será usado em todos os recibos.</div>
               <div className="flex flex-col gap-2">
                 <Label>Imposto (%)</Label>
                 <Input value={impostoDraft} onChange={(e) => setImpostoDraft(e.target.value)} placeholder="Ex.: 6,00" disabled={!canEdit} />

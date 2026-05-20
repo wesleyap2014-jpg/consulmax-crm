@@ -61,16 +61,16 @@ function EB({ title, children }: { title?: string; children: React.ReactNode }) 
 
 function GiroDeCarteiraInlineTest() {
   return (
-    <div className="min-h-[calc(100vh-90px)] p-6 text-slate-900">
-      <div className="mx-auto w-full max-w-[1200px] rounded-[2rem] border border-emerald-200 bg-emerald-50 p-8 shadow-sm">
-        <div className="inline-flex rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700">
-          TESTE INLINE NO ROUTER
+    <div style={{ minHeight: "100vh", padding: 40, background: "#ecfdf5", color: "#064e3b" }}>
+      <div style={{ maxWidth: 1000, margin: "0 auto", border: "2px solid #10b981", borderRadius: 24, background: "white", padding: 32 }}>
+        <div style={{ display: "inline-block", border: "1px solid #10b981", borderRadius: 999, padding: "6px 12px", fontSize: 12, fontWeight: 700 }}>
+          TESTE ROTA RAIZ /giro-de-carteira
         </div>
-        <h1 className="mt-5 text-3xl font-bold text-slate-950">
-          A rota /giro-de-carteira está renderizando pelo router.tsx
+        <h1 style={{ marginTop: 20, fontSize: 34, fontWeight: 800 }}>
+          A rota raiz /giro-de-carteira está renderizando.
         </h1>
-        <p className="mt-3 text-base text-slate-700">
-          Se esta mensagem aparecer, o problema está no componente importado. Se não aparecer, o problema está no deploy/cache/build/versão publicada.
+        <p style={{ marginTop: 12, fontSize: 16 }}>
+          Esta tela bypassa RequireAuth, App, Header, Sidebar e Outlet. Se aparecer, o problema está no layout/rota filha. Se não aparecer, o problema está antes do router atual ser executado.
         </p>
       </div>
     </div>
@@ -78,6 +78,9 @@ function GiroDeCarteiraInlineTest() {
 }
 
 export const router = createBrowserRouter([
+  { path: "/giro-de-carteira", element: <GiroDeCarteiraInlineTest /> },
+  { path: "/giro", element: <Navigate to="/giro-de-carteira" replace /> },
+
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   { path: "/simular", element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
@@ -136,7 +139,6 @@ export const router = createBrowserRouter([
               </EB>
             ),
           },
-          { path: "giro", element: <Navigate to="/giro-de-carteira" replace /> },
           { path: "giro-de-carteira/", element: <Navigate to="/giro-de-carteira" replace /> },
 
           { path: "ranking", element: withSuspense(<RankingVendedores />) },

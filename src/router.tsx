@@ -35,7 +35,10 @@ const Relatorios = React.lazy(() => import("./pages/Relatorios"));
 const Procedimentos = React.lazy(() => import("./pages/Procedimentos"));
 const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas"));
 const Processos = React.lazy(() => import("./pages/Processos"));
-const GiroDeCarteira = React.lazy(() => import("./pages/GiroDeCarteira"));
+
+// ==== Giro de Carteira SEM lazy ====
+// Mantido com import direto para evitar tela branca por falha/caching de chunk dinâmico.
+import GiroDeCarteira from "./pages/GiroDeCarteira";
 
 function withSuspense(node: React.ReactNode) {
   return (
@@ -113,7 +116,7 @@ export const router = createBrowserRouter([
 
           {
             path: "giro-de-carteira",
-            element: withSuspense(
+            element: (
               <EB title="Erro no Giro de Carteira">
                 <GiroDeCarteira />
               </EB>

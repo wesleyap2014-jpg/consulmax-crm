@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
-  Clock3,
   Loader2,
   Mail,
   MessageCircle,
@@ -14,6 +13,7 @@ import {
   Search,
   UserRound,
   Wallet,
+  X,
 } from "lucide-react";
 
 type UserRow = {
@@ -73,6 +73,14 @@ type GiroItem = GiroRaw & {
 
 type QuickFilter = "todos" | "atrasados" | "hoje" | "sem_contato";
 type SortMode = "data" | "valor" | "nome";
+type CanalGiro = "whatsapp" | "ligacao" | "email" | "presencial";
+
+type RegistroState = {
+  item: GiroItem;
+  canal: CanalGiro;
+  resumo: string;
+  pediuIndicacao: boolean;
+};
 
 const C = {
   ruby: "#A11C27",
@@ -166,6 +174,13 @@ function mapRows(rows: any[] | null | undefined) {
   return m;
 }
 
+const canalOptions: Array<{ key: CanalGiro; label: string; icon: React.ElementType }> = [
+  { key: "whatsapp", label: "WhatsApp", icon: MessageCircle },
+  { key: "ligacao", label: "Ligação", icon: Phone },
+  { key: "email", label: "E-mail", icon: Mail },
+  { key: "presencial", label: "Presencial", icon: UserRound },
+];
+
 export default function GiroDeCarteiraV2() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -180,6 +195,7 @@ export default function GiroDeCarteiraV2() {
   const [search, setSearch] = useState("");
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("todos");
   const [sortMode, setSortMode] = useState<SortMode>("data");
+  const [registro, setRegistro] = useState<RegistroState | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   async function loadCurrentUser() {
@@ -355,18 +371,30 @@ export default function GiroDeCarteiraV2() {
     return `Olá, ${primeiro}! Aqui é da Consulmax. Estou passando para fazer nosso giro de acompanhamento da sua carteira.`;
   }
 
-  async function registrarGiro(item: GiroItem) {
+  function openRegistro(item: GiroItem) {
+    setRegistro({
+      item,
+      canal: item._telefone ? "whatsapp" : item._email ? "email" : "ligacao",
+      resumo: "",
+      pediuIndicacao: true,
+    });
+  }
+
+  async function confirmarRegistro() {
+    if (!registro) return;
+    const item = registro.item;
     setSavingId(item._id);
     setErr(null);
 
     try {
       const { error } = await supabase.rpc("mark_giro_done", {
         p_task_id: item._id,
-        p_canal: "whatsapp",
-        p_resumo: "Giro registrado pela tela Giro de Carteira.",
-        p_pediu_indicacao: true,
+        p_canal: registro.canal,
+        p_resumo: registro.resumo || null,
+        p_pediu_indicacao: registro.pediuIndicacao,
       });
       if (error) throw error;
+      setRegistro(null);
       await loadAll("refresh");
     } catch (e: any) {
       console.error("[GiroDeCarteiraV2] mark_giro_done error:", e);
@@ -496,7 +524,7 @@ export default function GiroDeCarteiraV2() {
                           <div className="flex items-center justify-end gap-1 text-[11px] uppercase tracking-wide text-slate-400"><CalendarClock className="h-3.5 w-3.5" />Data</div>
                           <div className={`text-sm font-semibold ${st.text}`}>{fmtDateBR(item._dueYMD)}</div>
                         </div>
-                        <button type="button" disabled={savingId === item._id} onClick={() => registrarGiro(item)} className="inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-60" style={{ background: C.ruby }}>
+                        <button type="button" disabled={savingId === item._id} onClick={() => openRegistro(item)} className="inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-60" style={{ background: C.ruby }}>
                           {savingId === item._id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
                           Registrar
                         </button>
@@ -529,6 +557,79 @@ export default function GiroDeCarteiraV2() {
           </section>
         )}
       </div>
+
+      {registro && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-[2rem] border border-white/70 bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Registrar giro</div>
+                <h3 className="mt-3 text-xl font-semibold text-slate-950">{registro.item._nome}</h3>
+                <p className="mt-1 text-sm text-slate-500">Registre o canal utilizado e o resumo do que foi conversado com o cliente.</p>
+              </div>
+              <button type="button" onClick={() => setRegistro(null)} className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4">
+              <div>
+                <div className="mb-2 text-sm font-medium text-slate-700">Canal do contato</div>
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                  {canalOptions.map((opt) => {
+                    const Icon = opt.icon;
+                    const active = registro.canal === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => setRegistro((prev) => (prev ? { ...prev, canal: opt.key } : prev))}
+                        className={`inline-flex items-center justify-center rounded-2xl border px-3 py-3 text-sm font-semibold transition ${
+                          active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <Icon className="mr-2 h-4 w-4" />
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Resumo da conversa</label>
+                <textarea
+                  value={registro.resumo}
+                  onChange={(e) => setRegistro((prev) => (prev ? { ...prev, resumo: e.target.value } : prev))}
+                  rows={5}
+                  placeholder="Ex.: Atualizei o cliente sobre o grupo, expliquei próximos passos, tirei dúvidas, pedi indicação e combinei novo contato."
+                  className="w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm outline-none transition focus:border-slate-400"
+                />
+              </div>
+
+              <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={registro.pediuIndicacao}
+                  onChange={(e) => setRegistro((prev) => (prev ? { ...prev, pediuIndicacao: e.target.checked } : prev))}
+                  className="h-4 w-4"
+                />
+                Pedi indicação durante o contato
+              </label>
+            </div>
+
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setRegistro(null)} className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                Cancelar
+              </button>
+              <button type="button" onClick={confirmarRegistro} disabled={savingId === registro.item._id} className="inline-flex items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-60" style={{ background: C.ruby }}>
+                {savingId === registro.item._id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                Confirmar registro
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

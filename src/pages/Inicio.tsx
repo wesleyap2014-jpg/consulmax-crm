@@ -595,8 +595,8 @@ export default function Inicio() {
   );
 
   return (
-    <div className="min-h-[calc(100vh-64px)] bg-[radial-gradient(circle_at_top_left,rgba(161,28,39,0.13),transparent_32%),radial-gradient(circle_at_top_right,rgba(181,165,115,0.18),transparent_30%),linear-gradient(135deg,#F8FAFC,#F5F5F5_42%,#EEF2F7)] p-4 text-slate-900 md:p-6">
-      <div className="mx-auto max-w-[1500px] space-y-6">
+    <div className="min-h-[calc(100vh-64px)] bg-[radial-gradient(circle_at_top_left,rgba(161,28,39,0.13),transparent_32%),radial-gradient(circle_at_top_right,rgba(181,165,115,0.18),transparent_30%),linear-gradient(135deg,#F8FAFC,#F5F5F5_42%,#EEF2F7)] p-3 text-slate-900 md:p-4 xl:p-5">
+      <div className="mx-auto w-full max-w-[1920px] space-y-6">
         <Card className={`${glassCard} border-white/70 bg-gradient-to-br from-[#1E293F] via-[#26344f] to-[#A11C27] text-white`}>
           <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-24 left-1/3 h-64 w-64 rounded-full bg-[#B5A573]/25 blur-3xl" />
@@ -612,6 +612,18 @@ export default function Inicio() {
                 <p className="mt-2 text-sm text-white/75 md:text-base">
                   Hoje é <span className="font-semibold text-white">{rangeToday.br}</span>. Você tem <span className="font-semibold text-[#E0CE8C]">{kpi.myDayCount}</span> ação(ões) importante(s) para movimentar a operação.
                 </p>
+
+                <div className="mt-4 max-w-4xl rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur">
+                  <div className="flex gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-[#E0CE8C] shadow-sm">
+                      <MessageCircle className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/55">Pensamento do Dia</div>
+                      <div className="mt-1 text-sm leading-relaxed text-white/88 md:text-base">“{thoughtOfDay || FALLBACK_THOUGHTS[0]}”</div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row lg:items-center">
@@ -674,7 +686,7 @@ export default function Inicio() {
           </Card>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Meu Dia" value={kpi.myDayCount} helper="ações para hoje" icon={<Bell className="h-5 w-5" />} featured />
           <StatCard label="Oportunidades" value={kpi.openOppCount} helper={fmtBRL(kpi.openOppTotal)} icon={<AlertTriangle className="h-5 w-5" />} to="/oportunidades" />
           <StatCard label="Agenda" value={kpi.todayEventsCount} helper={admin && vendorScope !== ALL ? `Filtrado: ${scopedUser?.nome || "—"}` : admin ? "Visão geral" : "Somente seus eventos"} icon={<Calendar className="h-5 w-5" />} to="/agenda" />
@@ -871,20 +883,6 @@ export default function Inicio() {
           </Card>
         </div>
 
-        <Card className={`${glassCard} border-[#B5A573]/40`}>
-          <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
-            <div className="flex gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#1E293F] text-white shadow-md">
-                <MessageCircle className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-slate-950">Pensamento do Dia</div>
-                <div className="mt-1 text-sm text-slate-600">“{thoughtOfDay || FALLBACK_THOUGHTS[0]}”</div>
-              </div>
-            </div>
-            <Button className={primaryButton} onClick={() => nav("/planejamento")}>Abrir Playbook <ArrowRight className="ml-2 h-4 w-4" /></Button>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );

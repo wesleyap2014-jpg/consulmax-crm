@@ -38,6 +38,7 @@ const Procedimentos = React.lazy(() => import("./pages/Procedimentos"));
 const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas"));
 const Processos = React.lazy(() => import("./pages/Processos"));
 const RH = React.lazy(() => import("./pages/RH"));
+const RHVagas = React.lazy(() => import("./pages/RHVagas"));
 
 function withSuspense(node: React.ReactNode) {
   return (
@@ -141,6 +142,7 @@ export const router = createBrowserRouter([
           { path: "fluxo-de-caixa", element: withSuspense(<FluxoDeCaixa />) },
           { path: "processos", element: withSuspense(<Processos />) },
           { path: "rh", element: withSuspense(<RH />) },
+          { path: "rh/vagas", element: withSuspense(<RHVagas />) },
 
           {
             path: "giro-de-carteira",

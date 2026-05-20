@@ -44,18 +44,41 @@ function Pill({ className, children }: { className?: string; children: React.Rea
 }
 
 /* ===================== Tipos ===================== */
+type UserRow = {
+  id: string;
+  auth_user_id: string;
+  nome: string | null;
+  role?: string | null;
+  user_role?: string | null;
+  is_active?: boolean | null;
+};
+
 type GiroTask = {
   id: string;
   cliente_id: string | null;
   lead_id: string | null;
   owner_auth_id: string | null;
-  carteira_total: number | null;
-  faixa: string;
-  periodicidade_meses: number | null;
-  due_date: string | null;
-  last_done_at: string | null;
-  created_at: string | null;
-  updated_at: string | null;
+
+  // Campos da origem antiga/RPC
+  carteira_total?: number | null;
+  faixa?: string | null;
+  periodicidade_meses?: number | null;
+  due_date?: string | null;
+  last_done_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  // Campos das views usadas pela Início
+  cliente_nome?: string | null;
+  lead_nome?: string | null;
+  nome?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+  observacoes?: string | null;
+  carteira_ativa_total?: number | null;
+  valor_carteira_ativa?: number | null;
+
+  [key: string]: any;
 };
 
 type Cliente = {
@@ -76,15 +99,23 @@ function brMoney(n: number | null | undefined) {
   }
 }
 
+function toYMD(d?: string | Date | null) {
+  if (!d) return null;
+  const s = typeof d === "string" ? d.trim() : d.toISOString();
+  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dt = new Date(s);
+  if (Number.isNaN(dt.getTime())) return null;
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
 function fmtDateISO(d?: string | null) {
-  if (!d) return "-";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "-";
-  try {
-    return dt.toLocaleDateString("pt-BR", { timeZone: "America/Porto_Velho" });
-  } catch {
-    return dt.toLocaleDateString("pt-BR");
-  }
+  const ymd = toYMD(d);
+  if (!ymd) return "-";
+  const [y, m, day] = ymd.split("-");
+  return `${day}/${m}/${y}`;
 }
 
 function onlyDigits(s?: string | null) {
@@ -96,6 +127,38 @@ function waLink(phone?: string | null, text?: string) {
   if (!digits) return null;
   const encoded = encodeURIComponent(text || "");
   return `https://wa.me/55${digits}?text=${encoded}`;
+}
+
+function isAdminUser(u?: UserRow | null) {
+  return String(u?.role || u?.user_role || "").toLowerCase() === "admin";
+}
+
+function taskClienteNome(t: GiroTask, clientes: Record<string, Cliente>) {
+  const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
+  return c?.nome || t.cliente_nome || t.lead_nome || t.nome || "Cliente sem cadastro";
+}
+
+function taskTelefone(t: GiroTask, clientes: Record<string, Cliente>) {
+  const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
+  return c?.telefone || t.telefone || null;
+}
+
+function taskEmail(t: GiroTask, clientes: Record<string, Cliente>) {
+  const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
+  return c?.email || t.email || null;
+}
+
+function taskObs(t: GiroTask, clientes: Record<string, Cliente>) {
+  const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
+  return c?.observacoes || t.observacoes || null;
+}
+
+function taskCarteira(t: GiroTask) {
+  return Number(t.valor_carteira_ativa ?? t.carteira_ativa_total ?? t.carteira_total ?? 0) || 0;
+}
+
+function taskFaixa(t: GiroTask) {
+  return String(t.faixa || t.segmento || t.categoria || "—");
 }
 
 const canalOptions = [
@@ -199,6 +262,7 @@ function InnerGiroDeCarteira() {
 
   const [tasks, setTasks] = useState<GiroTask[]>([]);
   const [clientes, setClientes] = useState<Record<string, Cliente>>({});
+  const [me, setMe] = useState<UserRow | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [count, setCount] = useState<number>(0);
   const [search, setSearch] = useState<string>("");
@@ -237,6 +301,25 @@ function InnerGiroDeCarteira() {
     setPediuIndicacao(true);
   };
 
+  async function loadCurrentUser() {
+    const { data: auth, error: authErr } = await supabase.auth.getUser();
+    if (authErr) throw authErr;
+
+    const authId = auth.user?.id;
+    if (!authId) throw new Error("Sem usuário autenticado.");
+
+    const { data: userRow, error: userErr } = await supabase
+      .from("users")
+      .select("id,auth_user_id,nome,role,user_role,is_active")
+      .eq("auth_user_id", authId)
+      .maybeSingle();
+
+    if (userErr) throw userErr;
+    if (!userRow) throw new Error("Usuário não encontrado na tabela users.");
+
+    return userRow as UserRow;
+  }
+
   async function loadClientesByIds(list: GiroTask[]) {
     const ids = Array.from(new Set(list.map((t) => t?.cliente_id).filter(Boolean) as string[]));
 
@@ -260,36 +343,75 @@ function InnerGiroDeCarteira() {
     setClientes(map);
   }
 
+  async function loadGiroFromViews(userRow: UserRow) {
+    const admin = isAdminUser(userRow);
+    const scopeAuthId = admin ? null : userRow.auth_user_id;
+
+    let nextCount = 0;
+
+    if (admin) {
+      const { data, error } = await supabase
+        .from("v_giro_due_count")
+        .select("owner_auth_id,due_count");
+
+      if (error) throw error;
+
+      nextCount = (data || []).reduce((acc: number, r: any) => acc + (Number(r?.due_count || 0) || 0), 0);
+    } else {
+      const { data, error } = await supabase
+        .from("v_giro_due_count")
+        .select("owner_auth_id,due_count")
+        .eq("owner_auth_id", scopeAuthId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      nextCount = Number((data as any)?.due_count || 0);
+    }
+
+    let itemsQ = supabase
+      .from("v_giro_due_items")
+      .select("*")
+      .limit(5000);
+
+    if (!admin && scopeAuthId) {
+      itemsQ = itemsQ.eq("owner_auth_id", scopeAuthId);
+    }
+
+    const { data: itemRows, error: itemErr } = await itemsQ;
+    if (itemErr) throw itemErr;
+
+    const list: GiroTask[] = Array.isArray(itemRows) ? (itemRows as any as GiroTask[]) : [];
+
+    list.sort((a, b) => {
+      const av = taskCarteira(a);
+      const bv = taskCarteira(b);
+      return bv - av;
+    });
+
+    return { admin, nextCount, list };
+  }
+
   async function fetchAll() {
     setLoading(true);
     setLastError(null);
 
     try {
-      const [adminRes, countRes, batchRes] = await Promise.all([
-        supabase.rpc("current_user_is_admin"),
-        supabase.rpc("giro_due_count"),
-        supabase.rpc("next_giro_batch"),
-      ]);
+      const userRow = await loadCurrentUser();
+      const { admin, nextCount, list } = await loadGiroFromViews(userRow);
 
-      if (adminRes.error) throw adminRes.error;
-      if (countRes.error) throw countRes.error;
-      if (batchRes.error) throw batchRes.error;
-
-      const nextIsAdmin = Boolean(adminRes.data);
-      const nextCount = Number(countRes.data || 0);
-      const list: GiroTask[] = Array.isArray(batchRes.data) ? (batchRes.data as GiroTask[]) : [];
-
-      setIsAdmin(nextIsAdmin);
+      setMe(userRow);
+      setIsAdmin(admin);
       setCount(nextCount);
       setTasks(list);
 
       await loadClientesByIds(list);
 
       console.log("[GiroDeCarteira] fetchAll ok", {
-        isAdmin: nextIsAdmin,
+        isAdmin: admin,
         count: nextCount,
         tasks: list.length,
-        rawTasks: batchRes.data,
+        origem: "v_giro_due_count + v_giro_due_items",
       });
     } catch (e: any) {
       console.error("[GiroDeCarteira] fetchAll error:", e);
@@ -306,17 +428,11 @@ function InnerGiroDeCarteira() {
     setLastError(null);
 
     try {
-      const [countRes, batchRes] = await Promise.all([
-        supabase.rpc("giro_due_count"),
-        supabase.rpc("next_giro_batch"),
-      ]);
+      const userRow = me || (await loadCurrentUser());
+      const { admin, nextCount, list } = await loadGiroFromViews(userRow);
 
-      if (countRes.error) throw countRes.error;
-      if (batchRes.error) throw batchRes.error;
-
-      const nextCount = Number(countRes.data || 0);
-      const list: GiroTask[] = Array.isArray(batchRes.data) ? (batchRes.data as GiroTask[]) : [];
-
+      setMe(userRow);
+      setIsAdmin(admin);
       setCount(nextCount);
       setTasks(list);
 
@@ -325,7 +441,7 @@ function InnerGiroDeCarteira() {
       console.log("[GiroDeCarteira] refresh ok", {
         count: nextCount,
         tasks: list.length,
-        rawTasks: batchRes.data,
+        origem: "v_giro_due_count + v_giro_due_items",
       });
     } catch (e: any) {
       console.error("[GiroDeCarteira] refresh error:", e);
@@ -344,10 +460,9 @@ function InnerGiroDeCarteira() {
     if (!q) return tasks;
 
     return tasks.filter((t) => {
-      const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
-      const name = (c?.nome || "").toLowerCase();
-      const tel = onlyDigits(c?.telefone);
-      const faixa = (t?.faixa || "").toLowerCase();
+      const name = taskClienteNome(t, clientes).toLowerCase();
+      const tel = onlyDigits(taskTelefone(t, clientes));
+      const faixa = taskFaixa(t).toLowerCase();
       return name.includes(q) || tel.includes(q) || faixa.includes(q);
     });
   }, [tasks, search, clientes]);
@@ -383,7 +498,7 @@ function InnerGiroDeCarteira() {
       {SHOW_DEBUG && (
         <div className="mb-2 rounded-md bg-[#1E293F] text-white text-xs px-3 py-2">
           Debug Giro — loading={String(loading)} • refreshing={String(refreshing)} •
-          tasks={tasks.length} • admin={String(isAdmin)} • count={count}
+          tasks={tasks.length} • admin={String(isAdmin)} • count={count} • origem=views
         </div>
       )}
 
@@ -465,16 +580,21 @@ function InnerGiroDeCarteira() {
           </Card>
         ) : (
           filtered.map((t, idx) => {
-            const c = t?.cliente_id ? clientes[t.cliente_id] : undefined;
-            const phoneClean = onlyDigits(c?.telefone);
+            const nome = taskClienteNome(t, clientes);
+            const telefone = taskTelefone(t, clientes);
+            const email = taskEmail(t, clientes);
+            const obs = taskObs(t, clientes);
+            const phoneClean = onlyDigits(telefone);
+            const carteira = taskCarteira(t);
+            const faixa = taskFaixa(t);
 
             const msg = [
-              `Olá, ${c?.nome || "tudo bem"}? Aqui é da Consulmax.`,
+              `Olá, ${nome || "tudo bem"}? Aqui é da Consulmax.`,
               `Estou acompanhando seu grupo e te trazendo um panorama rápido.`,
               `Quando puder, te explico as últimas contemplações e próximos passos 😉`,
             ].join(" ");
 
-            const wa = waLink(c?.telefone, msg);
+            const wa = waLink(telefone, msg);
             const key = t?.id || `task-${idx}`;
 
             return (
@@ -483,27 +603,19 @@ function InnerGiroDeCarteira() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <CardTitle className="flex items-center gap-2 text-lg">
-                        {c?.nome || "Cliente sem cadastro"}
+                        {nome}
                       </CardTitle>
 
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
-                        <Pill>Faixa: {t?.faixa || "-"}</Pill>
-                        <Pill>Carteira: {brMoney(t?.carteira_total)}</Pill>
+                        <Pill>Faixa: {faixa}</Pill>
+                        <Pill>Carteira: {brMoney(carteira)}</Pill>
                         <Pill>Periodicidade: {t?.periodicidade_meses || 0} meses</Pill>
                       </div>
                     </div>
 
                     <div className="text-right">
                       <div className="text-xs text-gray-500">Data</div>
-                      <div
-                        className={cn(
-                          "text-sm font-medium",
-                          t?.due_date &&
-                            new Date(t.due_date).toDateString() === new Date().toDateString()
-                            ? "text-[#A11C27]"
-                            : ""
-                        )}
-                      >
+                      <div className="text-sm font-medium text-[#A11C27]">
                         {fmtDateISO(t?.due_date)}
                       </div>
                     </div>
@@ -522,7 +634,7 @@ function InnerGiroDeCarteira() {
                           className="inline-flex items-center gap-1 text-[#1E293F] hover:underline"
                           title="Abrir no WhatsApp"
                         >
-                          {c?.telefone}
+                          {telefone}
                           <LinkIcon className="w-3 h-3" />
                         </a>
                       ) : (
@@ -532,12 +644,12 @@ function InnerGiroDeCarteira() {
 
                     <div className="text-sm">
                       <span className="font-medium">E-mail:</span>{" "}
-                      {c?.email || <span className="text-gray-500">—</span>}
+                      {email || <span className="text-gray-500">—</span>}
                     </div>
 
                     <div className="text-sm line-clamp-2">
                       <span className="font-medium">Observações:</span>{" "}
-                      {c?.observacoes || <span className="text-gray-500">—</span>}
+                      {obs || <span className="text-gray-500">—</span>}
                     </div>
                   </div>
 
@@ -665,7 +777,7 @@ function InnerGiroDeCarteira() {
 
       {SHOW_DEBUG && (
         <div className="text-[11px] text-gray-500">
-          debug: tasks={tasks.length} • admin={String(isAdmin)} • count={count}
+          debug: tasks={tasks.length} • admin={String(isAdmin)} • count={count} • origem=views
         </div>
       )}
     </div>

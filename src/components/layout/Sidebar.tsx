@@ -262,7 +262,7 @@ function groupForPath(pathname: string): GroupKey {
     return "pos";
   }
 
-  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes", "/processos"])) {
+  if (isAnyPathActive(pathname, ["/relatorios", "/usuarios", "/parametros", "/clientes", "/processos", "/rh"])) {
     return "admin";
   }
 
@@ -462,6 +462,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       { to: "/parametros", label: "Parâmetros", icon: SlidersHorizontal, end: true },
       { to: "/clientes", label: "Clientes", icon: UserCog, end: true },
       { to: "/processos", label: "Processos", icon: ClipboardList, end: true },
+      { to: "/rh", label: "RH", icon: ClipboardList, end: true },
 
       { to: "/comissoes", label: "Comissões", icon: BarChart3, end: true },
       {
@@ -819,6 +820,18 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                 >
                   <ClipboardList className="h-4 w-4" />
                   Processos
+                </NavLink>
+
+                <NavLink
+                  to="/rh"
+                  className={({ isActive }) => pillClass(isActive)}
+                  style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
+                  onClick={handleNav}
+                  title="RH"
+                  end
+                >
+                  <ClipboardList className="h-4 w-4" />
+                  RH
                 </NavLink>
               </div>
             )}

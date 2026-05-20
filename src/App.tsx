@@ -3,48 +3,11 @@ import React from "react";
 import Header from "@/components/layout/Header";
 import Sidebar from "@/components/layout/Sidebar";
 import { Outlet, useLocation } from "react-router-dom";
-
-function GiroDebugDiretoNoApp() {
-  return (
-    <div
-      style={{
-        minHeight: "60vh",
-        padding: 40,
-        background: "#ecfdf5",
-        color: "#064e3b",
-        border: "2px solid #10b981",
-        borderRadius: 24,
-      }}
-    >
-      <div
-        style={{
-          display: "inline-block",
-          border: "1px solid #10b981",
-          borderRadius: 999,
-          padding: "6px 12px",
-          fontSize: 12,
-          fontWeight: 700,
-          background: "#fff",
-        }}
-      >
-        TESTE DIRETO NO APP.TSX
-      </div>
-
-      <h1 style={{ marginTop: 20, fontSize: 34, fontWeight: 800 }}>
-        O App.tsx reconheceu /giro-de-carteira.
-      </h1>
-
-      <p style={{ marginTop: 12, fontSize: 16 }}>
-        Se esta tela aparece, o problema está no Outlet/rota filha.
-        Se não aparece, o build publicado ainda não está usando este App.tsx.
-      </p>
-    </div>
-  );
-}
+import GiroDeCarteiraV2 from "@/pages/GiroDeCarteiraV2";
 
 export default function App() {
   const location = useLocation();
-  const isGiroDebug =
+  const isGiroDeCarteira =
     location.pathname === "/giro-de-carteira" ||
     location.pathname === "/giro-de-carteira/";
 
@@ -53,12 +16,15 @@ export default function App() {
       <Header />
 
       <div className="flex">
+        {/* Sidebar fixa/colável (onNavigate fecha drawer no mobile, se houver) */}
         <Sidebar onNavigate={() => {}} />
 
+        {/* Área central com fundo "liquid glass" */}
         <main
           role="main"
           className="relative flex-1 p-4 md:p-6 isolate min-h-[calc(100vh-56px)] overflow-auto"
         >
+          {/* CSS do efeito embutido para não depender de arquivo externo */}
           <style>{`
             .liquid-bg{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
             .liquid-bg .blob{position:absolute;width:320px;height:320px;border-radius:50%;filter:blur(40px);opacity:.55}
@@ -70,15 +36,17 @@ export default function App() {
             @keyframes float2{0%{transform:translate(0,0) scale(1)}50%{transform:translate(-16px,-10px) scale(1.05)}100%{transform:translate(0,0) scale(1)}}
           `}</style>
 
+          {/* fundo líquido */}
           <div className="liquid-bg">
             <span className="blob b1" />
             <span className="blob b2" />
             <span className="gold" />
           </div>
 
+          {/* conteúdo acima do fundo */}
           <div className="relative z-[1]">
-            {isGiroDebug ? (
-              <GiroDebugDiretoNoApp />
+            {isGiroDeCarteira ? (
+              <GiroDeCarteiraV2 />
             ) : (
               <React.Suspense
                 fallback={

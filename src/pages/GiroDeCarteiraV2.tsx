@@ -22,6 +22,14 @@ type UserRow = {
   user_role?: string | null;
 };
 
+type PersonRow = {
+  id: string;
+  nome?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+  observacoes?: string | null;
+};
+
 type GiroRaw = {
   id?: string | null;
   task_id?: string | null;
@@ -55,6 +63,7 @@ type GiroItem = GiroRaw & {
   _nome: string;
   _telefone: string | null;
   _email: string | null;
+  _observacoes: string | null;
   _carteira: number;
   _faixa: string;
   _dueYMD: string | null;
@@ -131,6 +140,14 @@ function Pill({ children, tone = "default" }: { children: React.ReactNode; tone?
   return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${cls}`}>{children}</span>;
 }
 
+function mapRows(rows: any[] | null | undefined) {
+  const m = new Map<string, PersonRow>();
+  (rows || []).forEach((r: any) => {
+    if (r?.id) m.set(String(r.id), r as PersonRow);
+  });
+  return m;
+}
+
 export default function GiroDeCarteiraV2() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -138,6 +155,8 @@ export default function GiroDeCarteiraV2() {
   const [me, setMe] = useState<UserRow | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [items, setItems] = useState<GiroRaw[]>([]);
+  const [clientes, setClientes] = useState<Map<string, PersonRow>>(new Map());
+  const [leads, setLeads] = useState<Map<string, PersonRow>>(new Map());
   const [dueCount, setDueCount] = useState(0);
   const [source, setSource] = useState<"view" | "rpc" | "none">("none");
   const [search, setSearch] = useState("");
@@ -182,7 +201,7 @@ export default function GiroDeCarteiraV2() {
 
       if (error) throw error;
       return Number((data as any)?.due_count || 0);
-    } catch (e) {
+    } catch {
       return await readRpc();
     }
   }
@@ -195,12 +214,39 @@ export default function GiroDeCarteiraV2() {
       if (error) throw error;
       setSource("view");
       return (data || []) as GiroRaw[];
-    } catch (viewErr: any) {
+    } catch {
       const { data, error } = await supabase.rpc("next_giro_batch");
       if (error) throw error;
       setSource("rpc");
       return (Array.isArray(data) ? data : []) as GiroRaw[];
     }
+  }
+
+  async function loadPeople(rows: GiroRaw[]) {
+    const clienteIds = Array.from(new Set(rows.map((r) => r.cliente_id).filter(Boolean).map(String)));
+    const leadIds = Array.from(new Set(rows.map((r) => r.lead_id).filter(Boolean).map(String)));
+
+    let clientesMap = new Map<string, PersonRow>();
+    let leadsMap = new Map<string, PersonRow>();
+
+    if (clienteIds.length) {
+      const { data, error } = await supabase
+        .from("clientes")
+        .select("id,nome,telefone,email,observacoes")
+        .in("id", clienteIds);
+      if (!error) clientesMap = mapRows(data as any[]);
+    }
+
+    if (leadIds.length) {
+      const { data, error } = await supabase
+        .from("leads")
+        .select("id,nome,telefone,email")
+        .in("id", leadIds);
+      if (!error) leadsMap = mapRows(data as any[]);
+    }
+
+    setClientes(clientesMap);
+    setLeads(leadsMap);
   }
 
   async function loadAll(mode: "first" | "refresh" = "first") {
@@ -216,10 +262,13 @@ export default function GiroDeCarteiraV2() {
       setIsAdmin(admin);
       setDueCount(count);
       setItems(rows);
+      await loadPeople(rows);
     } catch (e: any) {
       console.error("[GiroDeCarteiraV2] loadAll error:", e);
       setErr(String(e?.message || e));
       setItems([]);
+      setClientes(new Map());
+      setLeads(new Map());
       setDueCount(0);
       setSource("none");
     } finally {
@@ -236,14 +285,17 @@ export default function GiroDeCarteiraV2() {
   const enriched = useMemo<GiroItem[]>(() => {
     return items
       .map((item, index) => {
-        const nome = first(item.cliente_nome, item.lead_nome, item.nome) || "Cliente sem cadastro";
-        const telefone = first(item.telefone);
-        const email = first(item.email);
+        const cliente = item.cliente_id ? clientes.get(String(item.cliente_id)) : undefined;
+        const lead = item.lead_id ? leads.get(String(item.lead_id)) : undefined;
+        const nome = first(cliente?.nome, item.cliente_nome, item.lead_nome, lead?.nome, item.nome) || "Cliente sem cadastro";
+        const telefone = first(cliente?.telefone, item.telefone, lead?.telefone);
+        const email = first(cliente?.email, item.email, lead?.email);
+        const observacoes = first(cliente?.observacoes, item.observacoes);
         const carteira = Number(item.valor_carteira_ativa ?? item.carteira_ativa_total ?? item.carteira_total ?? 0) || 0;
         const faixa = first(item.faixa, item.segmento, item.categoria) || "Sem faixa";
         const due = toYMD(item.due_date || item.data_prevista || item.proximo_giro_em);
         const id = first(item.task_id, item.giro_task_id, item.id) || `giro-${index}`;
-        return { ...item, _id: id, _nome: nome, _telefone: telefone, _email: email, _carteira: carteira, _faixa: faixa, _dueYMD: due };
+        return { ...item, _id: id, _nome: nome, _telefone: telefone, _email: email, _observacoes: observacoes, _carteira: carteira, _faixa: faixa, _dueYMD: due };
       })
       .sort((a, b) => {
         const da = a._dueYMD || "9999-12-31";
@@ -251,14 +303,14 @@ export default function GiroDeCarteiraV2() {
         if (da !== db) return da.localeCompare(db);
         return b._carteira - a._carteira;
       });
-  }, [items]);
+  }, [items, clientes, leads]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return enriched;
     const digits = onlyDigits(q);
     return enriched.filter((item) => {
-      const hay = [item._nome, item._telefone, item._email, item._faixa, item.observacoes].filter(Boolean).join(" ").toLowerCase();
+      const hay = [item._nome, item._telefone, item._email, item._faixa, item._observacoes].filter(Boolean).join(" ").toLowerCase();
       return hay.includes(q) || Boolean(digits && onlyDigits(item._telefone).includes(digits));
     });
   }, [enriched, search]);
@@ -396,7 +448,7 @@ export default function GiroDeCarteiraV2() {
                     </div>
                     <div className="rounded-2xl border border-slate-100 bg-white/70 p-3 text-sm text-slate-600">
                       <div className="font-medium text-slate-700">Observações</div>
-                      <div className="mt-1 line-clamp-3">{item.observacoes || "Sem observações cadastradas."}</div>
+                      <div className="mt-1 line-clamp-3">{item._observacoes || "Sem observações cadastradas."}</div>
                     </div>
                   </div>
 

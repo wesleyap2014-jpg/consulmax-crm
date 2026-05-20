@@ -21,6 +21,10 @@ import {
   BookOpen,
   Link as LinkIcon,
   FileText,
+  Bell,
+  Gift,
+  Ticket,
+  Trophy,
 } from "lucide-react";
 
 /** ===================== Tipos ===================== */
@@ -64,9 +68,19 @@ type GroupRow = {
   administradora: string;
   segmento: string;
   codigo: string;
+  participantes?: number | null;
   prox_vencimento: string | null;
   prox_sorteio: string | null;
   prox_assembleia: string | null;
+};
+
+type LastAssemblyRow = {
+  group_id: string;
+  date: string | null;
+  ll_high?: number | null;
+  ll_low?: number | null;
+  median?: number | null;
+  reference_number?: number | null;
 };
 
 type ClienteRow = { id: string; nome: string; data_nascimento: string | null; telefone?: string | null };
@@ -125,6 +139,19 @@ type VendaMini = {
   cancelada_em?: string | null;
   segmento?: string | null;
   tabela?: string | null;
+  administradora?: string | null;
+  grupo?: string | null;
+  status?: string | null;
+  contemplada?: boolean | null;
+};
+
+type MeuDiaAlert = {
+  id: string;
+  priority: number;
+  title: string;
+  desc?: string | null;
+  icon?: "bell" | "gift" | "ticket" | "trophy" | "alert";
+  action?: { label: string; to?: string; href?: string };
 };
 
 const ALL = "__all__";
@@ -153,8 +180,20 @@ function addDaysYMD(ymd: string, days: number) {
   return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
 }
 
+function toYMD(d: string | Date | null | undefined): string | null {
+  if (!d) return null;
+  const s = typeof d === "string" ? d.trim() : d.toISOString();
+  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  const isoHead = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoHead) return `${isoHead[1]}-${isoHead[2]}-${isoHead[3]}`;
+  const dt = new Date(s);
+  if (Number.isNaN(dt.getTime())) return null;
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+
 function fmtDateBRFromYMD(ymd?: string | null) {
-  const d10 = (ymd || "").slice(0, 10);
+  const d10 = toYMD(ymd) || "";
   const [y, m, d] = d10.split("-");
   if (!y || !m || !d) return d10 || "—";
   return `${d}/${m}/${y}`;
@@ -196,10 +235,6 @@ function metaFieldForMonth(month: number) {
   return `m${String(month).padStart(2, "0")}` as any;
 }
 
-function normalizeYMD(v?: string | null) {
-  return (v || "").slice(0, 10);
-}
-
 function daysDiffYMD(a: string, b: string) {
   if (!a || !b) return 0;
   const [ay, am, ad] = a.slice(0, 10).split("-").map(Number);
@@ -216,10 +251,39 @@ function isOpenOpportunityStage(v?: string | null) {
   return ["novo", "qualificando", "qualificacao", "proposta", "negociacao"].includes(s);
 }
 
+function stripAccents(s: string) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeAdmin(raw?: string | null): string {
+  const s = stripAccents(String(raw ?? "")).toLowerCase();
+  const cleaned = s
+    .replace(/consorcios?|consorcio|holding|sa|s\/a|s\.a\.?/g, "")
+    .replace(/[^\w]/g, "")
+    .trim();
+  if (cleaned.includes("embracon")) return "Embracon";
+  if (cleaned.includes("hs")) return "HS";
+  if (cleaned.includes("maggi")) return "Maggi";
+  return (raw ?? "").toString().trim();
+}
+
+function normalizeGroupDigits(g?: string | number | null): string {
+  const s = String(g ?? "").trim();
+  const first = s.split(/[\/\-\s]/)[0] || s;
+  const m = first.match(/\d+/);
+  if (m) return m[0];
+  return s.replace(/\D/g, "");
+}
+
+function groupKey(adm?: string | null, grp?: string | number | null) {
+  return `${normalizeAdmin(adm)}::${normalizeGroupDigits(grp)}`;
+}
+
 function isVendaCancelada(v?: { codigo?: string | null; cancelada_em?: string | null }) {
   if (!v) return false;
-  if (v.cancelada_em) return true;
+  if (v.codigo === "00") return false;
   if (v.codigo && v.codigo !== "00") return true;
+  if (v.cancelada_em) return true;
   return false;
 }
 
@@ -236,9 +300,9 @@ function pendingCommissionGross(c: CommissionRow, flow: CommissionFlowRow[]) {
 }
 
 function localDateFromISO(iso?: string | null) {
-  if (!iso) return null;
-  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
-  if (!y || !m || !d) return null;
+  const ymd = toYMD(iso);
+  if (!ymd) return null;
+  const [y, m, d] = ymd.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
 
@@ -257,6 +321,30 @@ function expectedDateForParcel(flow: CommissionFlowRow[] | undefined, mes?: numb
   const expected = new Date(m2Date.getFullYear(), m2Date.getMonth(), m2Date.getDate());
   expected.setDate(expected.getDate() + (safeMes - 2) * 30);
   return expected;
+}
+
+function fmtPct4(v: number | null | undefined) {
+  if (v == null) return "—";
+  return `${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}%`;
+}
+
+function groupListLabel(groups: Array<{ codigo?: string | null }>, max = 6) {
+  const codes = Array.from(new Set(groups.map((g) => String(g.codigo || "").trim()).filter(Boolean)));
+  if (!codes.length) return "—";
+  const head = codes.slice(0, max).join(", ");
+  return codes.length > max ? `${head} +${codes.length - max}` : head;
+}
+
+function hasDraw(drawsByDate: Map<string, boolean>, dateRaw?: string | null) {
+  const d = toYMD(dateRaw);
+  return Boolean(d && drawsByDate.get(d));
+}
+
+function lastAsmInfo(lastAsmByGroup: Map<string, LastAssemblyRow>, groupId: string) {
+  const r = lastAsmByGroup.get(groupId);
+  if (!r) return "Sem apuração anterior";
+  const med = r.median ?? (r.ll_high != null && r.ll_low != null ? (r.ll_high + r.ll_low) / 2 : null);
+  return `Última apuração: ${fmtDateBRFromYMD(r.date)}${med != null ? ` • Mediana: ${fmtPct4(med)}` : ""}${r.reference_number != null ? ` • Ref: ${r.reference_number}` : ""}`;
 }
 
 /** ===================== UI Aux ===================== */
@@ -292,21 +380,29 @@ type NextEventItem = {
 };
 
 function flagFromYMDWeek(today: string, ymd: string): DateFlag {
-  const d = normalizeYMD(ymd);
+  const d = toYMD(ymd);
   if (d === today) return "Hoje";
   if (d === addDaysYMD(today, 1)) return "Amanhã";
   return "Esta Semana";
 }
 
 function isWithinNextWeekWindow(today: string, ymd: string) {
-  const d = normalizeYMD(ymd);
+  const d = toYMD(ymd);
   const end = addDaysYMD(today, 6);
-  return d >= today && d <= end;
+  return Boolean(d && d >= today && d <= end);
 }
 
 function flagBadgeClass(flag: DateFlag) {
   if (flag === "Hoje") return "bg-amber-50 border border-amber-200 text-amber-800";
   return "bg-slate-50 border border-slate-200 text-slate-700";
+}
+
+function alertIcon(kind?: MeuDiaAlert["icon"]) {
+  if (kind === "gift") return <Gift className="h-4 w-4 text-pink-700" />;
+  if (kind === "ticket") return <Ticket className="h-4 w-4 text-amber-700" />;
+  if (kind === "trophy") return <Trophy className="h-4 w-4 text-emerald-700" />;
+  if (kind === "alert") return <AlertTriangle className="h-4 w-4 text-red-700" />;
+  return <Bell className="h-4 w-4 text-slate-700" />;
 }
 
 const FALLBACK_THOUGHTS = [
@@ -354,6 +450,8 @@ export default function Inicio() {
     openOppTotal: 0,
     todayEventsCount: 0,
     todayGroupsCount: 0,
+    myDayCount: 0,
+    pendingGroupRegistrationCount: 0,
     monthSalesTotal: 0,
     monthSalesMeta: 0,
     monthSalesPct: 0,
@@ -375,12 +473,17 @@ export default function Inicio() {
   const [eventsAll, setEventsAll] = useState<NextEventItem[]>([]);
   const [eventsPage, setEventsPage] = useState(0);
   const EVENTS_PAGE_SIZE = 7;
+  const [myDayAlerts, setMyDayAlerts] = useState<MeuDiaAlert[]>([]);
+  const [myDayPage, setMyDayPage] = useState(0);
+  const MY_DAY_PAGE_SIZE = 7;
   const [thoughtOfDay, setThoughtOfDay] = useState<string>(pickThought(rangeToday.ymd));
 
   const giroPageCount = useMemo(() => Math.max(1, Math.ceil(giroAll.length / GIRO_PAGE_SIZE)), [giroAll.length]);
   const giroSlice = useMemo(() => giroAll.slice(giroPage * GIRO_PAGE_SIZE, giroPage * GIRO_PAGE_SIZE + GIRO_PAGE_SIZE), [giroAll, giroPage]);
   const eventsPageCount = useMemo(() => Math.max(1, Math.ceil(eventsAll.length / EVENTS_PAGE_SIZE)), [eventsAll.length]);
   const eventsSlice = useMemo(() => eventsAll.slice(eventsPage * EVENTS_PAGE_SIZE, eventsPage * EVENTS_PAGE_SIZE + EVENTS_PAGE_SIZE), [eventsAll, eventsPage]);
+  const myDayPageCount = useMemo(() => Math.max(1, Math.ceil(myDayAlerts.length / MY_DAY_PAGE_SIZE)), [myDayAlerts.length]);
+  const myDaySlice = useMemo(() => myDayAlerts.slice(myDayPage * MY_DAY_PAGE_SIZE, myDayPage * MY_DAY_PAGE_SIZE + MY_DAY_PAGE_SIZE), [myDayAlerts, myDayPage]);
 
   async function loadMeAndUsers() {
     const { data: auth } = await supabase.auth.getUser();
@@ -416,6 +519,8 @@ export default function Inicio() {
 
   async function loadDashboard(scopeUserId: string, scopeAuthId: string, admin: boolean) {
     const today = rangeToday.ymd;
+    const tomorrow = addDaysYMD(today, 1);
+    const yesterday = addDaysYMD(today, -1);
     const endWeek = addDaysYMD(today, 6);
     const windowStartISO = rangeISOForDayInOffset(today, PV_OFFSET_MIN).startISO;
     const windowEndISO = rangeISOForDayInOffset(endWeek, PV_OFFSET_MIN).endISO;
@@ -433,8 +538,8 @@ export default function Inicio() {
     const openOppTotal = openOppRows.reduce((acc, r) => acc + (Number(r.valor_credito || 0) || 0), 0);
 
     const overdueComputed = openOppRows
-      .filter((o) => Boolean(normalizeYMD(o.expected_close_at)) && normalizeYMD(o.expected_close_at) < today)
-      .map((o) => ({ ...o, daysWaiting: Math.max(0, daysDiffYMD(today, normalizeYMD(o.expected_close_at))) }))
+      .filter((o) => Boolean(toYMD(o.expected_close_at)) && (toYMD(o.expected_close_at) as string) < today)
+      .map((o) => ({ ...o, daysWaiting: Math.max(0, daysDiffYMD(today, toYMD(o.expected_close_at) as string)) }))
       .sort((a, b) => (b.daysWaiting || 0) - (a.daysWaiting || 0))
       .slice(0, 10);
 
@@ -456,17 +561,39 @@ export default function Inicio() {
       return t >= rangeToday.startISO && t <= rangeToday.endISO;
     }).length;
 
-    // ===== Grupos =====
-    const { data: gTodayRows, error: gTodayErr } = await supabase.from("groups").select("id").or(`prox_vencimento.eq.${today},prox_sorteio.eq.${today},prox_assembleia.eq.${today}`).limit(500);
-    if (gTodayErr) throw gTodayErr;
-    const todayGroupsCount = (gTodayRows || []).length;
-
-    const { data: gRows, error: gErr } = await supabase
+    // ===== Grupos: datas puras, sem conversão UTC na exibição =====
+    const { data: groupRowsRaw, error: groupsErr } = await supabase
       .from("groups")
-      .select("id,administradora,segmento,codigo,prox_vencimento,prox_sorteio,prox_assembleia")
-      .or(`prox_vencimento.gte.${today},prox_vencimento.lte.${endWeek},prox_sorteio.gte.${today},prox_sorteio.lte.${endWeek},prox_assembleia.gte.${today},prox_assembleia.lte.${endWeek}`)
-      .limit(1000);
-    if (gErr) throw gErr;
+      .select("id,administradora,segmento,codigo,participantes,prox_vencimento,prox_sorteio,prox_assembleia")
+      .limit(5000);
+    if (groupsErr) throw groupsErr;
+    const groupRows = (groupRowsRaw || []) as any as GroupRow[];
+
+    const groupsToday = groupRows.filter((g) => [toYMD(g.prox_vencimento), toYMD(g.prox_sorteio), toYMD(g.prox_assembleia)].includes(today));
+    const todayGroupsCount = groupsToday.length;
+    const groupsWindow = groupRows.filter((g) => {
+      const dates = [toYMD(g.prox_vencimento), toYMD(g.prox_sorteio), toYMD(g.prox_assembleia)].filter(Boolean) as string[];
+      return dates.some((d) => d >= today && d <= endWeek);
+    });
+
+    const realGroupKeys = new Set(groupRows.map((g) => groupKey(g.administradora, g.codigo)));
+    const sorteioDates = Array.from(new Set(groupRows.map((g) => toYMD(g.prox_sorteio)).filter(Boolean) as string[]));
+    const drawsByDate = new Map<string, boolean>();
+    if (sorteioDates.length) {
+      const { data: draws, error: drawsErr } = await supabase.from("lottery_draws").select("draw_date").in("draw_date", sorteioDates);
+      if (drawsErr) throw drawsErr;
+      (draws || []).forEach((d: any) => drawsByDate.set(toYMD(d.draw_date) as string, true));
+    }
+
+    const lastAsmByGroup = new Map<string, LastAssemblyRow>();
+    const realGroupIds = groupRows.map((g) => g.id).filter(Boolean);
+    if (realGroupIds.length) {
+      const { data: lastAsm, error: lastAsmErr } = await supabase
+        .from("v_group_last_assembly")
+        .select("group_id,date,ll_high,ll_low,median,reference_number")
+        .in("group_id", realGroupIds);
+      if (!lastAsmErr) (lastAsm || []).forEach((r: any) => lastAsmByGroup.set(r.group_id, r as LastAssemblyRow));
+    }
 
     // ===== Vendas do mês / meta / carteira =====
     const { startYMD, endYMD, year, month } = rangeMonth;
@@ -501,7 +628,7 @@ export default function Inicio() {
     if (reqErr) throw reqErr;
     const openStockReqCount = (reqRows || []).length;
 
-    // ===== Comissões: regra igual à guia Comissões =====
+    // ===== Comissões =====
     let commQ = supabase.from("commissions").select("id,venda_id,vendedor_id,valor_total,base_calculo,percent_aplicado,status,data_venda").limit(5000);
     if (!admin) commQ = commQ.eq("vendedor_id", scopeUserId);
     if (admin && scopeUserId !== ALL) commQ = commQ.eq("vendedor_id", scopeUserId);
@@ -545,7 +672,6 @@ export default function Inicio() {
     const commissionsPendingCount = pendingCommissions.length;
     const commissionsPendingTotal = pendingCommissions.reduce((acc, x) => acc + x.pending, 0);
 
-    // ===== Comissão programada: próxima data com parcela não paga =====
     const scheduledByDate = new Map<string, number>();
     for (const c of operationalCommissions) {
       const flows = (flowByCommission.get(c.id) || []).filter((f) => (Number(f.percentual) || 0) > 0);
@@ -553,8 +679,7 @@ export default function Inicio() {
 
       for (const f of flows) {
         if ((Number(f.valor_pago_vendedor) || 0) > 0) continue;
-
-        const direct = normalizeYMD(f.data_pagamento_vendedor);
+        const direct = toYMD(f.data_pagamento_vendedor);
         const exp = direct || (() => {
           const d = expectedDateForParcel(flows, f.mes);
           return d ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : "";
@@ -570,10 +695,10 @@ export default function Inicio() {
     const commissionScheduledDate = scheduledDates[0] || null;
     const commissionScheduledTotal = commissionScheduledDate ? scheduledByDate.get(commissionScheduledDate) || 0 : 0;
 
-    // ===== Vendas sem comissão: mesma regra da guia Comissões =====
+    // ===== Vendas sem comissão e grupos pendentes de cadastro =====
     let vendasSemQ = supabase
       .from("vendas")
-      .select("id,data_venda,vendedor_id,segmento,tabela,administradora,valor_venda,numero_proposta,cliente_lead_id,lead_id,encarteirada_em,codigo,cancelada_em")
+      .select("id,data_venda,vendedor_id,segmento,tabela,administradora,grupo,valor_venda,numero_proposta,cliente_lead_id,lead_id,encarteirada_em,codigo,cancelada_em,status,contemplada")
       .not("encarteirada_em", "is", null)
       .order("data_venda", { ascending: false });
     if (!admin) vendasSemQ = vendasSemQ.eq("vendedor_id", scopeAuthId);
@@ -583,6 +708,14 @@ export default function Inicio() {
     const vendasSemComissaoCount = ((vendasSemRows || []) as any as VendaMini[])
       .filter((v) => !vendaIdsWithComm.has(v.id))
       .filter((v) => !isVendaCancelada(v)).length;
+
+    const vendasForStubs = ((vendasSemRows || []) as any as VendaMini[]).filter((v) => !isVendaCancelada(v) && v.administradora && v.grupo);
+    const missingGroupsMap = new Map<string, VendaMini>();
+    vendasForStubs.forEach((v) => {
+      const k = groupKey(v.administradora, v.grupo);
+      if (!realGroupKeys.has(k) && !missingGroupsMap.has(k)) missingGroupsMap.set(k, v);
+    });
+    const pendingGroupRegistrationCount = missingGroupsMap.size;
 
     // ===== Giro pendente =====
     let giroDueCount = 0;
@@ -617,18 +750,129 @@ export default function Inicio() {
     // ===== Aniversários / procedimentos =====
     const { data: allBirth, error: birthErr } = await supabase.from("clientes").select("id,nome,data_nascimento,telefone").not("data_nascimento", "is", null).limit(2000);
     if (birthErr) throw birthErr;
-    const birthdayToday = ((allBirth || []) as ClienteRow[]).filter((c) => normalizeYMD(c.data_nascimento).slice(5) === today.slice(5)).slice(0, 50);
+    const birthdayToday = ((allBirth || []) as ClienteRow[]).filter((c) => (toYMD(c.data_nascimento) || "").slice(5) === today.slice(5)).slice(0, 50);
 
     let newProceduresCount = 0;
     try {
       const sevenDaysAgo = addDaysYMD(today, -7);
       const { data: kbRows, error: kbErr } = await supabase.from("kb_procedures").select("id,title,titulo,status,created_at,updated_at").order("created_at", { ascending: false }).limit(200);
       if (!kbErr && kbRows) {
-        newProceduresCount = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active" && normalizeYMD(p.created_at || "") >= sevenDaysAgo).length;
+        newProceduresCount = (kbRows as KBProcRow[]).filter((p) => String(p.status || "").toLowerCase() === "active" && (toYMD(p.created_at) || "") >= sevenDaysAgo).length;
       }
     } catch {}
 
-    // ===== Próximos eventos =====
+    // ===== Meu Dia =====
+    const myDay: MeuDiaAlert[] = [];
+
+    if (pendingGroupRegistrationCount > 0) {
+      const groups = Array.from(missingGroupsMap.values()).map((v) => ({ codigo: normalizeGroupDigits(v.grupo) }));
+      myDay.push({
+        id: "pending-groups",
+        priority: 10,
+        icon: "alert",
+        title: `Grupos pendentes de cadastro: ${groupListLabel(groups)}`,
+        desc: "Há vendas em grupos que ainda não estão cadastrados na Gestão de Grupos.",
+        action: { label: "Cadastrar Grupos", to: "/gestao-de-grupos" },
+      });
+    }
+
+    const boletoGroups = groupRows.filter((g) => toYMD(g.prox_vencimento) === tomorrow);
+    if (boletoGroups.length) {
+      myDay.push({
+        id: "boleto-groups",
+        priority: 20,
+        icon: "ticket",
+        title: `Enviar boleto dos grupos ${groupListLabel(boletoGroups)}`,
+        desc: `Vencimento previsto para ${fmtDateBRFromYMD(tomorrow)}.`,
+        action: { label: "Ver Grupos", to: "/gestao-de-grupos" },
+      });
+    }
+
+    const loteriaGroups = groupRows.filter((g) => {
+      const sorteio = toYMD(g.prox_sorteio);
+      const asm = toYMD(g.prox_assembleia);
+      if (!sorteio || !asm) return false;
+      return today >= sorteio && today < asm && !hasDraw(drawsByDate, sorteio);
+    });
+    if (loteriaGroups.length) {
+      myDay.push({
+        id: "loteria-groups",
+        priority: 30,
+        icon: "alert",
+        title: `Informar resultado da Loteria para os grupos ${groupListLabel(loteriaGroups)}`,
+        desc: "Esse alerta some quando o resultado da Loteria Federal da data do sorteio é informado.",
+        action: { label: "Informar Loteria", to: "/gestao-de-grupos" },
+      });
+    }
+
+    const lanceGroups = groupRows.filter((g) => {
+      const adm = normalizeAdmin(g.administradora).toLowerCase();
+      const sorteio = toYMD(g.prox_sorteio);
+      const asm = toYMD(g.prox_assembleia);
+      if (adm === "maggi") return sorteio === tomorrow;
+      return asm === tomorrow;
+    });
+    if (lanceGroups.length) {
+      myDay.push({
+        id: "lance-groups",
+        priority: 40,
+        icon: "bell",
+        title: `Ofertar lance dos grupos ${groupListLabel(lanceGroups)}`,
+        desc: "Para Maggi, o alerta é um dia antes do sorteio. Para as demais, um dia antes da assembleia.",
+        action: { label: "Abrir Oferta", to: "/gestao-de-grupos" },
+      });
+    }
+
+    const assembleiaTodayGroups = groupRows.filter((g) => toYMD(g.prox_assembleia) === today);
+    if (assembleiaTodayGroups.length) {
+      myDay.push({
+        id: "assembleia-today",
+        priority: 50,
+        icon: "bell",
+        title: `Hoje tem assembleia dos grupos ${groupListLabel(assembleiaTodayGroups)}`,
+        desc: "Verificar se os clientes foram contemplados.",
+        action: { label: "Ver Assembleias", to: "/gestao-de-grupos" },
+      });
+    }
+
+    const assembleiaYesterdayGroups = groupRows.filter((g) => toYMD(g.prox_assembleia) === yesterday);
+    if (assembleiaYesterdayGroups.length) {
+      myDay.push({
+        id: "assembleia-result",
+        priority: 60,
+        icon: "alert",
+        title: `Informar o resultado da assembleia dos grupos ${groupListLabel(assembleiaYesterdayGroups)}`,
+        desc: `Assembleia realizada em ${fmtDateBRFromYMD(yesterday)}.`,
+        action: { label: "Informar Resultado", to: "/gestao-de-grupos" },
+      });
+    }
+
+    birthdayToday.forEach((c) => {
+      myDay.push({
+        id: `birthday:${c.id}`,
+        priority: 70,
+        icon: "gift",
+        title: `Hoje é aniversário do cliente ${c.nome}`,
+        desc: "Parabenize-o e fortaleça o relacionamento.",
+        action: { label: "Ver Clientes", to: "/clientes" },
+      });
+    });
+
+    const commissionToday = scheduledByDate.get(today) || 0;
+    if (commissionToday > 0) {
+      myDay.push({
+        id: "commission-today",
+        priority: 80,
+        icon: "trophy",
+        title: `Hoje você receberá ${fmtBRL(commissionToday)} de comissão` ,
+        desc: "Celebre esse momento. Resultado é consequência de processo bem feito.",
+        action: { label: "Abrir Comissões", to: "/comissoes" },
+      });
+    }
+
+    myDay.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
+
+    // ===== Próximos eventos enriquecidos =====
     const items: NextEventItem[] = [];
 
     for (const e of (agRows || []) as AgendaRow[]) {
@@ -646,24 +890,26 @@ export default function Inicio() {
       });
     }
 
-    for (const g of (gRows || []) as GroupRow[]) {
-      const pushGroup = (kind: "Vencimento" | "Sorteio" | "Assembleia", dateRaw: string | null) => {
-        const d = normalizeYMD(dateRaw);
-        if (!d || !isWithinNextWeekWindow(today, d)) return;
-        items.push({
-          id: `grp:${g.id}:${kind}:${d}`,
-          whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 12),
-          whenLabel: fmtDateBRFromYMD(d),
-          flag: flagFromYMDWeek(today, d),
-          title: `${kind} Grupo ${g.codigo}`,
-          desc: `${g.administradora} | ${g.segmento}`,
-          action: { label: "Ver Grupos", to: "/gestao-de-grupos" },
-        });
-      };
-      pushGroup("Assembleia", g.prox_assembleia);
-      pushGroup("Vencimento", g.prox_vencimento);
-      pushGroup("Sorteio", g.prox_sorteio);
-    }
+    const pushGroupEvent = (g: GroupRow, kind: "Vencimento" | "Sorteio" | "Assembleia", dateRaw: string | null) => {
+      const d = toYMD(dateRaw);
+      if (!d || !isWithinNextWeekWindow(today, d)) return;
+      const drawInfo = kind === "Sorteio" || kind === "Assembleia" ? ` • Loteria: ${hasDraw(drawsByDate, g.prox_sorteio) ? "informada" : "pendente"}` : "";
+      items.push({
+        id: `grp:${g.id}:${kind}:${d}`,
+        whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), kind === "Vencimento" ? 9 : kind === "Sorteio" ? 11 : 12),
+        whenLabel: fmtDateBRFromYMD(d),
+        flag: flagFromYMDWeek(today, d),
+        title: `${kind} Grupo ${g.codigo}`,
+        desc: `${g.administradora} | ${g.segmento} | ${lastAsmInfo(lastAsmByGroup, g.id)}${drawInfo}`,
+        action: { label: "Ver Grupos", to: "/gestao-de-grupos" },
+      });
+    };
+
+    groupsWindow.forEach((g) => {
+      pushGroupEvent(g, "Vencimento", g.prox_vencimento);
+      pushGroupEvent(g, "Sorteio", g.prox_sorteio);
+      pushGroupEvent(g, "Assembleia", g.prox_assembleia);
+    });
 
     for (const [d, total] of scheduledByDate.entries()) {
       if (!isWithinNextWeekWindow(today, d)) continue;
@@ -672,8 +918,8 @@ export default function Inicio() {
         whenSort: Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)), 13),
         whenLabel: fmtDateBRFromYMD(d),
         flag: flagFromYMDWeek(today, d),
-        title: "Recebimento de Comissão",
-        desc: `💰 Você receberá ${fmtBRL(total)} de comissão 💸`,
+        title: d === today ? "Comissão de hoje" : "Recebimento de Comissão",
+        desc: d === today ? `🎉 Hoje você receberá ${fmtBRL(total)} de comissão. Celebre esse momento.` : `💰 Você receberá ${fmtBRL(total)} de comissão.`,
         action: { label: "Abrir Comissões", to: "/comissoes" },
       });
     }
@@ -685,7 +931,7 @@ export default function Inicio() {
         whenLabel: fmtDateBRFromYMD(today),
         flag: "Hoje",
         title: "Aniversário",
-        desc: `É aniversário do seu Cliente “${c.nome}”. Parabenize-o! 🎂🎉`,
+        desc: `Hoje é aniversário do cliente ${c.nome}. Parabenize-o! 🎂🎉`,
         action: { label: "Ver Clientes", to: "/clientes" },
       });
     }
@@ -697,6 +943,8 @@ export default function Inicio() {
     setGiroPage(0);
     setEventsAll(items);
     setEventsPage(0);
+    setMyDayAlerts(myDay);
+    setMyDayPage(0);
     setThoughtOfDay(pickThought(today));
 
     setKpi({
@@ -704,6 +952,8 @@ export default function Inicio() {
       openOppTotal,
       todayEventsCount,
       todayGroupsCount,
+      myDayCount: myDay.length,
+      pendingGroupRegistrationCount,
       monthSalesTotal,
       monthSalesMeta,
       monthSalesPct,
@@ -869,7 +1119,16 @@ export default function Inicio() {
         </div>
       ) : null}
 
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <Card className={glassCard}>
+          <CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Bell className="h-4 w-4" /> Meu Dia</CardTitle></CardHeader>
+          <CardContent>
+            <div className="text-3xl font-semibold">{kpi.myDayCount}</div>
+            <div className="text-slate-600 text-sm mt-1">alerta(s) para agir hoje</div>
+            <Button className="mt-3 bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => document.getElementById("meu-dia")?.scrollIntoView({ behavior: "smooth" })}>Ver Meu Dia <ArrowRight className="h-4 w-4 ml-2" /></Button>
+          </CardContent>
+        </Card>
+
         <Card className={glassCard}>
           <CardHeader className="pb-2"><CardTitle className="text-sm text-slate-700 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Oportunidades</CardTitle></CardHeader>
           <CardContent>
@@ -896,9 +1155,8 @@ export default function Inicio() {
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-slate-600">Realizado</div>
                 <div className="text-lg font-semibold text-slate-900">{fmtBRL(kpi.monthSalesTotal)}</div>
-                <div className="mt-2 text-sm text-slate-600">Meta do mês</div>
+                <div className="mt-2 text-sm text-slate-600">Meta</div>
                 <div className="text-base font-semibold text-slate-900">{fmtBRL(kpi.monthSalesMeta)}</div>
-                <Button className="mt-3 bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => nav("/relatorios")}>Ver Relatórios <ArrowRight className="h-4 w-4 ml-2" /></Button>
               </div>
             </div>
           </CardContent>
@@ -936,13 +1194,55 @@ export default function Inicio() {
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between"><div className="text-slate-700 inline-flex items-center gap-2"><FileText className="h-4 w-4 text-slate-500" />Procedimentos novos</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.newProceduresCount}</Badge></div>
             <div className="flex items-center justify-between"><div className="text-slate-700">Grupos com evento hoje</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.todayGroupsCount}</Badge></div>
+            <div className="flex items-center justify-between"><div className="text-slate-700">Grupos pendentes de cadastro</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.pendingGroupRegistrationCount}</Badge></div>
             <div className="flex items-center justify-between"><div className="text-slate-700">Vendas sem comissão</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.vendasSemComissaoCount}</Badge></div>
             <div className="flex items-center justify-between"><div className="text-slate-700">Comissões pendentes</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.commissionsPendingCount}</Badge></div>
             <div className="flex items-center justify-between"><div className="text-slate-700">Total pendente</div><div className="text-slate-900 font-medium">{fmtBRL(kpi.commissionsPendingTotal)}</div></div>
             <div className="flex items-center justify-between"><div className="text-slate-700">Comissão programada</div><div className="text-right"><div className="text-slate-900 font-medium">{fmtBRL(kpi.commissionScheduledTotal)}</div><div className="text-xs text-slate-500">{kpi.commissionScheduledDate ? fmtDateBRFromYMD(kpi.commissionScheduledDate) : "Sem data"}</div></div></div>
             <div className="flex items-center justify-between"><div className="text-slate-700">Giro pendente</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.giroDueCount}</Badge></div>
             <div className="flex items-center justify-between"><div className="text-slate-700">Solicitações de reserva</div><Badge className="bg-slate-100 border border-slate-200 text-slate-800">{kpi.openStockReqCount}</Badge></div>
-            <Button className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 w-full" onClick={() => nav("/comissoes")}>Abrir Comissões <ArrowRight className="h-4 w-4 ml-2" /></Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div id="meu-dia" className="mt-6">
+        <Card className={glassCard}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-slate-700 flex items-center gap-2"><Bell className="h-4 w-4" /> Meu Dia</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {myDayAlerts.length === 0 ? (
+              <div className="text-slate-500 text-sm">Nenhum alerta operacional para hoje. 👏</div>
+            ) : (
+              <>
+                {myDaySlice.map((a) => (
+                  <div key={a.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex gap-2">
+                        <div className="mt-0.5">{alertIcon(a.icon)}</div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-slate-900">{a.title}</div>
+                          {a.desc ? <div className="text-xs text-slate-500 mt-0.5">{a.desc}</div> : null}
+                        </div>
+                      </div>
+                      {a.action ? (
+                        <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shrink-0" onClick={() => { if (a.action?.to) nav(a.action.to); else if (a.action?.href) window.open(a.action.href, "_blank"); }}>
+                          {a.action.label} <ArrowRight className="h-4 w-4 ml-1" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+
+                <div className="flex items-center justify-between pt-2">
+                  <div className="text-xs text-slate-500">Página {myDayPage + 1} de {myDayPageCount}</div>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setMyDayPage((p) => Math.max(0, p - 1))} disabled={myDayPage <= 0}>Anterior</Button>
+                    <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setMyDayPage((p) => Math.min(myDayPageCount - 1, p + 1))} disabled={myDayPage >= myDayPageCount - 1}>Próxima</Button>
+                  </div>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -979,7 +1279,7 @@ export default function Inicio() {
           <CardContent className="space-y-2">
             {eventsAll.length === 0 ? <div className="text-slate-500 text-sm">Sem eventos futuros para esta semana.</div> : (
               <>
-                {eventsSlice.map((e) => <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="flex items-center gap-2"><Badge className={flagBadgeClass(e.flag)}>{e.flag}</Badge><div className="text-xs text-slate-500">{e.whenLabel}</div></div><div className="text-sm font-medium truncate mt-1">{e.title}</div>{e.desc ? <div className="text-xs text-slate-500 truncate">{e.desc}</div> : null}</div>{e.action ? <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => { if (e.action?.to) nav(e.action.to); else if (e.action?.href) window.open(e.action.href, "_blank"); }}>{e.action.label} <ArrowRight className="h-4 w-4 ml-1" /></Button> : null}</div></div>)}
+                {eventsSlice.map((e) => <div key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="flex items-center gap-2"><Badge className={flagBadgeClass(e.flag)}>{e.flag}</Badge><div className="text-xs text-slate-500">{e.whenLabel}</div></div><div className="text-sm font-medium truncate mt-1">{e.title}</div>{e.desc ? <div className="text-xs text-slate-500 truncate">{e.desc}</div> : null}</div>{e.action ? <Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shrink-0" onClick={() => { if (e.action?.to) nav(e.action.to); else if (e.action?.href) window.open(e.action.href, "_blank"); }}>{e.action.label} <ArrowRight className="h-4 w-4 ml-1" /></Button> : null}</div></div>)}
                 <div className="flex items-center justify-between pt-2"><div className="text-xs text-slate-500">Página {eventsPage + 1} de {eventsPageCount}</div><div className="flex items-center gap-2"><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setEventsPage((p) => Math.max(0, p - 1))} disabled={eventsPage <= 0}>Anterior</Button><Button size="sm" className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200" onClick={() => setEventsPage((p) => Math.min(eventsPageCount - 1, p + 1))} disabled={eventsPage >= eventsPageCount - 1}>Próxima</Button></div></div>
               </>
             )}

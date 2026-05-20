@@ -14,9 +14,11 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock,
+  DollarSign,
   FileText,
   Loader2,
   MapPin,
+  Plane,
   Plus,
   RefreshCcw,
   Save,
@@ -26,325 +28,97 @@ import {
   XCircle,
 } from "lucide-react";
 
-const C = {
-  ruby: "#A11C27",
-  navy: "#1E293F",
-  gold: "#B5A573",
-  off: "#F5F5F5",
-};
+const C = { ruby: "#A11C27", navy: "#1E293F", gold: "#B5A573", off: "#F5F5F5" };
 
-type TabKey = "painel" | "colaboradores" | "ponto" | "banco" | "ajustes" | "pdi" | "feedbacks" | "candidatos";
+type TabKey = "painel" | "colaboradores" | "contrato" | "remuneracao" | "ponto" | "banco" | "ajustes" | "pdi" | "feedbacks" | "candidatos";
+type UserProfile = { id: string; auth_user_id: string | null; nome: string | null; email: string | null; role: string | null; user_role: string | null };
+type Employee = { id: string; user_id: string | null; auth_user_id: string | null; nome: string; cpf_digits: string; email: string | null; telefone: string | null; cargo: string | null; setor: string | null; jornada_diaria_minutos: number; intervalo_minutos: number; ativo: boolean; created_at?: string; updated_at?: string };
+type TimeEntry = { id: string; employee_id: string; entry_type: "entrada" | "saida"; entry_at: string; latitude: number; longitude: number; accuracy: number | null; status: string; source: string; observacao: string | null; hr_employees?: { nome: string; cargo: string | null; setor: string | null } | null };
+type TimeAdjustment = { id: string; employee_id: string; date_ref: string; requested_entry_type: "entrada" | "saida"; requested_entry_at: string; reason: string; status: "pendente" | "aprovado" | "recusado"; approved_by: string | null; approved_at: string | null; created_at: string };
+type PDI = { id: string; employee_id: string; manager_id: string | null; title: string; main_goal: string | null; competencies: string | null; start_date: string | null; end_date: string | null; status: string; created_at: string; updated_at: string };
+type Feedback = { id: string; employee_id: string; manager_id: string | null; feedback_type: string; situation: string | null; behavior: string | null; impact: string | null; orientation: string | null; action_plan: string | null; followup_date: string | null; employee_acknowledged: boolean; status: string; created_at: string };
+type Candidate = { id: string; auth_user_id: string | null; nome: string | null; email: string | null; telefone: string | null; cpf: string | null; cidade: string | null; uf: string | null; area_interesse: string | null; pretensao_salarial: number | null; status: string | null; created_at: string };
+type HRContract = { id: string; employee_id: string; hire_date: string; contract_type: string; employment_status: string; role_title: string | null; department_name: string | null; base_salary: number | null; current_salary: number | null; termination_date: string | null; termination_reason: string | null; notes: string | null; created_at: string; updated_at: string };
+type VacationPeriod = { id: string; employee_id: string; acquisition_start: string; acquisition_end: string; concession_start: string; concession_end: string; days_right: number; days_scheduled: number; days_taken: number; status: string; notes: string | null; created_at: string; updated_at: string };
+type VacationSchedule = { id: string; vacation_period_id: string; employee_id: string; start_date: string; end_date: string; days_count: number; sold_days: number; bonus_days: number; status: string; approved_by: string | null; approved_at: string | null; notes: string | null; created_at: string; updated_at: string };
+type SalaryHistory = { id: string; employee_id: string; change_date: string; previous_salary: number | null; new_salary: number; change_type: string; reason: string | null; notes: string | null; registered_by: string | null; created_at: string };
+type WorkDay = { employee_id: string; employee_name: string; date_ref: string; first_entry?: string; last_exit?: string; worked_minutes: number; expected_minutes: number; balance_minutes: number; pairs: number; status: "em_jornada" | "fora_jornada" | "sem_registro" };
 
-type UserProfile = {
-  id: string;
-  auth_user_id: string | null;
-  nome: string | null;
-  email: string | null;
-  role: string | null;
-  user_role: string | null;
-};
+type EmployeeForm = { id?: string; nome: string; cpf: string; email: string; telefone: string; cargo: string; setor: string; jornada_diaria_minutos: string; intervalo_minutos: string; auth_user_id: string; ativo: boolean };
+type ContractForm = { employee_id: string; hire_date: string; contract_type: string; employment_status: string; role_title: string; department_name: string; base_salary: string; current_salary: string; termination_date: string; termination_reason: string; notes: string };
+type SalaryForm = { employee_id: string; change_date: string; previous_salary: string; new_salary: string; change_type: string; reason: string; notes: string };
+type VacationForm = { vacation_period_id: string; employee_id: string; start_date: string; end_date: string; days_count: string; sold_days: string; bonus_days: string; status: string; notes: string };
+type PDIForm = { employee_id: string; title: string; main_goal: string; competencies: string; start_date: string; end_date: string; status: string };
+type FeedbackForm = { employee_id: string; feedback_type: string; situation: string; behavior: string; impact: string; orientation: string; action_plan: string; followup_date: string; status: string };
+type AdjustmentForm = { employee_id: string; date_ref: string; requested_entry_type: "entrada" | "saida"; requested_entry_at: string; reason: string };
 
-type Employee = {
-  id: string;
-  user_id: string | null;
-  auth_user_id: string | null;
-  nome: string;
-  cpf_digits: string;
-  email: string | null;
-  telefone: string | null;
-  cargo: string | null;
-  setor: string | null;
-  jornada_diaria_minutos: number;
-  intervalo_minutos: number;
-  ativo: boolean;
-  created_at?: string;
-  updated_at?: string;
-};
+function onlyDigits(v: string) { return (v || "").replace(/\D/g, ""); }
+function maskCPF(v: string) { const d = onlyDigits(v).slice(0, 11); return d.replace(/^(\d{3})(\d)/, "$1.$2").replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3").replace(/^(\d{3})\.(\d{3})\.(\d{3})(\d)/, "$1.$2.$3-$4"); }
+function todayYMD() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function dateKey(value: string) { const d = new Date(value); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function toDateLocal(ymd: string) { const [y, m, d] = ymd.split("-").map(Number); return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0, 0); }
+function toYMD(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function addYears(ymd: string, years: number) { const d = toDateLocal(ymd); d.setFullYear(d.getFullYear() + years); return toYMD(d); }
+function addDays(ymd: string, days: number) { const d = toDateLocal(ymd); d.setDate(d.getDate() + days); return toYMD(d); }
+function formatDateTimeBR(value?: string) { if (!value) return "—"; try { return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Porto_Velho", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value)); } catch { return value; } }
+function formatDateBR(value?: string) { if (!value) return "—"; try { return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Porto_Velho" }).format(new Date(`${value}T12:00:00`)); } catch { return value; } }
+function formatMinutes(total: number) { const sign = total < 0 ? "-" : ""; const abs = Math.abs(Math.round(total)); return `${sign}${Math.floor(abs / 60)}h${String(abs % 60).padStart(2, "0")}`; }
+function fmtMoney(v: number | null | undefined) { if (v == null || Number.isNaN(Number(v))) return "—"; return Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
+function mapUrl(lat: number, lng: number) { return `https://www.google.com/maps?q=${lat},${lng}`; }
+function numOrNull(v: string) { if (!v.trim()) return null; const n = Number(v.replace(/\./g, "").replace(",", ".")); return Number.isFinite(n) ? n : null; }
+function emptyEmployeeForm(): EmployeeForm { return { nome: "", cpf: "", email: "", telefone: "", cargo: "", setor: "", jornada_diaria_minutos: "480", intervalo_minutos: "60", auth_user_id: "", ativo: true }; }
+function emptyContractForm(): ContractForm { return { employee_id: "", hire_date: todayYMD(), contract_type: "clt", employment_status: "ativo", role_title: "", department_name: "", base_salary: "", current_salary: "", termination_date: "", termination_reason: "", notes: "" }; }
+function emptySalaryForm(): SalaryForm { return { employee_id: "", change_date: todayYMD(), previous_salary: "", new_salary: "", change_type: "aumento", reason: "", notes: "" }; }
+function emptyVacationForm(): VacationForm { return { vacation_period_id: "", employee_id: "", start_date: todayYMD(), end_date: todayYMD(), days_count: "30", sold_days: "0", bonus_days: "0", status: "planejada", notes: "" }; }
 
-type TimeEntry = {
-  id: string;
-  employee_id: string;
-  entry_type: "entrada" | "saida";
-  entry_at: string;
-  latitude: number;
-  longitude: number;
-  accuracy: number | null;
-  status: string;
-  source: string;
-  observacao: string | null;
-  hr_employees?: {
-    nome: string;
-    cargo: string | null;
-    setor: string | null;
-  } | null;
-};
-
-type TimeAdjustment = {
-  id: string;
-  employee_id: string;
-  date_ref: string;
-  requested_entry_type: "entrada" | "saida";
-  requested_entry_at: string;
-  reason: string;
-  status: "pendente" | "aprovado" | "recusado";
-  approved_by: string | null;
-  approved_at: string | null;
-  created_at: string;
-};
-
-type PDI = {
-  id: string;
-  employee_id: string;
-  manager_id: string | null;
-  title: string;
-  main_goal: string | null;
-  competencies: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-};
-
-type Feedback = {
-  id: string;
-  employee_id: string;
-  manager_id: string | null;
-  feedback_type: string;
-  situation: string | null;
-  behavior: string | null;
-  impact: string | null;
-  orientation: string | null;
-  action_plan: string | null;
-  followup_date: string | null;
-  employee_acknowledged: boolean;
-  status: string;
-  created_at: string;
-};
-
-type Candidate = {
-  id: string;
-  auth_user_id: string | null;
-  nome: string | null;
-  email: string | null;
-  telefone: string | null;
-  cpf: string | null;
-  cidade: string | null;
-  uf: string | null;
-  area_interesse: string | null;
-  pretensao_salarial: number | null;
-  status: string | null;
-  created_at: string;
-};
-
-type EmployeeForm = {
-  id?: string;
-  nome: string;
-  cpf: string;
-  email: string;
-  telefone: string;
-  cargo: string;
-  setor: string;
-  jornada_diaria_minutos: string;
-  intervalo_minutos: string;
-  auth_user_id: string;
-  ativo: boolean;
-};
-
-type PDIForm = {
-  employee_id: string;
-  title: string;
-  main_goal: string;
-  competencies: string;
-  start_date: string;
-  end_date: string;
-  status: string;
-};
-
-type FeedbackForm = {
-  employee_id: string;
-  feedback_type: string;
-  situation: string;
-  behavior: string;
-  impact: string;
-  orientation: string;
-  action_plan: string;
-  followup_date: string;
-  status: string;
-};
-
-type AdjustmentForm = {
-  employee_id: string;
-  date_ref: string;
-  requested_entry_type: "entrada" | "saida";
-  requested_entry_at: string;
-  reason: string;
-};
-
-type WorkDay = {
-  employee_id: string;
-  employee_name: string;
-  date_ref: string;
-  first_entry?: string;
-  last_exit?: string;
-  worked_minutes: number;
-  expected_minutes: number;
-  balance_minutes: number;
-  pairs: number;
-  status: "em_jornada" | "em_intervalo" | "fora_jornada" | "sem_registro";
-};
-
-function onlyDigits(v: string) {
-  return (v || "").replace(/\D/g, "");
+function vacationStatus(p: Pick<VacationPeriod, "acquisition_end" | "concession_start" | "concession_end" | "days_taken" | "days_right" | "status">) {
+  const today = todayYMD();
+  if ((p.days_taken || 0) >= (p.days_right || 30)) return "gozada";
+  if (today <= p.acquisition_end) return "em_aquisicao";
+  if (today > p.concession_end) return "vencida";
+  const alertStart = addDays(p.concession_end, -90);
+  if (today >= alertStart) return "atencao";
+  return "disponivel";
 }
 
-function maskCPF(v: string) {
-  const d = onlyDigits(v).slice(0, 11);
-  return d
-    .replace(/^(\d{3})(\d)/, "$1.$2")
-    .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
-    .replace(/^(\d{3})\.(\d{3})\.(\d{3})(\d)/, "$1.$2.$3-$4");
-}
-
-function formatDateTimeBR(value?: string) {
-  if (!value) return "—";
-  try {
-    return new Intl.DateTimeFormat("pt-BR", {
-      timeZone: "America/Porto_Velho",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }).format(new Date(value));
-  } catch {
-    return value;
+function buildVacationPeriods(employee_id: string, hire_date: string) {
+  const rows: any[] = [];
+  const currentYear = toDateLocal(todayYMD()).getFullYear();
+  const hireYear = toDateLocal(hire_date).getFullYear();
+  const count = Math.max(2, currentYear - hireYear + 3);
+  for (let i = 0; i < count; i++) {
+    const acquisition_start = addYears(hire_date, i);
+    const acquisition_end = addDays(addYears(hire_date, i + 1), -1);
+    const concession_start = addYears(hire_date, i + 1);
+    const concession_end = addDays(addYears(hire_date, i + 2), -1);
+    rows.push({ employee_id, acquisition_start, acquisition_end, concession_start, concession_end, days_right: 30, status: vacationStatus({ acquisition_end, concession_start, concession_end, days_taken: 0, days_right: 30, status: "" }), updated_at: new Date().toISOString() });
   }
-}
-
-function formatDateBR(value?: string) {
-  if (!value) return "—";
-  try {
-    return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Porto_Velho" }).format(new Date(`${value}T12:00:00`));
-  } catch {
-    return value;
-  }
-}
-
-function formatMinutes(total: number) {
-  const sign = total < 0 ? "-" : "";
-  const abs = Math.abs(Math.round(total));
-  const h = Math.floor(abs / 60);
-  const m = abs % 60;
-  return `${sign}${h}h${String(m).padStart(2, "0")}`;
-}
-
-function todayYMD() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function dateKey(value: string) {
-  const d = new Date(value);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function mapUrl(lat: number, lng: number) {
-  return `https://www.google.com/maps?q=${lat},${lng}`;
-}
-
-function emptyEmployeeForm(): EmployeeForm {
-  return {
-    nome: "",
-    cpf: "",
-    email: "",
-    telefone: "",
-    cargo: "",
-    setor: "",
-    jornada_diaria_minutos: "480",
-    intervalo_minutos: "60",
-    auth_user_id: "",
-    ativo: true,
-  };
+  return rows;
 }
 
 function buildWorkDays(entries: TimeEntry[], employees: Employee[]): WorkDay[] {
   const employeeMap = new Map(employees.map((e) => [e.id, e]));
   const grouped = new Map<string, TimeEntry[]>();
-
-  entries.forEach((entry) => {
-    const key = `${entry.employee_id}|${dateKey(entry.entry_at)}`;
-    const arr = grouped.get(key) || [];
-    arr.push(entry);
-    grouped.set(key, arr);
-  });
-
+  entries.forEach((entry) => { const key = `${entry.employee_id}|${dateKey(entry.entry_at)}`; const arr = grouped.get(key) || []; arr.push(entry); grouped.set(key, arr); });
   const rows: WorkDay[] = [];
-
   grouped.forEach((dayEntries, key) => {
     const [employee_id, date_ref] = key.split("|");
     const employee = employeeMap.get(employee_id);
     const sorted = [...dayEntries].sort((a, b) => new Date(a.entry_at).getTime() - new Date(b.entry_at).getTime());
-
-    let openedAt: string | null = null;
-    let worked = 0;
-    let pairs = 0;
-
+    let openedAt: string | null = null; let worked = 0; let pairs = 0;
     for (const entry of sorted) {
-      if (entry.entry_type === "entrada") {
-        openedAt = entry.entry_at;
-      } else if (entry.entry_type === "saida" && openedAt) {
-        worked += Math.max(0, Math.round((new Date(entry.entry_at).getTime() - new Date(openedAt).getTime()) / 60000));
-        openedAt = null;
-        pairs += 1;
-      }
+      if (entry.entry_type === "entrada") openedAt = entry.entry_at;
+      else if (entry.entry_type === "saida" && openedAt) { worked += Math.max(0, Math.round((new Date(entry.entry_at).getTime() - new Date(openedAt).getTime()) / 60000)); openedAt = null; pairs += 1; }
     }
-
-    if (openedAt) {
-      worked += Math.max(0, Math.round((Date.now() - new Date(openedAt).getTime()) / 60000));
-    }
-
-    const last = sorted[sorted.length - 1];
-    const expected = employee?.jornada_diaria_minutos ?? 480;
-    const status: WorkDay["status"] = !last
-      ? "sem_registro"
-      : last.entry_type === "entrada"
-        ? "em_jornada"
-        : "fora_jornada";
-
-    rows.push({
-      employee_id,
-      employee_name: employee?.nome || sorted[0]?.hr_employees?.nome || "—",
-      date_ref,
-      first_entry: sorted.find((e) => e.entry_type === "entrada")?.entry_at,
-      last_exit: [...sorted].reverse().find((e) => e.entry_type === "saida")?.entry_at,
-      worked_minutes: worked,
-      expected_minutes: expected,
-      balance_minutes: worked - expected,
-      pairs,
-      status,
-    });
+    if (openedAt) worked += Math.max(0, Math.round((Date.now() - new Date(openedAt).getTime()) / 60000));
+    const last = sorted[sorted.length - 1]; const expected = employee?.jornada_diaria_minutos ?? 480;
+    rows.push({ employee_id, employee_name: employee?.nome || sorted[0]?.hr_employees?.nome || "—", date_ref, first_entry: sorted.find((e) => e.entry_type === "entrada")?.entry_at, last_exit: [...sorted].reverse().find((e) => e.entry_type === "saida")?.entry_at, worked_minutes: worked, expected_minutes: expected, balance_minutes: worked - expected, pairs, status: !last ? "sem_registro" : last.entry_type === "entrada" ? "em_jornada" : "fora_jornada" });
   });
-
   return rows.sort((a, b) => b.date_ref.localeCompare(a.date_ref) || a.employee_name.localeCompare(b.employee_name));
 }
 
-function StatusBadge({ children, tone = "default" }: { children: React.ReactNode; tone?: "default" | "good" | "warn" | "bad" | "navy" }) {
-  const styles: Record<string, React.CSSProperties> = {
-    default: { background: "#f1f5f9", color: "#334155" },
-    good: { background: "#dcfce7", color: "#166534" },
-    warn: { background: "#fef3c7", color: "#92400e" },
-    bad: { background: "#fee2e2", color: "#991b1b" },
-    navy: { background: C.navy, color: "#fff" },
-  };
-
+function StatusBadge({ children, tone = "default" }: { children: React.ReactNode; tone?: "default" | "good" | "warn" | "bad" | "navy" | "gold" }) {
+  const styles: Record<string, React.CSSProperties> = { default: { background: "#f1f5f9", color: "#334155" }, good: { background: "#dcfce7", color: "#166534" }, warn: { background: "#fef3c7", color: "#92400e" }, bad: { background: "#fee2e2", color: "#991b1b" }, navy: { background: C.navy, color: "#fff" }, gold: { background: "#fef3c7", color: "#78350f" } };
   return <Badge className="rounded-full" style={styles[tone]}>{children}</Badge>;
 }
 
@@ -355,7 +129,6 @@ export default function RH() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<TabKey>("painel");
-
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("all");
@@ -364,565 +137,150 @@ export default function RH() {
   const [pdis, setPdis] = useState<PDI[]>([]);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-
+  const [contracts, setContracts] = useState<HRContract[]>([]);
+  const [vacationPeriods, setVacationPeriods] = useState<VacationPeriod[]>([]);
+  const [vacationSchedules, setVacationSchedules] = useState<VacationSchedule[]>([]);
+  const [salaryHistory, setSalaryHistory] = useState<SalaryHistory[]>([]);
   const [employeeForm, setEmployeeForm] = useState<EmployeeForm>(emptyEmployeeForm());
+  const [contractForm, setContractForm] = useState<ContractForm>(emptyContractForm());
+  const [salaryForm, setSalaryForm] = useState<SalaryForm>(emptySalaryForm());
+  const [vacationForm, setVacationForm] = useState<VacationForm>(emptyVacationForm());
   const [pdiForm, setPdiForm] = useState<PDIForm>({ employee_id: "", title: "", main_goal: "", competencies: "", start_date: todayYMD(), end_date: "", status: "em_andamento" });
   const [feedbackForm, setFeedbackForm] = useState<FeedbackForm>({ employee_id: "", feedback_type: "desenvolvimento", situation: "", behavior: "", impact: "", orientation: "", action_plan: "", followup_date: "", status: "aberto" });
   const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentForm>({ employee_id: "", date_ref: todayYMD(), requested_entry_type: "entrada", requested_entry_at: `${todayYMD()}T08:00`, reason: "" });
 
-  const selectedEmployee = useMemo(() => {
-    if (selectedEmployeeId === "all") return null;
-    return employees.find((e) => e.id === selectedEmployeeId) || null;
-  }, [employees, selectedEmployeeId]);
-
-  const filteredEntries = useMemo(() => {
-    if (selectedEmployeeId === "all") return entries;
-    return entries.filter((e) => e.employee_id === selectedEmployeeId);
-  }, [entries, selectedEmployeeId]);
-
+  const selectedEmployee = useMemo(() => selectedEmployeeId === "all" ? null : employees.find((e) => e.id === selectedEmployeeId) || null, [employees, selectedEmployeeId]);
+  const filteredEntries = useMemo(() => selectedEmployeeId === "all" ? entries : entries.filter((e) => e.employee_id === selectedEmployeeId), [entries, selectedEmployeeId]);
   const workDays = useMemo(() => buildWorkDays(filteredEntries, employees), [filteredEntries, employees]);
   const todayRows = useMemo(() => workDays.filter((r) => r.date_ref === todayYMD()), [workDays]);
-  const monthBalance = useMemo(() => {
-    const month = todayYMD().slice(0, 7);
-    return workDays.filter((r) => r.date_ref.startsWith(month)).reduce((acc, r) => acc + r.balance_minutes, 0);
-  }, [workDays]);
-
-  const entradaCount = filteredEntries.filter((e) => e.entry_type === "entrada").length;
-  const saidaCount = filteredEntries.filter((e) => e.entry_type === "saida").length;
+  const monthBalance = useMemo(() => { const month = todayYMD().slice(0, 7); return workDays.filter((r) => r.date_ref.startsWith(month)).reduce((acc, r) => acc + r.balance_minutes, 0); }, [workDays]);
   const activeEmployees = employees.filter((e) => e.ativo).length;
   const pendingAdjustments = adjustments.filter((a) => a.status === "pendente").length;
+  const vacationsAttention = vacationPeriods.filter((p) => ["atencao", "vencida"].includes(vacationStatus(p))).length;
 
   async function safeSelect<T>(table: string, query: (q: any) => any, fallback: T[] = []) {
-    try {
-      const { data, error } = await query(supabase.from(table));
-      if (error) {
-        console.warn(`Tabela ${table}:`, error.message);
-        return fallback;
-      }
-      return (data || fallback) as T[];
-    } catch (err) {
-      console.warn(`Falha ao carregar ${table}:`, err);
-      return fallback;
-    }
+    try { const { data, error } = await query(supabase.from(table)); if (error) { console.warn(`Tabela ${table}:`, error.message); return fallback; } return (data || fallback) as T[]; } catch (err) { console.warn(`Falha ao carregar ${table}:`, err); return fallback; }
   }
 
   async function load() {
     setLoading(true);
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const uid = authData?.user?.id ?? null;
-      setAuthUserId(uid);
-
-      if (!uid) {
-        setProfile(null);
-        setIsAdmin(false);
-        setEmployees([]);
-        setEntries([]);
-        return;
-      }
-
-      const { data: userData } = await supabase
-        .from("users")
-        .select("id, auth_user_id, nome, email, role, user_role")
-        .eq("auth_user_id", uid)
-        .maybeSingle();
-
-      const userProfile = userData as UserProfile | null;
-      const admin = userProfile?.role === "admin" || userProfile?.user_role === "admin";
-      setProfile(userProfile);
-      setIsAdmin(admin);
-
-      const usersData = await safeSelect<UserProfile>(
-        "users",
-        (q) => q.select("id, auth_user_id, nome, email, role, user_role").order("nome", { ascending: true }),
-      );
-      setUsers(usersData);
-
-      let employeesQuery = supabase.from("hr_employees").select("*").order("nome", { ascending: true });
-      if (!admin) employeesQuery = employeesQuery.eq("auth_user_id", uid);
-      const { data: empData, error: empError } = await employeesQuery;
-      if (empError) throw empError;
-      const empList = (empData || []) as Employee[];
-      setEmployees(empList);
-
-      const allowedEmployeeIds = empList.map((e) => e.id);
-      let entriesQuery = supabase
-        .from("hr_time_entries")
-        .select("*, hr_employees (nome, cargo, setor)")
-        .order("entry_at", { ascending: false })
-        .limit(500);
-      if (!admin && allowedEmployeeIds.length) entriesQuery = entriesQuery.in("employee_id", allowedEmployeeIds);
-      if (admin && selectedEmployeeId !== "all") entriesQuery = entriesQuery.eq("employee_id", selectedEmployeeId);
-      const { data: entriesData, error: entriesError } = await entriesQuery;
-      if (entriesError) throw entriesError;
-      setEntries((entriesData || []) as TimeEntry[]);
-
-      const loadedAdjustments = await safeSelect<TimeAdjustment>(
-        "hr_time_adjustments",
-        (q) => {
-          let base = q.select("*").order("created_at", { ascending: false }).limit(300);
-          if (!admin && allowedEmployeeIds.length) base = base.in("employee_id", allowedEmployeeIds);
-          return base;
-        },
-      );
-      setAdjustments(loadedAdjustments);
-
-      const loadedPdis = await safeSelect<PDI>(
-        "hr_pdis",
-        (q) => {
-          let base = q.select("*").order("created_at", { ascending: false }).limit(300);
-          if (!admin && allowedEmployeeIds.length) base = base.in("employee_id", allowedEmployeeIds);
-          return base;
-        },
-      );
-      setPdis(loadedPdis);
-
-      const loadedFeedbacks = await safeSelect<Feedback>(
-        "hr_feedbacks",
-        (q) => {
-          let base = q.select("*").order("created_at", { ascending: false }).limit(300);
-          if (!admin && allowedEmployeeIds.length) base = base.in("employee_id", allowedEmployeeIds);
-          return base;
-        },
-      );
-      setFeedbacks(loadedFeedbacks);
-
-      const loadedCandidates = await safeSelect<Candidate>(
-        "hr_candidates",
-        (q) => q.select("*").order("created_at", { ascending: false }).limit(300),
-      );
-      setCandidates(admin ? loadedCandidates : []);
-
-      if (!admin && empList[0]?.id) {
-        setAdjustmentForm((prev) => ({ ...prev, employee_id: empList[0].id }));
-      }
-    } catch (err: any) {
-      console.error(err);
-      alert(err?.message || "Erro ao carregar RH.");
-    } finally {
-      setLoading(false);
-    }
+      const { data: authData } = await supabase.auth.getUser(); const uid = authData?.user?.id ?? null; setAuthUserId(uid);
+      if (!uid) { setEmployees([]); setEntries([]); setLoading(false); return; }
+      const { data: userData } = await supabase.from("users").select("id, auth_user_id, nome, email, role, user_role").eq("auth_user_id", uid).maybeSingle();
+      const userProfile = userData as UserProfile | null; const admin = userProfile?.role === "admin" || userProfile?.user_role === "admin"; setProfile(userProfile); setIsAdmin(admin);
+      setUsers(await safeSelect<UserProfile>("users", (q) => q.select("id, auth_user_id, nome, email, role, user_role").order("nome", { ascending: true })));
+      let employeesQuery = supabase.from("hr_employees").select("*").order("nome", { ascending: true }); if (!admin) employeesQuery = employeesQuery.eq("auth_user_id", uid);
+      const { data: empData, error: empError } = await employeesQuery; if (empError) throw empError; const empList = (empData || []) as Employee[]; setEmployees(empList);
+      const allowedIds = empList.map((e) => e.id);
+      let entriesQuery = supabase.from("hr_time_entries").select("*, hr_employees (nome, cargo, setor)").order("entry_at", { ascending: false }).limit(500); if (!admin && allowedIds.length) entriesQuery = entriesQuery.in("employee_id", allowedIds); if (admin && selectedEmployeeId !== "all") entriesQuery = entriesQuery.eq("employee_id", selectedEmployeeId);
+      const { data: entriesData, error: entriesError } = await entriesQuery; if (entriesError) throw entriesError; setEntries((entriesData || []) as TimeEntry[]);
+      const scope = <T,>(q: any) => { let base = q.select("*").order("created_at", { ascending: false }).limit(500); if (!admin && allowedIds.length) base = base.in("employee_id", allowedIds); return base; };
+      setAdjustments(await safeSelect<TimeAdjustment>("hr_time_adjustments", scope));
+      setPdis(await safeSelect<PDI>("hr_pdis", scope));
+      setFeedbacks(await safeSelect<Feedback>("hr_feedbacks", scope));
+      setContracts(await safeSelect<HRContract>("hr_employee_contracts", scope));
+      setVacationPeriods(await safeSelect<VacationPeriod>("hr_vacation_periods", (q) => { let base = q.select("*").order("acquisition_start", { ascending: false }).limit(700); if (!admin && allowedIds.length) base = base.in("employee_id", allowedIds); return base; }));
+      setVacationSchedules(await safeSelect<VacationSchedule>("hr_vacation_schedules", (q) => { let base = q.select("*").order("start_date", { ascending: false }).limit(700); if (!admin && allowedIds.length) base = base.in("employee_id", allowedIds); return base; }));
+      setSalaryHistory(await safeSelect<SalaryHistory>("hr_salary_history", (q) => { let base = q.select("*").order("change_date", { ascending: false }).limit(700); if (!admin && allowedIds.length) base = base.in("employee_id", allowedIds); return base; }));
+      setCandidates(admin ? await safeSelect<Candidate>("hr_candidates", (q) => q.select("*").order("created_at", { ascending: false }).limit(300)) : []);
+      if (!admin && empList[0]?.id) { setAdjustmentForm((p) => ({ ...p, employee_id: empList[0].id })); setContractForm((p) => ({ ...p, employee_id: empList[0].id })); }
+    } catch (err: any) { console.error(err); alert(err?.message || "Erro ao carregar RH."); } finally { setLoading(false); }
   }
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedEmployeeId]);
+  function employeeName(id: string | null | undefined) { return id ? employees.find((e) => e.id === id)?.nome || "—" : "—"; }
+  function contractFor(empId: string) { return contracts.find((c) => c.employee_id === empId) || null; }
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEmployeeId]);
-
-  function employeeName(id: string | null | undefined) {
-    if (!id) return "—";
-    return employees.find((e) => e.id === id)?.nome || "—";
-  }
-
-  function editEmployee(employee: Employee) {
-    setEmployeeForm({
-      id: employee.id,
-      nome: employee.nome || "",
-      cpf: maskCPF(employee.cpf_digits || ""),
-      email: employee.email || "",
-      telefone: employee.telefone || "",
-      cargo: employee.cargo || "",
-      setor: employee.setor || "",
-      jornada_diaria_minutos: String(employee.jornada_diaria_minutos || 480),
-      intervalo_minutos: String(employee.intervalo_minutos || 60),
-      auth_user_id: employee.auth_user_id || "",
-      ativo: !!employee.ativo,
-    });
-    setTab("colaboradores");
-  }
+  function editEmployee(e: Employee) { setEmployeeForm({ id: e.id, nome: e.nome || "", cpf: maskCPF(e.cpf_digits || ""), email: e.email || "", telefone: e.telefone || "", cargo: e.cargo || "", setor: e.setor || "", jornada_diaria_minutos: String(e.jornada_diaria_minutos || 480), intervalo_minutos: String(e.intervalo_minutos || 60), auth_user_id: e.auth_user_id || "", ativo: !!e.ativo }); setTab("colaboradores"); }
+  function editContract(c: HRContract) { setContractForm({ employee_id: c.employee_id, hire_date: c.hire_date, contract_type: c.contract_type || "clt", employment_status: c.employment_status || "ativo", role_title: c.role_title || "", department_name: c.department_name || "", base_salary: c.base_salary != null ? String(c.base_salary) : "", current_salary: c.current_salary != null ? String(c.current_salary) : "", termination_date: c.termination_date || "", termination_reason: c.termination_reason || "", notes: c.notes || "" }); setTab("contrato"); }
 
   async function saveEmployee() {
-    if (!isAdmin) return alert("Somente admin pode cadastrar ou editar colaboradores.");
-    const cpfDigits = onlyDigits(employeeForm.cpf);
-    if (!employeeForm.nome.trim()) return alert("Informe o nome do colaborador.");
-    if (cpfDigits.length !== 11) return alert("Informe um CPF válido com 11 dígitos.");
-
-    setSaving(true);
-    try {
-      const payload = {
-        nome: employeeForm.nome.trim(),
-        cpf_digits: cpfDigits,
-        email: employeeForm.email.trim() || null,
-        telefone: employeeForm.telefone.trim() || null,
-        cargo: employeeForm.cargo.trim() || null,
-        setor: employeeForm.setor.trim() || null,
-        jornada_diaria_minutos: Number(employeeForm.jornada_diaria_minutos || 480),
-        intervalo_minutos: Number(employeeForm.intervalo_minutos || 60),
-        auth_user_id: employeeForm.auth_user_id || null,
-        ativo: employeeForm.ativo,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (employeeForm.id) {
-        const { error } = await supabase.from("hr_employees").update(payload).eq("id", employeeForm.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("hr_employees").insert(payload);
-        if (error) throw error;
-      }
-
-      setEmployeeForm(emptyEmployeeForm());
-      await load();
-      alert("Colaborador salvo com sucesso.");
-    } catch (err: any) {
-      alert(err?.message || "Erro ao salvar colaborador.");
-    } finally {
-      setSaving(false);
-    }
+    if (!isAdmin) return alert("Somente admin pode cadastrar ou editar colaboradores."); const cpfDigits = onlyDigits(employeeForm.cpf); if (!employeeForm.nome.trim()) return alert("Informe o nome."); if (cpfDigits.length !== 11) return alert("CPF inválido.");
+    setSaving(true); try { const payload = { nome: employeeForm.nome.trim(), cpf_digits: cpfDigits, email: employeeForm.email.trim() || null, telefone: employeeForm.telefone.trim() || null, cargo: employeeForm.cargo.trim() || null, setor: employeeForm.setor.trim() || null, jornada_diaria_minutos: Number(employeeForm.jornada_diaria_minutos || 480), intervalo_minutos: Number(employeeForm.intervalo_minutos || 60), auth_user_id: employeeForm.auth_user_id || null, ativo: employeeForm.ativo, updated_at: new Date().toISOString() };
+      const { error } = employeeForm.id ? await supabase.from("hr_employees").update(payload).eq("id", employeeForm.id) : await supabase.from("hr_employees").insert(payload); if (error) throw error; setEmployeeForm(emptyEmployeeForm()); await load(); alert("Colaborador salvo.");
+    } catch (err: any) { alert(err?.message || "Erro ao salvar colaborador."); } finally { setSaving(false); }
   }
 
-  async function saveAdjustment() {
-    if (!adjustmentForm.employee_id) return alert("Selecione o colaborador.");
-    if (!adjustmentForm.reason.trim()) return alert("Informe a justificativa.");
-    setSaving(true);
-    try {
-      const { error } = await supabase.from("hr_time_adjustments").insert({
-        employee_id: adjustmentForm.employee_id,
-        date_ref: adjustmentForm.date_ref,
-        requested_entry_type: adjustmentForm.requested_entry_type,
-        requested_entry_at: new Date(adjustmentForm.requested_entry_at).toISOString(),
-        reason: adjustmentForm.reason.trim(),
-        status: "pendente",
-      });
+  async function saveContract() {
+    if (!isAdmin) return alert("Somente admin pode salvar contrato."); if (!contractForm.employee_id || !contractForm.hire_date) return alert("Selecione colaborador e data de contratação.");
+    setSaving(true); try {
+      const currentSalary = numOrNull(contractForm.current_salary); const baseSalary = numOrNull(contractForm.base_salary);
+      const { error } = await supabase.from("hr_employee_contracts").upsert({ employee_id: contractForm.employee_id, hire_date: contractForm.hire_date, contract_type: contractForm.contract_type, employment_status: contractForm.employment_status, role_title: contractForm.role_title || null, department_name: contractForm.department_name || null, base_salary: baseSalary, current_salary: currentSalary, termination_date: contractForm.termination_date || null, termination_reason: contractForm.termination_reason || null, notes: contractForm.notes || null, updated_at: new Date().toISOString() }, { onConflict: "employee_id" });
       if (error) throw error;
-      setAdjustmentForm({ employee_id: isAdmin ? "" : adjustmentForm.employee_id, date_ref: todayYMD(), requested_entry_type: "entrada", requested_entry_at: `${todayYMD()}T08:00`, reason: "" });
-      await load();
-      alert("Solicitação de ajuste enviada.");
-    } catch (err: any) {
-      alert(err?.message || "Erro ao solicitar ajuste.");
-    } finally {
-      setSaving(false);
-    }
+      const periods = buildVacationPeriods(contractForm.employee_id, contractForm.hire_date);
+      const { error: perr } = await supabase.from("hr_vacation_periods").upsert(periods, { onConflict: "employee_id,acquisition_start,acquisition_end" }); if (perr) throw perr;
+      if (currentSalary != null) { const existing = contractFor(contractForm.employee_id); const previous = existing?.current_salary ?? null; if (!existing || previous !== currentSalary) await supabase.from("hr_salary_history").insert({ employee_id: contractForm.employee_id, change_date: todayYMD(), previous_salary: previous, new_salary: currentSalary, change_type: existing ? "ajuste" : "admissao", reason: existing ? "Atualização contratual" : "Salário inicial", registered_by: profile?.id || null }); }
+      setContractForm(emptyContractForm()); await load(); alert("Contrato, períodos de férias e remuneração inicial salvos.");
+    } catch (err: any) { alert(err?.message || "Erro ao salvar contrato."); } finally { setSaving(false); }
   }
 
-  async function updateAdjustmentStatus(id: string, status: "aprovado" | "recusado") {
-    if (!isAdmin) return;
-    setSaving(true);
-    try {
-      const { error } = await supabase
-        .from("hr_time_adjustments")
-        .update({ status, approved_by: authUserId, approved_at: new Date().toISOString() })
-        .eq("id", id);
-      if (error) throw error;
-      await load();
-    } catch (err: any) {
-      alert(err?.message || "Erro ao atualizar ajuste.");
-    } finally {
-      setSaving(false);
-    }
+  async function saveVacationSchedule() {
+    if (!isAdmin) return alert("Somente admin pode agendar férias."); if (!vacationForm.employee_id || !vacationForm.vacation_period_id) return alert("Selecione período e colaborador.");
+    setSaving(true); try { const { error } = await supabase.from("hr_vacation_schedules").insert({ vacation_period_id: vacationForm.vacation_period_id, employee_id: vacationForm.employee_id, start_date: vacationForm.start_date, end_date: vacationForm.end_date, days_count: Number(vacationForm.days_count || 0), sold_days: Number(vacationForm.sold_days || 0), bonus_days: Number(vacationForm.bonus_days || 0), status: vacationForm.status, notes: vacationForm.notes || null, approved_by: vacationForm.status === "aprovada" ? authUserId : null, approved_at: vacationForm.status === "aprovada" ? new Date().toISOString() : null }); if (error) throw error;
+      const p = vacationPeriods.find((x) => x.id === vacationForm.vacation_period_id); if (p) await supabase.from("hr_vacation_periods").update({ days_scheduled: (p.days_scheduled || 0) + Number(vacationForm.days_count || 0), status: "agendada", updated_at: new Date().toISOString() }).eq("id", p.id);
+      setVacationForm(emptyVacationForm()); await load(); alert("Férias agendadas.");
+    } catch (err: any) { alert(err?.message || "Erro ao agendar férias."); } finally { setSaving(false); }
   }
 
-  async function savePDI() {
-    if (!isAdmin) return alert("Somente admin pode criar PDI por enquanto.");
-    if (!pdiForm.employee_id || !pdiForm.title.trim()) return alert("Informe colaborador e título do PDI.");
-    setSaving(true);
-    try {
-      const { error } = await supabase.from("hr_pdis").insert({
-        employee_id: pdiForm.employee_id,
-        manager_id: profile?.id || null,
-        title: pdiForm.title.trim(),
-        main_goal: pdiForm.main_goal.trim() || null,
-        competencies: pdiForm.competencies.trim() || null,
-        start_date: pdiForm.start_date || null,
-        end_date: pdiForm.end_date || null,
-        status: pdiForm.status,
-      });
-      if (error) throw error;
-      setPdiForm({ employee_id: "", title: "", main_goal: "", competencies: "", start_date: todayYMD(), end_date: "", status: "em_andamento" });
-      await load();
-      alert("PDI criado com sucesso.");
-    } catch (err: any) {
-      alert(err?.message || "Erro ao criar PDI. Verifique se a migration de RH foi aplicada.");
-    } finally {
-      setSaving(false);
-    }
+  async function saveSalaryChange() {
+    if (!isAdmin) return alert("Somente admin pode registrar remuneração."); const newSalary = numOrNull(salaryForm.new_salary); if (!salaryForm.employee_id || newSalary == null) return alert("Selecione colaborador e novo salário.");
+    setSaving(true); try { const previous = numOrNull(salaryForm.previous_salary); const { error } = await supabase.from("hr_salary_history").insert({ employee_id: salaryForm.employee_id, change_date: salaryForm.change_date, previous_salary: previous, new_salary: newSalary, change_type: salaryForm.change_type, reason: salaryForm.reason || null, notes: salaryForm.notes || null, registered_by: profile?.id || null }); if (error) throw error;
+      await supabase.from("hr_employee_contracts").update({ current_salary: newSalary, updated_at: new Date().toISOString() }).eq("employee_id", salaryForm.employee_id);
+      setSalaryForm(emptySalaryForm()); await load(); alert("Alteração salarial registrada.");
+    } catch (err: any) { alert(err?.message || "Erro ao registrar salário."); } finally { setSaving(false); }
   }
 
-  async function saveFeedback() {
-    if (!isAdmin) return alert("Somente admin pode criar feedback por enquanto.");
-    if (!feedbackForm.employee_id || !feedbackForm.situation.trim()) return alert("Informe colaborador e situação observada.");
-    setSaving(true);
-    try {
-      const { error } = await supabase.from("hr_feedbacks").insert({
-        employee_id: feedbackForm.employee_id,
-        manager_id: profile?.id || null,
-        feedback_type: feedbackForm.feedback_type,
-        situation: feedbackForm.situation.trim(),
-        behavior: feedbackForm.behavior.trim() || null,
-        impact: feedbackForm.impact.trim() || null,
-        orientation: feedbackForm.orientation.trim() || null,
-        action_plan: feedbackForm.action_plan.trim() || null,
-        followup_date: feedbackForm.followup_date || null,
-        status: feedbackForm.status,
-        employee_acknowledged: false,
-      });
-      if (error) throw error;
-      setFeedbackForm({ employee_id: "", feedback_type: "desenvolvimento", situation: "", behavior: "", impact: "", orientation: "", action_plan: "", followup_date: "", status: "aberto" });
-      await load();
-      alert("Feedback registrado com sucesso.");
-    } catch (err: any) {
-      alert(err?.message || "Erro ao registrar feedback. Verifique se a migration de RH foi aplicada.");
-    } finally {
-      setSaving(false);
-    }
-  }
+  async function saveAdjustment() { if (!adjustmentForm.employee_id) return alert("Selecione o colaborador."); if (!adjustmentForm.reason.trim()) return alert("Informe a justificativa."); setSaving(true); try { const { error } = await supabase.from("hr_time_adjustments").insert({ employee_id: adjustmentForm.employee_id, date_ref: adjustmentForm.date_ref, requested_entry_type: adjustmentForm.requested_entry_type, requested_entry_at: new Date(adjustmentForm.requested_entry_at).toISOString(), reason: adjustmentForm.reason.trim(), status: "pendente" }); if (error) throw error; setAdjustmentForm({ employee_id: isAdmin ? "" : adjustmentForm.employee_id, date_ref: todayYMD(), requested_entry_type: "entrada", requested_entry_at: `${todayYMD()}T08:00`, reason: "" }); await load(); alert("Solicitação enviada."); } catch (err: any) { alert(err?.message || "Erro ao solicitar ajuste."); } finally { setSaving(false); } }
+  async function updateAdjustmentStatus(id: string, status: "aprovado" | "recusado") { if (!isAdmin) return; setSaving(true); try { const { error } = await supabase.from("hr_time_adjustments").update({ status, approved_by: authUserId, approved_at: new Date().toISOString() }).eq("id", id); if (error) throw error; await load(); } catch (err: any) { alert(err?.message || "Erro ao atualizar ajuste."); } finally { setSaving(false); } }
+  async function savePDI() { if (!isAdmin) return alert("Somente admin pode criar PDI."); if (!pdiForm.employee_id || !pdiForm.title.trim()) return alert("Informe colaborador e título."); setSaving(true); try { const { error } = await supabase.from("hr_pdis").insert({ employee_id: pdiForm.employee_id, manager_id: profile?.id || null, title: pdiForm.title.trim(), main_goal: pdiForm.main_goal.trim() || null, competencies: pdiForm.competencies.trim() || null, start_date: pdiForm.start_date || null, end_date: pdiForm.end_date || null, status: pdiForm.status }); if (error) throw error; setPdiForm({ employee_id: "", title: "", main_goal: "", competencies: "", start_date: todayYMD(), end_date: "", status: "em_andamento" }); await load(); alert("PDI criado."); } catch (err: any) { alert(err?.message || "Erro ao criar PDI."); } finally { setSaving(false); } }
+  async function saveFeedback() { if (!isAdmin) return alert("Somente admin pode criar feedback."); if (!feedbackForm.employee_id || !feedbackForm.situation.trim()) return alert("Informe colaborador e situação."); setSaving(true); try { const { error } = await supabase.from("hr_feedbacks").insert({ employee_id: feedbackForm.employee_id, manager_id: profile?.id || null, feedback_type: feedbackForm.feedback_type, situation: feedbackForm.situation.trim(), behavior: feedbackForm.behavior.trim() || null, impact: feedbackForm.impact.trim() || null, orientation: feedbackForm.orientation.trim() || null, action_plan: feedbackForm.action_plan.trim() || null, followup_date: feedbackForm.followup_date || null, status: feedbackForm.status, employee_acknowledged: false }); if (error) throw error; setFeedbackForm({ employee_id: "", feedback_type: "desenvolvimento", situation: "", behavior: "", impact: "", orientation: "", action_plan: "", followup_date: "", status: "aberto" }); await load(); alert("Feedback registrado."); } catch (err: any) { alert(err?.message || "Erro ao registrar feedback."); } finally { setSaving(false); } }
 
   const tabs: Array<{ key: TabKey; label: string; icon: React.ElementType }> = [
-    { key: "painel", label: "Painel", icon: BarIcon },
-    { key: "colaboradores", label: "Colaboradores", icon: Users },
-    { key: "ponto", label: "Ponto", icon: Clock },
-    { key: "banco", label: "Banco de Horas", icon: CalendarDays },
-    { key: "ajustes", label: "Ajustes", icon: AlertCircle },
-    { key: "pdi", label: "PDI", icon: Target },
-    { key: "feedbacks", label: "Feedbacks", icon: UserCheck },
-    { key: "candidatos", label: "Candidatos", icon: Briefcase },
+    { key: "painel", label: "Painel", icon: BarChart3 }, { key: "colaboradores", label: "Colaboradores", icon: Users }, { key: "contrato", label: "Contrato & Férias", icon: Plane }, { key: "remuneracao", label: "Remuneração", icon: DollarSign }, { key: "ponto", label: "Ponto", icon: Clock }, { key: "banco", label: "Banco de Horas", icon: CalendarDays }, { key: "ajustes", label: "Ajustes", icon: AlertCircle }, { key: "pdi", label: "PDI", icon: Target }, { key: "feedbacks", label: "Feedbacks", icon: UserCheck }, { key: "candidatos", label: "Candidatos", icon: Briefcase },
   ];
 
-  return (
-    <div className="min-h-screen p-4 md:p-6 space-y-5 bg-slate-50">
-      <div className="rounded-3xl p-5 md:p-6 text-white shadow-xl" style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}>
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl md:text-3xl font-bold">RH</h1>
-            <p className="text-white/80 mt-1">Ponto, banco de horas, colaboradores, PDI, feedbacks e candidatos.</p>
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="secondary" className="rounded-xl" onClick={() => window.open("/ponto", "_blank")}>Abrir /ponto</Button>
-            <Button type="button" onClick={load} variant="secondary" className="rounded-xl" disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
-              Atualizar
-            </Button>
-          </div>
-        </div>
-      </div>
+  return <div className="min-h-screen p-4 md:p-6 space-y-5 bg-slate-50">
+    <div className="rounded-3xl p-5 md:p-6 text-white shadow-xl" style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><h1 className="text-2xl md:text-3xl font-bold">RH</h1><p className="text-white/80 mt-1">Ponto, banco de horas, contrato, férias, remuneração, PDI, feedbacks e candidatos.</p></div><div className="flex gap-2"><Button type="button" variant="secondary" className="rounded-xl" onClick={() => window.open("/ponto", "_blank")}>Abrir /ponto</Button><Button type="button" onClick={load} variant="secondary" className="rounded-xl" disabled={loading}>{loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}Atualizar</Button></div></div></div>
+    <div className="grid grid-cols-1 md:grid-cols-6 gap-4"><Kpi icon={Users} label="Colaboradores ativos" value={activeEmployees} /><Kpi icon={Clock} label="Registros filtrados" value={filteredEntries.length} /><Kpi icon={AlertCircle} label="Ajustes pendentes" value={pendingAdjustments} /><Kpi icon={Plane} label="Férias em atenção" value={vacationsAttention} /><Kpi icon={DollarSign} label="Contratos" value={contracts.length} /><Kpi icon={CalendarDays} label="Saldo mês" value={formatMinutes(monthBalance)} /></div>
+    <Card className="rounded-3xl"><CardContent className="p-3 flex flex-wrap gap-2">{tabs.map(({ key, label, icon: Icon }) => <button key={key} onClick={() => setTab(key)} className={`px-3 py-2 rounded-2xl text-sm flex items-center gap-2 border transition ${tab === key ? "text-white" : "bg-white hover:bg-slate-50"}`} style={tab === key ? { background: C.ruby, borderColor: C.ruby } : { borderColor: "#e2e8f0" }}><Icon className="h-4 w-4" />{label}</button>)}</CardContent></Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Kpi icon={Users} label="Colaboradores ativos" value={activeEmployees} />
-        <Kpi icon={Clock} label="Registros filtrados" value={filteredEntries.length} />
-        <Kpi icon={CheckCircle2} label="Entradas" value={entradaCount} />
-        <Kpi icon={XCircle} label="Saídas" value={saidaCount} />
-        <Kpi icon={AlertCircle} label="Ajustes pendentes" value={pendingAdjustments} />
-      </div>
+    {tab === "painel" && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Status de Hoje</CardTitle></CardHeader><CardContent className="space-y-3">{loading ? <Loading /> : todayRows.length === 0 ? <Empty text="Nenhum ponto registrado hoje." /> : todayRows.map((row) => <div key={`${row.employee_id}-${row.date_ref}`} className="rounded-2xl border bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><div className="font-semibold">{row.employee_name}</div><div className="text-sm text-slate-500">Entrada: {formatDateTimeBR(row.first_entry)} • Saída: {formatDateTimeBR(row.last_exit)}</div></div><div className="flex flex-wrap gap-2"><StatusBadge tone={row.status === "em_jornada" ? "good" : "default"}>{row.status === "em_jornada" ? "Em jornada" : "Fora"}</StatusBadge><StatusBadge tone={row.balance_minutes >= 0 ? "navy" : "warn"}>Saldo {formatMinutes(row.balance_minutes)}</StatusBadge></div></div>)}</CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Alertas de Férias</CardTitle></CardHeader><CardContent className="space-y-3">{vacationPeriods.filter((p) => ["atencao", "vencida"].includes(vacationStatus(p))).length === 0 ? <Empty text="Nenhum alerta de férias." /> : vacationPeriods.filter((p) => ["atencao", "vencida"].includes(vacationStatus(p))).slice(0, 8).map((p) => <div key={p.id} className="rounded-2xl border bg-white p-4"><div className="font-semibold">{employeeName(p.employee_id)}</div><div className="text-sm text-slate-500">Prazo para gozar até {formatDateBR(p.concession_end)}</div><StatusBadge tone={vacationStatus(p) === "vencida" ? "bad" : "warn"}>{vacationStatus(p)}</StatusBadge></div>)}</CardContent></Card></div>}
 
-      <Card className="rounded-3xl">
-        <CardContent className="p-3 flex flex-wrap gap-2">
-          {tabs.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`px-3 py-2 rounded-2xl text-sm flex items-center gap-2 border transition ${tab === key ? "text-white" : "bg-white hover:bg-slate-50"}`}
-              style={tab === key ? { background: C.ruby, borderColor: C.ruby } : { borderColor: "#e2e8f0" }}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </button>
-          ))}
-        </CardContent>
-      </Card>
+    {tab === "colaboradores" && <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4"><Card className="rounded-3xl"><CardHeader><CardTitle>{employeeForm.id ? "Editar colaborador" : "Novo colaborador"}</CardTitle></CardHeader><CardContent className="space-y-3">{!isAdmin && <AlertBox text="Somente administradores podem cadastrar ou editar colaboradores." />}<Field label="Nome"><Input value={employeeForm.nome} onChange={(e) => setEmployeeForm({ ...employeeForm, nome: e.target.value })} disabled={!isAdmin} /></Field><Field label="CPF"><Input value={employeeForm.cpf} onChange={(e) => setEmployeeForm({ ...employeeForm, cpf: maskCPF(e.target.value) })} disabled={!isAdmin} /></Field><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><Field label="E-mail"><Input value={employeeForm.email} onChange={(e) => setEmployeeForm({ ...employeeForm, email: e.target.value })} disabled={!isAdmin} /></Field><Field label="Telefone"><Input value={employeeForm.telefone} onChange={(e) => setEmployeeForm({ ...employeeForm, telefone: e.target.value })} disabled={!isAdmin} /></Field></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><Field label="Cargo"><Input value={employeeForm.cargo} onChange={(e) => setEmployeeForm({ ...employeeForm, cargo: e.target.value })} disabled={!isAdmin} /></Field><Field label="Setor"><Input value={employeeForm.setor} onChange={(e) => setEmployeeForm({ ...employeeForm, setor: e.target.value })} disabled={!isAdmin} /></Field></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><Field label="Jornada diária/min"><Input type="number" value={employeeForm.jornada_diaria_minutos} onChange={(e) => setEmployeeForm({ ...employeeForm, jornada_diaria_minutos: e.target.value })} disabled={!isAdmin} /></Field><Field label="Intervalo mínimo/min"><Input type="number" value={employeeForm.intervalo_minutos} onChange={(e) => setEmployeeForm({ ...employeeForm, intervalo_minutos: e.target.value })} disabled={!isAdmin} /></Field></div><Field label="Vincular usuário do CRM"><Select value={employeeForm.auth_user_id || "none"} onValueChange={(v) => setEmployeeForm({ ...employeeForm, auth_user_id: v === "none" ? "" : v })} disabled={!isAdmin}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent><SelectItem value="none">Sem vínculo</SelectItem>{users.filter((u) => u.auth_user_id).map((u) => <SelectItem key={u.id} value={u.auth_user_id!}>{u.nome || u.email || u.auth_user_id}</SelectItem>)}</SelectContent></Select></Field><div className="flex gap-2"><Button disabled={!isAdmin || saving} onClick={saveEmployee} className="text-white" style={{ background: C.ruby }}><Save className="h-4 w-4 mr-2" />Salvar</Button><Button variant="outline" onClick={() => setEmployeeForm(emptyEmployeeForm())}>Limpar</Button></div></CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Colaboradores</CardTitle></CardHeader><CardContent>{loading ? <Loading /> : employees.length === 0 ? <Empty text="Nenhum colaborador cadastrado." /> : <EmployeeTable employees={employees} editEmployee={editEmployee} editContract={editContract} contracts={contracts} />}</CardContent></Card></div>}
 
-      {tab === "painel" && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card className="rounded-3xl">
-            <CardHeader><CardTitle>Status de Hoje</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              {loading ? <Loading /> : todayRows.length === 0 ? <Empty text="Nenhum ponto registrado hoje." /> : todayRows.map((row) => (
-                <div key={`${row.employee_id}-${row.date_ref}`} className="rounded-2xl border bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                  <div>
-                    <div className="font-semibold">{row.employee_name}</div>
-                    <div className="text-sm text-slate-500">Entrada: {formatDateTimeBR(row.first_entry)} • Saída: {formatDateTimeBR(row.last_exit)}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <StatusBadge tone={row.status === "em_jornada" ? "good" : "default"}>{row.status === "em_jornada" ? "Em jornada" : "Fora de jornada"}</StatusBadge>
-                    <StatusBadge tone={row.balance_minutes >= 0 ? "navy" : "warn"}>Saldo {formatMinutes(row.balance_minutes)}</StatusBadge>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-3xl">
-            <CardHeader><CardTitle>Resumo do mês filtrado</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-2xl border bg-slate-50 p-5">
-                <div className="text-sm text-slate-500">Saldo calculado em tela</div>
-                <div className="text-3xl font-bold" style={{ color: monthBalance >= 0 ? C.navy : C.ruby }}>{formatMinutes(monthBalance)}</div>
-                <p className="text-xs text-slate-500 mt-2">Cálculo baseado nos registros carregados. Depois podemos persistir o fechamento oficial em banco.</p>
-              </div>
-              <div className="rounded-2xl border bg-white p-4 text-sm text-slate-600">
-                Próximos passos naturais: fechamento mensal, exportação, regras de tolerância, feriados, escala e aprovação de compensação.
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {tab === "colaboradores" && (
-        <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4">
-          <Card className="rounded-3xl">
-            <CardHeader><CardTitle>{employeeForm.id ? "Editar colaborador" : "Novo colaborador"}</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              {!isAdmin && <AlertBox text="Somente administradores podem cadastrar ou editar colaboradores." />}
-              <Field label="Nome"><Input value={employeeForm.nome} onChange={(e) => setEmployeeForm({ ...employeeForm, nome: e.target.value })} disabled={!isAdmin} /></Field>
-              <Field label="CPF"><Input value={employeeForm.cpf} onChange={(e) => setEmployeeForm({ ...employeeForm, cpf: maskCPF(e.target.value) })} disabled={!isAdmin} /></Field>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Field label="E-mail"><Input value={employeeForm.email} onChange={(e) => setEmployeeForm({ ...employeeForm, email: e.target.value })} disabled={!isAdmin} /></Field>
-                <Field label="Telefone"><Input value={employeeForm.telefone} onChange={(e) => setEmployeeForm({ ...employeeForm, telefone: e.target.value })} disabled={!isAdmin} /></Field>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Field label="Cargo"><Input value={employeeForm.cargo} onChange={(e) => setEmployeeForm({ ...employeeForm, cargo: e.target.value })} disabled={!isAdmin} /></Field>
-                <Field label="Setor"><Input value={employeeForm.setor} onChange={(e) => setEmployeeForm({ ...employeeForm, setor: e.target.value })} disabled={!isAdmin} /></Field>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Field label="Jornada diária/min"><Input type="number" value={employeeForm.jornada_diaria_minutos} onChange={(e) => setEmployeeForm({ ...employeeForm, jornada_diaria_minutos: e.target.value })} disabled={!isAdmin} /></Field>
-                <Field label="Intervalo mínimo/min"><Input type="number" value={employeeForm.intervalo_minutos} onChange={(e) => setEmployeeForm({ ...employeeForm, intervalo_minutos: e.target.value })} disabled={!isAdmin} /></Field>
-              </div>
-              <Field label="Vincular usuário do CRM">
-                <Select value={employeeForm.auth_user_id || "none"} onValueChange={(v) => setEmployeeForm({ ...employeeForm, auth_user_id: v === "none" ? "" : v })} disabled={!isAdmin}>
-                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sem vínculo</SelectItem>
-                    {users.filter((u) => u.auth_user_id).map((u) => <SelectItem key={u.id} value={u.auth_user_id!}>{u.nome || u.email || u.auth_user_id}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <div className="flex items-center justify-between rounded-2xl border p-3">
-                <span className="text-sm">Colaborador ativo</span>
-                <Button variant="outline" type="button" disabled={!isAdmin} onClick={() => setEmployeeForm({ ...employeeForm, ativo: !employeeForm.ativo })}>{employeeForm.ativo ? "Ativo" : "Inativo"}</Button>
-              </div>
-              <div className="flex gap-2">
-                <Button disabled={!isAdmin || saving} onClick={saveEmployee} className="text-white" style={{ background: C.ruby }}><Save className="h-4 w-4 mr-2" />Salvar</Button>
-                <Button variant="outline" onClick={() => setEmployeeForm(emptyEmployeeForm())}>Limpar</Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-3xl">
-            <CardHeader><CardTitle>Colaboradores</CardTitle></CardHeader>
-            <CardContent>
-              {loading ? <Loading /> : employees.length === 0 ? <Empty text="Nenhum colaborador cadastrado." /> : (
-                <div className="overflow-x-auto rounded-2xl border">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-100 text-slate-600"><tr><th className="p-3 text-left">Nome</th><th className="p-3 text-left">CPF</th><th className="p-3 text-left">Cargo/Setor</th><th className="p-3 text-left">Jornada</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">Ação</th></tr></thead>
-                    <tbody>{employees.map((e) => <tr key={e.id} className="border-t bg-white"><td className="p-3 font-medium">{e.nome}<div className="text-xs text-slate-500">{e.email || "—"}</div></td><td className="p-3">{maskCPF(e.cpf_digits)}</td><td className="p-3">{e.cargo || "—"}<div className="text-xs text-slate-500">{e.setor || "—"}</div></td><td className="p-3">{formatMinutes(e.jornada_diaria_minutos)}<div className="text-xs text-slate-500">Intervalo {formatMinutes(e.intervalo_minutos)}</div></td><td className="p-3"><StatusBadge tone={e.ativo ? "good" : "bad"}>{e.ativo ? "Ativo" : "Inativo"}</StatusBadge></td><td className="p-3"><Button size="sm" variant="outline" onClick={() => editEmployee(e)}>Editar</Button></td></tr>)}</tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {tab === "ponto" && (
-        <Card className="rounded-3xl">
-          <CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div><CardTitle>Registros de Ponto</CardTitle><p className="text-sm text-slate-500 mt-1">Registros captados pelo link externo com geolocalização obrigatória.</p></div>
-            {isAdmin && <EmployeeFilter employees={employees} value={selectedEmployeeId} onChange={setSelectedEmployeeId} />}
-          </CardHeader>
-          <CardContent>
-            {selectedEmployee && <div className="mb-4 rounded-2xl bg-slate-50 border p-4 text-sm"><b>{selectedEmployee.nome}</b><div className="text-slate-600">CPF: {maskCPF(selectedEmployee.cpf_digits)} • Cargo: {selectedEmployee.cargo || "—"} • Setor: {selectedEmployee.setor || "—"}</div></div>}
-            {loading ? <Loading /> : filteredEntries.length === 0 ? <Empty text="Nenhum registro encontrado." /> : <EntriesTable entries={filteredEntries} isAdmin={isAdmin} />}
-          </CardContent>
-        </Card>
-      )}
-
-      {tab === "banco" && (
-        <Card className="rounded-3xl">
-          <CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div><CardTitle>Banco de Horas</CardTitle><p className="text-sm text-slate-500 mt-1">Cálculo automático a partir dos pares Entrada/Saída.</p></div>
-            {isAdmin && <EmployeeFilter employees={employees} value={selectedEmployeeId} onChange={setSelectedEmployeeId} />}
-          </CardHeader>
-          <CardContent>{loading ? <Loading /> : workDays.length === 0 ? <Empty text="Sem registros para calcular banco de horas." /> : <WorkDaysTable rows={workDays} />}</CardContent>
-        </Card>
-      )}
-
-      {tab === "ajustes" && (
-        <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4">
-          <Card className="rounded-3xl"><CardHeader><CardTitle>Solicitar ajuste</CardTitle></CardHeader><CardContent className="space-y-3">
-            <Field label="Colaborador"><EmployeeSelect employees={employees} value={adjustmentForm.employee_id} onChange={(v) => setAdjustmentForm({ ...adjustmentForm, employee_id: v })} disabled={!isAdmin && employees.length <= 1} /></Field>
-            <Field label="Data"><Input type="date" value={adjustmentForm.date_ref} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, date_ref: e.target.value })} /></Field>
-            <Field label="Tipo"><Select value={adjustmentForm.requested_entry_type} onValueChange={(v) => setAdjustmentForm({ ...adjustmentForm, requested_entry_type: v as any })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="entrada">Entrada</SelectItem><SelectItem value="saida">Saída</SelectItem></SelectContent></Select></Field>
-            <Field label="Data/Hora solicitada"><Input type="datetime-local" value={adjustmentForm.requested_entry_at} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, requested_entry_at: e.target.value })} /></Field>
-            <Field label="Justificativa"><Textarea value={adjustmentForm.reason} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })} /></Field>
-            <Button disabled={saving} onClick={saveAdjustment} className="text-white" style={{ background: C.ruby }}><Plus className="h-4 w-4 mr-2" />Enviar ajuste</Button>
-          </CardContent></Card>
-          <Card className="rounded-3xl"><CardHeader><CardTitle>Ajustes de Ponto</CardTitle></CardHeader><CardContent>{loading ? <Loading /> : adjustments.length === 0 ? <Empty text="Nenhum ajuste solicitado." /> : <AdjustmentsList adjustments={adjustments} employeeName={employeeName} isAdmin={isAdmin} onStatus={updateAdjustmentStatus} />}</CardContent></Card>
-        </div>
-      )}
-
-      {tab === "pdi" && (
-        <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4">
-          <Card className="rounded-3xl"><CardHeader><CardTitle>Novo PDI</CardTitle></CardHeader><CardContent className="space-y-3">
-            {!isAdmin && <AlertBox text="Por enquanto, o cadastro de PDI fica liberado apenas para admin/gestor." />}
-            <Field label="Colaborador"><EmployeeSelect employees={employees} value={pdiForm.employee_id} onChange={(v) => setPdiForm({ ...pdiForm, employee_id: v })} disabled={!isAdmin} /></Field>
-            <Field label="Título"><Input value={pdiForm.title} onChange={(e) => setPdiForm({ ...pdiForm, title: e.target.value })} disabled={!isAdmin} /></Field>
-            <Field label="Objetivo principal"><Textarea value={pdiForm.main_goal} onChange={(e) => setPdiForm({ ...pdiForm, main_goal: e.target.value })} disabled={!isAdmin} /></Field>
-            <Field label="Competências"><Textarea value={pdiForm.competencies} onChange={(e) => setPdiForm({ ...pdiForm, competencies: e.target.value })} disabled={!isAdmin} /></Field>
-            <div className="grid grid-cols-2 gap-3"><Field label="Início"><Input type="date" value={pdiForm.start_date} onChange={(e) => setPdiForm({ ...pdiForm, start_date: e.target.value })} disabled={!isAdmin} /></Field><Field label="Prazo"><Input type="date" value={pdiForm.end_date} onChange={(e) => setPdiForm({ ...pdiForm, end_date: e.target.value })} disabled={!isAdmin} /></Field></div>
-            <Button disabled={!isAdmin || saving} onClick={savePDI} className="text-white" style={{ background: C.ruby }}><Target className="h-4 w-4 mr-2" />Criar PDI</Button>
-          </CardContent></Card>
-          <Card className="rounded-3xl"><CardHeader><CardTitle>PDIs</CardTitle></CardHeader><CardContent>{loading ? <Loading /> : pdis.length === 0 ? <Empty text="Nenhum PDI cadastrado." /> : <SimpleCards items={pdis.map((p) => ({ id: p.id, title: p.title, subtitle: employeeName(p.employee_id), meta: `${formatDateBR(p.start_date || "")} até ${formatDateBR(p.end_date || "")}`, body: p.main_goal || "—", status: p.status }))} />}</CardContent></Card>
-        </div>
-      )}
-
-      {tab === "feedbacks" && (
-        <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4">
-          <Card className="rounded-3xl"><CardHeader><CardTitle>Novo feedback</CardTitle></CardHeader><CardContent className="space-y-3">
-            {!isAdmin && <AlertBox text="Por enquanto, o cadastro de feedback fica liberado apenas para admin/gestor." />}
-            <Field label="Colaborador"><EmployeeSelect employees={employees} value={feedbackForm.employee_id} onChange={(v) => setFeedbackForm({ ...feedbackForm, employee_id: v })} disabled={!isAdmin} /></Field>
-            <Field label="Tipo"><Select value={feedbackForm.feedback_type} onValueChange={(v) => setFeedbackForm({ ...feedbackForm, feedback_type: v })} disabled={!isAdmin}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="reconhecimento">Reconhecimento</SelectItem><SelectItem value="correcao">Correção</SelectItem><SelectItem value="alinhamento">Alinhamento</SelectItem><SelectItem value="desenvolvimento">Desenvolvimento</SelectItem></SelectContent></Select></Field>
-            <Field label="Situação observada"><Textarea value={feedbackForm.situation} onChange={(e) => setFeedbackForm({ ...feedbackForm, situation: e.target.value })} disabled={!isAdmin} /></Field>
-            <Field label="Comportamento"><Textarea value={feedbackForm.behavior} onChange={(e) => setFeedbackForm({ ...feedbackForm, behavior: e.target.value })} disabled={!isAdmin} /></Field>
-            <Field label="Impacto"><Textarea value={feedbackForm.impact} onChange={(e) => setFeedbackForm({ ...feedbackForm, impact: e.target.value })} disabled={!isAdmin} /></Field>
-            <Field label="Orientação / plano de ação"><Textarea value={feedbackForm.action_plan} onChange={(e) => setFeedbackForm({ ...feedbackForm, action_plan: e.target.value })} disabled={!isAdmin} /></Field>
-            <Field label="Acompanhar em"><Input type="date" value={feedbackForm.followup_date} onChange={(e) => setFeedbackForm({ ...feedbackForm, followup_date: e.target.value })} disabled={!isAdmin} /></Field>
-            <Button disabled={!isAdmin || saving} onClick={saveFeedback} className="text-white" style={{ background: C.ruby }}><UserCheck className="h-4 w-4 mr-2" />Registrar feedback</Button>
-          </CardContent></Card>
-          <Card className="rounded-3xl"><CardHeader><CardTitle>Feedbacks</CardTitle></CardHeader><CardContent>{loading ? <Loading /> : feedbacks.length === 0 ? <Empty text="Nenhum feedback registrado." /> : <SimpleCards items={feedbacks.map((f) => ({ id: f.id, title: f.feedback_type, subtitle: employeeName(f.employee_id), meta: `Acompanhamento: ${formatDateBR(f.followup_date || "")}`, body: f.situation || "—", status: f.status }))} />}</CardContent></Card>
-        </div>
-      )}
-
-      {tab === "candidatos" && (
-        <Card className="rounded-3xl"><CardHeader><CardTitle>Candidatos</CardTitle><p className="text-sm text-slate-500">Base preparada para futura área externa /trabalhe-conosco e login do candidato.</p></CardHeader><CardContent>{!isAdmin ? <AlertBox text="A visualização de candidatos fica restrita ao admin." /> : loading ? <Loading /> : candidates.length === 0 ? <Empty text="Nenhum candidato encontrado. Após aplicar a migration, criaremos a área externa de candidatura." /> : <CandidatesTable candidates={candidates} />}</CardContent></Card>
-      )}
-    </div>
-  );
+    {tab === "contrato" && <ContractVacationTab employees={employees} contracts={contracts} vacationPeriods={vacationPeriods} vacationSchedules={vacationSchedules} contractForm={contractForm} setContractForm={setContractForm} vacationForm={vacationForm} setVacationForm={setVacationForm} saveContract={saveContract} saveVacationSchedule={saveVacationSchedule} employeeName={employeeName} isAdmin={isAdmin} saving={saving} />}
+    {tab === "remuneracao" && <SalaryTab employees={employees} contracts={contracts} salaryHistory={salaryHistory} salaryForm={salaryForm} setSalaryForm={setSalaryForm} saveSalaryChange={saveSalaryChange} employeeName={employeeName} isAdmin={isAdmin} saving={saving} />}
+    {tab === "ponto" && <Card className="rounded-3xl"><CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><CardTitle>Registros de Ponto</CardTitle><p className="text-sm text-slate-500 mt-1">Registros captados pelo link externo com geolocalização obrigatória.</p></div>{isAdmin && <EmployeeFilter employees={employees} value={selectedEmployeeId} onChange={setSelectedEmployeeId} />}</CardHeader><CardContent>{loading ? <Loading /> : filteredEntries.length === 0 ? <Empty text="Nenhum registro encontrado." /> : <EntriesTable entries={filteredEntries} isAdmin={isAdmin} />}</CardContent></Card>}
+    {tab === "banco" && <Card className="rounded-3xl"><CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><CardTitle>Banco de Horas</CardTitle><p className="text-sm text-slate-500 mt-1">Cálculo automático a partir dos pares Entrada/Saída.</p></div>{isAdmin && <EmployeeFilter employees={employees} value={selectedEmployeeId} onChange={setSelectedEmployeeId} />}</CardHeader><CardContent>{loading ? <Loading /> : workDays.length === 0 ? <Empty text="Sem registros para calcular banco de horas." /> : <WorkDaysTable rows={workDays} />}</CardContent></Card>}
+    {tab === "ajustes" && <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Solicitar ajuste</CardTitle></CardHeader><CardContent className="space-y-3"><Field label="Colaborador"><EmployeeSelect employees={employees} value={adjustmentForm.employee_id} onChange={(v) => setAdjustmentForm({ ...adjustmentForm, employee_id: v })} /></Field><Field label="Data"><Input type="date" value={adjustmentForm.date_ref} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, date_ref: e.target.value })} /></Field><Field label="Tipo"><Select value={adjustmentForm.requested_entry_type} onValueChange={(v) => setAdjustmentForm({ ...adjustmentForm, requested_entry_type: v as any })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="entrada">Entrada</SelectItem><SelectItem value="saida">Saída</SelectItem></SelectContent></Select></Field><Field label="Data/Hora solicitada"><Input type="datetime-local" value={adjustmentForm.requested_entry_at} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, requested_entry_at: e.target.value })} /></Field><Field label="Justificativa"><Textarea value={adjustmentForm.reason} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })} /></Field><Button disabled={saving} onClick={saveAdjustment} className="text-white" style={{ background: C.ruby }}><Plus className="h-4 w-4 mr-2" />Enviar ajuste</Button></CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Ajustes de Ponto</CardTitle></CardHeader><CardContent>{loading ? <Loading /> : adjustments.length === 0 ? <Empty text="Nenhum ajuste solicitado." /> : <AdjustmentsList adjustments={adjustments} employeeName={employeeName} isAdmin={isAdmin} onStatus={updateAdjustmentStatus} />}</CardContent></Card></div>}
+    {tab === "pdi" && <PDITab employees={employees} pdis={pdis} pdiForm={pdiForm} setPdiForm={setPdiForm} savePDI={savePDI} employeeName={employeeName} isAdmin={isAdmin} saving={saving} />}
+    {tab === "feedbacks" && <FeedbackTab employees={employees} feedbacks={feedbacks} feedbackForm={feedbackForm} setFeedbackForm={setFeedbackForm} saveFeedback={saveFeedback} employeeName={employeeName} isAdmin={isAdmin} saving={saving} />}
+    {tab === "candidatos" && <Card className="rounded-3xl"><CardHeader><CardTitle>Candidatos</CardTitle><p className="text-sm text-slate-500">Base preparada para futura área externa /trabalhe-conosco.</p></CardHeader><CardContent>{!isAdmin ? <AlertBox text="A visualização de candidatos fica restrita ao admin." /> : loading ? <Loading /> : candidates.length === 0 ? <Empty text="Nenhum candidato encontrado." /> : <CandidatesTable candidates={candidates} />}</CardContent></Card>}
+  </div>;
 }
 
-function BarIcon(props: any) { return <BarChart3 {...props} />; }
-
-function Kpi({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: React.ReactNode }) {
-  return <Card className="rounded-2xl"><CardContent className="p-5"><div className="flex items-center gap-3"><Icon className="h-5 w-5" style={{ color: C.ruby }} /><div><div className="text-sm text-slate-500">{label}</div><div className="text-2xl font-bold">{value}</div></div></div></CardContent></Card>;
-}
-
+function Kpi({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: React.ReactNode }) { return <Card className="rounded-2xl"><CardContent className="p-5"><div className="flex items-center gap-3"><Icon className="h-5 w-5" style={{ color: C.ruby }} /><div><div className="text-sm text-slate-500">{label}</div><div className="text-2xl font-bold">{value}</div></div></div></CardContent></Card>; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <div className="space-y-2"><Label>{label}</Label>{children}</div>; }
 function Loading() { return <div className="py-12 flex justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>; }
 function Empty({ text }: { text: string }) { return <div className="py-12 text-center text-slate-500">{text}</div>; }
 function AlertBox({ text }: { text: string }) { return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 flex gap-2"><AlertCircle className="h-4 w-4 mt-0.5" />{text}</div>; }
+function EmployeeSelect({ employees, value, onChange, disabled }: { employees: Employee[]; value: string; onChange: (v: string) => void; disabled?: boolean }) { return <Select value={value || "none"} onValueChange={(v) => onChange(v === "none" ? "" : v)} disabled={disabled}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent><SelectItem value="none">Selecione</SelectItem>{employees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.nome}</SelectItem>)}</SelectContent></Select>; }
+function EmployeeFilter({ employees, value, onChange }: { employees: Employee[]; value: string; onChange: (v: string) => void }) { return <div className="w-full md:w-72"><Select value={value} onValueChange={onChange}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos os colaboradores</SelectItem>{employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}</SelectContent></Select></div>; }
 
-function EmployeeFilter({ employees, value, onChange }: { employees: Employee[]; value: string; onChange: (v: string) => void }) {
-  return <div className="w-full md:w-72"><Select value={value} onValueChange={onChange}><SelectTrigger><SelectValue placeholder="Filtrar colaborador" /></SelectTrigger><SelectContent><SelectItem value="all">Todos os colaboradores</SelectItem>{employees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.nome}</SelectItem>)}</SelectContent></Select></div>;
+function EmployeeTable({ employees, editEmployee, editContract, contracts }: { employees: Employee[]; editEmployee: (e: Employee) => void; editContract: (c: HRContract) => void; contracts: HRContract[] }) { return <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="p-3 text-left">Nome</th><th className="p-3 text-left">CPF</th><th className="p-3 text-left">Cargo/Setor</th><th className="p-3 text-left">Contrato</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">Ações</th></tr></thead><tbody>{employees.map((e) => { const c = contracts.find((x) => x.employee_id === e.id); return <tr key={e.id} className="border-t bg-white"><td className="p-3 font-medium">{e.nome}<div className="text-xs text-slate-500">{e.email || "—"}</div></td><td className="p-3">{maskCPF(e.cpf_digits)}</td><td className="p-3">{e.cargo || "—"}<div className="text-xs text-slate-500">{e.setor || "—"}</div></td><td className="p-3">{c ? <><div>{formatDateBR(c.hire_date)}</div><div className="text-xs text-slate-500">{fmtMoney(c.current_salary)}</div></> : <span className="text-slate-400">Sem contrato</span>}</td><td className="p-3"><StatusBadge tone={e.ativo ? "good" : "bad"}>{e.ativo ? "Ativo" : "Inativo"}</StatusBadge></td><td className="p-3"><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => editEmployee(e)}>Editar</Button>{c && <Button size="sm" variant="outline" onClick={() => editContract(c)}>Contrato</Button>}</div></td></tr>; })}</tbody></table></div>; }
+
+function ContractVacationTab(props: { employees: Employee[]; contracts: HRContract[]; vacationPeriods: VacationPeriod[]; vacationSchedules: VacationSchedule[]; contractForm: ContractForm; setContractForm: (f: ContractForm) => void; vacationForm: VacationForm; setVacationForm: (f: VacationForm) => void; saveContract: () => void; saveVacationSchedule: () => void; employeeName: (id: string) => string; isAdmin: boolean; saving: boolean }) {
+  const { employees, contracts, vacationPeriods, vacationSchedules, contractForm, setContractForm, vacationForm, setVacationForm, saveContract, saveVacationSchedule, employeeName, isAdmin, saving } = props;
+  const periodsForEmployee = vacationPeriods.filter((p) => !vacationForm.employee_id || p.employee_id === vacationForm.employee_id);
+  return <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4"><div className="space-y-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Contrato do colaborador</CardTitle></CardHeader><CardContent className="space-y-3">{!isAdmin && <AlertBox text="Somente admin pode alterar contrato." />}<Field label="Colaborador"><EmployeeSelect employees={employees} value={contractForm.employee_id} onChange={(v) => setContractForm({ ...contractForm, employee_id: v })} disabled={!isAdmin} /></Field><Field label="Data de contratação"><Input type="date" value={contractForm.hire_date} onChange={(e) => setContractForm({ ...contractForm, hire_date: e.target.value })} disabled={!isAdmin} /></Field><div className="grid grid-cols-2 gap-3"><Field label="Tipo"><Select value={contractForm.contract_type} onValueChange={(v) => setContractForm({ ...contractForm, contract_type: v })} disabled={!isAdmin}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="clt">CLT</SelectItem><SelectItem value="pj">PJ</SelectItem><SelectItem value="estagio">Estágio</SelectItem><SelectItem value="outro">Outro</SelectItem></SelectContent></Select></Field><Field label="Status"><Select value={contractForm.employment_status} onValueChange={(v) => setContractForm({ ...contractForm, employment_status: v })} disabled={!isAdmin}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ativo">Ativo</SelectItem><SelectItem value="afastado">Afastado</SelectItem><SelectItem value="desligado">Desligado</SelectItem></SelectContent></Select></Field></div><div className="grid grid-cols-2 gap-3"><Field label="Cargo"><Input value={contractForm.role_title} onChange={(e) => setContractForm({ ...contractForm, role_title: e.target.value })} disabled={!isAdmin} /></Field><Field label="Departamento"><Input value={contractForm.department_name} onChange={(e) => setContractForm({ ...contractForm, department_name: e.target.value })} disabled={!isAdmin} /></Field></div><div className="grid grid-cols-2 gap-3"><Field label="Salário base"><Input value={contractForm.base_salary} onChange={(e) => setContractForm({ ...contractForm, base_salary: e.target.value })} disabled={!isAdmin} /></Field><Field label="Salário atual"><Input value={contractForm.current_salary} onChange={(e) => setContractForm({ ...contractForm, current_salary: e.target.value })} disabled={!isAdmin} /></Field></div><Field label="Observações"><Textarea value={contractForm.notes} onChange={(e) => setContractForm({ ...contractForm, notes: e.target.value })} disabled={!isAdmin} /></Field><Button disabled={!isAdmin || saving} onClick={saveContract} className="text-white" style={{ background: C.ruby }}><Save className="h-4 w-4 mr-2" />Salvar contrato e gerar férias</Button></CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Agendar férias</CardTitle></CardHeader><CardContent className="space-y-3"><Field label="Colaborador"><EmployeeSelect employees={employees} value={vacationForm.employee_id} onChange={(v) => setVacationForm({ ...vacationForm, employee_id: v, vacation_period_id: "" })} disabled={!isAdmin} /></Field><Field label="Período aquisitivo"><Select value={vacationForm.vacation_period_id || "none"} onValueChange={(v) => setVacationForm({ ...vacationForm, vacation_period_id: v === "none" ? "" : v })} disabled={!isAdmin}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Selecione</SelectItem>{periodsForEmployee.map((p) => <SelectItem key={p.id} value={p.id}>{formatDateBR(p.acquisition_start)} a {formatDateBR(p.acquisition_end)}</SelectItem>)}</SelectContent></Select></Field><div className="grid grid-cols-2 gap-3"><Field label="Início"><Input type="date" value={vacationForm.start_date} onChange={(e) => setVacationForm({ ...vacationForm, start_date: e.target.value })} disabled={!isAdmin} /></Field><Field label="Fim"><Input type="date" value={vacationForm.end_date} onChange={(e) => setVacationForm({ ...vacationForm, end_date: e.target.value })} disabled={!isAdmin} /></Field></div><div className="grid grid-cols-3 gap-3"><Field label="Dias"><Input type="number" value={vacationForm.days_count} onChange={(e) => setVacationForm({ ...vacationForm, days_count: e.target.value })} disabled={!isAdmin} /></Field><Field label="Vendidos"><Input type="number" value={vacationForm.sold_days} onChange={(e) => setVacationForm({ ...vacationForm, sold_days: e.target.value })} disabled={!isAdmin} /></Field><Field label="Bônus"><Input type="number" value={vacationForm.bonus_days} onChange={(e) => setVacationForm({ ...vacationForm, bonus_days: e.target.value })} disabled={!isAdmin} /></Field></div><Field label="Observações"><Textarea value={vacationForm.notes} onChange={(e) => setVacationForm({ ...vacationForm, notes: e.target.value })} disabled={!isAdmin} /></Field><Button disabled={!isAdmin || saving} onClick={saveVacationSchedule} className="text-white" style={{ background: C.navy }}><Plane className="h-4 w-4 mr-2" />Agendar férias</Button></CardContent></Card></div><div className="space-y-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Contratos</CardTitle></CardHeader><CardContent>{contracts.length === 0 ? <Empty text="Nenhum contrato cadastrado." /> : <div className="grid gap-3">{contracts.map((c) => <div key={c.id} className="rounded-2xl border bg-white p-4"><div className="flex justify-between gap-3"><div><div className="font-semibold">{employeeName(c.employee_id)}</div><div className="text-sm text-slate-500">Admissão: {formatDateBR(c.hire_date)} • {c.contract_type?.toUpperCase()} • {c.role_title || "Cargo não informado"}</div><div className="text-sm text-slate-500">Salário atual: {fmtMoney(c.current_salary)}</div></div><StatusBadge tone={c.employment_status === "ativo" ? "good" : "warn"}>{c.employment_status}</StatusBadge></div></div>)}</div>}</CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Períodos de férias</CardTitle></CardHeader><CardContent>{vacationPeriods.length === 0 ? <Empty text="Nenhum período gerado. Salve um contrato para gerar períodos." /> : <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="p-3 text-left">Colaborador</th><th className="p-3 text-left">Aquisitivo</th><th className="p-3 text-left">Prazo para gozar</th><th className="p-3 text-left">Dias</th><th className="p-3 text-left">Status</th></tr></thead><tbody>{vacationPeriods.map((p) => { const st = vacationStatus(p); return <tr key={p.id} className="border-t bg-white"><td className="p-3 font-medium">{employeeName(p.employee_id)}</td><td className="p-3">{formatDateBR(p.acquisition_start)} a {formatDateBR(p.acquisition_end)}</td><td className="p-3">{formatDateBR(p.concession_start)} a {formatDateBR(p.concession_end)}</td><td className="p-3">{p.days_taken || 0}/{p.days_right || 30}</td><td className="p-3"><StatusBadge tone={st === "vencida" ? "bad" : st === "atencao" ? "warn" : st === "disponivel" ? "navy" : "default"}>{st}</StatusBadge></td></tr>; })}</tbody></table></div>}</CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Férias agendadas</CardTitle></CardHeader><CardContent>{vacationSchedules.length === 0 ? <Empty text="Nenhuma férias agendada." /> : <div className="grid gap-3">{vacationSchedules.map((s) => <div key={s.id} className="rounded-2xl border bg-white p-4"><div className="font-semibold">{employeeName(s.employee_id)}</div><div className="text-sm text-slate-500">{formatDateBR(s.start_date)} a {formatDateBR(s.end_date)} • {s.days_count} dias</div><StatusBadge tone="gold">{s.status}</StatusBadge></div>)}</div>}</CardContent></Card></div></div>;
 }
 
-function EmployeeSelect({ employees, value, onChange, disabled }: { employees: Employee[]; value: string; onChange: (v: string) => void; disabled?: boolean }) {
-  return <Select value={value || "none"} onValueChange={(v) => onChange(v === "none" ? "" : v)} disabled={disabled}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent><SelectItem value="none">Selecione</SelectItem>{employees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.nome}</SelectItem>)}</SelectContent></Select>;
-}
+function SalaryTab({ employees, contracts, salaryHistory, salaryForm, setSalaryForm, saveSalaryChange, employeeName, isAdmin, saving }: { employees: Employee[]; contracts: HRContract[]; salaryHistory: SalaryHistory[]; salaryForm: SalaryForm; setSalaryForm: (f: SalaryForm) => void; saveSalaryChange: () => void; employeeName: (id: string) => string; isAdmin: boolean; saving: boolean }) { return <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Registrar alteração salarial</CardTitle></CardHeader><CardContent className="space-y-3">{!isAdmin && <AlertBox text="Somente admin pode registrar remuneração." />}<Field label="Colaborador"><EmployeeSelect employees={employees} value={salaryForm.employee_id} onChange={(v) => { const c = contracts.find((x) => x.employee_id === v); setSalaryForm({ ...salaryForm, employee_id: v, previous_salary: c?.current_salary != null ? String(c.current_salary) : "" }); }} disabled={!isAdmin} /></Field><Field label="Data da alteração"><Input type="date" value={salaryForm.change_date} onChange={(e) => setSalaryForm({ ...salaryForm, change_date: e.target.value })} disabled={!isAdmin} /></Field><div className="grid grid-cols-2 gap-3"><Field label="Salário anterior"><Input value={salaryForm.previous_salary} onChange={(e) => setSalaryForm({ ...salaryForm, previous_salary: e.target.value })} disabled={!isAdmin} /></Field><Field label="Novo salário"><Input value={salaryForm.new_salary} onChange={(e) => setSalaryForm({ ...salaryForm, new_salary: e.target.value })} disabled={!isAdmin} /></Field></div><Field label="Tipo"><Select value={salaryForm.change_type} onValueChange={(v) => setSalaryForm({ ...salaryForm, change_type: v })} disabled={!isAdmin}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="admissao">Admissão</SelectItem><SelectItem value="aumento">Aumento</SelectItem><SelectItem value="promocao">Promoção</SelectItem><SelectItem value="ajuste">Ajuste</SelectItem><SelectItem value="reducao">Redução</SelectItem></SelectContent></Select></Field><Field label="Motivo"><Input value={salaryForm.reason} onChange={(e) => setSalaryForm({ ...salaryForm, reason: e.target.value })} disabled={!isAdmin} /></Field><Field label="Observações"><Textarea value={salaryForm.notes} onChange={(e) => setSalaryForm({ ...salaryForm, notes: e.target.value })} disabled={!isAdmin} /></Field><Button disabled={!isAdmin || saving} onClick={saveSalaryChange} className="text-white" style={{ background: C.ruby }}><DollarSign className="h-4 w-4 mr-2" />Registrar alteração</Button></CardContent></Card><div className="space-y-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Resumo financeiro</CardTitle></CardHeader><CardContent><div className="grid grid-cols-1 md:grid-cols-2 gap-3">{contracts.map((c) => { const initial = c.base_salary || salaryHistory.filter((h) => h.employee_id === c.employee_id).sort((a, b) => a.change_date.localeCompare(b.change_date))[0]?.new_salary || c.current_salary || 0; const current = c.current_salary || 0; const growth = initial ? ((current - initial) / initial) * 100 : 0; return <div key={c.id} className="rounded-2xl border bg-white p-4"><div className="font-semibold">{employeeName(c.employee_id)}</div><div className="text-sm text-slate-500">Inicial: {fmtMoney(initial)} • Atual: {fmtMoney(current)}</div><div className="text-2xl font-bold mt-2" style={{ color: growth >= 0 ? C.navy : C.ruby }}>{growth >= 0 ? "+" : ""}{growth.toFixed(1)}%</div></div>; })}</div></CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Histórico salarial</CardTitle></CardHeader><CardContent>{salaryHistory.length === 0 ? <Empty text="Nenhum histórico salarial registrado." /> : <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="p-3 text-left">Data</th><th className="p-3 text-left">Colaborador</th><th className="p-3 text-left">Anterior</th><th className="p-3 text-left">Novo</th><th className="p-3 text-left">Tipo</th><th className="p-3 text-left">Motivo</th></tr></thead><tbody>{salaryHistory.map((h) => <tr key={h.id} className="border-t bg-white"><td className="p-3">{formatDateBR(h.change_date)}</td><td className="p-3 font-medium">{employeeName(h.employee_id)}</td><td className="p-3">{fmtMoney(h.previous_salary)}</td><td className="p-3 font-semibold">{fmtMoney(h.new_salary)}</td><td className="p-3"><StatusBadge tone="navy">{h.change_type}</StatusBadge></td><td className="p-3">{h.reason || "—"}</td></tr>)}</tbody></table></div>}</CardContent></Card></div></div>; }
 
-function EntriesTable({ entries, isAdmin }: { entries: TimeEntry[]; isAdmin: boolean }) {
-  return <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr>{isAdmin && <th className="text-left p-3">Colaborador</th>}<th className="text-left p-3">Tipo</th><th className="text-left p-3">Data/Hora</th><th className="text-left p-3">Status</th><th className="text-left p-3">Localização</th></tr></thead><tbody>{entries.map((entry) => <tr key={entry.id} className="border-t bg-white">{isAdmin && <td className="p-3"><div className="font-medium">{entry.hr_employees?.nome || "—"}</div><div className="text-xs text-slate-500">{entry.hr_employees?.cargo || "—"}</div></td>}<td className="p-3"><Badge className="rounded-full" style={{ backgroundColor: entry.entry_type === "entrada" ? C.navy : C.ruby, color: "#fff" }}>{entry.entry_type === "entrada" ? "Entrada" : "Saída"}</Badge></td><td className="p-3">{formatDateTimeBR(entry.entry_at)}</td><td className="p-3"><Badge variant="outline" className="rounded-full">{entry.status}</Badge></td><td className="p-3"><a href={mapUrl(Number(entry.latitude), Number(entry.longitude))} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline" style={{ color: C.ruby }}><MapPin className="h-4 w-4" />Ver mapa</a>{entry.accuracy != null && <div className="text-xs text-slate-500 mt-1">Precisão: {Math.round(Number(entry.accuracy))}m</div>}</td></tr>)}</tbody></table></div>;
-}
-
-function WorkDaysTable({ rows }: { rows: WorkDay[] }) {
-  return <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="text-left p-3">Data</th><th className="text-left p-3">Colaborador</th><th className="text-left p-3">Entrada</th><th className="text-left p-3">Saída</th><th className="text-left p-3">Previsto</th><th className="text-left p-3">Trabalhado</th><th className="text-left p-3">Saldo</th><th className="text-left p-3">Status</th></tr></thead><tbody>{rows.map((r) => <tr key={`${r.employee_id}-${r.date_ref}`} className="border-t bg-white"><td className="p-3">{formatDateBR(r.date_ref)}</td><td className="p-3 font-medium">{r.employee_name}</td><td className="p-3">{formatDateTimeBR(r.first_entry)}</td><td className="p-3">{formatDateTimeBR(r.last_exit)}</td><td className="p-3">{formatMinutes(r.expected_minutes)}</td><td className="p-3">{formatMinutes(r.worked_minutes)}</td><td className="p-3"><StatusBadge tone={r.balance_minutes >= 0 ? "good" : "bad"}>{formatMinutes(r.balance_minutes)}</StatusBadge></td><td className="p-3"><StatusBadge tone={r.status === "em_jornada" ? "good" : "default"}>{r.status === "em_jornada" ? "Em jornada" : "Fora"}</StatusBadge></td></tr>)}</tbody></table></div>;
-}
-
-function AdjustmentsList({ adjustments, employeeName, isAdmin, onStatus }: { adjustments: TimeAdjustment[]; employeeName: (id: string) => string; isAdmin: boolean; onStatus: (id: string, status: "aprovado" | "recusado") => void }) {
-  return <div className="space-y-3">{adjustments.map((a) => <div key={a.id} className="rounded-2xl border bg-white p-4"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2"><div><div className="font-semibold">{employeeName(a.employee_id)}</div><div className="text-sm text-slate-500">{a.requested_entry_type === "entrada" ? "Entrada" : "Saída"} em {formatDateTimeBR(a.requested_entry_at)}</div></div><StatusBadge tone={a.status === "aprovado" ? "good" : a.status === "recusado" ? "bad" : "warn"}>{a.status}</StatusBadge></div><p className="text-sm text-slate-700 mt-3">{a.reason}</p>{isAdmin && a.status === "pendente" && <div className="flex gap-2 mt-3"><Button size="sm" onClick={() => onStatus(a.id, "aprovado")} className="text-white" style={{ background: C.navy }}>Aprovar</Button><Button size="sm" variant="outline" onClick={() => onStatus(a.id, "recusado")}>Recusar</Button></div>}</div>)}</div>;
-}
-
-function SimpleCards({ items }: { items: Array<{ id: string; title: string; subtitle: string; meta: string; body: string; status: string }> }) {
-  return <div className="space-y-3">{items.map((item) => <div key={item.id} className="rounded-2xl border bg-white p-4"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2"><div><div className="font-semibold capitalize">{item.title}</div><div className="text-sm text-slate-500">{item.subtitle} • {item.meta}</div></div><StatusBadge tone="navy">{item.status}</StatusBadge></div><p className="text-sm text-slate-700 mt-3 whitespace-pre-wrap">{item.body}</p></div>)}</div>;
-}
-
-function CandidatesTable({ candidates }: { candidates: Candidate[] }) {
-  return <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="text-left p-3">Nome</th><th className="text-left p-3">Contato</th><th className="text-left p-3">Cidade</th><th className="text-left p-3">Área</th><th className="text-left p-3">Status</th></tr></thead><tbody>{candidates.map((c) => <tr key={c.id} className="border-t bg-white"><td className="p-3 font-medium">{c.nome || "—"}<div className="text-xs text-slate-500">{c.cpf ? maskCPF(c.cpf) : "CPF não informado"}</div></td><td className="p-3">{c.email || "—"}<div className="text-xs text-slate-500">{c.telefone || "—"}</div></td><td className="p-3">{c.cidade || "—"}/{c.uf || "—"}</td><td className="p-3">{c.area_interesse || "—"}</td><td className="p-3"><StatusBadge>{c.status || "novo"}</StatusBadge></td></tr>)}</tbody></table></div>;
-}
+function EntriesTable({ entries, isAdmin }: { entries: TimeEntry[]; isAdmin: boolean }) { return <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr>{isAdmin && <th className="text-left p-3">Colaborador</th>}<th className="text-left p-3">Tipo</th><th className="text-left p-3">Data/Hora</th><th className="text-left p-3">Status</th><th className="text-left p-3">Localização</th></tr></thead><tbody>{entries.map((entry) => <tr key={entry.id} className="border-t bg-white">{isAdmin && <td className="p-3"><div className="font-medium">{entry.hr_employees?.nome || "—"}</div><div className="text-xs text-slate-500">{entry.hr_employees?.cargo || "—"}</div></td>}<td className="p-3"><Badge className="rounded-full" style={{ backgroundColor: entry.entry_type === "entrada" ? C.navy : C.ruby, color: "#fff" }}>{entry.entry_type === "entrada" ? "Entrada" : "Saída"}</Badge></td><td className="p-3">{formatDateTimeBR(entry.entry_at)}</td><td className="p-3"><Badge variant="outline" className="rounded-full">{entry.status}</Badge></td><td className="p-3">{entry.source === "adjustment" ? <span className="text-slate-500">Ajuste aprovado</span> : <a href={mapUrl(Number(entry.latitude), Number(entry.longitude))} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline" style={{ color: C.ruby }}><MapPin className="h-4 w-4" />Ver mapa</a>}</td></tr>)}</tbody></table></div>; }
+function WorkDaysTable({ rows }: { rows: WorkDay[] }) { return <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="text-left p-3">Data</th><th className="text-left p-3">Colaborador</th><th className="text-left p-3">Entrada</th><th className="text-left p-3">Saída</th><th className="text-left p-3">Previsto</th><th className="text-left p-3">Trabalhado</th><th className="text-left p-3">Saldo</th><th className="text-left p-3">Status</th></tr></thead><tbody>{rows.map((r) => <tr key={`${r.employee_id}-${r.date_ref}`} className="border-t bg-white"><td className="p-3">{formatDateBR(r.date_ref)}</td><td className="p-3 font-medium">{r.employee_name}</td><td className="p-3">{formatDateTimeBR(r.first_entry)}</td><td className="p-3">{formatDateTimeBR(r.last_exit)}</td><td className="p-3">{formatMinutes(r.expected_minutes)}</td><td className="p-3">{formatMinutes(r.worked_minutes)}</td><td className="p-3"><StatusBadge tone={r.balance_minutes >= 0 ? "good" : "bad"}>{formatMinutes(r.balance_minutes)}</StatusBadge></td><td className="p-3"><StatusBadge tone={r.status === "em_jornada" ? "good" : "default"}>{r.status === "em_jornada" ? "Em jornada" : "Fora"}</StatusBadge></td></tr>)}</tbody></table></div>; }
+function AdjustmentsList({ adjustments, employeeName, isAdmin, onStatus }: { adjustments: TimeAdjustment[]; employeeName: (id: string) => string; isAdmin: boolean; onStatus: (id: string, status: "aprovado" | "recusado") => void }) { return <div className="space-y-3">{adjustments.map((a) => <div key={a.id} className="rounded-2xl border bg-white p-4"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2"><div><div className="font-semibold">{employeeName(a.employee_id)}</div><div className="text-sm text-slate-500">{a.requested_entry_type === "entrada" ? "Entrada" : "Saída"} em {formatDateTimeBR(a.requested_entry_at)}</div></div><StatusBadge tone={a.status === "aprovado" ? "good" : a.status === "recusado" ? "bad" : "warn"}>{a.status}</StatusBadge></div><p className="text-sm text-slate-700 mt-3">{a.reason}</p>{isAdmin && a.status === "pendente" && <div className="flex gap-2 mt-3"><Button size="sm" onClick={() => onStatus(a.id, "aprovado")} className="text-white" style={{ background: C.navy }}>Aprovar</Button><Button size="sm" variant="outline" onClick={() => onStatus(a.id, "recusado")}>Recusar</Button></div>}</div>)}</div>; }
+function SimpleCards({ items }: { items: Array<{ id: string; title: string; subtitle: string; meta: string; body: string; status: string }> }) { return <div className="space-y-3">{items.map((item) => <div key={item.id} className="rounded-2xl border bg-white p-4"><div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2"><div><div className="font-semibold capitalize">{item.title}</div><div className="text-sm text-slate-500">{item.subtitle} • {item.meta}</div></div><StatusBadge tone="navy">{item.status}</StatusBadge></div><p className="text-sm text-slate-700 mt-3 whitespace-pre-wrap">{item.body}</p></div>)}</div>; }
+function PDITab({ employees, pdis, pdiForm, setPdiForm, savePDI, employeeName, isAdmin, saving }: any) { return <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Novo PDI</CardTitle></CardHeader><CardContent className="space-y-3"><Field label="Colaborador"><EmployeeSelect employees={employees} value={pdiForm.employee_id} onChange={(v) => setPdiForm({ ...pdiForm, employee_id: v })} disabled={!isAdmin} /></Field><Field label="Título"><Input value={pdiForm.title} onChange={(e) => setPdiForm({ ...pdiForm, title: e.target.value })} disabled={!isAdmin} /></Field><Field label="Objetivo"><Textarea value={pdiForm.main_goal} onChange={(e) => setPdiForm({ ...pdiForm, main_goal: e.target.value })} disabled={!isAdmin} /></Field><Field label="Competências"><Textarea value={pdiForm.competencies} onChange={(e) => setPdiForm({ ...pdiForm, competencies: e.target.value })} disabled={!isAdmin} /></Field><Button disabled={!isAdmin || saving} onClick={savePDI} className="text-white" style={{ background: C.ruby }}>Criar PDI</Button></CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>PDIs</CardTitle></CardHeader><CardContent>{pdis.length === 0 ? <Empty text="Nenhum PDI cadastrado." /> : <SimpleCards items={pdis.map((p: PDI) => ({ id: p.id, title: p.title, subtitle: employeeName(p.employee_id), meta: `${formatDateBR(p.start_date || "")} até ${formatDateBR(p.end_date || "")}`, body: p.main_goal || "—", status: p.status }))} />}</CardContent></Card></div>; }
+function FeedbackTab({ employees, feedbacks, feedbackForm, setFeedbackForm, saveFeedback, employeeName, isAdmin, saving }: any) { return <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Novo feedback</CardTitle></CardHeader><CardContent className="space-y-3"><Field label="Colaborador"><EmployeeSelect employees={employees} value={feedbackForm.employee_id} onChange={(v) => setFeedbackForm({ ...feedbackForm, employee_id: v })} disabled={!isAdmin} /></Field><Field label="Tipo"><Select value={feedbackForm.feedback_type} onValueChange={(v) => setFeedbackForm({ ...feedbackForm, feedback_type: v })} disabled={!isAdmin}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="reconhecimento">Reconhecimento</SelectItem><SelectItem value="correcao">Correção</SelectItem><SelectItem value="alinhamento">Alinhamento</SelectItem><SelectItem value="desenvolvimento">Desenvolvimento</SelectItem></SelectContent></Select></Field><Field label="Situação"><Textarea value={feedbackForm.situation} onChange={(e) => setFeedbackForm({ ...feedbackForm, situation: e.target.value })} disabled={!isAdmin} /></Field><Field label="Plano de ação"><Textarea value={feedbackForm.action_plan} onChange={(e) => setFeedbackForm({ ...feedbackForm, action_plan: e.target.value })} disabled={!isAdmin} /></Field><Button disabled={!isAdmin || saving} onClick={saveFeedback} className="text-white" style={{ background: C.ruby }}>Registrar feedback</Button></CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Feedbacks</CardTitle></CardHeader><CardContent>{feedbacks.length === 0 ? <Empty text="Nenhum feedback registrado." /> : <SimpleCards items={feedbacks.map((f: Feedback) => ({ id: f.id, title: f.feedback_type, subtitle: employeeName(f.employee_id), meta: `Acompanhamento: ${formatDateBR(f.followup_date || "")}`, body: f.situation || "—", status: f.status }))} />}</CardContent></Card></div>; }
+function CandidatesTable({ candidates }: { candidates: Candidate[] }) { return <div className="overflow-x-auto rounded-2xl border"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="text-left p-3">Nome</th><th className="text-left p-3">Contato</th><th className="text-left p-3">Cidade</th><th className="text-left p-3">Área</th><th className="text-left p-3">Status</th></tr></thead><tbody>{candidates.map((c) => <tr key={c.id} className="border-t bg-white"><td className="p-3 font-medium">{c.nome || "—"}<div className="text-xs text-slate-500">{c.cpf ? maskCPF(c.cpf) : "CPF não informado"}</div></td><td className="p-3">{c.email || "—"}<div className="text-xs text-slate-500">{c.telefone || "—"}</div></td><td className="p-3">{c.cidade || "—"}/{c.uf || "—"}</td><td className="p-3">{c.area_interesse || "—"}</td><td className="p-3"><StatusBadge>{c.status || "novo"}</StatusBadge></td></tr>)}</tbody></table></div>; }

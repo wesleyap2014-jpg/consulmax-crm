@@ -6,7 +6,7 @@ import RequireAuth from "./components/auth/RequireAuth";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 
-// ==== Lazy pages (mantém lazy no resto) ====
+// ==== Lazy pages ====
 const Login = React.lazy(() => import("./pages/Login"));
 const Inicio = React.lazy(() => import("./pages/Inicio"));
 const Clientes = React.lazy(() => import("./pages/Clientes"));
@@ -35,9 +35,7 @@ const Relatorios = React.lazy(() => import("./pages/Relatorios"));
 const Procedimentos = React.lazy(() => import("./pages/Procedimentos"));
 const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas"));
 const Processos = React.lazy(() => import("./pages/Processos"));
-
-// ==== Giro de Carteira SEM lazy (import direto) ====
-import GiroDeCarteira from "./pages/GiroDeCarteira";
+const GiroDeCarteira = React.lazy(() => import("./pages/GiroDeCarteira"));
 
 function withSuspense(node: React.ReactNode) {
   return (
@@ -115,7 +113,7 @@ export const router = createBrowserRouter([
 
           {
             path: "giro-de-carteira",
-            element: (
+            element: withSuspense(
               <EB title="Erro no Giro de Carteira">
                 <GiroDeCarteira />
               </EB>

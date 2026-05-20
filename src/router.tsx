@@ -36,10 +36,6 @@ const Procedimentos = React.lazy(() => import("./pages/Procedimentos"));
 const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas"));
 const Processos = React.lazy(() => import("./pages/Processos"));
 
-// ==== Giro de Carteira V2 SEM lazy ====
-// Mantido com import direto para evitar tela branca por falha/caching de chunk dinâmico.
-import GiroDeCarteiraV2 from "./pages/GiroDeCarteiraV2";
-
 function withSuspense(node: React.ReactNode) {
   return (
     <React.Suspense
@@ -60,6 +56,24 @@ function EB({ title, children }: { title?: string; children: React.ReactNode }) 
     <ErrorBoundary title={title} resetKeys={[location.pathname]}>
       {children}
     </ErrorBoundary>
+  );
+}
+
+function GiroDeCarteiraInlineTest() {
+  return (
+    <div className="min-h-[calc(100vh-90px)] p-6 text-slate-900">
+      <div className="mx-auto w-full max-w-[1200px] rounded-[2rem] border border-emerald-200 bg-emerald-50 p-8 shadow-sm">
+        <div className="inline-flex rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700">
+          TESTE INLINE NO ROUTER
+        </div>
+        <h1 className="mt-5 text-3xl font-bold text-slate-950">
+          A rota /giro-de-carteira está renderizando pelo router.tsx
+        </h1>
+        <p className="mt-3 text-base text-slate-700">
+          Se esta mensagem aparecer, o problema está no componente importado. Se não aparecer, o problema está no deploy/cache/build/versão publicada.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -118,7 +132,7 @@ export const router = createBrowserRouter([
             path: "giro-de-carteira",
             element: (
               <EB title="Erro no Giro de Carteira">
-                <GiroDeCarteiraV2 />
+                <GiroDeCarteiraInlineTest />
               </EB>
             ),
           },

@@ -1,7 +1,7 @@
 // src/pages/Inicio.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -226,6 +226,19 @@ function normalizeYMD(v?: string | null) {
   return (v || "").slice(0, 10); // suporta date e timestamptz
 }
 
+function normalizeStageText(v?: string | null) {
+  return String(v || "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isOpenOpportunityStage(v?: string | null) {
+  const s = normalizeStageText(v);
+  return s === "novo" || s === "qualificando" || s === "qualificacao" || s === "proposta" || s === "negociacao";
+}
+
 /** ===================== Donut via SVG ===================== */
 function Donut({
   pct,
@@ -362,6 +375,7 @@ async function loadThoughtOfDay(todayYMD: string): Promise<string | null> {
 /** ===================== Página ===================== */
 export default function Inicio() {
   const nav = useNavigate();
+  const location = useLocation();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -384,7 +398,7 @@ export default function Inicio() {
   }, []);
   const rangeMonth = useMemo(() => monthRangeYMDFromOffset(new Date(), PV_OFFSET_MIN), []);
 
-  const OPEN_STAGES = useMemo(() => ["Novo", "Qualificando", "Proposta", "Negociação"], []);
+  const OPEN_STAGES = useMemo(() => ["Novo", "Qualificando", "Qualificação", "Qualificacao", "Proposta", "Negociação", "Negociacao"], []);
 
   // ======= KPIs =======
   const [kpi, setKpi] = useState({
@@ -512,12 +526,16 @@ export default function Inicio() {
     const { data: openOppRowsRaw, error: openOppErr } = await openOppQ;
     if (openOppErr) throw openOppErr;
 
-    const openOppRows = (openOppRowsRaw || []) as any as OppRow[];
+    const openOppRows = ((openOppRowsRaw || []) as any as OppRow[]).filter((o) => isOpenOpportunityStage(o.estagio));
     const openOppCount = openOppRows.length;
     const openOppTotal = openOppRows.reduce((acc, r) => acc + (Number(r.valor_credito || 0) || 0), 0);
 
     // ===== Oportunidades Atrasadas (top 10 por dias esperando ação) =====
     const overdueComputed = openOppRows
+      .filter((o: any) => {
+        const d = normalizeYMD(o.expected_close_at);
+        return Boolean(d) && d < today;
+      })
       .map((o: any) => {
         const d = normalizeYMD(o.expected_close_at);
         const daysWaiting = d ? Math.max(0, daysDiffYMD(today, d)) : 0;
@@ -957,6 +975,39 @@ export default function Inicio() {
     reload(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vendorScope]);
+
+  useEffect(() => {
+    if (!me) return;
+
+    const path = location.pathname.toLowerCase();
+    if (path === "/" || path === "/inicio") {
+      reload(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, me?.id, vendorScope]);
+
+  useEffect(() => {
+    if (!me) return;
+
+    const handleRefreshOnReturn = () => {
+      const path = window.location.pathname.toLowerCase();
+      if (path !== "/" && path !== "/inicio") return;
+      reload(false);
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") handleRefreshOnReturn();
+    };
+
+    window.addEventListener("focus", handleRefreshOnReturn);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      window.removeEventListener("focus", handleRefreshOnReturn);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.id, vendorScope, users.length]);
 
   const admin = isAdmin(me);
   const glassCard = "bg-white/80 border-slate-200/70 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.08)]";

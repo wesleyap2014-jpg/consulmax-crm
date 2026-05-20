@@ -29,12 +29,14 @@ const AlterarSenha = React.lazy(() => import("./pages/AlterarSenha"));
 const LinksUteis = React.lazy(() => import("./pages/LinksUteis"));
 const RankingVendedores = React.lazy(() => import("./pages/RankingVendedores"));
 const PublicSimulador = React.lazy(() => import("./pages/PublicSimulador"));
+const PublicPonto = React.lazy(() => import("./pages/PublicPonto"));
 const FluxoDeCaixa = React.lazy(() => import("./pages/FluxoDeCaixa"));
 const Planejamento = React.lazy(() => import("./pages/Planejamento"));
 const Relatorios = React.lazy(() => import("./pages/Relatorios"));
 const Procedimentos = React.lazy(() => import("./pages/Procedimentos"));
 const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas"));
 const Processos = React.lazy(() => import("./pages/Processos"));
+const RH = React.lazy(() => import("./pages/RH"));
 
 function withSuspense(node: React.ReactNode) {
   return (
@@ -84,6 +86,9 @@ export const router = createBrowserRouter([
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   { path: "/simular", element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
+  { path: "/ponto", element: withSuspense(<PublicPonto />) },
+  { path: "/registro-ponto", element: <Navigate to="/ponto" replace /> },
+  { path: "/ponto-eletronico", element: <Navigate to="/ponto" replace /> },
   { path: "/agenda/sala/:eventId", element: withSuspense(<AgendaSala />) },
 
   { path: "/login", element: withSuspense(<Login />) },
@@ -130,6 +135,7 @@ export const router = createBrowserRouter([
           { path: "carteira", element: withSuspense(<Carteira />) },
           { path: "fluxo-de-caixa", element: withSuspense(<FluxoDeCaixa />) },
           { path: "processos", element: withSuspense(<Processos />) },
+          { path: "rh", element: withSuspense(<RH />) },
 
           {
             path: "giro-de-carteira",

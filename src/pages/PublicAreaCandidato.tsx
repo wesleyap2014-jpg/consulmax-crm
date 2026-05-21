@@ -369,6 +369,7 @@ function emptyLanguage(language: CandidateLanguage["language"] = "portugues"): C
 export default function PublicAreaCandidato() {
   const [params, setParams] = useSearchParams();
   const requestedJobId = params.get("job") || "";
+  const requestedRecovery = params.get("recovery") === "1";
 
   const [mode, setMode] = useState<Mode>("login");
   const [portalTab, setPortalTab] = useState<PortalTab>(requestedJobId ? "vagas" : "curriculo");
@@ -376,6 +377,10 @@ export default function PublicAreaCandidato() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+
+  const [recoveryMode, setRecoveryMode] = useState(requestedRecovery);
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
 
   const [userId, setUserId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -529,6 +534,8 @@ export default function PublicAreaCandidato() {
       setUserId(user?.id || null);
       setAuthEmail(user?.email || "");
 
+      if (requestedRecovery) setRecoveryMode(true);
+
       if (user?.id) await loadCandidate(user.id, user.email || "");
       else fillForm(null);
     } catch (err: any) {
@@ -541,15 +548,22 @@ export default function PublicAreaCandidato() {
   useEffect(() => {
     loadAll();
 
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
       const user = session?.user || null;
+
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryMode(true);
+        setPortalTab("curriculo");
+      }
 
       setUserId(user?.id || null);
       setAuthEmail(user?.email || "");
 
       if (user?.id) {
         loadCandidate(user.id, user.email || "");
-        setPortalTab(requestedJobId ? "vagas" : "curriculo");
+        if (!requestedRecovery && event !== "PASSWORD_RECOVERY") {
+          setPortalTab(requestedJobId ? "vagas" : "curriculo");
+        }
       } else {
         setCandidate(null);
         setApplications([]);
@@ -569,6 +583,13 @@ export default function PublicAreaCandidato() {
       setPortalTab("vagas");
     }
   }, [requestedJobId]);
+
+  useEffect(() => {
+    if (requestedRecovery) {
+      setRecoveryMode(true);
+      setPortalTab("curriculo");
+    }
+  }, [requestedRecovery]);
 
   useEffect(() => {
     setForm((old) => ({ ...old, idade: calculateAge(old.nascimento) }));
@@ -626,7 +647,7 @@ export default function PublicAreaCandidato() {
         setMode("login");
       } else if (mode === "reset") {
         const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim().toLowerCase(), {
-          redirectTo: `${window.location.origin}/area-candidato`,
+          redirectTo: `${window.location.origin}/area-candidato?recovery=1`,
         });
 
         if (error) throw error;
@@ -643,6 +664,36 @@ export default function PublicAreaCandidato() {
       }
     } catch (err: any) {
       alert(err?.message || "Não foi possível concluir o acesso.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateRecoveredPassword() {
+    if (!newPassword || newPassword.length < 6) {
+      return alert("A nova senha precisa ter pelo menos 6 caracteres.");
+    }
+
+    if (newPassword !== newPasswordConfirm) {
+      return alert("As senhas não conferem.");
+    }
+
+    setSaving(true);
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) throw error;
+
+      setNewPassword("");
+      setNewPasswordConfirm("");
+      setRecoveryMode(false);
+      setParams({});
+      setMessage("Senha atualizada com sucesso. Você já pode acessar sua Área do Candidato.");
+    } catch (err: any) {
+      alert(err?.message || "Erro ao atualizar senha.");
     } finally {
       setSaving(false);
     }
@@ -904,6 +955,63 @@ export default function PublicAreaCandidato() {
           <div className="flex justify-center py-20">
             <Loader2 className="h-8 w-8 animate-spin" />
           </div>
+        ) : recoveryMode ? (
+          <Card className="mx-auto max-w-xl rounded-3xl shadow-xl">
+            <CardHeader
+              className="rounded-t-3xl text-white"
+              style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.ruby})` }}
+            >
+              <CardTitle className="flex items-center gap-2 text-2xl">
+                <Lock className="h-6 w-6" />
+                Criar nova senha
+              </CardTitle>
+              <p className="text-sm text-white/80">
+                Informe uma nova senha para acessar sua Área do Candidato.
+              </p>
+            </CardHeader>
+
+            <CardContent className="space-y-3 p-5">
+              <Field label="Nova senha">
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Digite sua nova senha"
+                />
+              </Field>
+
+              <Field label="Confirmar nova senha">
+                <Input
+                  type="password"
+                  value={newPasswordConfirm}
+                  onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                  placeholder="Confirme sua nova senha"
+                />
+              </Field>
+
+              <Button
+                disabled={saving}
+                onClick={updateRecoveredPassword}
+                className="h-12 w-full rounded-2xl text-white"
+                style={{ background: C.ruby }}
+              >
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                Salvar nova senha
+              </Button>
+
+              <Button
+                variant="outline"
+                disabled={saving}
+                onClick={() => {
+                  setRecoveryMode(false);
+                  setParams({});
+                }}
+                className="h-12 w-full rounded-2xl"
+              >
+                Voltar para login
+              </Button>
+            </CardContent>
+          </Card>
         ) : !userId ? (
           <AuthCard
             mode={mode}

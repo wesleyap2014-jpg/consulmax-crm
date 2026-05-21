@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -103,6 +104,7 @@ function buildBalanceSummaries(rows: WorkDay[], employees: Employee[], schedules
 function StatusBadge({ children, tone = "default" }: { children: React.ReactNode; tone?: "default" | "good" | "warn" | "bad" | "navy" | "gold" }) { const styles: Record<string, React.CSSProperties> = { default: { background: "#f1f5f9", color: "#334155" }, good: { background: "#dcfce7", color: "#166534" }, warn: { background: "#fef3c7", color: "#92400e" }, bad: { background: "#fee2e2", color: "#991b1b" }, navy: { background: C.navy, color: "#fff" }, gold: { background: "#fef3c7", color: "#78350f" } }; return <Badge className="rounded-full" style={styles[tone]}>{children}</Badge>; }
 
 export default function RH() {
+  const navigate = useNavigate();
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -200,7 +202,45 @@ export default function RH() {
     {tab === "ajustes" && <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-4"><Card className="rounded-3xl"><CardHeader><CardTitle>Solicitar ajuste</CardTitle></CardHeader><CardContent className="space-y-3"><Field label="Colaborador"><EmployeeSelect employees={employees} value={adjustmentForm.employee_id} onChange={(v) => setAdjustmentForm({ ...adjustmentForm, employee_id: v })} /></Field><Field label="Data"><Input type="date" value={adjustmentForm.date_ref} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, date_ref: e.target.value })} /></Field><Field label="Tipo"><Select value={adjustmentForm.requested_entry_type} onValueChange={(v) => setAdjustmentForm({ ...adjustmentForm, requested_entry_type: v as any })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="entrada">Entrada</SelectItem><SelectItem value="saida">Saída</SelectItem></SelectContent></Select></Field><Field label="Data/Hora solicitada"><Input type="datetime-local" value={adjustmentForm.requested_entry_at} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, requested_entry_at: e.target.value })} /></Field><Field label="Justificativa"><Textarea value={adjustmentForm.reason} onChange={(e) => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })} /></Field><Button disabled={saving} onClick={saveAdjustment} className="text-white" style={{ background: C.ruby }}><Plus className="h-4 w-4 mr-2" />Enviar ajuste</Button></CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle>Ajustes de Ponto</CardTitle></CardHeader><CardContent>{loading ? <Loading /> : adjustments.length === 0 ? <Empty text="Nenhum ajuste solicitado." /> : <AdjustmentsList adjustments={adjustments} employeeName={employeeName} isAdmin={isAdmin} onStatus={updateAdjustmentStatus} />}</CardContent></Card></div>}
     {tab === "pdi" && <PDITab employees={employees} pdis={pdis} pdiForm={pdiForm} setPdiForm={setPdiForm} savePDI={savePDI} employeeName={employeeName} isAdmin={isAdmin} saving={saving} />}
     {tab === "feedbacks" && <FeedbackTab employees={employees} feedbacks={feedbacks} feedbackForm={feedbackForm} setFeedbackForm={setFeedbackForm} saveFeedback={saveFeedback} employeeName={employeeName} isAdmin={isAdmin} saving={saving} />}
-    {tab === "candidatos" && <Card className="rounded-3xl"><CardHeader><CardTitle>Candidatos</CardTitle><p className="text-sm text-slate-500">Base preparada para futura área externa /trabalhe-conosco.</p></CardHeader><CardContent>{!isAdmin ? <AlertBox text="A visualização de candidatos fica restrita ao admin." /> : loading ? <Loading /> : candidates.length === 0 ? <Empty text="Nenhum candidato encontrado." /> : <CandidatesTable candidates={candidates} />}</CardContent></Card>}
+    {tab === "candidatos" && (
+      <Card className="rounded-3xl">
+        <CardHeader className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <CardTitle>Candidatos</CardTitle>
+            <p className="text-sm text-slate-500">
+              Base preparada para futura área externa /trabalhe-conosco.
+            </p>
+          </div>
+
+          {isAdmin && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="rounded-full text-white shadow-sm"
+                style={{ background: C.ruby }}
+                onClick={() => navigate("/rh/vagas")}
+              >
+                <Briefcase className="h-4 w-4 mr-2" />
+                Vagas
+              </Button>
+            </div>
+          )}
+        </CardHeader>
+
+        <CardContent>
+          {!isAdmin ? (
+            <AlertBox text="A visualização de candidatos fica restrita ao admin." />
+          ) : loading ? (
+            <Loading />
+          ) : candidates.length === 0 ? (
+            <Empty text="Nenhum candidato encontrado." />
+          ) : (
+            <CandidatesTable candidates={candidates} />
+          )}
+        </CardContent>
+      </Card>
+    )}
   </div>;
 }
 

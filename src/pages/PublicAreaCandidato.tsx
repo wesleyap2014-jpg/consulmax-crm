@@ -16,9 +16,12 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
+  Archive,
   Briefcase,
   Camera,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   ClipboardList,
   FileText,
   GraduationCap,
@@ -27,6 +30,7 @@ import {
   Lock,
   LogOut,
   Mail,
+  MessageSquare,
   Plus,
   Save,
   Send,
@@ -126,6 +130,24 @@ type Application = {
   candidate_id: string;
   status: string;
   notes: string | null;
+  parecer_candidato?: string | null;
+  parecer_interno?: string | null;
+  banco_talentos?: boolean | null;
+  moved_at?: string | null;
+  moved_by?: string | null;
+  created_at: string;
+};
+
+type ApplicationHistory = {
+  id: string;
+  application_id: string;
+  candidate_id: string;
+  job_id: string | null;
+  from_status: string | null;
+  to_status: string;
+  parecer_candidato: string | null;
+  parecer_interno: string | null;
+  moved_by: string | null;
   created_at: string;
 };
 
@@ -275,8 +297,30 @@ function parseJsonArray<T>(value: any): T[] {
 function statusTone(status?: string | null): "default" | "good" | "warn" | "bad" | "navy" {
   if (status === "aprovado" || status === "convertido") return "good";
   if (status === "reprovado") return "bad";
-  if (status === "entrevista" || status === "teste" || status === "triagem") return "warn";
-  return "navy";
+  if (status === "triagem" || status === "teste" || status === "entrevista") return "warn";
+  if (status === "banco_talentos") return "navy";
+  return "default";
+}
+
+function statusLabel(status?: string | null) {
+  const labels: Record<string, string> = {
+    inscrito: "Inscrito",
+    novo: "Novo",
+    triagem: "Triagem",
+    teste: "Teste",
+    entrevista: "Entrevista",
+    aprovado: "Aprovado",
+    reprovado: "Reprovado",
+    convertido: "Convertido",
+    banco_talentos: "Banco de Talentos",
+  };
+
+  return labels[String(status || "novo")] || status || "Novo";
+}
+
+function historyStageLabel(fromStatus?: string | null, toStatus?: string | null) {
+  if (fromStatus) return `${statusLabel(fromStatus)} → ${statusLabel(toStatus)}`;
+  return statusLabel(toStatus);
 }
 
 function emptyAcademicFormation(): AcademicFormation {
@@ -337,6 +381,9 @@ export default function PublicAreaCandidato() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [applications, setApplications] = useState<Application[]>([]);
+  const [applicationHistory, setApplicationHistory] = useState<ApplicationHistory[]>([]);
+  const [expandedApplicationId, setExpandedApplicationId] = useState<string | null>(null);
+  const [curriculumSavedMessage, setCurriculumSavedMessage] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState(requestedJobId || "banco");
   const [form, setForm] = useState<CandidateForm>(initialForm);
 
@@ -347,7 +394,19 @@ export default function PublicAreaCandidato() {
 
   const jobMap = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
   const openJobs = useMemo(() => jobs.filter((j) => j.status === "aberta"), [jobs]);
-  const appliedJobIds = useMemo(() => new Set(applications.map((a) => a.job_id)), [applications]);
+  const appliedJobIds = useMemo(() => new Set(applications.filter((a) => !a.banco_talentos).map((a) => a.job_id)), [applications]);
+  const isInTalentBank = useMemo(() => applications.some((app) => app.banco_talentos === true), [applications]);
+
+  const historyByApplicationId = useMemo(() => {
+    const grouped = new Map<string, ApplicationHistory[]>();
+
+    applicationHistory.forEach((item) => {
+      const current = grouped.get(item.application_id) || [];
+      grouped.set(item.application_id, [...current, item]);
+    });
+
+    return grouped;
+  }, [applicationHistory]);
 
   const hasCurriculum = useMemo(() => {
     return (
@@ -432,9 +491,31 @@ export default function PublicAreaCandidato() {
         .order("created_at", { ascending: false });
 
       if (appError) throw appError;
-      setApplications((appData || []) as Application[]);
+
+      const loadedApplications = (appData || []) as Application[];
+      setApplications(loadedApplications);
+
+      const applicationIds = loadedApplications.map((app) => app.id);
+
+      if (applicationIds.length > 0) {
+        const { data: histData, error: histError } = await supabase
+          .from("hr_application_history")
+          .select("*")
+          .in("application_id", applicationIds)
+          .order("created_at", { ascending: true });
+
+        if (histError) {
+          console.warn("[PublicAreaCandidato] Erro ao carregar histórico:", histError.message);
+          setApplicationHistory([]);
+        } else {
+          setApplicationHistory((histData || []) as ApplicationHistory[]);
+        }
+      } else {
+        setApplicationHistory([]);
+      }
     } else {
       setApplications([]);
+      setApplicationHistory([]);
     }
   }
 
@@ -472,6 +553,8 @@ export default function PublicAreaCandidato() {
       } else {
         setCandidate(null);
         setApplications([]);
+        setApplicationHistory([]);
+        setExpandedApplicationId(null);
         fillForm(null);
       }
     });
@@ -570,6 +653,8 @@ export default function PublicAreaCandidato() {
     setUserId(null);
     setCandidate(null);
     setApplications([]);
+    setApplicationHistory([]);
+    setExpandedApplicationId(null);
     setPortalTab("curriculo");
   }
 
@@ -690,6 +775,8 @@ export default function PublicAreaCandidato() {
 
       await loadCandidate(userId, form.email);
       setMessage("Currículo salvo com sucesso.");
+      setCurriculumSavedMessage(true);
+      window.setTimeout(() => setCurriculumSavedMessage(false), 6000);
       return candidateId;
     } catch (err: any) {
       alert(err?.message || "Erro ao salvar currículo.");
@@ -1433,6 +1520,14 @@ export default function PublicAreaCandidato() {
                       Ver vagas disponíveis
                     </Button>
                   </div>
+
+                  {curriculumSavedMessage && (
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                      <strong>Currículo salvo com sucesso.</strong>
+                      <br />
+                      Agora você já pode acompanhar suas candidaturas ou se candidatar às vagas disponíveis.
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -1525,6 +1620,19 @@ export default function PublicAreaCandidato() {
                       </div>
                     )}
 
+                    {isInTalentBank && (
+                      <div
+                        className="rounded-2xl border p-4 text-sm"
+                        style={{ borderColor: C.gold, background: "#fffaf0", color: C.navy }}
+                      >
+                        <div className="mb-1 flex items-center gap-2 font-semibold">
+                          <Archive className="h-4 w-4" />
+                          Seu currículo está no Banco de Talentos.
+                        </div>
+                        Você poderá ser chamado para uma nova entrevista a qualquer momento quando surgir uma oportunidade aderente ao seu perfil.
+                      </div>
+                    )}
+
                     <Button variant="outline" className="w-full rounded-2xl" onClick={() => setPortalTab("curriculo")}>
                       {candidate?.id ? "Editar currículo" : "Cadastrar currículo"}
                     </Button>
@@ -1548,17 +1656,101 @@ export default function PublicAreaCandidato() {
                       Você ainda não se candidatou a nenhuma vaga.
                     </div>
                   ) : (
-                    applications.map((app) => (
-                      <div key={app.id} className="rounded-2xl border bg-white p-4">
-                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                          <div>
-                            <div className="font-semibold">{jobMap.get(app.job_id)?.title || "Vaga"}</div>
-                            <div className="text-xs text-slate-500">Enviada em {formatDateBR(app.created_at)}</div>
-                          </div>
-                          <StatusBadge tone={statusTone(app.status)}>{app.status}</StatusBadge>
+                    applications.map((app) => {
+                      const job = jobMap.get(app.job_id);
+                      const isExpanded = expandedApplicationId === app.id;
+                      const history = historyByApplicationId.get(app.id) || [];
+
+                      return (
+                        <div key={app.id} className="rounded-2xl border bg-white p-4">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedApplicationId(isExpanded ? null : app.id)}
+                            className="w-full text-left"
+                          >
+                            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                              <div className="flex items-start gap-3">
+                                <div
+                                  className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl"
+                                  style={{ background: "#f8fafc", color: C.navy }}
+                                >
+                                  {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                </div>
+                                <div>
+                                  <div className="font-semibold">{job?.title || "Vaga"}</div>
+                                  <div className="text-xs text-slate-500">Enviada em {formatDateBR(app.created_at)}</div>
+                                  {app.banco_talentos && (
+                                    <div className="mt-1 text-xs font-medium" style={{ color: C.gold }}>
+                                      Currículo no Banco de Talentos
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <StatusBadge tone={statusTone(app.banco_talentos ? "banco_talentos" : app.status)}>
+                                {app.banco_talentos ? "Banco de Talentos" : statusLabel(app.status)}
+                              </StatusBadge>
+                            </div>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="mt-4 space-y-4 border-t pt-4">
+                              {app.banco_talentos && (
+                                <div
+                                  className="rounded-2xl border p-3 text-sm"
+                                  style={{ borderColor: C.gold, background: "#fffaf0", color: C.navy }}
+                                >
+                                  <strong>Seu currículo está no Banco de Talentos da Consulmax.</strong>
+                                  <br />
+                                  Ele poderá ser considerado para novas oportunidades e você poderá ser chamado para uma entrevista quando houver aderência ao seu perfil.
+                                </div>
+                              )}
+
+                              {app.parecer_candidato && (
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                                  <div className="mb-1 flex items-center gap-2 font-semibold" style={{ color: C.navy }}>
+                                    <MessageSquare className="h-4 w-4" />
+                                    Última devolutiva
+                                  </div>
+                                  <div className="whitespace-pre-wrap">{app.parecer_candidato}</div>
+                                </div>
+                              )}
+
+                              <div>
+                                <div className="mb-3 font-semibold" style={{ color: C.navy }}>
+                                  Jornada da candidatura
+                                </div>
+
+                                {history.length === 0 ? (
+                                  <div className="rounded-2xl border bg-slate-50 p-3 text-sm text-slate-500">
+                                    Sua candidatura foi recebida e está aguardando movimentação pelo RH.
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    {history.map((h) => (
+                                      <div key={h.id} className="rounded-2xl border bg-white p-3">
+                                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                          <div className="text-sm font-semibold" style={{ color: C.navy }}>
+                                            {historyStageLabel(h.from_status, h.to_status)}
+                                          </div>
+                                          <div className="text-xs text-slate-500">{formatDateBR(h.created_at)}</div>
+                                        </div>
+
+                                        {h.parecer_candidato && (
+                                          <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                                            {h.parecer_candidato}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </CardContent>
               </Card>

@@ -8,11 +8,24 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Briefcase, CheckCircle2, Loader2, Lock, LogOut, Mail, Save, Send, UserRound } from "lucide-react";
+import {
+  Briefcase,
+  CheckCircle2,
+  ClipboardList,
+  FileText,
+  Loader2,
+  Lock,
+  LogOut,
+  Mail,
+  Save,
+  Send,
+  UserRound,
+} from "lucide-react";
 
 const C = { ruby: "#A11C27", navy: "#1E293F", gold: "#B5A573" };
 
 type Mode = "login" | "signup" | "reset";
+type PortalTab = "curriculo" | "vagas" | "candidaturas";
 
 type Job = {
   id: string;
@@ -104,7 +117,7 @@ function formatDateBR(v?: string | null) {
 function statusTone(status?: string | null): "default" | "good" | "warn" | "bad" | "navy" {
   if (status === "aprovado" || status === "convertido") return "good";
   if (status === "reprovado") return "bad";
-  if (status === "entrevista" || status === "teste") return "warn";
+  if (status === "entrevista" || status === "teste" || status === "triagem") return "warn";
   return "navy";
 }
 
@@ -127,6 +140,8 @@ export default function PublicAreaCandidato() {
   const requestedJobId = params.get("job") || "";
 
   const [mode, setMode] = useState<Mode>("login");
+  const [portalTab, setPortalTab] = useState<PortalTab>(requestedJobId ? "vagas" : "curriculo");
+
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -142,6 +157,13 @@ export default function PublicAreaCandidato() {
   const [message, setMessage] = useState("");
 
   const jobMap = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
+  const appliedJobIds = useMemo(() => new Set(applications.map((a) => a.job_id)), [applications]);
+
+  const hasCurriculum =
+    !!candidate?.id &&
+    !!form.nome.trim() &&
+    onlyDigits(form.cpf).length === 11 &&
+    onlyDigits(form.telefone).length >= 10;
 
   async function loadJobs() {
     const { data, error } = await supabase
@@ -212,12 +234,15 @@ export default function PublicAreaCandidato() {
 
   useEffect(() => {
     loadAll();
+
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       const user = session?.user || null;
       setUserId(user?.id || null);
       setAuthEmail(user?.email || "");
-      if (user?.id) loadCandidate(user.id, user.email || "");
-      else {
+      if (user?.id) {
+        loadCandidate(user.id, user.email || "");
+        setPortalTab(requestedJobId ? "vagas" : "curriculo");
+      } else {
         setCandidate(null);
         setApplications([]);
         fillForm(null);
@@ -227,6 +252,13 @@ export default function PublicAreaCandidato() {
     return () => data.subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (requestedJobId) {
+      setSelectedJobId(requestedJobId);
+      setPortalTab("vagas");
+    }
+  }, [requestedJobId]);
 
   async function signIn() {
     if (!authEmail.trim()) return alert("Informe seu e-mail.");
@@ -275,6 +307,7 @@ export default function PublicAreaCandidato() {
     setUserId(null);
     setCandidate(null);
     setApplications([]);
+    setPortalTab("curriculo");
   }
 
   async function saveCandidate() {
@@ -329,23 +362,28 @@ export default function PublicAreaCandidato() {
     }
   }
 
-  async function applyToJob() {
-    if (!userId) return alert("Faça login para se candidatar.");
-    if (!candidate?.id) {
-      await saveCandidate();
-      const { data } = await supabase.from("hr_candidates").select("id").eq("auth_user_id", userId).maybeSingle();
-      if (!data?.id) return alert("Salve seu currículo antes de se candidatar.");
-    }
+  async function ensureCandidateBeforeApply() {
+    if (candidate?.id) return candidate.id;
 
-    const cId = candidate?.id || (await supabase.from("hr_candidates").select("id").eq("auth_user_id", userId).maybeSingle()).data?.id;
+    await saveCandidate();
+
+    if (!userId) return null;
+    const { data } = await supabase.from("hr_candidates").select("id").eq("auth_user_id", userId).maybeSingle();
+    return data?.id || null;
+  }
+
+  async function applyToJob(jobId = selectedJobId) {
+    if (!userId) return alert("Faça login para se candidatar.");
+    if (!jobId || jobId === "banco") return alert("Selecione uma vaga aberta.");
+
+    const cId = await ensureCandidateBeforeApply();
     if (!cId) return alert("Salve seu currículo antes de se candidatar.");
-    if (!selectedJobId || selectedJobId === "banco") return alert("Selecione uma vaga aberta.");
 
     setSaving(true);
     try {
       const { error } = await supabase.from("hr_applications").upsert(
         {
-          job_id: selectedJobId,
+          job_id: jobId,
           candidate_id: cId,
           status: "inscrito",
           notes: form.resumo.trim() || null,
@@ -354,7 +392,11 @@ export default function PublicAreaCandidato() {
         { onConflict: "job_id,candidate_id" }
       );
       if (error) throw error;
+
       await loadCandidate(userId, form.email);
+      setSelectedJobId(jobId);
+      setParams({ job: jobId });
+      setPortalTab("candidaturas");
       setMessage("Candidatura enviada com sucesso.");
     } catch (err: any) {
       alert(err?.message || "Erro ao enviar candidatura.");
@@ -374,7 +416,7 @@ export default function PublicAreaCandidato() {
               </div>
               <h1 className="text-3xl md:text-4xl font-bold">Sua carreira na Consulmax começa aqui</h1>
               <p className="text-white/80 mt-2 max-w-2xl">
-                Crie seu acesso, preencha seu currículo e acompanhe suas candidaturas.
+                Crie seu acesso, cadastre seu currículo uma única vez e use ele para se candidatar às vagas.
               </p>
             </div>
 
@@ -391,83 +433,153 @@ export default function PublicAreaCandidato() {
         {loading ? (
           <div className="py-20 flex justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>
         ) : !userId ? (
-          <AuthCard mode={mode} setMode={setMode} email={authEmail} setEmail={setAuthEmail} password={authPassword} setPassword={setAuthPassword} confirmPassword={confirmPassword} setConfirmPassword={setConfirmPassword} saving={saving} onSubmit={signIn} />
+          <AuthCard
+            mode={mode}
+            setMode={setMode}
+            email={authEmail}
+            setEmail={setAuthEmail}
+            password={authPassword}
+            setPassword={setAuthPassword}
+            confirmPassword={confirmPassword}
+            setConfirmPassword={setConfirmPassword}
+            saving={saving}
+            onSubmit={signIn}
+          />
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-5">
+          <>
             <Card className="rounded-3xl">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2" style={{ color: C.navy }}>
-                  <UserRound className="h-5 w-5" /> Meu currículo
-                </CardTitle>
-                <p className="text-sm text-slate-500">Essas informações ficam disponíveis para o RH avaliar seu perfil.</p>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Field label="Nome completo"><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></Field>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Field label="E-mail"><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-                  <Field label="Telefone"><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: maskPhone(e.target.value) })} /></Field>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Field label="CPF"><Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: maskCPF(e.target.value) })} /></Field>
-                  <Field label="Pretensão salarial"><Input value={form.pretensao_salarial} onChange={(e) => setForm({ ...form, pretensao_salarial: e.target.value })} placeholder="Ex.: 2500,00" /></Field>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-[1fr_90px] gap-3">
-                  <Field label="Cidade"><Input value={form.cidade} onChange={(e) => setForm({ ...form, cidade: e.target.value })} /></Field>
-                  <Field label="UF"><Input value={form.uf} onChange={(e) => setForm({ ...form, uf: e.target.value.toUpperCase().slice(0, 2) })} /></Field>
-                </div>
-                <Field label="Área de interesse"><Input value={form.area_interesse} onChange={(e) => setForm({ ...form, area_interesse: e.target.value })} placeholder="Comercial, administrativo, atendimento..." /></Field>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Field label="LinkedIn"><Input value={form.linkedin} onChange={(e) => setForm({ ...form, linkedin: e.target.value })} /></Field>
-                  <Field label="Instagram"><Input value={form.instagram} onChange={(e) => setForm({ ...form, instagram: e.target.value })} /></Field>
-                </div>
-                <Field label="Resumo profissional"><Textarea value={form.resumo} onChange={(e) => setForm({ ...form, resumo: e.target.value })} placeholder="Fale sobre sua experiência, objetivos e principais competências." /></Field>
-
-                <Button disabled={saving} onClick={saveCandidate} className="rounded-2xl text-white" style={{ background: C.ruby }}>
-                  {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-                  Salvar currículo
-                </Button>
+              <CardContent className="p-3 flex flex-wrap gap-2">
+                <PortalChip active={portalTab === "curriculo"} onClick={() => setPortalTab("curriculo")} icon={FileText} label={candidate?.id ? "Editar currículo" : "Cadastrar currículo"} />
+                <PortalChip active={portalTab === "vagas"} onClick={() => setPortalTab("vagas")} icon={Briefcase} label="Vagas disponíveis" />
+                <PortalChip active={portalTab === "candidaturas"} onClick={() => setPortalTab("candidaturas")} icon={ClipboardList} label="Minhas candidaturas" />
               </CardContent>
             </Card>
 
-            <div className="space-y-5">
+            {portalTab === "curriculo" && (
               <Card className="rounded-3xl">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2" style={{ color: C.navy }}>
-                    <Briefcase className="h-5 w-5" /> Candidatar-se
+                    <UserRound className="h-5 w-5" /> {candidate?.id ? "Editar currículo" : "Cadastrar currículo"}
                   </CardTitle>
-                  <p className="text-sm text-slate-500">Selecione uma vaga aberta e envie sua candidatura.</p>
+                  <p className="text-sm text-slate-500">
+                    Essas informações ficam salvas e serão vinculadas automaticamente às vagas em que você se candidatar.
+                  </p>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Field label="Vaga aberta">
-                    <Select value={selectedJobId || "banco"} onValueChange={(v) => { setSelectedJobId(v); setParams(v === "banco" ? {} : { job: v }); }}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="banco">Selecione uma vaga</SelectItem>
-                        {jobs.map((job) => <SelectItem key={job.id} value={job.id}>{job.title}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </Field>
+                  <Field label="Nome completo"><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></Field>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <Field label="E-mail"><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+                    <Field label="Telefone"><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: maskPhone(e.target.value) })} /></Field>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <Field label="CPF"><Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: maskCPF(e.target.value) })} /></Field>
+                    <Field label="Pretensão salarial"><Input value={form.pretensao_salarial} onChange={(e) => setForm({ ...form, pretensao_salarial: e.target.value })} placeholder="Ex.: 2500,00" /></Field>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_90px] gap-3">
+                    <Field label="Cidade"><Input value={form.cidade} onChange={(e) => setForm({ ...form, cidade: e.target.value })} /></Field>
+                    <Field label="UF"><Input value={form.uf} onChange={(e) => setForm({ ...form, uf: e.target.value.toUpperCase().slice(0, 2) })} /></Field>
+                  </div>
+                  <Field label="Área de interesse"><Input value={form.area_interesse} onChange={(e) => setForm({ ...form, area_interesse: e.target.value })} placeholder="Comercial, administrativo, atendimento..." /></Field>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <Field label="LinkedIn"><Input value={form.linkedin} onChange={(e) => setForm({ ...form, linkedin: e.target.value })} /></Field>
+                    <Field label="Instagram"><Input value={form.instagram} onChange={(e) => setForm({ ...form, instagram: e.target.value })} /></Field>
+                  </div>
+                  <Field label="Resumo profissional"><Textarea value={form.resumo} onChange={(e) => setForm({ ...form, resumo: e.target.value })} placeholder="Fale sobre sua experiência, objetivos e principais competências." /></Field>
 
-                  {selectedJobId !== "banco" && jobMap.get(selectedJobId) && (
-                    <div className="rounded-2xl border bg-slate-50 p-4">
-                      <div className="font-semibold" style={{ color: C.navy }}>{jobMap.get(selectedJobId)?.title}</div>
-                      <div className="text-sm text-slate-500">{jobMap.get(selectedJobId)?.area || "Área não informada"}</div>
-                      {jobMap.get(selectedJobId)?.description && <p className="text-sm text-slate-600 mt-2 whitespace-pre-wrap">{jobMap.get(selectedJobId)?.description}</p>}
-                    </div>
-                  )}
-
-                  <Button disabled={saving || selectedJobId === "banco"} onClick={applyToJob} className="w-full rounded-2xl text-white" style={{ background: C.navy }}>
-                    {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
-                    Enviar candidatura
-                  </Button>
+                  <div className="flex flex-col md:flex-row gap-2">
+                    <Button disabled={saving} onClick={saveCandidate} className="rounded-2xl text-white" style={{ background: C.ruby }}>
+                      {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                      Salvar currículo
+                    </Button>
+                    <Button variant="outline" className="rounded-2xl" onClick={() => setPortalTab("vagas")}>
+                      Ver vagas disponíveis
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
+            )}
 
+            {portalTab === "vagas" && (
+              <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-5">
+                <Card className="rounded-3xl">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2" style={{ color: C.navy }}>
+                      <Briefcase className="h-5 w-5" /> Vagas disponíveis
+                    </CardTitle>
+                    <p className="text-sm text-slate-500">
+                      Ao se candidatar, seu currículo salvo será vinculado à vaga escolhida.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {jobs.length === 0 ? (
+                      <div className="rounded-2xl border bg-slate-50 p-4 text-sm text-slate-500">Nenhuma vaga aberta no momento.</div>
+                    ) : (
+                      jobs.map((job) => {
+                        const alreadyApplied = appliedJobIds.has(job.id);
+                        return (
+                          <div key={job.id} className="rounded-2xl border bg-white p-4">
+                            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                              <div>
+                                <div className="font-semibold text-lg" style={{ color: C.navy }}>{job.title}</div>
+                                <div className="text-sm text-slate-500">{job.area || "Área não informada"}</div>
+                                {job.description && <p className="text-sm text-slate-600 mt-2 whitespace-pre-wrap">{job.description}</p>}
+                                {job.requirements && <p className="text-xs text-slate-500 mt-2 whitespace-pre-wrap">Requisitos: {job.requirements}</p>}
+                              </div>
+                              <div className="flex flex-col gap-2 shrink-0">
+                                {alreadyApplied && <StatusBadge tone="good">inscrito</StatusBadge>}
+                                <Button
+                                  disabled={saving || alreadyApplied}
+                                  onClick={() => {
+                                    setSelectedJobId(job.id);
+                                    setParams({ job: job.id });
+                                    applyToJob(job.id);
+                                  }}
+                                  className="rounded-2xl text-white"
+                                  style={{ background: alreadyApplied ? "#94a3b8" : C.ruby }}
+                                >
+                                  {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                                  {alreadyApplied ? "Já inscrito" : "Candidatar-se"}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-3xl h-fit">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2" style={{ color: C.navy }}>
+                      <FileText className="h-5 w-5" /> Currículo
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {hasCurriculum ? (
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                        Seu currículo está cadastrado e será vinculado às vagas em que você se candidatar.
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                        Cadastre seu currículo antes de se candidatar para aumentar a qualidade da avaliação.
+                      </div>
+                    )}
+                    <Button variant="outline" className="w-full rounded-2xl" onClick={() => setPortalTab("curriculo")}>
+                      {candidate?.id ? "Editar currículo" : "Cadastrar currículo"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {portalTab === "candidaturas" && (
               <Card className="rounded-3xl">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2" style={{ color: C.navy }}>
                     <CheckCircle2 className="h-5 w-5" /> Minhas candidaturas
                   </CardTitle>
+                  <p className="text-sm text-slate-500">Acompanhe aqui a etapa de cada processo seletivo.</p>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {applications.length === 0 ? (
@@ -475,16 +587,20 @@ export default function PublicAreaCandidato() {
                   ) : (
                     applications.map((app) => (
                       <div key={app.id} className="rounded-2xl border bg-white p-4">
-                        <div className="font-semibold">{jobMap.get(app.job_id)?.title || "Vaga"}</div>
-                        <div className="text-xs text-slate-500">Enviada em {formatDateBR(app.created_at)}</div>
-                        <div className="mt-2"><StatusBadge tone={statusTone(app.status)}>{app.status}</StatusBadge></div>
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                          <div>
+                            <div className="font-semibold">{jobMap.get(app.job_id)?.title || "Vaga"}</div>
+                            <div className="text-xs text-slate-500">Enviada em {formatDateBR(app.created_at)}</div>
+                          </div>
+                          <StatusBadge tone={statusTone(app.status)}>{app.status}</StatusBadge>
+                        </div>
                       </div>
                     ))
                   )}
                 </CardContent>
               </Card>
-            </div>
-          </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -511,7 +627,7 @@ function AuthCard(props: {
           {mode === "reset" ? <Mail className="h-6 w-6" /> : <Lock className="h-6 w-6" />}
           {mode === "signup" ? "Criar acesso" : mode === "reset" ? "Recuperar senha" : "Entrar na área do candidato"}
         </CardTitle>
-        <p className="text-sm text-white/80">Use seu e-mail para acessar e editar seu currículo.</p>
+        <p className="text-sm text-white/80">Use seu e-mail para acessar o portal e editar seu currículo.</p>
       </CardHeader>
       <CardContent className="p-5 space-y-3">
         <Field label="E-mail"><Input value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
@@ -530,6 +646,19 @@ function AuthCard(props: {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function PortalChip({ active, onClick, icon: Icon, label }: { active: boolean; onClick: () => void; icon: React.ElementType; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-2 rounded-2xl text-sm flex items-center gap-2 border transition ${active ? "text-white" : "bg-white hover:bg-slate-50"}`}
+      style={active ? { background: C.ruby, borderColor: C.ruby } : { borderColor: "#e2e8f0", color: C.navy }}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
   );
 }
 

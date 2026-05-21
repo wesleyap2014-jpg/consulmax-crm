@@ -13,6 +13,7 @@ import {
   ArrowRight,
   Briefcase,
   CheckCircle2,
+  Download,
   ExternalLink,
   Loader2,
   MessageSquare,
@@ -45,10 +46,32 @@ type Candidate = {
   email: string | null;
   telefone: string | null;
   cpf: string | null;
+
+  nascimento?: string | null;
+  cep?: string | null;
+  logradouro?: string | null;
+  numero?: string | null;
+  bairro?: string | null;
   cidade: string | null;
   uf: string | null;
+  foto_url?: string | null;
+
+  pcd?: boolean | null;
+  pcd_tipo?: string | null;
+  pcd_adaptacao?: string | null;
+
+  ensino_medio?: string | null;
+  academic_formations?: any[] | string | null;
+  courses_certifications?: any[] | string | null;
+  professional_experiences?: any[] | string | null;
+  languages?: any[] | string | null;
+
   area_interesse: string | null;
   pretensao_salarial: number | null;
+  linkedin?: string | null;
+  instagram?: string | null;
+  additional_info?: string | null;
+
   status: string | null;
   created_at: string;
 };
@@ -180,6 +203,59 @@ function statusTone(status?: string | null): "default" | "good" | "warn" | "bad"
   return "default";
 }
 
+function escapeHtml(v?: string | number | boolean | null) {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function safeArray(value: any): any[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeText(v?: string | null) {
+  return v && String(v).trim() ? String(v).trim() : "—";
+}
+
+function formatLanguageName(lang?: string | null, other?: string | null) {
+  if (lang === "portugues") return "Português";
+  if (lang === "ingles") return "Inglês";
+  if (lang === "espanhol") return "Espanhol";
+  if (lang === "outro") return other || "Outro";
+  return lang || "—";
+}
+
+function formatLevel(level?: string | null) {
+  if (level === "basico") return "Básico";
+  if (level === "intermediario") return "Intermediário";
+  if (level === "avancado") return "Avançado";
+  return level || "—";
+}
+
+function formatEducationStatus(v?: string | null) {
+  if (v === "cursando") return "Cursando";
+  if (v === "completo") return "Completo";
+  if (v === "incompleto") return "Incompleto";
+  return v || "—";
+}
+
+function formatFormationType(v?: string | null) {
+  if (v === "faculdade") return "Faculdade";
+  if (v === "especializacao_mba") return "Especialização/MBA";
+  return v || "—";
+}
+
 function StatusBadge({
   children,
   tone = "default",
@@ -200,6 +276,227 @@ function StatusBadge({
       {children}
     </Badge>
   );
+}
+
+function downloadCandidatePdf(candidate: Candidate) {
+  const academic = safeArray(candidate.academic_formations);
+  const courses = safeArray(candidate.courses_certifications);
+  const experiences = safeArray(candidate.professional_experiences);
+  const languages = safeArray(candidate.languages);
+
+  const html = `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Currículo - ${escapeHtml(candidate.nome || "Candidato")}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 32px;
+      color: #1E293F;
+      background: #f8fafc;
+    }
+    .page {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 24px;
+      padding: 32px;
+      border: 1px solid #e2e8f0;
+    }
+    .header {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      border-bottom: 4px solid #A11C27;
+      padding-bottom: 20px;
+      margin-bottom: 24px;
+    }
+    .photo {
+      width: 112px;
+      height: 112px;
+      border-radius: 24px;
+      object-fit: cover;
+      background: #e2e8f0;
+      border: 1px solid #e2e8f0;
+      flex: 0 0 auto;
+    }
+    .photo-empty {
+      width: 112px;
+      height: 112px;
+      border-radius: 24px;
+      background: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+      border: 1px solid #e2e8f0;
+      flex: 0 0 auto;
+    }
+    h1 { margin: 0; font-size: 28px; color: #1E293F; }
+    h2 {
+      font-size: 16px;
+      margin: 26px 0 10px;
+      color: #A11C27;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .muted { color: #64748b; font-size: 13px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 20px;
+    }
+    .item {
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 12px;
+      margin-bottom: 10px;
+      break-inside: avoid;
+    }
+    .label { font-size: 11px; color: #64748b; text-transform: uppercase; }
+    .value { font-size: 14px; margin-top: 3px; white-space: pre-wrap; }
+    .badge {
+      display: inline-block;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      color: #334155;
+      margin-top: 6px;
+    }
+    @media print {
+      body { background: white; padding: 0; }
+      .page { border: none; border-radius: 0; max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      ${
+        candidate.foto_url
+          ? `<img class="photo" src="${escapeHtml(candidate.foto_url)}" />`
+          : `<div class="photo-empty"></div>`
+      }
+      <div>
+        <h1>${escapeHtml(candidate.nome || "Candidato")}</h1>
+        <div class="muted">${escapeHtml(candidate.email || "E-mail não informado")} • ${escapeHtml(maskPhone(candidate.telefone))}</div>
+        <div class="muted">${escapeHtml(candidate.cidade || "—")}/${escapeHtml(candidate.uf || "—")} • CPF ${escapeHtml(maskCPF(candidate.cpf))}</div>
+        <div class="badge">Área de interesse: ${escapeHtml(candidate.area_interesse || "—")}</div>
+      </div>
+    </div>
+
+    <h2>Dados pessoais</h2>
+    <div class="grid">
+      <div><div class="label">Nascimento</div><div class="value">${escapeHtml(formatDateBR(candidate.nascimento))}</div></div>
+      <div><div class="label">Telefone</div><div class="value">${escapeHtml(maskPhone(candidate.telefone))}</div></div>
+      <div><div class="label">E-mail</div><div class="value">${escapeHtml(candidate.email || "—")}</div></div>
+      <div><div class="label">Pretensão salarial</div><div class="value">${escapeHtml(fmtMoney(candidate.pretensao_salarial))}</div></div>
+      <div><div class="label">Ensino médio</div><div class="value">${escapeHtml(formatEducationStatus(candidate.ensino_medio))}</div></div>
+      <div><div class="label">PCD</div><div class="value">${candidate.pcd ? "Sim" : "Não"}</div></div>
+      <div><div class="label">Tipo PCD</div><div class="value">${escapeHtml(candidate.pcd_tipo || "—")}</div></div>
+      <div><div class="label">Adaptação PCD</div><div class="value">${escapeHtml(candidate.pcd_adaptacao || "—")}</div></div>
+    </div>
+
+    <h2>Endereço</h2>
+    <div class="value">
+      ${escapeHtml(candidate.logradouro || "—")}, ${escapeHtml(candidate.numero || "—")} -
+      ${escapeHtml(candidate.bairro || "—")} - ${escapeHtml(candidate.cidade || "—")}/${escapeHtml(candidate.uf || "—")}
+      - CEP ${escapeHtml(candidate.cep || "—")}
+    </div>
+
+    <h2>Formação acadêmica</h2>
+    ${
+      academic.length
+        ? academic
+            .map(
+              (a) => `
+      <div class="item">
+        <strong>${escapeHtml(a.course || "Curso")}</strong>
+        <div class="muted">${escapeHtml(a.institution || "Instituição não informada")}</div>
+        <div class="muted">${escapeHtml(formatFormationType(a.type))} • ${a.in_progress ? "Cursando" : "Concluído"}</div>
+        <div class="muted">${escapeHtml(a.start_date || "—")} até ${a.in_progress ? "atual" : escapeHtml(a.end_date || "—")}</div>
+      </div>`
+            )
+            .join("")
+        : `<div class="muted">Nenhuma formação informada.</div>`
+    }
+
+    <h2>Cursos e certificações</h2>
+    ${
+      courses.length
+        ? courses
+            .map(
+              (c) => `
+      <div class="item">
+        <strong>${escapeHtml(c.name || "Curso/Certificação")}</strong>
+        <div class="muted">${escapeHtml(c.type || "—")} • ${escapeHtml(c.conclusion_year || "Ano não informado")}</div>
+        <div class="value">${escapeHtml(c.description || "")}</div>
+      </div>`
+            )
+            .join("")
+        : `<div class="muted">Nenhum curso ou certificação informado.</div>`
+    }
+
+    <h2>Experiências profissionais</h2>
+    ${
+      experiences.length
+        ? experiences
+            .map(
+              (e) => `
+      <div class="item">
+        <strong>${escapeHtml(e.role || "Cargo")}</strong>
+        <div class="muted">${escapeHtml(e.company || "Empresa não informada")}</div>
+        <div class="muted">${escapeHtml(e.start_month || "—")} até ${e.current ? "atual" : escapeHtml(e.end_month || "—")}</div>
+        <div class="value">${escapeHtml(e.activities || "")}</div>
+      </div>`
+            )
+            .join("")
+        : `<div class="muted">Nenhuma experiência informada.</div>`
+    }
+
+    <h2>Idiomas</h2>
+    ${
+      languages.length
+        ? languages
+            .map(
+              (l) => `
+      <div class="item">
+        <strong>${escapeHtml(formatLanguageName(l.language, l.other_language))}</strong>
+        <div class="muted">${escapeHtml(formatLevel(l.level))}</div>
+      </div>`
+            )
+            .join("")
+        : `<div class="muted">Nenhum idioma informado.</div>`
+    }
+
+    <h2>Informações adicionais</h2>
+    <div class="value">${escapeHtml(candidate.additional_info || "—")}</div>
+
+    <h2>Redes</h2>
+    <div class="grid">
+      <div><div class="label">LinkedIn</div><div class="value">${escapeHtml(candidate.linkedin || "—")}</div></div>
+      <div><div class="label">Instagram</div><div class="value">${escapeHtml(candidate.instagram || "—")}</div></div>
+    </div>
+  </div>
+
+  <script>
+    window.onload = function() {
+      window.focus();
+      window.print();
+    };
+  </script>
+</body>
+</html>
+  `;
+
+  const win = window.open("", "_blank");
+  if (!win) return alert("Não foi possível abrir a janela de impressão. Verifique o bloqueador de pop-ups.");
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
 }
 
 export default function RHVagas() {
@@ -778,7 +1075,7 @@ export default function RHVagas() {
               <div>
                 <CardTitle>Candidaturas • Kanban</CardTitle>
                 <p className="text-sm text-slate-500 mt-1">
-                  Movimente o candidato entre etapas e registre o parecer do processo seletivo.
+                  Movimente o candidato entre etapas, baixe o currículo e registre o parecer do processo seletivo.
                 </p>
               </div>
 
@@ -850,6 +1147,7 @@ export default function RHVagas() {
                                     onMove={(to) => openMoveModal(app, to)}
                                     onTalentBank={() => sendToTalentBank(app)}
                                     onConvert={() => candidate && convertCandidate(candidate)}
+                                    onDownloadPdf={() => candidate && downloadCandidatePdf(candidate)}
                                   />
                                 );
                               })
@@ -915,6 +1213,16 @@ export default function RHVagas() {
                           <Button
                             size="sm"
                             variant="outline"
+                            disabled={!candidate}
+                            onClick={() => candidate && downloadCandidatePdf(candidate)}
+                          >
+                            <Download className="h-4 w-4 mr-2" />
+                            Currículo
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
                             disabled={!isAdmin || saving}
                             onClick={() =>
                               setLinkTalent({
@@ -977,6 +1285,7 @@ function CandidateKanbanCard({
   onMove,
   onTalentBank,
   onConvert,
+  onDownloadPdf,
 }: {
   app: Application;
   candidate?: Candidate;
@@ -989,6 +1298,7 @@ function CandidateKanbanCard({
   onMove: (to: StageKey) => void;
   onTalentBank: () => void;
   onConvert: () => void;
+  onDownloadPdf: () => void;
 }) {
   return (
     <div className="rounded-2xl border bg-white p-3 shadow-sm">
@@ -1025,6 +1335,11 @@ function CandidateKanbanCard({
       )}
 
       <div className="mt-3 flex flex-col gap-2">
+        <Button size="sm" variant="outline" disabled={!candidate} onClick={onDownloadPdf}>
+          <Download className="h-4 w-4 mr-2" />
+          Baixar currículo
+        </Button>
+
         <div className="grid grid-cols-2 gap-2">
           <Button
             size="sm"

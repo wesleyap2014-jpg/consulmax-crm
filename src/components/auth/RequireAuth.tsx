@@ -21,14 +21,19 @@ export default function RequireAuth() {
   const [checkedCrmUser, setCheckedCrmUser] = useState(false);
 
   const mountedRef = useRef(true);
+  const crmUserLoadedForAuthIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
     let unsub: (() => void) | undefined;
 
-    async function loadSessionAndProfile(s?: Session | null) {
-      setReady(false);
-      setCheckedCrmUser(false);
+    async function loadSessionAndProfile(s?: Session | null, opts?: { silent?: boolean }) {
+      const silent = opts?.silent === true;
+
+      if (!silent) {
+        setReady(false);
+        setCheckedCrmUser(false);
+      }
 
       try {
         const currentSession =
@@ -37,9 +42,24 @@ export default function RequireAuth() {
         if (!mountedRef.current) return;
 
         setSession(currentSession);
-        setCrmUser(null);
 
-        if (!currentSession?.user?.id) {
+        const authUserId = currentSession?.user?.id ?? null;
+
+        if (!authUserId) {
+          crmUserLoadedForAuthIdRef.current = null;
+          setCrmUser(null);
+          setCheckedCrmUser(true);
+          setReady(true);
+          return;
+        }
+
+        /**
+         * Evita desmontar/remontar o CRM quando o Supabase apenas renova o token
+         * ao voltar o foco da aba ou durante auto refresh da sessão.
+         *
+         * Se o perfil do mesmo usuário já foi carregado, apenas atualizamos a sessão.
+         */
+        if (silent && crmUserLoadedForAuthIdRef.current === authUserId) {
           setCheckedCrmUser(true);
           setReady(true);
           return;
@@ -48,7 +68,7 @@ export default function RequireAuth() {
         const { data: profile, error } = await supabase
           .from("users")
           .select("id, auth_user_id, role, user_role, is_active")
-          .eq("auth_user_id", currentSession.user.id)
+          .eq("auth_user_id", authUserId)
           .maybeSingle();
 
         if (error) {
@@ -58,6 +78,7 @@ export default function RequireAuth() {
         if (!mountedRef.current) return;
 
         setCrmUser((profile || null) as CrmUserAccess | null);
+        crmUserLoadedForAuthIdRef.current = authUserId;
         setCheckedCrmUser(true);
         setReady(true);
       } catch (e: any) {
@@ -67,6 +88,7 @@ export default function RequireAuth() {
 
         setSession(null);
         setCrmUser(null);
+        crmUserLoadedForAuthIdRef.current = null;
         setCheckedCrmUser(true);
         setReady(true);
       }
@@ -80,9 +102,24 @@ export default function RequireAuth() {
 
     loadSessionAndProfile().finally(() => window.clearTimeout(t));
 
-    const { data } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data } = supabase.auth.onAuthStateChange((event, s) => {
       if (!mountedRef.current) return;
-      loadSessionAndProfile(s ?? null);
+
+      if (event === "TOKEN_REFRESHED") {
+        setSession(s ?? null);
+        return;
+      }
+
+      if (event === "SIGNED_OUT") {
+        crmUserLoadedForAuthIdRef.current = null;
+        setSession(null);
+        setCrmUser(null);
+        setCheckedCrmUser(true);
+        setReady(true);
+        return;
+      }
+
+      loadSessionAndProfile(s ?? null, { silent: true });
     });
 
     unsub = () => data.subscription.unsubscribe();

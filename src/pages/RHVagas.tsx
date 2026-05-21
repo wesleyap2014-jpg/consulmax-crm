@@ -654,6 +654,23 @@ export default function RHVagas() {
     });
   }
 
+  async function notifyCandidateApplicationUpdate(applicationId: string, historyId?: string | null) {
+    try {
+      const { error } = await supabase.functions.invoke("send-candidate-update-email", {
+        body: {
+          application_id: applicationId,
+          history_id: historyId || null,
+        },
+      });
+
+      if (error) {
+        console.warn("[RHVagas] E-mail de atualização não enviado:", error.message);
+      }
+    } catch (err: any) {
+      console.warn("[RHVagas] Falha ao chamar função de e-mail:", err?.message || err);
+    }
+  }
+
   async function confirmMoveApplication() {
     if (!isAdmin) return;
     if (!moveModal.application) return;
@@ -695,20 +712,26 @@ export default function RHVagas() {
 
       if (candError) throw candError;
 
-      const { error: historyError } = await supabase.from("hr_application_history").insert({
-        application_id: application.id,
-        candidate_id: application.candidate_id,
-        job_id: application.job_id,
-        from_status: fromStatus,
-        to_status: toStatus,
-        parecer_candidato: parecerCandidato,
-        parecer_interno: toStatus === "reprovado" ? parecerInterno || null : null,
-        moved_by: authUserId,
-      });
+      const { data: historyData, error: historyError } = await supabase
+        .from("hr_application_history")
+        .insert({
+          application_id: application.id,
+          candidate_id: application.candidate_id,
+          job_id: application.job_id,
+          from_status: fromStatus,
+          to_status: toStatus,
+          parecer_candidato: parecerCandidato,
+          parecer_interno: toStatus === "reprovado" ? parecerInterno || null : null,
+          moved_by: authUserId,
+        })
+        .select("id")
+        .maybeSingle();
 
       if (historyError) {
         console.warn("[RHVagas] Não foi possível registrar histórico:", historyError.message);
       }
+
+      await notifyCandidateApplicationUpdate(application.id, historyData?.id || null);
 
       setMoveModal(emptyMoveModal());
       await load();
@@ -756,20 +779,26 @@ export default function RHVagas() {
 
       if (candError) throw candError;
 
-      const { error: historyError } = await supabase.from("hr_application_history").insert({
-        application_id: application.id,
-        candidate_id: application.candidate_id,
-        job_id: application.job_id,
-        from_status: application.status || "novo",
-        to_status: "banco_talentos",
-        parecer_candidato: "Candidato direcionado para o Banco de Talentos da Consulmax.",
-        parecer_interno: "Movimentação para Banco de Talentos realizada pelo RH.",
-        moved_by: authUserId,
-      });
+      const { data: historyData, error: historyError } = await supabase
+        .from("hr_application_history")
+        .insert({
+          application_id: application.id,
+          candidate_id: application.candidate_id,
+          job_id: application.job_id,
+          from_status: application.status || "novo",
+          to_status: "banco_talentos",
+          parecer_candidato: "Candidato direcionado para o Banco de Talentos da Consulmax.",
+          parecer_interno: "Movimentação para Banco de Talentos realizada pelo RH.",
+          moved_by: authUserId,
+        })
+        .select("id")
+        .maybeSingle();
 
       if (historyError) {
         console.warn("[RHVagas] Não foi possível registrar histórico:", historyError.message);
       }
+
+      await notifyCandidateApplicationUpdate(application.id, historyData?.id || null);
 
       await load();
     } catch (err: any) {
@@ -794,21 +823,25 @@ export default function RHVagas() {
     setSaving(true);
 
     try {
-      const { error } = await supabase.from("hr_applications").upsert(
-        {
-          job_id: linkTalent.jobId,
-          candidate_id: sourceApplication.candidate_id,
-          status: "novo",
-          notes: sourceApplication.notes || "Candidato vinculado a partir do Banco de Talentos.",
-          banco_talentos: false,
-          parecer_candidato: null,
-          parecer_interno: null,
-          moved_at: new Date().toISOString(),
-          moved_by: authUserId,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "job_id,candidate_id" }
-      );
+      const { data: linkedApplication, error } = await supabase
+        .from("hr_applications")
+        .upsert(
+          {
+            job_id: linkTalent.jobId,
+            candidate_id: sourceApplication.candidate_id,
+            status: "novo",
+            notes: sourceApplication.notes || "Candidato vinculado a partir do Banco de Talentos.",
+            banco_talentos: false,
+            parecer_candidato: `Você foi vinculado(a) à vaga ${job.title} a partir do Banco de Talentos da Consulmax.`,
+            parecer_interno: "Candidato vinculado a partir do Banco de Talentos.",
+            moved_at: new Date().toISOString(),
+            moved_by: authUserId,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "job_id,candidate_id" }
+        )
+        .select("id")
+        .maybeSingle();
 
       if (error) throw error;
 
@@ -821,6 +854,29 @@ export default function RHVagas() {
         .eq("id", sourceApplication.candidate_id);
 
       if (candError) throw candError;
+
+      if (linkedApplication?.id) {
+        const { data: historyData, error: historyError } = await supabase
+          .from("hr_application_history")
+          .insert({
+            application_id: linkedApplication.id,
+            candidate_id: sourceApplication.candidate_id,
+            job_id: linkTalent.jobId,
+            from_status: "banco_talentos",
+            to_status: "novo",
+            parecer_candidato: `Você foi vinculado(a) à vaga ${job.title} a partir do Banco de Talentos da Consulmax.`,
+            parecer_interno: "Candidato vinculado a partir do Banco de Talentos.",
+            moved_by: authUserId,
+          })
+          .select("id")
+          .maybeSingle();
+
+        if (historyError) {
+          console.warn("[RHVagas] Não foi possível registrar histórico:", historyError.message);
+        }
+
+        await notifyCandidateApplicationUpdate(linkedApplication.id, historyData?.id || null);
+      }
 
       setLinkTalent(emptyLinkTalent());
       await load();
@@ -1468,7 +1524,7 @@ function MoveApplicationModal({
           )}
 
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            O parecer para o candidato ficará salvo na candidatura e poderá ser exibido futuramente na Área do Candidato.
+            O parecer para o candidato ficará salvo na candidatura, aparecerá na Área do Candidato e será enviado por e-mail.
           </div>
 
           <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">

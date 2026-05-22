@@ -20,6 +20,7 @@ import {
   ClipboardList,
   BadgeCheck,
   Calendar,
+  MessageCircle,
   Link as LinkIcon,
   ChevronDown,
   ChevronRight,
@@ -248,6 +249,10 @@ function groupForPath(pathname: string): GroupKey {
     isAnyPathActive(pathname, [
       "/planejamento",
       "/oportunidades",
+      "/atendimento-whatsapp",
+      "/whatsapp",
+      "/central-whatsapp",
+      "/atendimento",
       "/agenda",
       "/simuladores",
       "/propostas",
@@ -344,6 +349,16 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
   const simuladoresActive = useMemo(() => pathname.startsWith("/simuladores"), [pathname]);
 
+  const whatsappActive = useMemo(
+    () =>
+      pathname === "/atendimento-whatsapp" ||
+      pathname.startsWith("/atendimento-whatsapp") ||
+      pathname === "/whatsapp" ||
+      pathname === "/central-whatsapp" ||
+      pathname === "/atendimento",
+    [pathname]
+  );
+
   const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -439,6 +454,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         label: "Oportunidades",
         icon: Briefcase,
         showDot: navAlerts.oportunidades,
+        end: true,
+      },
+      {
+        to: "/atendimento-whatsapp",
+        label: "WhatsApp",
+        icon: MessageCircle,
         end: true,
       },
       { to: "/agenda", label: "Agenda", icon: Calendar, showDot: navAlerts.agenda, end: true },
@@ -648,6 +669,18 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                     <span>Oportunidades</span>
                     {navAlerts.oportunidades && <AlertDot />}
                   </span>
+                </NavLink>
+
+                <NavLink
+                  to="/atendimento-whatsapp"
+                  className={({ isActive }) => pillClass(isActive || whatsappActive)}
+                  style={({ isActive }) => (isActive || whatsappActive ? activePillStyle : glassHoverPill)}
+                  onClick={handleNav}
+                  title="Central WhatsApp"
+                  end
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  WhatsApp
                 </NavLink>
 
                 <NavLink

@@ -32,6 +32,7 @@ const PublicSimulador = React.lazy(() => import("./pages/PublicSimulador"));
 const PublicPonto = React.lazy(() => import("./pages/PublicPonto"));
 const PublicTrabalheConosco = React.lazy(() => import("./pages/PublicTrabalheConosco"));
 const PublicAreaCandidato = React.lazy(() => import("./pages/PublicAreaCandidato"));
+const PublicPoliticaPrivacidade = React.lazy(() => import("./pages/PublicPoliticaPrivacidade"));
 const FluxoDeCaixa = React.lazy(() => import("./pages/FluxoDeCaixa"));
 const Planejamento = React.lazy(() => import("./pages/Planejamento"));
 const Relatorios = React.lazy(() => import("./pages/Relatorios"));
@@ -71,17 +72,27 @@ export const router = createBrowserRouter([
   { path: "/giro-de-carteira", element: <GiroDeCarteiraInlineTest /> },
   { path: "/giro", element: <Navigate to="/giro-de-carteira" replace /> },
 
+  // ==== Rotas públicas ====
   { path: "/publico/simulador", element: withSuspense(<PublicSimulador />) },
   { path: "/simular", element: <Navigate to="/publico/simulador" replace /> },
   { path: "/public/simulador", element: <Navigate to="/publico/simulador" replace /> },
+
   { path: "/ponto", element: withSuspense(<PublicPonto />) },
   { path: "/registro-ponto", element: <Navigate to="/ponto" replace /> },
   { path: "/ponto-eletronico", element: <Navigate to="/ponto" replace /> },
+
   { path: "/trabalhe-conosco", element: withSuspense(<PublicTrabalheConosco />) },
   { path: "/area-candidato", element: withSuspense(<PublicAreaCandidato />) },
+
+  // Política de Privacidade pública para Meta/WhatsApp
+  { path: "/politica-de-privacidade", element: withSuspense(<PublicPoliticaPrivacidade />) },
+  { path: "/privacidade", element: <Navigate to="/politica-de-privacidade" replace /> },
+  { path: "/privacy", element: <Navigate to="/politica-de-privacidade" replace /> },
+
   { path: "/trabalheconosco", element: <Navigate to="/trabalhe-conosco" replace /> },
   { path: "/carreiras", element: <Navigate to="/trabalhe-conosco" replace /> },
   { path: "/vagas", element: <Navigate to="/trabalhe-conosco" replace /> },
+
   { path: "/agenda/sala/:eventId", element: withSuspense(<AgendaSala />) },
 
   { path: "/login", element: withSuspense(<Login />) },

@@ -1,11 +1,6 @@
-// /api/whatsapp/subscribe.ts
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+// /api/whatsapp/subscribe.js
 
-const META_TOKEN = process.env.META_WHATSAPP_TOKEN!;
-const WABA_ID = process.env.META_WHATSAPP_WABA_ID || "738926192556410";
-const SUBSCRIBE_KEY = process.env.WHATSAPP_SUBSCRIBE_KEY!;
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req, res) {
   try {
     if (req.method !== "GET" && req.method !== "POST") {
       return res.status(405).json({
@@ -14,7 +9,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const key = String(req.query.key || req.body?.key || "");
+    const META_TOKEN = process.env.META_WHATSAPP_TOKEN;
+    const WABA_ID = process.env.META_WHATSAPP_WABA_ID || "738926192556410";
+    const SUBSCRIBE_KEY = process.env.WHATSAPP_SUBSCRIBE_KEY;
+
+    const queryKey = req.query?.key;
+    const bodyKey = req.body?.key;
+    const key = String(queryKey || bodyKey || "");
 
     if (!SUBSCRIBE_KEY || key !== SUBSCRIBE_KEY) {
       return res.status(401).json({
@@ -56,7 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       waba_id: WABA_ID,
       data,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("WHATSAPP_SUBSCRIBE_ERROR", error);
 
     return res.status(500).json({

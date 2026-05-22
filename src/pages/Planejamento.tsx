@@ -173,7 +173,7 @@ const defaultChat: ChatMessage[] = [
   {
     role: "assistant",
     content:
-      "Sou o Max. Selecione uma ação da semana e me peça abordagem, diagnóstico, objeções, follow-up ou simulação de conversa.",
+      "Pronto. Selecione uma ação da semana e me peça abordagem, diagnóstico, objeções, follow-up ou simulação de conversa. Vou montar tudo para o vendedor enviar em nome dele, com o tom da Consulmax.",
   },
 ];
 
@@ -211,7 +211,15 @@ function brDate(iso?: string | null) {
 
 function planName(p?: WeeklyPlan | null) {
   if (!p) return "";
-  return p.theme?.trim() || `Semana ${brDate(p.date_start)} a ${brDate(p.date_end)}`;
+
+  const theme = cleanText(p.theme);
+  const isGeneric =
+    theme.toLowerCase() === "sala de guerra comercial" ||
+    theme.toLowerCase() === "planejamento";
+
+  if (theme && !isGeneric) return theme;
+
+  return `Semana comercial ${brDate(p.date_start)} a ${brDate(p.date_end)}`;
 }
 
 function weekStartEnd() {
@@ -308,6 +316,16 @@ export default function Planejamento() {
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const isAdmin = currentUser?.user_role === "admin";
+
+  const seller = useMemo(() => {
+    return users.find((u) => u.id === selectedUserId) || currentUser;
+  }, [currentUser, selectedUserId, users]);
+
+  const sellerName =
+    cleanText(seller?.nome) ||
+    cleanText(currentUser?.nome) ||
+    "consultor da Consulmax";
+
   const selectedAction = useMemo(
     () => items.find((i) => i.id === selectedActionId) || items[0] || null,
     [items, selectedActionId]
@@ -511,8 +529,8 @@ export default function Planejamento() {
             role,
             date_start: dateStart,
             date_end: dateEnd,
-            theme: "Sala de Guerra Comercial",
-            main_goal: "Gerar conversas qualificadas, reuniões e propostas na semana.",
+            theme: `Semana comercial ${brDate(dateStart)} a ${brDate(dateEnd)}`,
+            main_goal: "Gerar conversas qualificadas, reuniões e propostas com ações comerciais bem executadas.",
           })
           .select("*")
           .single();
@@ -632,9 +650,50 @@ export default function Planejamento() {
   const callMax = async (prompt: string): Promise<string | null> => {
     if (!prompt.trim()) return null;
     setMaxLoading(true);
+
     try {
+      const promptFinal = `
+Você é o Max, copiloto comercial interno da Consulmax Consórcios.
+
+Você NÃO é o vendedor.
+Você NÃO deve se apresentar como Max para o cliente final.
+Quando criar mensagens para cliente, escreva como se fosse o vendedor falando.
+
+Vendedor/colaborador: ${sellerName}
+Cargo/função: ${role}
+Empresa: Consulmax Consórcios
+
+Contexto da semana:
+- Foco: ${planName(plan)}
+- Meta principal: ${plan?.main_goal || "não definida"}
+- Período: ${brDate(plan?.date_start)} a ${brDate(plan?.date_end)}
+
+Ação selecionada:
+- Ação: ${actionTitle(selectedAction)}
+- Objetivo comercial: ${selectedAction?.why || "não definido"}
+- Canal: ${selectedAction?.where_ || "não definido"}
+- Público/lista: ${selectedAction?.who || "não definido"}
+- Quando: ${selectedAction?.when_ || "não definido"}
+- Como executar: ${selectedAction?.how || "não definido"}
+- Meta/esforço: ${selectedAction?.how_much || "não definido"}
+
+Regras obrigatórias:
+1. Nunca escreva "Oi, eu sou o Max".
+2. Use: "Oi, tudo bem? Aqui é o ${sellerName}, da Consulmax..."
+3. A mensagem precisa gerar conversa, não parecer propaganda.
+4. Fale com tom leve, consultivo, humano e direto.
+5. Foque em diagnóstico, planejamento, economia de juros, patrimônio, caixa, empresa, agro ou objetivo informado na ação.
+6. Sempre entregue próximo passo claro.
+7. Evite resposta genérica. Use os dados da ação selecionada.
+8. Se for criar roteiro, entregue estrutura pronta para WhatsApp, ligação, diagnóstico, objeções e follow-up.
+
+Pedido do usuário:
+${prompt}
+`;
+
       const context = {
         screen: "Sala de Guerra Comercial",
+        seller: { id: seller?.id, nome: sellerName, role },
         plan,
         selectedAction,
         actions: items,
@@ -642,16 +701,19 @@ export default function Planejamento() {
         objections,
         chatMessages,
       };
+
       const res = await fetch("/api/max-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, mode: "estrategia", context }),
+        body: JSON.stringify({ prompt: promptFinal, mode: "estrategia", context }),
       });
+
       if (!res.ok) {
         const text = await res.text();
         console.error("Erro /api/max-chat:", text);
         return null;
       }
+
       const data = await res.json();
       return String((data as any)?.answer || "Não consegui responder agora.");
     } catch (err) {
@@ -698,8 +760,11 @@ Responda APENAS em JSON válido, sem markdown:
   "objections": [
     { "tag":"${actionTitle(selectedAction).slice(0, 42)}", "objection_text":"...", "answer_text":"...", "next_step":"...", "priority":1 }
   ],
-  "mensagem_pronta": "Mensagem curta e natural de WhatsApp para iniciar conversa."
+  "mensagem_pronta": "Mensagem curta de WhatsApp pronta para copiar, escrita em nome do vendedor ${sellerName}, nunca em nome do Max."
 }
+
+A mensagem pronta deve começar naturalmente com:
+"Oi, tudo bem? Aqui é o ${sellerName}, da Consulmax..."
 
 Regras:
 - Tom leve, consultivo e humano.
@@ -749,7 +814,11 @@ Regras:
       );
     }
 
-    setAiDraft(cleanText(parsed?.mensagem_pronta) || answer);
+    const fallbackMsg = `Oi, tudo bem? Aqui é o ${sellerName}, da Consulmax. Estou organizando algumas estratégias de planejamento para ${
+      selectedAction.who || "clientes com perfil de compra planejada"
+    } e achei que poderia fazer sentido conversar com você. A ideia é entender seu momento e ver se existe uma forma mais inteligente de chegar no seu objetivo sem comprometer seu caixa. Posso te fazer duas perguntas rápidas?`;
+
+    setAiDraft(cleanText(parsed?.mensagem_pronta) || fallbackMsg);
     setStrategyOpen(true);
     setActiveTab("playbook");
   };
@@ -805,14 +874,15 @@ Regras:
 
   const quickPrompt = (kind: "abordagem" | "diagnostico" | "objeções" | "followup" | "simular") => {
     const title = actionTitle(selectedAction);
-    const base = `Considere a ação "${title}" da Sala de Guerra Comercial. `;
+
     const prompts = {
-      abordagem: base + "Crie uma abordagem inicial curta para WhatsApp, uma versão para ligação e uma versão para direct. Seja natural e consultivo.",
-      diagnostico: base + "Crie perguntas de diagnóstico para entender objetivo, renda, prazo, lance, urgência e perfil de compra sem parecer interrogatório.",
-      objeções: base + "Liste as objeções mais prováveis do cliente e me dê respostas curtas com próximo passo.",
-      followup: base + "Crie 3 follow-ups progressivos para cliente que não respondeu, sem parecer insistente.",
-      simular: base + "Simule uma conversa em que você é um cliente difícil e eu sou o vendedor. Comece com uma objeção realista.",
+      abordagem: `Crie abordagem inicial para a ação "${title}". Quero: WhatsApp curto em nome de ${sellerName}, versão para ligação e versão para direct. Não se apresente como Max.`,
+      diagnostico: `Crie perguntas de diagnóstico para a ação "${title}". Quero perguntas naturais sobre objetivo, prazo, entrada/lance, renda, caixa, urgência e tomada de decisão.`,
+      objeções: `Liste as objeções mais prováveis para a ação "${title}" e responda cada uma com resposta curta, humana e próximo passo.`,
+      followup: `Crie 3 follow-ups progressivos para a ação "${title}". Mensagens em nome de ${sellerName}, sem pressão e com CTA claro.`,
+      simular: `Simule uma conversa em que você é um cliente difícil e eu sou ${sellerName}, vendedor da Consulmax. Comece com uma objeção realista.`,
     };
+
     sendChat(prompts[kind]);
   };
 
@@ -828,7 +898,7 @@ Regras:
     doc.text("Consulmax — Sala de Guerra Comercial", 14, 12);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(`${planName(plan)} • ${brDate(plan.date_start)} a ${brDate(plan.date_end)} • Cargo: ${plan.role}`, 14, 20);
+    doc.text(`${planName(plan)} • ${brDate(plan.date_start)} a ${brDate(plan.date_end)} • Vendedor: ${sellerName}`, 14, 20);
 
     doc.setTextColor(30, 41, 63);
     doc.setFont("helvetica", "bold");
@@ -974,7 +1044,7 @@ Regras:
         <div className="p-5 md:p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-white/80 text-sm">
-              <Dog className="w-5 h-5" /> Max • Planejamento semanal de vendas
+              <Dog className="w-5 h-5" /> Max • Sala de Guerra semanal de vendas
             </div>
             <h1 className="text-2xl md:text-3xl font-bold mt-1">Sala de Guerra Comercial</h1>
             <p className="text-white/80 mt-1 max-w-3xl">
@@ -1191,6 +1261,8 @@ Regras:
             {chatOpen && (
               <CardContent className="p-0">
                 <div className="p-3 border-b bg-slate-50 text-xs text-muted-foreground">
+                  <b>Vendedor:</b> {sellerName}
+                  <br />
                   <b>Ação:</b> {selectedAction ? actionTitle(selectedAction) : "selecione uma ação"}
                 </div>
                 <div className="h-[430px] overflow-y-auto p-3 space-y-3 bg-white">

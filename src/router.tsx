@@ -40,6 +40,7 @@ const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas
 const Processos = React.lazy(() => import("./pages/Processos"));
 const RH = React.lazy(() => import("./pages/RH"));
 const RHVagas = React.lazy(() => import("./pages/RHVagas"));
+const AtendimentoWhatsApp = React.lazy(() => import("./pages/AtendimentoWhatsApp"));
 
 function withSuspense(node: React.ReactNode) {
   return (
@@ -95,16 +96,26 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: withSuspense(<Inicio />) },
           { path: "inicio", element: withSuspense(<Inicio />) },
+
           { path: "leads", element: <Navigate to="/oportunidades" replace /> },
           { path: "oportunidades", element: withSuspense(<Oportunidades />) },
+
           { path: "clientes", element: withSuspense(<Clientes />) },
           { path: "agenda", element: withSuspense(<Agenda />) },
           { path: "planejamento", element: withSuspense(<Planejamento />) },
           { path: "procedimentos", element: withSuspense(<Procedimentos />) },
           { path: "relatorios", element: withSuspense(<Relatorios />) },
+
+          // Central WhatsApp
+          { path: "atendimento-whatsapp", element: withSuspense(<AtendimentoWhatsApp />) },
+          { path: "whatsapp", element: <Navigate to="/atendimento-whatsapp" replace /> },
+          { path: "central-whatsapp", element: <Navigate to="/atendimento-whatsapp" replace /> },
+          { path: "atendimento", element: <Navigate to="/atendimento-whatsapp" replace /> },
+
           { path: "estoque-contempladas", element: withSuspense(<EstoqueContempladas />) },
           { path: "estoque", element: <Navigate to="/estoque-contempladas" replace /> },
           { path: "cotas-contempladas", element: <Navigate to="/estoque-contempladas" replace /> },
+
           {
             path: "simuladores",
             children: [
@@ -117,6 +128,7 @@ export const router = createBrowserRouter([
               { path: ":id", element: withSuspense(<EmbraconSimulator />) },
             ],
           },
+
           { path: "propostas", element: withSuspense(<Propostas />) },
           { path: "comissoes", element: withSuspense(<Comissoes />) },
           { path: "carteira", element: withSuspense(<Carteira />) },
@@ -124,12 +136,15 @@ export const router = createBrowserRouter([
           { path: "processos", element: withSuspense(<Processos />) },
           { path: "rh", element: withSuspense(<RH />) },
           { path: "rh/vagas", element: withSuspense(<RHVagas />) },
+
           { path: "giro-de-carteira", element: <EB title="Erro no Giro de Carteira"><GiroDeCarteiraInlineTest /></EB> },
           { path: "giro-de-carteira/", element: <Navigate to="/giro-de-carteira" replace /> },
+
           { path: "ranking", element: withSuspense(<RankingVendedores />) },
           { path: "ranking-vendedores", element: <Navigate to="/ranking" replace /> },
           { path: "vendedores/ranking", element: <Navigate to="/ranking" replace /> },
           { path: "ranking-vendas", element: <Navigate to="/ranking" replace /> },
+
           { path: "usuarios", element: withSuspense(<Usuarios />) },
           { path: "gestao-de-grupos", element: withSuspense(<GestaoDeGrupos />) },
           { path: "parametros", element: withSuspense(<Parametros />) },
@@ -137,6 +152,7 @@ export const router = createBrowserRouter([
           { path: "links", element: withSuspense(<LinksUteis />) },
           { path: "links-uteis", element: <Navigate to="/links" replace /> },
           { path: "linksuteis", element: <Navigate to="/links" replace /> },
+
           { path: "*", element: <Navigate to="/" replace /> },
         ],
       },

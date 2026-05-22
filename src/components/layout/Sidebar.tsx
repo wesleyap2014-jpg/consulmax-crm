@@ -433,7 +433,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
 
   const flatItems: FlatItem[] = useMemo(
     () => [
-      { to: "/planejamento", label: "Planejamento", icon: ClipboardList, end: true },
+      { to: "/planejamento", label: "Sala de Guerra", icon: ClipboardList, end: true },
       {
         to: "/oportunidades",
         label: "Oportunidades",
@@ -628,11 +628,11 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
                   className={({ isActive }) => pillClass(isActive)}
                   style={({ isActive }) => (isActive ? activePillStyle : glassHoverPill)}
                   onClick={handleNav}
-                  title="Planejamento"
+                  title="Sala de Guerra Comercial"
                   end
                 >
                   <ClipboardList className="h-4 w-4" />
-                  Planejamento
+                  Sala de Guerra
                 </NavLink>
 
                 <NavLink

@@ -26,6 +26,9 @@ import {
   FileText,
   Lock,
   KanbanSquare,
+  Download,
+  Phone,
+  Paperclip,
 } from "lucide-react";
 
 const C = {
@@ -38,6 +41,7 @@ const C = {
 };
 
 const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
+const DEFAULT_MEDIA_BUCKET = "whatsapp-media";
 
 type Conversation = {
   id: string;
@@ -62,6 +66,15 @@ type Conversation = {
   } | null;
 };
 
+type StoredMedia = {
+  bucket?: string | null;
+  storage_path?: string | null;
+  mime_type?: string | null;
+  file_size?: number | null;
+  media_id?: string | null;
+  original_file_name?: string | null;
+};
+
 type Message = {
   id: string;
   conversation_id: string;
@@ -72,6 +85,7 @@ type Message = {
   body: string | null;
   media_id?: string | null;
   media_mime_type?: string | null;
+  raw_payload?: any;
   created_at: string;
 };
 
@@ -137,13 +151,6 @@ function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
 
-function normalizeText(value?: string | null) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
 function hasScope(profile: UserProfile | null, scope: string) {
   return (profile?.scopes || []).includes(scope);
 }
@@ -206,9 +213,7 @@ function allowedQueuesFor(profile: UserProfile | null, authUserId: string | null
   }
 
   if (isOperationalUser(profile)) {
-    ["cliente_ativo", "boleto", "contemplacao", "pos_venda", "suporte", "financeiro"].forEach((q) =>
-      allowed.add(q)
-    );
+    ["cliente_ativo", "boleto", "contemplacao", "pos_venda", "suporte", "financeiro"].forEach((q) => allowed.add(q));
   }
 
   return Array.from(allowed);
@@ -240,11 +245,7 @@ function isUnassigned(conv: Conversation) {
   return !conv.assigned_to && !isClosed(conv);
 }
 
-function canViewConversation(
-  conv: Conversation,
-  profile: UserProfile | null,
-  authUserId: string | null
-) {
+function canViewConversation(conv: Conversation, profile: UserProfile | null, authUserId: string | null) {
   if (isManager(profile, authUserId)) return true;
   if (conv.assigned_to === authUserId) return true;
 
@@ -383,15 +384,105 @@ function MediaIcon({ type }: { type?: string | null }) {
   return null;
 }
 
-function MetricCard({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "gold" | "navy" | "red" | "green";
-}) {
+function getStoredMedia(msg: Message): StoredMedia | null {
+  return (
+    msg.raw_payload?._consulmax_media ||
+    msg.raw_payload?.consulmax_media ||
+    msg.raw_payload?.media ||
+    null
+  );
+}
+
+function isMediaMessage(msg: Message) {
+  const type = String(msg.message_type || "").toLowerCase();
+  return ["audio", "voice", "image", "video", "document", "sticker"].includes(type) || !!getStoredMedia(msg)?.storage_path;
+}
+
+function MessageContent({ msg, mediaUrl, outbound }: { msg: Message; mediaUrl?: string; outbound: boolean }) {
+  const type = String(msg.message_type || "text").toLowerCase();
+  const storedMedia = getStoredMedia(msg);
+  const mime = storedMedia?.mime_type || msg.media_mime_type || "";
+  const label = messageFallback(msg);
+  const linkClass = outbound ? "text-white/90 underline" : "text-slate-700 underline";
+
+  if ((type === "audio" || type === "voice") && mediaUrl) {
+    return (
+      <div className="min-w-[260px] space-y-2">
+        <div className="flex items-center gap-2 font-semibold">
+          <Mic className="h-4 w-4" />
+          <span>Áudio recebido</span>
+        </div>
+        <audio controls preload="metadata" src={mediaUrl} className="w-full max-w-[360px]" />
+        <a href={mediaUrl} target="_blank" rel="noreferrer" className={linkClass}>
+          Abrir áudio
+        </a>
+      </div>
+    );
+  }
+
+  if (type === "image" && mediaUrl) {
+    return (
+      <div className="space-y-2">
+        <img src={mediaUrl} alt="Imagem recebida" className="max-h-[360px] max-w-full rounded-2xl object-contain" />
+        {msg.body && <p className="whitespace-pre-wrap">{msg.body}</p>}
+        <a href={mediaUrl} target="_blank" rel="noreferrer" className={linkClass}>
+          Abrir imagem
+        </a>
+      </div>
+    );
+  }
+
+  if (type === "video" && mediaUrl) {
+    return (
+      <div className="space-y-2">
+        <video controls preload="metadata" src={mediaUrl} className="max-h-[360px] max-w-full rounded-2xl" />
+        {msg.body && <p className="whitespace-pre-wrap">{msg.body}</p>}
+        <a href={mediaUrl} target="_blank" rel="noreferrer" className={linkClass}>
+          Abrir vídeo
+        </a>
+      </div>
+    );
+  }
+
+  if ((type === "document" || type === "sticker" || isMediaMessage(msg)) && mediaUrl) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 font-semibold">
+          <MediaIcon type={type} />
+          <span>{label}</span>
+        </div>
+        <a href={mediaUrl} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm ${outbound ? "bg-white/10 text-white" : "bg-slate-100 text-slate-800"}`}>
+          <Download className="h-4 w-4" />
+          Abrir arquivo
+        </a>
+        {mime && <p className={outbound ? "text-xs text-white/70" : "text-xs text-slate-400"}>{mime}</p>}
+      </div>
+    );
+  }
+
+  if (isMediaMessage(msg) && !mediaUrl) {
+    return (
+      <div className="flex items-start gap-2">
+        <MediaIcon type={msg.message_type} />
+        <div>
+          <p className="whitespace-pre-wrap">{label}</p>
+          <p className={outbound ? "mt-1 text-xs text-white/70" : "mt-1 text-xs text-slate-400"}>
+            Arquivo ainda não disponível para reprodução. Envie um novo áudio após o último deploy ou atualize a página.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-2">
+      <MediaIcon type={msg.message_type} />
+      <p className="whitespace-pre-wrap">{label}</p>
+    </div>
+  );
+}
+
+function MetricCard({ label, value, tone }: { label: string; value: number; tone: "gold" | "navy" | "red" | "green" }) {
   const colorMap = {
     gold: C.gold,
     navy: C.navy,
@@ -425,6 +516,7 @@ export default function AtendimentoWhatsApp() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
 
   const activeRef = useRef<Conversation | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -448,9 +540,7 @@ export default function AtendimentoWhatsApp() {
     return map;
   }, [authUserId, profile?.nome, users]);
 
-  const availableTabs = useMemo(() => {
-    return TABS.filter((item) => !item.managerOnly || manager);
-  }, [manager]);
+  const availableTabs = useMemo(() => TABS.filter((item) => !item.managerOnly || manager), [manager]);
 
   async function loadAuth() {
     const { data } = await supabase.auth.getUser();
@@ -499,8 +589,7 @@ export default function AtendimentoWhatsApp() {
 
     const { data, error } = await supabase
       .from("whatsapp_conversations")
-      .select(
-        `
+      .select(`
         *,
         whatsapp_contacts (
           id,
@@ -508,8 +597,7 @@ export default function AtendimentoWhatsApp() {
           telefone,
           wa_id
         )
-      `
-      )
+      `)
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(150);
 
@@ -551,10 +639,7 @@ export default function AtendimentoWhatsApp() {
     setMessages((data || []) as Message[]);
 
     if (options?.markRead !== false) {
-      await supabase
-        .from("whatsapp_conversations")
-        .update({ unread_count: 0 })
-        .eq("id", conversationId);
+      await supabase.from("whatsapp_conversations").update({ unread_count: 0 }).eq("id", conversationId);
     }
   }
 
@@ -575,33 +660,67 @@ export default function AtendimentoWhatsApp() {
   }, [active?.id]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadMediaUrls() {
+      const entries = messages
+        .map((msg) => ({ msg, media: getStoredMedia(msg) }))
+        .filter(({ msg, media }) => !!media?.storage_path && !mediaUrls[msg.id]);
+
+      if (entries.length === 0) return;
+
+      const next: Record<string, string> = {};
+
+      await Promise.all(
+        entries.map(async ({ msg, media }) => {
+          const bucket = media?.bucket || DEFAULT_MEDIA_BUCKET;
+          const path = media?.storage_path;
+
+          if (!bucket || !path) return;
+
+          const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
+
+          if (error) {
+            console.error("Erro ao gerar URL assinada da mídia WhatsApp:", error);
+            return;
+          }
+
+          if (data?.signedUrl) next[msg.id] = data.signedUrl;
+        })
+      );
+
+      if (!cancelled && Object.keys(next).length > 0) {
+        setMediaUrls((prev) => ({ ...prev, ...next }));
+      }
+    }
+
+    loadMediaUrls();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, mediaUrls]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, active?.id]);
 
   useEffect(() => {
     const channel = supabase
       .channel("whatsapp-central-atendimentos")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "whatsapp_messages" },
-        (payload) => {
-          const currentActive = activeRef.current;
-          const row = payload.new as Message | null;
+      .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_messages" }, (payload) => {
+        const currentActive = activeRef.current;
+        const row = payload.new as Message | null;
 
-          if (currentActive?.id && row?.conversation_id === currentActive.id) {
-            loadMessages(currentActive.id);
-          }
+        if (currentActive?.id && row?.conversation_id === currentActive.id) {
+          loadMessages(currentActive.id);
+        }
 
-          loadConversations({ silent: true });
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "whatsapp_conversations" },
-        () => {
-          loadConversations({ silent: true });
-        }
-      )
+        loadConversations({ silent: true });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "whatsapp_conversations" }, () => {
+        loadConversations({ silent: true });
+      })
       .subscribe();
 
     const fallback = window.setInterval(() => {
@@ -615,66 +734,30 @@ export default function AtendimentoWhatsApp() {
   }, [authUserId, profile]);
 
   useEffect(() => {
-    if (!availableTabs.some((item) => item.key === tab)) {
-      setTab("new");
-    }
+    if (!availableTabs.some((item) => item.key === tab)) setTab("new");
   }, [availableTabs, tab]);
 
   const activeContact = active?.whatsapp_contacts;
   const activePhone = onlyDigits(activeContact?.telefone || activeContact?.wa_id);
 
-  const visibleConversations = useMemo(() => {
-    return conversations.filter((conv) => canViewConversation(conv, profile, authUserId));
-  }, [authUserId, conversations, profile]);
+  const visibleConversations = useMemo(() => conversations.filter((conv) => canViewConversation(conv, profile, authUserId)), [authUserId, conversations, profile]);
 
   const counts = useMemo(() => {
     const newCount = visibleConversations.filter((conv) => isUnassigned(conv)).length;
-
-    const mineCount = conversations.filter(
-      (conv) => conv.assigned_to === authUserId && !isClosed(conv)
-    ).length;
-
-    const queueCount = visibleConversations.filter(
-      (conv) => !isClosed(conv) && queueFromConversation(conv) !== "finalizado"
-    ).length;
-
+    const mineCount = conversations.filter((conv) => conv.assigned_to === authUserId && !isClosed(conv)).length;
+    const queueCount = visibleConversations.filter((conv) => !isClosed(conv) && queueFromConversation(conv) !== "finalizado").length;
     const allOpenCount = manager ? conversations.filter((conv) => !isClosed(conv)).length : 0;
+    const closedCount = manager ? conversations.filter(isClosed).length : conversations.filter((conv) => conv.assigned_to === authUserId && isClosed(conv)).length;
 
-    const closedCount = manager
-      ? conversations.filter(isClosed).length
-      : conversations.filter((conv) => conv.assigned_to === authUserId && isClosed(conv)).length;
-
-    return {
-      new: newCount,
-      mine: mineCount,
-      queues: queueCount,
-      all: allOpenCount,
-      closed: closedCount,
-    } satisfies Record<TabKey, number>;
+    return { new: newCount, mine: mineCount, queues: queueCount, all: allOpenCount, closed: closedCount } satisfies Record<TabKey, number>;
   }, [authUserId, conversations, manager, visibleConversations]);
 
   const filteredConversations = useMemo(() => {
-    if (tab === "new") {
-      return visibleConversations.filter((conv) => isUnassigned(conv));
-    }
-
-    if (tab === "mine") {
-      return conversations.filter((conv) => conv.assigned_to === authUserId && !isClosed(conv));
-    }
-
-    if (tab === "queues") {
-      return visibleConversations.filter((conv) => !isClosed(conv));
-    }
-
-    if (tab === "closed") {
-      if (manager) return conversations.filter(isClosed);
-      return conversations.filter((conv) => conv.assigned_to === authUserId && isClosed(conv));
-    }
-
-    if (tab === "all" && manager) {
-      return conversations.filter((conv) => !isClosed(conv));
-    }
-
+    if (tab === "new") return visibleConversations.filter((conv) => isUnassigned(conv));
+    if (tab === "mine") return conversations.filter((conv) => conv.assigned_to === authUserId && !isClosed(conv));
+    if (tab === "queues") return visibleConversations.filter((conv) => !isClosed(conv));
+    if (tab === "closed") return manager ? conversations.filter(isClosed) : conversations.filter((conv) => conv.assigned_to === authUserId && isClosed(conv));
+    if (tab === "all" && manager) return conversations.filter((conv) => !isClosed(conv));
     return [];
   }, [authUserId, conversations, manager, tab, visibleConversations]);
 
@@ -684,13 +767,8 @@ export default function AtendimentoWhatsApp() {
     const canStillView = canViewConversation(active, profile, authUserId);
     const existsInTab = filteredConversations.some((conv) => conv.id === active.id);
 
-    if ((!canStillView || !existsInTab) && filteredConversations.length > 0) {
-      setActive(filteredConversations[0]);
-    }
-
-    if ((!canStillView || !existsInTab) && filteredConversations.length === 0) {
-      setActive(null);
-    }
+    if ((!canStillView || !existsInTab) && filteredConversations.length > 0) setActive(filteredConversations[0]);
+    if ((!canStillView || !existsInTab) && filteredConversations.length === 0) setActive(null);
   }, [active, authUserId, filteredConversations, profile]);
 
   async function sendMessage(customBody?: string) {
@@ -703,22 +781,22 @@ export default function AtendimentoWhatsApp() {
     try {
       const response = await fetch("/api/whatsapp/send", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          conversation_id: active.id,
-          to: activePhone,
-          body,
-          user_id: authUserId,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: active.id, to: activePhone, body, user_id: authUserId }),
       });
 
       const result = await response.json();
 
       if (!response.ok || !result?.ok) {
-        alert("Não foi possível enviar a mensagem.");
-        console.error(result);
+        const metaMessage =
+          result?.error?.error?.error_data?.details ||
+          result?.error?.error?.message ||
+          result?.error?.message ||
+          result?.error ||
+          "Não foi possível enviar a mensagem.";
+
+        alert(String(metaMessage));
+        console.error("WHATSAPP_SEND_FRONT_ERROR", result);
         return false;
       }
 
@@ -740,10 +818,7 @@ export default function AtendimentoWhatsApp() {
 
     const { error } = await supabase
       .from("whatsapp_conversations")
-      .update({
-        ...patch,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ ...patch, updated_at: new Date().toISOString() })
       .eq("id", active.id);
 
     setUpdatingConversation(false);
@@ -790,7 +865,6 @@ export default function AtendimentoWhatsApp() {
             }
           : prev
       );
-
       setTab("mine");
     }
   }
@@ -808,9 +882,7 @@ export default function AtendimentoWhatsApp() {
     });
 
     if (ok) {
-      if (!sent) {
-        alert("Atendimento finalizado, mas não foi possível enviar a mensagem de avaliação.");
-      }
+      if (!sent) alert("Atendimento finalizado, mas não foi possível enviar a mensagem de avaliação.");
       setTab("closed");
     }
   }
@@ -838,29 +910,22 @@ export default function AtendimentoWhatsApp() {
       return;
     }
 
-    const ok = await updateConversationPatch({
-      queue,
-      stage: queue,
-      status: active.assigned_to ? "humano" : "novo",
-    });
+    const ok = await updateConversationPatch({ queue, stage: queue, status: active.assigned_to ? "humano" : "novo" });
 
-    if (ok) {
-      setActive((prev) =>
-        prev
-          ? {
-              ...prev,
-              queue,
-              stage: queue,
-              status: prev.assigned_to ? "humano" : "novo",
-            }
-          : prev
-      );
-    }
+    if (ok) setActive((prev) => (prev ? { ...prev, queue, stage: queue, status: prev.assigned_to ? "humano" : "novo" } : prev));
   }
 
   function addEmoji(emoji: string) {
     setText((prev) => `${prev}${emoji}`);
     setEmojiOpen(false);
+  }
+
+  function audioSoon() {
+    alert("Envio de áudio pelo CRM precisa de uma rota de upload/envio de mídia. A reprodução de áudios recebidos já foi preparada nesta tela.");
+  }
+
+  function callSoon() {
+    alert("Ligação pelo WhatsApp Business exige configuração própria da Meta/Calling API. Vamos tratar isso em uma etapa separada.");
   }
 
   const activeIsMine = !!active?.assigned_to && active.assigned_to === authUserId;
@@ -889,8 +954,7 @@ export default function AtendimentoWhatsApp() {
           </h1>
 
           <p className="mt-1 max-w-3xl text-base text-slate-500">
-            Atendimento integrado da Consulmax para WhatsApp, triagem, suporte,
-            pós-venda e oportunidades comerciais.
+            Atendimento integrado da Consulmax para WhatsApp, triagem, suporte, pós-venda e oportunidades comerciais.
           </p>
         </div>
 
@@ -904,30 +968,15 @@ export default function AtendimentoWhatsApp() {
 
       <div className="grid gap-4 xl:grid-cols-[430px_1fr]">
         <Card className="overflow-hidden border-0 shadow-sm">
-          <CardHeader
-            className="border-b p-4"
-            style={{
-              background: `linear-gradient(135deg, ${C.navy}, ${C.red})`,
-              color: "white",
-            }}
-          >
+          <CardHeader className="border-b p-4" style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.red})`, color: "white" }}>
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <MessageCircle className="h-5 w-5" />
                 Atendimentos
               </CardTitle>
 
-              <Button
-                variant="outline"
-                onClick={() => loadConversations()}
-                disabled={refreshing}
-                className="h-9 gap-2 border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white"
-              >
-                {refreshing ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
+              <Button variant="outline" onClick={() => loadConversations()} disabled={refreshing} className="h-9 gap-2 border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white">
+                {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Atualizar
               </Button>
             </div>
@@ -942,25 +991,14 @@ export default function AtendimentoWhatsApp() {
                     key={item.key}
                     type="button"
                     onClick={() => setTab(item.key)}
-                    className={`flex items-center justify-between rounded-2xl px-3 py-2 text-left text-sm font-semibold transition ${
-                      selected
-                        ? "bg-white text-slate-900 shadow-sm"
-                        : "bg-white/10 text-white hover:bg-white/20"
-                    }`}
+                    className={`flex items-center justify-between rounded-2xl px-3 py-2 text-left text-sm font-semibold transition ${selected ? "bg-white text-slate-900 shadow-sm" : "bg-white/10 text-white hover:bg-white/20"}`}
                     title={item.label}
                   >
                     <span className="flex items-center gap-2">
                       <Icon className="h-4 w-4" />
                       {item.short}
                     </span>
-
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        selected ? "bg-slate-100 text-slate-700" : "bg-white/15 text-white"
-                      }`}
-                    >
-                      {counts[item.key]}
-                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${selected ? "bg-slate-100 text-slate-700" : "bg-white/15 text-white"}`}>{counts[item.key]}</span>
                   </button>
                 );
               })}
@@ -982,12 +1020,8 @@ export default function AtendimentoWhatsApp() {
             ) : filteredConversations.length === 0 ? (
               <div className="flex h-[430px] flex-col items-center justify-center p-8 text-center text-slate-500">
                 <Inbox className="mb-3 h-10 w-10 text-slate-300" />
-                <p className="text-base font-semibold text-slate-700">
-                  Nenhum atendimento nesta visão.
-                </p>
-                <p className="mt-1 text-sm">
-                  Quando uma conversa entrar ou mudar de fila, ela aparecerá automaticamente aqui.
-                </p>
+                <p className="text-base font-semibold text-slate-700">Nenhum atendimento nesta visão.</p>
+                <p className="mt-1 text-sm">Quando uma conversa entrar ou mudar de fila, ela aparecerá automaticamente aqui.</p>
               </div>
             ) : (
               <div className="max-h-[calc(100vh-305px)] overflow-auto">
@@ -998,63 +1032,31 @@ export default function AtendimentoWhatsApp() {
                   const queue = queueFromConversation(conv);
 
                   return (
-                    <button
-                      key={conv.id}
-                      onClick={() => setActive(conv)}
-                      className={`w-full border-b p-4 text-left transition hover:bg-slate-50 ${
-                        selected ? "bg-[#fff7ed]" : "bg-white"
-                      }`}
-                    >
+                    <button key={conv.id} onClick={() => setActive(conv)} className={`w-full border-b p-4 text-left transition hover:bg-slate-50 ${selected ? "bg-[#fff7ed]" : "bg-white"}`}>
                       <div className="flex items-start gap-3">
-                        <div
-                          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-base font-bold text-white shadow-sm"
-                          style={{ background: unassigned ? C.red : queueColor(queue) }}
-                        >
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-base font-bold text-white shadow-sm" style={{ background: unassigned ? C.red : queueColor(queue) }}>
                           {initials(contact?.nome)}
                         </div>
 
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="truncate text-base font-bold text-slate-900">
-                                {contact?.nome || "Cliente WhatsApp"}
-                              </p>
-
-                              <p className="truncate text-sm text-slate-500">
-                                {formatPhoneBR(contact?.telefone || contact?.wa_id)}
-                              </p>
+                              <p className="truncate text-base font-bold text-slate-900">{contact?.nome || "Cliente WhatsApp"}</p>
+                              <p className="truncate text-sm text-slate-500">{formatPhoneBR(contact?.telefone || contact?.wa_id)}</p>
                             </div>
-
-                            <span className="shrink-0 text-xs font-medium text-slate-400">
-                              {fmtRelative(conv.last_message_at)}
-                            </span>
+                            <span className="shrink-0 text-xs font-medium text-slate-400">{fmtRelative(conv.last_message_at)}</span>
                           </div>
 
                           <div className="mt-2 flex items-center gap-2">
-                            <Badge variant="outline" className="text-[11px]">
-                              {makeTicketNumber(conv)}
-                            </Badge>
+                            <Badge variant="outline" className="text-[11px]">{makeTicketNumber(conv)}</Badge>
                           </div>
 
-                          <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-slate-700">
-                            {conv.last_message || "—"}
-                          </p>
+                          <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-slate-700">{conv.last_message || "—"}</p>
 
                           <div className="mt-3 flex flex-wrap items-center gap-2">
-                            <Badge style={badgeStyleForStatus(conv.status)}>
-                              {statusLabel(conv.status)}
-                            </Badge>
-
-                            <Badge variant="secondary" className="gap-1">
-                              <Tag className="h-3 w-3" />
-                              {queueLabel(queue)}
-                            </Badge>
-
-                            {conv.unread_count > 0 && (
-                              <Badge style={{ background: C.red, color: "white" }}>
-                                {conv.unread_count} nova(s)
-                              </Badge>
-                            )}
+                            <Badge style={badgeStyleForStatus(conv.status)}>{statusLabel(conv.status)}</Badge>
+                            <Badge variant="secondary" className="gap-1"><Tag className="h-3 w-3" />{queueLabel(queue)}</Badge>
+                            {conv.unread_count > 0 && <Badge style={{ background: C.red, color: "white" }}>{conv.unread_count} nova(s)</Badge>}
                           </div>
                         </div>
                       </div>
@@ -1068,57 +1070,31 @@ export default function AtendimentoWhatsApp() {
 
         <Card className="overflow-hidden border-0 shadow-sm">
           {!active ? (
-            <div className="flex h-[70vh] items-center justify-center text-base text-slate-500">
-              Selecione um atendimento para começar.
-            </div>
+            <div className="flex h-[70vh] items-center justify-center text-base text-slate-500">Selecione um atendimento para começar.</div>
           ) : (
             <>
               <CardHeader className="border-b bg-white p-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="flex items-start gap-3">
-                    <div
-                      className="flex h-14 w-14 items-center justify-center rounded-2xl text-lg font-bold text-white shadow-sm"
-                      style={{ background: activeIsClosed ? C.green : queueColor(activeQueue) }}
-                    >
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl text-lg font-bold text-white shadow-sm" style={{ background: activeIsClosed ? C.green : queueColor(activeQueue) }}>
                       {initials(activeContact?.nome)}
                     </div>
 
                     <div className="min-w-0">
-                      <CardTitle className="text-xl text-slate-900">
-                        {conversationName(active)}
-                      </CardTitle>
-
-                      <p className="mt-0.5 text-base text-slate-500">
-                        {formatPhoneBR(activeContact?.telefone || activeContact?.wa_id)}
-                      </p>
+                      <CardTitle className="text-xl text-slate-900">{conversationName(active)}</CardTitle>
+                      <p className="mt-0.5 text-base text-slate-500">{formatPhoneBR(activeContact?.telefone || activeContact?.wa_id)}</p>
 
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <Badge variant="outline">{ticketNumber}</Badge>
-
                         <Badge className="gap-1" style={badgeStyleForStatus(active.status)}>
-                          {active.status === "bot" ? (
-                            <Bot className="h-3.5 w-3.5" />
-                          ) : (
-                            <UserRound className="h-3.5 w-3.5" />
-                          )}
+                          {active.status === "bot" ? <Bot className="h-3.5 w-3.5" /> : <UserRound className="h-3.5 w-3.5" />}
                           {statusLabel(active.status)}
                         </Badge>
-
-                        <Badge variant="secondary" className="gap-1">
-                          <Tag className="h-3.5 w-3.5" />
-                          Fila: {queueLabel(activeQueue)}
-                        </Badge>
-
+                        <Badge variant="secondary" className="gap-1"><Tag className="h-3.5 w-3.5" />Fila: {queueLabel(activeQueue)}</Badge>
                         {active.assigned_to ? (
-                          <Badge variant="outline" className="gap-1">
-                            <UserCheck className="h-3.5 w-3.5" />
-                            {activeIsMine ? "Seu atendimento" : "Assumido"}
-                          </Badge>
+                          <Badge variant="outline" className="gap-1"><UserCheck className="h-3.5 w-3.5" />{activeIsMine ? "Seu atendimento" : "Assumido"}</Badge>
                         ) : (
-                          <Badge variant="outline" className="gap-1 border-amber-300 text-amber-700">
-                            <Clock className="h-3.5 w-3.5" />
-                            Novo nesta fila
-                          </Badge>
+                          <Badge variant="outline" className="gap-1 border-amber-300 text-amber-700"><Clock className="h-3.5 w-3.5" />Novo nesta fila</Badge>
                         )}
                       </div>
                     </div>
@@ -1126,75 +1102,26 @@ export default function AtendimentoWhatsApp() {
 
                   <div className="flex flex-wrap items-center gap-2">
                     {!activeIsClosed && !active.assigned_to && (
-                      <Button
-                        onClick={assumirConversa}
-                        disabled={updatingConversation || !canAssumeActive}
-                        style={{ background: C.red }}
-                        className="gap-2 text-white hover:opacity-95"
-                      >
-                        {updatingConversation ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <UserCheck className="h-4 w-4" />
-                        )}
+                      <Button onClick={assumirConversa} disabled={updatingConversation || !canAssumeActive} style={{ background: C.red }} className="gap-2 text-white hover:opacity-95">
+                        {updatingConversation ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
                         Assumir conversa
                       </Button>
                     )}
 
                     {!activeIsClosed && active.assigned_to && !activeIsMine && manager && (
-                      <Button
-                        variant="outline"
-                        onClick={assumirConversa}
-                        disabled={updatingConversation}
-                        className="gap-2"
-                      >
-                        <ArrowRightLeft className="h-4 w-4" />
-                        Assumir de outro usuário
-                      </Button>
+                      <Button variant="outline" onClick={assumirConversa} disabled={updatingConversation} className="gap-2"><ArrowRightLeft className="h-4 w-4" />Assumir de outro usuário</Button>
                     )}
 
-                    {!activeIsClosed && (
-                      <Button
-                        variant="outline"
-                        onClick={finalizarConversa}
-                        disabled={updatingConversation || sending}
-                        className="gap-2"
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                        Finalizar
-                      </Button>
-                    )}
-
-                    {activeIsClosed && (
-                      <Button
-                        variant="outline"
-                        onClick={reabrirConversa}
-                        disabled={updatingConversation}
-                        className="gap-2"
-                      >
-                        <RefreshCw className="h-4 w-4" />
-                        Reabrir
-                      </Button>
-                    )}
+                    {!activeIsClosed && <Button variant="outline" onClick={finalizarConversa} disabled={updatingConversation || sending} className="gap-2"><CheckCircle2 className="h-4 w-4" />Finalizar</Button>}
+                    {activeIsClosed && <Button variant="outline" onClick={reabrirConversa} disabled={updatingConversation} className="gap-2"><RefreshCw className="h-4 w-4" />Reabrir</Button>}
                   </div>
                 </div>
 
                 {!activeIsClosed && (
                   <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
-                    <span className="mr-1 flex items-center text-sm font-semibold text-slate-500">
-                      Mover para:
-                    </span>
-
+                    <span className="mr-1 flex items-center text-sm font-semibold text-slate-500">Mover para:</span>
                     {transferQueues.map((queue) => (
-                      <Button
-                        key={queue.key}
-                        type="button"
-                        size="sm"
-                        variant={activeQueue === queue.key ? "default" : "outline"}
-                        onClick={() => transferirFila(queue.key)}
-                        disabled={updatingConversation}
-                        style={activeQueue === queue.key ? { background: queue.color } : undefined}
-                      >
+                      <Button key={queue.key} type="button" size="sm" variant={activeQueue === queue.key ? "default" : "outline"} onClick={() => transferirFila(queue.key)} disabled={updatingConversation} style={activeQueue === queue.key ? { background: queue.color } : undefined}>
                         {queue.label}
                       </Button>
                     ))}
@@ -1205,90 +1132,49 @@ export default function AtendimentoWhatsApp() {
               <CardContent className="flex h-[calc(100vh-335px)] min-h-[520px] flex-col p-0">
                 <div className="flex-1 space-y-4 overflow-auto bg-slate-50 p-5">
                   {messages.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-base text-slate-500">
-                      Nenhuma mensagem neste atendimento.
-                    </div>
+                    <div className="flex h-full items-center justify-center text-base text-slate-500">Nenhuma mensagem neste atendimento.</div>
                   ) : (
                     messages.map((msg) => {
                       const outbound = msg.direction === "outbound";
                       const isBot = msg.sender_type === "bot";
-                      const signature =
-                        outbound && msg.user_id
-                          ? userNameByAuthId.get(msg.user_id) || "Usuário"
-                          : outbound && isBot
-                            ? "Max"
-                            : null;
+                      const signature = outbound && msg.user_id ? userNameByAuthId.get(msg.user_id) || "Usuário" : outbound && isBot ? "Max" : null;
 
                       return (
-                        <div
-                          key={msg.id}
-                          className={`flex ${outbound ? "justify-end" : "justify-start"}`}
-                        >
+                        <div key={msg.id} className={`flex ${outbound ? "justify-end" : "justify-start"}`}>
                           <div
-                            className={`max-w-[82%] rounded-3xl px-4 py-3 text-base leading-relaxed shadow-sm ${
-                              outbound
-                                ? "rounded-br-md text-white"
-                                : "rounded-bl-md border border-slate-100 bg-white text-slate-900"
-                            }`}
-                            style={{
-                              background: outbound ? (isBot ? C.gold : C.navy) : "white",
-                              color: outbound && isBot ? C.navy : undefined,
-                            }}
+                            className={`max-w-[82%] rounded-3xl px-4 py-3 text-base leading-relaxed shadow-sm ${outbound ? "rounded-br-md text-white" : "rounded-bl-md border border-slate-100 bg-white text-slate-900"}`}
+                            style={{ background: outbound ? (isBot ? C.gold : C.navy) : "white", color: outbound && isBot ? C.navy : undefined }}
                           >
-                            <div className="flex items-start gap-2">
-                              <MediaIcon type={msg.message_type} />
-                              <p className="whitespace-pre-wrap">{messageFallback(msg)}</p>
-                            </div>
-
-                            <p
-                              className={`mt-2 text-[11px] ${
-                                outbound ? "text-white/70" : "text-slate-400"
-                              }`}
-                            >
-                              {signature ? `${signature} • ` : ""}
-                              {fmtTime(msg.created_at)}
+                            <MessageContent msg={msg} mediaUrl={mediaUrls[msg.id]} outbound={outbound} />
+                            <p className={`mt-2 text-[11px] ${outbound ? "text-white/70" : "text-slate-400"}`}>
+                              {signature ? `${signature} • ` : ""}{fmtTime(msg.created_at)}
                             </p>
                           </div>
                         </div>
                       );
                     })
                   )}
-
                   <div ref={messagesEndRef} />
                 </div>
 
                 <div className="border-t bg-white p-4">
                   {activeIsClosed ? (
-                    <div className="rounded-2xl bg-slate-50 p-4 text-center text-sm text-slate-500">
-                      Este atendimento foi finalizado. Reabra a conversa para responder novamente.
-                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4 text-center text-sm text-slate-500">Este atendimento foi finalizado. Reabra a conversa para responder novamente.</div>
                   ) : (
                     <div className="space-y-3">
                       {emojiOpen && (
                         <div className="flex flex-wrap gap-2 rounded-2xl border bg-slate-50 p-3">
                           {QUICK_EMOJIS.map((emoji) => (
-                            <button
-                              key={emoji}
-                              type="button"
-                              onClick={() => addEmoji(emoji)}
-                              className="rounded-xl bg-white px-3 py-2 text-xl shadow-sm transition hover:scale-105"
-                            >
-                              {emoji}
-                            </button>
+                            <button key={emoji} type="button" onClick={() => addEmoji(emoji)} className="rounded-xl bg-white px-3 py-2 text-xl shadow-sm transition hover:scale-105">{emoji}</button>
                           ))}
                         </div>
                       )}
 
                       <div className="flex gap-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => setEmojiOpen((prev) => !prev)}
-                          className="h-auto min-w-[52px]"
-                          title="Enviar emoji"
-                        >
-                          <Smile className="h-5 w-5" />
-                        </Button>
+                        <Button type="button" variant="outline" onClick={() => setEmojiOpen((prev) => !prev)} className="h-auto min-w-[52px]" title="Enviar emoji"><Smile className="h-5 w-5" /></Button>
+                        <Button type="button" variant="outline" onClick={audioSoon} className="h-auto min-w-[52px]" title="Enviar áudio"><Mic className="h-5 w-5" /></Button>
+                        <Button type="button" variant="outline" onClick={callSoon} className="h-auto min-w-[52px]" title="Fazer ligação"><Phone className="h-5 w-5" /></Button>
+                        <Button type="button" variant="outline" onClick={audioSoon} className="h-auto min-w-[52px]" title="Anexar arquivo"><Paperclip className="h-5 w-5" /></Button>
 
                         <Textarea
                           value={text}
@@ -1303,23 +1189,12 @@ export default function AtendimentoWhatsApp() {
                           }}
                         />
 
-                        <Button
-                          onClick={() => sendMessage()}
-                          disabled={!canSend}
-                          className="min-w-[64px] px-4"
-                          style={{ background: C.red }}
-                        >
-                          {sending ? (
-                            <Loader2 className="h-5 w-5 animate-spin" />
-                          ) : (
-                            <Send className="h-5 w-5" />
-                          )}
+                        <Button onClick={() => sendMessage()} disabled={!canSend} className="min-w-[64px] px-4" style={{ background: C.red }}>
+                          {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
                         </Button>
                       </div>
 
-                      <p className="text-xs text-slate-400">
-                        Assinatura automática: as mensagens enviadas pelo CRM exibem o nome do usuário responsável.
-                      </p>
+                      <p className="text-xs text-slate-400">Assinatura automática: as mensagens enviadas pelo CRM exibem o nome do usuário responsável.</p>
                     </div>
                   )}
                 </div>

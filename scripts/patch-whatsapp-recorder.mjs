@@ -31,7 +31,7 @@ if (!source.includes("mediaRecorderRef")) {
 if (!source.includes("function formatRecordingTime")) {
   replaceOnce(
     `function MetricCard({ label, value, tone }: { label: string; value: number; tone: "gold" | "navy" | "red" | "green" }) {`,
-    `function formatRecordingTime(seconds: number) {\n  const min = Math.floor(seconds / 60);\n  const sec = seconds % 60;\n\n  return \`${min}:\${String(sec).padStart(2, "0")}\`;\n}\n\nfunction MetricCard({ label, value, tone }: { label: string; value: number; tone: "gold" | "navy" | "red" | "green" }) {`,
+    `function formatRecordingTime(seconds: number) {\n  const min = Math.floor(seconds / 60);\n  const sec = seconds % 60;\n\n  return min + ":" + String(sec).padStart(2, "0");\n}\n\nfunction MetricCard({ label, value, tone }: { label: string; value: number; tone: "gold" | "navy" | "red" | "green" }) {`,
     "formatRecordingTime"
   );
 }

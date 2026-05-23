@@ -5,6 +5,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL!;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const VERIFY_TOKEN = process.env.META_WHATSAPP_VERIFY_TOKEN!;
 const META_TOKEN = process.env.META_WHATSAPP_TOKEN || "";
+const MEDIA_BUCKET = process.env.WHATSAPP_MEDIA_BUCKET || "whatsapp-media";
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -20,6 +21,7 @@ function extractMessageBody(message: any) {
     message?.interactive?.list_reply?.title ||
     message?.image?.caption ||
     message?.document?.caption ||
+    message?.video?.caption ||
     message?.audio?.caption ||
     ""
   );
@@ -42,8 +44,41 @@ function extractMimeType(message: any) {
     message?.audio?.mime_type ||
     message?.video?.mime_type ||
     message?.document?.mime_type ||
+    message?.sticker?.mime_type ||
     null
   );
+}
+
+function extractFileName(message: any, mediaId?: string | null) {
+  return message?.document?.filename || `${mediaId || "media"}`;
+}
+
+function extensionFromMime(mime?: string | null, type?: string | null) {
+  const clean = String(mime || "").split(";")[0].trim().toLowerCase();
+
+  const map: Record<string, string> = {
+    "audio/ogg": "ogg",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/aac": "aac",
+    "audio/amr": "amr",
+    "video/mp4": "mp4",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "application/pdf": "pdf",
+  };
+
+  if (map[clean]) return map[clean];
+
+  const messageType = String(type || "").toLowerCase();
+  if (messageType === "audio") return "ogg";
+  if (messageType === "video") return "mp4";
+  if (messageType === "image") return "jpg";
+  if (messageType === "sticker") return "webp";
+  if (messageType === "document") return "bin";
+
+  return "bin";
 }
 
 function isRatingResponse(body?: string | null) {
@@ -54,7 +89,6 @@ function isRatingResponse(body?: string | null) {
   if (digits.length !== 1) return false;
   if (!/[1-5]/.test(digits)) return false;
 
-  // Evita classificar mensagens longas com números soltos como avaliação.
   return raw.length <= 20;
 }
 
@@ -71,6 +105,92 @@ function isRecentClosedConversation(value?: string | null) {
 
   const days = (Date.now() - closedAt) / (1000 * 60 * 60 * 24);
   return days <= 7;
+}
+
+async function ensureMediaBucket() {
+  try {
+    const { error } = await supabaseAdmin.storage.createBucket(MEDIA_BUCKET, {
+      public: false,
+      fileSizeLimit: 50 * 1024 * 1024,
+    });
+
+    if (error && !String(error.message || "").toLowerCase().includes("already exists")) {
+      console.warn("WHATSAPP_MEDIA_BUCKET_CREATE_WARN", error);
+    }
+  } catch (error) {
+    console.warn("WHATSAPP_MEDIA_BUCKET_CREATE_IGNORED", error);
+  }
+}
+
+async function downloadAndStoreMedia(params: {
+  mediaId: string | null;
+  messageType: string;
+  mimeType: string | null;
+  conversationId: string;
+  metaMessageId: string | null;
+  originalFileName?: string | null;
+}) {
+  const { mediaId, messageType, conversationId, metaMessageId, originalFileName } = params;
+
+  if (!META_TOKEN || !mediaId) return null;
+
+  try {
+    const metaInfoResponse = await fetch(`https://graph.facebook.com/v25.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${META_TOKEN}` },
+    });
+
+    const metaInfo = await metaInfoResponse.json();
+
+    if (!metaInfoResponse.ok || !metaInfo?.url) {
+      console.error("WHATSAPP_MEDIA_INFO_ERROR", metaInfo);
+      return null;
+    }
+
+    const mediaResponse = await fetch(metaInfo.url, {
+      headers: { Authorization: `Bearer ${META_TOKEN}` },
+    });
+
+    if (!mediaResponse.ok) {
+      console.error("WHATSAPP_MEDIA_DOWNLOAD_ERROR", {
+        status: mediaResponse.status,
+        statusText: mediaResponse.statusText,
+      });
+      return null;
+    }
+
+    await ensureMediaBucket();
+
+    const mimeType = metaInfo?.mime_type || params.mimeType || mediaResponse.headers.get("content-type") || "application/octet-stream";
+    const extension = extensionFromMime(mimeType, messageType);
+    const safeBaseName = String(originalFileName || metaMessageId || mediaId)
+      .replace(/[^a-zA-Z0-9._-]/g, "-")
+      .slice(0, 80);
+    const storagePath = `${conversationId}/${Date.now()}-${safeBaseName}.${extension}`;
+    const arrayBuffer = await mediaResponse.arrayBuffer();
+
+    const { error: uploadError } = await supabaseAdmin.storage.from(MEDIA_BUCKET).upload(storagePath, Buffer.from(arrayBuffer), {
+      contentType: mimeType,
+      upsert: true,
+    });
+
+    if (uploadError) {
+      console.error("WHATSAPP_MEDIA_UPLOAD_ERROR", uploadError);
+      return null;
+    }
+
+    return {
+      bucket: MEDIA_BUCKET,
+      storage_path: storagePath,
+      mime_type: mimeType,
+      file_size: metaInfo?.file_size || arrayBuffer.byteLength,
+      sha256: metaInfo?.sha256 || null,
+      media_id: mediaId,
+      original_file_name: originalFileName || null,
+    };
+  } catch (error) {
+    console.error("WHATSAPP_MEDIA_STORE_ERROR", error);
+    return null;
+  }
 }
 
 async function upsertAccount(phoneNumberId?: string | null, displayPhoneNumber?: string | null) {
@@ -239,6 +359,8 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
   const metaMessageId = message?.id || null;
   const inboundAt = new Date().toISOString();
   const isRating = isRatingResponse(body);
+  const mediaId = extractMediaId(message);
+  const mediaMimeType = extractMimeType(message);
 
   console.log("WHATSAPP_INBOUND_MESSAGE", {
     waId,
@@ -247,6 +369,7 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
     bodyPreview: body?.slice?.(0, 80),
     metaMessageId,
     isRating,
+    hasMedia: !!mediaId,
   });
 
   const { data: contact, error: contactError } = await supabaseAdmin
@@ -290,7 +413,7 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
         status: "bot",
         stage: "entrada",
         queue: "novos_contatos",
-        last_message: body,
+        last_message: body || (mediaId ? `${messageType} recebido` : body),
         last_message_at: inboundAt,
         unread_count: 1,
       })
@@ -315,7 +438,7 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
           updated_at: inboundAt,
         }
       : {
-          last_message: body,
+          last_message: body || (mediaId ? `${messageType} recebido` : body),
           last_message_at: inboundAt,
           unread_count: (conversation.unread_count || 0) + 1,
           updated_at: inboundAt,
@@ -331,16 +454,31 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
     }
   }
 
+  const storedMedia = mediaId
+    ? await downloadAndStoreMedia({
+        mediaId,
+        messageType,
+        mimeType: mediaMimeType,
+        conversationId: conversation.id,
+        metaMessageId,
+        originalFileName: extractFileName(message, mediaId),
+      })
+    : null;
+
+  const rawPayloadWithMedia = storedMedia
+    ? { ...payload, _consulmax_media: storedMedia }
+    : payload;
+
   const messagePayload = {
     conversation_id: conversation.id,
     direction: "inbound",
     sender_type: handledAsClosedRating ? "avaliacao" : "cliente",
     message_type: messageType,
     body,
-    media_id: extractMediaId(message),
-    media_mime_type: extractMimeType(message),
+    media_id: mediaId,
+    media_mime_type: storedMedia?.mime_type || mediaMimeType,
     meta_message_id: metaMessageId,
-    raw_payload: payload,
+    raw_payload: rawPayloadWithMedia,
   };
 
   const { error: messageError } = metaMessageId

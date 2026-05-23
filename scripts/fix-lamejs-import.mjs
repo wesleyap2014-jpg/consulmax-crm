@@ -3,26 +3,49 @@ import fs from "node:fs";
 const filePath = "src/pages/AtendimentoWhatsApp.tsx";
 let source = fs.readFileSync(filePath, "utf8");
 
-const oldSnippet = `const lamejs = await import("lamejs");
-    const Mp3Encoder = (lamejs as any).Mp3Encoder || (lamejs as any).default?.Mp3Encoder;`;
-
-const oldSnippet2 = `await import("lamejs/lame.all.js");
-    const Mp3Encoder = (window as any).lamejs?.Mp3Encoder || (globalThis as any).lamejs?.Mp3Encoder;`;
-
-const newSnippet = `const lameModule = await import("lamejs/lame.all.js");
+const snippets = [
+  `const lamejs = await import("lamejs");
+    const Mp3Encoder = (lamejs as any).Mp3Encoder || (lamejs as any).default?.Mp3Encoder;`,
+  `await import("lamejs/lame.all.js");
+    const Mp3Encoder = (window as any).lamejs?.Mp3Encoder || (globalThis as any).lamejs?.Mp3Encoder;`,
+  `const lameModule = await import("lamejs/lame.all.js");
     const Mp3Encoder =
       (lameModule as any).Mp3Encoder ||
       (lameModule as any).default?.Mp3Encoder ||
       (window as any).lamejs?.Mp3Encoder ||
-      (globalThis as any).lamejs?.Mp3Encoder;`;
+      (globalThis as any).lamejs?.Mp3Encoder;`,
+];
 
-if (source.includes(oldSnippet)) {
-  source = source.replaceAll(oldSnippet, newSnippet);
-}
+const newSnippet = `const lameAsset = await import("lamejs/lame.all.js?url");
+    const lameUrl = (lameAsset as any).default || (lameAsset as any);
 
-if (source.includes(oldSnippet2)) {
-  source = source.replaceAll(oldSnippet2, newSnippet);
+    if (!(window as any).lamejs?.Mp3Encoder) {
+      await new Promise<void>((resolve, reject) => {
+        const existing = document.querySelector<HTMLScriptElement>('script[data-consulmax-lamejs="true"]');
+
+        if (existing) {
+          existing.addEventListener("load", () => resolve(), { once: true });
+          existing.addEventListener("error", () => reject(new Error("Falha ao carregar encoder de áudio.")), { once: true });
+          return;
+        }
+
+        const script = document.createElement("script");
+        script.src = lameUrl;
+        script.async = true;
+        script.dataset.consulmaxLamejs = "true";
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error("Falha ao carregar encoder de áudio."));
+        document.head.appendChild(script);
+      });
+    }
+
+    const Mp3Encoder = (window as any).lamejs?.Mp3Encoder || (globalThis as any).lamejs?.Mp3Encoder;`;
+
+for (const snippet of snippets) {
+  if (source.includes(snippet)) {
+    source = source.replaceAll(snippet, newSnippet);
+  }
 }
 
 fs.writeFileSync(filePath, source);
-console.log("[fix-lamejs-import] Import do lamejs ajustado com resolução do módulo, default e global.");
+console.log("[fix-lamejs-import] lamejs ajustado para carregar como script clássico via asset URL.");

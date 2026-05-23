@@ -520,6 +520,8 @@ export default function AtendimentoWhatsApp() {
 
   const activeRef = useRef<Conversation | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     activeRef.current = active;
@@ -811,6 +813,90 @@ export default function AtendimentoWhatsApp() {
     }
   }
 
+  function fileToBase64(file: File) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("Erro ao ler arquivo."));
+
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function detectMediaType(file: File) {
+    const mime = file.type || "";
+
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("video/")) return "video";
+    if (mime.startsWith("audio/")) return "audio";
+
+    return "document";
+  }
+
+  async function sendMediaFile(file: File) {
+    if (!active || !activePhone || !file) return false;
+
+    const maxSizeMb = 20;
+    const sizeMb = file.size / 1024 / 1024;
+
+    if (sizeMb > maxSizeMb) {
+      alert(`Arquivo muito grande. Envie arquivos de até ${maxSizeMb}MB.`);
+      return false;
+    }
+
+    setSending(true);
+
+    try {
+      const file_base64 = await fileToBase64(file);
+      const media_type = detectMediaType(file);
+      const caption = text.trim();
+
+      const response = await fetch("/api/whatsapp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: active.id,
+          to: activePhone,
+          user_id: authUserId,
+          file_base64,
+          file_name: file.name,
+          mime_type: file.type || "application/octet-stream",
+          media_type,
+          caption,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result?.ok) {
+        const metaMessage =
+          result?.error?.error?.error_data?.details ||
+          result?.error?.error?.message ||
+          result?.error?.message ||
+          result?.error ||
+          "Não foi possível enviar a mídia.";
+
+        alert(String(metaMessage));
+        console.error("WHATSAPP_SEND_MEDIA_FRONT_ERROR", result);
+        return false;
+      }
+
+      if (caption) setText("");
+
+      await loadMessages(active.id);
+      await loadConversations({ silent: true });
+
+      return true;
+    } catch (error: any) {
+      console.error("WHATSAPP_SEND_MEDIA_FRONT_EXCEPTION", error);
+      alert(error?.message || "Erro ao enviar mídia.");
+      return false;
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function updateConversationPatch(patch: Partial<Conversation>) {
     if (!active) return false;
 
@@ -918,10 +1004,6 @@ export default function AtendimentoWhatsApp() {
   function addEmoji(emoji: string) {
     setText((prev) => `${prev}${emoji}`);
     setEmojiOpen(false);
-  }
-
-  function audioSoon() {
-    alert("Envio de áudio pelo CRM precisa de uma rota de upload/envio de mídia. A reprodução de áudios recebidos já foi preparada nesta tela.");
   }
 
   function callSoon() {
@@ -1171,10 +1253,34 @@ export default function AtendimentoWhatsApp() {
                       )}
 
                       <div className="flex gap-3">
+                        <input
+                          ref={audioInputRef}
+                          type="file"
+                          accept="audio/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (file) sendMediaFile(file);
+                          }}
+                        />
+
+                        <input
+                          ref={attachmentInputRef}
+                          type="file"
+                          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (file) sendMediaFile(file);
+                          }}
+                        />
+
                         <Button type="button" variant="outline" onClick={() => setEmojiOpen((prev) => !prev)} className="h-auto min-w-[52px]" title="Enviar emoji"><Smile className="h-5 w-5" /></Button>
-                        <Button type="button" variant="outline" onClick={audioSoon} className="h-auto min-w-[52px]" title="Enviar áudio"><Mic className="h-5 w-5" /></Button>
+                        <Button type="button" variant="outline" onClick={() => audioInputRef.current?.click()} disabled={sending} className="h-auto min-w-[52px]" title="Enviar áudio"><Mic className="h-5 w-5" /></Button>
                         <Button type="button" variant="outline" onClick={callSoon} className="h-auto min-w-[52px]" title="Fazer ligação"><Phone className="h-5 w-5" /></Button>
-                        <Button type="button" variant="outline" onClick={audioSoon} className="h-auto min-w-[52px]" title="Anexar arquivo"><Paperclip className="h-5 w-5" /></Button>
+                        <Button type="button" variant="outline" onClick={() => attachmentInputRef.current?.click()} disabled={sending} className="h-auto min-w-[52px]" title="Anexar arquivo"><Paperclip className="h-5 w-5" /></Button>
 
                         <Textarea
                           value={text}

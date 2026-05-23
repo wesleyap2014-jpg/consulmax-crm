@@ -19,6 +19,13 @@ import {
   Tag,
   ShieldCheck,
   ArrowRightLeft,
+  Smile,
+  Image as ImageIcon,
+  Video,
+  Mic,
+  FileText,
+  Lock,
+  KanbanSquare,
 } from "lucide-react";
 
 const C = {
@@ -29,6 +36,8 @@ const C = {
   green: "#0f766e",
   muted: "#64748b",
 };
+
+const WESLEY_ID = "524f9d55-48c0-4c56-9ab8-7e6115e7c0b0";
 
 type Conversation = {
   id: string;
@@ -61,41 +70,191 @@ type Message = {
   user_id: string | null;
   message_type: string;
   body: string | null;
+  media_id?: string | null;
+  media_mime_type?: string | null;
   created_at: string;
 };
 
-type TabKey = "new" | "mine" | "all" | "closed";
+type UserProfile = {
+  id: string;
+  auth_user_id: string | null;
+  nome: string | null;
+  email: string | null;
+  role: string | null;
+  user_role: string | null;
+  scopes: string[] | null;
+  is_active: boolean | null;
+};
+
+type TabKey = "new" | "mine" | "queues" | "all" | "closed";
 
 type TabDef = {
   key: TabKey;
   label: string;
   short: string;
   icon: React.ElementType;
+  managerOnly?: boolean;
 };
 
+type QueueDef = {
+  key: string;
+  label: string;
+  area: "comercial" | "operacional" | "geral";
+  color: string;
+};
+
+const QUEUES: QueueDef[] = [
+  { key: "novos_contatos", label: "Novos Contatos", area: "geral", color: C.red },
+  { key: "triagem", label: "Triagem", area: "geral", color: C.gold },
+  { key: "comercial", label: "Comercial", area: "comercial", color: C.navy },
+  { key: "qualificacao", label: "Qualificação", area: "comercial", color: C.navy },
+  { key: "proposta", label: "Proposta", area: "comercial", color: C.navy },
+  { key: "negociacao", label: "Negociação", area: "comercial", color: C.navy },
+  { key: "cliente_ativo", label: "Cliente Ativo", area: "operacional", color: C.green },
+  { key: "boleto", label: "Boleto", area: "operacional", color: C.green },
+  { key: "contemplacao", label: "Contemplação", area: "operacional", color: C.green },
+  { key: "pos_venda", label: "Pós-venda", area: "operacional", color: C.green },
+  { key: "suporte", label: "Suporte", area: "operacional", color: C.green },
+  { key: "financeiro", label: "Financeiro", area: "operacional", color: C.green },
+  { key: "finalizado", label: "Finalizado", area: "geral", color: C.muted },
+];
+
 const TABS: TabDef[] = [
-  { key: "new", label: "Novos Contatos", short: "Novos", icon: Inbox },
+  { key: "new", label: "Novos por Fila", short: "Novos", icon: Inbox },
   { key: "mine", label: "Meus Atendimentos", short: "Meus", icon: UserCheck },
-  { key: "all", label: "Todas as Abertas", short: "Abertas", icon: Users },
+  { key: "queues", label: "Minhas Filas", short: "Filas", icon: KanbanSquare },
+  { key: "all", label: "Gestão Geral", short: "Gestão", icon: Users, managerOnly: true },
   { key: "closed", label: "Finalizados", short: "Finalizados", icon: CheckCircle2 },
 ];
 
 const CLOSED_STATUSES = new Set(["fechada", "finalizado", "finalizada", "closed"]);
+const QUICK_EMOJIS = ["😊", "👍", "🙏", "🚀", "✅", "📌", "📄", "💰", "🏡", "🚗", "📞", "🤝"];
 
-function isClosed(conv?: Pick<Conversation, "status" | "stage"> | null) {
+const EVALUATION_MESSAGE =
+  "Atendimento finalizado ✅\n\nSua opinião é muito importante para a Consulmax. Como você avalia esse atendimento de 1 a 5?\n\n1️⃣ Ruim\n2️⃣ Regular\n3️⃣ Bom\n4️⃣ Muito bom\n5️⃣ Excelente";
+
+function onlyDigits(value?: string | null) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeText(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function hasScope(profile: UserProfile | null, scope: string) {
+  return (profile?.scopes || []).includes(scope);
+}
+
+function profileRole(profile: UserProfile | null) {
+  return String(profile?.role || profile?.user_role || "").toLowerCase();
+}
+
+function isManager(profile: UserProfile | null, authUserId: string | null) {
+  const role = profileRole(profile);
+
+  return (
+    authUserId === WESLEY_ID ||
+    role === "admin" ||
+    role === "gestor" ||
+    hasScope(profile, "atendimentos_admin") ||
+    hasScope(profile, "atendimento_admin") ||
+    hasScope(profile, "attendance:all")
+  );
+}
+
+function isCommercialUser(profile: UserProfile | null) {
+  const role = profileRole(profile);
+
+  return (
+    role === "vendedor" ||
+    role === "gestor" ||
+    role === "admin" ||
+    hasScope(profile, "atendimentos_comercial") ||
+    hasScope(profile, "atendimento_comercial") ||
+    hasScope(profile, "attendance:commercial")
+  );
+}
+
+function isOperationalUser(profile: UserProfile | null) {
+  const role = profileRole(profile);
+
+  return (
+    role === "operacoes" ||
+    role === "operacional" ||
+    role === "viewer" ||
+    role === "gestor" ||
+    role === "admin" ||
+    hasScope(profile, "atendimentos_operacoes") ||
+    hasScope(profile, "atendimento_operacoes") ||
+    hasScope(profile, "attendance:operations")
+  );
+}
+
+function allowedQueuesFor(profile: UserProfile | null, authUserId: string | null) {
+  if (isManager(profile, authUserId)) return QUEUES.map((q) => q.key);
+
+  const allowed = new Set<string>();
+
+  allowed.add("novos_contatos");
+  allowed.add("triagem");
+
+  if (isCommercialUser(profile)) {
+    ["comercial", "qualificacao", "proposta", "negociacao"].forEach((q) => allowed.add(q));
+  }
+
+  if (isOperationalUser(profile)) {
+    ["cliente_ativo", "boleto", "contemplacao", "pos_venda", "suporte", "financeiro"].forEach((q) =>
+      allowed.add(q)
+    );
+  }
+
+  return Array.from(allowed);
+}
+
+function isClosed(conv?: Pick<Conversation, "status" | "stage" | "queue"> | null) {
   if (!conv) return false;
+
   return (
     CLOSED_STATUSES.has(String(conv.status || "").toLowerCase()) ||
-    CLOSED_STATUSES.has(String(conv.stage || "").toLowerCase())
+    CLOSED_STATUSES.has(String(conv.stage || "").toLowerCase()) ||
+    CLOSED_STATUSES.has(String(conv.queue || "").toLowerCase())
   );
+}
+
+function queueFromConversation(conv?: Conversation | null) {
+  if (!conv) return "novos_contatos";
+
+  const raw = String(conv.queue || conv.stage || "novos_contatos").toLowerCase();
+
+  if (raw === "entrada") return "novos_contatos";
+  if (raw === "atendimento") return "triagem";
+  if (raw === "fechada" || raw === "finalizado" || raw === "finalizada") return "finalizado";
+
+  return raw;
 }
 
 function isUnassigned(conv: Conversation) {
   return !conv.assigned_to && !isClosed(conv);
 }
 
+function canViewConversation(
+  conv: Conversation,
+  profile: UserProfile | null,
+  authUserId: string | null
+) {
+  if (isManager(profile, authUserId)) return true;
+  if (conv.assigned_to === authUserId) return true;
+
+  const allowed = allowedQueuesFor(profile, authUserId);
+  return allowed.includes(queueFromConversation(conv));
+}
+
 function fmtTime(value?: string | null) {
   if (!value) return "—";
+
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -121,10 +280,6 @@ function fmtRelative(value?: string | null) {
   return `${days} d`;
 }
 
-function onlyDigits(value?: string | null) {
-  return String(value || "").replace(/\D/g, "");
-}
-
 function formatPhoneBR(value?: string | null) {
   const digits = onlyDigits(value);
 
@@ -135,13 +290,8 @@ function formatPhoneBR(value?: string | null) {
     const ddd = local.slice(0, 2);
     const rest = local.slice(2);
 
-    if (rest.length === 9) {
-      return `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
-    }
-
-    if (rest.length === 8) {
-      return `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
-    }
+    if (rest.length === 9) return `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    if (rest.length === 8) return `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
   }
 
   return digits;
@@ -159,6 +309,12 @@ function initials(name?: string | null) {
 
 function conversationName(conv?: Conversation | null) {
   return conv?.whatsapp_contacts?.nome || "Cliente WhatsApp";
+}
+
+function makeTicketNumber(conv?: Conversation | null) {
+  if (!conv?.id) return "ATD-000000";
+  const year = new Date(conv.last_message_at || new Date()).getFullYear();
+  return `ATD-${year}-${conv.id.slice(0, 8).toUpperCase()}`;
 }
 
 function statusLabel(status?: string | null) {
@@ -182,64 +338,49 @@ function statusLabel(status?: string | null) {
 function queueLabel(value?: string | null) {
   const normalized = String(value || "novos_contatos").toLowerCase();
 
-  const map: Record<string, string> = {
-    novos_contatos: "Novos Contatos",
-    triagem: "Triagem",
-    atendimento: "Atendimento",
-    comercial: "Comercial",
-    cliente_ativo: "Cliente Ativo",
-    boleto: "Boleto",
-    contemplacao: "Contemplação",
-    pos_venda: "Pós-venda",
-    suporte: "Suporte",
-    financeiro: "Financeiro",
-    consultor: "Consultor",
-    finalizado: "Finalizado",
-  };
+  const found = QUEUES.find((q) => q.key === normalized);
+  if (found) return found.label;
 
-  return map[normalized] || value || "Novos Contatos";
-}
-
-function stageLabel(stage?: string | null) {
-  const value = String(stage || "entrada").toLowerCase();
-
-  const map: Record<string, string> = {
-    entrada: "Entrada",
-    atendimento: "Atendimento",
-    triagem: "Triagem",
-    qualificacao: "Qualificação",
-    comercial: "Comercial",
-    boleto: "Boleto",
-    contemplacao: "Contemplação",
-    pos_venda: "Pós-venda",
-    suporte: "Suporte",
-    finalizado: "Finalizado",
-  };
-
-  return map[value] || stage || "Entrada";
+  return value || "Novos Contatos";
 }
 
 function badgeStyleForStatus(status?: string | null): React.CSSProperties {
   const value = String(status || "").toLowerCase();
 
-  if (value === "bot" || value === "novo") {
-    return { background: C.gold, color: C.navy };
-  }
-
-  if (value === "humano") {
-    return { background: C.navy, color: "white" };
-  }
-
-  if (CLOSED_STATUSES.has(value)) {
-    return { background: C.green, color: "white" };
-  }
+  if (value === "bot" || value === "novo") return { background: C.gold, color: C.navy };
+  if (value === "humano") return { background: C.navy, color: "white" };
+  if (CLOSED_STATUSES.has(value)) return { background: C.green, color: "white" };
 
   return { background: "#e2e8f0", color: C.navy };
 }
 
-function queueFromConversation(conv?: Conversation | null) {
-  if (!conv) return "novos_contatos";
-  return conv.queue || conv.stage || "novos_contatos";
+function queueColor(queue?: string | null) {
+  const found = QUEUES.find((q) => q.key === String(queue || "").toLowerCase());
+  return found?.color || C.muted;
+}
+
+function messageFallback(msg: Message) {
+  const type = String(msg.message_type || "text").toLowerCase();
+
+  if (msg.body) return msg.body;
+  if (type === "image") return "Imagem recebida";
+  if (type === "video") return "Vídeo recebido";
+  if (type === "audio" || type === "voice") return "Áudio recebido";
+  if (type === "document") return "Documento recebido";
+  if (type === "sticker") return "Figurinha recebida";
+
+  return "Mensagem sem texto";
+}
+
+function MediaIcon({ type }: { type?: string | null }) {
+  const value = String(type || "").toLowerCase();
+
+  if (value === "image") return <ImageIcon className="h-4 w-4" />;
+  if (value === "video") return <Video className="h-4 w-4" />;
+  if (value === "audio" || value === "voice") return <Mic className="h-4 w-4" />;
+  if (value === "document") return <FileText className="h-4 w-4" />;
+
+  return null;
 }
 
 function MetricCard({
@@ -260,9 +401,7 @@ function MetricCard({
 
   return (
     <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-        {label}
-      </p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
       <p className="mt-1 text-2xl font-bold" style={{ color: colorMap[tone] }}>
         {value}
       </p>
@@ -272,6 +411,9 @@ function MetricCard({
 
 export default function AtendimentoWhatsApp() {
   const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [users, setUsers] = useState<UserProfile[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
@@ -282,6 +424,7 @@ export default function AtendimentoWhatsApp() {
   const [active, setActive] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
 
   const activeRef = useRef<Conversation | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -290,9 +433,61 @@ export default function AtendimentoWhatsApp() {
     activeRef.current = active;
   }, [active]);
 
+  const manager = isManager(profile, authUserId);
+  const allowedQueues = useMemo(() => allowedQueuesFor(profile, authUserId), [profile, authUserId]);
+
+  const userNameByAuthId = useMemo(() => {
+    const map = new Map<string, string>();
+
+    users.forEach((u) => {
+      if (u.auth_user_id) map.set(u.auth_user_id, u.nome || u.email || "Usuário");
+    });
+
+    if (authUserId && profile?.nome) map.set(authUserId, profile.nome);
+
+    return map;
+  }, [authUserId, profile?.nome, users]);
+
+  const availableTabs = useMemo(() => {
+    return TABS.filter((item) => !item.managerOnly || manager);
+  }, [manager]);
+
   async function loadAuth() {
     const { data } = await supabase.auth.getUser();
-    setAuthUserId(data?.user?.id ?? null);
+    const userId = data?.user?.id ?? null;
+
+    setAuthUserId(userId);
+
+    if (!userId) return;
+
+    const { data: profileData, error } = await supabase
+      .from("users")
+      .select("id, auth_user_id, nome, email, role, user_role, scopes, is_active")
+      .eq("auth_user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Erro ao carregar usuário:", error);
+      return;
+    }
+
+    setProfile((profileData || null) as UserProfile | null);
+  }
+
+  async function loadUsers() {
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, auth_user_id, nome, email, role, user_role, scopes, is_active")
+      .eq("is_active", true)
+      .limit(500);
+
+    if (error) {
+      console.error("Erro ao carregar usuários:", error);
+      setUsers([]);
+      return;
+    }
+
+    setUsers((data || []) as UserProfile[]);
   }
 
   async function loadConversations(options?: { showLoading?: boolean; silent?: boolean }) {
@@ -316,7 +511,7 @@ export default function AtendimentoWhatsApp() {
       `
       )
       .order("last_message_at", { ascending: false, nullsFirst: false })
-      .limit(120);
+      .limit(150);
 
     if (error) {
       console.error("Erro ao carregar conversas WhatsApp:", error);
@@ -331,7 +526,8 @@ export default function AtendimentoWhatsApp() {
         const refreshedActive = next.find((c) => c.id === currentActive.id);
         if (refreshedActive) setActive(refreshedActive);
       } else if (next.length > 0) {
-        setActive(next[0]);
+        const firstVisible = next.find((c) => canViewConversation(c, profile, authUserId));
+        if (firstVisible) setActive(firstVisible);
       }
     }
 
@@ -363,8 +559,11 @@ export default function AtendimentoWhatsApp() {
   }
 
   useEffect(() => {
-    loadAuth();
-    loadConversations({ showLoading: true });
+    (async () => {
+      await loadAuth();
+      await loadUsers();
+      await loadConversations({ showLoading: true });
+    })();
   }, []);
 
   useEffect(() => {
@@ -413,59 +612,91 @@ export default function AtendimentoWhatsApp() {
       window.clearInterval(fallback);
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [authUserId, profile]);
+
+  useEffect(() => {
+    if (!availableTabs.some((item) => item.key === tab)) {
+      setTab("new");
+    }
+  }, [availableTabs, tab]);
 
   const activeContact = active?.whatsapp_contacts;
   const activePhone = onlyDigits(activeContact?.telefone || activeContact?.wa_id);
 
+  const visibleConversations = useMemo(() => {
+    return conversations.filter((conv) => canViewConversation(conv, profile, authUserId));
+  }, [authUserId, conversations, profile]);
+
   const counts = useMemo(() => {
-    const newCount = conversations.filter(isUnassigned).length;
+    const newCount = visibleConversations.filter((conv) => isUnassigned(conv)).length;
+
     const mineCount = conversations.filter(
       (conv) => conv.assigned_to === authUserId && !isClosed(conv)
     ).length;
-    const allOpenCount = conversations.filter((conv) => !isClosed(conv)).length;
-    const closedCount = conversations.filter(isClosed).length;
+
+    const queueCount = visibleConversations.filter(
+      (conv) => !isClosed(conv) && queueFromConversation(conv) !== "finalizado"
+    ).length;
+
+    const allOpenCount = manager ? conversations.filter((conv) => !isClosed(conv)).length : 0;
+
+    const closedCount = manager
+      ? conversations.filter(isClosed).length
+      : conversations.filter((conv) => conv.assigned_to === authUserId && isClosed(conv)).length;
 
     return {
       new: newCount,
       mine: mineCount,
+      queues: queueCount,
       all: allOpenCount,
       closed: closedCount,
     } satisfies Record<TabKey, number>;
-  }, [authUserId, conversations]);
+  }, [authUserId, conversations, manager, visibleConversations]);
 
   const filteredConversations = useMemo(() => {
-    if (tab === "new") return conversations.filter(isUnassigned);
-
-    if (tab === "mine") {
-      return conversations.filter(
-        (conv) => conv.assigned_to === authUserId && !isClosed(conv)
-      );
+    if (tab === "new") {
+      return visibleConversations.filter((conv) => isUnassigned(conv));
     }
 
-    if (tab === "closed") return conversations.filter(isClosed);
+    if (tab === "mine") {
+      return conversations.filter((conv) => conv.assigned_to === authUserId && !isClosed(conv));
+    }
 
-    return conversations.filter((conv) => !isClosed(conv));
-  }, [authUserId, conversations, tab]);
+    if (tab === "queues") {
+      return visibleConversations.filter((conv) => !isClosed(conv));
+    }
+
+    if (tab === "closed") {
+      if (manager) return conversations.filter(isClosed);
+      return conversations.filter((conv) => conv.assigned_to === authUserId && isClosed(conv));
+    }
+
+    if (tab === "all" && manager) {
+      return conversations.filter((conv) => !isClosed(conv));
+    }
+
+    return [];
+  }, [authUserId, conversations, manager, tab, visibleConversations]);
 
   useEffect(() => {
     if (!active) return;
 
+    const canStillView = canViewConversation(active, profile, authUserId);
     const existsInTab = filteredConversations.some((conv) => conv.id === active.id);
 
-    if (!existsInTab && filteredConversations.length > 0) {
+    if ((!canStillView || !existsInTab) && filteredConversations.length > 0) {
       setActive(filteredConversations[0]);
     }
 
-    if (!existsInTab && filteredConversations.length === 0 && tab !== "all") {
+    if ((!canStillView || !existsInTab) && filteredConversations.length === 0) {
       setActive(null);
     }
-  }, [active, filteredConversations, tab]);
+  }, [active, authUserId, filteredConversations, profile]);
 
-  async function sendMessage() {
-    const body = text.trim();
+  async function sendMessage(customBody?: string) {
+    const body = String(customBody ?? text).trim();
 
-    if (!active || !activePhone || !body) return;
+    if (!active || !activePhone || !body) return false;
 
     setSending(true);
 
@@ -488,12 +719,15 @@ export default function AtendimentoWhatsApp() {
       if (!response.ok || !result?.ok) {
         alert("Não foi possível enviar a mensagem.");
         console.error(result);
-        return;
+        return false;
       }
 
-      setText("");
+      if (!customBody) setText("");
+
       await loadMessages(active.id);
       await loadConversations({ silent: true });
+
+      return true;
     } finally {
       setSending(false);
     }
@@ -527,14 +761,20 @@ export default function AtendimentoWhatsApp() {
   async function assumirConversa() {
     if (!active || !authUserId) return;
 
+    if (!canViewConversation(active, profile, authUserId)) {
+      alert("Você não tem acesso à fila deste atendimento.");
+      return;
+    }
+
     const now = new Date().toISOString();
+    const queue = queueFromConversation(active);
 
     const ok = await updateConversationPatch({
       assigned_to: authUserId,
       assigned_at: now,
       status: "humano",
-      stage: "atendimento",
-      queue: "atendimento",
+      stage: queue === "novos_contatos" ? "triagem" : queue,
+      queue: queue === "novos_contatos" ? "triagem" : queue,
     });
 
     if (ok) {
@@ -545,8 +785,8 @@ export default function AtendimentoWhatsApp() {
               assigned_to: authUserId,
               assigned_at: now,
               status: "humano",
-              stage: "atendimento",
-              queue: "atendimento",
+              stage: queue === "novos_contatos" ? "triagem" : queue,
+              queue: queue === "novos_contatos" ? "triagem" : queue,
             }
           : prev
       );
@@ -558,6 +798,8 @@ export default function AtendimentoWhatsApp() {
   async function finalizarConversa() {
     if (!active) return;
 
+    const sent = await sendMessage(EVALUATION_MESSAGE);
+
     const ok = await updateConversationPatch({
       status: "fechada",
       stage: "finalizado",
@@ -565,7 +807,12 @@ export default function AtendimentoWhatsApp() {
       closed_at: new Date().toISOString(),
     });
 
-    if (ok) setTab("closed");
+    if (ok) {
+      if (!sent) {
+        alert("Atendimento finalizado, mas não foi possível enviar a mensagem de avaliação.");
+      }
+      setTab("closed");
+    }
   }
 
   async function reabrirConversa() {
@@ -573,8 +820,8 @@ export default function AtendimentoWhatsApp() {
 
     const ok = await updateConversationPatch({
       status: "humano",
-      stage: "atendimento",
-      queue: "atendimento",
+      stage: "triagem",
+      queue: "triagem",
       closed_at: null,
       assigned_to: active.assigned_to || authUserId,
       assigned_at: active.assigned_at || new Date().toISOString(),
@@ -586,19 +833,47 @@ export default function AtendimentoWhatsApp() {
   async function transferirFila(queue: string) {
     if (!active) return;
 
+    if (!manager && !allowedQueues.includes(queue)) {
+      alert("Você não tem acesso para mover atendimentos para esta fila.");
+      return;
+    }
+
     const ok = await updateConversationPatch({
       queue,
       stage: queue,
+      status: active.assigned_to ? "humano" : "novo",
     });
 
     if (ok) {
-      setActive((prev) => (prev ? { ...prev, queue, stage: queue } : prev));
+      setActive((prev) =>
+        prev
+          ? {
+              ...prev,
+              queue,
+              stage: queue,
+              status: prev.assigned_to ? "humano" : "novo",
+            }
+          : prev
+      );
     }
+  }
+
+  function addEmoji(emoji: string) {
+    setText((prev) => `${prev}${emoji}`);
+    setEmojiOpen(false);
   }
 
   const activeIsMine = !!active?.assigned_to && active.assigned_to === authUserId;
   const activeIsClosed = isClosed(active);
   const canSend = !!active && !activeIsClosed && !!text.trim() && !sending;
+  const canAssumeActive = !!active && !activeIsClosed && canViewConversation(active, profile, authUserId);
+  const activeQueue = queueFromConversation(active);
+  const ticketNumber = makeTicketNumber(active);
+
+  const transferQueues = useMemo(() => {
+    const list = manager ? QUEUES : QUEUES.filter((q) => allowedQueues.includes(q.key));
+    return list.filter((q) => q.key !== "finalizado" && q.key !== "novos_contatos");
+  }, [allowedQueues, manager]);
 
   return (
     <div className="min-h-screen p-4 md:p-6" style={{ background: "#f7f7f8" }}>
@@ -622,12 +897,12 @@ export default function AtendimentoWhatsApp() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[520px]">
           <MetricCard label="Novos" value={counts.new} tone="gold" />
           <MetricCard label="Meus" value={counts.mine} tone="navy" />
-          <MetricCard label="Abertos" value={counts.all} tone="red" />
+          <MetricCard label={manager ? "Abertos" : "Filas"} value={manager ? counts.all : counts.queues} tone="red" />
           <MetricCard label="Finalizados" value={counts.closed} tone="green" />
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+      <div className="grid gap-4 xl:grid-cols-[430px_1fr]">
         <Card className="overflow-hidden border-0 shadow-sm">
           <CardHeader
             className="border-b p-4"
@@ -658,7 +933,7 @@ export default function AtendimentoWhatsApp() {
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-2">
-              {TABS.map((item) => {
+              {availableTabs.map((item) => {
                 const Icon = item.icon;
                 const selected = tab === item.key;
 
@@ -681,9 +956,7 @@ export default function AtendimentoWhatsApp() {
 
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs ${
-                        selected
-                          ? "bg-slate-100 text-slate-700"
-                          : "bg-white/15 text-white"
+                        selected ? "bg-slate-100 text-slate-700" : "bg-white/15 text-white"
                       }`}
                     >
                       {counts[item.key]}
@@ -692,6 +965,13 @@ export default function AtendimentoWhatsApp() {
                 );
               })}
             </div>
+
+            {!manager && (
+              <div className="mt-3 flex items-start gap-2 rounded-2xl bg-white/10 p-3 text-xs text-white/90">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+                Você visualiza apenas conversas das suas filas ou assumidas por você.
+              </div>
+            )}
           </CardHeader>
 
           <CardContent className="p-0">
@@ -700,22 +980,22 @@ export default function AtendimentoWhatsApp() {
                 <Loader2 className="h-6 w-6 animate-spin" />
               </div>
             ) : filteredConversations.length === 0 ? (
-              <div className="flex h-[420px] flex-col items-center justify-center p-8 text-center text-slate-500">
+              <div className="flex h-[430px] flex-col items-center justify-center p-8 text-center text-slate-500">
                 <Inbox className="mb-3 h-10 w-10 text-slate-300" />
                 <p className="text-base font-semibold text-slate-700">
-                  Nenhum atendimento nesta fila.
+                  Nenhum atendimento nesta visão.
                 </p>
                 <p className="mt-1 text-sm">
-                  Quando uma conversa entrar ou mudar de status, ela aparecerá
-                  automaticamente aqui.
+                  Quando uma conversa entrar ou mudar de fila, ela aparecerá automaticamente aqui.
                 </p>
               </div>
             ) : (
-              <div className="max-h-[calc(100vh-285px)] overflow-auto">
+              <div className="max-h-[calc(100vh-305px)] overflow-auto">
                 {filteredConversations.map((conv) => {
                   const contact = conv.whatsapp_contacts;
                   const selected = active?.id === conv.id;
                   const unassigned = isUnassigned(conv);
+                  const queue = queueFromConversation(conv);
 
                   return (
                     <button
@@ -728,7 +1008,7 @@ export default function AtendimentoWhatsApp() {
                       <div className="flex items-start gap-3">
                         <div
                           className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-base font-bold text-white shadow-sm"
-                          style={{ background: unassigned ? C.red : C.navy }}
+                          style={{ background: unassigned ? C.red : queueColor(queue) }}
                         >
                           {initials(contact?.nome)}
                         </div>
@@ -750,6 +1030,12 @@ export default function AtendimentoWhatsApp() {
                             </span>
                           </div>
 
+                          <div className="mt-2 flex items-center gap-2">
+                            <Badge variant="outline" className="text-[11px]">
+                              {makeTicketNumber(conv)}
+                            </Badge>
+                          </div>
+
                           <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-slate-700">
                             {conv.last_message || "—"}
                           </p>
@@ -761,7 +1047,7 @@ export default function AtendimentoWhatsApp() {
 
                             <Badge variant="secondary" className="gap-1">
                               <Tag className="h-3 w-3" />
-                              {queueLabel(queueFromConversation(conv))}
+                              {queueLabel(queue)}
                             </Badge>
 
                             {conv.unread_count > 0 && (
@@ -792,7 +1078,7 @@ export default function AtendimentoWhatsApp() {
                   <div className="flex items-start gap-3">
                     <div
                       className="flex h-14 w-14 items-center justify-center rounded-2xl text-lg font-bold text-white shadow-sm"
-                      style={{ background: activeIsClosed ? C.green : C.red }}
+                      style={{ background: activeIsClosed ? C.green : queueColor(activeQueue) }}
                     >
                       {initials(activeContact?.nome)}
                     </div>
@@ -807,6 +1093,8 @@ export default function AtendimentoWhatsApp() {
                       </p>
 
                       <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">{ticketNumber}</Badge>
+
                         <Badge className="gap-1" style={badgeStyleForStatus(active.status)}>
                           {active.status === "bot" ? (
                             <Bot className="h-3.5 w-3.5" />
@@ -818,7 +1106,7 @@ export default function AtendimentoWhatsApp() {
 
                         <Badge variant="secondary" className="gap-1">
                           <Tag className="h-3.5 w-3.5" />
-                          Fila: {queueLabel(queueFromConversation(active))}
+                          Fila: {queueLabel(activeQueue)}
                         </Badge>
 
                         {active.assigned_to ? (
@@ -829,7 +1117,7 @@ export default function AtendimentoWhatsApp() {
                         ) : (
                           <Badge variant="outline" className="gap-1 border-amber-300 text-amber-700">
                             <Clock className="h-3.5 w-3.5" />
-                            Novo contato
+                            Novo nesta fila
                           </Badge>
                         )}
                       </div>
@@ -840,7 +1128,7 @@ export default function AtendimentoWhatsApp() {
                     {!activeIsClosed && !active.assigned_to && (
                       <Button
                         onClick={assumirConversa}
-                        disabled={updatingConversation}
+                        disabled={updatingConversation || !canAssumeActive}
                         style={{ background: C.red }}
                         className="gap-2 text-white hover:opacity-95"
                       >
@@ -853,7 +1141,7 @@ export default function AtendimentoWhatsApp() {
                       </Button>
                     )}
 
-                    {!activeIsClosed && active.assigned_to && !activeIsMine && (
+                    {!activeIsClosed && active.assigned_to && !activeIsMine && manager && (
                       <Button
                         variant="outline"
                         onClick={assumirConversa}
@@ -869,7 +1157,7 @@ export default function AtendimentoWhatsApp() {
                       <Button
                         variant="outline"
                         onClick={finalizarConversa}
-                        disabled={updatingConversation}
+                        disabled={updatingConversation || sending}
                         className="gap-2"
                       >
                         <CheckCircle2 className="h-4 w-4" />
@@ -897,31 +1185,24 @@ export default function AtendimentoWhatsApp() {
                       Mover para:
                     </span>
 
-                    {[
-                      ["triagem", "Triagem"],
-                      ["comercial", "Comercial"],
-                      ["boleto", "Boleto"],
-                      ["contemplacao", "Contemplação"],
-                      ["pos_venda", "Pós-venda"],
-                      ["suporte", "Suporte"],
-                    ].map(([value, label]) => (
+                    {transferQueues.map((queue) => (
                       <Button
-                        key={value}
+                        key={queue.key}
                         type="button"
                         size="sm"
-                        variant={queueFromConversation(active) === value ? "default" : "outline"}
-                        onClick={() => transferirFila(value)}
+                        variant={activeQueue === queue.key ? "default" : "outline"}
+                        onClick={() => transferirFila(queue.key)}
                         disabled={updatingConversation}
-                        style={queueFromConversation(active) === value ? { background: C.navy } : undefined}
+                        style={activeQueue === queue.key ? { background: queue.color } : undefined}
                       >
-                        {label}
+                        {queue.label}
                       </Button>
                     ))}
                   </div>
                 )}
               </CardHeader>
 
-              <CardContent className="flex h-[calc(100vh-315px)] min-h-[520px] flex-col p-0">
+              <CardContent className="flex h-[calc(100vh-335px)] min-h-[520px] flex-col p-0">
                 <div className="flex-1 space-y-4 overflow-auto bg-slate-50 p-5">
                   {messages.length === 0 ? (
                     <div className="flex h-full items-center justify-center text-base text-slate-500">
@@ -931,6 +1212,12 @@ export default function AtendimentoWhatsApp() {
                     messages.map((msg) => {
                       const outbound = msg.direction === "outbound";
                       const isBot = msg.sender_type === "bot";
+                      const signature =
+                        outbound && msg.user_id
+                          ? userNameByAuthId.get(msg.user_id) || "Usuário"
+                          : outbound && isBot
+                            ? "Max"
+                            : null;
 
                       return (
                         <div
@@ -948,15 +1235,17 @@ export default function AtendimentoWhatsApp() {
                               color: outbound && isBot ? C.navy : undefined,
                             }}
                           >
-                            <p className="whitespace-pre-wrap">
-                              {msg.body || "Mensagem sem texto"}
-                            </p>
+                            <div className="flex items-start gap-2">
+                              <MediaIcon type={msg.message_type} />
+                              <p className="whitespace-pre-wrap">{messageFallback(msg)}</p>
+                            </div>
 
                             <p
                               className={`mt-2 text-[11px] ${
                                 outbound ? "text-white/70" : "text-slate-400"
                               }`}
                             >
+                              {signature ? `${signature} • ` : ""}
                               {fmtTime(msg.created_at)}
                             </p>
                           </div>
@@ -974,32 +1263,63 @@ export default function AtendimentoWhatsApp() {
                       Este atendimento foi finalizado. Reabra a conversa para responder novamente.
                     </div>
                   ) : (
-                    <div className="flex gap-3">
-                      <Textarea
-                        value={text}
-                        onChange={(e) => setText(e.target.value)}
-                        placeholder="Digite sua mensagem... Use Enter para enviar e Shift + Enter para quebrar linha."
-                        className="min-h-[72px] resize-none text-base leading-relaxed"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            sendMessage();
-                          }
-                        }}
-                      />
+                    <div className="space-y-3">
+                      {emojiOpen && (
+                        <div className="flex flex-wrap gap-2 rounded-2xl border bg-slate-50 p-3">
+                          {QUICK_EMOJIS.map((emoji) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => addEmoji(emoji)}
+                              className="rounded-xl bg-white px-3 py-2 text-xl shadow-sm transition hover:scale-105"
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      )}
 
-                      <Button
-                        onClick={sendMessage}
-                        disabled={!canSend}
-                        className="min-w-[64px] px-4"
-                        style={{ background: C.red }}
-                      >
-                        {sending ? (
-                          <Loader2 className="h-5 w-5 animate-spin" />
-                        ) : (
-                          <Send className="h-5 w-5" />
-                        )}
-                      </Button>
+                      <div className="flex gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setEmojiOpen((prev) => !prev)}
+                          className="h-auto min-w-[52px]"
+                          title="Enviar emoji"
+                        >
+                          <Smile className="h-5 w-5" />
+                        </Button>
+
+                        <Textarea
+                          value={text}
+                          onChange={(e) => setText(e.target.value)}
+                          placeholder="Digite sua mensagem... Use Enter para enviar e Shift + Enter para quebrar linha."
+                          className="min-h-[72px] resize-none text-base leading-relaxed"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              sendMessage();
+                            }
+                          }}
+                        />
+
+                        <Button
+                          onClick={() => sendMessage()}
+                          disabled={!canSend}
+                          className="min-w-[64px] px-4"
+                          style={{ background: C.red }}
+                        >
+                          {sending ? (
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                          ) : (
+                            <Send className="h-5 w-5" />
+                          )}
+                        </Button>
+                      </div>
+
+                      <p className="text-xs text-slate-400">
+                        Assinatura automática: as mensagens enviadas pelo CRM exibem o nome do usuário responsável.
+                      </p>
                     </div>
                   )}
                 </div>

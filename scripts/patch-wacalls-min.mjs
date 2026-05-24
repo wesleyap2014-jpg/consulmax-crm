@@ -23,6 +23,8 @@ async function handleWACallEvent(payload: any, value: any, item: any) {
 }
 `;
 if(!s.includes('handleWACallEvent')) s=s.replace(marker, add+'\n'+marker);
-s=s.replace("      const messages = value?.messages || [];", "      const callItems = value?.calls || value?.call_events || [];\n      if (Array.isArray(callItems) && callItems.length > 0) {\n        for (const item of callItems) await handleWACallEvent(payload, value, item);\n      }\n\n      const messages = value?.messages || [];");
+const rawLog="      console.log('WHATSAPP_WEBHOOK_RAW_CHANGE', { field: change?.field, valueKeys: Object.keys(value || {}), hasCalls: Array.isArray(value?.calls), callsLength: Array.isArray(value?.calls) ? value.calls.length : 0, hasCallEvents: Array.isArray(value?.call_events), callEventsLength: Array.isArray(value?.call_events) ? value.call_events.length : 0 });\n\n";
+if(!s.includes('WHATSAPP_WEBHOOK_RAW_CHANGE')) s=s.replace("      if (Array.isArray(value?.statuses) && value.statuses.length > 0) {", rawLog+"      if (Array.isArray(value?.statuses) && value.statuses.length > 0) {");
+if(!s.includes('callItems = value?.calls')) s=s.replace("      const messages = value?.messages || [];", "      const callItems = value?.calls || value?.call_events || [];\n      if (Array.isArray(callItems) && callItems.length > 0) {\n        for (const item of callItems) await handleWACallEvent(payload, value, item);\n      }\n\n      const messages = value?.messages || [];");
 fs.writeFileSync(p,s);
-console.log('[patch-wacalls-min] ok');
+console.log('[patch-wacalls-min] ok with raw logs');

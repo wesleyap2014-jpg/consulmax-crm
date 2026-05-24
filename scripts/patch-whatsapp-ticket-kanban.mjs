@@ -44,6 +44,18 @@ if (!s.includes('const [boardQueue, setBoardQueue]')) {
   );
 }
 
+if (!s.includes('const effectiveQueues = useMemo')) {
+  replaceOnce(
+    '  const allowedQueues = useMemo(() => allowedQueuesFor(profile, authUserId), [profile, authUserId]);',
+    join([
+      '  const allowedQueues = useMemo(() => allowedQueuesFor(profile, authUserId), [profile, authUserId]);',
+      '  const effectiveQueues = useMemo(() => {',
+      '    return QUEUES.filter((q) => manager || allowedQueues.includes(q.key));',
+      '  }, [allowedQueues, manager]);',
+    ])
+  );
+}
+
 if (!s.includes('async function updateTicketStage')) {
   replaceOnce(
     join([
@@ -153,7 +165,6 @@ if (!s.includes('Central de Tickets em Kanban') && s.includes(gridAnchor)) {
     '            </div>',
     '            <div className="flex flex-wrap gap-2">',
     '              <Button variant="outline" onClick={() => setStartTicketOpen((v) => !v)} className="h-9 border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white">+ Iniciar conversa</Button>',
-    '              {manager && <Button variant="outline" onClick={() => setQueueSettingsOpen((v) => !v)} className="h-9 border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white">Configurar filas</Button>}',
     '            </div>',
     '          </div>',
     '        </CardHeader>',

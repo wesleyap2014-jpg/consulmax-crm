@@ -30,6 +30,14 @@ function patchFrontend() {
     setCallStatus("ended");
   }
 
+  function humanCallError(value: any) {
+    const raw = String(value || "");
+    if (raw.toLowerCase().includes("calling api not enabled")) {
+      return "A Calling API ainda não está habilitada para este app/número na Meta. O CRM já está pronto para chamar; falta a Meta liberar esse recurso na conta.";
+    }
+    return raw || "Erro ao iniciar chamada.";
+  }
+
   async function callSoon() {
     if (!active || !activePhone) return;
     setCallPanelOpen(true);
@@ -56,7 +64,7 @@ function patchFrontend() {
       const result = await response.json();
       if (!response.ok || !result?.ok) {
         const msg = result?.error?.error?.message || result?.error?.message || result?.error || "A Meta não aceitou a chamada.";
-        throw new Error(String(msg));
+        throw new Error(humanCallError(msg));
       }
       const answer = result?.answer_sdp || result?.data?.session?.sdp || null;
       if (answer) {
@@ -69,7 +77,7 @@ function patchFrontend() {
       await loadConversations({ silent: true });
     } catch (error: any) {
       console.error("WHATSAPP_CALL_FRONT_ERROR", error);
-      setCallError(error?.message || "Erro ao iniciar chamada.");
+      setCallError(humanCallError(error?.message));
       setCallStatus("error");
       try { callStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
     }

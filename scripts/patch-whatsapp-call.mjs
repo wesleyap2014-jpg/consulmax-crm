@@ -5,7 +5,7 @@ function replaceBetween(text, start, end, replacement) {
   if (a < 0) return text;
   const b = text.indexOf(end, a);
   if (b < 0) return text;
-  return text.slice(0, a) + replacement + text.slice(b);
+  return text.slice(0, a) + replacement + text.slice(b + end.length);
 }
 
 function patchFrontend() {
@@ -78,6 +78,7 @@ function patchFrontend() {
   const activeIsMine =`;
   s = replaceBetween(s, "  function callSoon() {", "  const activeIsMine =", newCall);
   s = replaceBetween(s, "  async function callSoon() {", "  const activeIsMine =", newCall);
+  s = s.replace(/const activeIsMine =\s*const activeIsMine =\s*/g, "const activeIsMine = ");
 
   const panelAt = `                      {emojiOpen && (`;
   const panel = `                      {callPanelOpen && (

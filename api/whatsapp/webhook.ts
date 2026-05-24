@@ -571,7 +571,7 @@ async function handleSingleCallEvent(payload: any, value: any, call: any) {
   const now = new Date().toISOString();
   const phoneNumberId = value?.metadata?.phone_number_id || null;
   const displayPhoneNumber = value?.metadata?.display_phone_number || null;
-  const accountId = await upsertAccount(phoneNumberId, displayPhoneNumber);
+  await upsertAccount(phoneNumberId, displayPhoneNumber);
 
   const waId = extractCallPhone(value, call);
   const metaCallId = extractCallId(call);
@@ -586,128 +586,18 @@ async function handleSingleCallEvent(payload: any, value: any, call: any) {
     keys: Object.keys(call || {}),
   });
 
-  if (!waId && !metaCallId) {
-    console.warn("WHATSAPP_CALL_EVENT_WITHOUT_IDENTIFIERS", call);
-    return;
-  }
-
-  let contactId: string | null = null;
-  let conversationId: string | null = null;
-
-  if (waId) {
-    const contactFromContacts = value?.contacts?.find((c: any) => onlyDigits(c?.wa_id) === waId) || value?.contacts?.[0];
-    const nome = contactFromContacts?.profile?.name || null;
-
-    const { data: contact, error: contactError } = await supabaseAdmin
-      .from("whatsapp_contacts")
-      .upsert(
-        {
-          wa_id: waId,
-          telefone: waId,
-          nome,
-          updated_at: now,
-        },
-        { onConflict: "wa_id" }
-      )
-      .select("id, lead_id")
-      .single();
-
-    if (contactError || !contact?.id) {
-      console.error("WHATSAPP_CALL_CONTACT_UPSERT_ERROR", contactError);
-    } else {
-      contactId = contact.id;
-      const activeConversation = await findActiveConversation(contact.id);
-
-      if (activeConversation?.id) {
-        conversationId = activeConversation.id;
-      } else {
-        const body = callHistoryText(status, direction);
-        const { data: createdConversation, error: createConversationError } = await supabaseAdmin
-          .from("whatsapp_conversations")
-          .insert({
-            account_id: accountId,
-            contact_id: contact.id,
-            lead_id: contact.lead_id,
-            status: "humano",
-            stage: "triagem",
-            queue: "triagem",
-            last_message: body,
-            last_message_at: now,
-            unread_count: direction === "inbound" ? 1 : 0,
-          })
-          .select("id")
-          .single();
-
-        if (createConversationError || !createdConversation?.id) {
-          console.error("WHATSAPP_CALL_CONVERSATION_CREATE_ERROR", createConversationError);
-        } else {
-          conversationId = createdConversation.id;
-        }
-      }
-    }
-  }
-
-  const callRow = {
-    conversation_id: conversationId,
-    contact_id: contactId,
+  const payloadToStore = {
     phone: waId || null,
     wa_id: waId || null,
     direction,
-    provider: "meta_whatsapp_calling_api",
     status,
-    meta_call_id: metaCallId,
-    raw_payload: { payload, value, call },
-    updated_at: now,
-    ...(status.includes("connect") || status.includes("accept") || status.includes("active") ? { accepted_at: now } : {}),
-    ...(status.includes("terminate") || status.includes("end") || status.includes("complete") ? { ended_at: now } : {}),
+    raw_payload: { payload, value, call, meta_call_id: metaCallId, provider: "meta_whatsapp_calling_api" },
   };
 
-  if (metaCallId) {
-    const { data: existingCall, error: findCallError } = await supabaseAdmin
-      .from("whatsapp_calls")
-      .select("id")
-      .eq("meta_call_id", metaCallId)
-      .maybeSingle();
+  const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert(payloadToStore);
 
-    if (findCallError) {
-      console.error("WHATSAPP_CALL_FIND_ERROR", findCallError);
-    }
-
-    if (existingCall?.id) {
-      const { error: updateCallError } = await supabaseAdmin.from("whatsapp_calls").update(callRow).eq("id", existingCall.id);
-      if (updateCallError) console.error("WHATSAPP_CALL_UPDATE_ERROR", updateCallError);
-    } else {
-      const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert({ ...callRow, started_at: now });
-      if (insertCallError) console.error("WHATSAPP_CALL_INSERT_ERROR", insertCallError);
-    }
-  } else {
-    const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert({ ...callRow, started_at: now });
-    if (insertCallError) console.error("WHATSAPP_CALL_INSERT_NO_ID_ERROR", insertCallError);
-  }
-
-  if (conversationId) {
-    const body = callHistoryText(status, direction);
-    const eventKey = metaCallId ? `call_${metaCallId}_${status}_${Date.now()}` : null;
-
-    await supabaseAdmin.from("whatsapp_messages").insert({
-      conversation_id: conversationId,
-      direction: direction === "inbound" ? "inbound" : "outbound",
-      sender_type: direction === "inbound" ? "cliente" : "usuario",
-      message_type: "call_event",
-      body,
-      meta_message_id: eventKey,
-      raw_payload: { payload, value, call },
-    });
-
-    await supabaseAdmin
-      .from("whatsapp_conversations")
-      .update({
-        last_message: body,
-        last_message_at: now,
-        updated_at: now,
-        ...(direction === "inbound" ? { unread_count: 1 } : {}),
-      })
-      .eq("id", conversationId);
+  if (insertCallError) {
+    console.error("WHATSAPP_CALL_INSERT_ERROR", insertCallError);
   }
 }
 

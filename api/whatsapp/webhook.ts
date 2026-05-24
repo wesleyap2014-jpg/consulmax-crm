@@ -107,6 +107,50 @@ function isRecentClosedConversation(value?: string | null) {
   return days <= 7;
 }
 
+function extractCallId(call: any) {
+  return call?.id || call?.call_id || call?.meta_call_id || call?.call?.id || null;
+}
+
+function extractCallStatus(call: any) {
+  return String(call?.event || call?.status || call?.type || call?.state || "received").toLowerCase();
+}
+
+function extractCallPhone(value: any, call: any) {
+  return onlyDigits(
+    call?.from ||
+      call?.to ||
+      call?.caller ||
+      call?.callee ||
+      call?.customer?.wa_id ||
+      call?.contact?.wa_id ||
+      value?.contacts?.[0]?.wa_id ||
+      value?.contacts?.[0]?.input ||
+      ""
+  );
+}
+
+function callHistoryText(status: string, direction: string) {
+  const normalized = String(status || "").toLowerCase();
+
+  if (normalized.includes("connect") || normalized.includes("accept") || normalized.includes("active")) {
+    return "Chamada conectada pelo WhatsApp";
+  }
+
+  if (normalized.includes("reject") || normalized.includes("decline")) {
+    return "Chamada recusada pelo WhatsApp";
+  }
+
+  if (normalized.includes("terminate") || normalized.includes("end") || normalized.includes("complete")) {
+    return "Chamada encerrada pelo WhatsApp";
+  }
+
+  if (normalized.includes("miss")) {
+    return "Chamada perdida pelo WhatsApp";
+  }
+
+  return direction === "inbound" ? "Chamada recebida pelo WhatsApp" : "Chamada iniciada pelo WhatsApp";
+}
+
 async function ensureMediaBucket() {
   try {
     const { error } = await supabaseAdmin.storage.createBucket(MEDIA_BUCKET, {
@@ -523,6 +567,150 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
   }
 }
 
+async function handleSingleCallEvent(payload: any, value: any, call: any) {
+  const now = new Date().toISOString();
+  const phoneNumberId = value?.metadata?.phone_number_id || null;
+  const displayPhoneNumber = value?.metadata?.display_phone_number || null;
+  const accountId = await upsertAccount(phoneNumberId, displayPhoneNumber);
+
+  const waId = extractCallPhone(value, call);
+  const metaCallId = extractCallId(call);
+  const status = extractCallStatus(call);
+  const direction = call?.from || call?.caller || call?.customer ? "inbound" : "outbound";
+
+  console.log("WHATSAPP_CALL_EVENT", {
+    waId,
+    metaCallId,
+    status,
+    direction,
+    keys: Object.keys(call || {}),
+  });
+
+  if (!waId && !metaCallId) {
+    console.warn("WHATSAPP_CALL_EVENT_WITHOUT_IDENTIFIERS", call);
+    return;
+  }
+
+  let contactId: string | null = null;
+  let conversationId: string | null = null;
+
+  if (waId) {
+    const contactFromContacts = value?.contacts?.find((c: any) => onlyDigits(c?.wa_id) === waId) || value?.contacts?.[0];
+    const nome = contactFromContacts?.profile?.name || null;
+
+    const { data: contact, error: contactError } = await supabaseAdmin
+      .from("whatsapp_contacts")
+      .upsert(
+        {
+          wa_id: waId,
+          telefone: waId,
+          nome,
+          updated_at: now,
+        },
+        { onConflict: "wa_id" }
+      )
+      .select("id, lead_id")
+      .single();
+
+    if (contactError || !contact?.id) {
+      console.error("WHATSAPP_CALL_CONTACT_UPSERT_ERROR", contactError);
+    } else {
+      contactId = contact.id;
+      const activeConversation = await findActiveConversation(contact.id);
+
+      if (activeConversation?.id) {
+        conversationId = activeConversation.id;
+      } else {
+        const body = callHistoryText(status, direction);
+        const { data: createdConversation, error: createConversationError } = await supabaseAdmin
+          .from("whatsapp_conversations")
+          .insert({
+            account_id: accountId,
+            contact_id: contact.id,
+            lead_id: contact.lead_id,
+            status: "humano",
+            stage: "triagem",
+            queue: "triagem",
+            last_message: body,
+            last_message_at: now,
+            unread_count: direction === "inbound" ? 1 : 0,
+          })
+          .select("id")
+          .single();
+
+        if (createConversationError || !createdConversation?.id) {
+          console.error("WHATSAPP_CALL_CONVERSATION_CREATE_ERROR", createConversationError);
+        } else {
+          conversationId = createdConversation.id;
+        }
+      }
+    }
+  }
+
+  const callRow = {
+    conversation_id: conversationId,
+    contact_id: contactId,
+    phone: waId || null,
+    wa_id: waId || null,
+    direction,
+    provider: "meta_whatsapp_calling_api",
+    status,
+    meta_call_id: metaCallId,
+    raw_payload: { payload, value, call },
+    updated_at: now,
+    ...(status.includes("connect") || status.includes("accept") || status.includes("active") ? { accepted_at: now } : {}),
+    ...(status.includes("terminate") || status.includes("end") || status.includes("complete") ? { ended_at: now } : {}),
+  };
+
+  if (metaCallId) {
+    const { data: existingCall, error: findCallError } = await supabaseAdmin
+      .from("whatsapp_calls")
+      .select("id")
+      .eq("meta_call_id", metaCallId)
+      .maybeSingle();
+
+    if (findCallError) {
+      console.error("WHATSAPP_CALL_FIND_ERROR", findCallError);
+    }
+
+    if (existingCall?.id) {
+      const { error: updateCallError } = await supabaseAdmin.from("whatsapp_calls").update(callRow).eq("id", existingCall.id);
+      if (updateCallError) console.error("WHATSAPP_CALL_UPDATE_ERROR", updateCallError);
+    } else {
+      const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert({ ...callRow, started_at: now });
+      if (insertCallError) console.error("WHATSAPP_CALL_INSERT_ERROR", insertCallError);
+    }
+  } else {
+    const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert({ ...callRow, started_at: now });
+    if (insertCallError) console.error("WHATSAPP_CALL_INSERT_NO_ID_ERROR", insertCallError);
+  }
+
+  if (conversationId) {
+    const body = callHistoryText(status, direction);
+    const eventKey = metaCallId ? `call_${metaCallId}_${status}_${Date.now()}` : null;
+
+    await supabaseAdmin.from("whatsapp_messages").insert({
+      conversation_id: conversationId,
+      direction: direction === "inbound" ? "inbound" : "outbound",
+      sender_type: direction === "inbound" ? "cliente" : "usuario",
+      message_type: "call_event",
+      body,
+      meta_message_id: eventKey,
+      raw_payload: { payload, value, call },
+    });
+
+    await supabaseAdmin
+      .from("whatsapp_conversations")
+      .update({
+        last_message: body,
+        last_message_at: now,
+        updated_at: now,
+        ...(direction === "inbound" ? { unread_count: 1 } : {}),
+      })
+      .eq("id", conversationId);
+  }
+}
+
 async function handleInboundWebhook(payload: any) {
   const entries = payload?.entry || [];
 
@@ -532,8 +720,25 @@ async function handleInboundWebhook(payload: any) {
     for (const change of changes) {
       const value = change?.value || {};
 
+      console.log("WHATSAPP_WEBHOOK_RAW_CHANGE", {
+        field: change?.field,
+        valueKeys: Object.keys(value || {}),
+        hasCalls: Array.isArray(value?.calls),
+        callsLength: Array.isArray(value?.calls) ? value.calls.length : 0,
+        hasStatuses: Array.isArray(value?.statuses),
+        hasMessages: Array.isArray(value?.messages),
+      });
+
       if (Array.isArray(value?.statuses) && value.statuses.length > 0) {
         console.log("WHATSAPP_STATUS_EVENT", value.statuses);
+      }
+
+      const calls = value?.calls || value?.call_events || [];
+
+      if (Array.isArray(calls) && calls.length > 0) {
+        for (const call of calls) {
+          await handleSingleCallEvent(payload, value, call);
+        }
       }
 
       const messages = value?.messages || [];
@@ -542,6 +747,8 @@ async function handleInboundWebhook(payload: any) {
         console.log("WHATSAPP_WEBHOOK_WITHOUT_MESSAGES", {
           field: change?.field,
           hasStatuses: Array.isArray(value?.statuses),
+          hasCalls: Array.isArray(value?.calls),
+          callsLength: Array.isArray(value?.calls) ? value.calls.length : 0,
           keys: Object.keys(value || {}),
         });
         continue;

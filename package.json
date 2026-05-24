@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/patch-whatsapp-recorder.mjs && node scripts/fix-lamejs-import.mjs && node scripts/patch-whatsapp-call.mjs && node scripts/patch-wacalls-min.mjs && vite build",
+    "build": "node scripts/patch-whatsapp-recorder.mjs && node scripts/fix-lamejs-import.mjs && node scripts/patch-whatsapp-call.mjs && node scripts/patch-wacalls-min.mjs && node scripts/patch-whatsapp-kanban.mjs && vite build",
     "preview": "vite preview",
     "start": "vite preview --host --port 4173",
     "clean": "rimraf dist",

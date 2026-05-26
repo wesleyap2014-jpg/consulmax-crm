@@ -12,7 +12,26 @@ rep(
   const [contactBookSearch, setContactBookSearch] = useState("");
   const [contactBookResults, setContactBookResults] = useState<any[]>([]);
   const [selectedContactBookId, setSelectedContactBookId] = useState<string | null>(null);
-  const [searchingContactBook, setSearchingContactBook] = useState(false);`
+  const [searchingContactBook, setSearchingContactBook] = useState(false);
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [savingCampaign, setSavingCampaign] = useState(false);
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignMessage, setCampaignMessage] = useState("");
+  const [campaignScheduledAt, setCampaignScheduledAt] = useState("");`
+);
+
+rep(
+  '  const [searchingContactBook, setSearchingContactBook] = useState(false);',
+  `  const [searchingContactBook, setSearchingContactBook] = useState(false);
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [savingCampaign, setSavingCampaign] = useState(false);
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignMessage, setCampaignMessage] = useState("");
+  const [campaignScheduledAt, setCampaignScheduledAt] = useState("");`
 );
 
 before(
@@ -63,6 +82,64 @@ before(
     setStartTicketName("");
     setStartTicketPhone("");
   }
+
+  async function loadCampaigns() {
+    setLoadingCampaigns(true);
+    const { data, error } = await supabase
+      .from("whatsapp_campaigns")
+      .select("id,name,status,campaign_type,audience_source,message_body,scheduled_at,started_at,finished_at,created_at")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) {
+      console.warn("Erro ao carregar campanhas WhatsApp:", error);
+      setCampaigns([]);
+    } else {
+      setCampaigns(data || []);
+    }
+    setLoadingCampaigns(false);
+  }
+
+  function campaignStatusLabel(status?: string | null) {
+    const value = String(status || "draft").toLowerCase();
+    const map: Record<string, string> = {
+      draft: "Rascunho",
+      scheduled: "Agendada",
+      running: "Enviando",
+      finished: "Finalizada",
+      paused: "Pausada",
+      cancelled: "Cancelada",
+    };
+    return map[value] || value;
+  }
+
+  async function createCampaignDraft() {
+    const name = campaignName.trim();
+    const body = campaignMessage.trim();
+    if (!name) return alert("Informe o nome da campanha.");
+    if (!body) return alert("Escreva a mensagem da campanha.");
+    setSavingCampaign(true);
+    const status = campaignScheduledAt ? "scheduled" : "draft";
+    const { error } = await supabase.from("whatsapp_campaigns").insert({
+      name,
+      campaign_type: "free_text",
+      status,
+      audience_source: "contact_book",
+      message_body: body,
+      scheduled_at: campaignScheduledAt ? new Date(campaignScheduledAt).toISOString() : null,
+      created_by: authUserId,
+      updated_at: new Date().toISOString(),
+    });
+    setSavingCampaign(false);
+    if (error) {
+      console.error("Erro ao criar campanha:", error);
+      return alert("Não foi possível salvar a campanha. Verifique RLS/permissões da tabela whatsapp_campaigns.");
+    }
+    setCampaignName("");
+    setCampaignMessage("");
+    setCampaignScheduledAt("");
+    await loadCampaigns();
+    alert(status === "scheduled" ? "Campanha agendada. O disparo será ligado na próxima etapa." : "Campanha salva como rascunho.");
+  }
 `,
   'async function searchContactBook'
 );
@@ -74,8 +151,12 @@ before(
     const handle = window.setTimeout(() => searchContactBook(contactBookSearch), 250);
     return () => window.clearTimeout(handle);
   }, [contactBookSearch, startTicketOpen]);
+
+  useEffect(() => {
+    if (campaignOpen) loadCampaigns();
+  }, [campaignOpen]);
 `,
-  'searchContactBook(contactBookSearch)'
+  'loadCampaigns();\n  }, [campaignOpen]'
 );
 
 before(
@@ -130,6 +211,78 @@ rep(
                 <input value={startTicketPhone} onChange={(e) => setStartTicketPhone(e.target.value)} placeholder="Telefone com DDD" className="rounded-xl border px-3 py-3 text-sm" />
               </div>
             </div>`
+);
+
+// Botão de campanhas no topo.
+if (!s.includes('onClick={() => setCampaignOpen(true)}')) {
+  s = s.replace(
+    '<Button variant="outline" onClick={() => setStartTicketOpen((v) => !v)} className="h-9 border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white">+ Iniciar conversa</Button>',
+    '<Button variant="outline" onClick={() => setCampaignOpen(true)} className="h-9 border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white">Campanhas</Button><Button variant="outline" onClick={() => setStartTicketOpen((v) => !v)} className="h-9 border-white/25 bg-white/10 text-white hover:bg-white/20 hover:text-white">+ Iniciar conversa</Button>'
+  );
+}
+
+// Overlay de campanhas.
+before(
+  '      <Card className="mb-4 overflow-hidden border-0 shadow-sm">',
+  `      {campaignOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-6xl overflow-auto rounded-3xl bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Central WhatsApp</p>
+                <h2 className="text-2xl font-black" style={{ color: C.navy }}>Campanhas WhatsApp</h2>
+                <p className="text-sm text-slate-500">Crie rascunhos e agendamentos com opt-out obrigatório. O disparo automático será ativado na próxima etapa.</p>
+              </div>
+              <Button variant="ghost" onClick={() => setCampaignOpen(false)} className="text-xl">×</Button>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-[420px_1fr]">
+              <div className="space-y-3 rounded-3xl bg-slate-50 p-4">
+                <label className="text-sm font-bold text-slate-700">Nome da campanha</label>
+                <input value={campaignName} onChange={(e) => setCampaignName(e.target.value)} placeholder="Ex.: Reativação de leads" className="w-full rounded-xl border px-3 py-3 text-sm" />
+                <label className="text-sm font-bold text-slate-700">Data e hora de envio</label>
+                <input type="datetime-local" value={campaignScheduledAt} onChange={(e) => setCampaignScheduledAt(e.target.value)} className="w-full rounded-xl border px-3 py-3 text-sm" />
+                <label className="text-sm font-bold text-slate-700">Mensagem</label>
+                <textarea value={campaignMessage} onChange={(e) => setCampaignMessage(e.target.value)} placeholder="Use {{nome}} ou {{primeiro_nome}}. Ex.: Olá {{primeiro_nome}}, tudo bem?" className="min-h-[160px] w-full rounded-xl border px-3 py-3 text-sm" />
+                <div className="rounded-2xl border border-amber-100 bg-amber-50 p-3 text-xs text-amber-800">
+                  O CRM incluirá controle de descadastro. Recomendo terminar campanhas com: Para não receber mais mensagens, responda SAIR.
+                </div>
+                <Button onClick={createCampaignDraft} disabled={savingCampaign} className="w-full text-white" style={{ background: C.red }}>{savingCampaign ? "Salvando..." : "Salvar campanha"}</Button>
+              </div>
+              <div className="rounded-3xl border p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">Campanhas recentes</p>
+                    <p className="text-xs text-slate-500">Base: agenda WhatsApp, excluindo contatos descadastrados.</p>
+                  </div>
+                  <Button variant="outline" onClick={loadCampaigns} disabled={loadingCampaigns}>Atualizar</Button>
+                </div>
+                <div className="max-h-[520px] space-y-2 overflow-auto">
+                  {loadingCampaigns && <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">Carregando campanhas...</div>}
+                  {!loadingCampaigns && campaigns.length === 0 && <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">Nenhuma campanha criada ainda.</div>}
+                  {campaigns.map((campaign) => (
+                    <div key={campaign.id} className="rounded-2xl border bg-white p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-slate-800">{campaign.name}</p>
+                          <p className="mt-1 line-clamp-2 text-xs text-slate-500">{campaign.message_body || "Sem mensagem"}</p>
+                        </div>
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">{campaignStatusLabel(campaign.status)}</span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-400">
+                        <span>Tipo: {campaign.campaign_type || "free_text"}</span>
+                        <span>• Público: {campaign.audience_source || "contact_book"}</span>
+                        {campaign.scheduled_at && <span>• Agendada: {fmtTime(campaign.scheduled_at)}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+`,
+  'Campanhas WhatsApp'
 );
 
 fs.writeFileSync(file, s);

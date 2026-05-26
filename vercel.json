@@ -4,7 +4,7 @@
   "outputDirectory": "dist",
   "crons": [
     {
-      "path": "/api/whatsapp/campaign-runner",
+      "path": "/api/whatsapp/send",
       "schedule": "*/5 * * * *"
     }
   ],

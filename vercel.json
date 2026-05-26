@@ -2,6 +2,12 @@
   "framework": "vite",
   "buildCommand": "npm install && npm run build",
   "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/whatsapp/campaign-runner",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/((?!.*\\.).*)",

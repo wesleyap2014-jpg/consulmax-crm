@@ -143,7 +143,7 @@ before('  async function startConversationFromCrm() {', `  async function search
     if (campaignFileBase64 && campaignFileName) {
       const base64 = campaignFileBase64.includes(",") ? campaignFileBase64.split(",").pop() || "" : campaignFileBase64;
       const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-      attachmentPath = `campaigns/${Date.now()}-${campaignFileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      attachmentPath = "campaigns/" + Date.now() + "-" + campaignFileName.replace(/[^a-zA-Z0-9._-]/g, "_");
       const saved = await supabase.storage.from("whatsapp-media").upload(attachmentPath, bytes, { contentType: campaignFileMimeType || "application/octet-stream", upsert: true });
       if (saved.error) { setSavingCampaign(false); return alert("Não foi possível salvar o anexo."); }
     }
@@ -204,7 +204,7 @@ before('  async function startConversationFromCrm() {', `  async function search
       await new Promise((resolve) => setTimeout(resolve, 450));
     }
     await supabase.from("whatsapp_campaigns").update({ status: "finished", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", campaign.id);
-    setSendingCampaignId(null); await loadCampaigns(); alert(`Envio concluído. Enviadas: ${sent}. Falhas: ${failed}.`);
+    setSendingCampaignId(null); await loadCampaigns(); alert("Envio concluído. Enviadas: " + sent + ". Falhas: " + failed + ".");
   }
 `, 'async function searchContactBook');
 

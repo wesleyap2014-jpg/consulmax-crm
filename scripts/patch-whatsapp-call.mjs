@@ -15,45 +15,90 @@ function patchFrontend() {
   const refs = `  const audioInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);`;
   const refs2 = `${refs}
+  const callPeerRef = useRef<RTCPeerConnection | null>(null);
+  const callStreamRef = useRef<MediaStream | null>(null);
   const [callPanelOpen, setCallPanelOpen] = useState(false);
-  const [sendingCallRequest, setSendingCallRequest] = useState(false);`;
-  if (!s.includes("sendingCallRequest")) s = s.replace(refs, refs2);
+  const [callStatus, setCallStatus] = useState("idle");
+  const [callError, setCallError] = useState<string | null>(null);`;
+  if (!s.includes("callPeerRef")) s = s.replace(refs, refs2);
 
-  const newCall = `  function dialablePhone() {
-    const digits = onlyDigits(activePhone);
-    if (!digits) return "";
-    if (digits.startsWith("55")) return digits;
-    if (digits.length === 10 || digits.length === 11) return "55" + digits;
-    return digits;
+  const newCall = `  function stopCurrentCall() {
+    try { callPeerRef.current?.close(); } catch {}
+    callPeerRef.current = null;
+    try { callStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+    callStreamRef.current = null;
+    setCallStatus("ended");
   }
 
-  function callSoon() {
-    if (!active || !activePhone) return;
-    setCallPanelOpen((prev) => !prev);
-  }
-
-  async function sendCallRequest() {
-    if (!active || !activePhone) return;
-    setSendingCallRequest(true);
-    const firstName = conversationName(active).split(/\\s+/)[0] || "Olá";
-    const body = `${firstName}, posso te ligar agora? Se preferir, também pode me chamar por ligação aqui no WhatsApp. 😊`;
-    try {
-      await sendMessage(body);
-    } finally {
-      setSendingCallRequest(false);
+  function humanCallError(value: any) {
+    const raw = String(value || "");
+    const lower = raw.toLowerCase();
+    if (lower.includes("calling api") || lower.includes("not enabled") || lower.includes("permission")) {
+      return "A ligação direta depende da liberação da WhatsApp Calling API para este app/número na Meta. Verifique a autenticação em dois fatores, permissões do app e o produto de chamadas no painel da Meta.";
     }
+    if (lower.includes("two-factor") || lower.includes("2fa") || lower.includes("two factor")) {
+      return "A Meta bloqueou a chamada por autenticação em dois fatores. Conclua o 2FA no Facebook/Meta Business e tente novamente.";
+    }
+    return raw || "Erro ao iniciar chamada.";
   }
 
-  function openNativeCall() {
-    const phone = dialablePhone();
-    if (!phone) return;
-    window.location.href = "tel:+" + phone;
-  }
+  async function callSoon() {
+    if (!active || !activePhone) return;
+    setCallPanelOpen(true);
+    setCallError(null);
+    setCallStatus("requesting_mic");
 
-  function openWhatsAppChat() {
-    const phone = dialablePhone();
-    if (!phone) return;
-    window.open("https://wa.me/" + phone, "_blank", "noopener,noreferrer");
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Este navegador não liberou acesso ao microfone. Use Chrome/Edge em HTTPS.");
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      callStreamRef.current = stream;
+      setCallStatus("creating_offer");
+
+      const peer = new RTCPeerConnection();
+      callPeerRef.current = peer;
+      stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+
+      const offer = await peer.createOffer({ offerToReceiveAudio: true });
+      await peer.setLocalDescription(offer);
+
+      setCallStatus("calling");
+      const response = await fetch("/api/whatsapp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "start_call",
+          conversation_id: active.id,
+          to: activePhone,
+          user_id: authUserId,
+          sdp_offer: offer.sdp,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result?.ok) {
+        const msg = result?.error?.error?.message || result?.error?.message || result?.error || "A Meta não aceitou a chamada.";
+        throw new Error(humanCallError(msg));
+      }
+
+      const answer = result?.answer_sdp || result?.data?.session?.sdp || null;
+      if (answer) {
+        await peer.setRemoteDescription({ type: "answer", sdp: answer });
+        setCallStatus("connected");
+      } else {
+        setCallStatus("api_pending");
+      }
+
+      await loadMessages(active.id);
+      await loadConversations({ silent: true });
+    } catch (error: any) {
+      console.error("WHATSAPP_CALL_FRONT_ERROR", error);
+      setCallError(humanCallError(error?.message));
+      setCallStatus("error");
+      try { callStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+    }
   }
 
   const activeIsMine =`;
@@ -65,42 +110,134 @@ function patchFrontend() {
   const panelAt = `                      {emojiOpen && (`;
   const panel = `                      {callPanelOpen && (
                         <div className="rounded-2xl border bg-slate-50 p-4">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-center justify-between gap-3">
                             <div>
-                              <p className="flex items-center gap-2 text-sm font-bold text-slate-800"><Phone className="h-4 w-4" />Ligação</p>
-                              <p className="mt-1 text-xs text-slate-500">Envie um pedido discreto de ligação ou abra o discador do aparelho. Ligação nativa pelo WhatsApp depende de liberação específica da Meta.</p>
+                              <p className="flex items-center gap-2 text-sm font-bold text-slate-800"><Phone className="h-4 w-4" />Ligação direta pelo CRM</p>
+                              <p className="mt-1 text-xs text-slate-500">Status: {callStatus}</p>
+                              {callError && <p className="mt-2 text-xs font-semibold text-red-700">{callError}</p>}
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Button type="button" variant="outline" onClick={sendCallRequest} disabled={sendingCallRequest || sending} className="gap-2">
-                                {sendingCallRequest ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                                Pedir ligação
-                              </Button>
-                              <Button type="button" variant="outline" onClick={openNativeCall} className="gap-2"><Phone className="h-4 w-4" />Ligar</Button>
-                              <Button type="button" variant="outline" onClick={openWhatsAppChat} className="gap-2"><MessageCircle className="h-4 w-4" />WhatsApp</Button>
-                            </div>
+                            <Button type="button" variant="outline" onClick={stopCurrentCall}>Encerrar</Button>
                           </div>
                         </div>
                       )}
 
 ${panelAt}`;
-  if (!s.includes("Pedir ligação")) s = s.replace(panelAt, panel);
+
+  if (!s.includes("Ligação direta pelo CRM")) {
+    s = s.replace(panelAt, panel);
+  }
 
   const oldBtn = `<Button type="button" variant="outline" onClick={callSoon} className="h-auto min-w-[52px]" title="Fazer ligação"><Phone className="h-5 w-5" /></Button>`;
-  const oldBtn2 = `<Button type="button" variant="outline" onClick={callSoon} disabled={sending || callStatus === "requesting_mic" || callStatus === "creating_offer" || callStatus === "calling"} className="h-auto min-w-[52px]" title="Fazer ligação"><Phone className="h-5 w-5" /></Button>`;
-  const newBtn = `<Button type="button" variant="outline" onClick={callSoon} disabled={sending} className="h-auto min-w-[52px]" title="Ligação"><Phone className="h-5 w-5" /></Button>`;
+  const oldBtn2 = `<Button type="button" variant="outline" onClick={callSoon} disabled={sending} className="h-auto min-w-[52px]" title="Ligação"><Phone className="h-5 w-5" /></Button>`;
+  const oldBtn3 = `<Button type="button" variant="outline" onClick={callSoon} disabled={sending || callStatus === "requesting_mic" || callStatus === "creating_offer" || callStatus === "calling"} className="h-auto min-w-[52px]" title="Fazer ligação"><Phone className="h-5 w-5" /></Button>`;
+  const newBtn = `<Button type="button" variant="outline" onClick={callSoon} disabled={sending || callStatus === "requesting_mic" || callStatus === "creating_offer" || callStatus === "calling"} className="h-auto min-w-[52px]" title="Fazer ligação"><Phone className="h-5 w-5" /></Button>`;
   s = s.replace(oldBtn, newBtn);
   s = s.replace(oldBtn2, newBtn);
+  s = s.replace(oldBtn3, newBtn);
 
   fs.writeFileSync(p, s);
-  console.log("[patch-whatsapp-call] botão de ligação estável aplicado.");
+  console.log("[patch-whatsapp-call] Frontend WebRTC restaurado.");
 }
 
 function patchSend() {
   const p = "api/whatsapp/send.ts";
   let s = fs.readFileSync(p, "utf8");
   s = s.replace('const GRAPH_BASE = "https://graph.facebook.com/v21.0";', 'const GRAPH_BASE = "https://graph.facebook.com/v25.0";');
+
+  if (!s.includes("async function startWhatsAppCall")) {
+    const fn = `async function startWhatsAppCall(params: { conversation_id: string; to: string; user_id?: string | null; sdp_offer: string }) {
+  const phone = onlyDigits(params.to);
+  const now = new Date().toISOString();
+  const requestPayload = {
+    messaging_product: "whatsapp",
+    to: phone,
+    action: "connect",
+    session: { sdp_type: "offer", sdp: params.sdp_offer },
+  };
+
+  await supabaseAdmin.from("whatsapp_calls").insert({
+    conversation_id: params.conversation_id,
+    phone,
+    wa_id: phone,
+    user_id: params.user_id || null,
+    direction: "outbound",
+    status: "starting",
+    raw_payload: { provider: "meta_whatsapp_calling_api", request: requestPayload },
+  });
+
+  const response = await fetch(GRAPH_BASE + "/" + DEFAULT_PHONE_NUMBER_ID + "/calls", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + META_TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify(requestPayload),
+  });
+
+  const data = await readJson(response);
+
+  if (!response.ok) {
+    await supabaseAdmin.from("whatsapp_calls").insert({
+      conversation_id: params.conversation_id,
+      phone,
+      wa_id: phone,
+      user_id: params.user_id || null,
+      direction: "outbound",
+      status: "meta_error",
+      raw_payload: { provider: "meta_whatsapp_calling_api", request: requestPayload, response: data, http_status: response.status },
+    });
+    return { ok: false, status: response.status, error: data };
+  }
+
+  const answer_sdp = data?.session?.sdp || data?.sdp || data?.answer?.sdp || null;
+  const meta_call_id = data?.id || data?.call_id || data?.calls?.[0]?.id || null;
+
+  await supabaseAdmin.from("whatsapp_calls").insert({
+    conversation_id: params.conversation_id,
+    phone,
+    wa_id: phone,
+    user_id: params.user_id || null,
+    direction: "outbound",
+    status: answer_sdp ? "connected" : "api_pending",
+    raw_payload: { provider: "meta_whatsapp_calling_api", response: data, meta_call_id, answer_sdp },
+  });
+
+  await supabaseAdmin.from("whatsapp_messages").insert({
+    conversation_id: params.conversation_id,
+    direction: "outbound",
+    sender_type: "usuario",
+    user_id: params.user_id || null,
+    message_type: "call_attempt",
+    body: "Ligação iniciada pelo CRM",
+    raw_payload: { provider: "meta_whatsapp_calling_api", response: data, meta_call_id },
+  });
+
+  await supabaseAdmin.from("whatsapp_conversations").update({
+    last_message: "Ligação iniciada pelo CRM",
+    last_message_at: now,
+    unread_count: 0,
+    status: "humano",
+    updated_at: now,
+  }).eq("id", params.conversation_id);
+
+  return { ok: true, status: 200, data, answer_sdp, meta_call_id };
+}
+
+`;
+    s = s.replace("async function sendMediaMessage(params: {", fn + "async function sendMediaMessage(params: {");
+  }
+
+  s = s.replace(
+    "const { conversation_id, to, body, user_id, file_base64, file_name, mime_type, caption, media_type } = req.body || {};",
+    "const { action, conversation_id, to, body, user_id, file_base64, file_name, mime_type, caption, media_type, sdp_offer } = req.body || {};"
+  );
+
+  if (!s.includes('action === "start_call"')) {
+    s = s.replace(
+      "    if (file_base64 && mime_type) {",
+      "    if (action === \"start_call\") {\n      if (!sdp_offer) return res.status(400).json({ ok: false, error: \"sdp_offer é obrigatório para iniciar ligação.\" });\n      const result = await startWhatsAppCall({ conversation_id, to, user_id, sdp_offer });\n      if (!result.ok) return res.status(result.status).json({ ok: false, error: result.error });\n      return res.status(200).json({ ok: true, data: result.data, answer_sdp: result.answer_sdp, meta_call_id: result.meta_call_id });\n    }\n\n    if (file_base64 && mime_type) {"
+    );
+  }
+
   fs.writeFileSync(p, s);
-  console.log("[patch-whatsapp-call] send.ts mantido estável.");
+  console.log("[patch-whatsapp-call] send.ts com start_call restaurado.");
 }
 
 patchFrontend();

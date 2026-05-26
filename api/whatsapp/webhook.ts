@@ -3,14 +3,23 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL!;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const VERIFY_TOKEN = process.env.META_WHATSAPP_VERIFY_TOKEN!;
+const VERIFY_TOKEN = process.env.META_WHATSAPP_VERIFY_TOKEN || process.env.META_VERIFY_TOKEN!;
 const META_TOKEN = process.env.META_WHATSAPP_TOKEN || "";
 const MEDIA_BUCKET = process.env.WHATSAPP_MEDIA_BUCKET || "whatsapp-media";
+const GRAPH_BASE = "https://graph.facebook.com/v25.0";
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
 function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeText(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 function extractMessageBody(message: any) {
@@ -107,6 +116,41 @@ function isRecentClosedConversation(value?: string | null) {
   return days <= 7;
 }
 
+function isOptOutMessage(body?: string | null) {
+  const text = normalizeText(body);
+  if (!text) return false;
+
+  const exact = new Set([
+    "sair",
+    "parar",
+    "cancelar",
+    "descadastrar",
+    "descadastro",
+    "stop",
+    "unsubscribe",
+    "nao quero",
+    "nao receber",
+    "remover",
+  ]);
+
+  if (exact.has(text)) return true;
+
+  return (
+    /\b(sair|parar|cancelar|descadastrar|descadastro|stop|unsubscribe|remover)\b/i.test(text) ||
+    text.includes("nao quero receber") ||
+    text.includes("não quero receber") ||
+    text.includes("nao me envie") ||
+    text.includes("não me envie")
+  );
+}
+
+function isOptInMessage(body?: string | null) {
+  const text = normalizeText(body);
+  if (!text) return false;
+
+  return ["voltar", "receber", "ativar", "quero receber", "sim quero receber", "permitir"].includes(text);
+}
+
 function extractCallId(call: any) {
   return call?.id || call?.call_id || call?.meta_call_id || call?.call?.id || null;
 }
@@ -129,28 +173,6 @@ function extractCallPhone(value: any, call: any) {
   );
 }
 
-function callHistoryText(status: string, direction: string) {
-  const normalized = String(status || "").toLowerCase();
-
-  if (normalized.includes("connect") || normalized.includes("accept") || normalized.includes("active")) {
-    return "Chamada conectada pelo WhatsApp";
-  }
-
-  if (normalized.includes("reject") || normalized.includes("decline")) {
-    return "Chamada recusada pelo WhatsApp";
-  }
-
-  if (normalized.includes("terminate") || normalized.includes("end") || normalized.includes("complete")) {
-    return "Chamada encerrada pelo WhatsApp";
-  }
-
-  if (normalized.includes("miss")) {
-    return "Chamada perdida pelo WhatsApp";
-  }
-
-  return direction === "inbound" ? "Chamada recebida pelo WhatsApp" : "Chamada iniciada pelo WhatsApp";
-}
-
 async function ensureMediaBucket() {
   try {
     const { error } = await supabaseAdmin.storage.createBucket(MEDIA_BUCKET, {
@@ -163,6 +185,115 @@ async function ensureMediaBucket() {
     }
   } catch (error) {
     console.warn("WHATSAPP_MEDIA_BUCKET_CREATE_IGNORED", error);
+  }
+}
+
+async function sendPlainText(params: {
+  phoneNumberId: string | null;
+  to: string;
+  body: string;
+  conversationId?: string | null;
+  senderType?: string;
+}) {
+  const { phoneNumberId, to, body, conversationId, senderType = "bot" } = params;
+
+  if (!META_TOKEN || !phoneNumberId || !to) return null;
+
+  try {
+    const response = await fetch(`${GRAPH_BASE}/${phoneNumberId}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${META_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        text: {
+          preview_url: false,
+          body,
+        },
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("WHATSAPP_SEND_PLAIN_TEXT_ERROR", data);
+      return null;
+    }
+
+    if (conversationId) {
+      await supabaseAdmin.from("whatsapp_messages").insert({
+        conversation_id: conversationId,
+        direction: "outbound",
+        sender_type: senderType,
+        user_id: null,
+        message_type: "text",
+        body,
+        meta_message_id: data?.messages?.[0]?.id || null,
+        raw_payload: data,
+      });
+
+      await supabaseAdmin
+        .from("whatsapp_conversations")
+        .update({
+          last_message: body,
+          last_message_at: new Date().toISOString(),
+          unread_count: 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", conversationId);
+    }
+
+    return data;
+  } catch (error) {
+    console.error("WHATSAPP_SEND_PLAIN_TEXT_EXCEPTION", error);
+    return null;
+  }
+}
+
+async function registerOptOut(params: {
+  telefoneDigits: string;
+  nome?: string | null;
+  body?: string | null;
+  source?: string;
+}) {
+  const { telefoneDigits, nome, body, source = "whatsapp_inbound" } = params;
+  const phone = onlyDigits(telefoneDigits);
+
+  if (!phone) return;
+
+  const payload: any = {
+    telefone_digits: phone,
+    nome: nome || null,
+    reason: body || "Opt-out via WhatsApp",
+    source,
+    opted_out_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabaseAdmin
+    .from("whatsapp_opt_outs")
+    .upsert(payload, { onConflict: "telefone_digits" });
+
+  if (error) {
+    console.error("WHATSAPP_OPT_OUT_UPSERT_ERROR", error);
+  }
+}
+
+async function removeOptOut(params: { telefoneDigits: string }) {
+  const phone = onlyDigits(params.telefoneDigits);
+  if (!phone) return;
+
+  const { error } = await supabaseAdmin
+    .from("whatsapp_opt_outs")
+    .delete()
+    .eq("telefone_digits", phone);
+
+  if (error) {
+    console.error("WHATSAPP_OPT_OUT_DELETE_ERROR", error);
   }
 }
 
@@ -179,7 +310,7 @@ async function downloadAndStoreMedia(params: {
   if (!META_TOKEN || !mediaId) return null;
 
   try {
-    const metaInfoResponse = await fetch(`https://graph.facebook.com/v25.0/${mediaId}`, {
+    const metaInfoResponse = await fetch(`${GRAPH_BASE}/${mediaId}`, {
       headers: { Authorization: `Bearer ${META_TOKEN}` },
     });
 
@@ -270,65 +401,30 @@ async function sendEvaluationThanks(params: {
 }) {
   const { conversationId, phoneNumberId, to, rating } = params;
 
-  if (!META_TOKEN || !phoneNumberId || !to) return;
-
   const body = rating
     ? `Obrigado pela sua avaliação ${rating}/5! 😊\n\nA Consulmax agradece seu retorno. Ele nos ajuda a melhorar cada vez mais o nosso atendimento.`
     : "Obrigado pela sua avaliação! 😊\n\nA Consulmax agradece seu retorno. Ele nos ajuda a melhorar cada vez mais o nosso atendimento.";
 
-  try {
-    const response = await fetch(`https://graph.facebook.com/v25.0/${phoneNumberId}/messages`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${META_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: {
-          preview_url: false,
-          body,
-        },
-      }),
-    });
+  await sendPlainText({
+    phoneNumberId,
+    to,
+    body,
+    conversationId,
+    senderType: "bot",
+  });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("WHATSAPP_RATING_THANKS_SEND_ERROR", data);
-      return;
-    }
-
-    const metaMessageId = data?.messages?.[0]?.id || null;
-
-    await supabaseAdmin.from("whatsapp_messages").insert({
-      conversation_id: conversationId,
-      direction: "outbound",
-      sender_type: "bot",
-      user_id: null,
-      message_type: "text",
-      body,
-      meta_message_id: metaMessageId,
-      raw_payload: data,
-    });
-
-    await supabaseAdmin
-      .from("whatsapp_conversations")
-      .update({
-        last_message: body,
-        last_message_at: new Date().toISOString(),
-        unread_count: 0,
-        status: "fechada",
-        stage: "finalizado",
-        queue: "finalizado",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", conversationId);
-  } catch (error) {
-    console.error("WHATSAPP_RATING_THANKS_ERROR", error);
-  }
+  await supabaseAdmin
+    .from("whatsapp_conversations")
+    .update({
+      last_message: body,
+      last_message_at: new Date().toISOString(),
+      unread_count: 0,
+      status: "fechada",
+      stage: "finalizado",
+      queue: "finalizado",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", conversationId);
 }
 
 async function findActiveConversation(contactId: string) {
@@ -405,6 +501,8 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
   const isRating = isRatingResponse(body);
   const mediaId = extractMediaId(message);
   const mediaMimeType = extractMimeType(message);
+  const optOut = isOptOutMessage(body);
+  const optIn = isOptInMessage(body);
 
   console.log("WHATSAPP_INBOUND_MESSAGE", {
     waId,
@@ -413,6 +511,8 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
     bodyPreview: body?.slice?.(0, 80),
     metaMessageId,
     isRating,
+    optOut,
+    optIn,
     hasMedia: !!mediaId,
   });
 
@@ -484,7 +584,7 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
       : {
           last_message: body || (mediaId ? `${messageType} recebido` : body),
           last_message_at: inboundAt,
-          unread_count: (conversation.unread_count || 0) + 1,
+          unread_count: optOut || optIn ? conversation.unread_count || 0 : (conversation.unread_count || 0) + 1,
           updated_at: inboundAt,
         };
 
@@ -516,7 +616,7 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
   const messagePayload = {
     conversation_id: conversation.id,
     direction: "inbound",
-    sender_type: handledAsClosedRating ? "avaliacao" : "cliente",
+    sender_type: handledAsClosedRating ? "avaliacao" : optOut ? "opt_out" : optIn ? "opt_in" : "cliente",
     message_type: messageType,
     body,
     media_id: mediaId,
@@ -526,9 +626,7 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
   };
 
   const { error: messageError } = metaMessageId
-    ? await supabaseAdmin
-        .from("whatsapp_messages")
-        .upsert(messagePayload, { onConflict: "meta_message_id" })
+    ? await supabaseAdmin.from("whatsapp_messages").upsert(messagePayload, { onConflict: "meta_message_id" })
     : await supabaseAdmin.from("whatsapp_messages").insert(messagePayload);
 
   if (messageError) {
@@ -550,6 +648,41 @@ async function handleSingleInboundMessage(payload: any, value: any, message: any
       rating: ratingValue(body),
     });
 
+    return;
+  }
+
+  if (optOut) {
+    await registerOptOut({
+      telefoneDigits: waId,
+      nome,
+      body,
+      source: "whatsapp_inbound",
+    });
+
+    await sendPlainText({
+      phoneNumberId,
+      to: waId,
+      conversationId: conversation.id,
+      senderType: "bot",
+      body: "Pronto, você foi descadastrado da nossa lista de mensagens. Se quiser voltar a receber mensagens futuramente, responda VOLTAR.",
+    });
+
+    console.log("WHATSAPP_OPT_OUT_REGISTERED", { waId, conversationId: conversation.id });
+    return;
+  }
+
+  if (optIn) {
+    await removeOptOut({ telefoneDigits: waId });
+
+    await sendPlainText({
+      phoneNumberId,
+      to: waId,
+      conversationId: conversation.id,
+      senderType: "bot",
+      body: "Combinado! Você voltou a receber mensagens da Consulmax.",
+    });
+
+    console.log("WHATSAPP_OPT_IN_REGISTERED", { waId, conversationId: conversation.id });
     return;
   }
 

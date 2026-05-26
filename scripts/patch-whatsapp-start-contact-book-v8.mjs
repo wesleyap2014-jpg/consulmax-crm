@@ -6,25 +6,22 @@ let s = fs.readFileSync(file, 'utf8');
 const rep = (from, to) => { if (s.includes(from)) s = s.replace(from, to); };
 const before = (needle, block, flag) => { if (s.includes(needle) && !s.includes(flag)) s = s.replace(needle, block + '\n' + needle); };
 
-rep(
-  '  const [startTicketMessage, setStartTicketMessage] = useState("");',
-  `  const [startTicketMessage, setStartTicketMessage] = useState("");
+// Estados: inserir uma única vez, junto do bloco de Iniciar conversa.
+if (!s.includes('const [contactBookSearch, setContactBookSearch]')) {
+  rep(
+    '  const [startTicketMessage, setStartTicketMessage] = useState("");',
+    `  const [startTicketMessage, setStartTicketMessage] = useState("");
   const [contactBookSearch, setContactBookSearch] = useState("");
   const [contactBookResults, setContactBookResults] = useState<any[]>([]);
   const [selectedContactBookId, setSelectedContactBookId] = useState<string | null>(null);
-  const [searchingContactBook, setSearchingContactBook] = useState(false);
-  const [campaignOpen, setCampaignOpen] = useState(false);
-  const [campaigns, setCampaigns] = useState<any[]>([]);
-  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
-  const [savingCampaign, setSavingCampaign] = useState(false);
-  const [campaignName, setCampaignName] = useState("");
-  const [campaignMessage, setCampaignMessage] = useState("");
-  const [campaignScheduledAt, setCampaignScheduledAt] = useState("");`
-);
+  const [searchingContactBook, setSearchingContactBook] = useState(false);`
+  );
+}
 
-rep(
-  '  const [searchingContactBook, setSearchingContactBook] = useState(false);',
-  `  const [searchingContactBook, setSearchingContactBook] = useState(false);
+if (!s.includes('const [campaignOpen, setCampaignOpen]')) {
+  rep(
+    '  const [searchingContactBook, setSearchingContactBook] = useState(false);',
+    `  const [searchingContactBook, setSearchingContactBook] = useState(false);
   const [campaignOpen, setCampaignOpen] = useState(false);
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
@@ -32,7 +29,8 @@ rep(
   const [campaignName, setCampaignName] = useState("");
   const [campaignMessage, setCampaignMessage] = useState("");
   const [campaignScheduledAt, setCampaignScheduledAt] = useState("");`
-);
+  );
+}
 
 before(
   '  async function startConversationFromCrm() {',

@@ -32,6 +32,16 @@ if (!s.includes('const [campaignOpen, setCampaignOpen]')) {
   );
 }
 
+if (!s.includes('const [campaignAudienceSearch, setCampaignAudienceSearch]')) {
+  rep(
+    '  const [campaignScheduledAt, setCampaignScheduledAt] = useState("");',
+    `  const [campaignScheduledAt, setCampaignScheduledAt] = useState("");
+  const [campaignAudienceSearch, setCampaignAudienceSearch] = useState("");
+  const [campaignAudienceResults, setCampaignAudienceResults] = useState<any[]>([]);
+  const [campaignAudienceLoading, setCampaignAudienceLoading] = useState(false);`
+  );
+}
+
 before(
   '  async function startConversationFromCrm() {',
   `  async function searchContactBook(term: string) {
@@ -79,6 +89,44 @@ before(
     setContactBookResults([]);
     setStartTicketName("");
     setStartTicketPhone("");
+  }
+
+  async function searchCampaignAudience(term: string) {
+    const q = term.trim();
+    if (!q || q.length < 2) {
+      setCampaignAudienceResults([]);
+      return;
+    }
+    setCampaignAudienceLoading(true);
+    const digits = onlyDigits(q);
+    const filters = [
+      'nome.ilike.%' + q + '%',
+      'telefone.ilike.%' + q + '%',
+    ];
+    if (digits) {
+      filters.push('telefone_digits.ilike.%' + digits + '%');
+      filters.push('telefone.ilike.%' + digits + '%');
+    }
+
+    const { data, error } = await supabase
+      .from("whatsapp_contact_book")
+      .select("id,nome,telefone,telefone_digits,email,origem,tags")
+      .or(filters.join(","))
+      .order("nome", { ascending: true })
+      .limit(20);
+
+    if (error) {
+      console.warn("Erro ao pesquisar público da campanha:", error);
+      setCampaignAudienceResults([]);
+    } else {
+      const phones = (data || []).map((row: any) => onlyDigits(row.telefone_digits || row.telefone)).filter(Boolean);
+      const { data: optRows } = phones.length
+        ? await supabase.from("whatsapp_opt_outs").select("telefone_digits").in("telefone_digits", phones)
+        : { data: [] as any[] };
+      const blocked = new Set((optRows || []).map((row: any) => onlyDigits(row.telefone_digits)));
+      setCampaignAudienceResults((data || []).map((row: any) => ({ ...row, _optOut: blocked.has(onlyDigits(row.telefone_digits || row.telefone)) })));
+    }
+    setCampaignAudienceLoading(false);
   }
 
   async function loadCampaigns() {
@@ -153,8 +201,14 @@ before(
   useEffect(() => {
     if (campaignOpen) loadCampaigns();
   }, [campaignOpen]);
+
+  useEffect(() => {
+    if (!campaignOpen) return;
+    const handle = window.setTimeout(() => searchCampaignAudience(campaignAudienceSearch), 250);
+    return () => window.clearTimeout(handle);
+  }, [campaignAudienceSearch, campaignOpen]);
 `,
-  'loadCampaigns();\n  }, [campaignOpen]'
+  'searchCampaignAudience(campaignAudienceSearch)'
 );
 
 before(
@@ -249,12 +303,29 @@ before(
               <div className="rounded-3xl border p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-bold text-slate-800">Campanhas recentes</p>
-                    <p className="text-xs text-slate-500">Base: agenda WhatsApp, excluindo contatos descadastrados.</p>
+                    <p className="text-sm font-bold text-slate-800">Público e campanhas recentes</p>
+                    <p className="text-xs text-slate-500">Pesquise por nome ou telefone para conferir se o contato está na agenda.</p>
                   </div>
                   <Button variant="outline" onClick={loadCampaigns} disabled={loadingCampaigns}>Atualizar</Button>
                 </div>
-                <div className="max-h-[520px] space-y-2 overflow-auto">
+                <div className="mb-3 rounded-2xl bg-slate-50 p-3">
+                  <label className="text-xs font-black uppercase tracking-wide text-slate-400">Pesquisar contato</label>
+                  <input value={campaignAudienceSearch} onChange={(e) => setCampaignAudienceSearch(e.target.value)} placeholder="Digite nome ou telefone..." className="mt-2 w-full rounded-xl border px-3 py-3 text-sm" />
+                  <div className="mt-3 max-h-48 space-y-2 overflow-auto">
+                    {campaignAudienceLoading && <div className="text-xs text-slate-400">Buscando contatos...</div>}
+                    {!campaignAudienceLoading && campaignAudienceSearch.trim().length >= 2 && campaignAudienceResults.length === 0 && <div className="text-xs text-slate-400">Nenhum contato encontrado.</div>}
+                    {campaignAudienceResults.map((contact) => (
+                      <div key={contact.id} className="flex items-center justify-between gap-3 rounded-xl border bg-white px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-slate-800">{contact.nome || "Sem nome"}</p>
+                          <p className="text-xs text-slate-500">{formatPhoneBR(contact.telefone || contact.telefone_digits)} {contact.origem ? "• " + contact.origem : ""}</p>
+                        </div>
+                        <span className={contact._optOut ? "rounded-full bg-red-50 px-2 py-1 text-[10px] font-black text-red-700" : "rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700"}>{contact._optOut ? "Descadastrado" : "Elegível"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="max-h-[330px] space-y-2 overflow-auto">
                   {loadingCampaigns && <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">Carregando campanhas...</div>}
                   {!loadingCampaigns && campaigns.length === 0 && <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">Nenhuma campanha criada ainda.</div>}
                   {campaigns.map((campaign) => (

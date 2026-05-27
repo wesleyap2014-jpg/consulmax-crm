@@ -1,6 +1,6 @@
 {
   "framework": "vite",
-  "buildCommand": "npm install && npm run build",
+  "buildCommand": "npm install && node scripts/patch-maggi-lead-select.mjs && npm run build",
   "outputDirectory": "dist",
   "rewrites": [
     {

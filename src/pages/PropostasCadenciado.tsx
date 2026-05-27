@@ -17,6 +17,7 @@ type SimRow = {
   grupo: string | null;
   credito: number | null;
   prazo_venda: number | null;
+  parcela_contemplacao: number | null;
   novo_credito: number | null;
   parcela_escolhida: number | null;
   novo_prazo: number | null;
@@ -74,6 +75,7 @@ function calcRow(r: SimRow) {
   const parcelaInicial = safe(r.parcela_ate_1_ou_2);
   const parcelaPos = safe(r.parcela_escolhida);
   const parcelasApos = safe(r.novo_prazo);
+  const contemplacao = Math.max(1, Math.round(safe(r.parcela_contemplacao) || 1));
   const alavancagem = Math.max(0, creditoLiquido - lanceProprio);
   const saldoDevedorPos = Math.max(0, valorCategoria - parcelaInicial - lanceTotal);
   return {
@@ -84,6 +86,7 @@ function calcRow(r: SimRow) {
     taxaValor,
     valorCategoria,
     prazo: safe(r.prazo_venda),
+    contemplacao,
     parcelasApos,
     parcelaInicial,
     lanceTotal,
@@ -118,21 +121,33 @@ function buildCadenciado(rows: SimRow[]) {
   const qtdCotas = itens.length;
   const mediaParcelasApos = qtdCotas > 0 ? totals.parcelasApos / qtdCotas : 0;
 
-  const fluxoParcelas = itens.length === 0 ? [] : [
-    { label: "Parcela Inicial", valor: totals.parcelaInicial },
-    ...Array.from({ length: itens.length }, (_, i) => {
-      const contempladas = i + 1;
-      const valor = itens.reduce((acc, item, idx) => acc + (idx < contempladas ? item.c.parcelaPos : item.c.parcelaInicial), 0);
-      return { label: `Parcela ${i + 2}`, valor };
-    }),
-  ];
+  const valorTotalNoMes = (mes: number) =>
+    itens.reduce((acc, item) => acc + (item.c.contemplacao < mes ? item.c.parcelaPos : item.c.parcelaInicial), 0);
 
-  const fluxoCaixa = itens.map((item, idx) => ({
-    mes: `M${idx + 1}`,
-    saida: item.c.lanceProprio,
-    entrada: item.c.creditoLiquido,
-    liquido: item.c.creditoLiquido - item.c.lanceProprio,
-  }));
+  const fluxoParcelas: Array<{ label: string; valor: number }> = [];
+  if (itens.length > 0) {
+    fluxoParcelas.push({ label: "Parcela Inicial", valor: totals.parcelaInicial });
+    const eventos = Array.from(new Set(itens.map((item) => item.c.contemplacao))).sort((a, b) => a - b);
+    let inicio = 2;
+    for (const evento of eventos) {
+      if (evento >= inicio) {
+        const label = inicio === evento ? `Parcela ${inicio}` : `Parcela ${inicio} a ${evento}`;
+        fluxoParcelas.push({ label, valor: valorTotalNoMes(inicio) });
+      }
+      inicio = Math.max(inicio, evento + 1);
+    }
+    fluxoParcelas.push({ label: `Parcela ${inicio} em diante`, valor: valorTotalNoMes(inicio) });
+  }
+
+  const fluxoCaixa = itens
+    .slice()
+    .sort((a, b) => a.c.contemplacao - b.c.contemplacao || a.ordem - b.ordem)
+    .map((item) => ({
+      mes: `M${item.c.contemplacao}`,
+      saida: item.c.lanceProprio,
+      entrada: item.c.creditoLiquido,
+      liquido: item.c.creditoLiquido - item.c.lanceProprio,
+    }));
 
   const saidas = fluxoCaixa.reduce((a, x) => a + x.saida, 0);
   const entradas = fluxoCaixa.reduce((a, x) => a + x.entrada, 0);
@@ -244,7 +259,7 @@ export default function PropostasCadenciado() {
     setLoading(true);
     let query = supabase
       .from("sim_simulations")
-      .select("code,created_at,lead_nome,lead_telefone,segmento,grupo,credito,prazo_venda,novo_credito,parcela_escolhida,novo_prazo,parcela_ate_1_ou_2,parcela_demais,valor_categoria,lance_ofertado_valor,lance_embutido_valor,lance_proprio_valor,lance_ofertado_pct,adm_tax_pct,fr_tax_pct")
+      .select("code,created_at,lead_nome,lead_telefone,segmento,grupo,credito,prazo_venda,parcela_contemplacao,novo_credito,parcela_escolhida,novo_prazo,parcela_ate_1_ou_2,parcela_demais,valor_categoria,lance_ofertado_valor,lance_embutido_valor,lance_proprio_valor,lance_ofertado_pct,adm_tax_pct,fr_tax_pct")
       .order("created_at", { ascending: false })
       .limit(300);
     if (dateFrom) query = query.gte("created_at", startOfDayISO(dateFrom));
@@ -364,7 +379,7 @@ export default function PropostasCadenciado() {
 
     const disclaimerY = Math.max(flowFinalY, cashFinalY, yLower + 158) + 12;
     const disclaimerTitle = "Disclaimer";
-    const disclaimerText = "Atenção: a presente proposta refere-se a uma simulação, não configurando promessa de contemplação. As contemplações podem ocorrer antes ou após o prazo previsto.\nObs.: O valor das parcelas pode variar conforme prazo ou valor do lance aportado. O fluxo representa a contemplação de 1 cota por assembleia, a partir do mês de contratação.\nObs.: O fluxo de caixa projetado soma todas as entradas e saídas para demonstrar os valores que irão transitar na conta corrente do cliente. A coluna 'Saídas' refere-se somente ao capital utilizado como lance próprio em cada mês.";
+    const disclaimerText = "Atenção: a presente proposta refere-se a uma simulação, não configurando promessa de contemplação. As contemplações podem ocorrer antes ou após o prazo previsto.\nObs.: O valor das parcelas pode variar conforme prazo ou valor do lance aportado. O fluxo representa a contemplação conforme o mês projetado de cada cota.\nObs.: O fluxo de caixa projetado soma todas as entradas e saídas para demonstrar os valores que irão transitar na conta corrente do cliente. A coluna 'Saídas' refere-se somente ao capital utilizado como lance próprio em cada mês.";
     const disclaimerLines = doc.splitTextToSize(disclaimerText, w - marginX * 2 - 18);
     const disclaimerH = Math.max(86, disclaimerLines.length * 9 + 34);
     roundedCard(doc, marginX, disclaimerY, w - marginX * 2, disclaimerH, disclaimerTitle, brand.primary);
@@ -390,7 +405,7 @@ export default function PropostasCadenciado() {
 
       <Card className="border-[#B5A573]">
         <CardContent className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div><div className="font-semibold text-[#1E293F]">Selecione as cotas para montar a cadência</div><div className="text-sm text-muted-foreground">A ordem de seleção define M1, M2, M3...</div></div>
+          <div><div className="font-semibold text-[#1E293F]">Selecione as cotas para montar a cadência</div><div className="text-sm text-muted-foreground">O fluxo de parcelas usa a contemplação projetada de cada simulação.</div></div>
           <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setSelectedCodes(rows.map((r) => r.code))}>Selecionar todas</Button><Button variant="secondary" onClick={() => setSelectedCodes([])}>Limpar</Button><Button onClick={gerarPDF}><Download className="h-4 w-4 mr-2" /> Baixar PDF ({selectedRows.length})</Button></div>
         </CardContent>
       </Card>
@@ -401,10 +416,10 @@ export default function PropostasCadenciado() {
           <CardContent>
             <div className="overflow-auto rounded-lg border">
               <table className="min-w-full text-sm">
-                <thead className="bg-muted/40"><tr><th className="p-2 text-left">Sel.</th><th className="p-2 text-left">#</th><th className="p-2 text-left">Lead</th><th className="p-2 text-left">Crédito</th><th className="p-2 text-left">Lance Próprio</th><th className="p-2 text-left">Crédito Líq.</th><th className="p-2 text-left">Parcelas Após</th></tr></thead>
+                <thead className="bg-muted/40"><tr><th className="p-2 text-left">Sel.</th><th className="p-2 text-left">#</th><th className="p-2 text-left">Lead</th><th className="p-2 text-left">Crédito</th><th className="p-2 text-left">Contemplação</th><th className="p-2 text-left">Lance Próprio</th><th className="p-2 text-left">Crédito Líq.</th><th className="p-2 text-left">Parcelas Após</th></tr></thead>
                 <tbody>
-                  {rows.map((r) => { const c = calcRow(r); const checked = selectedCodes.includes(r.code); return <tr key={r.code} className="border-t"><td className="p-2"><button onClick={() => toggle(r)}>{checked ? <CheckSquare className="h-5 w-5 text-[#A11C27]" /> : <Square className="h-5 w-5" />}</button></td><td className="p-2">{r.code}</td><td className="p-2"><div className="font-medium">{r.lead_nome || "—"}</div><div className="text-xs text-muted-foreground">{r.lead_telefone || "—"}</div></td><td className="p-2">{brMoney(c.credito)}</td><td className="p-2">{brMoney(c.lanceProprio)}</td><td className="p-2">{brMoney(c.creditoLiquido)}</td><td className="p-2">{c.parcelasApos}x</td></tr>; })}
-                  {rows.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">{loading ? "Carregando..." : "Nenhuma simulação encontrada."}</td></tr>}
+                  {rows.map((r) => { const c = calcRow(r); const checked = selectedCodes.includes(r.code); return <tr key={r.code} className="border-t"><td className="p-2"><button onClick={() => toggle(r)}>{checked ? <CheckSquare className="h-5 w-5 text-[#A11C27]" /> : <Square className="h-5 w-5" />}</button></td><td className="p-2">{r.code}</td><td className="p-2"><div className="font-medium">{r.lead_nome || "—"}</div><div className="text-xs text-muted-foreground">{r.lead_telefone || "—"}</div></td><td className="p-2">{brMoney(c.credito)}</td><td className="p-2">Parc. {c.contemplacao}</td><td className="p-2">{brMoney(c.lanceProprio)}</td><td className="p-2">{brMoney(c.creditoLiquido)}</td><td className="p-2">{c.parcelasApos}x</td></tr>; })}
+                  {rows.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">{loading ? "Carregando..." : "Nenhuma simulação encontrada."}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -424,7 +439,7 @@ export default function PropostasCadenciado() {
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET simples</div><div className="font-semibold">{pct(calc.cetMes)} a.m. / {pct(calc.cetAno)} a.a.</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET composto</div><div className="font-semibold">{pct(calc.cetCompMes)} a.m. / {pct(calc.cetCompAno)} a.a.</div></div>
             </div>
-            <div className="overflow-auto rounded-lg border"><table className="min-w-full text-xs"><thead className="bg-muted/40"><tr><th className="text-left p-2">Mês</th><th className="text-left p-2">Saídas</th><th className="text-left p-2">Entradas</th><th className="text-left p-2">Líquido</th></tr></thead><tbody>{calc.fluxoCaixa.map((f) => <tr key={f.mes} className="border-t"><td className="p-2">{f.mes}</td><td className="p-2">{brMoney(f.saida)}</td><td className="p-2">{brMoney(f.entrada)}</td><td className="p-2 font-semibold">{brMoney(f.liquido)}</td></tr>)}</tbody></table></div>
+            <div className="overflow-auto rounded-lg border"><table className="min-w-full text-xs"><thead className="bg-muted/40"><tr><th className="text-left p-2">Faixa</th><th className="text-left p-2">Parcela Total</th></tr></thead><tbody>{calc.fluxoParcelas.map((f) => <tr key={f.label} className="border-t"><td className="p-2">{f.label}</td><td className="p-2 font-semibold">{brMoney(f.valor)}</td></tr>)}</tbody></table></div>
           </CardContent>
         </Card>
       </div>

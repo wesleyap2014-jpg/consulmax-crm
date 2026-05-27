@@ -138,7 +138,7 @@ function buildCadenciado(rows: SimRow[]) {
   const entradas = fluxoCaixa.reduce((a, x) => a + x.entrada, 0);
   const liquido = entradas - saidas;
   const mediaLanceProprio = qtdCotas > 0 ? totals.lanceProprio / qtdCotas : 0;
-  const lanceEfetivo = totals.alavancagem > 0 ? mediaLanceProprio / totals.alavancagem : 0;
+  const lanceEfetivo = totals.alavancagem > 0 ? totals.lanceTotal / totals.alavancagem : 0;
 
   const custoTotalPct = totals.alavancagem > 0 ? totals.taxaValor / totals.alavancagem : 0;
   const cetMes = mediaParcelasApos > 0 ? custoTotalPct / mediaParcelasApos : 0;
@@ -351,7 +351,7 @@ export default function PropostasCadenciado() {
     const row3 = row2 + 38;
 
     drawMetric(doc, col1, row1, metricW, "Média Parc. Após", `${calc.mediaParcelasApos.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}x`, true);
-    drawMetric(doc, col2, row1, metricW, "Custo Total", pct(calc.custoTotalPct), true);
+    drawMetric(doc, col2, row1, metricW, "Lance Efetivo", pct(calc.lanceEfetivo), true);
     drawMetric(doc, col1, row2, metricW, "CET simples a.m.", pct(calc.cetMes));
     drawMetric(doc, col2, row2, metricW, "CET simples a.a.", pct(calc.cetAno));
     drawMetric(doc, col1, row3, metricW, "CET comp. a.m.", pct(calc.cetCompMes));
@@ -416,10 +416,10 @@ export default function PropostasCadenciado() {
           <CardContent className="space-y-4">
             <div className="grid md:grid-cols-2 gap-3 text-sm">
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Crédito líquido total</div><div className="font-semibold">{brMoney(calc.totals.creditoLiquido)}</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Lance total</div><div className="font-semibold">{brMoney(calc.totals.lanceTotal)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Lance próprio total</div><div className="font-semibold">{brMoney(calc.totals.lanceProprio)}</div></div>
-              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Média dos lances próprios</div><div className="font-semibold">{brMoney(calc.mediaLanceProprio)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Alavancagem total</div><div className="font-semibold">{brMoney(calc.totals.alavancagem)}</div></div>
-              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Custo total sobre alavancagem</div><div className="font-semibold">{pct(calc.custoTotalPct)}</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Lance efetivo</div><div className="font-semibold">{pct(calc.lanceEfetivo)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Média de parcelas após</div><div className="font-semibold">{calc.mediaParcelasApos.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}x</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET simples</div><div className="font-semibold">{pct(calc.cetMes)} a.m. / {pct(calc.cetAno)} a.a.</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET composto</div><div className="font-semibold">{pct(calc.cetCompMes)} a.m. / {pct(calc.cetCompAno)} a.a.</div></div>

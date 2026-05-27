@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Calendar, CheckSquare, Download, FileText, Search, Square, Trash2 } from "lucide-react";
+import { Calendar, CheckSquare, Download, FileText, Search, Square } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 
@@ -36,7 +36,6 @@ const brand = {
   primary: "#1E293F",
   accent: "#A11C27",
   grayRow: "#F3F4F6",
-  gold: "#B5A573",
 };
 
 const LOGO_URL = "/logo-consulmax.png";
@@ -72,9 +71,26 @@ function calcRow(r: SimRow) {
   const creditoLiquido = safe(r.novo_credito) > 0 ? safe(r.novo_credito) : Math.max(0, credito - lanceEmbutido);
   const parcelaInicial = safe(r.parcela_ate_1_ou_2);
   const parcelaPos = safe(r.parcela_escolhida);
+  const parcelasApos = safe(r.novo_prazo);
   const alavancagem = Math.max(0, creditoLiquido - lanceProprio);
   const saldoDevedorPos = Math.max(0, valorCategoria - parcelaInicial - lanceTotal);
-  return { credito, adm, fr, valorCategoria, prazo: safe(r.prazo_venda), parcelaInicial, lanceTotal, lanceEmbutido, lanceProprio, creditoLiquido, parcelaPos, alavancagem, saldoDevedorPos };
+  return {
+    credito,
+    adm,
+    fr,
+    taxaTotal: adm + fr,
+    valorCategoria,
+    prazo: safe(r.prazo_venda),
+    parcelasApos,
+    parcelaInicial,
+    lanceTotal,
+    lanceEmbutido,
+    lanceProprio,
+    creditoLiquido,
+    parcelaPos,
+    alavancagem,
+    saldoDevedorPos,
+  };
 }
 
 function buildCadenciado(rows: SimRow[]) {
@@ -88,8 +104,11 @@ function buildCadenciado(rows: SimRow[]) {
     lanceProprio: sum((x) => x.c.lanceProprio),
     creditoLiquido: sum((x) => x.c.creditoLiquido),
     parcelaPos: sum((x) => x.c.parcelaPos),
+    parcelasApos: sum((x) => x.c.parcelasApos),
     alavancagem: sum((x) => x.c.alavancagem),
     saldoDevedorPos: sum((x) => x.c.saldoDevedorPos),
+    taxaTotal: sum((x) => x.c.taxaTotal),
+    prazoTotal: sum((x) => x.c.prazo),
   };
   const fluxoParcelas = itens.length === 0 ? [] : [
     { label: "Parcela Inicial", valor: totals.parcelaInicial },
@@ -108,10 +127,11 @@ function buildCadenciado(rows: SimRow[]) {
   const saidas = fluxoCaixa.reduce((a, x) => a + x.saida, 0);
   const entradas = fluxoCaixa.reduce((a, x) => a + x.entrada, 0);
   const liquido = entradas - saidas;
-  const lanceEfetivo = entradas + saidas > 0 ? saidas / (entradas + saidas) : 0;
-  const cetMesAprox = totals.saldoDevedorPos > 0 ? totals.parcelaPos / totals.saldoDevedorPos : 0;
-  const cetAnoAprox = Math.pow(1 + cetMesAprox, 12) - 1;
-  return { itens, totals, fluxoParcelas, fluxoCaixa, saidas, entradas, liquido, lanceEfetivo, cetMesAprox, cetAnoAprox };
+  const mediaLanceProprio = itens.length > 0 ? totals.lanceProprio / itens.length : 0;
+  const lanceEfetivo = totals.alavancagem > 0 ? mediaLanceProprio / totals.alavancagem : 0;
+  const cetMes = totals.prazoTotal > 0 ? totals.taxaTotal / totals.prazoTotal : 0;
+  const cetAno = cetMes * 12;
+  return { itens, totals, fluxoParcelas, fluxoCaixa, saidas, entradas, liquido, mediaLanceProprio, lanceEfetivo, cetMes, cetAno };
 }
 
 async function fetchAsDataURL(url: string): Promise<string | null> {
@@ -124,6 +144,17 @@ async function fetchAsDataURL(url: string): Promise<string | null> {
       r.readAsDataURL(blob);
     });
   } catch { return null; }
+}
+
+function addLogo(doc: jsPDF, logoDataUrl: string | null, x: number, y: number, maxW: number, maxH: number) {
+  if (!logoDataUrl) return;
+  try {
+    const props = (doc as any).getImageProperties(logoDataUrl);
+    const ratio = Math.min(maxW / props.width, maxH / props.height);
+    const w = props.width * ratio;
+    const h = props.height * ratio;
+    doc.addImage(logoDataUrl, "PNG", x - w, y, w, h);
+  } catch {}
 }
 
 export default function PropostasCadenciado() {
@@ -179,7 +210,7 @@ export default function PropostasCadenciado() {
     const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
     const w = doc.internal.pageSize.getWidth();
     const h = doc.internal.pageSize.getHeight();
-    const marginX = 28;
+    const marginX = 24;
     const lead = selectedRows.find((x) => x.lead_nome)?.lead_nome || "Cliente";
 
     doc.setFillColor(brand.header as any); doc.rect(0, 0, w, 88, "F");
@@ -187,47 +218,86 @@ export default function PropostasCadenciado() {
     doc.text("Proposta Cadenciada — Junção de Cotas", marginX, 46);
     doc.setFont("helvetica", "normal"); doc.setFontSize(10);
     doc.text(`Projeto elaborado para ${lead} • ${selectedRows.length} cota(s) selecionada(s)`, marginX, 65);
-    if (logoDataUrl) {
-      try { doc.addImage(logoDataUrl, "PNG", w - 130, 24, 92, 28); } catch {}
-    }
+    addLogo(doc, logoDataUrl, w - marginX, 24, 92, 34);
 
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(40);
     doc.text("Estratégia de contemplação em cadência: cada simulação representa uma cota, permitindo visualizar crédito, lance, alavancagem, fluxo de parcelas e fluxo de caixa projetado.", marginX, 114, { maxWidth: w - marginX * 2 });
 
     (doc as any).autoTable({
       startY: 132,
-      head: [["CRÉDITO", "TAXA ADM", "FR", "PRAZO", "PARCELA INICIAL", "LANCE TOTAL", "LANCE EMBUTIDO", "LANCE PRÓPRIO", "CRÉDITO LÍQUIDO", "PARCELA PÓS", "ALAVANCAGEM", "SD PÓS"]],
+      head: [["CRÉDITO", "TAXA ADM", "FR", "PRAZO", "PARCELA INICIAL", "LANCE TOTAL", "LANCE EMBUTIDO", "LANCE PRÓPRIO", "CRÉDITO LÍQUIDO", "PARCELA PÓS", "PARC. APÓS", "ALAVANCAGEM", "SD PÓS"]],
       body: [
-        ...calc.itens.map(({ c }) => [brMoney(c.credito), pct(c.adm), pct(c.fr), `${c.prazo}`, brMoney(c.parcelaInicial), brMoney(c.lanceTotal), brMoney(c.lanceEmbutido), brMoney(c.lanceProprio), brMoney(c.creditoLiquido), brMoney(c.parcelaPos), brMoney(c.alavancagem), brMoney(c.saldoDevedorPos)]),
-        [brMoney(calc.totals.credito), "", "", "", brMoney(calc.totals.parcelaInicial), brMoney(calc.totals.lanceTotal), brMoney(calc.totals.lanceEmbutido), brMoney(calc.totals.lanceProprio), brMoney(calc.totals.creditoLiquido), brMoney(calc.totals.parcelaPos), brMoney(calc.totals.alavancagem), brMoney(calc.totals.saldoDevedorPos)],
+        ...calc.itens.map(({ c }) => [brMoney(c.credito), pct(c.adm), pct(c.fr), `${c.prazo}`, brMoney(c.parcelaInicial), brMoney(c.lanceTotal), brMoney(c.lanceEmbutido), brMoney(c.lanceProprio), brMoney(c.creditoLiquido), brMoney(c.parcelaPos), `${c.parcelasApos}x`, brMoney(c.alavancagem), brMoney(c.saldoDevedorPos)]),
+        [brMoney(calc.totals.credito), "", "", `${calc.totals.prazoTotal}`, brMoney(calc.totals.parcelaInicial), brMoney(calc.totals.lanceTotal), brMoney(calc.totals.lanceEmbutido), brMoney(calc.totals.lanceProprio), brMoney(calc.totals.creditoLiquido), brMoney(calc.totals.parcelaPos), `${calc.totals.parcelasApos}x`, brMoney(calc.totals.alavancagem), brMoney(calc.totals.saldoDevedorPos)],
       ],
       headStyles: { fillColor: brand.primary, textColor: "#fff", halign: "center" },
-      styles: { fontSize: 7.2, cellPadding: 3, overflow: "linebreak" },
+      styles: { fontSize: 6.5, cellPadding: 2.5, overflow: "linebreak" },
       alternateRowStyles: { fillColor: brand.grayRow },
       theme: "grid",
       margin: { left: marginX, right: marginX },
       didParseCell: (data: any) => { if (data.row.index === calc.itens.length) { data.cell.styles.fontStyle = "bold"; data.cell.styles.fillColor = [245,245,245]; } },
     });
 
-    const yLower = (doc as any).lastAutoTable.finalY + 22;
-    const flowX = marginX, flowW = 320, cashX = 410, cashW = 275, kpiX = 710;
-    (doc as any).autoTable({ startY: yLower, head: [["Fluxo de Parcelas", "Valor"]], body: calc.fluxoParcelas.map((f) => [f.label, brMoney(f.valor)]), headStyles: { fillColor: brand.primary, textColor: "#fff" }, styles: { fontSize: 8, cellPadding: 4 }, theme: "grid", tableWidth: flowW, margin: { left: flowX }, alternateRowStyles: { fillColor: brand.grayRow } });
-    const yFlowObs = (doc as any).lastAutoTable.finalY + 12;
-    doc.setDrawColor(30,41,63); doc.rect(flowX, yFlowObs, flowW, 74);
+    const yLower = (doc as any).lastAutoTable.finalY + 20;
+    const flowX = marginX;
+    const flowW = 300;
+    const cashX = 360;
+    const cashW = 290;
+    const kpiX = 680;
+    const kpiW = w - kpiX - marginX;
+
+    (doc as any).autoTable({
+      startY: yLower,
+      head: [["Fluxo de Parcelas", "Valor"]],
+      body: calc.fluxoParcelas.map((f) => [f.label, brMoney(f.valor)]),
+      headStyles: { fillColor: brand.primary, textColor: "#fff" },
+      styles: { fontSize: 8, cellPadding: 4 },
+      theme: "grid",
+      tableWidth: flowW,
+      margin: { left: flowX },
+      alternateRowStyles: { fillColor: brand.grayRow },
+    });
+
+    const yFlowObs = (doc as any).lastAutoTable.finalY + 10;
+    const obsText = "Obs.: O valor das parcelas pode variar conforme prazo ou valor do lance aportado. O fluxo representa a contemplação de 1 cota por assembleia, a partir do mês de contratação.";
+    const obsLines = doc.splitTextToSize(obsText, flowW - 18);
+    const obsH = Math.max(78, obsLines.length * 10 + 22);
+    doc.setDrawColor(30,41,63);
+    doc.rect(flowX, yFlowObs, flowW, obsH);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(30);
+    doc.text(obsLines, flowX + 9, yFlowObs + 16, { maxWidth: flowW - 18 });
+
+    (doc as any).autoTable({
+      startY: yLower,
+      head: [["FLUXO DE CAIXA PROJETADO", "SAÍDAS", "ENTRADAS", "LÍQUIDO"]],
+      body: [...calc.fluxoCaixa.map((f) => [f.mes, brMoney(f.saida), brMoney(f.entrada), brMoney(f.liquido)]), ["Totais", brMoney(calc.saidas), brMoney(calc.entradas), brMoney(calc.liquido)]],
+      headStyles: { fillColor: brand.accent, textColor: "#fff", halign: "center" },
+      styles: { fontSize: 8, cellPadding: 4 },
+      theme: "grid",
+      tableWidth: cashW,
+      margin: { left: cashX },
+      alternateRowStyles: { fillColor: brand.grayRow },
+      didParseCell: (data: any) => { if (data.row.index === calc.fluxoCaixa.length) { data.cell.styles.fontStyle = "bold"; data.cell.styles.fillColor = [245,245,245]; } },
+    });
+
+    doc.setDrawColor(30,41,63);
+    doc.rect(kpiX, yLower, kpiW, 134);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.1); doc.setTextColor(20);
+    doc.text("Parcelas após", kpiX + 10, yLower + 18); doc.setFont("helvetica", "bold"); doc.text(`${calc.totals.parcelasApos}x soma`, kpiX + 10, yLower + 32);
+    doc.setFont("helvetica", "normal"); doc.text("Lance Efetivo", kpiX + 10, yLower + 56); doc.setFont("helvetica", "bold"); doc.text(pct(calc.lanceEfetivo), kpiX + 10, yLower + 70);
+    doc.setFont("helvetica", "normal"); doc.text("CET a.m.", kpiX + 10, yLower + 94); doc.setFont("helvetica", "bold"); doc.text(pct(calc.cetMes), kpiX + 10, yLower + 108);
+    doc.setFont("helvetica", "normal"); doc.text("CET a.a. (a.m. x 12)", kpiX + 10, yLower + 120); doc.setFont("helvetica", "bold"); doc.text(pct(calc.cetAno), kpiX + 98, yLower + 120);
+
+    const yCashObs = (doc as any).lastAutoTable.finalY + 10;
+    const cashObsText = "Obs.: O fluxo de caixa projetado soma todas as entradas e saídas para demonstrar os valores que irão transitar na conta corrente do cliente. A coluna 'Saídas' refere-se somente ao capital utilizado como lance próprio em cada mês.";
+    const cashObsLines = doc.splitTextToSize(cashObsText, w - cashX - marginX - 18);
+    const cashObsH = Math.max(76, cashObsLines.length * 10 + 22);
+    doc.setDrawColor(30,41,63);
+    doc.rect(cashX, yCashObs, w - cashX - marginX, cashObsH);
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(30);
-    doc.text("Obs.: O valor das parcelas pode variar conforme prazo ou valor do lance aportado. O fluxo representa a contemplação de 1 cota por assembleia, a partir do mês de contratação.", flowX + 8, yFlowObs + 16, { maxWidth: flowW - 16, align: "center" as any });
-
-    (doc as any).autoTable({ startY: yLower, head: [["FLUXO DE CAIXA PROJETADO", "SAÍDAS", "ENTRADAS", "LÍQUIDO"]], body: [...calc.fluxoCaixa.map((f) => [f.mes, brMoney(f.saida), brMoney(f.entrada), brMoney(f.liquido)]), ["Totais", brMoney(calc.saidas), brMoney(calc.entradas), brMoney(calc.liquido)]], headStyles: { fillColor: brand.accent, textColor: "#fff", halign: "center" }, styles: { fontSize: 8, cellPadding: 4 }, theme: "grid", tableWidth: cashW, margin: { left: cashX }, alternateRowStyles: { fillColor: brand.grayRow }, didParseCell: (data: any) => { if (data.row.index === calc.fluxoCaixa.length) { data.cell.styles.fontStyle = "bold"; data.cell.styles.fillColor = [245,245,245]; } } });
-
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(20);
-    doc.text("Lance Efetivo", kpiX, yLower + 8); doc.setFont("helvetica", "bold"); doc.text(pct(calc.lanceEfetivo), kpiX + 8, yLower + 22);
-    doc.setFont("helvetica", "normal"); doc.text("CET a.m. aprox.", kpiX, yLower + 54); doc.setFont("helvetica", "bold"); doc.text(pct(calc.cetMesAprox), kpiX + 8, yLower + 68);
-    doc.setFont("helvetica", "normal"); doc.text("CET a.a. aprox.", kpiX, yLower + 88); doc.setFont("helvetica", "bold"); doc.text(pct(calc.cetAnoAprox), kpiX + 8, yLower + 102);
-
-    const yCashObs = (doc as any).lastAutoTable.finalY + 12;
-    doc.setDrawColor(30,41,63); doc.rect(cashX, yCashObs, w - cashX - marginX, 72);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(30);
-    doc.text("Obs.: O fluxo de caixa projetado soma todas as entradas e saídas para demonstrar os valores que irão transitar na conta corrente do cliente. A coluna 'Saídas' refere-se somente ao capital utilizado como lance próprio em cada mês.", cashX + 8, yCashObs + 16, { maxWidth: w - cashX - marginX - 16 });
+    doc.text(cashObsLines, cashX + 9, yCashObs + 16, { maxWidth: w - cashX - marginX - 18 });
 
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(90);
     doc.text("Atenção: a presente proposta refere-se a uma simulação, não configurando promessa de contemplação. As contemplações podem ocorrer antes ou após o prazo previsto.", marginX, h - 72, { maxWidth: w - marginX * 2 });
@@ -260,10 +330,10 @@ export default function PropostasCadenciado() {
           <CardContent>
             <div className="overflow-auto rounded-lg border">
               <table className="min-w-full text-sm">
-                <thead className="bg-muted/40"><tr><th className="p-2 text-left">Sel.</th><th className="p-2 text-left">#</th><th className="p-2 text-left">Lead</th><th className="p-2 text-left">Crédito</th><th className="p-2 text-left">Lance Próprio</th><th className="p-2 text-left">Crédito Líq.</th></tr></thead>
+                <thead className="bg-muted/40"><tr><th className="p-2 text-left">Sel.</th><th className="p-2 text-left">#</th><th className="p-2 text-left">Lead</th><th className="p-2 text-left">Crédito</th><th className="p-2 text-left">Lance Próprio</th><th className="p-2 text-left">Crédito Líq.</th><th className="p-2 text-left">Parcelas Após</th></tr></thead>
                 <tbody>
-                  {rows.map((r) => { const c = calcRow(r); const checked = selectedCodes.includes(r.code); return <tr key={r.code} className="border-t"><td className="p-2"><button onClick={() => toggle(r)}>{checked ? <CheckSquare className="h-5 w-5 text-[#A11C27]" /> : <Square className="h-5 w-5" />}</button></td><td className="p-2">{r.code}</td><td className="p-2"><div className="font-medium">{r.lead_nome || "—"}</div><div className="text-xs text-muted-foreground">{r.lead_telefone || "—"}</div></td><td className="p-2">{brMoney(c.credito)}</td><td className="p-2">{brMoney(c.lanceProprio)}</td><td className="p-2">{brMoney(c.creditoLiquido)}</td></tr>; })}
-                  {rows.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">{loading ? "Carregando..." : "Nenhuma simulação encontrada."}</td></tr>}
+                  {rows.map((r) => { const c = calcRow(r); const checked = selectedCodes.includes(r.code); return <tr key={r.code} className="border-t"><td className="p-2"><button onClick={() => toggle(r)}>{checked ? <CheckSquare className="h-5 w-5 text-[#A11C27]" /> : <Square className="h-5 w-5" />}</button></td><td className="p-2">{r.code}</td><td className="p-2"><div className="font-medium">{r.lead_nome || "—"}</div><div className="text-xs text-muted-foreground">{r.lead_telefone || "—"}</div></td><td className="p-2">{brMoney(c.credito)}</td><td className="p-2">{brMoney(c.lanceProprio)}</td><td className="p-2">{brMoney(c.creditoLiquido)}</td><td className="p-2">{c.parcelasApos}x</td></tr>; })}
+                  {rows.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">{loading ? "Carregando..." : "Nenhuma simulação encontrada."}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -276,8 +346,12 @@ export default function PropostasCadenciado() {
             <div className="grid md:grid-cols-2 gap-3 text-sm">
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Crédito líquido total</div><div className="font-semibold">{brMoney(calc.totals.creditoLiquido)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Lance próprio total</div><div className="font-semibold">{brMoney(calc.totals.lanceProprio)}</div></div>
-              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Alavancagem</div><div className="font-semibold">{brMoney(calc.totals.alavancagem)}</div></div>
-              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Líquido do fluxo</div><div className="font-semibold">{brMoney(calc.liquido)}</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Média dos lances próprios</div><div className="font-semibold">{brMoney(calc.mediaLanceProprio)}</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Alavancagem total</div><div className="font-semibold">{brMoney(calc.totals.alavancagem)}</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Parcelas após contemplação</div><div className="font-semibold">{calc.totals.parcelasApos}x soma</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Lance efetivo</div><div className="font-semibold">{pct(calc.lanceEfetivo)}</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET a.m.</div><div className="font-semibold">{pct(calc.cetMes)}</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET a.a.</div><div className="font-semibold">{pct(calc.cetAno)}</div></div>
             </div>
             <div className="overflow-auto rounded-lg border"><table className="min-w-full text-xs"><thead className="bg-muted/40"><tr><th className="text-left p-2">Mês</th><th className="text-left p-2">Saídas</th><th className="text-left p-2">Entradas</th><th className="text-left p-2">Líquido</th></tr></thead><tbody>{calc.fluxoCaixa.map((f) => <tr key={f.mes} className="border-t"><td className="p-2">{f.mes}</td><td className="p-2">{brMoney(f.saida)}</td><td className="p-2">{brMoney(f.entrada)}</td><td className="p-2 font-semibold">{brMoney(f.liquido)}</td></tr>)}</tbody></table></div>
           </CardContent>

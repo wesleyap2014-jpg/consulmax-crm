@@ -64,6 +64,7 @@ function calcRow(r: SimRow) {
   const adm = safe(r.adm_tax_pct);
   const fr = safe(r.fr_tax_pct);
   const valorCategoria = safe(r.valor_categoria) > 0 ? safe(r.valor_categoria) : credito * (1 + adm + fr);
+  const taxaValor = credito * (adm + fr);
   const lanceTotal = safe(r.lance_ofertado_valor) > 0
     ? safe(r.lance_ofertado_valor)
     : safe(r.lance_embutido_valor) + safe(r.lance_proprio_valor);
@@ -80,6 +81,7 @@ function calcRow(r: SimRow) {
     adm,
     fr,
     taxaTotal: adm + fr,
+    taxaValor,
     valorCategoria,
     prazo: safe(r.prazo_venda),
     parcelasApos,
@@ -109,6 +111,7 @@ function buildCadenciado(rows: SimRow[]) {
     alavancagem: sum((x) => x.c.alavancagem),
     saldoDevedorPos: sum((x) => x.c.saldoDevedorPos),
     taxaTotal: sum((x) => x.c.taxaTotal),
+    taxaValor: sum((x) => x.c.taxaValor),
     prazoTotal: sum((x) => x.c.prazo),
   };
 
@@ -123,22 +126,25 @@ function buildCadenciado(rows: SimRow[]) {
       return { label: `Parcela ${i + 2}`, valor };
     }),
   ];
+
   const fluxoCaixa = itens.map((item, idx) => ({
     mes: `M${idx + 1}`,
     saida: item.c.lanceProprio,
     entrada: item.c.creditoLiquido,
     liquido: item.c.creditoLiquido - item.c.lanceProprio,
   }));
+
   const saidas = fluxoCaixa.reduce((a, x) => a + x.saida, 0);
   const entradas = fluxoCaixa.reduce((a, x) => a + x.entrada, 0);
   const liquido = entradas - saidas;
   const mediaLanceProprio = qtdCotas > 0 ? totals.lanceProprio / qtdCotas : 0;
   const lanceEfetivo = totals.alavancagem > 0 ? mediaLanceProprio / totals.alavancagem : 0;
 
-  const cetMes = mediaParcelasApos > 0 ? totals.taxaTotal / mediaParcelasApos : 0;
+  const custoTotalPct = totals.alavancagem > 0 ? totals.taxaValor / totals.alavancagem : 0;
+  const cetMes = mediaParcelasApos > 0 ? custoTotalPct / mediaParcelasApos : 0;
   const cetAno = cetMes * 12;
-  const cetCompMes = cetAno > 0 ? Math.pow(1 + cetAno, 1 / 12) - 1 : 0;
-  const cetCompAno = cetCompMes > 0 ? Math.pow(1 + cetCompMes, 12) - 1 : 0;
+  const cetCompMes = mediaParcelasApos > 0 ? Math.pow(1 + custoTotalPct, 1 / mediaParcelasApos) - 1 : 0;
+  const cetCompAno = Math.pow(1 + cetCompMes, 12) - 1;
 
   return {
     itens,
@@ -152,6 +158,7 @@ function buildCadenciado(rows: SimRow[]) {
     mediaLanceProprio,
     mediaParcelasApos,
     lanceEfetivo,
+    custoTotalPct,
     cetMes,
     cetAno,
     cetCompMes,
@@ -194,6 +201,19 @@ function drawMetric(doc: jsPDF, x: number, y: number, width: number, title: stri
   doc.setFontSize(9.2);
   doc.setTextColor(accent ? brand.accent : brand.primary);
   doc.text(value, x + 7, y + 23, { maxWidth: width - 12 });
+}
+
+function roundedCard(doc: jsPDF, x: number, y: number, width: number, height: number, title: string, headerColor = brand.primary) {
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(x, y, width, height, 8, 8, "FD");
+  doc.setFillColor(headerColor as any);
+  doc.roundedRect(x, y, width, 22, 8, 8, "F");
+  doc.rect(x, y + 11, width, 11, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.setTextColor("#FFFFFF");
+  doc.text(title, x + 10, y + 14);
 }
 
 export default function PropostasCadenciado() {
@@ -262,8 +282,9 @@ export default function PropostasCadenciado() {
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(40);
     doc.text("Estratégia de contemplação em cadência: cada simulação representa uma cota, permitindo visualizar crédito, lance, alavancagem, fluxo de parcelas e fluxo de caixa projetado.", marginX, 114, { maxWidth: w - marginX * 2 });
 
+    const mainTableY = 132;
     (doc as any).autoTable({
-      startY: 132,
+      startY: mainTableY,
       head: [["CRÉDITO", "TAXA ADM", "FR", "PRAZO", "PARCELA INICIAL", "LANCE TOTAL", "LANCE EMBUTIDO", "LANCE PRÓPRIO", "CRÉDITO LÍQUIDO", "PARCELA PÓS", "PARC. APÓS", "ALAVANCAGEM", "SD PÓS"]],
       body: [
         ...calc.itens.map(({ c }) => [brMoney(c.credito), pct(c.adm), pct(c.fr), `${c.prazo}`, brMoney(c.parcelaInicial), brMoney(c.lanceTotal), brMoney(c.lanceEmbutido), brMoney(c.lanceProprio), brMoney(c.creditoLiquido), brMoney(c.parcelaPos), `${c.parcelasApos}x`, brMoney(c.alavancagem), brMoney(c.saldoDevedorPos)]),
@@ -276,8 +297,11 @@ export default function PropostasCadenciado() {
       margin: { left: marginX, right: marginX },
       didParseCell: (data: any) => { if (data.row.index === calc.itens.length) { data.cell.styles.fontStyle = "bold"; data.cell.styles.fillColor = [245,245,245]; } },
     });
+    const mainFinalY = (doc as any).lastAutoTable.finalY;
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(marginX, mainTableY - 2, w - marginX * 2, mainFinalY - mainTableY + 4, 7, 7, "S");
 
-    const yLower = (doc as any).lastAutoTable.finalY + 20;
+    const yLower = mainFinalY + 20;
     const gap = 16;
     const flowX = marginX;
     const flowW = 304;
@@ -286,44 +310,38 @@ export default function PropostasCadenciado() {
     const kpiX = cashX + cashW + gap;
     const kpiW = w - marginX - kpiX;
 
+    const flowCardH = Math.max(138, 28 + calc.fluxoParcelas.length * 22);
+    roundedCard(doc, flowX, yLower, flowW, flowCardH, "Fluxo de Parcelas", brand.primary);
     (doc as any).autoTable({
-      startY: yLower,
-      head: [["Fluxo de Parcelas", "Valor"]],
+      startY: yLower + 28,
+      head: [["Parcela", "Valor"]],
       body: calc.fluxoParcelas.map((f) => [f.label, brMoney(f.valor)]),
-      headStyles: { fillColor: brand.primary, textColor: "#fff" },
-      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [248, 250, 252], textColor: brand.primary, halign: "left" },
+      styles: { fontSize: 8, cellPadding: 4, lineColor: [226, 232, 240], lineWidth: 0.4 },
       theme: "grid",
-      tableWidth: flowW,
-      margin: { left: flowX },
-      alternateRowStyles: { fillColor: brand.grayRow },
+      tableWidth: flowW - 20,
+      margin: { left: flowX + 10 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
     });
-    const flowFinalY = (doc as any).lastAutoTable.finalY;
+    const flowFinalY = Math.max((doc as any).lastAutoTable.finalY, yLower + flowCardH);
 
+    const cashCardH = Math.max(138, 28 + (calc.fluxoCaixa.length + 1) * 22);
+    roundedCard(doc, cashX, yLower, cashW, cashCardH, "Fluxo de Caixa Projetado", brand.accent);
     (doc as any).autoTable({
-      startY: yLower,
-      head: [["FLUXO DE CAIXA PROJETADO", "SAÍDAS", "ENTRADAS", "LÍQUIDO"]],
+      startY: yLower + 28,
+      head: [["Mês", "Saídas", "Entradas", "Líquido"]],
       body: [...calc.fluxoCaixa.map((f) => [f.mes, brMoney(f.saida), brMoney(f.entrada), brMoney(f.liquido)]), ["Totais", brMoney(calc.saidas), brMoney(calc.entradas), brMoney(calc.liquido)]],
-      headStyles: { fillColor: brand.accent, textColor: "#fff", halign: "center" },
-      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [248, 250, 252], textColor: brand.primary, halign: "center" },
+      styles: { fontSize: 7.3, cellPadding: 4, lineColor: [226, 232, 240], lineWidth: 0.4 },
       theme: "grid",
-      tableWidth: cashW,
-      margin: { left: cashX },
-      alternateRowStyles: { fillColor: brand.grayRow },
+      tableWidth: cashW - 20,
+      margin: { left: cashX + 10 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
       didParseCell: (data: any) => { if (data.row.index === calc.fluxoCaixa.length) { data.cell.styles.fontStyle = "bold"; data.cell.styles.fillColor = [245,245,245]; } },
     });
-    const cashFinalY = (doc as any).lastAutoTable.finalY;
+    const cashFinalY = Math.max((doc as any).lastAutoTable.finalY, yLower + cashCardH);
 
-    doc.setFillColor(255, 255, 255);
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(kpiX, yLower, kpiW, 158, 8, 8, "FD");
-    doc.setFillColor(brand.primary as any);
-    doc.roundedRect(kpiX, yLower, kpiW, 22, 8, 8, "F");
-    doc.rect(kpiX, yLower + 11, kpiW, 11, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor("#FFFFFF");
-    doc.text("Indicadores da operação", kpiX + 10, yLower + 14);
-
+    roundedCard(doc, kpiX, yLower, kpiW, 158, "Indicadores da operação", brand.primary);
     const metricGap = 8;
     const metricW = (kpiW - 28) / 2;
     const col1 = kpiX + 10;
@@ -333,28 +351,25 @@ export default function PropostasCadenciado() {
     const row3 = row2 + 38;
 
     drawMetric(doc, col1, row1, metricW, "Média Parc. Após", `${calc.mediaParcelasApos.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}x`, true);
-    drawMetric(doc, col2, row1, metricW, "Lance Efetivo", pct(calc.lanceEfetivo), true);
+    drawMetric(doc, col2, row1, metricW, "Custo Total", pct(calc.custoTotalPct), true);
     drawMetric(doc, col1, row2, metricW, "CET simples a.m.", pct(calc.cetMes));
     drawMetric(doc, col2, row2, metricW, "CET simples a.a.", pct(calc.cetAno));
-    drawMetric(doc, col1, row3, metricW, "Equiv. comp. a.m.", pct(calc.cetCompMes));
-    drawMetric(doc, col2, row3, metricW, "Equiv. comp. a.a.", pct(calc.cetCompAno));
+    drawMetric(doc, col1, row3, metricW, "CET comp. a.m.", pct(calc.cetCompMes));
+    drawMetric(doc, col2, row3, metricW, "CET comp. a.a.", pct(calc.cetCompAno));
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
     doc.setTextColor(100);
-    doc.text("CET simples anual = CET mensal × 12", kpiX + 10, yLower + 148, { maxWidth: kpiW - 20 });
+    doc.text("CET calculado sobre a alavancagem total", kpiX + 10, yLower + 148, { maxWidth: kpiW - 20 });
 
     const disclaimerY = Math.max(flowFinalY, cashFinalY, yLower + 158) + 12;
     const disclaimerTitle = "Disclaimer";
     const disclaimerText = "Atenção: a presente proposta refere-se a uma simulação, não configurando promessa de contemplação. As contemplações podem ocorrer antes ou após o prazo previsto.\nObs.: O valor das parcelas pode variar conforme prazo ou valor do lance aportado. O fluxo representa a contemplação de 1 cota por assembleia, a partir do mês de contratação.\nObs.: O fluxo de caixa projetado soma todas as entradas e saídas para demonstrar os valores que irão transitar na conta corrente do cliente. A coluna 'Saídas' refere-se somente ao capital utilizado como lance próprio em cada mês.";
     const disclaimerLines = doc.splitTextToSize(disclaimerText, w - marginX * 2 - 18);
-    const disclaimerH = Math.max(84, disclaimerLines.length * 9 + 32);
-    doc.setDrawColor(30,41,63);
-    doc.rect(marginX, disclaimerY, w - marginX * 2, disclaimerH);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(30);
-    doc.text(disclaimerTitle, marginX + 9, disclaimerY + 14);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7.8);
-    doc.text(disclaimerLines, marginX + 9, disclaimerY + 28, { maxWidth: w - marginX * 2 - 18 });
+    const disclaimerH = Math.max(86, disclaimerLines.length * 9 + 34);
+    roundedCard(doc, marginX, disclaimerY, w - marginX * 2, disclaimerH, disclaimerTitle, brand.primary);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.8); doc.setTextColor(30);
+    doc.text(disclaimerLines, marginX + 10, disclaimerY + 34, { maxWidth: w - marginX * 2 - 20 });
 
     doc.setDrawColor(220,220,220); doc.line(marginX, h - 52, w - marginX, h - 52);
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(90);
@@ -404,10 +419,10 @@ export default function PropostasCadenciado() {
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Lance próprio total</div><div className="font-semibold">{brMoney(calc.totals.lanceProprio)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Média dos lances próprios</div><div className="font-semibold">{brMoney(calc.mediaLanceProprio)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Alavancagem total</div><div className="font-semibold">{brMoney(calc.totals.alavancagem)}</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Custo total sobre alavancagem</div><div className="font-semibold">{pct(calc.custoTotalPct)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Média de parcelas após</div><div className="font-semibold">{calc.mediaParcelasApos.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}x</div></div>
-              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Lance efetivo</div><div className="font-semibold">{pct(calc.lanceEfetivo)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET simples</div><div className="font-semibold">{pct(calc.cetMes)} a.m. / {pct(calc.cetAno)} a.a.</div></div>
-              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Equiv. composto</div><div className="font-semibold">{pct(calc.cetCompMes)} a.m. / {pct(calc.cetCompAno)} a.a.</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET composto</div><div className="font-semibold">{pct(calc.cetCompMes)} a.m. / {pct(calc.cetCompAno)} a.a.</div></div>
             </div>
             <div className="overflow-auto rounded-lg border"><table className="min-w-full text-xs"><thead className="bg-muted/40"><tr><th className="text-left p-2">Mês</th><th className="text-left p-2">Saídas</th><th className="text-left p-2">Entradas</th><th className="text-left p-2">Líquido</th></tr></thead><tbody>{calc.fluxoCaixa.map((f) => <tr key={f.mes} className="border-t"><td className="p-2">{f.mes}</td><td className="p-2">{brMoney(f.saida)}</td><td className="p-2">{brMoney(f.entrada)}</td><td className="p-2 font-semibold">{brMoney(f.liquido)}</td></tr>)}</tbody></table></div>
           </CardContent>

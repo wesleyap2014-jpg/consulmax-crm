@@ -1,0 +1,3 @@
+Redeploy manual para restaurar a versão anterior de src/pages/Propostas.tsx.
+Data: 2026-05-27
+Motivo: disparar novo deploy na Vercel após reset da branch main.

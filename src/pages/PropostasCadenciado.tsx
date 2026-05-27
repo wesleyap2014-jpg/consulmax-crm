@@ -36,6 +36,7 @@ const brand = {
   primary: "#1E293F",
   accent: "#A11C27",
   grayRow: "#F3F4F6",
+  soft: "#F8FAFC",
 };
 
 const LOGO_URL = "/logo-consulmax.png";
@@ -181,6 +182,20 @@ function addLogo(doc: jsPDF, logoDataUrl: string | null, x: number, y: number, m
   } catch {}
 }
 
+function drawMetric(doc: jsPDF, x: number, y: number, width: number, title: string, value: string, accent = false) {
+  doc.setFillColor(accent ? 253 : 248, accent ? 242 : 250, accent ? 242 : 252);
+  doc.setDrawColor(accent ? 161 : 226, accent ? 28 : 232, accent ? 39 : 240);
+  doc.roundedRect(x, y, width, 30, 5, 5, "FD");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.8);
+  doc.setTextColor(90);
+  doc.text(title, x + 7, y + 10);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.2);
+  doc.setTextColor(accent ? brand.accent : brand.primary);
+  doc.text(value, x + 7, y + 23, { maxWidth: width - 12 });
+}
+
 export default function PropostasCadenciado() {
   const [q, setQ] = useState("");
   const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return toDateInputValue(d); });
@@ -263,12 +278,13 @@ export default function PropostasCadenciado() {
     });
 
     const yLower = (doc as any).lastAutoTable.finalY + 20;
+    const gap = 16;
     const flowX = marginX;
-    const flowW = 300;
-    const cashX = 360;
-    const cashW = 290;
-    const kpiX = 680;
-    const kpiW = w - kpiX - marginX;
+    const flowW = 304;
+    const cashX = flowX + flowW + gap;
+    const cashW = 292;
+    const kpiX = cashX + cashW + gap;
+    const kpiW = w - marginX - kpiX;
 
     (doc as any).autoTable({
       startY: yLower,
@@ -297,16 +313,38 @@ export default function PropostasCadenciado() {
     });
     const cashFinalY = (doc as any).lastAutoTable.finalY;
 
-    doc.setDrawColor(30,41,63);
-    doc.rect(kpiX, yLower, kpiW, 156);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8.1); doc.setTextColor(20);
-    doc.text("Média Parc. Após", kpiX + 10, yLower + 18); doc.setFont("helvetica", "bold"); doc.text(`${calc.mediaParcelasApos.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}x`, kpiX + 10, yLower + 32);
-    doc.setFont("helvetica", "normal"); doc.text("Lance Efetivo", kpiX + 10, yLower + 54); doc.setFont("helvetica", "bold"); doc.text(pct(calc.lanceEfetivo), kpiX + 10, yLower + 68);
-    doc.setFont("helvetica", "normal"); doc.text("CET a.m. simples", kpiX + 10, yLower + 90); doc.setFont("helvetica", "bold"); doc.text(pct(calc.cetMes), kpiX + 10, yLower + 104);
-    doc.setFont("helvetica", "normal"); doc.text("CET a.a. simples", kpiX + 10, yLower + 126); doc.setFont("helvetica", "bold"); doc.text(pct(calc.cetAno), kpiX + 10, yLower + 140);
-    doc.setFont("helvetica", "normal"); doc.text("Equiv. composto", kpiX + 88, yLower + 126); doc.setFont("helvetica", "bold"); doc.text(`${pct(calc.cetCompMes)} a.m. / ${pct(calc.cetCompAno)} a.a.`, kpiX + 88, yLower + 140);
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(kpiX, yLower, kpiW, 158, 8, 8, "FD");
+    doc.setFillColor(brand.primary as any);
+    doc.roundedRect(kpiX, yLower, kpiW, 22, 8, 8, "F");
+    doc.rect(kpiX, yLower + 11, kpiW, 11, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor("#FFFFFF");
+    doc.text("Indicadores da operação", kpiX + 10, yLower + 14);
 
-    const disclaimerY = Math.max(flowFinalY, cashFinalY, yLower + 156) + 12;
+    const metricGap = 8;
+    const metricW = (kpiW - 28) / 2;
+    const col1 = kpiX + 10;
+    const col2 = col1 + metricW + metricGap;
+    const row1 = yLower + 32;
+    const row2 = row1 + 38;
+    const row3 = row2 + 38;
+
+    drawMetric(doc, col1, row1, metricW, "Média Parc. Após", `${calc.mediaParcelasApos.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}x`, true);
+    drawMetric(doc, col2, row1, metricW, "Lance Efetivo", pct(calc.lanceEfetivo), true);
+    drawMetric(doc, col1, row2, metricW, "CET simples a.m.", pct(calc.cetMes));
+    drawMetric(doc, col2, row2, metricW, "CET simples a.a.", pct(calc.cetAno));
+    drawMetric(doc, col1, row3, metricW, "Equiv. comp. a.m.", pct(calc.cetCompMes));
+    drawMetric(doc, col2, row3, metricW, "Equiv. comp. a.a.", pct(calc.cetCompAno));
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6.5);
+    doc.setTextColor(100);
+    doc.text("CET simples anual = CET mensal × 12", kpiX + 10, yLower + 148, { maxWidth: kpiW - 20 });
+
+    const disclaimerY = Math.max(flowFinalY, cashFinalY, yLower + 158) + 12;
     const disclaimerTitle = "Disclaimer";
     const disclaimerText = "Atenção: a presente proposta refere-se a uma simulação, não configurando promessa de contemplação. As contemplações podem ocorrer antes ou após o prazo previsto.\nObs.: O valor das parcelas pode variar conforme prazo ou valor do lance aportado. O fluxo representa a contemplação de 1 cota por assembleia, a partir do mês de contratação.\nObs.: O fluxo de caixa projetado soma todas as entradas e saídas para demonstrar os valores que irão transitar na conta corrente do cliente. A coluna 'Saídas' refere-se somente ao capital utilizado como lance próprio em cada mês.";
     const disclaimerLines = doc.splitTextToSize(disclaimerText, w - marginX * 2 - 18);

@@ -111,6 +111,7 @@ function buildCadenciado(rows: SimRow[]) {
     creditoLiquido: sum((x) => x.c.creditoLiquido),
     parcelaPos: sum((x) => x.c.parcelaPos),
     parcelasApos: sum((x) => x.c.parcelasApos),
+    contemplacao: sum((x) => x.c.contemplacao),
     alavancagem: sum((x) => x.c.alavancagem),
     saldoDevedorPos: sum((x) => x.c.saldoDevedorPos),
     taxaTotal: sum((x) => x.c.taxaTotal),
@@ -119,7 +120,7 @@ function buildCadenciado(rows: SimRow[]) {
   };
 
   const qtdCotas = itens.length;
-  const mediaParcelasApos = qtdCotas > 0 ? totals.parcelasApos / qtdCotas : 0;
+  const prazoMedio = qtdCotas > 0 ? (totals.parcelasApos + totals.contemplacao) / qtdCotas : 0;
 
   const valorTotalNoMes = (mes: number) =>
     itens.reduce((acc, item) => acc + (item.c.contemplacao < mes ? item.c.parcelaPos : item.c.parcelaInicial), 0);
@@ -156,9 +157,9 @@ function buildCadenciado(rows: SimRow[]) {
   const lanceEfetivo = totals.alavancagem > 0 ? mediaLanceProprio / totals.alavancagem : 0;
 
   const custoTotalPct = totals.alavancagem > 0 ? totals.taxaValor / totals.alavancagem : 0;
-  const cetMes = mediaParcelasApos > 0 ? custoTotalPct / mediaParcelasApos : 0;
+  const cetMes = prazoMedio > 0 ? custoTotalPct / prazoMedio : 0;
   const cetAno = cetMes * 12;
-  const cetCompMes = mediaParcelasApos > 0 ? Math.pow(1 + custoTotalPct, 1 / mediaParcelasApos) - 1 : 0;
+  const cetCompMes = prazoMedio > 0 ? Math.pow(1 + custoTotalPct, 1 / prazoMedio) - 1 : 0;
   const cetCompAno = Math.pow(1 + cetCompMes, 12) - 1;
 
   return {
@@ -171,7 +172,7 @@ function buildCadenciado(rows: SimRow[]) {
     liquido,
     qtdCotas,
     mediaLanceProprio,
-    mediaParcelasApos,
+    prazoMedio,
     lanceEfetivo,
     custoTotalPct,
     cetMes,
@@ -365,7 +366,7 @@ export default function PropostasCadenciado() {
     const row2 = row1 + 38;
     const row3 = row2 + 38;
 
-    drawMetric(doc, col1, row1, metricW, "Média Parc. Após", `${calc.mediaParcelasApos.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}x`, true);
+    drawMetric(doc, col1, row1, metricW, "Prazo Médio", `${calc.prazoMedio.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} meses`, true);
     drawMetric(doc, col2, row1, metricW, "Lance Efetivo", pct(calc.lanceEfetivo), true);
     drawMetric(doc, col1, row2, metricW, "CET simples a.m.", pct(calc.cetMes));
     drawMetric(doc, col2, row2, metricW, "CET simples a.a.", pct(calc.cetAno));
@@ -435,7 +436,7 @@ export default function PropostasCadenciado() {
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Média dos lances próprios</div><div className="font-semibold">{brMoney(calc.mediaLanceProprio)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Alavancagem total</div><div className="font-semibold">{brMoney(calc.totals.alavancagem)}</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">Lance efetivo</div><div className="font-semibold">{pct(calc.lanceEfetivo)}</div></div>
-              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Média de parcelas após</div><div className="font-semibold">{calc.mediaParcelasApos.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}x</div></div>
+              <div className="rounded-xl border p-3"><div className="text-muted-foreground">Prazo médio</div><div className="font-semibold">{calc.prazoMedio.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} meses</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET simples</div><div className="font-semibold">{pct(calc.cetMes)} a.m. / {pct(calc.cetAno)} a.a.</div></div>
               <div className="rounded-xl border p-3"><div className="text-muted-foreground">CET composto</div><div className="font-semibold">{pct(calc.cetCompMes)} a.m. / {pct(calc.cetCompAno)} a.a.</div></div>
             </div>

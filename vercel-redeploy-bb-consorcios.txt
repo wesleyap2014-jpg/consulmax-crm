@@ -1,0 +1,2 @@
+Trigger de redeploy para Vercel após ajustes no Simulador BB Consórcios.
+Commit anterior com ajustes principais: d2dfe0d8ce579fa6a88d1c28a50a680b26429f08

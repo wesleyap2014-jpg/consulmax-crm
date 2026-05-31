@@ -4,8 +4,6 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v25.0";
 const META_TOKEN = process.env.META_WHATSAPP_TOKEN || "";
 const DEFAULT_PHONE_NUMBER_ID = process.env.META_WHATSAPP_PHONE_NUMBER_ID || "";
 
-// Pode criar WHATSAPP_REGISTER_KEY na Vercel.
-// Se não criar, ele usa a mesma WHATSAPP_DEREGISTER_KEY que você já tinha.
 const REGISTER_KEY =
   process.env.WHATSAPP_REGISTER_KEY ||
   process.env.WHATSAPP_DEREGISTER_KEY ||
@@ -13,10 +11,12 @@ const REGISTER_KEY =
 
 function getParam(req: VercelRequest, name: string) {
   const fromQuery = req.query?.[name];
+
   if (Array.isArray(fromQuery)) return fromQuery[0] || "";
   if (fromQuery) return String(fromQuery);
 
   const fromBody = (req.body || {})?.[name];
+
   return fromBody == null ? "" : String(fromBody);
 }
 
@@ -33,6 +33,41 @@ async function readJson(response: Response) {
 function maskPin(pin: string) {
   if (!pin) return null;
   return `${pin.slice(0, 1)}****${pin.slice(-1)}`;
+}
+
+function normalizePin(value: string) {
+  return String(value || "").replace(/\D/g, "").slice(0, 6);
+}
+
+function validatePin(pin: string) {
+  return /^\d{6}$/.test(pin);
+}
+
+async function graphRequest(params: {
+  method: "GET" | "POST" | "DELETE";
+  path: string;
+  body?: Record<string, any>;
+}) {
+  const { method, path, body } = params;
+
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${path.replace(/^\/+/, "")}`;
+
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${META_TOKEN}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+
+  const data = await readJson(response);
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    data,
+  };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -71,62 +106,145 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const action = (getParam(req, "action") || "register").toLowerCase();
+    const action = (getParam(req, "action") || "status").toLowerCase();
+    const pin = normalizePin(getParam(req, "pin"));
 
-    // Teste opcional: ver status do número
     if (action === "status") {
-      const statusUrl =
-        `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}` +
-        `?fields=id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status`;
-
-      const response = await fetch(statusUrl, {
+      const result = await graphRequest({
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${META_TOKEN}`,
+        path:
+          `${phoneNumberId}` +
+          `?fields=id,display_phone_number,verified_name,quality_rating,platform_type,code_verification_status`,
+      });
+
+      return res.status(result.ok ? 200 : result.status).json({
+        ok: result.ok,
+        action,
+        phone_number_id: phoneNumberId,
+        data: result.data,
+      });
+    }
+
+    if (action === "set_pin") {
+      if (!validatePin(pin)) {
+        return res.status(400).json({
+          ok: false,
+          action,
+          error: "PIN inválido. Envie exatamente 6 dígitos.",
+        });
+      }
+
+      const result = await graphRequest({
+        method: "POST",
+        path: phoneNumberId,
+        body: { pin },
+      });
+
+      return res.status(result.ok ? 200 : result.status).json({
+        ok: result.ok,
+        action,
+        phone_number_id: phoneNumberId,
+        used_pin: maskPin(pin),
+        data: result.data,
+        next_step: result.ok
+          ? "Agora rode action=register com o mesmo PIN."
+          : "Se retornar account is not registered, tente action=register com o PIN ou solicite reset à Meta.",
+        warning:
+          "Rota temporária. Remova api/whatsapp/register.ts depois do teste.",
+      });
+    }
+
+    if (action === "register") {
+      const body: Record<string, string> = {
+        messaging_product: "whatsapp",
+      };
+
+      if (pin) {
+        if (!validatePin(pin)) {
+          return res.status(400).json({
+            ok: false,
+            action,
+            error: "PIN inválido. Envie exatamente 6 dígitos.",
+          });
+        }
+
+        body.pin = pin;
+      }
+
+      const result = await graphRequest({
+        method: "POST",
+        path: `${phoneNumberId}/register`,
+        body,
+      });
+
+      return res.status(result.ok ? 200 : result.status).json({
+        ok: result.ok,
+        action,
+        phone_number_id: phoneNumberId,
+        used_pin: maskPin(pin),
+        data: result.data,
+        next_step: result.ok
+          ? "Número registrado. Teste o envio pelo CRM."
+          : "Se pedir PIN ou acusar mismatch, o PIN antigo ainda está preso na Meta.",
+        warning:
+          "Rota temporária. Remova api/whatsapp/register.ts depois do teste.",
+      });
+    }
+
+    if (action === "set_pin_register") {
+      if (!validatePin(pin)) {
+        return res.status(400).json({
+          ok: false,
+          action,
+          error: "PIN inválido. Envie exatamente 6 dígitos.",
+        });
+      }
+
+      const setPinResult = await graphRequest({
+        method: "POST",
+        path: phoneNumberId,
+        body: { pin },
+      });
+
+      const registerResult = await graphRequest({
+        method: "POST",
+        path: `${phoneNumberId}/register`,
+        body: {
+          messaging_product: "whatsapp",
+          pin,
         },
       });
 
-      const data = await readJson(response);
+      const finalOk = setPinResult.ok && registerResult.ok;
 
-      return res.status(response.ok ? 200 : response.status).json({
-        ok: response.ok,
-        action: "status",
+      return res.status(finalOk ? 200 : 207).json({
+        ok: finalOk,
+        action,
         phone_number_id: phoneNumberId,
-        data,
+        used_pin: maskPin(pin),
+        set_pin: {
+          ok: setPinResult.ok,
+          status: setPinResult.status,
+          data: setPinResult.data,
+        },
+        register: {
+          ok: registerResult.ok,
+          status: registerResult.status,
+          data: registerResult.data,
+        },
+        interpretation:
+          setPinResult.ok && registerResult.ok
+            ? "PIN criado/alterado e número registrado com sucesso."
+            : "Uma das etapas falhou. Veja set_pin e register separadamente.",
+        warning:
+          "Rota temporária. Remova api/whatsapp/register.ts depois do teste.",
       });
     }
 
-    const pin = getParam(req, "pin").replace(/\D/g, "");
-
-    const body: Record<string, string> = {
-      messaging_product: "whatsapp",
-    };
-
-    if (pin) {
-      body.pin = pin;
-    }
-
-    const registerUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/register`;
-
-    const response = await fetch(registerUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${META_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await readJson(response);
-
-    return res.status(response.ok ? 200 : response.status).json({
-      ok: response.ok,
-      action: "register",
-      phone_number_id: phoneNumberId,
-      used_pin: maskPin(pin),
-      data,
-      warning:
-        "Rota temporária. Remova api/whatsapp/register.ts depois do teste.",
+    return res.status(400).json({
+      ok: false,
+      error: "Ação inválida.",
+      valid_actions: ["status", "set_pin", "register", "set_pin_register"],
     });
   } catch (error: any) {
     return res.status(500).json({

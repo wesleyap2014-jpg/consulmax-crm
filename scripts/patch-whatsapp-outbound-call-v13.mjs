@@ -146,7 +146,24 @@ const outboundFunction = `
     } catch (error: any) {
       stopLocalCallResources();
       setCallState({ callId: null, status: "idle" });
-      alert(error?.message || "Não foi possível iniciar a ligação pelo CRM.");
+
+      const rawMessage = String(error?.message || "");
+      const needsPermission = /permiss|permission|aprova|approved|destinat/i.test(rawMessage);
+
+      if (needsPermission) {
+        const permissionMessage = "Olá! Aqui é da Consulmax. Posso te ligar agora pelo WhatsApp para agilizar seu atendimento? Responda SIM para autorizar a ligação.";
+        const sent = await sendMessage(permissionMessage);
+
+        if (sent) {
+          alert("O WhatsApp ainda não liberou chamada iniciada pela Consulmax para este contato. Enviei uma solicitação de autorização pelo próprio WhatsApp. Quando o cliente responder SIM, tente ligar novamente pelo CRM.");
+        } else {
+          alert("Este cliente ainda não autorizou chamadas iniciadas pela Consulmax e não foi possível enviar a solicitação automática pelo WhatsApp. Envie uma mensagem manual pedindo autorização e tente novamente após a resposta.");
+        }
+
+        return;
+      }
+
+      alert(error?.message || "Não foi possível iniciar a ligação pelo WhatsApp no CRM.");
     } finally {
       setCallBusy(false);
     }

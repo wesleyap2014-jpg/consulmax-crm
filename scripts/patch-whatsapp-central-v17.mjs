@@ -71,11 +71,11 @@ replace(
   `<div className="flex-1 space-y-3 overflow-auto bg-slate-50 px-4 py-3">`
 );
 
-// Bolhas menos gigantes.
+// Bolhas menos gigantes. Sem template literal para o Node não tentar resolver ${outbound}.
 replace(
   "bubble compacta",
-  `className={\`max-w-[84%] rounded-3xl px-4 py-3 text-base leading-relaxed shadow-sm ${outbound ? "rounded-br-md text-white" : "rounded-bl-md border border-slate-100 bg-white text-slate-900"}\`}`,
-  `className={\`max-w-[82%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${outbound ? "rounded-br-md text-white" : "rounded-bl-md border border-slate-100 bg-white text-slate-900"}\`}`
+  'className={`max-w-[84%] rounded-3xl px-4 py-3 text-base leading-relaxed shadow-sm ${outbound ? "rounded-br-md text-white" : "rounded-bl-md border border-slate-100 bg-white text-slate-900"}`}',
+  'className={`max-w-[82%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${outbound ? "rounded-br-md text-white" : "rounded-bl-md border border-slate-100 bg-white text-slate-900"}`}'
 );
 
 // Composer final compacto. Trata variações do v13/v15/v16.

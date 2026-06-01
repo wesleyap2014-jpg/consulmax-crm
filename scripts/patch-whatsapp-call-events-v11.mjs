@@ -24,26 +24,182 @@ function patch(file, label, from, to) {
   console.log(`[patch-whatsapp-call-events-v11] ${label}: aplicado`);
 }
 
-patch(
-  pageFile,
-  "messageFallback-call",
-  `  if (type === "document") return "Documento recebido";\n  if (type === "sticker") return "Figurinha recebida";\n\n  return "Mensagem sem texto";`,
-  `  if (type === "document") return "Documento recebido";\n  if (type === "sticker") return "Figurinha recebida";\n  if (type === "call") return msg.body || "Chamada WhatsApp";\n\n  return "Mensagem sem texto";`
-);
+const oldFallback = `  if (type === "document") return "Documento recebido";
+  if (type === "sticker") return "Figurinha recebida";
 
-patch(
-  pageFile,
-  "MediaIcon-call",
-  `  if (value === "document") return <FileText className="h-4 w-4" />;\n\n  return null;`,
-  `  if (value === "document") return <FileText className="h-4 w-4" />;\n  if (value === "call") return <Phone className="h-4 w-4" />;\n\n  return null;`
-);
+  return "Mensagem sem texto";`;
 
-patch(
-  webhookFile,
-  "handleSingleCallEvent-persist-conversation",
-  `async function handleSingleCallEvent(payload: any, value: any, call: any) {\n  const now = new Date().toISOString();\n  const phoneNumberId = value?.metadata?.phone_number_id || null;\n  const displayPhoneNumber = value?.metadata?.display_phone_number || null;\n  await upsertAccount(phoneNumberId, displayPhoneNumber);\n\n  const waId = extractCallPhone(value, call);\n  const metaCallId = extractCallId(call);\n  const status = extractCallStatus(call);\n  const direction = call?.from || call?.caller || call?.customer ? "inbound" : "outbound";\n\n  console.log("WHATSAPP_CALL_EVENT", {\n    waId,\n    metaCallId,\n    status,\n    direction,\n    keys: Object.keys(call || {}),\n  });\n\n  const payloadToStore = {\n    phone: waId || null,\n    wa_id: waId || null,\n    direction,\n    status,\n    raw_payload: { payload, value, call, meta_call_id: metaCallId, provider: "meta_whatsapp_calling_api" },\n  };\n\n  const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert(payloadToStore);\n\n  if (insertCallError) {\n    console.error("WHATSAPP_CALL_INSERT_ERROR", insertCallError);\n  }\n}`,
-  `async function handleSingleCallEvent(payload: any, value: any, call: any) {\n  const now = new Date().toISOString();\n  const phoneNumberId = value?.metadata?.phone_number_id || null;\n  const displayPhoneNumber = value?.metadata?.display_phone_number || null;\n  const accountId = await upsertAccount(phoneNumberId, displayPhoneNumber);\n\n  const waId = extractCallPhone(value, call);\n  const metaCallId = extractCallId(call);\n  const status = extractCallStatus(call);\n  const direction = call?.from || call?.caller || call?.customer ? "inbound" : "outbound";\n  const contactFromContacts = value?.contacts?.find((c: any) => onlyDigits(c?.wa_id) === waId) || value?.contacts?.[0];\n  const nome = contactFromContacts?.profile?.name || null;\n\n  console.log("WHATSAPP_CALL_EVENT", {\n    waId,\n    metaCallId,\n    status,\n    direction,\n    keys: Object.keys(call || {}),\n    rawCall: call,\n  });\n\n  const payloadToStore = {\n    phone: waId || null,\n    wa_id: waId || null,\n    direction,\n    status,\n    raw_payload: { payload, value, call, meta_call_id: metaCallId, provider: "meta_whatsapp_calling_api" },\n  };\n\n  const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert(payloadToStore);\n\n  if (insertCallError) {\n    console.error("WHATSAPP_CALL_INSERT_ERROR", insertCallError);\n  }\n\n  if (!waId) return;\n\n  const { data: contact, error: contactError } = await supabaseAdmin\n    .from("whatsapp_contacts")\n    .upsert(\n      {\n        wa_id: waId,\n        telefone: waId,\n        nome,\n        updated_at: now,\n      },\n      { onConflict: "wa_id" }\n    )\n    .select("id, lead_id")\n    .single();\n\n  if (contactError || !contact?.id) {\n    console.error("WHATSAPP_CALL_CONTACT_UPSERT_ERROR", contactError);\n    return;\n  }\n\n  let conversation = await findActiveConversation(contact.id);\n\n  if (!conversation?.id) {\n    const { data: createdConversation, error: createConversationError } = await supabaseAdmin\n      .from("whatsapp_conversations")\n      .insert({\n        account_id: accountId,\n        contact_id: contact.id,\n        lead_id: contact.lead_id,\n        status: "humano",\n        stage: "triagem",\n        queue: "triagem",\n        last_message: "Chamada WhatsApp recebida",\n        last_message_at: now,\n        unread_count: direction === "inbound" ? 1 : 0,\n      })\n      .select("id, unread_count, status, stage, queue, closed_at, last_message_at")\n      .single();\n\n    if (createConversationError || !createdConversation?.id) {\n      console.error("WHATSAPP_CALL_CONVERSATION_CREATE_ERROR", createConversationError);\n      return;\n    }\n\n    conversation = createdConversation;\n  } else {\n    const { error: updateConversationError } = await supabaseAdmin\n      .from("whatsapp_conversations")\n      .update({\n        last_message: direction === "inbound" ? "Chamada WhatsApp recebida" : "Chamada WhatsApp realizada",\n        last_message_at: now,\n        unread_count: direction === "inbound" ? (conversation.unread_count || 0) + 1 : conversation.unread_count || 0,\n        updated_at: now,\n      })\n      .eq("id", conversation.id);\n\n    if (updateConversationError) {\n      console.error("WHATSAPP_CALL_CONVERSATION_UPDATE_ERROR", updateConversationError);\n    }\n  }\n\n  const body = direction === "inbound" ? "Chamada WhatsApp recebida" : "Chamada WhatsApp realizada";\n\n  const messagePayload = {\n    conversation_id: conversation.id,\n    direction: direction === "inbound" ? "inbound" : "outbound",\n    sender_type: direction === "inbound" ? "cliente" : "usuario",\n    message_type: "call",\n    body: `${body}${status ? ` • ${status}` : ""}`,\n    meta_message_id: metaCallId ? `call:${metaCallId}:${status || "event"}` : null,\n    raw_payload: { payload, value, call, meta_call_id: metaCallId, provider: "meta_whatsapp_calling_api" },\n  };\n\n  const { error: messageError } = messagePayload.meta_message_id\n    ? await supabaseAdmin.from("whatsapp_messages").upsert(messagePayload, { onConflict: "meta_message_id" })\n    : await supabaseAdmin.from("whatsapp_messages").insert(messagePayload);\n\n  if (messageError) {\n    console.error("WHATSAPP_CALL_MESSAGE_INSERT_ERROR", messageError);\n  }\n}`
-);
+const newFallback = `  if (type === "document") return "Documento recebido";
+  if (type === "sticker") return "Figurinha recebida";
+  if (type === "call") return msg.body || "Chamada WhatsApp";
+
+  return "Mensagem sem texto";`;
+
+const oldIcon = `  if (value === "document") return <FileText className="h-4 w-4" />;
+
+  return null;`;
+
+const newIcon = `  if (value === "document") return <FileText className="h-4 w-4" />;
+  if (value === "call") return <Phone className="h-4 w-4" />;
+
+  return null;`;
+
+const oldCallHandler = `async function handleSingleCallEvent(payload: any, value: any, call: any) {
+  const now = new Date().toISOString();
+  const phoneNumberId = value?.metadata?.phone_number_id || null;
+  const displayPhoneNumber = value?.metadata?.display_phone_number || null;
+  await upsertAccount(phoneNumberId, displayPhoneNumber);
+
+  const waId = extractCallPhone(value, call);
+  const metaCallId = extractCallId(call);
+  const status = extractCallStatus(call);
+  const direction = call?.from || call?.caller || call?.customer ? "inbound" : "outbound";
+
+  console.log("WHATSAPP_CALL_EVENT", {
+    waId,
+    metaCallId,
+    status,
+    direction,
+    keys: Object.keys(call || {}),
+  });
+
+  const payloadToStore = {
+    phone: waId || null,
+    wa_id: waId || null,
+    direction,
+    status,
+    raw_payload: { payload, value, call, meta_call_id: metaCallId, provider: "meta_whatsapp_calling_api" },
+  };
+
+  const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert(payloadToStore);
+
+  if (insertCallError) {
+    console.error("WHATSAPP_CALL_INSERT_ERROR", insertCallError);
+  }
+}`;
+
+const newCallHandler = `async function handleSingleCallEvent(payload: any, value: any, call: any) {
+  const now = new Date().toISOString();
+  const phoneNumberId = value?.metadata?.phone_number_id || null;
+  const displayPhoneNumber = value?.metadata?.display_phone_number || null;
+  const accountId = await upsertAccount(phoneNumberId, displayPhoneNumber);
+
+  const waId = extractCallPhone(value, call);
+  const metaCallId = extractCallId(call);
+  const status = extractCallStatus(call);
+  const direction = call?.from || call?.caller || call?.customer ? "inbound" : "outbound";
+  const contactFromContacts = value?.contacts?.find((c: any) => onlyDigits(c?.wa_id) === waId) || value?.contacts?.[0];
+  const nome = contactFromContacts?.profile?.name || null;
+
+  console.log("WHATSAPP_CALL_EVENT", {
+    waId,
+    metaCallId,
+    status,
+    direction,
+    keys: Object.keys(call || {}),
+    rawCall: call,
+  });
+
+  const payloadToStore = {
+    phone: waId || null,
+    wa_id: waId || null,
+    direction,
+    status,
+    raw_payload: { payload, value, call, meta_call_id: metaCallId, provider: "meta_whatsapp_calling_api" },
+  };
+
+  const { error: insertCallError } = await supabaseAdmin.from("whatsapp_calls").insert(payloadToStore);
+
+  if (insertCallError) {
+    console.error("WHATSAPP_CALL_INSERT_ERROR", insertCallError);
+  }
+
+  if (!waId) return;
+
+  const { data: contact, error: contactError } = await supabaseAdmin
+    .from("whatsapp_contacts")
+    .upsert(
+      {
+        wa_id: waId,
+        telefone: waId,
+        nome,
+        updated_at: now,
+      },
+      { onConflict: "wa_id" }
+    )
+    .select("id, lead_id")
+    .single();
+
+  if (contactError || !contact?.id) {
+    console.error("WHATSAPP_CALL_CONTACT_UPSERT_ERROR", contactError);
+    return;
+  }
+
+  let conversation = await findActiveConversation(contact.id);
+
+  if (!conversation?.id) {
+    const { data: createdConversation, error: createConversationError } = await supabaseAdmin
+      .from("whatsapp_conversations")
+      .insert({
+        account_id: accountId,
+        contact_id: contact.id,
+        lead_id: contact.lead_id,
+        status: "humano",
+        stage: "triagem",
+        queue: "triagem",
+        last_message: "Chamada WhatsApp recebida",
+        last_message_at: now,
+        unread_count: direction === "inbound" ? 1 : 0,
+      })
+      .select("id, unread_count, status, stage, queue, closed_at, last_message_at")
+      .single();
+
+    if (createConversationError || !createdConversation?.id) {
+      console.error("WHATSAPP_CALL_CONVERSATION_CREATE_ERROR", createConversationError);
+      return;
+    }
+
+    conversation = createdConversation;
+  } else {
+    const { error: updateConversationError } = await supabaseAdmin
+      .from("whatsapp_conversations")
+      .update({
+        last_message: direction === "inbound" ? "Chamada WhatsApp recebida" : "Chamada WhatsApp realizada",
+        last_message_at: now,
+        unread_count: direction === "inbound" ? (conversation.unread_count || 0) + 1 : conversation.unread_count || 0,
+        updated_at: now,
+      })
+      .eq("id", conversation.id);
+
+    if (updateConversationError) {
+      console.error("WHATSAPP_CALL_CONVERSATION_UPDATE_ERROR", updateConversationError);
+    }
+  }
+
+  const body = direction === "inbound" ? "Chamada WhatsApp recebida" : "Chamada WhatsApp realizada";
+
+  const messagePayload = {
+    conversation_id: conversation.id,
+    direction: direction === "inbound" ? "inbound" : "outbound",
+    sender_type: direction === "inbound" ? "cliente" : "usuario",
+    message_type: "call",
+    body: body + (status ? " • " + status : ""),
+    meta_message_id: metaCallId ? "call:" + metaCallId + ":" + (status || "event") : null,
+    raw_payload: { payload, value, call, meta_call_id: metaCallId, provider: "meta_whatsapp_calling_api" },
+  };
+
+  const { error: messageError } = messagePayload.meta_message_id
+    ? await supabaseAdmin.from("whatsapp_messages").upsert(messagePayload, { onConflict: "meta_message_id" })
+    : await supabaseAdmin.from("whatsapp_messages").insert(messagePayload);
+
+  if (messageError) {
+    console.error("WHATSAPP_CALL_MESSAGE_INSERT_ERROR", messageError);
+  }
+}`;
+
+patch(pageFile, "messageFallback-call", oldFallback, newFallback);
+patch(pageFile, "MediaIcon-call", oldIcon, newIcon);
+patch(webhookFile, "handleSingleCallEvent-persist-conversation", oldCallHandler, newCallHandler);
 
 if (changed) {
   console.log("[patch-whatsapp-call-events-v11] patches aplicados");

@@ -8,7 +8,7 @@
 },
 "scripts": {
 "dev": "vite",
-"build": "node scripts/patch-propostas-cadenciado-chip.mjs && node scripts/patch-whatsapp-focus-call-v10.mjs && node scripts/patch-whatsapp-call-events-v11.mjs && node scripts/patch-whatsapp-call-answer-v12.mjs && node scripts/patch-whatsapp-outbound-call-v13.mjs && node scripts/patch-whatsapp-central-v15.mjs && vite build",
+"build": "node scripts/patch-propostas-cadenciado-chip.mjs && node scripts/patch-whatsapp-focus-call-v10.mjs && node scripts/patch-whatsapp-call-events-v11.mjs && node scripts/patch-whatsapp-call-answer-v12.mjs && node scripts/patch-whatsapp-outbound-call-v13.mjs && node scripts/patch-whatsapp-central-v15.mjs && node scripts/patch-whatsapp-central-v16.mjs && vite build",
 "preview": "vite preview",
 "start": "vite preview --host --port 4173",
 "clean": "rimraf dist",

@@ -151,7 +151,13 @@ const bulkFunction = `
         return next;
       });
 
-      alert(labelMap[source] + " adicionados à campanha.\n\nAdicionados: " + added + "\nDuplicados ignorados: " + duplicates + "\nDescadastrados ignorados: " + skipped);
+      alert([
+        labelMap[source] + " adicionados à campanha.",
+        "",
+        "Adicionados: " + added,
+        "Duplicados ignorados: " + duplicates,
+        "Descadastrados ignorados: " + skipped,
+      ].join("\\n"));
     } catch (error: any) {
       console.error("Erro ao importar público da campanha:", error);
       alert(error?.message || "Não foi possível importar esta lista de contatos.");

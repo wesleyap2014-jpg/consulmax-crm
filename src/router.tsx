@@ -43,6 +43,9 @@ const Processos = React.lazy(() => import("./pages/Processos"));
 const RH = React.lazy(() => import("./pages/RH"));
 const RHVagas = React.lazy(() => import("./pages/RHVagas"));
 const AtendimentoWhatsApp = React.lazy(() => import("./pages/AtendimentoWhatsApp"));
+const WhatsAppCampanhas = React.lazy(() => import("./pages/whatsapp/WhatsAppCampanhas"));
+const WhatsAppModelos = React.lazy(() => import("./pages/whatsapp/WhatsAppModelos"));
+const WhatsAppAutorizacoes = React.lazy(() => import("./pages/whatsapp/WhatsAppAutorizacoes"));
 
 function withSuspense(node: React.ReactNode) {
   return (
@@ -118,11 +121,15 @@ export const router = createBrowserRouter([
           { path: "procedimentos", element: withSuspense(<Procedimentos />) },
           { path: "relatorios", element: withSuspense(<Relatorios />) },
 
-          // Central WhatsApp
+          // WhatsApp
           { path: "atendimento-whatsapp", element: withSuspense(<AtendimentoWhatsApp />) },
-          { path: "whatsapp", element: <Navigate to="/atendimento-whatsapp" replace /> },
-          { path: "central-whatsapp", element: <Navigate to="/atendimento-whatsapp" replace /> },
-          { path: "atendimento", element: <Navigate to="/atendimento-whatsapp" replace /> },
+          { path: "whatsapp", element: <Navigate to="/whatsapp/atendimento" replace /> },
+          { path: "whatsapp/atendimento", element: withSuspense(<AtendimentoWhatsApp />) },
+          { path: "whatsapp/campanhas", element: withSuspense(<WhatsAppCampanhas />) },
+          { path: "whatsapp/modelos", element: withSuspense(<WhatsAppModelos />) },
+          { path: "whatsapp/autorizacoes", element: withSuspense(<WhatsAppAutorizacoes />) },
+          { path: "central-whatsapp", element: <Navigate to="/whatsapp/atendimento" replace /> },
+          { path: "atendimento", element: <Navigate to="/whatsapp/atendimento" replace /> },
 
           { path: "estoque-contempladas", element: withSuspense(<EstoqueContempladas />) },
           { path: "estoque", element: <Navigate to="/estoque-contempladas" replace /> },

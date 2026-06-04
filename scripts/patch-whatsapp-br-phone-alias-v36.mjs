@@ -214,3 +214,5 @@ patchFile("api/whatsapp/send.ts", (src) => {
 
   return src;
 });
+
+await import("./patch-whatsapp-consent-gate-v37a.mjs");

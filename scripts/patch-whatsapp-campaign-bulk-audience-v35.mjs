@@ -23,6 +23,7 @@ mustReplace(
 );
 
 const bulkFunction = `
+  // patch-whatsapp-campaign-bulk-audience-v35
   async function addCampaignAudienceSource(source: "leads" | "clientes" | "whatsapp_contact_book") {
     const labelMap: Record<typeof source, string> = {
       leads: "Leads",
@@ -102,7 +103,7 @@ const bulkFunction = `
         .filter(Boolean) as ContactBook[];
 
       if (contacts.length === 0) {
-        alert(`Nenhum contato com telefone foi encontrado em ${labelMap[source]}.`);
+        alert("Nenhum contato com telefone foi encontrado em " + labelMap[source] + ".");
         return;
       }
 
@@ -150,7 +151,7 @@ const bulkFunction = `
         return next;
       });
 
-      alert(`${labelMap[source]} adicionados à campanha.\n\nAdicionados: ${added}\nDuplicados ignorados: ${duplicates}\nDescadastrados ignorados: ${skipped}`);
+      alert(labelMap[source] + " adicionados à campanha.\n\nAdicionados: " + added + "\nDuplicados ignorados: " + duplicates + "\nDescadastrados ignorados: " + skipped);
     } catch (error: any) {
       console.error("Erro ao importar público da campanha:", error);
       alert(error?.message || "Não foi possível importar esta lista de contatos.");

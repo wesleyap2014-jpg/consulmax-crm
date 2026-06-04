@@ -65,10 +65,10 @@ async function sendConsentTemplate(campaign: any, recipient: any, phoneValue: st
   const phone = typeof resolveWhatsAppSendPhone === "function" ? await resolveWhatsAppSendPhone(phoneValue, null) : onlyDigits(phoneValue);
   const first = firstName(recipient?.nome) || "cliente";
 
-  const response = await fetch(`${GRAPH_BASE}/${DEFAULT_PHONE_NUMBER_ID}/messages`, {
+  const response = await fetch(GRAPH_BASE + "/" + DEFAULT_PHONE_NUMBER_ID + "/messages", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${META_TOKEN}`,
+      Authorization: "Bearer " + META_TOKEN,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

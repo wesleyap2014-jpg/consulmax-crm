@@ -42,7 +42,7 @@ const EstoqueContempladas = React.lazy(() => import("./pages/EstoqueContempladas
 const Processos = React.lazy(() => import("./pages/Processos"));
 const RH = React.lazy(() => import("./pages/RH"));
 const RHVagas = React.lazy(() => import("./pages/RHVagas"));
-const AtendimentoWhatsApp = React.lazy(() => import("./pages/AtendimentoWhatsApp"));
+const WhatsAppAtendimento = React.lazy(() => import("./pages/whatsapp/WhatsAppAtendimento"));
 const WhatsAppCampanhas = React.lazy(() => import("./pages/whatsapp/WhatsAppCampanhas"));
 const WhatsAppModelos = React.lazy(() => import("./pages/whatsapp/WhatsAppModelos"));
 const WhatsAppAutorizacoes = React.lazy(() => import("./pages/whatsapp/WhatsAppAutorizacoes"));
@@ -122,9 +122,9 @@ export const router = createBrowserRouter([
           { path: "relatorios", element: withSuspense(<Relatorios />) },
 
           // WhatsApp
-          { path: "atendimento-whatsapp", element: withSuspense(<AtendimentoWhatsApp />) },
+          { path: "atendimento-whatsapp", element: <Navigate to="/whatsapp/atendimento" replace /> },
           { path: "whatsapp", element: <Navigate to="/whatsapp/atendimento" replace /> },
-          { path: "whatsapp/atendimento", element: withSuspense(<AtendimentoWhatsApp />) },
+          { path: "whatsapp/atendimento", element: withSuspense(<WhatsAppAtendimento />) },
           { path: "whatsapp/campanhas", element: withSuspense(<WhatsAppCampanhas />) },
           { path: "whatsapp/modelos", element: withSuspense(<WhatsAppModelos />) },
           { path: "whatsapp/autorizacoes", element: withSuspense(<WhatsAppAutorizacoes />) },

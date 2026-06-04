@@ -20,6 +20,13 @@ function mustReplace(src, search, replace, label) {
   return src.replace(search, replace);
 }
 
+function mustReplaceRegex(src, regex, replace, label) {
+  if (!regex.test(src)) {
+    throw new Error(`${marker}: trecho não encontrado para ${label}`);
+  }
+  return src.replace(regex, replace);
+}
+
 const phoneHelpers = `
 // patch-whatsapp-br-phone-alias-v36
 function brPhoneVariants(value?: string | null) {
@@ -100,9 +107,11 @@ patchFile("api/whatsapp/webhook.ts", (src) => {
     "helpers de telefone no webhook"
   );
 
-  src = mustReplace(
+  const contactRegex = /  const \{ data: contact, error: contactError \} = await supabaseAdmin[\s\S]*?  if \(contactError \|\| !contact\?\.id\) \{\n    console\.error\("WHATSAPP_CONTACT_UPSERT_ERROR", contactError\);\n    return;\n  \}/;
+
+  src = mustReplaceRegex(
     src,
-    `  const { data: contact, error: contactError } = await supabaseAdmin\n    .from("whatsapp_contacts")\n    .upsert(\n      {\n        wa_id: waId,\n        telefone: waId,\n        nome,\n        updated_at: inboundAt,\n      },\n      { onConflict: "wa_id" }\n    )\n    .select("id, lead_id")\n    .single();\n\n  if (contactError || !contact?.id) {\n    console.error("WHATSAPP_CONTACT_UPSERT_ERROR", contactError);\n    return;\n  }`,
+    contactRegex,
     `  const existingContactByAlias = await findWhatsAppContactByPhoneVariants(waId);\n\n  const contactResult = existingContactByAlias?.id\n    ? await supabaseAdmin\n        .from("whatsapp_contacts")\n        .update({\n          wa_id: waId,\n          telefone: waId,\n          nome: existingContactByAlias.nome || nome,\n          updated_at: inboundAt,\n        })\n        .eq("id", existingContactByAlias.id)\n        .select("id, lead_id")\n        .single()\n    : await supabaseAdmin\n        .from("whatsapp_contacts")\n        .upsert(\n          {\n            wa_id: waId,\n            telefone: waId,\n            nome,\n            updated_at: inboundAt,\n          },\n          { onConflict: "wa_id" }\n        )\n        .select("id, lead_id")\n        .single();\n\n  const contact = contactResult.data;\n  const contactError = contactResult.error;\n\n  if (contactError || !contact?.id) {\n    console.error("WHATSAPP_CONTACT_UPSERT_ERROR", contactError);\n    return;\n  }`,
     "merge de contato inbound por alias BR"
   );
@@ -194,9 +203,11 @@ patchFile("api/whatsapp/send.ts", (src) => {
     `  const phone = await resolveWhatsAppSendPhone(to, conversation_id);\n  const mimeType = String(mime_type || "application/octet-stream");`
   );
 
-  src = mustReplace(
+  const ensureRegex = /  const phone = onlyDigits\(contact\.telefone_digits \|\| contact\.telefone\);\n  const now = new Date\(\)\.toISOString\(\);\n\n  const \{ data: waContact, error: contactError \} = await supabaseAdmin[\s\S]*?  if \(contactError \|\| !waContact\?\.id\) throw contactError \|\| new Error\("Contato não criado\."\);/;
+
+  src = mustReplaceRegex(
     src,
-    `  const phone = onlyDigits(contact.telefone_digits || contact.telefone);\n  const now = new Date().toISOString();\n\n  const { data: waContact, error: contactError } = await supabaseAdmin\n    .from("whatsapp_contacts")\n    .upsert(\n      {\n        wa_id: phone,\n        telefone: phone,\n        nome: contact.nome || null,\n        updated_at: now,\n      },\n      { onConflict: "wa_id" }\n    )\n    .select("id,lead_id")\n    .single();\n\n  if (contactError || !waContact?.id) throw contactError || new Error("Contato não criado.");`,
+    ensureRegex,
     `  const phone = onlyDigits(contact.telefone_digits || contact.telefone);\n  const now = new Date().toISOString();\n\n  const waContact = await getOrCreateWhatsAppContactForSend(phone, contact.nome || null);`,
     "ensureCampaignConversation por alias BR"
   );

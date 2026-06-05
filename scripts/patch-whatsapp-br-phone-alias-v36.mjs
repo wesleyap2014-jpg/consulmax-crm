@@ -284,3 +284,4 @@ ${sendHelpers}
 
 await import("./patch-whatsapp-consent-gate-v37a.mjs");
 await import("./patch-whatsapp-module-fixes-v38b.mjs");
+await import("./patch-whatsapp-atendimento-web-layout-v39.mjs");

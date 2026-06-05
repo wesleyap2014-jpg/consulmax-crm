@@ -2,7 +2,12 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 const META_TOKEN = process.env.META_WHATSAPP_TOKEN || process.env.WHATSAPP_TOKEN || "";
 const PHONE_NUMBER_ID = process.env.META_WHATSAPP_PHONE_NUMBER_ID || "";
-const WABA_ID = process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID || process.env.META_WABA_ID || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "";
+const WABA_ID =
+  process.env.META_WHATSAPP_WABA_ID ||
+  process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID ||
+  process.env.META_WABA_ID ||
+  process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ||
+  "";
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v21.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
@@ -58,7 +63,7 @@ async function getTemplates(req: VercelRequest, res: VercelResponse) {
   if (!wabaId) {
     return send(res, 400, {
       ok: false,
-      error: "WABA_ID ausente. Configure META_WHATSAPP_BUSINESS_ACCOUNT_ID, META_WABA_ID ou WHATSAPP_BUSINESS_ACCOUNT_ID na Vercel.",
+      error: "WABA_ID ausente. Configure META_WHATSAPP_WABA_ID, META_WHATSAPP_BUSINESS_ACCOUNT_ID, META_WABA_ID ou WHATSAPP_BUSINESS_ACCOUNT_ID na Vercel.",
     });
   }
 
@@ -129,7 +134,7 @@ async function getOverview(_req: VercelRequest, res: VercelResponse) {
     business_profile: businessProfile.ok ? businessProfile.data?.data?.[0] || businessProfile.data : null,
     warnings: [
       !PHONE_NUMBER_ID ? "Configure META_WHATSAPP_PHONE_NUMBER_ID para consultar número e perfil." : null,
-      !wabaId ? "Configure META_WHATSAPP_BUSINESS_ACCOUNT_ID para consultar WABA, modelos e números." : null,
+      !wabaId ? "Configure META_WHATSAPP_WABA_ID ou META_WHATSAPP_BUSINESS_ACCOUNT_ID para consultar WABA, modelos e números." : null,
       phone.ok ? null : { phone_number_error: phone.data },
       waba.ok ? null : { waba_error: waba.data },
       businessProfile.ok ? null : { business_profile_error: businessProfile.data },

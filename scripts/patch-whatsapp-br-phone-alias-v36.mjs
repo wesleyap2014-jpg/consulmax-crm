@@ -35,12 +35,14 @@ patchIfExists("api/whatsapp/webhook.ts", (src) => {
 });
 
 // O campo de mensagem perdia foco porque o Chat estava sendo renderizado como
-// componente interno <Chat />, que é recriado a cada render. Chamando Chat()
-// como função, o textarea não desmonta a cada tecla.
+// componente interno <Chat />, que é recriado a cada render.
+// Em posição de filho JSX usamos {Chat()}; dentro de ternário usamos Reports() sem chaves extras.
 patchIfExists("src/pages/whatsapp/WhatsAppAtendimento.tsx", (src) => {
   return src
     .replace(/<Chat \/>/g, "{Chat()}")
-    .replace(/<Reports \/>/g, "{Reports()}");
+    .replace(/<Reports \/>/g, "Reports()")
+    .replace(/\? \{Reports\(\)\} :/g, "? Reports() :")
+    .replace(/\? \{Chat\(\)\} :/g, "? Chat() :");
 });
 
 // Mantém o gate de consentimento das campanhas sem reativar a troca insegura acima.

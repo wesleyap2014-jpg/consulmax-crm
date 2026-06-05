@@ -102,8 +102,15 @@ async function findWhatsAppContactByPhoneVariants(value?: string | null) {
 patchFile("api/whatsapp/webhook.ts", (src) => {
   src = mustReplace(
     src,
-    `function onlyDigits(value?: string | null) {\n  return String(value || "").replace(/\\D/g, "");\n}\n`,
-    `function onlyDigits(value?: string | null) {\n  return String(value || "").replace(/\\D/g, "");\n}\n${phoneHelpers}\n`,
+    `function onlyDigits(value?: string | null) {
+  return String(value || "").replace(/\D/g, "");
+}
+`,
+    `function onlyDigits(value?: string | null) {
+  return String(value || "").replace(/\D/g, "");
+}
+${phoneHelpers}
+`,
     "helpers de telefone no webhook"
   );
 
@@ -112,7 +119,41 @@ patchFile("api/whatsapp/webhook.ts", (src) => {
   src = mustReplaceRegex(
     src,
     contactRegex,
-    `  const existingContactByAlias = await findWhatsAppContactByPhoneVariants(waId);\n\n  const contactResult = existingContactByAlias?.id\n    ? await supabaseAdmin\n        .from("whatsapp_contacts")\n        .update({\n          wa_id: waId,\n          telefone: waId,\n          nome: existingContactByAlias.nome || nome,\n          updated_at: inboundAt,\n        })\n        .eq("id", existingContactByAlias.id)\n        .select("id, lead_id")\n        .single()\n    : await supabaseAdmin\n        .from("whatsapp_contacts")\n        .upsert(\n          {\n            wa_id: waId,\n            telefone: waId,\n            nome,\n            updated_at: inboundAt,\n          },\n          { onConflict: "wa_id" }\n        )\n        .select("id, lead_id")\n        .single();\n\n  const contact = contactResult.data;\n  const contactError = contactResult.error;\n\n  if (contactError || !contact?.id) {\n    console.error("WHATSAPP_CONTACT_UPSERT_ERROR", contactError);\n    return;\n  }`,
+    `  const existingContactByAlias = await findWhatsAppContactByPhoneVariants(waId);
+
+  const contactResult = existingContactByAlias?.id
+    ? await supabaseAdmin
+        .from("whatsapp_contacts")
+        .update({
+          wa_id: waId,
+          telefone: waId,
+          nome: existingContactByAlias.nome || nome,
+          updated_at: inboundAt,
+        })
+        .eq("id", existingContactByAlias.id)
+        .select("id, lead_id")
+        .single()
+    : await supabaseAdmin
+        .from("whatsapp_contacts")
+        .upsert(
+          {
+            wa_id: waId,
+            telefone: waId,
+            nome,
+            updated_at: inboundAt,
+          },
+          { onConflict: "wa_id" }
+        )
+        .select("id, lead_id")
+        .single();
+
+  const contact = contactResult.data;
+  const contactError = contactResult.error;
+
+  if (contactError || !contact?.id) {
+    console.error("WHATSAPP_CONTACT_UPSERT_ERROR", contactError);
+    return;
+  }`,
     "merge de contato inbound por alias BR"
   );
 
@@ -188,19 +229,32 @@ async function getOrCreateWhatsAppContactForSend(phoneValue?: string | null, nom
 patchFile("api/whatsapp/send.ts", (src) => {
   src = mustReplace(
     src,
-    `function onlyDigits(value?: string | null) {\n  return String(value || "").replace(/\\D/g, "");\n}\n`,
-    `function onlyDigits(value?: string | null) {\n  return String(value || "").replace(/\\D/g, "");\n}\n${sendHelpers}\n`,
+    `function onlyDigits(value?: string | null) {
+  return String(value || "").replace(/\D/g, "");
+}
+`,
+    `function onlyDigits(value?: string | null) {
+  return String(value || "").replace(/\D/g, "");
+}
+${sendHelpers}
+`,
     "helpers de telefone no send"
   );
 
   src = src.replace(
-    `  const phone = onlyDigits(to);\n\n  const response = await fetch`,
-    `  const phone = await resolveWhatsAppSendPhone(to, conversation_id);\n\n  const response = await fetch`
+    `  const phone = onlyDigits(to);
+
+  const response = await fetch`,
+    `  const phone = await resolveWhatsAppSendPhone(to, conversation_id);
+
+  const response = await fetch`
   );
 
   src = src.replace(
-    `  const phone = onlyDigits(to);\n  const mimeType = String(mime_type || "application/octet-stream");`,
-    `  const phone = await resolveWhatsAppSendPhone(to, conversation_id);\n  const mimeType = String(mime_type || "application/octet-stream");`
+    `  const phone = onlyDigits(to);
+  const mimeType = String(mime_type || "application/octet-stream");`,
+    `  const phone = await resolveWhatsAppSendPhone(to, conversation_id);
+  const mimeType = String(mime_type || "application/octet-stream");`
   );
 
   const ensureRegex = /  const phone = onlyDigits\(contact\.telefone_digits \|\| contact\.telefone\);\n  const now = new Date\(\)\.toISOString\(\);\n\n  const \{ data: waContact, error: contactError \} = await supabaseAdmin[\s\S]*?  if \(contactError \|\| !waContact\?\.id\) throw contactError \|\| new Error\("Contato não criado\."\);/;
@@ -208,7 +262,10 @@ patchFile("api/whatsapp/send.ts", (src) => {
   src = mustReplaceRegex(
     src,
     ensureRegex,
-    `  const phone = onlyDigits(contact.telefone_digits || contact.telefone);\n  const now = new Date().toISOString();\n\n  const waContact = await getOrCreateWhatsAppContactForSend(phone, contact.nome || null);`,
+    `  const phone = onlyDigits(contact.telefone_digits || contact.telefone);
+  const now = new Date().toISOString();
+
+  const waContact = await getOrCreateWhatsAppContactForSend(phone, contact.nome || null);`,
     "ensureCampaignConversation por alias BR"
   );
 
@@ -216,4 +273,4 @@ patchFile("api/whatsapp/send.ts", (src) => {
 });
 
 await import("./patch-whatsapp-consent-gate-v37a.mjs");
-await import("./patch-whatsapp-module-fixes-v38.mjs");
+await import("./patch-whatsapp-module-fixes-v38b.mjs");

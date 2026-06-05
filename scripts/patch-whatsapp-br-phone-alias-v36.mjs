@@ -24,6 +24,16 @@ patchIfExists("api/whatsapp/send.ts", (src) => {
     .replace(/await resolveWhatsAppSendPhone\(phoneValue, null\)/g, "onlyDigits(phoneValue)");
 });
 
+// O webhook não pode tentar trocar wa_id/telefone de um contato encontrado por alias,
+// porque pode bater em unique constraint e impedir a mensagem inbound de ser salva.
+// Quando encontrar contato por variação BR, atualizamos só nome/updated_at e mantemos o fluxo funcionando.
+patchIfExists("api/whatsapp/webhook.ts", (src) => {
+  return src.replace(
+    `? await supabaseAdmin.from("whatsapp_contacts").update({ wa_id: waId, telefone: waId, nome: existingContact.nome || nome, updated_at: inboundAt }).eq("id", existingContact.id).select("id, lead_id").single()`,
+    `? await supabaseAdmin.from("whatsapp_contacts").update({ nome: existingContact.nome || nome, updated_at: inboundAt }).eq("id", existingContact.id).select("id, lead_id").single()`
+  );
+});
+
 // O campo de mensagem perdia foco porque o Chat estava sendo renderizado como
 // componente interno <Chat />, que é recriado a cada render. Chamando Chat()
 // como função, o textarea não desmonta a cada tecla.

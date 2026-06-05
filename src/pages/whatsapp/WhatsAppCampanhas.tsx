@@ -31,11 +31,26 @@ type ContactBook = {
   origem?: string | null;
 };
 
-const TEMPLATES = [
-  { value: "autorizacao_marketing_consulmax", label: "Autorização de marketing", body: "Olá, {{nome_cliente}}, tudo bem?\n\nA Consulmax Consórcios gostaria de te enviar conteúdos, novidades e oportunidades relacionadas a consórcios e planejamento financeiro.\n\nVocê aceita receber essas mensagens por aqui?\n\nVocê pode cancelar quando quiser respondendo SAIR." },
-  { value: "campanha_texto_livre", label: "Campanha / texto livre", body: "Olá, {{primeiro_nome}}, tudo bem?\n\nA Consulmax preparou uma oportunidade que pode fazer sentido para o seu planejamento.\n\nQuer receber os detalhes por aqui?" },
-  { value: "boas_vindas_consulmax", label: "Boas-vindas", body: "Bem-vindo(a) à Consulmax 🎉\n\nOlá, {{nome_cliente}}!\n\nSua cota foi alocada com sucesso e agora você inicia uma nova etapa do seu planejamento com consórcio." },
-  { value: "documentacao_pendente_consulmax", label: "Documentação pendente", body: "Olá, {{nome_cliente}}, tudo bem?\n\nPara darmos sequência ao seu processo na Consulmax, ainda precisamos da documentação referente a {{etapa_processo}}.\n\nPode nos enviar por aqui?" },
+type MetaTemplate = {
+  id?: string;
+  name: string;
+  template_name?: string | null;
+  status?: string | null;
+  category?: string | null;
+  language?: string | null;
+  body?: string | null;
+  components?: any[] | null;
+};
+
+const FALLBACK_APPROVED_TEMPLATES: MetaTemplate[] = [
+  {
+    name: "call_permission_optin",
+    template_name: "call_permission_optin",
+    status: "APPROVED",
+    category: "MARKETING",
+    language: "pt_BR",
+    body: "Olá, aqui é da Consulmax Consórcios. Podemos te ligar pelo WhatsApp para agilizar seu atendimento?",
+  },
 ];
 
 function onlyDigits(v?: string | null) { return String(v || "").replace(/\D/g, ""); }
@@ -65,19 +80,65 @@ function humanStatus(status?: string | null) {
   return map[String(status || "")] || status || "—";
 }
 
+function isApprovedTemplate(template: MetaTemplate) {
+  const status = String(template.status || "").toUpperCase();
+  return status === "APPROVED" || status === "ATIVO" || status === "ACTIVE";
+}
+
 export default function WhatsAppCampanhas() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [approvedTemplates, setApprovedTemplates] = useState<MetaTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesSource, setTemplatesSource] = useState<"meta" | "fallback" | "empty">("empty");
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [campaignName, setCampaignName] = useState("");
   const [audience, setAudience] = useState<"leads" | "clientes" | "agenda">("leads");
-  const [templateName, setTemplateName] = useState("autorizacao_marketing_consulmax");
-  const [messageBody, setMessageBody] = useState(TEMPLATES[0].body);
+  const [templateName, setTemplateName] = useState("");
+  const [messageBody, setMessageBody] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
   const [previewCount, setPreviewCount] = useState<number | null>(null);
+
+  async function loadApprovedTemplates() {
+    setTemplatesLoading(true);
+    try {
+      const response = await fetch("/api/meta/whatsapp?resource=templates");
+      const json = await response.json().catch(() => null);
+      const templates = Array.isArray(json?.templates) ? (json.templates as MetaTemplate[]) : [];
+      const approved = templates.filter(isApprovedTemplate);
+
+      if (response.ok && json?.ok && approved.length > 0) {
+        setApprovedTemplates(approved);
+        setTemplatesSource("meta");
+        if (!templateName) {
+          setTemplateName(approved[0].name);
+          setMessageBody(approved[0].body || "");
+        }
+        return;
+      }
+
+      const fallback = FALLBACK_APPROVED_TEMPLATES.filter(isApprovedTemplate);
+      setApprovedTemplates(fallback);
+      setTemplatesSource(fallback.length ? "fallback" : "empty");
+      if (!templateName && fallback.length > 0) {
+        setTemplateName(fallback[0].name);
+        setMessageBody(fallback[0].body || "");
+      }
+    } catch {
+      const fallback = FALLBACK_APPROVED_TEMPLATES.filter(isApprovedTemplate);
+      setApprovedTemplates(fallback);
+      setTemplatesSource(fallback.length ? "fallback" : "empty");
+      if (!templateName && fallback.length > 0) {
+        setTemplateName(fallback[0].name);
+        setMessageBody(fallback[0].body || "");
+      }
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -123,8 +184,8 @@ export default function WhatsAppCampanhas() {
     }
   }
 
-  useEffect(() => { load(); }, []);
-  useEffect(() => { if (createOpen) updatePreviewCount(); }, [createOpen, audience]);
+  useEffect(() => { load(); loadApprovedTemplates(); }, []);
+  useEffect(() => { if (createOpen) { updatePreviewCount(); loadApprovedTemplates(); } }, [createOpen, audience]);
 
   const stats = useMemo(() => {
     const sent = recipients.filter((r) => r.status === "sent").length;
@@ -137,8 +198,9 @@ export default function WhatsAppCampanhas() {
   function resetForm() {
     setCampaignName("");
     setAudience("leads");
-    setTemplateName("autorizacao_marketing_consulmax");
-    setMessageBody(TEMPLATES[0].body);
+    const first = approvedTemplates[0];
+    setTemplateName(first?.name || "");
+    setMessageBody(first?.body || "");
     setScheduledAt("");
     setPreviewCount(null);
   }
@@ -147,7 +209,8 @@ export default function WhatsAppCampanhas() {
     const name = campaignName.trim();
     const body = messageBody.trim();
     if (!name) return alert("Informe o nome da campanha.");
-    if (!body) return alert("Informe a mensagem da campanha.");
+    if (!templateName) return alert("Selecione um modelo aprovado.");
+    if (!body) return alert("O modelo selecionado não possui corpo de mensagem disponível.");
 
     setSaving(true);
     try {
@@ -155,12 +218,15 @@ export default function WhatsAppCampanhas() {
       if (contacts.length === 0) return alert("Nenhum contato encontrado para esse público.");
 
       const finalStatus = scheduledAt ? "scheduled" : status;
+      const selectedTemplate = approvedTemplates.find((tpl) => tpl.name === templateName);
       const { data: campaign, error } = await supabase
         .from("whatsapp_campaigns")
         .insert({
           name,
-          campaign_type: templateName === "campanha_texto_livre" ? "free_text" : "template",
+          campaign_type: "template",
           template_name: templateName,
+          template_category: selectedTemplate?.category || null,
+          template_language: selectedTemplate?.language || "pt_BR",
           status: finalStatus,
           audience_source: audience,
           message_body: body,
@@ -198,9 +264,9 @@ export default function WhatsAppCampanhas() {
     }
   }
 
-  const currentTemplate = TEMPLATES.find((t) => t.value === templateName) || TEMPLATES[0];
+  const currentTemplate = approvedTemplates.find((t) => t.name === templateName) || approvedTemplates[0];
   const previewName = "Pedro";
-  const previewText = messageBody
+  const previewText = (messageBody || currentTemplate?.body || "")
     .replace(/{{\s*nome_cliente\s*}}/gi, previewName)
     .replace(/{{\s*primeiro_nome\s*}}/gi, firstName(previewName))
     .replace(/{{\s*nome\s*}}/gi, previewName)
@@ -211,8 +277,8 @@ export default function WhatsAppCampanhas() {
     <div className="space-y-5">
       <WhatsAppModuleHeader title="Campanhas & Autorizações" subtitle="Crie campanhas, solicite consentimento, acompanhe aceites e automatize envios pelo WhatsApp oficial.">
         <div className="flex gap-2">
-          <button onClick={load} className="inline-flex items-center gap-2 rounded-2xl bg-white/15 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/25 hover:bg-white/20">
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Atualizar
+          <button onClick={() => { load(); loadApprovedTemplates(); }} className="inline-flex items-center gap-2 rounded-2xl bg-white/15 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/25 hover:bg-white/20">
+            <RefreshCw className={`h-4 w-4 ${loading || templatesLoading ? "animate-spin" : ""}`} /> Atualizar
           </button>
           <button onClick={() => setCreateOpen(true)} className="inline-flex items-center gap-2 rounded-2xl bg-[#B5A573] px-4 py-2 text-sm font-black text-white shadow-lg shadow-black/10">
             <Megaphone className="h-4 w-4" /> Criar campanha
@@ -228,7 +294,7 @@ export default function WhatsAppCampanhas() {
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.2em] text-[#A11C27]">Nova campanha</p>
                   <h2 className="text-2xl font-black text-slate-900">Criar campanha WhatsApp</h2>
-                  <p className="text-sm text-slate-500">Selecione público, template, mensagem e agendamento. O fluxo de consentimento automático será respeitado pelo envio.</p>
+                  <p className="text-sm text-slate-500">Selecione público e um modelo aprovado pela Meta. Modelos em análise ou recusados não aparecem aqui.</p>
                 </div>
                 <button onClick={() => setCreateOpen(false)} className="rounded-full p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button>
               </div>
@@ -266,34 +332,40 @@ export default function WhatsAppCampanhas() {
                   <span className="text-sm font-black text-slate-700">Modelo aprovado</span>
                   <select
                     value={templateName}
+                    disabled={approvedTemplates.length === 0 || templatesLoading}
                     onChange={(e) => {
                       const value = e.target.value;
                       setTemplateName(value);
-                      const tpl = TEMPLATES.find((t) => t.value === value);
-                      if (tpl) setMessageBody(tpl.body);
+                      const tpl = approvedTemplates.find((t) => t.name === value);
+                      if (tpl) setMessageBody(tpl.body || "");
                     }}
-                    className="w-full rounded-2xl border px-4 py-3 text-sm"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm disabled:bg-slate-100 disabled:text-slate-400"
                   >
-                    {TEMPLATES.map((tpl) => <option key={tpl.value} value={tpl.value}>{tpl.label}</option>)}
+                    {approvedTemplates.length === 0 ? (
+                      <option value="">Nenhum modelo aprovado encontrado</option>
+                    ) : (
+                      approvedTemplates.map((tpl) => <option key={tpl.id || tpl.name} value={tpl.name}>{tpl.name} · {tpl.category || "sem categoria"}</option>)
+                    )}
                   </select>
+                  <p className="text-xs text-slate-400">Fonte: {templatesSource === "meta" ? "Meta" : templatesSource === "fallback" ? "fallback aprovado" : "sem modelos"}</p>
                 </label>
                 <label className="space-y-1">
-                  <span className="text-sm font-black text-slate-700">Mensagem</span>
+                  <span className="text-sm font-black text-slate-700">Mensagem do modelo</span>
                   <textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} className="min-h-[190px] w-full rounded-2xl border px-4 py-3 text-sm" />
                 </label>
               </div>
 
               <div className="mt-5 flex flex-wrap justify-end gap-2">
-                <button onClick={() => saveCampaign("draft")} disabled={saving} className="rounded-2xl border px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">Salvar rascunho</button>
-                <button onClick={() => saveCampaign("pending")} disabled={saving} className="rounded-2xl bg-[#A11C27] px-4 py-3 text-sm font-black text-white hover:opacity-95">{saving ? "Salvando..." : scheduledAt ? "Salvar e agendar" : "Criar campanha"}</button>
+                <button onClick={() => saveCampaign("draft")} disabled={saving || approvedTemplates.length === 0} className="rounded-2xl border px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50">Salvar rascunho</button>
+                <button onClick={() => saveCampaign("pending")} disabled={saving || approvedTemplates.length === 0} className="rounded-2xl bg-[#A11C27] px-4 py-3 text-sm font-black text-white hover:opacity-95 disabled:opacity-50">{saving ? "Salvando..." : scheduledAt ? "Salvar e agendar" : "Criar campanha"}</button>
               </div>
             </div>
 
             <aside className="border-l bg-slate-50 p-5">
               <p className="text-lg font-black text-slate-900">Prévia</p>
-              <p className="text-xs text-slate-500">{currentTemplate.label}</p>
+              <p className="text-xs text-slate-500">{currentTemplate?.name || "Selecione um modelo aprovado"}</p>
               <div className="mt-4 rounded-[32px] border-[10px] border-slate-900 bg-[#efe7dd] p-4 shadow-2xl">
-                <div className="whitespace-pre-line rounded-2xl bg-white p-3 text-sm shadow">{previewText}</div>
+                <div className="whitespace-pre-line rounded-2xl bg-white p-3 text-sm shadow">{previewText || "Nenhuma mensagem disponível."}</div>
                 {templateName === "autorizacao_marketing_consulmax" && <>
                   <div className="mt-2 rounded-xl bg-white py-2 text-center text-sm font-black text-emerald-700">Sim, aceito</div>
                   <div className="mt-2 rounded-xl bg-white py-2 text-center text-sm font-black text-red-600">Não quero receber</div>
@@ -307,7 +379,7 @@ export default function WhatsAppCampanhas() {
       <div className="grid gap-4 md:grid-cols-4">
         <StatCard icon={ShieldCheck} title="Autorizados/Enviados" value={fmt(stats.sent)} note="Contatos enviados" tone="green" />
         <StatCard icon={Clock3} title="Aguardando autorização" value={fmt(stats.waiting)} note="Pedido enviado" tone="gold" />
-        <StatCard icon={Send} title="Campanhas recentes" value={fmt(campaigns.length)} note="Últimos registros" tone="navy" />
+        <StatCard icon={Send} title="Modelos aprovados" value={fmt(approvedTemplates.length)} note="Disponíveis para campanha" tone="navy" />
         <StatCard icon={CheckCircle2} title="Taxa de envio" value={`${stats.response}%`} note="Base carregada" tone="ruby" />
       </div>
 
@@ -315,11 +387,11 @@ export default function WhatsAppCampanhas() {
         <div className="space-y-4">
           <div className="rounded-[26px] border border-white/80 bg-white/90 p-5 shadow-xl shadow-slate-900/5 backdrop-blur">
             <div className="flex items-start justify-between gap-4">
-              <div><p className="text-xs font-black uppercase tracking-[0.2em] text-[#A11C27]">Construtor de campanha</p><h2 className="mt-1 text-xl font-black text-slate-900">Fluxo com consentimento automático</h2><p className="mt-1 text-sm text-slate-500">Sem autorização, o sistema envia o template de aceite antes da campanha.</p></div>
-              <StatusPill tone="green">Pronto para templates</StatusPill>
+              <div><p className="text-xs font-black uppercase tracking-[0.2em] text-[#A11C27]">Construtor de campanha</p><h2 className="mt-1 text-xl font-black text-slate-900">Fluxo com consentimento automático</h2><p className="mt-1 text-sm text-slate-500">A campanha usa apenas modelos aprovados pela Meta.</p></div>
+              <StatusPill tone="green">Modelos aprovados</StatusPill>
             </div>
             <div className="mt-5 grid gap-3 md:grid-cols-5">
-              {[["1", "Selecionar público", Users], ["2", "Enviar autorização", ShieldCheck], ["3", "Aguardar aceite", Clock3], ["4", "Disparar campanha", Send], ["5", "Relatório", CheckCircle2]].map(([num, label, Icon]: any) => <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1E293F] text-white"><Icon className="h-4 w-4" /></div><p className="mt-3 text-xs font-black text-[#A11C27]">{num}</p><p className="text-sm font-bold text-slate-800">{label}</p></div>)}
+              {[["1", "Selecionar público", Users], ["2", "Escolher modelo", ShieldCheck], ["3", "Agendar", Clock3], ["4", "Disparar campanha", Send], ["5", "Relatório", CheckCircle2]].map(([num, label, Icon]: any) => <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1E293F] text-white"><Icon className="h-4 w-4" /></div><p className="mt-3 text-xs font-black text-[#A11C27]">{num}</p><p className="text-sm font-bold text-slate-800">{label}</p></div>)}
             </div>
           </div>
 

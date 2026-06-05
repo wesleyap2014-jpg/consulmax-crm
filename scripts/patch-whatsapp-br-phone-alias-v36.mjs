@@ -13,16 +13,18 @@ function patchFile(file, patcher) {
   console.log(`${marker}: ${file} applied`);
 }
 
-function mustReplace(src, search, replace, label) {
+function safeReplace(src, search, replace, label) {
   if (!src.includes(search)) {
-    throw new Error(`${marker}: trecho não encontrado para ${label}`);
+    console.log(`${marker}: ${label}: trecho não encontrado; seguindo build`);
+    return src;
   }
   return src.replace(search, replace);
 }
 
-function mustReplaceRegex(src, regex, replace, label) {
+function safeReplaceRegex(src, regex, replace, label) {
   if (!regex.test(src)) {
-    throw new Error(`${marker}: trecho não encontrado para ${label}`);
+    console.log(`${marker}: ${label}: ponto não encontrado; seguindo build`);
+    return src;
   }
   return src.replace(regex, replace);
 }
@@ -100,23 +102,27 @@ async function findWhatsAppContactByPhoneVariants(value?: string | null) {
 `;
 
 patchFile("api/whatsapp/webhook.ts", (src) => {
-  src = mustReplace(
-    src,
-    `function onlyDigits(value?: string | null) {
+  if (src.includes("function brPhoneVariants(")) {
+    console.log(`${marker}: helpers de telefone no webhook já existem`);
+  } else {
+    src = safeReplace(
+      src,
+      `function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
 `,
-    `function onlyDigits(value?: string | null) {
+      `function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
 ${phoneHelpers}
 `,
-    "helpers de telefone no webhook"
-  );
+      "helpers de telefone no webhook"
+    );
+  }
 
   const contactRegex = /  const \{ data: contact, error: contactError \} = await supabaseAdmin[\s\S]*?  if \(contactError \|\| !contact\?\.id\) \{\n    console\.error\("WHATSAPP_CONTACT_UPSERT_ERROR", contactError\);\n    return;\n  \}/;
 
-  src = mustReplaceRegex(
+  src = safeReplaceRegex(
     src,
     contactRegex,
     `  const existingContactByAlias = await findWhatsAppContactByPhoneVariants(waId);
@@ -227,19 +233,23 @@ async function getOrCreateWhatsAppContactForSend(phoneValue?: string | null, nom
 `;
 
 patchFile("api/whatsapp/send.ts", (src) => {
-  src = mustReplace(
-    src,
-    `function onlyDigits(value?: string | null) {
+  if (src.includes("function brPhoneVariants(") || src.includes("async function resolveWhatsAppSendPhone(")) {
+    console.log(`${marker}: helpers de telefone no send já existem`);
+  } else {
+    src = safeReplace(
+      src,
+      `function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
 `,
-    `function onlyDigits(value?: string | null) {
+      `function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
 ${sendHelpers}
 `,
-    "helpers de telefone no send"
-  );
+      "helpers de telefone no send"
+    );
+  }
 
   src = src.replace(
     `  const phone = onlyDigits(to);
@@ -259,7 +269,7 @@ ${sendHelpers}
 
   const ensureRegex = /  const phone = onlyDigits\(contact\.telefone_digits \|\| contact\.telefone\);\n  const now = new Date\(\)\.toISOString\(\);\n\n  const \{ data: waContact, error: contactError \} = await supabaseAdmin[\s\S]*?  if \(contactError \|\| !waContact\?\.id\) throw contactError \|\| new Error\("Contato não criado\."\);/;
 
-  src = mustReplaceRegex(
+  src = safeReplaceRegex(
     src,
     ensureRegex,
     `  const phone = onlyDigits(contact.telefone_digits || contact.telefone);

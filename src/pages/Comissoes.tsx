@@ -2322,8 +2322,8 @@ export default function ComissoesPage() {
       if (isPaid) return acc;
       return acc + Math.max(0, Number(flow.valor_previsto) || 0);
     }, 0);
-    const partitionVendaIds = new Set(partitionEntriesVisible.map((entry) => entry.venda_id));
-    const partitionVendasTotal = Array.from(partitionVendaIds).reduce((acc, vendaId) => {
+    const partitionVendaIds = new Set<string>(partitionEntriesVisible.map((entry) => entry.venda_id));
+    const partitionVendasTotal = Array.from(partitionVendaIds).reduce<number>((acc, vendaId) => {
       const venda = partitionVendaById[vendaId];
       const batch = partitionBatches.find((b) => b.venda_id === vendaId);
       return acc + (Number(venda?.valor_venda ?? batch?.valor_venda) || 0);
@@ -2704,51 +2704,108 @@ export default function ComissoesPage() {
 
   function downloadDemonstrativoParticionadoPDF() {
     const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
-    const periodoIni =
-      demonstrativoTipo === "data" ? reciboDate : `${demonstrativoMes}-01`;
+    const periodoIni = demonstrativoTipo === "data" ? reciboDate : `${demonstrativoMes}-01`;
     const periodoFim =
       demonstrativoTipo === "data"
         ? reciboDate
         : toDateInput(new Date(Number(demonstrativoMes.slice(0, 4)), Number(demonstrativoMes.slice(5, 7)), 0));
 
-    const rowsPdf: any[] = [];
+    type DemoLine = {
+      unitId: string;
+      unitName: string;
+      vendedorId: string;
+      vendedorName: string;
+      recipientType: string;
+      favorecido: string;
+      vendaId: string;
+      tipo: string;
+      proposta: string;
+      cliente: string;
+      grupo: string;
+      cota: string;
+      parcela: string;
+      valorVenda: number;
+      bruto: number;
+      impostos: number;
+      liquida: number;
+      status: string;
+    };
+
+    const lines: DemoLine[] = [];
+
+    const flowInPeriod = (flow: CommissionEntryFlow) => {
+      if (demonstrativoTipo === "data") return flow.data_pagamento === reciboDate;
+      return flow.data_pagamento ? flow.data_pagamento >= periodoIni && flow.data_pagamento <= periodoFim : true;
+    };
+
+    const getClienteNome = (venda?: Venda | null) => {
+      if (!venda) return "—";
+      return (
+        (venda.lead_id && clientesMap[venda.lead_id]) ||
+        (venda.cliente_lead_id && clientesMap[venda.cliente_lead_id]) ||
+        (venda as any)?.cliente_nome ||
+        "—"
+      );
+    };
+
+    const getSaleUnitId = (batch?: CommissionBatch | null, venda?: Venda | null, entry?: CommissionEntry | null) => {
+      const saleVendor = batch?.vendedor_id ? usersById[batch.vendedor_id] : venda?.vendedor_id ? usersById[venda.vendedor_id] || usersByAuth[venda.vendedor_id] : null;
+      return batch?.business_unit_id || saleVendor?.unit_id || entry?.business_unit_id || "";
+    };
+
+    const getRecipientLabel = (entry: CommissionEntry) => {
+      if (entry.recipient_type === "empresa") return "Matriz";
+      if (entry.recipient_type === "unidade") return "Unidade";
+      if (entry.recipient_type === "vendedor") return "Vendedor";
+      return entry.recipient_type || "Comissão";
+    };
 
     for (const entry of partitionEntriesVisible) {
       const batch = partitionBatches.find((b) => b.id === entry.batch_id);
-      const venda = batch ? partitionVendaById[batch.venda_id] : null;
-      const favorecido = entry.recipient_user_id ? userLabel(entry.recipient_user_id) : unitById[entry.recipient_unit_id || ""]?.nome || "—";
+      const venda = batch ? partitionVendaById[batch.venda_id] : partitionVendaById[entry.venda_id];
+      const saleVendorId = batch?.vendedor_id || venda?.vendedor_id || "";
 
-      partitionFlows
-        .filter((f) => f.entry_id === entry.id)
-        .filter((f) => {
-          if (demonstrativoTipo === "data") return f.data_pagamento === reciboDate;
-          return f.data_pagamento ? f.data_pagamento >= periodoIni && f.data_pagamento <= periodoFim : true;
-        })
-        .forEach((flow) => {
-          const bruto = Number(flow.valor_pago || flow.valor_previsto) || 0;
-          const impostos = Math.round(bruto * impostoFrac * 100) / 100;
-          const vendedorVenda = batch?.vendedor_id ? userLabel(batch.vendedor_id) : "—";
-          const clienteNome =
-            (venda?.lead_id && clientesMap[venda.lead_id]) ||
-            (venda?.cliente_lead_id && clientesMap[venda.cliente_lead_id]) ||
-            (venda as any)?.cliente_nome ||
-            "—";
-          rowsPdf.push([
-            vendedorVenda,
-            "Comissão",
-            venda?.numero_proposta || "—",
-            clienteNome,
-            `${entry.recipient_type} • ${favorecido}`,
-            (venda as any)?.grupo || "—",
-            (venda as any)?.cota || "—",
-            `M${flow.mes}`,
-            BRL(batch?.valor_venda ?? venda?.valor_venda),
-            BRL(bruto),
-            BRL(impostos),
-            BRL(bruto - impostos),
-            flow.status === "pago" ? "Pago" : flow.data_pagamento ? "Programado" : "A programar",
-          ]);
+      if (!isMatrixAdmin && !isBranchManager) {
+        if (entry.recipient_type !== "vendedor" || entry.recipient_user_id !== currentUser?.id) continue;
+      }
+
+      if (vendedorId !== "all" && saleVendorId !== vendedorId) continue;
+      if (unitFilter !== "all") {
+        const saleUnitIdCheck = getSaleUnitId(batch, venda, entry);
+        if (saleUnitIdCheck !== unitFilter) continue;
+      }
+
+      const unitId = getSaleUnitId(batch, venda, entry);
+      const unitName = unitById[unitId]?.nome || "Sem unidade";
+      const vendedorName = saleVendorId ? userLabel(saleVendorId) : "—";
+      const favorecido = entry.recipient_user_id ? userLabel(entry.recipient_user_id) : unitById[entry.recipient_unit_id || ""]?.nome || "—";
+      const allFlows = partitionFlows.filter((f) => f.entry_id === entry.id).sort((a, b) => (a.mes || 0) - (b.mes || 0));
+      const totalParcelas = Math.max(1, allFlows.length);
+
+      allFlows.filter(flowInPeriod).forEach((flow) => {
+        const bruto = Number(flow.valor_pago || flow.valor_previsto) || 0;
+        const impostos = Math.round(bruto * impostoFrac * 100) / 100;
+        lines.push({
+          unitId,
+          unitName,
+          vendedorId: saleVendorId,
+          vendedorName,
+          recipientType: entry.recipient_type,
+          favorecido,
+          vendaId: entry.venda_id,
+          tipo: getRecipientLabel(entry),
+          proposta: venda?.numero_proposta || "—",
+          cliente: getClienteNome(venda),
+          grupo: (venda as any)?.grupo || "—",
+          cota: (venda as any)?.cota || "—",
+          parcela: `${flow.mes}/${totalParcelas}`,
+          valorVenda: Number(batch?.valor_venda ?? venda?.valor_venda) || 0,
+          bruto,
+          impostos,
+          liquida: bruto - impostos,
+          status: flow.status === "pago" ? "Pago" : flow.data_pagamento ? "Programado" : "A programar",
         });
+      });
     }
 
     partitionAdjustments
@@ -2760,52 +2817,170 @@ export default function ComissoesPage() {
         const entry = partitionEntriesVisible.find((e) => e.id === a.entry_id);
         if (!entry) return;
         const batch = partitionBatches.find((b) => b.id === entry.batch_id);
-        const venda = batch ? partitionVendaById[batch.venda_id] : null;
-        const bruto = -Math.abs(Number(a.amount) || 0);
+        const venda = batch ? partitionVendaById[batch.venda_id] : partitionVendaById[entry.venda_id];
+        const saleVendorId = batch?.vendedor_id || venda?.vendedor_id || "";
 
-        const vendedorVenda = batch?.vendedor_id ? userLabel(batch.vendedor_id) : "—";
-        const clienteNome =
-          (venda?.lead_id && clientesMap[venda.lead_id]) ||
-          (venda?.cliente_lead_id && clientesMap[venda.cliente_lead_id]) ||
-          (venda as any)?.cliente_nome ||
-          "—";
-        rowsPdf.push([
-          vendedorVenda,
-          a.adjustment_type === "estorno" ? "Estorno" : "Ajuste",
-          venda?.numero_proposta || "—",
-          clienteNome,
-          a.description || "Estorno/desconto de comissão",
-          a.grupo || (venda as any)?.grupo || "—",
-          a.cota || (venda as any)?.cota || "—",
-          a.parcela || "—",
-          BRL(batch?.valor_venda ?? venda?.valor_venda),
-          BRL(bruto),
-          BRL(0),
-          BRL(bruto),
-          "Descontado",
-        ]);
+        if (!isMatrixAdmin && !isBranchManager) {
+          if (entry.recipient_type !== "vendedor" || entry.recipient_user_id !== currentUser?.id) return;
+        }
+        if (vendedorId !== "all" && saleVendorId !== vendedorId) return;
+
+        const unitId = getSaleUnitId(batch, venda, entry);
+        if (unitFilter !== "all" && unitId !== unitFilter) return;
+
+        const bruto = -Math.abs(Number(a.amount) || 0);
+        lines.push({
+          unitId,
+          unitName: unitById[unitId]?.nome || "Sem unidade",
+          vendedorId: saleVendorId,
+          vendedorName: saleVendorId ? userLabel(saleVendorId) : "—",
+          recipientType: entry.recipient_type,
+          favorecido: entry.recipient_user_id ? userLabel(entry.recipient_user_id) : unitById[entry.recipient_unit_id || ""]?.nome || "—",
+          vendaId: a.venda_id || entry.venda_id,
+          tipo: a.adjustment_type === "estorno" ? "Estorno" : "Ajuste",
+          proposta: venda?.numero_proposta || "—",
+          cliente: getClienteNome(venda),
+          grupo: a.grupo || (venda as any)?.grupo || "—",
+          cota: a.cota || (venda as any)?.cota || "—",
+          parcela: a.parcela || "—",
+          valorVenda: Number(batch?.valor_venda ?? venda?.valor_venda) || 0,
+          bruto,
+          impostos: 0,
+          liquida: bruto,
+          status: "Descontado",
+        });
       });
 
-    if (!rowsPdf.length) return alert("Nenhum lançamento encontrado para o demonstrativo.");
+    if (!lines.length) return alert("Nenhum lançamento encontrado para o demonstrativo.");
 
+    lines.sort(
+      (a, b) =>
+        a.unitName.localeCompare(b.unitName) ||
+        a.vendedorName.localeCompare(b.vendedorName) ||
+        a.proposta.localeCompare(b.proposta) ||
+        a.parcela.localeCompare(b.parcela)
+    );
+
+    const uniqueBy = (arr: DemoLine[], key: (r: DemoLine) => string) => Array.from(new Set(arr.map(key).filter(Boolean))).length;
+    const totals = (arr: DemoLine[]) => ({
+      vendas: uniqueBy(arr, (r) => r.vendaId),
+      valorVenda: Array.from(new Map(arr.map((r) => [r.vendaId, r.valorVenda])).values()).reduce((a, b) => a + b, 0),
+      bruto: arr.reduce((a, r) => a + r.bruto, 0),
+      impostos: arr.reduce((a, r) => a + r.impostos, 0),
+      liquida: arr.reduce((a, r) => a + r.liquida, 0),
+    });
+    const groupBy = <T,>(arr: T[], key: (item: T) => string) => {
+      const m = new Map<string, T[]>();
+      arr.forEach((item) => {
+        const k = key(item) || "—";
+        if (!m.has(k)) m.set(k, []);
+        m.get(k)!.push(item);
+      });
+      return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    };
+
+    let y = 38;
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const ensureSpace = (needed = 80) => {
+      if (y + needed > pageHeight - 36) {
+        doc.addPage();
+        y = 38;
+      }
+    };
+    const title = (text: string, size = 12) => {
+      ensureSpace(40);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(size);
+      doc.text(text, 40, y);
+      y += size + 8;
+    };
+    const subtitle = (text: string) => {
+      ensureSpace(24);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(text, 40, y);
+      y += 14;
+    };
+    const table = (head: string[][], body: any[][], fontSize = 7.2) => {
+      ensureSpace(90);
+      autoTable(doc, {
+        startY: y,
+        head,
+        body,
+        styles: { font: "helvetica", fontSize, cellPadding: 3, overflow: "linebreak" },
+        headStyles: { fillColor: [30, 41, 63] },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        margin: { left: 40, right: 40 },
+      });
+      y = ((doc as any).lastAutoTable?.finalY || y) + 16;
+    };
+
+    const periodoLabel = `${formatISODateBR(periodoIni)} até ${formatISODateBR(periodoFim)}`;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    doc.text("DEMONSTRATIVO DE COMISSÃO", 40, 36);
+    doc.text("DEMONSTRATIVO DE COMISSÃO", 40, y);
+    y += 18;
+    subtitle(`Período: ${periodoLabel}`);
+    subtitle("Documento demonstrativo. O pagamento deve ser comprovado pelo comprovante bancário anexado ao lançamento.");
+    y += 4;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Período: ${formatISODateBR(periodoIni)} até ${formatISODateBR(periodoFim)}`, 40, 52);
-    doc.text("Este documento possui caráter demonstrativo e não substitui o comprovante bancário de pagamento.", 40, 66);
+    const detailHead = [["Tipo", "Proposta", "Cliente", "Grupo", "Cota", "Parcela", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida", "Status"]];
+    const detailBody = (arr: DemoLine[]) =>
+      arr.map((r) => [r.tipo, r.proposta, r.cliente, r.grupo, r.cota, r.parcela, BRL(r.valorVenda), BRL(r.bruto), BRL(r.impostos), BRL(r.liquida), r.status]);
+    const totalLine = (label: string, arr: DemoLine[]) => {
+      const t = totals(arr);
+      return [[label, "", "", "", "", "", BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida), `${t.vendas} venda(s)`]];
+    };
 
-    rowsPdf.sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[2]).localeCompare(String(b[2])) || String(a[7]).localeCompare(String(b[7])));
+    const vendedorSelecionado = vendedorId !== "all" ? userLabel(vendedorId) : null;
+    const unidadeSelecionada = unitFilter !== "all" ? unitById[unitFilter]?.nome : currentUnit?.nome;
+    const mode = vendedorSelecionado || (!isMatrixAdmin && !isBranchManager) ? "vendedor" : isMatrixAdmin && unitFilter === "all" ? "matriz" : "unidade";
 
-    autoTable(doc, {
-      startY: 82,
-      head: [["Vendedor", "Tipo", "Proposta", "Cliente", "Descrição", "Grupo", "Cota", "Parcela", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida", "Status"]],
-      body: rowsPdf,
-      styles: { font: "helvetica", fontSize: 8 },
-      headStyles: { fillColor: [30, 41, 63] },
-    });
+    if (mode === "matriz") {
+      title("MODELO MATRIZ", 13);
+      subtitle(`EMPRESA: ${matrixUnit?.nome || "Consulmax Consórcios"}`);
+      const resumoUnidades = groupBy(lines, (r) => r.unitName).map(([unidade, arr]) => {
+        const t = totals(arr);
+        return [unidade, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
+      });
+      table([["Unidade", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]], resumoUnidades.concat([["TOTAL GERAL", String(totals(lines).vendas), BRL(totals(lines).valorVenda), BRL(totals(lines).bruto), BRL(totals(lines).impostos), BRL(totals(lines).liquida)]]), 8);
+
+      for (const [unidade, unitRows] of groupBy(lines, (r) => r.unitName)) {
+        title(`UNIDADE: ${unidade}`, 11);
+        const resumoVendedores = groupBy(unitRows, (r) => r.vendedorName).map(([vendedor, arr]) => {
+          const t = totals(arr);
+          return [vendedor, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
+        });
+        table([["Vendedor", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]], resumoVendedores.concat([["TOTAL DA UNIDADE", String(totals(unitRows).vendas), BRL(totals(unitRows).valorVenda), BRL(totals(unitRows).bruto), BRL(totals(unitRows).impostos), BRL(totals(unitRows).liquida)]]), 8);
+        for (const [vendedor, vendedorRows] of groupBy(unitRows, (r) => r.vendedorName)) {
+          title(`VENDEDOR: ${vendedor}`, 10);
+          table(detailHead, detailBody(vendedorRows).concat(totalLine("TOTAL A RECEBER", vendedorRows)), 7);
+        }
+      }
+    } else if (mode === "unidade") {
+      title("MODELO UNIDADE", 13);
+      subtitle(`UNIDADE: ${unidadeSelecionada || lines[0]?.unitName || "—"}`);
+      const resumoVendedores = groupBy(lines, (r) => r.vendedorName).map(([vendedor, arr]) => {
+        const t = totals(arr);
+        return [vendedor, String(t.vendas), BRL(t.valorVenda), BRL(t.bruto), BRL(t.impostos), BRL(t.liquida)];
+      });
+      table([["Vendedor", "Vendas", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida"]], resumoVendedores.concat([["TOTAL DA UNIDADE", String(totals(lines).vendas), BRL(totals(lines).valorVenda), BRL(totals(lines).bruto), BRL(totals(lines).impostos), BRL(totals(lines).liquida)]]), 8);
+      for (const [vendedor, vendedorRows] of groupBy(lines, (r) => r.vendedorName)) {
+        title(`VENDEDOR: ${vendedor}`, 10);
+        table(detailHead, detailBody(vendedorRows).concat(totalLine("TOTAL A RECEBER", vendedorRows)), 7);
+      }
+    } else {
+      const vendedorNome = vendedorSelecionado || currentUser?.nome || lines[0]?.vendedorName || "—";
+      title("MODELO VENDEDOR", 13);
+      subtitle(`VENDEDOR: ${vendedorNome}`);
+      table(detailHead, detailBody(lines).concat(totalLine("TOTAL A RECEBER", lines)), 7);
+    }
+
+    const grand = totals(lines);
+    ensureSpace(42);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text(`TOTAL GERAL LÍQUIDO: ${BRL(grand.liquida)}  •  COMISSÃO BRUTA: ${BRL(grand.bruto)}  •  IMPOSTOS: ${BRL(grand.impostos)}`, 40, y);
 
     doc.save(`demonstrativo_comissao_${periodoIni}_${periodoFim}.pdf`);
   }

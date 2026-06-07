@@ -1639,6 +1639,72 @@ export default function ComissoesPage() {
     return (n || 0) / 100;
   }, [reciboImpostoPct]);
 
+  const partitionBatchByVendaId = useMemo(() => {
+    const m: Record<string, CommissionBatch> = {};
+    partitionBatches.forEach((b) => {
+      if (!b.legacy) m[b.venda_id] = b;
+    });
+    return m;
+  }, [partitionBatches]);
+
+  const partitionVendaById = useMemo(() => {
+    const m: Record<string, Venda> = {};
+    allVendasComissao.forEach((v) => (m[v.id] = v));
+    rows.forEach((r) => {
+      if (!m[r.venda_id]) {
+        m[r.venda_id] = {
+          id: r.venda_id,
+          data_venda: r.data_venda || "",
+          vendedor_id: r.vendedor_id,
+          segmento: r.segmento,
+          tabela: r.tabela,
+          administradora: r.administradora,
+          valor_venda: r.valor_venda || r.base_calculo || 0,
+          numero_proposta: r.numero_proposta,
+        } as Venda;
+      }
+    });
+    return m;
+  }, [allVendasComissao, rows]);
+
+
+  const partitionEntriesVisible = useMemo(() => {
+    return partitionEntries.filter((entry) => {
+      const batch = partitionBatches.find((b) => b.id === entry.batch_id);
+      const vendedor = batch?.vendedor_id ? usersById[batch.vendedor_id] : null;
+      const unitId = entry.business_unit_id || batch?.business_unit_id || vendedor?.unit_id || null;
+
+      if (!isMatrixAdmin) {
+        if (isBranchManager && unitId !== currentUser?.unit_id) return false;
+        if (!isBranchManager && entry.recipient_user_id !== currentUser?.id && batch?.vendedor_id !== currentUser?.id) return false;
+      }
+
+      if (unitFilter !== "all" && unitId !== unitFilter) return false;
+      if (vendedorId !== "all" && entry.recipient_user_id !== vendedorId && batch?.vendedor_id !== vendedorId) return false;
+      if (status !== "all" && entry.status !== status) return false;
+      if (!isBetweenISO(batch?.data_venda, localDateFromISO(periodStart), localDateFromISO(periodEnd))) return false;
+
+      const venda = batch ? partitionVendaById[batch.venda_id] : null;
+      if (adminFilter !== "all" && normalize(venda?.administradora) !== normalize(adminFilter)) return false;
+
+      return true;
+    });
+  }, [
+    partitionEntries,
+    partitionBatches,
+    usersById,
+    isMatrixAdmin,
+    isBranchManager,
+    currentUser,
+    unitFilter,
+    vendedorId,
+    status,
+    periodStart,
+    periodEnd,
+    adminFilter,
+    partitionVendaById,
+  ]);
+
   function paidInRangeGross(s: Date, e: Date) {
     const operationalRows = rows.filter(isOperationalCommission);
 
@@ -2235,72 +2301,6 @@ export default function ComissoesPage() {
     }
   }
 
-
-  const partitionBatchByVendaId = useMemo(() => {
-    const m: Record<string, CommissionBatch> = {};
-    partitionBatches.forEach((b) => {
-      if (!b.legacy) m[b.venda_id] = b;
-    });
-    return m;
-  }, [partitionBatches]);
-
-  const partitionVendaById = useMemo(() => {
-    const m: Record<string, Venda> = {};
-    allVendasComissao.forEach((v) => (m[v.id] = v));
-    rows.forEach((r) => {
-      if (!m[r.venda_id]) {
-        m[r.venda_id] = {
-          id: r.venda_id,
-          data_venda: r.data_venda || "",
-          vendedor_id: r.vendedor_id,
-          segmento: r.segmento,
-          tabela: r.tabela,
-          administradora: r.administradora,
-          valor_venda: r.valor_venda || r.base_calculo || 0,
-          numero_proposta: r.numero_proposta,
-        } as Venda;
-      }
-    });
-    return m;
-  }, [allVendasComissao, rows]);
-
-
-  const partitionEntriesVisible = useMemo(() => {
-    return partitionEntries.filter((entry) => {
-      const batch = partitionBatches.find((b) => b.id === entry.batch_id);
-      const vendedor = batch?.vendedor_id ? usersById[batch.vendedor_id] : null;
-      const unitId = entry.business_unit_id || batch?.business_unit_id || vendedor?.unit_id || null;
-
-      if (!isMatrixAdmin) {
-        if (isBranchManager && unitId !== currentUser?.unit_id) return false;
-        if (!isBranchManager && entry.recipient_user_id !== currentUser?.id && batch?.vendedor_id !== currentUser?.id) return false;
-      }
-
-      if (unitFilter !== "all" && unitId !== unitFilter) return false;
-      if (vendedorId !== "all" && entry.recipient_user_id !== vendedorId && batch?.vendedor_id !== vendedorId) return false;
-      if (status !== "all" && entry.status !== status) return false;
-      if (!isBetweenISO(batch?.data_venda, localDateFromISO(periodStart), localDateFromISO(periodEnd))) return false;
-
-      const venda = batch ? partitionVendaById[batch.venda_id] : null;
-      if (adminFilter !== "all" && normalize(venda?.administradora) !== normalize(adminFilter)) return false;
-
-      return true;
-    });
-  }, [
-    partitionEntries,
-    partitionBatches,
-    usersById,
-    isMatrixAdmin,
-    isBranchManager,
-    currentUser,
-    unitFilter,
-    vendedorId,
-    status,
-    periodStart,
-    periodEnd,
-    adminFilter,
-    partitionVendaById,
-  ]);
 
   const combinedKpi = useMemo(() => {
     const partitionBruta = partitionEntriesVisible.reduce((acc, entry) => acc + (Number(entry.gross_amount) || 0), 0);

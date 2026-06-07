@@ -981,6 +981,11 @@ export default function ComissoesPage() {
   const [tableRuleTotalPct, setTableRuleTotalPct] = useState<string>("5,00");
   const [tableRuleFluxoMeses, setTableRuleFluxoMeses] = useState<number>(4);
   const [tableRuleFluxoPctList, setTableRuleFluxoPctList] = useState<string[]>(["2,00", "1,00", "1,00", "1,00"]);
+  const [tableRulesPage, setTableRulesPage] = useState<number>(1);
+  const [partitionPayFlow, setPartitionPayFlow] = useState<CommissionEntryFlow | null>(null);
+  const [partitionPayValue, setPartitionPayValue] = useState<string>("");
+  const [partitionPayDate, setPartitionPayDate] = useState<string>(() => toDateInput(new Date()));
+  const [partitionPayFile, setPartitionPayFile] = useState<File | null>(null);
   const [demonstrativoTipo, setDemonstrativoTipo] = useState<"data" | "mes">("data");
   const [demonstrativoMes, setDemonstrativoMes] = useState<string>(() => toDateInput(new Date()).slice(0, 7));
 
@@ -1174,6 +1179,30 @@ export default function ComissoesPage() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [simTables, adminById]);
 
+  const mainSegmentOptions = useMemo(() => {
+    let base = simTables;
+    if (adminFilter !== "all") {
+      const adminName = normalize(adminFilter);
+      base = base.filter((t) => normalize(adminById[t.admin_id || ""]) === adminName);
+    }
+    return Array.from(new Set(base.map((t) => t.segmento).filter(Boolean))).sort() as string[];
+  }, [simTables, adminFilter, adminById]);
+
+  const mainTableOptions = useMemo(() => {
+    let base = simTables;
+    if (adminFilter !== "all") {
+      const adminName = normalize(adminFilter);
+      base = base.filter((t) => normalize(adminById[t.admin_id || ""]) === adminName);
+    }
+    if (segmento !== "all") base = base.filter((t) => t.segmento === segmento);
+    return Array.from(new Set(base.map((t) => t.nome_tabela).filter(Boolean))).sort() as string[];
+  }, [simTables, adminFilter, segmento, adminById]);
+
+  useEffect(() => {
+    if (segmento !== "all" && !mainSegmentOptions.includes(segmento)) setSegmento("all");
+    if (tabela !== "all" && !mainTableOptions.includes(tabela)) setTabela("all");
+  }, [adminFilter, mainSegmentOptions, mainTableOptions, segmento, tabela]);
+
   const tableRuleAdminOptions = useMemo(() => adminOptions, [adminOptions]);
 
   const tableRuleSegmentOptions = useMemo(() => {
@@ -1192,6 +1221,17 @@ export default function ComissoesPage() {
         return an.localeCompare(bn) || (a.segmento || "").localeCompare(b.segmento || "") || a.nome_tabela.localeCompare(b.nome_tabela);
       });
   }, [simTables, tableRuleAdminFilter, tableRuleSegmentFilter, adminById]);
+
+  const paginatedTableRules = useMemo(() => {
+    const totalPages = Math.max(1, Math.ceil(tableRules.length / 10));
+    const safePage = Math.min(Math.max(tableRulesPage, 1), totalPages);
+    const start = (safePage - 1) * 10;
+    return { rows: tableRules.slice(start, start + 10), page: safePage, totalPages };
+  }, [tableRules, tableRulesPage]);
+
+  useEffect(() => {
+    setTableRulesPage(1);
+  }, [tableRules.length, tableRuleAdminFilter, tableRuleSegmentFilter]);
 
   const partSegmentOptions = useMemo(() => {
     let base = simTables;
@@ -1546,13 +1586,22 @@ export default function ComissoesPage() {
   function paidInRangeGross(s: Date, e: Date) {
     const operationalRows = rows.filter(isOperationalCommission);
 
-    return sum(
+    const legacyPaid = sum(
       operationalRows.flatMap((r) =>
         (r.flow || [])
           .filter((f) => f.data_pagamento_vendedor && isBetweenISO(f.data_pagamento_vendedor, s, e) && Number(f.valor_pago_vendedor) > 0)
           .map((f) => Number(f.valor_pago_vendedor) || 0)
       )
     );
+
+    const partitionPaid = partitionFlows.reduce((acc, f) => {
+      const entry = partitionEntries.find((e0) => e0.id === f.entry_id);
+      if (!entry || !partitionEntriesVisible.some((e0) => e0.id === entry.id)) return acc;
+      if (!f.data_pagamento || !isBetweenISO(f.data_pagamento, s, e)) return acc;
+      return acc + (Number(f.valor_pago) || 0);
+    }, 0);
+
+    return legacyPaid + partitionPaid;
   }
 
   function previstoInRangeGross(s: Date, e: Date) {
@@ -1574,6 +1623,19 @@ export default function ComissoesPage() {
           const expVal = Number(f.valor_previsto ?? totalComissao * (Number(f.percentual) || 0)) || 0;
           total += expVal;
         }
+      }
+    }
+
+    for (const f of partitionFlows) {
+      const entry = partitionEntries.find((e0) => e0.id === f.entry_id);
+      if (!entry || !partitionEntriesVisible.some((e0) => e0.id === entry.id)) continue;
+      const isPaid = f.status === "pago" || (Number(f.valor_pago) || 0) > 0;
+      if (isPaid) continue;
+      if (!f.data_pagamento) continue;
+      const exp = localDateFromISO(f.data_pagamento);
+      if (!exp) continue;
+      if (exp.getTime() >= s.getTime() && exp.getTime() <= e.getTime()) {
+        total += Number(f.valor_previsto) || 0;
       }
     }
 
@@ -2171,6 +2233,47 @@ export default function ComissoesPage() {
     partitionVendaById,
   ]);
 
+  const combinedKpi = useMemo(() => {
+    const partitionBruta = partitionEntriesVisible.reduce((acc, entry) => acc + (Number(entry.gross_amount) || 0), 0);
+    const partitionPaga = partitionEntriesVisible.reduce((acc, entry) => {
+      const paid = partitionFlows
+        .filter((f) => f.entry_id === entry.id)
+        .reduce((a, f) => a + (Number(f.valor_pago) || 0), 0);
+      return acc + paid;
+    }, 0);
+    const partitionPerdida = partitionAdjustments.reduce((acc, adjustment) => {
+      if (!partitionEntriesVisible.some((entry) => entry.id === adjustment.entry_id)) return acc;
+      if (adjustment.adjustment_type !== "estorno" && adjustment.adjustment_type !== "desconto") return acc;
+      return acc + Math.abs(Number(adjustment.amount) || 0);
+    }, 0);
+    const partitionProgramada = partitionFlows.reduce((acc, flow) => {
+      const entry = partitionEntriesVisible.find((e) => e.id === flow.entry_id);
+      if (!entry) return acc;
+      const isPaid = flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0;
+      if (isPaid) return acc;
+      return acc + Math.max(0, Number(flow.valor_previsto) || 0);
+    }, 0);
+    const partitionVendaIds = new Set(partitionEntriesVisible.map((entry) => entry.venda_id));
+    const partitionVendasTotal = Array.from(partitionVendaIds).reduce((acc, vendaId) => {
+      const venda = partitionVendaById[vendaId];
+      return acc + (Number(venda?.valor_venda) || 0);
+    }, 0);
+
+    return {
+      vendasTotal: kpi.vendasTotal + partitionVendasTotal,
+      comBruta: kpi.comBruta + partitionBruta,
+      comLiquida: commissionNet(kpi.comBruta + partitionBruta, impostoFrac),
+      comPagaBruta: kpi.comPagaBruta + partitionPaga,
+      comPagaLiquida: commissionNet(kpi.comPagaBruta + partitionPaga, impostoFrac),
+      comPendenteBruta: kpi.comPendenteBruta + Math.max(0, partitionBruta - partitionPaga - partitionPerdida),
+      comPendenteLiquida: commissionNet(kpi.comPendenteBruta + Math.max(0, partitionBruta - partitionPaga - partitionPerdida), impostoFrac),
+      comPerdidaBruta: kpi.comPerdidaBruta + partitionPerdida,
+      comPerdidaLiquida: commissionNet(kpi.comPerdidaBruta + partitionPerdida, impostoFrac),
+      comProgramadaBruta: partitionProgramada,
+      comProgramadaLiquida: commissionNet(partitionProgramada, impostoFrac),
+    };
+  }, [kpi, partitionEntriesVisible, partitionFlows, partitionAdjustments, partitionVendaById, impostoFrac]);
+
   function findPartitionRuleForVenda(venda: Venda) {
     const vendaTabela = normalize(venda.tabela);
     const vendaAdmin = normalize(venda.administradora);
@@ -2197,9 +2300,9 @@ export default function ComissoesPage() {
     const percentTotal = parsePctHumanToNumber(tableRuleTotalPct) / 100;
     if (percentTotal <= 0) return alert("Informe a comissão total da tabela.");
 
-    const fluxoRaw = tableRuleFluxoPctList.map((x) => parsePctHumanToNumber(x.trim()) / 100);
-    if (!fluxoRaw.length || fluxoRaw.some((x) => !isFinite(x) || x <= 0)) {
-      return alert("Preencha todos os percentuais do fluxo de pagamento.");
+    const fluxoRaw = tableRuleFluxoPctList.map((x) => parsePctHumanToNumber(String(x || "").trim()) / 100);
+    if (!fluxoRaw.length || tableRuleFluxoPctList.some((x) => String(x ?? "").trim() === "") || fluxoRaw.some((x) => !isFinite(x) || x < 0)) {
+      return alert("Preencha todos os percentuais do fluxo de pagamento. Parcelas zeradas são permitidas, mas o campo não pode ficar vazio.");
     }
 
     const fluxoComoPercentualDaVenda = fluxoRaw.reduce((a, b) => a + b, 0);
@@ -2415,23 +2518,55 @@ export default function ComissoesPage() {
     return true;
   }
 
-  async function registrarPagamentoParticionado(flow: CommissionEntryFlow) {
-    if (!canEdit) return alert("Somente admin pode registrar pagamento.");
+  async function programarPagamentoParticionado(flow: CommissionEntryFlow) {
+    if (!canEdit) return alert("Somente admin pode programar pagamento.");
 
-    const valor = prompt("Valor pago bruto:", String(Number(flow.valor_previsto || 0).toFixed(2)).replace(".", ","));
-    if (valor === null) return;
-
-    const valorPago = parseBRL(valor);
-    const data = prompt("Data do pagamento (AAAA-MM-DD):", toDateInput(new Date()));
+    const data = prompt("Data programada para pagamento (AAAA-MM-DD):", flow.data_pagamento || toDateInput(new Date()));
     if (!data) return;
 
     const { error } = await supabase
       .from("commission_entry_flow")
-      .update({ valor_pago: valorPago, data_pagamento: data, status: "pago" } as any)
+      .update({ data_pagamento: data, status: "a_pagar" } as any)
       .eq("id", flow.id);
+
+    if (error) return alert("Erro ao programar pagamento: " + error.message);
+
+    fetchData();
+  }
+
+  function abrirPagamentoParticionado(flow: CommissionEntryFlow) {
+    setPartitionPayFlow(flow);
+    setPartitionPayDate(flow.data_pagamento || toDateInput(new Date()));
+    setPartitionPayValue(String(Number(flow.valor_previsto || 0).toFixed(2)).replace(".", ","));
+    setPartitionPayFile(null);
+  }
+
+  async function confirmarPagamentoParticionado() {
+    if (!canEdit) return alert("Somente admin pode registrar pagamento.");
+    if (!partitionPayFlow) return;
+
+    const valorPago = parseBRL(partitionPayValue);
+    if (valorPago <= 0) return alert("Informe o valor pago.");
+    if (!partitionPayDate) return alert("Informe a data do pagamento.");
+
+    let comprovantePath: string | null = null;
+    if (partitionPayFile) {
+      comprovantePath = await uploadToBucket(partitionPayFile, partitionPayFlow.entry_id);
+      if (!comprovantePath) return;
+    }
+
+    const payload: any = { valor_pago: valorPago, data_pagamento: partitionPayDate, status: "pago" };
+    if (comprovantePath) payload.comprovante_url = comprovantePath;
+
+    const { error } = await supabase
+      .from("commission_entry_flow")
+      .update(payload)
+      .eq("id", partitionPayFlow.id);
 
     if (error) return alert("Erro ao registrar pagamento: " + error.message);
 
+    setPartitionPayFlow(null);
+    setPartitionPayFile(null);
     fetchData();
   }
 
@@ -2460,6 +2595,33 @@ export default function ComissoesPage() {
 
     await supabase.from("commission_entries").update({ status: "estornado" } as any).eq("id", entry.id);
     fetchData();
+  }
+
+  function renderPartitionFlowAction(flow: CommissionEntryFlow) {
+    const isPaid = flow.status === "pago" || (Number(flow.valor_pago) || 0) > 0;
+    const isProgrammed = !!flow.data_pagamento && !isPaid;
+
+    if (isPaid) {
+      return (
+        <Button size="sm" className="h-6 px-2 bg-green-600 text-white hover:bg-green-700" disabled>
+          Pago
+        </Button>
+      );
+    }
+
+    if (isProgrammed) {
+      return (
+        <Button size="sm" className="h-6 px-2 bg-[#1E293F] text-white hover:bg-[#1E293F]/90" onClick={() => abrirPagamentoParticionado(flow)}>
+          Pagar
+        </Button>
+      );
+    }
+
+    return (
+      <Button size="sm" className="h-6 px-2 bg-[#A11C27] text-white hover:bg-[#A11C27]/90" onClick={() => programarPagamentoParticionado(flow)}>
+        Prog
+      </Button>
+    );
   }
 
   function downloadDemonstrativoParticionadoPDF() {
@@ -2993,7 +3155,7 @@ export default function ComissoesPage() {
 
             <div className="flex flex-col gap-2">
               <Label>Administradora</Label>
-              <Select value={adminFilter} onValueChange={setAdminFilter}>
+              <Select value={adminFilter} onValueChange={(v) => { setAdminFilter(v); setSegmento("all"); setTabela("all"); }}>
                 <SelectTrigger>
                   <SelectValue placeholder="Todas" />
                 </SelectTrigger>
@@ -3010,19 +3172,17 @@ export default function ComissoesPage() {
 
             <div className="flex flex-col gap-2">
               <Label>Segmento</Label>
-              <Select value={segmento} onValueChange={setSegmento}>
+              <Select value={segmento} onValueChange={(v) => { setSegmento(v); setTabela("all"); }}>
                 <SelectTrigger>
                   <SelectValue placeholder="Todos" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
-                  {Array.from(new Set(simTables.map((t) => t.segmento)))
-                    .filter(Boolean)
-                    .map((seg) => (
-                      <SelectItem key={seg} value={seg}>
-                        {seg}
-                      </SelectItem>
-                    ))}
+                  {mainSegmentOptions.map((seg) => (
+                    <SelectItem key={seg} value={seg}>
+                      {seg}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -3035,13 +3195,11 @@ export default function ComissoesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas</SelectItem>
-                  {Array.from(new Set(simTables.map((t) => t.nome_tabela)))
-                    .filter(Boolean)
-                    .map((tab) => (
-                      <SelectItem key={tab} value={tab}>
-                        {tab}
-                      </SelectItem>
-                    ))}
+                  {mainTableOptions.map((tab) => (
+                    <SelectItem key={tab} value={tab}>
+                      {tab}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -3177,21 +3335,21 @@ export default function ComissoesPage() {
             <CardHeader className="pb-3">
               <CardTitle>🔥 Vendas</CardTitle>
             </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.vendasTotal)}</CardContent>
+            <CardContent className="text-2xl font-bold">{BRL(combinedKpi.vendasTotal)}</CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>🧾 Comissão Bruta</CardTitle>
             </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.comBruta)}</CardContent>
+            <CardContent className="text-2xl font-bold">{BRL(combinedKpi.comBruta)}</CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>✅ Comissão Líquida</CardTitle>
             </CardHeader>
-            <CardContent className="text-2xl font-bold">{BRL(kpi.comLiquida)}</CardContent>
+            <CardContent className="text-2xl font-bold">{BRL(combinedKpi.comLiquida)}</CardContent>
           </Card>
 
           <Card>
@@ -3200,8 +3358,8 @@ export default function ComissoesPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-1">
-                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPagaBruta)}</div>
-                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(kpi.comPagaLiquida)}</div>
+                <div className="text-lg font-bold">Bruta: {BRL(combinedKpi.comPagaBruta)}</div>
+                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(combinedKpi.comPagaLiquida)}</div>
               </div>
             </CardContent>
           </Card>
@@ -3212,8 +3370,8 @@ export default function ComissoesPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-1">
-                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPendenteBruta)}</div>
-                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(kpi.comPendenteLiquida)}</div>
+                <div className="text-lg font-bold">Bruta: {BRL(combinedKpi.comPendenteBruta)}</div>
+                <div className="text-lg font-bold text-[#1E293F]">Líquida: {BRL(combinedKpi.comPendenteLiquida)}</div>
               </div>
             </CardContent>
           </Card>
@@ -3224,8 +3382,8 @@ export default function ComissoesPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-1">
-                <div className="text-lg font-bold">Bruta: {BRL(kpi.comPerdidaBruta)}</div>
-                <div className="text-lg font-bold text-[#A11C27]">Líquida: {BRL(kpi.comPerdidaLiquida)}</div>
+                <div className="text-lg font-bold">Bruta: {BRL(combinedKpi.comPerdidaBruta)}</div>
+                <div className="text-lg font-bold text-[#A11C27]">Líquida: {BRL(combinedKpi.comPerdidaLiquida)}</div>
               </div>
             </CardContent>
           </Card>
@@ -3343,12 +3501,8 @@ export default function ComissoesPage() {
                               <span>
                                 M{flow.mes} • {BRL(flow.valor_previsto)}
                               </span>
-                              <span>{flow.status === "pago" ? `Pago ${formatISODateBR(flow.data_pagamento)}` : "A pagar"}</span>
-                              {canEdit && flow.status !== "pago" && (
-                                <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => registrarPagamentoParticionado(flow)}>
-                                  Pagar
-                                </Button>
-                              )}
+                              <span>{flow.status === "pago" ? `Pago ${formatISODateBR(flow.data_pagamento)}` : flow.data_pagamento ? `Prog. ${formatISODateBR(flow.data_pagamento)}` : "A programar"}</span>
+                              {canEdit && renderPartitionFlowAction(flow)}
                             </div>
                           ))}
                         </div>
@@ -3959,7 +4113,7 @@ export default function ComissoesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {tableRules.map((r) => (
+                    {paginatedTableRules.rows.map((r) => (
                       <tr key={r.id} className="border-t">
                         <td className="p-2">{r.administradora || "—"}</td>
                         <td className="p-2">{r.segmento || "—"}</td>
@@ -3973,6 +4127,12 @@ export default function ComissoesPage() {
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 text-sm text-gray-600">
+                <span>Página {paginatedTableRules.page} de {paginatedTableRules.totalPages}</span>
+                <Button size="sm" variant="outline" onClick={() => setTableRulesPage((p) => Math.max(1, p - 1))} disabled={paginatedTableRules.page <= 1}>Anterior</Button>
+                <Button size="sm" variant="outline" onClick={() => setTableRulesPage((p) => Math.min(paginatedTableRules.totalPages, p + 1))} disabled={paginatedTableRules.page >= paginatedTableRules.totalPages}>Próxima</Button>
               </div>
             </div>
 
@@ -4226,6 +4386,34 @@ export default function ComissoesPage() {
               <Button onClick={() => setOpenPay(false)} variant="secondary">
                 Fechar
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!partitionPayFlow} onOpenChange={(open) => { if (!open) setPartitionPayFlow(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Confirmar pagamento da comissão</DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="flex flex-col gap-2">
+                <Label>Data do pagamento</Label>
+                <Input type="date" value={partitionPayDate} onChange={(e) => setPartitionPayDate(e.target.value)} />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>Valor pago bruto</Label>
+                <Input value={partitionPayValue} onChange={(e) => setPartitionPayValue(e.target.value)} placeholder="0,00" />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>Comprovante de pagamento</Label>
+                <Input type="file" accept="application/pdf,image/*" onChange={(e) => setPartitionPayFile(e.target.files?.[0] || null)} />
+              </div>
+            </div>
+
+            <DialogFooter className="pt-4">
+              <Button variant="secondary" onClick={() => setPartitionPayFlow(null)}>Cancelar</Button>
+              <Button onClick={confirmarPagamentoParticionado} style={{ background: "#1E293F" }}>Confirmar pagamento</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -86,6 +86,8 @@ type Venda = {
   encarteirada_em?: string | null;
   codigo?: string | null;
   cancelada_em?: string | null;
+  grupo?: string | null;
+  cota?: string | null;
 };
 
 type Commission = {
@@ -277,6 +279,25 @@ const toDateInput = (d: Date) => {
 };
 
 const formatISODateBR = (iso?: string | null) => (!iso ? "—" : iso.split("-").reverse().join("/"));
+
+function isoToBRDate(iso?: string | null) {
+  return !iso ? "" : String(iso).slice(0, 10).split("-").reverse().join("/");
+}
+
+function brDateToISO(value: string) {
+  const digits = (value || "").replace(/\D/g, "");
+  if (digits.length !== 8) return null;
+  const dd = digits.slice(0, 2);
+  const mm = digits.slice(2, 4);
+  const yyyy = digits.slice(4, 8);
+  const d = Number(dd);
+  const m = Number(mm);
+  const y = Number(yyyy);
+  if (!d || !m || !y || m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const date = new Date(y, m - 1, d);
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 const normalize = (s?: string | null) =>
   (s || "")
@@ -982,6 +1003,8 @@ export default function ComissoesPage() {
   const [tableRuleFluxoMeses, setTableRuleFluxoMeses] = useState<number>(4);
   const [tableRuleFluxoPctList, setTableRuleFluxoPctList] = useState<string[]>(["2,00", "1,00", "1,00", "1,00"]);
   const [tableRulesPage, setTableRulesPage] = useState<number>(1);
+  const [partitionScheduleFlow, setPartitionScheduleFlow] = useState<CommissionEntryFlow | null>(null);
+  const [partitionScheduleDateBR, setPartitionScheduleDateBR] = useState<string>(() => isoToBRDate(toDateInput(new Date())));
   const [partitionPayFlow, setPartitionPayFlow] = useState<CommissionEntryFlow | null>(null);
   const [partitionPayValue, setPartitionPayValue] = useState<string>("");
   const [partitionPayDate, setPartitionPayDate] = useState<string>(() => toDateInput(new Date()));
@@ -1178,6 +1201,18 @@ export default function ComissoesPage() {
       .map((id) => ({ id, name: adminById[id] || "Sem administradora" }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [simTables, adminById]);
+
+  const mainAdminOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        [
+          ...simTables.map((t) => (t.admin_id ? adminById[t.admin_id] : null)),
+          ...allVendasComissao.map((v) => v.administradora),
+          ...rows.map((r) => r.administradora),
+        ].filter(Boolean) as string[]
+      )
+    ).sort();
+  }, [simTables, adminById, allVendasComissao, rows]);
 
   const mainSegmentOptions = useMemo(() => {
     let base = simTables;
@@ -1467,7 +1502,7 @@ export default function ComissoesPage() {
 
       let qbV = supabase
         .from("vendas")
-        .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id, encarteirada_em, codigo, cancelada_em")
+        .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id, encarteirada_em, codigo, cancelada_em, grupo, cota")
         .order("data_venda", { ascending: false });
 
       if (!isAdmin) qbV = qbV.eq("vendedor_id", usersByAuth[authUserId || ""]?.id || vendedorId);
@@ -1502,7 +1537,7 @@ export default function ComissoesPage() {
       setVendasSemCom(vendasFiltered as Venda[]);
 
       const clientIds = Array.from(
-        new Set((vendasFiltered || []).map((v: any) => v.lead_id || v.cliente_lead_id).filter((x: any): x is string => !!x))
+        new Set((vendasPeriodo || []).map((v: any) => v.lead_id || v.cliente_lead_id).filter((x: any): x is string => !!x))
       );
 
       if (clientIds.length) {
@@ -1529,6 +1564,27 @@ export default function ComissoesPage() {
         supabase.from("commission_entry_flow").select("*").order("mes", { ascending: true }).limit(10000),
         supabase.from("commission_adjustments").select("*").order("created_at", { ascending: false }).limit(3000),
       ]);
+
+      const combinedVendasMap: Record<string, Venda> = {};
+      (vendasPeriodo || []).forEach((v: any) => { combinedVendasMap[v.id] = v as Venda; });
+      const missingPartitionVendaIds = Array.from(new Set(((freshBatches || []) as any[]).map((b) => b.venda_id).filter(Boolean))).filter((id) => !combinedVendasMap[id]);
+      if (missingPartitionVendaIds.length) {
+        const { data: partVendasInfo } = await supabase
+          .from("vendas")
+          .select("id, data_venda, vendedor_id, segmento, tabela, administradora, valor_venda, numero_proposta, cliente_lead_id, lead_id, encarteirada_em, codigo, cancelada_em, grupo, cota")
+          .in("id", missingPartitionVendaIds);
+        (partVendasInfo || []).forEach((v: any) => { combinedVendasMap[v.id] = v as Venda; });
+      }
+      const combinedVendasList = Object.values(combinedVendasMap);
+      setAllVendasComissao(combinedVendasList);
+
+      const combinedClientIds = Array.from(new Set(combinedVendasList.map((v: any) => v.lead_id || v.cliente_lead_id).filter(Boolean) as string[]));
+      if (combinedClientIds.length) {
+        const { data: cli } = await supabase.from("leads").select("id, nome").in("id", combinedClientIds);
+        const map: Record<string, string> = {};
+        (cli || []).forEach((c: any) => (map[c.id] = c.nome || ""));
+        setClientesMap(map);
+      }
 
       setTableRules((freshTableRules || []) as CommissionTableRule[]);
       setSplitRules((freshSplitRules || []) as CommissionSplitRule[]);
@@ -1706,6 +1762,19 @@ export default function ComissoesPage() {
       }
     }
 
+    for (const f of partitionFlows) {
+      const entry = partitionEntries.find((e) => e.id === f.entry_id);
+      if (!entry || !partitionEntriesVisible.some((visible) => visible.id === entry.id)) continue;
+      const isPaid = f.status === "pago" || (Number(f.valor_pago) || 0) > 0;
+      if (isPaid || !f.data_pagamento) continue;
+      const bruto = Number(f.valor_previsto) || 0;
+      programadas.push({
+        dateIso: f.data_pagamento,
+        bruto,
+        liquido: commissionNet(bruto, impostoFrac),
+      });
+    }
+
     if (!programadas.length) return null;
 
     programadas.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
@@ -1719,7 +1788,7 @@ export default function ComissoesPage() {
       bruto: brutoTotal,
       liquido: liquidoTotal,
     };
-  }, [rows, impostoFrac]);
+  }, [rows, partitionFlows, partitionEntries, partitionEntriesVisible, impostoFrac]);
 
   function onChangeMeses(n: number) {
     setRuleMeses(n);
@@ -2256,7 +2325,8 @@ export default function ComissoesPage() {
     const partitionVendaIds = new Set(partitionEntriesVisible.map((entry) => entry.venda_id));
     const partitionVendasTotal = Array.from(partitionVendaIds).reduce((acc, vendaId) => {
       const venda = partitionVendaById[vendaId];
-      return acc + (Number(venda?.valor_venda) || 0);
+      const batch = partitionBatches.find((b) => b.venda_id === vendaId);
+      return acc + (Number(venda?.valor_venda ?? batch?.valor_venda) || 0);
     }, 0);
 
     return {
@@ -2272,7 +2342,7 @@ export default function ComissoesPage() {
       comProgramadaBruta: partitionProgramada,
       comProgramadaLiquida: commissionNet(partitionProgramada, impostoFrac),
     };
-  }, [kpi, partitionEntriesVisible, partitionFlows, partitionAdjustments, partitionVendaById, impostoFrac]);
+  }, [kpi, partitionEntriesVisible, partitionFlows, partitionAdjustments, partitionVendaById, partitionBatches, impostoFrac]);
 
   function findPartitionRuleForVenda(venda: Venda) {
     const vendaTabela = normalize(venda.tabela);
@@ -2300,9 +2370,9 @@ export default function ComissoesPage() {
     const percentTotal = parsePctHumanToNumber(tableRuleTotalPct) / 100;
     if (percentTotal <= 0) return alert("Informe a comissão total da tabela.");
 
-    const fluxoRaw = tableRuleFluxoPctList.map((x) => parsePctHumanToNumber(String(x || "").trim()) / 100);
-    if (!fluxoRaw.length || tableRuleFluxoPctList.some((x) => String(x ?? "").trim() === "") || fluxoRaw.some((x) => !isFinite(x) || x < 0)) {
-      return alert("Preencha todos os percentuais do fluxo de pagamento. Parcelas zeradas são permitidas, mas o campo não pode ficar vazio.");
+    const fluxoRaw = tableRuleFluxoPctList.map((x) => parsePctHumanToNumber(String(x ?? "0").trim() || "0") / 100);
+    if (!fluxoRaw.length || fluxoRaw.some((x) => !isFinite(x) || x < 0)) {
+      return alert("Informe percentuais válidos no fluxo de pagamento. Parcelas zeradas são permitidas.");
     }
 
     const fluxoComoPercentualDaVenda = fluxoRaw.reduce((a, b) => a + b, 0);
@@ -2518,19 +2588,27 @@ export default function ComissoesPage() {
     return true;
   }
 
-  async function programarPagamentoParticionado(flow: CommissionEntryFlow) {
+  function programarPagamentoParticionado(flow: CommissionEntryFlow) {
     if (!canEdit) return alert("Somente admin pode programar pagamento.");
+    setPartitionScheduleFlow(flow);
+    setPartitionScheduleDateBR(isoToBRDate(flow.data_pagamento || toDateInput(new Date())));
+  }
 
-    const data = prompt("Data programada para pagamento (AAAA-MM-DD):", flow.data_pagamento || toDateInput(new Date()));
-    if (!data) return;
+  async function confirmarProgramacaoParticionada() {
+    if (!canEdit) return alert("Somente admin pode programar pagamento.");
+    if (!partitionScheduleFlow) return;
+
+    const dataISO = brDateToISO(partitionScheduleDateBR);
+    if (!dataISO) return alert("Informe a data no formato dd/mm/aaaa.");
 
     const { error } = await supabase
       .from("commission_entry_flow")
-      .update({ data_pagamento: data, status: "a_pagar" } as any)
-      .eq("id", flow.id);
+      .update({ data_pagamento: dataISO, status: "a_pagar" } as any)
+      .eq("id", partitionScheduleFlow.id);
 
     if (error) return alert("Erro ao programar pagamento: " + error.message);
 
+    setPartitionScheduleFlow(null);
     fetchData();
   }
 
@@ -2649,19 +2727,26 @@ export default function ComissoesPage() {
         .forEach((flow) => {
           const bruto = Number(flow.valor_pago || flow.valor_previsto) || 0;
           const impostos = Math.round(bruto * impostoFrac * 100) / 100;
+          const vendedorVenda = batch?.vendedor_id ? userLabel(batch.vendedor_id) : "—";
+          const clienteNome =
+            (venda?.lead_id && clientesMap[venda.lead_id]) ||
+            (venda?.cliente_lead_id && clientesMap[venda.cliente_lead_id]) ||
+            (venda as any)?.cliente_nome ||
+            "—";
           rowsPdf.push([
+            vendedorVenda,
             "Comissão",
             venda?.numero_proposta || "—",
-            (venda?.lead_id && clientesMap[venda.lead_id]) || (venda?.cliente_lead_id && clientesMap[venda.cliente_lead_id]) || "—",
+            clienteNome,
             `${entry.recipient_type} • ${favorecido}`,
             (venda as any)?.grupo || "—",
             (venda as any)?.cota || "—",
             `M${flow.mes}`,
-            BRL(batch?.valor_venda || venda?.valor_venda),
+            BRL(batch?.valor_venda ?? venda?.valor_venda),
             BRL(bruto),
             BRL(impostos),
             BRL(bruto - impostos),
-            flow.status === "pago" ? "Pago" : "A pagar",
+            flow.status === "pago" ? "Pago" : flow.data_pagamento ? "Programado" : "A programar",
           ]);
         });
     }
@@ -2678,15 +2763,22 @@ export default function ComissoesPage() {
         const venda = batch ? partitionVendaById[batch.venda_id] : null;
         const bruto = -Math.abs(Number(a.amount) || 0);
 
+        const vendedorVenda = batch?.vendedor_id ? userLabel(batch.vendedor_id) : "—";
+        const clienteNome =
+          (venda?.lead_id && clientesMap[venda.lead_id]) ||
+          (venda?.cliente_lead_id && clientesMap[venda.cliente_lead_id]) ||
+          (venda as any)?.cliente_nome ||
+          "—";
         rowsPdf.push([
+          vendedorVenda,
           a.adjustment_type === "estorno" ? "Estorno" : "Ajuste",
           venda?.numero_proposta || "—",
-          (venda?.lead_id && clientesMap[venda.lead_id]) || (venda?.cliente_lead_id && clientesMap[venda.cliente_lead_id]) || "—",
+          clienteNome,
           a.description || "Estorno/desconto de comissão",
           a.grupo || (venda as any)?.grupo || "—",
           a.cota || (venda as any)?.cota || "—",
           a.parcela || "—",
-          BRL(batch?.valor_venda || venda?.valor_venda),
+          BRL(batch?.valor_venda ?? venda?.valor_venda),
           BRL(bruto),
           BRL(0),
           BRL(bruto),
@@ -2705,9 +2797,11 @@ export default function ComissoesPage() {
     doc.text(`Período: ${formatISODateBR(periodoIni)} até ${formatISODateBR(periodoFim)}`, 40, 52);
     doc.text("Este documento possui caráter demonstrativo e não substitui o comprovante bancário de pagamento.", 40, 66);
 
+    rowsPdf.sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[2]).localeCompare(String(b[2])) || String(a[7]).localeCompare(String(b[7])));
+
     autoTable(doc, {
       startY: 82,
-      head: [["Tipo", "Proposta", "Cliente", "Descrição", "Grupo", "Cota", "Parcela", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida", "Status"]],
+      head: [["Vendedor", "Tipo", "Proposta", "Cliente", "Descrição", "Grupo", "Cota", "Parcela", "R$ da Venda", "Comissão Bruta", "Impostos", "Comissão Líquida", "Status"]],
       body: rowsPdf,
       styles: { font: "helvetica", fontSize: 8 },
       headStyles: { fillColor: [30, 41, 63] },
@@ -3161,7 +3255,7 @@ export default function ComissoesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas</SelectItem>
-                  {Array.from(new Set(rows.map((r) => r.administradora).filter(Boolean) as string[])).map((adm) => (
+                  {mainAdminOptions.map((adm) => (
                     <SelectItem key={adm} value={adm}>
                       {adm}
                     </SelectItem>
@@ -4386,6 +4480,32 @@ export default function ComissoesPage() {
               <Button onClick={() => setOpenPay(false)} variant="secondary">
                 Fechar
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!partitionScheduleFlow} onOpenChange={(open) => { if (!open) setPartitionScheduleFlow(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Programar pagamento da comissão</DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="flex flex-col gap-2">
+                <Label>Data programada</Label>
+                <Input
+                  value={partitionScheduleDateBR}
+                  onChange={(e) => setPartitionScheduleDateBR(e.target.value)}
+                  placeholder="dd/mm/aaaa"
+                  inputMode="numeric"
+                />
+                <div className="text-xs text-gray-500">Use o formato dd/mm/aaaa. Essa data será usada no demonstrativo.</div>
+              </div>
+            </div>
+
+            <DialogFooter className="pt-4">
+              <Button variant="secondary" onClick={() => setPartitionScheduleFlow(null)}>Cancelar</Button>
+              <Button onClick={confirmarProgramacaoParticionada} style={{ background: "#A11C27" }}>Programar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
